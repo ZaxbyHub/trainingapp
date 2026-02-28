@@ -1,0 +1,469 @@
+"""
+RAG Engine Module
+Combines document processing, vector store, and LLM for question answering.
+"""
+
+import os
+import sys
+import json
+import time
+from typing import Optional, List, Dict, Any, Tuple
+from pathlib import Path
+from dataclasses import dataclass
+
+
+
+from document_processor import DocumentProcessor, DocumentChunk
+from vector_store import VectorStore
+from llm_interface import SmartLLM
+
+
+@dataclass
+class QueryResult:
+    """Result of a RAG query."""
+    question: str
+    answer: str
+    sources: List[str]
+    context_length: int
+    inference_time: float
+    chunks_retrieved: int
+
+
+class RAGConfig:
+    """Configuration for RAG engine."""
+    
+    def __init__(
+        self,
+        db_path: str = "./doc_qa_db",
+        chunk_size: int = 256,
+        chunk_overlap: int = 50,
+        n_results: int = 3,
+        min_similarity: float = 0.3,
+        max_tokens: int = 512,
+        temperature: float = 0.3,
+        embedding_model: str = "BAAI/bge-small-en-v1.5",
+        retrieval_window: int = 0,
+        hybrid_search: bool = True,
+        reranking_enabled: bool = False,
+        reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-2-v2",
+        query_transformation_enabled: bool = False,
+        initial_retrieval_top_k: int = 20
+    ):
+        self.db_path = db_path
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.n_results = n_results
+        self.min_similarity = min_similarity
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.embedding_model = embedding_model
+        self.retrieval_window = retrieval_window
+        self.hybrid_search = hybrid_search
+        self.reranking_enabled = reranking_enabled
+        self.reranker_model = reranker_model
+        self.query_transformation_enabled = query_transformation_enabled
+        self.initial_retrieval_top_k = initial_retrieval_top_k
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "db_path": self.db_path,
+            "chunk_size": self.chunk_size,
+            "chunk_overlap": self.chunk_overlap,
+            "n_results": self.n_results,
+            "min_similarity": self.min_similarity,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "embedding_model": self.embedding_model,
+            "retrieval_window": self.retrieval_window,
+            "hybrid_search": self.hybrid_search,
+            "reranking_enabled": self.reranking_enabled,
+            "reranker_model": self.reranker_model,
+            "query_transformation_enabled": self.query_transformation_enabled,
+            "initial_retrieval_top_k": self.initial_retrieval_top_k
+        }
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RAGConfig":
+        # Handle backward compatibility - provide defaults for new fields
+        return cls(
+            db_path=data.get("db_path", "./doc_qa_db"),
+            chunk_size=data.get("chunk_size", 256),
+            chunk_overlap=data.get("chunk_overlap", 50),
+            n_results=data.get("n_results", 3),
+            min_similarity=data.get("min_similarity", 0.3),
+            max_tokens=data.get("max_tokens", 512),
+            temperature=data.get("temperature", 0.3),
+            embedding_model=data.get("embedding_model", "BAAI/bge-small-en-v1.5"),
+            retrieval_window=data.get("retrieval_window", 0),
+            hybrid_search=data.get("hybrid_search", True),
+            reranking_enabled=data.get("reranking_enabled", False),
+            reranker_model=data.get("reranker_model", "cross-encoder/ms-marco-MiniLM-L-2-v2"),
+            query_transformation_enabled=data.get("query_transformation_enabled", False),
+            initial_retrieval_top_k=data.get("initial_retrieval_top_k", 20)
+        )
+
+
+class RAGEngine:
+    """
+    Main RAG engine for document Q&A.
+    Handles document ingestion, embedding, and question answering.
+    """
+    
+    CONFIG_FILE = "rag_config.json"
+    
+    def __init__(
+        self,
+        config: Optional[RAGConfig] = None,
+        model_path: Optional[str] = None,
+        ollama_model: Optional[str] = None,
+        ollama_url: Optional[str] = None,
+        api_url: Optional[str] = None,
+        api_model: Optional[str] = None,
+        device: Optional[str] = None,
+        gguf_path: Optional[str] = None
+    ):
+        self.config = config or RAGConfig()
+        self.gguf_path = gguf_path
+        
+        print("=" * 50)
+        print("Initializing RAG Engine")
+        print("=" * 50)
+        
+        self.doc_processor = DocumentProcessor(
+            chunk_size=self.config.chunk_size,
+            chunk_overlap=self.config.chunk_overlap
+        )
+        print(f"[OK] Document processor ready")
+        
+        self.vector_store = VectorStore(
+            db_path=self.config.db_path,
+            embedding_model=self.config.embedding_model
+        )
+        
+        self.llm: Optional[SmartLLM] = None
+        self._init_llm(model_path, ollama_model, ollama_url, api_url, api_model, device, gguf_path)
+        
+        self._save_config()
+        print("=" * 50)
+        print("RAG Engine Ready")
+        print("=" * 50)
+    
+    def _init_llm(
+        self,
+        model_path: Optional[str],
+        ollama_model: Optional[str],
+        ollama_url: Optional[str],
+        api_url: Optional[str],
+        api_model: Optional[str],
+        device: Optional[str],
+        gguf_path: Optional[str]
+    ):
+        """Initialize LLM with fallback chain."""
+        try:
+            # Use root SmartLLM which auto-detects GGUF model
+            # Parameters are passed as-is; GGUF takes priority
+            self.llm = SmartLLM(
+                model_path=model_path,
+                ollama_model=ollama_model,
+                ollama_url=ollama_url,
+                api_url=api_url,
+                api_model=api_model,
+                device=device,
+                gguf_path=gguf_path
+            )
+            print(f"[OK] LLM initialized: {self.llm.get_info()['backend']}")
+        except Exception as e:
+            print(f"[WARN] LLM not available: {e}")
+            print("  RAG engine will work for document ingestion only.")
+            self.llm = None
+    
+    def _save_config(self):
+        """Save configuration to database directory."""
+        config_path = Path(self.config.db_path) / self.CONFIG_FILE
+        with open(config_path, 'w') as f:
+            json.dump(self.config.to_dict(), f, indent=2)
+    
+    def ingest_directory(self, directory: str, callback=None) -> Dict[str, Any]:
+        """
+        Ingest all documents from a directory.
+        
+        Args:
+            directory: Path to directory containing documents
+            callback: Optional callback(message, progress) for UI updates
+        
+        Returns:
+            Statistics about the ingestion
+        """
+        start_time = time.time()
+        directory_path = Path(directory)
+        
+        if not directory_path.exists():
+            raise FileNotFoundError(f"Directory not found: {directory_path}")
+        
+        if callback:
+            callback("Scanning directory...", 0)
+        
+        chunks = self.doc_processor.process_directory(str(directory_path))
+        
+        if not chunks:
+            return {
+                "success": False,
+                "message": "No documents found or processed",
+                "documents": 0,
+                "chunks": 0,
+                "time_seconds": time.time() - start_time
+            }
+        
+        if callback:
+            callback(f"Embedding {len(chunks)} chunks...", 50)
+        
+        added = self.vector_store.add_chunks(chunks)
+        
+        elapsed = time.time() - start_time
+        
+        stats = {
+            "success": True,
+            "documents": len(set(c.source for c in chunks)),
+            "chunks_total": len(chunks),
+            "chunks_added": added,
+            "time_seconds": elapsed
+        }
+        
+        if callback:
+            callback(f"[OK] Ingested {stats['documents']} documents", 100)
+        
+        return stats
+    
+    def ingest_file(self, filepath: str) -> Dict[str, Any]:
+        """Ingest a single file."""
+        start_time = time.time()
+        
+        chunks = self.doc_processor.process_file(filepath)
+        
+        if not chunks:
+            return {
+                "success": False,
+                "message": "Failed to process file",
+                "chunks": 0
+            }
+        
+        added = self.vector_store.add_chunks(chunks)
+        
+        return {
+            "success": True,
+            "file": Path(filepath).name,
+            "chunks_added": added,
+            "time_seconds": time.time() - start_time
+        }
+    
+    def _expand_chunks_with_window(self, chunks: List[DocumentChunk], window: int) -> List[DocumentChunk]:
+        """Expand retrieved chunks by fetching adjacent chunks within window."""
+        if not chunks or window <= 0:
+            return chunks
+        
+        expanded = []
+        seen_ids = set()
+        
+        for chunk in chunks:
+            # Get chunks with same source, within window range
+            source_chunks = self.vector_store.get_chunks_by_source(chunk.source)
+            
+            for source_chunk in source_chunks:
+                # Check if within window of current chunk
+                if abs(source_chunk.chunk_index - chunk.chunk_index) <= window:
+                    chunk_id = f"{source_chunk.source}_{source_chunk.chunk_index}"
+                    if chunk_id not in seen_ids:
+                        expanded.append(source_chunk)
+                        seen_ids.add(chunk_id)
+        
+        # Sort by source and chunk_index for coherent ordering
+        expanded.sort(key=lambda c: (c.source, c.chunk_index))
+        return expanded
+
+    def query(self, question: str, n_results: Optional[int] = None) -> QueryResult:
+        """
+        Answer a question using RAG.
+        
+        Args:
+            question: The question to answer
+            n_results: Number of context chunks to retrieve (overrides config)
+        
+        Returns:
+            QueryResult with answer and metadata
+        """
+        if not self.llm:
+            raise RuntimeError("LLM not initialized. Cannot answer questions.")
+        
+        start_time = time.time()
+        
+        # Check for greetings - handle directly without RAG
+        greeting_keywords = {'hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening', 'howdy', 'what\'s up', 'sup', 'yo'}
+        words = question.lower().split()
+        if len(words) <= 3 and any(keyword in question.lower() for keyword in greeting_keywords):
+            # Handle greeting directly
+            answer = self.llm.answer_question(question, '', [])
+            return QueryResult(
+                question=question,
+                answer=answer,
+                sources=[],
+                context_length=0,
+                inference_time=time.time() - start_time,
+                chunks_retrieved=0
+            )
+        
+        # Check for general "what do you have" type questions
+        general_keywords = {'what', 'information', 'have', 'documents', 'available', 'overview', 'summary', 'list'}
+        is_general = len(words) <= 8 and any(keyword in question.lower() for keyword in general_keywords)
+        
+        # For general questions, retrieve more chunks (up to 3)
+        n = 3 if is_general else 1
+        
+        # Get chunks with metadata instead of combined context
+        chunks = self.vector_store.get_chunks(
+            question,
+            n_results=n,
+            min_similarity=self.config.min_similarity
+        )
+        
+        # Expand chunks with window
+        if hasattr(self.config, 'retrieval_window') and self.config.retrieval_window > 0:
+            expanded_chunks = self._expand_chunks_with_window(chunks, self.config.retrieval_window)
+            chunks = expanded_chunks
+        
+        # Build context from chunks
+        context_parts = [chunk.text for chunk in chunks]
+        context = "\n\n---\n\n".join(context_parts)
+        sources = list(set(chunk.source for chunk in chunks))
+        
+        # Diagnostic logging
+        print(f"[DEBUG] Context type: {type(context)}, len: {len(context) if context else 'None'}")
+        print(f"[DEBUG] Sources: {sources}")
+        print(f"[DEBUG] Context preview: {context[:200] if context else 'None'}")
+        
+        if not context:
+            return QueryResult(
+                question=question,
+                answer="I couldn't find any relevant information in the documents to answer your question.",
+                sources=[],
+                context_length=0,
+                inference_time=time.time() - start_time,
+                chunks_retrieved=0
+            )
+        
+        # Pre-truncate context to safe size (2000 chars = ~500 tokens)
+        safe_context = context[:2000]
+        
+        # Use answer_question instead of generate for proper RAG handling
+        answer = self.llm.answer_question(
+            question=question,
+            context=safe_context,
+            sources=sources
+        )
+        
+        # Post-process: if LLM says it can't find information but we retrieved chunks, provide helpful fallback
+        fallback_phrases = [
+            'i could not find this information',
+            'i couldn\'t find any relevant information',
+            'the documents do not contain information',
+            'i don\'t have information'
+        ]
+        
+        if any(phrase in answer.lower() for phrase in fallback_phrases) and sources:
+            # LLM couldn't match question to retrieved context
+            # Provide a more helpful response
+            stats = self.vector_store.get_stats()
+            doc_count = stats.get('document_count', 0)
+            chunk_count = stats.get('chunk_count', 0)
+            
+            answer = (
+                f"I retrieved {len(sources)} relevant document(s) but couldn't find specific information to answer '{question}'. "
+                f"The database contains {doc_count} documents with {chunk_count} chunks total. "
+                f"Try asking a more specific question about the content of these documents: {', '.join(sources[:3])}"
+            )
+        
+        return QueryResult(
+            question=question,
+            answer=answer,
+            sources=sources,
+            context_length=len(safe_context),
+            inference_time=time.time() - start_time,
+            chunks_retrieved=len(chunks)
+        )
+    
+    def search_documents(self, query: str, n_results: int = 5) -> List[Tuple[str, Dict, float]]:
+        """Search documents without generating an answer."""
+        return self.vector_store.search(query, n_results)
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get engine statistics."""
+        stats = self.vector_store.get_stats()
+        stats["config"] = self.config.to_dict()
+        if self.llm:
+            stats["llm"] = self.llm.get_info()
+        else:
+            stats["llm"] = None
+        return stats
+    
+    def clear_documents(self):
+        """Clear all ingested documents."""
+        self.vector_store.clear()
+    
+    def list_documents(self) -> List[str]:
+        """List all ingested documents."""
+        return self.vector_store.get_stats()["documents"]
+
+
+def create_engine_from_env() -> RAGEngine:
+    """Create RAG engine from environment variables."""
+    config = RAGConfig(
+        db_path=os.environ.get("RAG_DB_PATH", "./doc_qa_db"),
+        chunk_size=int(os.environ.get("RAG_CHUNK_SIZE", "256")),
+        n_results=int(os.environ.get("RAG_N_RESULTS", "3")),
+        max_tokens=int(os.environ.get("RAG_MAX_TOKENS", "512")),
+        temperature=float(os.environ.get("RAG_TEMPERATURE", "0.3"))
+    )
+    
+    gguf_path = os.environ.get("RAG_GGUF_PATH")
+    
+    return RAGEngine(
+        config=config,
+        model_path=os.environ.get("RAG_MODEL_PATH"),
+        ollama_model=os.environ.get("RAG_OLLAMA_MODEL"),
+        ollama_url=os.environ.get("RAG_OLLAMA_URL"),
+        api_url=os.environ.get("RAG_API_URL"),
+        api_model=os.environ.get("RAG_API_MODEL"),
+        device=os.environ.get("RAG_DEVICE"),
+        gguf_path=gguf_path
+    )
+
+
+if __name__ == "__main__":
+    import sys
+    
+    engine = RAGEngine(
+        ollama_model="phi3:mini",
+        ollama_url="http://localhost:11434"
+    )
+    
+    if len(sys.argv) > 1:
+        path = sys.argv[1]
+        if os.path.isdir(path):
+            stats = engine.ingest_directory(path)
+            print(f"\nIngestion stats: {stats}")
+        elif os.path.isfile(path):
+            stats = engine.ingest_file(path)
+            print(f"\nIngestion stats: {stats}")
+    
+    print("\nEngine stats:")
+    print(json.dumps(engine.get_stats(), indent=2))
+    
+    if engine.llm:
+        while True:
+            question = input("\nAsk a question (or 'quit'): ").strip()
+            if question.lower() in ['quit', 'exit', 'q']:
+                break
+            
+            result = engine.query(question)
+            print(f"\nAnswer: {result.answer}")
+            print(f"Sources: {result.sources}")
+            print(f"Time: {result.inference_time:.2f}s")

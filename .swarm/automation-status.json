@@ -1,0 +1,17 @@
+{
+  "timestamp": 1772283734412,
+  "mode": "hybrid",
+  "enabled": true,
+  "currentPhase": 0,
+  "lastTrigger": null,
+  "pendingActions": 0,
+  "lastOutcome": null,
+  "capabilities": {
+    "plan_sync": true,
+    "phase_preflight": true,
+    "config_doctor_on_startup": true,
+    "config_doctor_autofix": true,
+    "evidence_auto_summaries": true,
+    "decision_drift_detection": true
+  }
+}

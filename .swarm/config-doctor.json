@@ -1,0 +1,75 @@
+{
+  "timestamp": 1772283734418,
+  "summary": {
+    "info": 6,
+    "warn": 0,
+    "error": 1
+  },
+  "hasAutoFixableIssues": false,
+  "configSource": "C:\\Users\\zaxby\\.config\\opencode\\opencode-swarm.json",
+  "findings": [
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"explore\" in swarm \"mega\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.mega.agents.explore",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"test_engineer\" in swarm \"mega\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.mega.agents.test_engineer",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"explore\" in swarm \"paid\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.paid.agents.explore",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"test_engineer\" in swarm \"paid\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.paid.agents.test_engineer",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"explore\" in swarm \"local\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.local.agents.explore",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"test_engineer\" in swarm \"local\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.local.agents.test_engineer",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "guardrails-disabled",
+      "title": "Guardrails disabled",
+      "description": "Guardrails have been explicitly disabled. This removes safety limits.",
+      "severity": "error",
+      "path": "guardrails.enabled",
+      "autoFixable": false,
+      "proposedFix": null
+    }
+  ]
+}

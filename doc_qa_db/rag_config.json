@@ -1,0 +1,10 @@
+{
+  "db_path": "./doc_qa_db",
+  "chunk_size": 256,
+  "chunk_overlap": 50,
+  "n_results": 3,
+  "min_similarity": 0.3,
+  "max_tokens": 512,
+  "temperature": 0.3,
+  "embedding_model": "all-MiniLM-L6-v2"
+}
