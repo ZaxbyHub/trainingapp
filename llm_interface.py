@@ -5,9 +5,10 @@ Supports OpenVINO (NPU/CPU/GPU), Ollama, and OpenAI-compatible APIs.
 """
 
 import os
+import re
 import json
-import time
-from typing import Optional, Dict, Any, Generator
+
+from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -16,10 +17,10 @@ from pathlib import Path
 @dataclass
 class InferenceConfig:
     """Configuration for LLM inference."""
+    temperature: float = 0.7
     max_tokens: int = 512
-    temperature: float = 0.3
     top_p: float = 0.9
-    do_sample: bool = True
+    stop_sequences: Optional[List[str]] = None
 
 
 class BaseLLM(ABC):
@@ -81,9 +82,9 @@ class OpenVINOLLM(BaseLLM):
         response = self.pipeline.generate(
             prompt,
             max_new_tokens=config.max_tokens,
-            do_sample=config.do_sample,
             temperature=config.temperature,
-            top_p=config.top_p
+            top_p=config.top_p,
+            stop_sequences=config.stop_sequences
         )
         
         return response
@@ -113,7 +114,7 @@ class GGUFBackend(BaseLLM):
     for offline use).
     """
     
-    def __init__(self, gguf_path: str, n_ctx: int = 8192, n_threads: Optional[int] = None, verbose: bool = False):
+    def __init__(self, gguf_path: str, n_ctx: int = 4096, n_threads: Optional[int] = None, verbose: bool = False):
         # Lazy import to avoid ImportError if not installed
         try:
             from llama_cpp import Llama
@@ -145,6 +146,11 @@ class GGUFBackend(BaseLLM):
             n_threads=self.n_threads,
             verbose=self.verbose
         )
+
+        # Detect Qwen3 model for /no_think suppression and chat template use
+        self.is_qwen3 = 'qwen3' in self.model_path.name.lower()
+        if self.is_qwen3:
+            print("[OK] Qwen3 model detected — thinking mode suppressed via /no_think")
     
     def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:
         """Generate response using GGUF model."""
@@ -162,7 +168,35 @@ class GGUFBackend(BaseLLM):
         
         # Return the generated text - llama-cpp-python returns a dict with 'choices' key
         return result["choices"][0]["text"]
-    
+
+    def chat_complete(self, system_prompt: str, user_prompt: str, config: Optional[InferenceConfig] = None) -> str:
+        """Generate response using chat completion API (applies model chat template).
+
+        For Qwen3 models, prepends /no_think to the system prompt to suppress
+        thinking mode, preventing token overhead.
+        """
+        config = config or InferenceConfig()
+
+        effective_system = f"/no_think\n{system_prompt}" if self.is_qwen3 else system_prompt
+
+        messages = [
+            {"role": "system", "content": effective_system},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        response = self.llama.create_chat_completion(
+            messages=messages,
+            max_tokens=config.max_tokens,
+            temperature=config.temperature,
+            top_p=config.top_p,
+            repeat_penalty=1.1,
+        )
+
+        raw = response["choices"][0]["message"]["content"]
+        # Strip think-tag blocks that Qwen3 may emit despite /no_think
+        cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+        return cleaned
+
     def get_info(self) -> Dict[str, Any]:
         """Get information about the GGUF model and settings."""
         return {
@@ -277,10 +311,14 @@ class OpenAICompatibleLLM(BaseLLM):
 class RAGPromptBuilder:
     """Builds prompts for RAG-based question answering."""
     
-    SYSTEM_PROMPT = """You are a helpful assistant that answers questions based on the provided context.
-Answer the question using ONLY the information in the context below.
-If the context doesn't contain enough information to answer, say "I don't have enough information to answer that question based on the available documents."
-Be concise and direct in your answers."""
+    SYSTEM_PROMPT = (
+        "You are a precise document assistant. "
+        "Answer using ONLY the context supplied. "
+        "If the context lacks the answer, respond exactly: "
+        "\"I don't have enough information to answer that question based on the available documents.\" "
+        "Rules: no speculation. Provide a comprehensive answer — include all relevant steps, sub-steps, and details present in the context. Do not truncate or summarise when the context contains full detail. "
+        "Cite the source filename at the end of your answer in brackets, e.g. [report.pdf]."
+    )
 
     @staticmethod
     def build_prompt(question: str, context: str, sources: list) -> str:
@@ -370,10 +408,63 @@ class SmartLLM:
         question: str,
         context: str,
         sources: list,
-        config: Optional[InferenceConfig] = None
+        config: Optional[InferenceConfig] = None,
+        conversation_history: Optional[list] = None
     ) -> str:
-        """Answer a question using RAG context."""
+        """Answer a question using RAG context.
+
+        GGUF backends use the chat completion API (applies model chat template
+        and suppresses Qwen3 thinking mode).  All other backends fall back to
+        the plain-text prompt path.
+
+        Args:
+            question: The user's question.
+            context: Retrieved document context.
+            sources: List of source filenames.
+            config: Inference configuration (max_tokens, temperature, etc.).
+            conversation_history: Optional list of prior turns as
+                [{"role": "user"/"assistant", "content": "..."}].
+                Last 2 turns are prepended to the prompt to support follow-up queries.
+        """
+        history_prefix = ""
+        if conversation_history:
+            # Extract last user + last assistant messages (up to 2 turns)
+            # Use .get("content", "") to avoid KeyError on malformed messages
+            last_user = next(
+                (m.get("content", "") for m in reversed(conversation_history) if isinstance(m, dict) and m.get("role") == "user"),
+                None
+            )
+            last_assistant = next(
+                (m.get("content", "") for m in reversed(conversation_history) if isinstance(m, dict) and m.get("role") == "assistant"),
+                None
+            )
+            if last_user and last_assistant:
+                # Truncate both to 300 chars to protect token budget
+                user_snippet = last_user[:300]
+                assistant_snippet = last_assistant[:300]
+                history_prefix = (
+                    f"Previous conversation:\n"
+                    f"User: {user_snippet}\n"
+                    f"Assistant: {assistant_snippet}\n\n"
+                )
+
+        if isinstance(self.backend, GGUFBackend):
+            sources_str = ", ".join(sources) if sources else "unknown"
+            user_prompt = (
+                f"{history_prefix}"
+                f"Context from documents:\n{context}\n\n"
+                f"Sources: {sources_str}\n\n"
+                f"Question: {question}"
+            )
+            return self.backend.chat_complete(
+                system_prompt=RAGPromptBuilder.SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                config=config,
+            )
         prompt = self.prompt_builder.build_prompt(question, context, sources)
+        # Non-GGUF path: prepend history_prefix to the generated prompt
+        if history_prefix:
+            prompt = history_prefix + prompt
         return self.generate(prompt, config)
     
     def get_info(self) -> Dict[str, Any]:

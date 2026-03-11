@@ -10,12 +10,13 @@ import time
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass
+import app_paths
 
 
 
 from document_processor import DocumentProcessor, DocumentChunk
 from vector_store import VectorStore
-from llm_interface import SmartLLM
+from llm_interface import SmartLLM, InferenceConfig
 
 
 @dataclass
@@ -34,12 +35,12 @@ class RAGConfig:
     
     def __init__(
         self,
-        db_path: str = "./doc_qa_db",
+        db_path: str = str(app_paths.get_vector_db_path()),
         chunk_size: int = 256,
         chunk_overlap: int = 50,
         n_results: int = 3,
         min_similarity: float = 0.3,
-        max_tokens: int = 512,
+        max_tokens: int = 1024,
         temperature: float = 0.3,
         embedding_model: str = "BAAI/bge-small-en-v1.5",
         retrieval_window: int = 0,
@@ -86,7 +87,7 @@ class RAGConfig:
     def from_dict(cls, data: Dict[str, Any]) -> "RAGConfig":
         # Handle backward compatibility - provide defaults for new fields
         return cls(
-            db_path=data.get("db_path", "./doc_qa_db"),
+            db_path=data.get("db_path", str(app_paths.get_vector_db_path())),
             chunk_size=data.get("chunk_size", 256),
             chunk_overlap=data.get("chunk_overlap", 50),
             n_results=data.get("n_results", 3),
@@ -133,7 +134,7 @@ class RAGEngine:
             chunk_size=self.config.chunk_size,
             chunk_overlap=self.config.chunk_overlap
         )
-        print(f"[OK] Document processor ready")
+        print("[OK] Document processor ready")
         
         self.vector_store = VectorStore(
             db_path=self.config.db_path,
@@ -280,14 +281,22 @@ class RAGEngine:
         expanded.sort(key=lambda c: (c.source, c.chunk_index))
         return expanded
 
-    def query(self, question: str, n_results: Optional[int] = None) -> QueryResult:
+    def query(
+        self,
+        question: str,
+        n_results: Optional[int] = None,
+        conversation_history: Optional[list] = None
+    ) -> QueryResult:
         """
         Answer a question using RAG.
-        
+
         Args:
             question: The question to answer
             n_results: Number of context chunks to retrieve (overrides config)
-        
+            conversation_history: Optional list of prior turns as
+                [{"role": "user"/"assistant", "content": "..."}].
+                Used for follow-up query detection and passed to the LLM.
+
         Returns:
             QueryResult with answer and metadata
         """
@@ -301,7 +310,13 @@ class RAGEngine:
         words = question.lower().split()
         if len(words) <= 3 and any(keyword in question.lower() for keyword in greeting_keywords):
             # Handle greeting directly
-            answer = self.llm.answer_question(question, '', [])
+            answer = self.llm.answer_question(
+                question,
+                '',
+                [],
+                config=InferenceConfig(max_tokens=self.config.max_tokens),
+                conversation_history=conversation_history
+            )
             return QueryResult(
                 question=question,
                 answer=answer,
@@ -311,30 +326,43 @@ class RAGEngine:
                 chunks_retrieved=0
             )
         
-        # Check for general "what do you have" type questions
-        general_keywords = {'what', 'information', 'have', 'documents', 'available', 'overview', 'summary', 'list'}
-        is_general = len(words) <= 8 and any(keyword in question.lower() for keyword in general_keywords)
-        
-        # For general questions, retrieve more chunks (up to 3)
-        n = 3 if is_general else 1
-        
-        # Get chunks with metadata instead of combined context
-        chunks = self.vector_store.get_chunks(
-            question,
+        # Determine number of chunks to retrieve (always at least 1)
+        n = n_results if n_results is not None else self.config.n_results
+        n = max(1, n)
+
+        # Follow-up query detection
+        retrieval_query = question
+        if conversation_history is not None and conversation_history:
+            # Check if there are any assistant messages in history
+            has_assistant = any(isinstance(m, dict) and m.get('role') == 'assistant' for m in conversation_history)
+            if has_assistant:
+                # Check if question is short or contains follow-up keywords
+                is_short = len(question.split()) <= 6
+                followup_keywords = {'more', 'elaborate', 'detail', 'detailed', 'explain', 'expand', 'deeper', 'further', 'again'}
+                has_keyword = any(keyword in question.lower() for keyword in followup_keywords)
+
+                if is_short or has_keyword:
+                    # Find last user message in conversation history
+                    last_user_content = None
+                    for msg in reversed(conversation_history):
+                        if isinstance(msg, dict) and msg.get('role') == 'user':
+                            content = msg.get('content', '')
+                            if content and content.strip():
+                                last_user_content = content
+                                break
+
+                    if last_user_content:
+                        retrieval_query = last_user_content
+                        print(f"[INFO] Follow-up detected — retrieval query: '{retrieval_query[:80]}'")
+
+        # Retrieve context — hybrid (BM25+vector+RRF) if enabled, else vector-only
+        context, sources = self.vector_store.get_context(
+            retrieval_query,
             n_results=n,
-            min_similarity=self.config.min_similarity
+            min_similarity=self.config.min_similarity,
+            hybrid_search=self.config.hybrid_search
         )
-        
-        # Expand chunks with window
-        if hasattr(self.config, 'retrieval_window') and self.config.retrieval_window > 0:
-            expanded_chunks = self._expand_chunks_with_window(chunks, self.config.retrieval_window)
-            chunks = expanded_chunks
-        
-        # Build context from chunks
-        context_parts = [chunk.text for chunk in chunks]
-        context = "\n\n---\n\n".join(context_parts)
-        sources = list(set(chunk.source for chunk in chunks))
-        
+
         # Diagnostic logging
         print(f"[DEBUG] Context type: {type(context)}, len: {len(context) if context else 'None'}")
         print(f"[DEBUG] Sources: {sources}")
@@ -350,14 +378,16 @@ class RAGEngine:
                 chunks_retrieved=0
             )
         
-        # Pre-truncate context to safe size (2000 chars = ~500 tokens)
-        safe_context = context[:2000]
+        # Pre-truncate context to safe size (6000 chars ≈ 1500 tokens, within GGUF n_ctx=8192 budget)
+        safe_context = context[:6000]
         
         # Use answer_question instead of generate for proper RAG handling
         answer = self.llm.answer_question(
             question=question,
             context=safe_context,
-            sources=sources
+            sources=sources,
+            config=InferenceConfig(max_tokens=self.config.max_tokens),
+            conversation_history=conversation_history
         )
         
         # Post-process: if LLM says it can't find information but we retrieved chunks, provide helpful fallback
@@ -387,7 +417,7 @@ class RAGEngine:
             sources=sources,
             context_length=len(safe_context),
             inference_time=time.time() - start_time,
-            chunks_retrieved=len(chunks)
+            chunks_retrieved=len(sources)
         )
     
     def search_documents(self, query: str, n_results: int = 5) -> List[Tuple[str, Dict, float]]:
@@ -412,11 +442,36 @@ class RAGEngine:
         """List all ingested documents."""
         return self.vector_store.get_stats()["documents"]
 
+    def get_all_documents(self) -> List[Dict[str, Any]]:
+        """Get all ingested documents with metadata.
+
+        Returns a list of dicts with keys:
+            id (str): document source path
+            chunk_count (int): number of chunks for this document
+        """
+        metadata = self.vector_store.metadata or {}
+        docs_meta = metadata.get("documents", {})
+        return [
+            {"id": source, "chunk_count": meta.get("chunks", 0)}
+            for source, meta in docs_meta.items()
+        ]
+
+    def delete_document(self, doc_id: str) -> bool:
+        """Delete a document and all its chunks from the vector store.
+
+        Args:
+            doc_id: The document source path / ID to delete.
+
+        Returns:
+            True if document existed and was removed, False otherwise.
+        """
+        return self.vector_store.delete_document(doc_id)
+
 
 def create_engine_from_env() -> RAGEngine:
     """Create RAG engine from environment variables."""
     config = RAGConfig(
-        db_path=os.environ.get("RAG_DB_PATH", "./doc_qa_db"),
+        db_path=os.environ.get("RAG_DB_PATH", str(app_paths.get_vector_db_path())),
         chunk_size=int(os.environ.get("RAG_CHUNK_SIZE", "256")),
         n_results=int(os.environ.get("RAG_N_RESULTS", "3")),
         max_tokens=int(os.environ.get("RAG_MAX_TOKENS", "512")),

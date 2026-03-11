@@ -13,7 +13,6 @@ Usage:
 import os
 import sys
 import argparse
-from pathlib import Path
 
 
 def main():
@@ -117,9 +116,9 @@ def main():
             print("\nGoodbye!")
     
     else:
-        # Default: Launch GUI
+        # Default: Launch GUI (new UI)
         try:
-            from app_gui import main as run_gui
+            from ui.app import main as run_gui
             run_gui()
         except ImportError as e:
             print(f"GUI not available: {e}")

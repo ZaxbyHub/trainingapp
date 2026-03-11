@@ -4,10 +4,11 @@ Manages document embeddings and similarity search using ChromaDB.
 """
 
 import os
+import sys
 import json
 from typing import List, Tuple, Optional, Dict, Any
 from pathlib import Path
-from dataclasses import asdict
+
 import pickle
 
 try:
@@ -31,7 +32,6 @@ except ImportError:
 
 from document_processor import DocumentChunk
 from utils import rrf_fuse
-from utils import rrf_fuse
 
 
 class EmbeddingModel:
@@ -42,11 +42,22 @@ class EmbeddingModel:
     def __init__(self, model_name: Optional[str] = None):
         if not SENTENCE_TRANSFORMERS_AVAILABLE:
             raise ImportError("sentence-transformers not installed. Run: pip install sentence-transformers")
-        
-        self.model_name = model_name or self.DEFAULT_MODEL
-        print(f"Loading embedding model: {self.model_name}")
-        self.model = SentenceTransformer(self.model_name)
-        print(f"[OK] Embedding model loaded")
+
+        if getattr(sys, 'frozen', False):
+            # Running in PyInstaller bundle - use bundled model
+            bundle_path = Path(sys._MEIPASS) / 'bundled_models' / 'bge-small-en-v1.5'
+            if not bundle_path.exists():
+                raise FileNotFoundError(f"Bundled embedding model not found at {bundle_path}")
+            self.model_name = str(bundle_path)
+            print(f"Loading embedding model from bundle: {self.model_name}")
+            self.model = SentenceTransformer(self.model_name, local_files_only=True)
+            print("[OK] Embedding model loaded")
+        else:
+            # Running in development - use model from HuggingFace cache
+            self.model_name = model_name or self.DEFAULT_MODEL
+            print(f"Loading embedding model: {self.model_name}")
+            self.model = SentenceTransformer(self.model_name)
+            print("[OK] Embedding model loaded")
     
     def encode(self, texts: List[str]) -> List[List[float]]:
         """Encode texts to embeddings."""
@@ -78,6 +89,29 @@ class BM25Index:
                 self.bm25_index = BM25Okapi(tokenized_corpus)
             except NameError:
                 # BM25 not available, skip indexing
+                self.bm25_index = None
+
+    def add_document(self, chunk_id: str, text: str):
+        """Add a document to the BM25 index.
+
+        Args:
+            chunk_id: Unique identifier for the document.
+            text: Document text content.
+        """
+        # Add to chunks list regardless of BM25 availability
+        self.chunks.append(DocumentChunk(
+            text=text,
+            source=chunk_id,  # Use chunk_id as source
+            chunk_index=len(self.chunks),
+            page=None
+        ))
+
+        # Rebuild index with new document
+        tokenized_corpus = [chunk.text.split() for chunk in self.chunks]
+        if tokenized_corpus:
+            try:
+                self.bm25_index = BM25Okapi(tokenized_corpus)
+            except NameError:
                 self.bm25_index = None
     
     def search(self, query: str, top_k: int = 10) -> List[Tuple[int, float]]:
@@ -143,6 +177,32 @@ class VectorStore:
         self.bm25_index: Optional[BM25Index] = None
         
         self._load_metadata()
+
+        # Rebuild BM25 index from persisted ChromaDB data if documents exist
+        if self.metadata.get("chunk_count", 0) > 0:
+            try:
+                all_data = self.collection.get(include=["documents", "metadatas"])
+                docs = all_data.get("documents") or []
+                metas = all_data.get("metadatas") or []
+                if docs and metas:
+                    all_chunks = []
+                    for doc, meta in zip(docs, metas):
+                        if not meta or "source" not in meta or "chunk_index" not in meta:
+                            continue
+                        chunk = DocumentChunk(
+                            text=doc,
+                            source=meta["source"],
+                            chunk_index=meta["chunk_index"],
+                            page=meta.get("page")
+                        )
+                        all_chunks.append(chunk)
+                    if all_chunks:
+                        self.bm25_index = BM25Index()
+                        self.bm25_index.build_index(all_chunks)
+                        print(f"[OK] BM25 index rebuilt on startup: {len(all_chunks)} chunks")
+            except Exception as e:
+                print(f"[WARN] BM25 index rebuild failed on startup: {e}")
+
         print(f"[OK] Vector store initialized at {self.db_path}")
         print(f"  Documents: {self.metadata.get('document_count', 0)}")
         print(f"  Chunks: {self.collection.count()}")
@@ -252,6 +312,80 @@ class VectorStore:
         
         return added
     
+    def add_chunks_with_embeddings(self, chunks_with_vectors: list[dict]) -> None:
+        """Add document chunks with pre-computed embeddings to the vector store.
+        
+        Args:
+            chunks_with_vectors: List of dicts, each with keys:
+                - chunk_id (str): Unique identifier for the chunk
+                - text (str): The chunk text content
+                - embedding (list[float]): Pre-computed embedding vector
+                - metadata (dict): Metadata dict with keys like source, doc_id, chunk_index, etc.
+        
+        Raises:
+            ValueError: If a chunk_id already exists in the collection.
+        """
+        if not chunks_with_vectors:
+            return
+        
+        ids = []
+        documents = []
+        embeddings = []
+        metadatas = []
+        
+        # Validate and collect all chunk data
+        for chunk_data in chunks_with_vectors:
+            chunk_id = chunk_data.get("chunk_id")
+            text = chunk_data.get("text")
+            embedding = chunk_data.get("embedding")
+            metadata = chunk_data.get("metadata", {})
+            
+            if embedding is None:
+                raise ValueError(f"Chunk {chunk_id} missing 'embedding' field")
+            
+            # Validate embedding type
+            if not isinstance(embedding, list):
+                raise ValueError(f"Chunk {chunk_id}: 'embedding' must be a list, got {type(embedding).__name__}")
+            if not all(isinstance(x, (int, float)) for x in embedding):
+                raise ValueError(f"Chunk {chunk_id}: 'embedding' must contain only numbers")
+            
+            if not chunk_id or not text or not embedding:
+                raise ValueError(f"Invalid chunk data: {chunk_data}")
+            
+            # Check if chunk_id already exists
+            try:
+                existing = self.collection.get(ids=[chunk_id])
+                # If we got results and the ID matches, it exists
+                if existing and existing['ids'] and len(existing['ids']) > 0:
+                    raise ValueError(f"Chunk ID {chunk_id} already exists")
+            except KeyError:
+                # If key error occurs, assume it doesn't exist
+                pass
+            
+            ids.append(chunk_id)
+            documents.append(text)
+            embeddings.append(embedding)
+            metadatas.append(metadata)
+        
+        # Add to ChromaDB collection
+        self.collection.add(
+            ids=ids,
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas
+        )
+
+        # Initialize BM25 index if not exists
+        if not self.bm25_index:
+            self.bm25_index = BM25Index()
+
+        # Update BM25 index with new chunks
+        for chunk_data in chunks_with_vectors:
+            chunk_id = chunk_data.get("chunk_id")
+            text = chunk_data.get("text")
+            if chunk_id and text:
+                self.bm25_index.add_document(chunk_id, text)
+    
     def search(self, query: str, n_results: int = 5) -> List[Tuple[str, Dict[str, Any], float]]:
         """Search for similar documents."""
         if self.collection.count() == 0:
@@ -333,6 +467,86 @@ class VectorStore:
         except Exception:
             return []
     
+    def delete_document(self, doc_id: str) -> bool:
+        """Delete a document and all its chunks from the vector store.
+
+        Args:
+            doc_id: The filename or document ID to delete.
+
+        Returns:
+            True if the document existed and was removed, False otherwise.
+        """
+        # Guard clause: return False if doc_id is falsy or not a string
+        if not doc_id or not isinstance(doc_id, str):
+            return False
+
+        # Sanitize doc_id using basename and strip whitespace
+        sanitized_id = os.path.basename(doc_id).strip()
+
+        # Return False if sanitized id is empty
+        if not sanitized_id:
+            return False
+
+        # Return False if document doesn't exist in metadata
+        if sanitized_id not in self.metadata.get('documents', {}):
+            return False
+
+        # Capture the document metadata before deleting it
+        doc_meta = self.metadata.get('documents', {}).get(sanitized_id, {})
+        removed_chunks = doc_meta.get('chunks', 0)
+
+        # Return False if there are no chunks to remove
+        if removed_chunks == 0:
+            return False
+
+        try:
+            # Verify collection can be queried before deleting
+            self.collection.get(where={"source": sanitized_id})
+        except Exception:
+            # Handle exception gracefully, return False
+            return False
+
+        try:
+            # Delete all chunks with matching source from ChromaDB collection
+            self.collection.delete(where={"source": sanitized_id})
+        except Exception:
+            # Handle exception gracefully, return False
+            return False
+
+        # Remove from BM25 index
+        if self.bm25_index:
+            prefix = f"{sanitized_id}_"
+            self.bm25_index.chunks = [
+                chunk for chunk in self.bm25_index.chunks
+                if not chunk[0].startswith(prefix)
+            ]
+            self.bm25_index.bm25 = None  # Invalidate cached index
+
+        # Remove the document from metadata
+        if sanitized_id in self.metadata.get('documents', {}):
+            del self.metadata['documents'][sanitized_id]
+
+        # Update document count
+        self.metadata['document_count'] = len(self.metadata['documents'])
+
+        # Update chunk count - try to get from collection.count(), fall back to calculation
+        try:
+            new_chunk_count = self.collection.count()
+            # Verify it's actually an integer
+            if not isinstance(new_chunk_count, int):
+                raise ValueError("count() did not return an integer")
+        except Exception:
+            # Fall back to subtracting removed chunks from previous count
+            previous_chunk_count = self.metadata.get('chunk_count', 0)
+            new_chunk_count = max(0, previous_chunk_count - removed_chunks)
+
+        self.metadata['chunk_count'] = new_chunk_count
+
+        # Save updated metadata
+        self._save_metadata()
+
+        return True
+    
     def get_context(self, query: str, n_results: int = 3, min_similarity: float = 0.3, hybrid_search: bool = False) -> Tuple[str, List[str]]:
         """Get context for RAG from similar documents."""
         if hybrid_search and self.bm25_index:
@@ -349,10 +563,7 @@ class VectorStore:
             
             # Fuse using RRF
             fused = rrf_fuse([vector_ranked, bm25_results])
-            
-            # Get top N unique results
-            top_indices = [doc_id for doc_id, _ in fused[:n_results]]
-            
+
             # Build context from fused results
             context_parts = []
             sources = []
