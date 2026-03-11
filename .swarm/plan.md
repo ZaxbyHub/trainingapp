@@ -1,7 +1,7 @@
 <!-- PLAN_HASH: 3k4w512tjtgbz -->
 # AFOMIS Help and Support — Distribution Build
 Swarm: lowtier
-Phase: 13 [IN PROGRESS] | Updated: 2026-03-05T03:15:00.000Z
+Phase: COMPLETE | Updated: 2026-03-11T07:35:00.000Z
 
 ---
 ## Phase 8: Production Windows Paths [COMPLETE]
@@ -33,6 +33,6 @@ Phase: 13 [IN PROGRESS] | Updated: 2026-03-05T03:15:00.000Z
 - [x] 12.2: Create `build_exe.bat` — Windows batch script for the PyInstaller build. Prerequisites check: (1) verify `bundled_models\bge-small-en-v1.5\` exists; (2) verify `seed_data\chunks.json` exists; (3) verify at least one `.gguf` file exists in `models\`. Exit with error code 1 and descriptive message if any check fails. On pass: activate `.venv\Scripts\activate.bat` if present; run `pyinstaller AFOMIS.spec --clean --noconfirm`; print output path on success. [SMALL] (depends: 12.1)
 
 ---
-## Phase 13: Inno Setup Installer [IN PROGRESS]
-- [ ] 13.1: Create `installer.iss` — Inno Setup script. AppName: `AFOMIS Help and Support`. AppVersion: `1.0.0`. DefaultDirName: `{autopf}\AFOMIS Help and Support`. DefaultGroupName: `AFOMIS Help and Support`. Source: all files from `dist\AFOMIS\*` recursively. Creates Start Menu shortcut and Desktop shortcut to `AFOMIS.exe` with `WorkingDir: {app}`. Registers in Add/Remove Programs with publisher `AFOMIS`. Provides uninstaller. OutputBaseFilename: `AFOMIS-Setup-1.0.0`. Compression: `lzma2/ultra64`. MinVersion: `10.0`. PrivilegesRequired: `lowest` (allows standard user install). [MEDIUM] ← CURRENT
-- [ ] 13.2: Create `build_installer.bat` — Windows batch script to compile the Inno Setup installer. Steps: (1) check that `dist\AFOMIS\AFOMIS.exe` exists, exit code 1 with usage note if not; (2) locate `ISCC.exe` in `%ProgramFiles(x86)%\Inno Setup 6\` and `%ProgramFiles%\Inno Setup 6\`; (3) run `ISCC installer.iss`; (4) print output path of resulting Setup .exe. Include usage note at top explaining build order: run build_exe.bat first. [SMALL] (depends: 13.1)
+## Phase 13: Inno Setup Installer [COMPLETE]
+- [x] 13.1: Create `installer.iss` — Inno Setup script. AppName: `AFOMIS Help and Support`. AppVersion: `1.0.0.1`. DefaultDirName: `{autopf}\AFOMIS Help and Support`. DefaultGroupName: `AFOMIS Help and Support`. Source: all files from `dist\AFOMIS\*` recursively. Creates Start Menu shortcut and Desktop shortcut to `AFOMIS.exe` with `WorkingDir: {app}`. Registers in Add/Remove Programs with publisher `AFOMIS`. Provides uninstaller. OutputBaseFilename: `AFOMIS-Setup-1.0.0`. Compression: `lzma2/ultra64`. MinVersion: `10.0`. PrivilegesRequired: `lowest` (allows standard user install). [MEDIUM]
+- [x] 13.2: Create `build_installer.bat` — Windows batch script to compile the Inno Setup installer. Steps: (1) check that `dist\AFOMIS\AFOMIS.exe` exists, exit code 1 with usage note if not; (2) locate `ISCC.exe` in `%ProgramFiles(x86)%\Inno Setup 6\` and `%ProgramFiles%\Inno Setup 6\` and `C:\InnoSetup6\`; (3) run `ISCC installer.iss`; (4) print output path of resulting Setup .exe. Include usage note at top explaining build order: run build_exe.bat first. [SMALL] (depends: 13.1)
