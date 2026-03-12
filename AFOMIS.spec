@@ -26,6 +26,7 @@ a = Analysis(
         'sentence_transformers',
         'rank_bm25',
         'llama_cpp',
+        'engine_factory',
     ],
     hookspath=[],
     hooksconfig={},

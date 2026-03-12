@@ -209,17 +209,18 @@ class DocumentProcessor:
         
         return chunks
     
-    def process_file(self, filepath: str) -> List[DocumentChunk]:
+    def process_file(self, filepath: str, source_name: Optional[str] = None) -> List[DocumentChunk]:
         """Process a single file and return chunks."""
         filepath = str(filepath)
-        filename = Path(filepath).name
-        
+        # Use provided source_name or fall back to filename from path
+        filename = source_name if source_name else Path(filepath).name
+
         try:
             text = self.extract_document(filepath)
             if not text.strip():
                 print(f"[WARN] Empty content: {filename}")
                 return []
-            
+
             chunks = self.chunk_text(text, filename)
             print(f"[OK] Processed: {filename} ({len(chunks)} chunks)")
             return chunks

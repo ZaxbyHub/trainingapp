@@ -12,33 +12,63 @@ A fully offline RAG-based document question answering system optimized for Windo
 - **Smart Chunking**: Paragraph and sentence boundary aware
 - **Cross-Encoder Reranking**: Optional MS MARCO MiniLM for precise ranking
 
-### LLM Backends
-- **GGUF (Recommended)**: CPU-only inference with llama-cpp-python
-  - Model: Qwen3-1.7B-Instruct-Q4_K (lightweight, high performance)
-  - No GPU required
-  - ~5-10 tokens/second on standard CPU
-- **OpenVINO**: NPU/GPU/CPU acceleration (Intel)
-- **Ollama**: Local LLM runtime (dev/testing only)
-- **OpenAI-compatible API**: For external API integration
+### LLM Backends (Priority Order)
+The application tries backends in this priority order:
+
+1. **GGUF (Primary)** - CPU-only inference with llama-cpp-python
+   - Set via: `RAG_GGUF_PATH` environment variable or `--gguf-path` CLI option
+   - Model: Qwen3-1.7B-Instruct-Q4_K (lightweight, high performance)
+   - No GPU required
+   - ~5-10 tokens/second on standard CPU
+
+2. **OpenVINO** - NPU/GPU/CPU acceleration (Intel)
+   - Set via: `--model-path` CLI option
+   - Falls back to GGUF if not configured
+
+3. **OpenAI-compatible API** - External API integration
+   - Set via: `RAG_API_URL` environment variable or `--api-url` CLI option
+   - Falls back to previous backends if not configured
+
+4. **Ollama** - Local LLM runtime
+   - Set via: `RAG_OLLAMA_URL` environment variable or `--ollama-url` CLI option
+   - Fallback option when other backends unavailable
 
 ### Hardware Requirements
-#### Minimum (i5-10400, 16GB RAM)
-- Windows 10/11
-- 4GB RAM
-- Any x64 CPU
+#### Minimum (Intel 11th Gen i5, 16GB RAM)
+- Windows 11 (64-bit)
+- Intel Core i5 11th generation or newer (or equivalent AMD Ryzen 5000+)
+- Intel integrated graphics (present on all 11th gen+ Intel CPUs) — no discrete GPU required
+- 16GB RAM
+- ~4GB free storage for model + app
 - **Performance**: ~5-7 tokens/second
 
-#### Recommended (i7-12700, 32GB RAM)
-- Intel Core i7 or equivalent
-- 16GB+ RAM
+#### Recommended (Intel 12th Gen i7, 32GB RAM)
+- Intel Core i7 12th generation or newer (or equivalent AMD Ryzen 7000+)
+- Intel Iris Xe integrated graphics or discrete GPU
+- 32GB RAM
 - SSD for vector database
 - **Performance**: ~10-15 tokens/second
 
-#### High-Performance (i9-13900, 64GB RAM + GPU)
-- High-end CPU
-- 32GB+ RAM
-- NVIDIA GPU or Intel NPU
+#### High-Performance (Intel 13th Gen i9, 64GB RAM)
+- High-end CPU (Intel Core i9 or AMD Ryzen 9)
+- 64GB RAM
+- Intel Arc or NVIDIA discrete GPU for OpenVINO acceleration
 - **Performance**: 20-30+ tokens/second
+
+## 🆕 New Features (Version 1.1.0)
+
+### Settings (Phase 6)
+- **Real-time UI Updates**: Font size slider now applies to all widgets immediately when saved
+- **Debug Mode**: Toggle debug-level logging for troubleshooting
+- **Log File Persistence**: Customizable log file path with automatic persistence
+- **Auto-Reconfiguration**: RAG settings (chunk size, n_results, etc.) trigger engine reinitialization when changed
+
+### Chat Improvements (Phase 7)
+- **Thinking Indicator**: Animated "Thinking..." with dots while LLM generates responses
+- **Smart Regeneration**: "Regenerate" button replaces the last assistant message instead of creating duplicates
+- **Feedback System**: Working thumbs up/down buttons that persist to database
+- **Conversation Context Menu**: Right-click options to delete or rename conversations
+- **Time Display**: Relative timestamps in sidebar (e.g., "2 min ago", "Yesterday")
 
 ## 📦 Installation
 
@@ -118,14 +148,20 @@ A fully offline RAG-based document question answering system optimized for Windo
 | `RAG_TEMPERATURE` | LLM temperature | `0.3` |
 | `API_PORT` | API server port | `8080` |
 
+**Backend Selection:**
+The application selects backends in priority order (GGUF → OpenVINO → API → Ollama).
+If `RAG_GGUF_PATH` is set, GGUF is used. Otherwise, falls through to next available backend.
+
 ## 📖 Usage
 
 ### Ingest Documents
 
 **GUI Mode**:
 1. Click "Ingest" button
-2. Select document folder
+2. Select document folder (folder-based ingestion)
 3. Wait for processing to complete
+
+*Note: GUI supports folder-based batch ingestion. For single-file upload, use API or CLI mode.*
 
 **CLI Mode**:
 ```powershell
@@ -140,10 +176,18 @@ python main.py --ingest "C:\Documents\report.pdf"
 ```python
 import requests
 
-# Ingest documents
+# Ingest entire directory
 response = requests.post("http://localhost:8080/ingest", json={
     "directory": "C:/Documents/reports"
 })
+print(response.json())
+
+# Upload and ingest single file
+with open("C:/Documents/report.pdf", "rb") as f:
+    response = requests.post(
+        "http://localhost:8080/ingest/file",
+        files={"file": ("report.pdf", f, "application/pdf")}
+    )
 print(response.json())
 ```
 
@@ -502,7 +546,6 @@ MIT License - See LICENSE file for details.
 - [CustomTkinter](https://customtkinter.tomschimansky.com/) - Modern GUI toolkit
 
 ---
-
-**Version**: 1.0.0
-**Last Updated**: 2026-02-28
-**Hardware**: CPU-only optimized for i5-10400 and above
+**Version**: 1.1.0
+**Last Updated**: 2026-03-01
+**Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)

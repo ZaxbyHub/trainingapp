@@ -18,6 +18,9 @@ from document_processor import DocumentProcessor, DocumentChunk
 from vector_store import VectorStore
 from llm_interface import SmartLLM, InferenceConfig
 
+# Import unified factory functions
+from engine_factory import create_engine, create_engine_from_env as _factory_create_engine_from_env
+
 
 @dataclass
 class QueryResult:
@@ -235,24 +238,27 @@ class RAGEngine:
         
         return stats
     
-    def ingest_file(self, filepath: str) -> Dict[str, Any]:
+    def ingest_file(self, filepath: str, source_name: Optional[str] = None) -> Dict[str, Any]:
         """Ingest a single file."""
         start_time = time.time()
-        
-        chunks = self.doc_processor.process_file(filepath)
-        
+
+        # Use provided source_name or fall back to filename from path
+        display_name = source_name if source_name else Path(filepath).name
+
+        chunks = self.doc_processor.process_file(filepath, source_name=display_name)
+
         if not chunks:
             return {
                 "success": False,
                 "message": "Failed to process file",
                 "chunks": 0
             }
-        
+
         added = self.vector_store.add_chunks(chunks)
-        
+
         return {
             "success": True,
-            "file": Path(filepath).name,
+            "file": display_name,
             "chunks_added": added,
             "time_seconds": time.time() - start_time
         }
@@ -469,27 +475,15 @@ class RAGEngine:
 
 
 def create_engine_from_env() -> RAGEngine:
-    """Create RAG engine from environment variables."""
-    config = RAGConfig(
-        db_path=os.environ.get("RAG_DB_PATH", str(app_paths.get_vector_db_path())),
-        chunk_size=int(os.environ.get("RAG_CHUNK_SIZE", "256")),
-        n_results=int(os.environ.get("RAG_N_RESULTS", "3")),
-        max_tokens=int(os.environ.get("RAG_MAX_TOKENS", "512")),
-        temperature=float(os.environ.get("RAG_TEMPERATURE", "0.3"))
-    )
+    """Create engine from environment variables.
     
-    gguf_path = os.environ.get("RAG_GGUF_PATH")
+    DEPRECATED: This function is now a wrapper around engine_factory.create_engine_from_env()
+    for backward compatibility. New code should import directly from engine_factory.
     
-    return RAGEngine(
-        config=config,
-        model_path=os.environ.get("RAG_MODEL_PATH"),
-        ollama_model=os.environ.get("RAG_OLLAMA_MODEL"),
-        ollama_url=os.environ.get("RAG_OLLAMA_URL"),
-        api_url=os.environ.get("RAG_API_URL"),
-        api_model=os.environ.get("RAG_API_MODEL"),
-        device=os.environ.get("RAG_DEVICE"),
-        gguf_path=gguf_path
-    )
+    Returns:
+        Configured RAGEngine instance
+    """
+    return _factory_create_engine_from_env()
 
 
 if __name__ == "__main__":

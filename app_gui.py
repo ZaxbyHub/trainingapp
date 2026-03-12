@@ -386,7 +386,7 @@ class DocumentQAApp(CTk):
                 
                 self.engine = RAGEngine(
                     config=config,
-                    model_path=self.settings.get("gguf_path") or None,
+                    gguf_path=self.settings.get("gguf_path") or None,
                     ollama_model=self.settings.get("ollama_model"),
                     ollama_url=self.settings.get("ollama_url"),
                     api_url=self.settings.get("api_url") or None

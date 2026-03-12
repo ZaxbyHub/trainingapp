@@ -108,12 +108,23 @@ def test_validate_model_path_rejects_url_encoded_path_traversal():
     with pytest.raises(ValueError, match="Model path contains path traversal attempts"):
         validate_model_path("test%2e%2e/passwd")
 
-def test_validate_model_path_rejects_absolute_path():
-    """Test that validate_model_path() rejects /etc/passwd (absolute path outside base)"""
+def test_validate_model_path_allows_absolute_paths():
+    """Test that validate_model_path() allows absolute paths if they exist"""
     from api_server import validate_model_path
-    
-    with pytest.raises(ValueError, match="Model path is outside the allowed directory"):
-        validate_model_path("/etc/passwd")
+    import tempfile
+    import os
+
+    # Create a temp file to test with
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        f.write("test")
+        temp_path = f.name
+
+    try:
+        # Should not raise for existing absolute path
+        result = validate_model_path(temp_path)
+        assert result == temp_path
+    finally:
+        os.unlink(temp_path)
 
 def test_validate_directory_rejects_path_traversal():
     """Test that validate_directory() rejects ../../sensitive"""

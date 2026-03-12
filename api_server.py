@@ -6,8 +6,10 @@ FastAPI-based REST API for the RAG system.
 import os
 import json
 import re
+import socket
 import logging
-from typing import Optional, List
+import unicodedata
+from typing import Optional, List, Set, Tuple
 from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse, unquote
@@ -23,17 +25,26 @@ from rag_engine import RAGEngine, RAGConfig
 # Set up logger
 logger = logging.getLogger(__name__)
 
+# Default allowed ports for URL validation
+DEFAULT_ALLOWED_PORTS = {80, 443, 11434}  # HTTP, HTTPS, Ollama
 
-def validate_url(url: str) -> str:
+
+def validate_url(
+    url: str, 
+    allow_local: bool = False,
+    allowed_ports: Optional[set] = None
+) -> str:
     """
     Validate URL to prevent injection attacks.
-    
+
     Args:
         url: URL string to validate
-        
+        allow_local: If True, allow localhost and private IPs for local backends
+        allowed_ports: Set of allowed port numbers. If None, uses DEFAULT_ALLOWED_PORTS
+
     Returns:
         Validated URL string
-        
+
     Raises:
         ValueError: If URL is invalid
     """
@@ -52,65 +63,130 @@ def validate_url(url: str) -> str:
     if parsed.username or parsed.password:
         raise ValueError("URL must not contain userinfo (username:password)")
     
-    # Reject localhost and private IP addresses
+    # Check for localhost and private IP addresses
     if parsed.hostname:
         # Check for localhost
         if parsed.hostname in ('localhost', '127.0.0.1', '::1'):
-            raise ValueError("URL must not point to localhost")
+            if not allow_local:
+                raise ValueError("URL must not point to localhost")
         
         # Check for private IP addresses
-        try:
-            ip_addr = ipaddress.ip_address(parsed.hostname)
-            if ip_addr.is_private:
-                raise ValueError("URL must not point to private IP addresses")
-        except ValueError:
-            # If it's not an IP address, skip IP checks
-            pass
+        if parsed.hostname:
+            try:
+                ip_addr = ipaddress.ip_address(parsed.hostname)
+            except ValueError:
+                # Not an IP address, skip IP checks
+                pass
+            else:
+                # Successfully parsed as IP - check if private
+                if ip_addr.is_private and not allow_local:
+                    raise ValueError("URL must not point to private IP addresses")
     
-    # Reject non-standard ports
-    if parsed.port and parsed.port not in (80, 443):
-        raise ValueError("URL must use standard ports (80 or 443)")
-    
+    # Port validation
+    if parsed.port:
+        # Use provided allowed_ports or default
+        ports = allowed_ports if allowed_ports is not None else DEFAULT_ALLOWED_PORTS
+
+        if parsed.port not in ports:
+            raise ValueError(
+                f"URL port {parsed.port} is not in allowed ports: {sorted(ports)}. "
+                f"Use standard ports or explicitly configure the port."
+            )
+
+    # DNS rebinding protection - resolve hostname and validate IP
+    if parsed.hostname:
+        _resolve_and_validate_host(parsed.hostname, allow_local)
+
     return url
+
+
+def _resolve_and_validate_host(hostname: str, allow_local: bool) -> None:
+    """Resolve hostname and validate IP against whitelist.
+
+    Args:
+        hostname: Hostname to resolve
+        allow_local: Whether to allow local/private IPs
+
+    Raises:
+        ValueError: If resolved IP is not in whitelist
+    """
+    if not hostname:
+        return
+
+    try:
+        # Resolve hostname to IP(s)
+        addr_info = socket.getaddrinfo(hostname, None)
+
+        for info in addr_info:
+            ip_str = info[4][0]
+            try:
+                ip_addr = ipaddress.ip_address(ip_str)
+
+                # Check if IP is localhost
+                if ip_addr.is_loopback and not allow_local:
+                    raise ValueError(f"Hostname resolves to loopback: {ip_str}")
+
+                # Check if IP is private
+                if ip_addr.is_private and not allow_local:
+                    raise ValueError(f"Hostname resolves to private IP: {ip_str}")
+
+            except ValueError:
+                # Not a valid IP, skip
+                continue
+
+    except socket.gaierror:
+        # Hostname resolution failed - this is OK for validation
+        # (actual connection will fail later if invalid)
+        pass
 
 
 def validate_model_path(path: str, base_dir: Path = Path(".")) -> str:
     """
     Validate model path to prevent path traversal and ensure safety.
-    
+
+    Allows absolute paths (like C:\\Models\\model.gguf) while still
+    preventing directory traversal attacks.
+
     Args:
         path: Model path string to validate
-        base_dir: Base directory to resolve relative paths against (default: current directory)
-        
+        base_dir: Base directory to resolve relative paths against
+
     Returns:
         Validated model path string
-        
+
     Raises:
         ValueError: If model path is invalid
     """
     if not path:
         raise ValueError("Model path cannot be empty")
-    
+
     # Normalize path using unquote to handle %2e%2e encoding
     normalized_path = unquote(path)
-    
+
     # Check for path traversal attempts
     if '..' in normalized_path:
         raise ValueError("Model path contains path traversal attempts")
-    
-    # Resolve the path relative to base_dir (or current dir if not provided)
-    resolved_path = Path(normalized_path).resolve(strict=False)
-    
-    # Check if resolved path is under base_dir
-    try:
-        resolved_path.relative_to(base_dir)
-    except ValueError:
-        raise ValueError("Model path is outside the allowed directory")
-    
+
+    # Parse the input path
+    input_path = Path(normalized_path)
+
+    if input_path.is_absolute():
+        # Absolute paths: resolve as-is (allows C:\\Models\\model.gguf)
+        resolved_path = input_path.resolve(strict=False)
+    else:
+        # Relative paths: join with base_dir first, then resolve
+        resolved_path = (base_dir / input_path).resolve(strict=False)
+
+        # Verify the resolved path stays within base_dir
+        try:
+            resolved_path.relative_to(base_dir.resolve())
+        except ValueError:
+            raise ValueError("Model path is outside the allowed directory")
+
     # Check file/directory exists
     if not os.path.exists(resolved_path):
         raise ValueError("Model path does not exist")
-    
+
     return str(resolved_path)
 
 
@@ -159,20 +235,88 @@ def validate_directory(path: str, base_dir: Path = Path(".")) -> str:
     if '..' in normalized_path:
         raise ValueError("Directory path contains path traversal attempts")
     
-    # Resolve path including symlinks
-    resolved_path = Path(normalized_path).resolve(strict=False)
+    # Parse the input path
+    input_path = Path(normalized_path)
     
-    # Verify resolved path is within base_dir
-    try:
-        resolved_path.relative_to(base_dir)
-    except ValueError:
-        raise ValueError("Directory path is outside the allowed directory")
+    if input_path.is_absolute():
+        # Absolute paths: resolve as-is
+        resolved_path = input_path.resolve(strict=False)
+    else:
+        # Relative paths: join with base_dir, then resolve
+        resolved_path = (base_dir / input_path).resolve(strict=False)
+        
+        # Verify the resolved path stays within base_dir
+        try:
+            resolved_path.relative_to(base_dir.resolve())
+        except ValueError:
+            raise ValueError("Directory path is outside the allowed directory")
     
     # Check if directory exists
     if not os.path.isdir(resolved_path):
         raise ValueError("Directory does not exist")
     
     return str(resolved_path)
+
+
+# Windows reserved names
+WINDOWS_RESERVED_NAMES = {
+    'CON', 'PRN', 'AUX', 'NUL',
+    'COM1', 'COM2', 'COM3', 'COM4', 'COM5', 'COM6', 'COM7', 'COM8', 'COM9',
+    'LPT1', 'LPT2', 'LPT3', 'LPT4', 'LPT5', 'LPT6', 'LPT7', 'LPT8', 'LPT9'
+}
+
+
+def sanitize_filename(filename: str) -> Tuple[str, str]:
+    """
+    Sanitize filename for safe filesystem storage while preserving display name.
+    
+    Args:
+        filename: Original filename from upload
+        
+    Returns:
+        Tuple of (sanitized_filename, display_name)
+        - sanitized_filename: Safe filename for filesystem storage
+        - display_name: Original (or cleaned) name for UI/metadata display
+        
+    Raises:
+        ValueError: If filename is empty or invalid
+    """
+    if not filename:
+        raise ValueError("Filename cannot be empty")
+    
+    # Step 1: Strip directory components
+    basename = os.path.basename(filename)
+    
+    # Step 2: Normalize Unicode (NFKC to prevent homograph attacks)
+    normalized = unicodedata.normalize('NFKC', basename)
+    
+    # Step 3: Remove null bytes and control characters
+    cleaned = ''.join(char for char in normalized if char.isprintable() and ord(char) > 31)
+    
+    # Step 4: Replace path separators and dangerous characters
+    # Replace backslashes, forward slashes, colons with underscores
+    cleaned = cleaned.replace('\\', '_').replace('/', '_').replace(':', '_')
+    
+    # Step 5: Check for Windows reserved names (case-insensitive)
+    name_without_ext = Path(cleaned).stem.upper()
+    if name_without_ext in WINDOWS_RESERVED_NAMES:
+        # Prepend underscore to make it safe
+        stem = Path(cleaned).stem
+        suffix = Path(cleaned).suffix
+        cleaned = f"_{stem}{suffix}"
+    
+    # Step 6: Limit length (255 chars is typical filesystem max)
+    if len(cleaned) > 255:
+        stem = Path(cleaned).stem[:250]
+        suffix = Path(cleaned).suffix
+        cleaned = f"{stem}{suffix}"
+    
+    # Step 7: Ensure we have something left
+    if not cleaned or cleaned == '.' or cleaned == '..' or cleaned.strip() == '':
+        raise ValueError("Filename is invalid after sanitization")
+    
+    # Return sanitized name and display name (display uses sanitized for safety)
+    return cleaned, cleaned
 
 
 # Global engine instance
@@ -277,6 +421,16 @@ async def lifespan(app: FastAPI):
                 logger.error("Invalid model path configuration")
                 raise HTTPException(status_code=500, detail="Invalid configuration")
         
+        # Validate GGUF path if provided
+        gguf_path = os.environ.get("RAG_GGUF_PATH")
+
+        if gguf_path is not None:
+            try:
+                gguf_path = validate_model_path(gguf_path, Path("."))
+            except ValueError as e:
+                logger.error("Invalid GGUF path configuration")
+                raise HTTPException(status_code=500, detail="Invalid configuration")
+        
         # Validate device string if provided
         device = os.environ.get("RAG_DEVICE")
         if device:
@@ -320,7 +474,8 @@ async def lifespan(app: FastAPI):
             ollama_url=ollama_url,
             api_url=api_url,
             api_model=api_model,
-            device=device
+            device=device,
+            gguf_path=gguf_path
         )
         
         yield
@@ -440,22 +595,29 @@ async def ingest_file(file: UploadFile = File(...)):
     """Ingest a single uploaded file."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
-    
-    ext = Path(file.filename).suffix.lower()
+
+    # Sanitize filename
+    try:
+        safe_filename, display_name = sanitize_filename(file.filename)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid filename: {e}")
+
+    ext = Path(safe_filename).suffix.lower()
     if ext not in {'.pdf', '.docx', '.doc', '.pptx', '.ppt', '.txt', '.md'}:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
-    
+
     import tempfile
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name
-        
-        stats = engine.ingest_file(tmp_path)
-        
+
+        # Use sanitized display name as source
+        stats = engine.ingest_file(tmp_path, source_name=display_name)
+
         os.unlink(tmp_path)
-        
+
         return IngestResponse(
             success=stats["success"],
             documents=1 if stats["success"] else 0,

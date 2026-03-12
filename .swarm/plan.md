@@ -1,38 +1,52 @@
-<!-- PLAN_HASH: 3k4w512tjtgbz -->
-# AFOMIS Help and Support — Distribution Build
-Swarm: lowtier
-Phase: COMPLETE | Updated: 2026-03-11T07:35:00.000Z
+<!-- PLAN_HASH: n2qwhb5lhkp4 -->
+# AFOMIS End-to-End Functionality Restoration
+Swarm: paid
+Phase: 14 [PENDING] | Updated: 2026-03-12T00:43:19.794Z
 
 ---
-## Phase 8: Production Windows Paths [COMPLETE]
-- [x] 8.1: Create `app_paths.py` — centralised Windows path resolver. Exports `get_user_data_dir()` returning `%LOCALAPPDATA%\AFOMIS Help and Support\`; `get_vector_db_path()` returning `<user_data>/data/vector_db`; `get_conversations_db_path()` returning `<user_data>/conversations.db`; `get_settings_path()` returning `<user_data>/settings.json`; `get_seed_state_path()` returning `<user_data>/seed_state.json`; `find_bundled_model(ext)` scanning `models/` dir relative to exe (uses `sys._MEIPASS` when frozen, `__file__` parent otherwise). All `get_*` functions call `mkdir(parents=True, exist_ok=True)` on their parent dirs before returning. [SMALL]
-- [x] 8.2: Update `ui/conversation_db.py` — replace `Path.home() / '.doc_qa_app' / 'conversations.db'` with `app_paths.get_conversations_db_path()`. Import `app_paths` at top of file. No other changes. [SMALL] (depends: 8.1)
-- [x] 8.3: Update `ui/app.py` — replace all occurrences of `Path.home() / '.doc_qa_app' / 'app_settings.json'` with `app_paths.get_settings_path()`; replace `~/.doc_qa_app/logs/app.log` default log path with `str(app_paths.get_user_data_dir() / 'logs' / 'app.log')`. Import `app_paths` at top of file. No other changes to app.py in this task. [SMALL] (depends: 8.1)
-- [x] 8.4: Update `rag_engine.py` — change the default value of `db_path` parameter in `RAGEngine.__init__` from `'./doc_qa_db'` to `str(app_paths.get_vector_db_path())`; update `create_engine_from_env()` default for `RAG_DB_PATH` env var to `str(app_paths.get_vector_db_path())`. Import `app_paths` at top of file. No other changes. [SMALL] (depends: 8.1)
+## Phase 14: Phase 14: Establish Reproducible Baseline [PENDING]
+- [x] 14.1: Create baseline test matrix covering GUI mode, CLI mode, and API mode with GGUF path variations and upload paths [MEDIUM]
+- [x] 14.2: Execute baseline tests and capture failing code paths for each confirmed defect [MEDIUM]
+- [ ] 14.3: Create regression test stubs for each confirmed defect that will verify fixes [SMALL] ← CURRENT
 
 ---
-## Phase 9: Seed Data System [COMPLETE]
-- [x] 9.1: Add `add_chunks_with_embeddings(chunks_with_vectors: list[dict])` method to `VectorStore` in `vector_store.py`. Each dict has keys: `chunk_id` (str), `text` (str), `embedding` (list[float]), `metadata` (dict). Method inserts directly into ChromaDB using `collection.add(ids=..., documents=..., embeddings=..., metadatas=...)` without calling SentenceTransformer. Raises `ValueError` if any chunk_id already exists in the collection. Updates BM25 index after successful insert. [SMALL] (depends: 8.4)
-- [x] 9.2: Create `seed_loader.py` — `SeedDataLoader` class. Constructor takes `vector_store: VectorStore`, `seed_manifest_path: Path`, `seed_chunks_path: Path`, `seed_state_path: Path`. Method `sync()`: reads manifest JSON (list of `{doc_id, version, description, chunk_count}`); reads state JSON (dict of `{doc_id: version}`, empty dict if file missing); for each manifest entry: if not in state → import; if state version < manifest version → delete old chunks (IDs matching prefix `seed_{doc_id}_`) then import; if versions match → skip. After all imports, writes updated state JSON. Method `_import_doc(doc_id, chunks)` filters chunks for this doc_id and calls `vector_store.add_chunks_with_embeddings()`. [MEDIUM] (depends: 9.1)
-- [x] 9.3: Create `scripts/export_seed_chunks.py` — developer CLI script. Reads ChromaDB at `doc_qa_db/` (default, overridable via `--db-path`). Exports all chunks to `seed_data/chunks.json` and writes `seed_data/seed_manifest.json`. Each chunk entry: `{doc_id, chunk_id, text, embedding, metadata}`. Manifest entry: `{doc_id, version: 1, description: source filename, chunk_count}`. Creates `seed_data/` directory if absent. Prints summary: N documents, M chunks exported. [SMALL] (depends: 9.1)
-- [x] 9.4: Wire `SeedDataLoader.sync()` into `ui/app.py` `AppController.initialize_rag()`. After `self.rag_engine` is created and the vector store is ready, check if the seed manifest path exists (from `app_paths` — seed data sits alongside the exe in the install dir). If found: instantiate `SeedDataLoader` and call `sync()`. Wrap in try/except — log errors but do not crash. Import `seed_loader` and update `app_paths` imports. [SMALL] (depends: 8.3, 9.2)
+## Phase 15: Phase 15: Repair GGUF Backend Detection [PENDING]
+- [x] 15.1: Fix GUI initialization in app_gui.py to pass gguf_path parameter instead of model_path to RAGEngine [SMALL]
+- [x] 15.2: Fix API server lifespan in api_server.py to read RAG_GGUF_PATH environment variable and pass to RAGEngine [SMALL]
+- [x] 15.3: Audit repository for remaining semantic misuse of model_path versus gguf_path including migration code and tests [MEDIUM]
+- [x] 15.4: Create unified engine construction helper if needed to ensure all modes use shared path [MEDIUM]
 
 ---
-## Phase 10: GGUF Auto-Detection and Settings Warning [COMPLETE]
-- [x] 10.1: Update `ui/app.py` `AppController._load_settings()` — replace the existing inline GGUF auto-detection logic (the `Path(__file__).parent.parent` glob blocks that appear twice) with a single call to `app_paths.find_bundled_model('.gguf')`. If `find_bundled_model` returns a path and the current `gguf_path` setting is empty or points to a non-existent file, set `self.settings['gguf_path']` to the returned path. Remove the duplicate detection block. [SMALL] (depends: 8.3)
-- [x] 10.2: Update `ui/views/settings_view.py` — in the LLM tab, add a `CTkLabel` warning widget immediately below the GGUF path row. Warning text: '⚠️ Changing the model from the bundled default is not recommended for regular users. Untested models may produce incorrect or unstable behaviour.' Style: fg_color='transparent', text_color='#E8A000' (amber), font small, wraplength=400, justify='left'. Widget placed with `grid` or `pack` consistent with existing layout. [SMALL]
+## Phase 16: Phase 16: Repair Local Endpoint Handling [PENDING]
+- [x] 16.1: Update validate_url() in api_server.py to allow localhost, 127.0.0.1, ::1 for explicitly local backends [SMALL]
+- [x] 16.2: Add DNS rebinding protection by resolving hostname and validating IP against whitelist [SMALL]
+- [x] 16.3: Update validate_model_path() to allow absolute Windows paths while preventing traversal [SMALL]
+- [x] 16.4: Update validate_directory() with same path handling improvements [SMALL]
+- [x] 16.5: Add port whitelist validation for non-standard ports with explicit opt-in requirement [SMALL]
 
 ---
-## Phase 11: Offline Embedding Model Bundling [COMPLETE]
-- [x] 11.1: Create `scripts/bundle_embedding_model.py` — developer CLI script. Uses `huggingface_hub.snapshot_download` with `local_dir='bundled_models/bge-small-en-v1.5'` and `repo_id='BAAI/bge-small-en-v1.5'` to download model files. Validates presence of required files after download. Prints list of files and total size on disk. Exits with error if required files are missing after download. [SMALL]
-- [x] 11.2: Update `vector_store.py` `EmbeddingModel.__init__` — detect if running as a frozen PyInstaller bundle (`getattr(sys, 'frozen', False)`). If frozen: resolve bundled model path as `Path(sys._MEIPASS) / 'bundled_models' / 'bge-small-en-v1.5'`; raise `FileNotFoundError` with message 'Bundled embedding model not found at {path}' if path does not exist; else load `SentenceTransformer(str(path), local_files_only=True)`. If not frozen: use existing `SentenceTransformer(model_name)` logic unchanged. [SMALL] (depends: 11.1)
+## Phase 17: Phase 17: Rebuild Upload Ingestion [PENDING]
+- [x] 17.1: Add source_name/display_name parameter through ingest pipeline from /ingest/file endpoint to DocumentProcessor [MEDIUM]
+- [x] 17.2: Implement filename sanitization function to prevent path traversal while preserving display name [SMALL]
+- [x] 17.3: Update DocumentProcessor.process_file() to use source_name parameter for metadata [SMALL]
+- [x] 17.4: Verify duplicate handling, deletion, document listing, and citations use stable source metadata [MEDIUM]
 
 ---
-## Phase 12: PyInstaller Build Configuration [COMPLETE]
-- [x] 12.1: Create `AFOMIS.spec` — PyInstaller spec file for `--onedir` build. Entry point: `ui/app.py` (name: `AFOMIS`). `datas`: `('bundled_models', 'bundled_models')`, `('seed_data', 'seed_data')`, `('ui', 'ui')`, `('models', 'models')` — so the GGUF model ships alongside the bundle. `binaries`: `collect_binaries('llama_cpp')` for native DLLs. `hiddenimports`: `['chromadb', 'sentence_transformers', 'rank_bm25', 'llama_cpp']`. `runtime_hooks`: empty list (SENTENCE_TRANSFORMERS_HOME set in code via app_paths). Console=False (windowed). `excludes`: `[]`. [MEDIUM]
-- [x] 12.2: Create `build_exe.bat` — Windows batch script for the PyInstaller build. Prerequisites check: (1) verify `bundled_models\bge-small-en-v1.5\` exists; (2) verify `seed_data\chunks.json` exists; (3) verify at least one `.gguf` file exists in `models\`. Exit with error code 1 and descriptive message if any check fails. On pass: activate `.venv\Scripts\activate.bat` if present; run `pyinstaller AFOMIS.spec --clean --noconfirm`; print output path on success. [SMALL] (depends: 12.1)
+## Phase 18: Phase 18: Align GUI, API, CLI, and Documentation [PENDING]
+- [ ] 18.1: Audit README and documentation for drift between documented and actual behavior [MEDIUM]
+- [x] 18.2: Verify GUI upload capabilities match API surface or document intentional differences [SMALL]
+- [x] 18.3: Update settings labels and backend naming to match actual code behavior [SMALL]
+- [ ] 18.4: Document actual backend precedence and configuration knobs accurately [SMALL]
 
 ---
-## Phase 13: Inno Setup Installer [COMPLETE]
-- [x] 13.1: Create `installer.iss` — Inno Setup script. AppName: `AFOMIS Help and Support`. AppVersion: `1.0.0.1`. DefaultDirName: `{autopf}\AFOMIS Help and Support`. DefaultGroupName: `AFOMIS Help and Support`. Source: all files from `dist\AFOMIS\*` recursively. Creates Start Menu shortcut and Desktop shortcut to `AFOMIS.exe` with `WorkingDir: {app}`. Registers in Add/Remove Programs with publisher `AFOMIS`. Provides uninstaller. OutputBaseFilename: `AFOMIS-Setup-1.0.0`. Compression: `lzma2/ultra64`. MinVersion: `10.0`. PrivilegesRequired: `lowest` (allows standard user install). [MEDIUM]
-- [x] 13.2: Create `build_installer.bat` — Windows batch script to compile the Inno Setup installer. Steps: (1) check that `dist\AFOMIS\AFOMIS.exe` exists, exit code 1 with usage note if not; (2) locate `ISCC.exe` in `%ProgramFiles(x86)%\Inno Setup 6\` and `%ProgramFiles%\Inno Setup 6\` and `C:\InnoSetup6\`; (3) run `ISCC installer.iss`; (4) print output path of resulting Setup .exe. Include usage note at top explaining build order: run build_exe.bat first. [SMALL] (depends: 13.1)
+## Phase 19: Phase 19: Packaging and Distribution Validation [PENDING]
+- [x] 19.1: Audit AFOMIS.spec against current repository layout and update entry point and bundled paths [MEDIUM]
+- [ ] 19.2: Update build_exe.bat to validate prerequisites against correct paths [SMALL]
+- [x] 19.3: Perform clean package build and document any issues encountered [MEDIUM]
+- [x] 19.4: Execute packaged application smoke test: launch, load GGUF, ingest document, answer question [MEDIUM]
+
+---
+## Phase 20: Phase 20: Regression Test Suite and Bug Ledger [PENDING]
+- [ ] 20.1: Complete regression tests for all confirmed defects with PASS status [MEDIUM]
+- [x] 20.2: Document final bug ledger with root cause, fix, and test for each defect [SMALL]
+- [x] 20.3: Write postmortem analysis describing why regressions escaped and prevention measures [SMALL]

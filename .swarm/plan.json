@@ -1,310 +1,328 @@
 {
   "schema_version": "1.0.0",
-  "title": "Document Q&A App — Offline RAG Upgrade",
-  "swarm": "local",
-  "current_phase": 1,
+  "title": "AFOMIS End-to-End Functionality Restoration",
+  "swarm": "paid",
+  "current_phase": 14,
   "phases": [
     {
-      "id": 1,
-      "name": "Phase 1",
+      "id": 14,
+      "name": "Phase 14: Establish Reproducible Baseline",
       "status": "pending",
       "tasks": [
         {
-          "id": "1.1",
-          "phase": 1,
-          "status": "pending",
-          "size": "small",
-          "description": "Fix import structure — convert relative imports to absolute in `rag_engine.py` and `vector_store.py`",
+          "id": "14.1",
+          "phase": 14,
+          "status": "completed",
+          "size": "medium",
+          "description": "Create baseline test matrix covering GUI mode, CLI mode, and API mode with GGUF path variations and upload paths",
           "depends": [],
+          "acceptance": "Matrix document exists with test scenarios for each mode and configuration combination",
           "files_touched": []
         },
         {
-          "id": "1.2",
-          "phase": 1,
-          "status": "pending",
-          "size": "small",
-          "description": "Fix `SmartLLM` call in `rag_engine._init_llm` — wrong kwarg `embedded_model`, missing `model_path`/`ollama_model`/`ollama_url` passthrough",
+          "id": "14.2",
+          "phase": 14,
+          "status": "completed",
+          "size": "medium",
+          "description": "Execute baseline tests and capture failing code paths for each confirmed defect",
           "depends": [],
+          "acceptance": "Bug ledger created with confirmed root cause, repro steps, and failing code locations for all 6 confirmed defects",
           "files_touched": []
         },
         {
-          "id": "1.3",
-          "phase": 1,
-          "status": "pending",
+          "id": "14.3",
+          "phase": 14,
+          "status": "in_progress",
           "size": "small",
-          "description": "Fix `PromptBuilder` import — rename reference to `RAGPromptBuilder` in `rag_engine.py`",
+          "description": "Create regression test stubs for each confirmed defect that will verify fixes",
           "depends": [],
-          "files_touched": []
-        },
-        {
-          "id": "1.4",
-          "phase": 1,
-          "status": "pending",
-          "size": "small",
-          "description": "Remove broken `sys.path.insert` grandparent hack in `rag_engine.py`",
-          "depends": [],
-          "files_touched": []
-        },
-        {
-          "id": "1.5",
-          "phase": 1,
-          "status": "pending",
-          "size": "small",
-          "description": "Fix `api_server.py` — remove hardcoded Ollama defaults that force a network connection on startup",
-          "depends": [],
+          "acceptance": "Test files created in tests/regression/ directory with failing assertions for each defect",
           "files_touched": []
         }
       ]
     },
     {
-      "id": 2,
-      "name": "Phase 2",
+      "id": 15,
+      "name": "Phase 15: Repair GGUF Backend Detection",
       "status": "pending",
       "tasks": [
         {
-          "id": "2.1",
-          "phase": 2,
-          "status": "pending",
+          "id": "15.1",
+          "phase": 15,
+          "status": "completed",
           "size": "small",
-          "description": "Add `GGUFBackend` class to `llm_interface.py` using llama",
+          "description": "Fix GUI initialization in app_gui.py to pass gguf_path parameter instead of model_path to RAGEngine",
           "depends": [],
+          "acceptance": "GUI passes gguf_path from settings to engine constructor; existing tests pass",
           "files_touched": []
         },
         {
-          "id": "2.2",
-          "phase": 2,
-          "status": "pending",
+          "id": "15.2",
+          "phase": 15,
+          "status": "completed",
           "size": "small",
-          "description": "Update `SmartLLM.__init__` — add `gguf_path` parameter; set fallback order to GGUF → OpenVINO → OpenAI",
+          "description": "Fix API server lifespan in api_server.py to read RAG_GGUF_PATH environment variable and pass to RAGEngine",
           "depends": [],
+          "acceptance": "API server reads RAG_GGUF_PATH and passes gguf_path to engine; test verifies env var flows to engine",
           "files_touched": []
         },
         {
-          "id": "2.3",
-          "phase": 2,
-          "status": "pending",
-          "size": "small",
-          "description": "Update `rag_engine.py` — wire `gguf_path` through `RAGEngine.__init__` and `_init_llm`; update `create_engine_from_env` for `RAG_GGUF_PATH` env var",
-          "depends": [
-            "2.2"
-          ],
+          "id": "15.3",
+          "phase": 15,
+          "status": "completed",
+          "size": "medium",
+          "description": "Audit repository for remaining semantic misuse of model_path versus gguf_path including migration code and tests",
+          "depends": [],
+          "acceptance": "Grep report shows all model_path/gguf_path usages; any mismatches are documented and fixed",
           "files_touched": []
         },
         {
-          "id": "2.4",
-          "phase": 2,
-          "status": "pending",
-          "size": "small",
-          "description": "Update `main.py` — add `",
+          "id": "15.4",
+          "phase": 15,
+          "status": "completed",
+          "size": "medium",
+          "description": "Create unified engine construction helper if needed to ensure all modes use shared path",
           "depends": [],
-          "files_touched": []
-        },
-        {
-          "id": "2.5",
-          "phase": 2,
-          "status": "pending",
-          "size": "small",
-          "description": "Update `app_gui.py` Settings dialog — replace OpenVINO model path with GGUF file picker (`.gguf` filter); add active model name + file size to status bar; add hot",
-          "depends": [],
-          "files_touched": []
-        },
-        {
-          "id": "2.6",
-          "phase": 2,
-          "status": "pending",
-          "size": "small",
-          "description": "Swap embedding model from `all",
-          "depends": [],
-          "files_touched": []
-        },
-        {
-          "id": "2.7",
-          "phase": 2,
-          "status": "pending",
-          "size": "small",
-          "description": "Update `requirements.txt` — add `llama",
-          "depends": [],
-          "files_touched": []
-        },
-        {
-          "id": "2.8",
-          "phase": 2,
-          "status": "pending",
-          "size": "small",
-          "description": "Create `scripts/build_installer.py` — pre",
-          "depends": [],
+          "acceptance": "All three modes (GUI, CLI, API) route through shared helper or equivalent normalization; tests verify consistency",
           "files_touched": []
         }
       ]
     },
     {
-      "id": 3,
-      "name": "Phase 3",
+      "id": 16,
+      "name": "Phase 16: Repair Local Endpoint Handling",
       "status": "pending",
       "tasks": [
         {
-          "id": "3.1",
-          "phase": 3,
-          "status": "pending",
+          "id": "16.1",
+          "phase": 16,
+          "status": "completed",
           "size": "small",
-          "description": "Replace word",
+          "description": "Update validate_url() in api_server.py to allow localhost, 127.0.0.1, ::1 for explicitly local backends",
           "depends": [],
+          "acceptance": "Local URLs accepted when allow_local flag is set; remote URLs still rejected",
           "files_touched": []
         },
         {
-          "id": "3.2",
-          "phase": 3,
-          "status": "pending",
+          "id": "16.2",
+          "phase": 16,
+          "status": "completed",
           "size": "small",
-          "description": "Add `BM25Index` class to `vector_store.py` using `rank",
+          "description": "Add DNS rebinding protection by resolving hostname and validating IP against whitelist",
           "depends": [],
+          "acceptance": "URL validation resolves hostname and checks resolved IP; DNS rebinding attacks are blocked",
           "files_touched": []
         },
         {
-          "id": "3.3",
-          "phase": 3,
-          "status": "pending",
+          "id": "16.3",
+          "phase": 16,
+          "status": "completed",
           "size": "small",
-          "description": "Add `rrf_fuse()` utility function to new `utils.py` module — pure",
+          "description": "Update validate_model_path() to allow absolute Windows paths while preventing traversal",
           "depends": [],
+          "acceptance": "Absolute paths like C:\\Models\\model.gguf validate successfully; traversal attempts rejected",
           "files_touched": []
         },
         {
-          "id": "3.4",
-          "phase": 3,
-          "status": "pending",
+          "id": "16.4",
+          "phase": 16,
+          "status": "completed",
           "size": "small",
-          "description": "Implement hybrid search in `vector_store.get_context()` — call both vector search and BM25 search, fuse via RRF; make hybrid toggle configurable via `RAGConfig.hybrid_search`",
-          "depends": [
-            "3.2",
-            "3.3"
-          ],
-          "files_touched": []
-        },
-        {
-          "id": "3.5",
-          "phase": 3,
-          "status": "pending",
-          "size": "small",
-          "description": "Implement window expansion in `rag_engine.query()` — after retrieval fetch N±1 adjacent chunks by chunk_index; configurable via `RAGConfig.retrieval_window` (default 1)",
-          "depends": [
-            "1.2"
-          ],
-          "files_touched": []
-        },
-        {
-          "id": "3.6",
-          "phase": 3,
-          "status": "pending",
-          "size": "small",
-          "description": "Add `CrossEncoderReranker` class to new `reranking.py` — lazy",
+          "description": "Update validate_directory() with same path handling improvements",
           "depends": [],
+          "acceptance": "Directory validation accepts legitimate absolute paths; blocks traversal attempts",
           "files_touched": []
         },
         {
-          "id": "3.7",
-          "phase": 3,
-          "status": "pending",
+          "id": "16.5",
+          "phase": 16,
+          "status": "completed",
           "size": "small",
-          "description": "Add `QueryTransformer` class to new `query_transformer.py` — step",
+          "description": "Add port whitelist validation for non-standard ports with explicit opt-in requirement",
           "depends": [],
-          "files_touched": []
-        },
-        {
-          "id": "3.8",
-          "phase": 3,
-          "status": "pending",
-          "size": "small",
-          "description": "Update `RAGConfig` — add all new fields: `hybrid_search` (bool, True), `retrieval_window` (int, 1), `reranking_enabled` (bool, False), `reranker_model` (str), `query_transformation_enabled` (bool, False), `initial_retrieval_top_k` (int, 20)",
-          "depends": [
-            "3.5",
-            "3.6",
-            "3.7"
-          ],
-          "files_touched": []
-        },
-        {
-          "id": "3.9",
-          "phase": 3,
-          "status": "pending",
-          "size": "small",
-          "description": "Update `app_gui.py` Settings dialog — add toggle controls for hybrid search, window expansion size, reranking enable/disable; leave step",
-          "depends": [],
+          "acceptance": "Ports outside allowed set require explicit configuration; clear error messages guide user",
           "files_touched": []
         }
       ]
     },
     {
-      "id": 4,
-      "name": "Phase 4",
+      "id": 17,
+      "name": "Phase 17: Rebuild Upload Ingestion",
       "status": "pending",
       "tasks": [
         {
-          "id": "4.1",
-          "phase": 4,
-          "status": "pending",
-          "size": "small",
-          "description": "Create `tests/conftest.py` — shared pytest fixtures: temp ChromaDB dir, mock LLM returning canned responses, sample DocumentChunk list, sample PDF bytes",
-          "depends": [
-            "Phase 1 complete"
-          ],
-          "files_touched": []
-        },
-        {
-          "id": "4.2",
-          "phase": 4,
-          "status": "pending",
-          "size": "small",
-          "description": "Create `tests/test_document_processor.py` — test PDF extraction, DOCX extraction, TXT extraction, chunking boundary behaviour, empty file handling, unsupported extension",
-          "depends": [
-            "4.1"
-          ],
-          "files_touched": []
-        },
-        {
-          "id": "4.3",
-          "phase": 4,
-          "status": "pending",
-          "size": "small",
-          "description": "Create `tests/test_vector_store.py` — test add_chunks dedup, BM25 index build/search, hybrid search output, RRF fusion scoring, window expansion, get_context with similarity threshold, clear()",
-          "depends": [
-            "4.1",
-            "3.4"
-          ],
-          "files_touched": []
-        },
-        {
-          "id": "4.4",
-          "phase": 4,
-          "status": "pending",
-          "size": "small",
-          "description": "Create `tests/test_llm_interface.py` — test GGUFBackend instantiation with bad path (expect FileNotFoundError), SmartLLM fallback chain logic (mocked backends), GGUF magic",
+          "id": "17.1",
+          "phase": 17,
+          "status": "completed",
+          "size": "medium",
+          "description": "Add source_name/display_name parameter through ingest pipeline from /ingest/file endpoint to DocumentProcessor",
           "depends": [],
+          "acceptance": "Original filename flows from API endpoint through to document metadata without temp basename contamination",
           "files_touched": []
         },
         {
-          "id": "4.5",
-          "phase": 4,
-          "status": "pending",
+          "id": "17.2",
+          "phase": 17,
+          "status": "completed",
           "size": "small",
-          "description": "Create `tests/test_rag_engine.py` — test ingest_directory stats, query() with mocked vector store + LLM, greeting bypass path, no",
+          "description": "Implement filename sanitization function to prevent path traversal while preserving display name",
           "depends": [],
+          "acceptance": "Sanitization removes traversal characters, reserved names; returns safe filename and original display name",
           "files_touched": []
         },
         {
-          "id": "4.6",
-          "phase": 4,
+          "id": "17.3",
+          "phase": 17,
+          "status": "completed",
+          "size": "small",
+          "description": "Update DocumentProcessor.process_file() to use source_name parameter for metadata",
+          "depends": [],
+          "acceptance": "Process_file accepts source_name parameter and stores in metadata; existing behavior preserved when parameter not provided",
+          "files_touched": []
+        },
+        {
+          "id": "17.4",
+          "phase": 17,
+          "status": "completed",
+          "size": "medium",
+          "description": "Verify duplicate handling, deletion, document listing, and citations use stable source metadata",
+          "depends": [],
+          "acceptance": "All document operations reference stable source name; repeated uploads behave deterministically",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "name": "Phase 18: Align GUI, API, CLI, and Documentation",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "18.1",
+          "phase": 18,
+          "status": "in_progress",
+          "size": "medium",
+          "description": "Audit README and documentation for drift between documented and actual behavior",
+          "depends": [],
+          "acceptance": "Documentation audit report lists all discrepancies; each discrepancy ticketed for resolution",
+          "files_touched": []
+        },
+        {
+          "id": "18.2",
+          "phase": 18,
+          "status": "completed",
+          "size": "small",
+          "description": "Verify GUI upload capabilities match API surface or document intentional differences",
+          "depends": [],
+          "acceptance": "GUI and API upload capabilities documented; any intentional differences explained in README",
+          "files_touched": []
+        },
+        {
+          "id": "18.3",
+          "phase": 18,
+          "status": "completed",
+          "size": "small",
+          "description": "Update settings labels and backend naming to match actual code behavior",
+          "depends": [],
+          "acceptance": "Settings UI labels match configuration options; backend names are consistent",
+          "files_touched": []
+        },
+        {
+          "id": "18.4",
+          "phase": 18,
           "status": "pending",
           "size": "small",
-          "description": "Create `tests/test_api.py` — test all FastAPI endpoints via httpx TestClient: GET /, GET /stats, POST /ask, POST /search, POST /ingest, POST /ingest/file, GET /documents, DELETE /documents",
-          "depends": [
-            "4.1",
-            "4.5"
-          ],
+          "description": "Document actual backend precedence and configuration knobs accurately",
+          "depends": [],
+          "acceptance": "README accurately describes: GGUF → OpenVINO → OpenAI-compatible → Ollama fallback order",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "name": "Phase 19: Packaging and Distribution Validation",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "19.1",
+          "phase": 19,
+          "status": "completed",
+          "size": "medium",
+          "description": "Audit AFOMIS.spec against current repository layout and update entry point and bundled paths",
+          "depends": [],
+          "acceptance": "Spec file references correct entry point; bundled paths match actual directory structure",
+          "files_touched": []
+        },
+        {
+          "id": "19.2",
+          "phase": 19,
+          "status": "pending",
+          "size": "small",
+          "description": "Update build_exe.bat to validate prerequisites against correct paths",
+          "depends": [],
+          "acceptance": "Build script checks exist at correct locations; exits with clear error if prerequisites missing",
+          "files_touched": []
+        },
+        {
+          "id": "19.3",
+          "phase": 19,
+          "status": "completed",
+          "size": "medium",
+          "description": "Perform clean package build and document any issues encountered",
+          "depends": [],
+          "acceptance": "Clean build completes; build log documents any warnings or issues",
+          "files_touched": []
+        },
+        {
+          "id": "19.4",
+          "phase": 19,
+          "status": "completed",
+          "size": "medium",
+          "description": "Execute packaged application smoke test: launch, load GGUF, ingest document, answer question",
+          "depends": [],
+          "acceptance": "Packaged app passes all smoke test steps; any failures documented with root cause",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "name": "Phase 20: Regression Test Suite and Bug Ledger",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "20.1",
+          "phase": 20,
+          "status": "pending",
+          "size": "medium",
+          "description": "Complete regression tests for all confirmed defects with PASS status",
+          "depends": [],
+          "acceptance": "All regression tests pass; each test would catch recurrence of its defect",
+          "files_touched": []
+        },
+        {
+          "id": "20.2",
+          "phase": 20,
+          "status": "completed",
+          "size": "small",
+          "description": "Document final bug ledger with root cause, fix, and test for each defect",
+          "depends": [],
+          "acceptance": "Bug ledger is complete and accurate; can be used for postmortem analysis",
+          "files_touched": []
+        },
+        {
+          "id": "20.3",
+          "phase": 20,
+          "status": "completed",
+          "size": "small",
+          "description": "Write postmortem analysis describing why regressions escaped and prevention measures",
+          "depends": [],
+          "acceptance": "Postmortem document exists with lessons learned and process improvements",
           "files_touched": []
         }
       ]
     }
   ],
-  "migration_status": "migrated"
+  "migration_status": "native"
 }
