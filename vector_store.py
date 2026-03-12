@@ -6,10 +6,9 @@ Manages document embeddings and similarity search using ChromaDB.
 import os
 import sys
 import json
+import logging
 from typing import List, Tuple, Optional, Dict, Any
 from pathlib import Path
-
-import pickle
 
 try:
     import chromadb
@@ -32,6 +31,8 @@ except ImportError:
 
 from document_processor import DocumentChunk
 from utils import rrf_fuse
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingModel:
@@ -129,24 +130,45 @@ class BM25Index:
             results = [(i, score) for i, score in enumerate(scores) if score > 0]
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:top_k]
-        except Exception:
+        except Exception as e:
+            logger.warning("BM25 search failed: %s", e)
             return []
-    
+
     def save(self, path: str):
-        """Save index and chunks using pickle."""
+        """Save index and chunks using JSON."""
+        chunks_data = [
+            {'text': c.text, 'source': c.source, 'page': c.page, 'chunk_index': c.chunk_index}
+            for c in self.chunks
+        ]
+        tokenized_corpus = [chunk.text.split() for chunk in self.chunks]
         data = {
-            'chunks': self.chunks,
-            'bm25_index': self.bm25_index
+            'chunks': chunks_data,
+            'tokenized_corpus': tokenized_corpus
         }
-        with open(path, 'wb') as f:
-            pickle.dump(data, f)
-    
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+
     def load(self, path: str):
-        """Load index and chunks from pickle."""
-        with open(path, 'rb') as f:
-            data = pickle.load(f)
-        self.chunks = data['chunks']
-        self.bm25_index = data['bm25_index']
+        """Load index and chunks from JSON."""
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        self.chunks = [
+            DocumentChunk(
+                text=c['text'],
+                source=c['source'],
+                page=c.get('page'),
+                chunk_index=c.get('chunk_index', 0)
+            )
+            for c in data['chunks']
+        ]
+        tokenized_corpus = data.get('tokenized_corpus', [chunk.text.split() for chunk in self.chunks])
+        if tokenized_corpus:
+            try:
+                self.bm25_index = BM25Okapi(tokenized_corpus)
+            except NameError:
+                self.bm25_index = None
+        else:
+            self.bm25_index = None
 
 
 class VectorStore:
@@ -252,8 +274,8 @@ class VectorStore:
             try:
                 existing = self.collection.get(ids=ids)
                 existing_ids = set(existing['ids']) if existing['ids'] else set()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Failed to check for existing chunks (treating all as new): %s", e)
             
             new_indices = [j for j, id_ in enumerate(ids) if id_ not in existing_ids]
             
@@ -301,9 +323,8 @@ class VectorStore:
                             page=meta['page'] if 'page' in meta else None
                         )
                         all_chunks.append(chunk)
-            except Exception:
-                # Fallback - skip BM25 indexing if API issues
-                pass
+            except Exception as e:
+                logger.warning("Failed to retrieve chunks for BM25 indexing: %s", e)
             
             if all_chunks:
                 self.bm25_index.build_index(all_chunks)
@@ -464,10 +485,9 @@ class VectorStore:
             # Sort by chunk_index
             chunks.sort(key=lambda c: c.chunk_index)
             return chunks
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to retrieve chunks for source '%s': %s", source, e)
             return []
-    
-    def delete_document(self, doc_id: str) -> bool:
         """Delete a document and all its chunks from the vector store.
 
         Args:
@@ -502,25 +522,24 @@ class VectorStore:
         try:
             # Verify collection can be queried before deleting
             self.collection.get(where={"source": sanitized_id})
-        except Exception:
-            # Handle exception gracefully, return False
+        except Exception as e:
+            logger.error("Failed to verify document '%s' in collection: %s", sanitized_id, e)
             return False
 
         try:
             # Delete all chunks with matching source from ChromaDB collection
             self.collection.delete(where={"source": sanitized_id})
-        except Exception:
-            # Handle exception gracefully, return False
+        except Exception as e:
+            logger.error("Failed to delete document '%s' from collection: %s", sanitized_id, e)
             return False
 
         # Remove from BM25 index
         if self.bm25_index:
-            prefix = f"{sanitized_id}_"
             self.bm25_index.chunks = [
                 chunk for chunk in self.bm25_index.chunks
-                if not chunk[0].startswith(prefix)
+                if chunk.source != sanitized_id
             ]
-            self.bm25_index.bm25 = None  # Invalidate cached index
+            self.bm25_index.bm25_index = None  # Invalidate cached index
 
         # Remove the document from metadata
         if sanitized_id in self.metadata.get('documents', {}):
@@ -535,7 +554,8 @@ class VectorStore:
             # Verify it's actually an integer
             if not isinstance(new_chunk_count, int):
                 raise ValueError("count() did not return an integer")
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to get chunk count from collection: %s", e)
             # Fall back to subtracting removed chunks from previous count
             previous_chunk_count = self.metadata.get('chunk_count', 0)
             new_chunk_count = max(0, previous_chunk_count - removed_chunks)

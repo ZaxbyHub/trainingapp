@@ -399,7 +399,7 @@ async def lifespan(app: FastAPI):
         
         if ollama_url:
             try:
-                ollama_url = validate_url(ollama_url)
+                ollama_url = validate_url(ollama_url, allow_local=True)
             except ValueError as e:
                 logger.error("Invalid Ollama URL configuration")
                 raise HTTPException(status_code=500, detail="Invalid configuration")
@@ -497,7 +497,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

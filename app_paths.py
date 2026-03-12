@@ -1,5 +1,5 @@
 """
-Centralized Windows path resolver for AFOMIS Help and Support.
+Centralized Windows path resolver for Document Q&A Assistant.
 
 This module provides unified path handling for both development and
 PyInstaller-frozen environments, using platform-appropriate directory
@@ -13,7 +13,7 @@ from pathlib import Path
 
 def get_user_data_dir() -> Path:
     """
-    Get the user data directory: %LOCALAPPDATA%\\AFOMIS Help and Support\\
+    Get the user data directory: %LOCALAPPDATA%\\Document Q&A Assistant\\
 
     Creates the directory if it doesn't exist.
 
@@ -21,7 +21,7 @@ def get_user_data_dir() -> Path:
         Path: The user data directory path
     """
     local_app_data = os.environ.get('LOCALAPPDATA', os.path.expandvars('%LOCALAPPDATA%'))
-    user_data_dir = Path(local_app_data) / 'AFOMIS Help and Support'
+    user_data_dir = Path(local_app_data) / 'Document Q&A Assistant'
     user_data_dir.mkdir(parents=True, exist_ok=True)
     return user_data_dir
 

@@ -163,7 +163,7 @@ class GGUFBackend(BaseLLM):
             temperature=config.temperature,
             top_p=config.top_p,
             repeat_penalty=1.1,
-            stop=None
+            stop=config.stop_sequences
         )
         
         # Return the generated text - llama-cpp-python returns a dict with 'choices' key

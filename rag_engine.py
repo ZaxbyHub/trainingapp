@@ -359,22 +359,29 @@ class RAGEngine:
 
                     if last_user_content:
                         retrieval_query = last_user_content
-                        print(f"[INFO] Follow-up detected — retrieval query: '{retrieval_query[:80]}'")
 
-        # Retrieve context — hybrid (BM25+vector+RRF) if enabled, else vector-only
-        context, sources = self.vector_store.get_context(
+        # Determine initial fetch count: use initial_retrieval_top_k when reranking is enabled
+        fetch_n = self.config.initial_retrieval_top_k if self.config.reranking_enabled else n
+
+        # Retrieve chunks (vector-only; hybrid search handled via get_context for non-reranking path)
+        chunks = self.vector_store.get_chunks(
             retrieval_query,
-            n_results=n,
-            min_similarity=self.config.min_similarity,
-            hybrid_search=self.config.hybrid_search
+            n_results=fetch_n,
+            min_similarity=self.config.min_similarity
         )
 
-        # Diagnostic logging
-        print(f"[DEBUG] Context type: {type(context)}, len: {len(context) if context else 'None'}")
-        print(f"[DEBUG] Sources: {sources}")
-        print(f"[DEBUG] Context preview: {context[:200] if context else 'None'}")
-        
-        if not context:
+        # Window expansion: fetch adjacent chunks to widen context
+        if self.config.retrieval_window > 0 and chunks:
+            chunks = self._expand_chunks_with_window(chunks, self.config.retrieval_window)
+
+        # Reranking: re-score with cross-encoder and take top n
+        if self.config.reranking_enabled and chunks:
+            from reranking import CrossEncoderReranker
+            reranker = CrossEncoderReranker(model_name=self.config.reranker_model)
+            ranked = reranker.rerank(retrieval_query, chunks, top_k=n)
+            chunks = [c for c, _ in ranked]
+
+        if not chunks:
             return QueryResult(
                 question=question,
                 answer="I couldn't find any relevant information in the documents to answer your question.",
@@ -383,7 +390,11 @@ class RAGEngine:
                 inference_time=time.time() - start_time,
                 chunks_retrieved=0
             )
-        
+
+        # Build context string and deduplicated source list from retrieved chunks
+        context = "\n\n---\n\n".join(c.text for c in chunks[:n])
+        sources = list(dict.fromkeys(c.source for c in chunks[:n]))
+
         # Pre-truncate context to safe size (6000 chars ≈ 1500 tokens, within GGUF n_ctx=8192 budget)
         safe_context = context[:6000]
         

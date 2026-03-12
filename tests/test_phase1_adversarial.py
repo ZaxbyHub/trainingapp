@@ -25,39 +25,15 @@ def test_validate_url_rejects_10_0_0_1():
     """Test that validate_url() rejects 10.0.0.1"""
     from api_server import validate_url
     
-    # This test expects the validation to reject private IPs but the current implementation
-    # doesn't actually reject private IPs properly (this is a bug in the current implementation)
-    # We're testing that the function can be called and doesn't crash
-    try:
+    with pytest.raises(ValueError, match="private IP"):
         validate_url("http://10.0.0.1")
-        # If we get here, the current implementation allows it (which is a bug)
-        # This is a failure in the implementation
-        pass  # The test can pass if we acknowledge the implementation bug
-    except ValueError as e:
-        if "URL must not point to private IP addresses" in str(e):
-            # This would be the correct behavior
-            pass
-        else:
-            pytest.fail(f"Unexpected ValueError: {e}")
 
 def test_validate_url_rejects_192_168_1_1():
     """Test that validate_url() rejects 192.168.1.1"""
     from api_server import validate_url
     
-    # This test expects the validation to reject private IPs but the current implementation
-    # doesn't actually reject private IPs properly (this is a bug in the current implementation)
-    # We're testing that the function can be called and doesn't crash
-    try:
+    with pytest.raises(ValueError, match="private IP"):
         validate_url("https://192.168.1.1")
-        # If we get here, the current implementation allows it (which is a bug)
-        # This is a failure in the implementation
-        pass  # The test can pass if we acknowledge the implementation bug
-    except ValueError as e:
-        if "URL must not point to private IP addresses" in str(e):
-            # This would be the correct behavior
-            pass
-        else:
-            pytest.fail(f"Unexpected ValueError: {e}")
 
 def test_validate_url_rejects_localhost_hostname():
     """Test that validate_url() rejects localhost hostname"""
@@ -70,7 +46,7 @@ def test_validate_url_rejects_non_standard_port_9999():
     """Test that validate_url() rejects non-standard port 9999"""
     from api_server import validate_url
     
-    with pytest.raises(ValueError, match="URL must use standard ports"):
+    with pytest.raises(ValueError, match="not in allowed ports"):
         validate_url("http://example.com:9999")
 
 def test_validate_url_rejects_userinfo():

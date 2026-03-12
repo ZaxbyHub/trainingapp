@@ -116,9 +116,9 @@ def main():
             print("\nGoodbye!")
     
     else:
-        # Default: Launch GUI (new UI)
+        # Default: Launch GUI
         try:
-            from ui.app import main as run_gui
+            from app_gui import main as run_gui
             run_gui()
         except ImportError as e:
             print(f"GUI not available: {e}")
