@@ -9,7 +9,6 @@ import json
 from typing import List, Tuple, Optional, Dict, Any
 from pathlib import Path
 
-import pickle
 
 try:
     import chromadb
@@ -32,6 +31,9 @@ except ImportError:
 
 from document_processor import DocumentChunk
 from utils import rrf_fuse
+
+import logging
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingModel:
@@ -85,10 +87,9 @@ class BM25Index:
         tokenized_corpus = [chunk.text.split() for chunk in chunks]
         # Create BM25Okapi index from tokenized corpus
         if tokenized_corpus:
-            try:
+            if BM25_AVAILABLE:
                 self.bm25_index = BM25Okapi(tokenized_corpus)
-            except NameError:
-                # BM25 not available, skip indexing
+            else:
                 self.bm25_index = None
 
     def add_document(self, chunk_id: str, text: str):
@@ -109,9 +110,9 @@ class BM25Index:
         # Rebuild index with new document
         tokenized_corpus = [chunk.text.split() for chunk in self.chunks]
         if tokenized_corpus:
-            try:
+            if BM25_AVAILABLE:
                 self.bm25_index = BM25Okapi(tokenized_corpus)
-            except NameError:
+            else:
                 self.bm25_index = None
     
     def search(self, query: str, top_k: int = 10) -> List[Tuple[int, float]]:
@@ -133,20 +134,36 @@ class BM25Index:
             return []
     
     def save(self, path: str):
-        """Save index and chunks using pickle."""
+        """Save chunks to JSON (BM25 index is rebuilt on load)."""
+        import dataclasses
         data = {
-            'chunks': self.chunks,
-            'bm25_index': self.bm25_index
+            'chunks': [dataclasses.asdict(chunk) for chunk in self.chunks]
         }
-        with open(path, 'wb') as f:
-            pickle.dump(data, f)
-    
+        json_path = path.replace('.pkl', '.json') if path.endswith('.pkl') else path
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+
     def load(self, path: str):
-        """Load index and chunks from pickle."""
-        with open(path, 'rb') as f:
-            data = pickle.load(f)
-        self.chunks = data['chunks']
-        self.bm25_index = data['bm25_index']
+        """Load chunks from JSON and rebuild BM25 index."""
+        from document_processor import DocumentChunk
+        json_path = path.replace('.pkl', '.json') if path.endswith('.pkl') else path
+        if not os.path.exists(json_path):
+            # No saved index — start fresh
+            self.chunks = []
+            self.bm25_index = None
+            return
+        with open(json_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        self.chunks = [DocumentChunk(**chunk_dict) for chunk_dict in data.get('chunks', [])]
+        # Rebuild BM25Okapi from corpus
+        tokenized_corpus = [chunk.text.split() for chunk in self.chunks]
+        if tokenized_corpus:
+            if BM25_AVAILABLE:
+                self.bm25_index = BM25Okapi(tokenized_corpus)
+            else:
+                self.bm25_index = None
+        else:
+            self.bm25_index = None
 
 
 class VectorStore:
@@ -252,9 +269,9 @@ class VectorStore:
             try:
                 existing = self.collection.get(ids=ids)
                 existing_ids = set(existing['ids']) if existing['ids'] else set()
-            except Exception:
-                pass
-            
+            except Exception as e:
+                logger.warning("Could not check for existing IDs, proceeding without dedup: %s", e)
+
             new_indices = [j for j, id_ in enumerate(ids) if id_ not in existing_ids]
             
             if new_indices:
@@ -282,37 +299,19 @@ class VectorStore:
         self.metadata["document_count"] = len(self.metadata["documents"])
         self.metadata["chunk_count"] = self.collection.count()
         
-        # Build BM25 index if not exists and we have chunks
-        if self.metadata["chunk_count"] > 0 and not self.bm25_index:
-            self.bm25_index = BM25Index()
-            # Get all chunks from the collection for BM25 indexing
-            all_chunks = []
-            # We need to get all document chunks from the collection
-            # Note: ChromaDB API changed - 'ids' is not a valid include option
-            try:
-                # Try newer API - get all data at once
-                all_data = self.collection.get(include=["documents", "metadatas"])
-                if all_data.get('documents'):
-                    for doc, meta in zip(all_data['documents'], all_data['metadatas']):
-                        chunk = DocumentChunk(
-                            text=doc,
-                            source=meta['source'],
-                            chunk_index=meta['chunk_index'],
-                            page=meta['page'] if 'page' in meta else None
-                        )
-                        all_chunks.append(chunk)
-            except Exception:
-                # Fallback - skip BM25 indexing if API issues
-                pass
-            
-            if all_chunks:
-                self.bm25_index.build_index(all_chunks)
+        # Update BM25 index incrementally for newly added chunks
+        if added > 0:
+            if not self.bm25_index:
+                self.bm25_index = BM25Index()
+            for chunk in chunks:
+                chunk_id = f"{chunk.source}_{chunk.chunk_index}"
+                self.bm25_index.add_document(chunk_id, chunk.text)
         
         self._save_metadata()
         
         return added
     
-    def add_chunks_with_embeddings(self, chunks_with_vectors: list[dict]) -> None:
+    def add_chunks_with_embeddings(self, chunks_with_vectors: List[Dict[str, Any]]) -> None:
         """Add document chunks with pre-computed embeddings to the vector store.
         
         Args:
@@ -332,41 +331,40 @@ class VectorStore:
         documents = []
         embeddings = []
         metadatas = []
-        
-        # Validate and collect all chunk data
+
+        # Collect all chunk data first
         for chunk_data in chunks_with_vectors:
             chunk_id = chunk_data.get("chunk_id")
             text = chunk_data.get("text")
             embedding = chunk_data.get("embedding")
             metadata = chunk_data.get("metadata", {})
-            
+
             if embedding is None:
                 raise ValueError(f"Chunk {chunk_id} missing 'embedding' field")
-            
-            # Validate embedding type
+
             if not isinstance(embedding, list):
                 raise ValueError(f"Chunk {chunk_id}: 'embedding' must be a list, got {type(embedding).__name__}")
             if not all(isinstance(x, (int, float)) for x in embedding):
                 raise ValueError(f"Chunk {chunk_id}: 'embedding' must contain only numbers")
-            
+
             if not chunk_id or not text or not embedding:
                 raise ValueError(f"Invalid chunk data: {chunk_data}")
-            
-            # Check if chunk_id already exists
-            try:
-                existing = self.collection.get(ids=[chunk_id])
-                # If we got results and the ID matches, it exists
-                if existing and existing['ids'] and len(existing['ids']) > 0:
-                    raise ValueError(f"Chunk ID {chunk_id} already exists")
-            except KeyError:
-                # If key error occurs, assume it doesn't exist
-                pass
-            
+
             ids.append(chunk_id)
             documents.append(text)
             embeddings.append(embedding)
             metadatas.append(metadata)
-        
+
+        # Batch existence check BEFORE any writes
+        all_existing_ids = set()
+        try:
+            existing = self.collection.get(ids=ids)
+            all_existing_ids = set(existing['ids']) if existing['ids'] else set()
+        except Exception as e:
+            logger.warning("Could not check for existing IDs in batch: %s", e)
+        if all_existing_ids:
+            raise ValueError(f"Chunk IDs already exist: {all_existing_ids}")
+
         # Add to ChromaDB collection
         self.collection.add(
             ids=ids,
@@ -380,9 +378,7 @@ class VectorStore:
             self.bm25_index = BM25Index()
 
         # Update BM25 index with new chunks
-        for chunk_data in chunks_with_vectors:
-            chunk_id = chunk_data.get("chunk_id")
-            text = chunk_data.get("text")
+        for chunk_id, text in zip(ids, documents):
             if chunk_id and text:
                 self.bm25_index.add_document(chunk_id, text)
     
@@ -410,12 +406,6 @@ class VectorStore:
                 matches.append((doc, meta, similarity))
         
         return matches
-    
-    def _get_chunk_by_index(self, index: int) -> Optional[DocumentChunk]:
-        """Helper method to retrieve chunk by index from BM25 index."""
-        if self.bm25_index and index < len(self.bm25_index.chunks):
-            return self.bm25_index.chunks[index]
-        return None
     
     def get_chunks(self, query: str, n_results: int = 3, min_similarity: float = 0.3) -> List[DocumentChunk]:
         """Get document chunks for RAG without combining context."""
@@ -445,22 +435,19 @@ class VectorStore:
     def get_chunks_by_source(self, source: str) -> List[DocumentChunk]:
         """Get all chunks from a specific source document."""
         try:
-            # Get all chunks from this source by filtering metadata
-            # Note: ChromaDB API changed - 'ids' is not a valid include option
-            all_data = self.collection.get(include=["documents", "metadatas"])
+            all_data = self.collection.get(where={"source": source}, include=["documents", "metadatas"])
             chunks = []
-            
+
             if all_data.get('documents'):
                 for doc, meta in zip(all_data['documents'], all_data['metadatas']):
-                    if meta.get('source') == source:
-                        chunk = DocumentChunk(
-                            text=doc,
-                            source=meta['source'],
-                            chunk_index=meta['chunk_index'],
-                            page=meta['page'] if 'page' in meta else None
-                        )
-                        chunks.append(chunk)
-            
+                    chunk = DocumentChunk(
+                        text=doc,
+                        source=meta['source'],
+                        chunk_index=meta['chunk_index'],
+                        page=meta['page'] if 'page' in meta else None
+                    )
+                    chunks.append(chunk)
+
             # Sort by chunk_index
             chunks.sort(key=lambda c: c.chunk_index)
             return chunks
@@ -518,9 +505,9 @@ class VectorStore:
             prefix = f"{sanitized_id}_"
             self.bm25_index.chunks = [
                 chunk for chunk in self.bm25_index.chunks
-                if not chunk[0].startswith(prefix)
+                if not chunk.source.startswith(prefix)
             ]
-            self.bm25_index.bm25 = None  # Invalidate cached index
+            self.bm25_index.bm25_index = None  # Invalidate cached index
 
         # Remove the document from metadata
         if sanitized_id in self.metadata.get('documents', {}):

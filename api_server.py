@@ -89,8 +89,7 @@ def validate_url(
 
         if parsed.port not in ports:
             raise ValueError(
-                f"URL port {parsed.port} is not in allowed ports: {sorted(ports)}. "
-                f"Use standard ports or explicitly configure the port."
+                f"URL must use standard ports (got {parsed.port}, allowed: {sorted(ports)})"
             )
 
     # DNS rebinding protection - resolve hostname and validate IP
@@ -402,14 +401,14 @@ async def lifespan(app: FastAPI):
                 ollama_url = validate_url(ollama_url)
             except ValueError as e:
                 logger.error("Invalid Ollama URL configuration")
-                raise HTTPException(status_code=500, detail="Invalid configuration")
+                raise RuntimeError("Startup failed: Invalid configuration")
         
         if api_url:
             try:
                 api_url = validate_url(api_url)
             except ValueError as e:
                 logger.error("Invalid API URL configuration")
-                raise HTTPException(status_code=500, detail="Invalid configuration")
+                raise RuntimeError("Startup failed: Invalid configuration")
         
         # Validate model paths
         model_path = os.environ.get("RAG_MODEL_PATH")
@@ -419,7 +418,7 @@ async def lifespan(app: FastAPI):
                 model_path = validate_model_path(model_path, Path("."))
             except ValueError as e:
                 logger.error("Invalid model path configuration")
-                raise HTTPException(status_code=500, detail="Invalid configuration")
+                raise RuntimeError("Startup failed: Invalid configuration")
         
         # Validate GGUF path if provided
         gguf_path = os.environ.get("RAG_GGUF_PATH")
@@ -429,7 +428,7 @@ async def lifespan(app: FastAPI):
                 gguf_path = validate_model_path(gguf_path, Path("."))
             except ValueError as e:
                 logger.error("Invalid GGUF path configuration")
-                raise HTTPException(status_code=500, detail="Invalid configuration")
+                raise RuntimeError("Startup failed: Invalid configuration")
         
         # Validate device string if provided
         device = os.environ.get("RAG_DEVICE")
@@ -440,7 +439,7 @@ async def lifespan(app: FastAPI):
                 dangerous_patterns = (";", "|", "&", "&&", "||", ">", "<", "`", "$(", "'", "\"")
                 if any(pattern in device for pattern in dangerous_patterns):
                     logger.error("Invalid device string configuration")
-                    raise HTTPException(status_code=500, detail="Invalid configuration")
+                    raise RuntimeError("Startup failed: Invalid configuration")
         
         # Validate model names if provided
         ollama_model = os.environ.get("RAG_OLLAMA_MODEL")
@@ -450,13 +449,13 @@ async def lifespan(app: FastAPI):
             # Basic validation - ensure it's a reasonable model name
             if ollama_model.startswith(".") or ollama_model.startswith("/") or ".." in ollama_model:
                 logger.error("Invalid Ollama model name configuration")
-                raise HTTPException(status_code=500, detail="Invalid configuration")
+                raise RuntimeError("Startup failed: Invalid configuration")
         
         if api_model:
             # Basic validation - ensure it's a reasonable model name
             if api_model.startswith(".") or api_model.startswith("/") or ".." in api_model:
                 logger.error("Invalid API model name configuration")
-                raise HTTPException(status_code=500, detail="Invalid configuration")
+                raise RuntimeError("Startup failed: Invalid configuration")
         
         config = RAGConfig(
             db_path=db_path,
@@ -481,8 +480,8 @@ async def lifespan(app: FastAPI):
         yield
         
     except Exception as e:
-        logger.error("Startup configuration error")
-        raise HTTPException(status_code=500, detail="Invalid configuration")
+        logger.error("Startup configuration error: %s", e)
+        raise RuntimeError(f"Startup failed: {e}")
     
     print("Shutting down...")
 
@@ -496,8 +495,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["http://localhost", "http://127.0.0.1", "http://localhost:8080", "http://127.0.0.1:8080"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -607,6 +606,7 @@ async def ingest_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
 
     import tempfile
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             content = await file.read()
@@ -616,8 +616,6 @@ async def ingest_file(file: UploadFile = File(...)):
         # Use sanitized display name as source
         stats = engine.ingest_file(tmp_path, source_name=display_name)
 
-        os.unlink(tmp_path)
-
         return IngestResponse(
             success=stats["success"],
             documents=1 if stats["success"] else 0,
@@ -626,6 +624,9 @@ async def ingest_file(file: UploadFile = File(...)):
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 @app.delete("/documents")

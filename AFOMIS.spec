@@ -12,14 +12,12 @@ from PyInstaller.utils.hooks import collect_dynamic_libs
 
 # Analysis configuration
 a = Analysis(
-    ['ui/app.py'],  # Entry point
+    ['main.py'],  # Entry point
     pathex=[os.getcwd()],
     binaries=collect_dynamic_libs('llama_cpp'),  # Include llama-cpp-python native DLLs
     datas=[
         ('bundled_models', 'bundled_models'),  # Bundled embedding model
         ('seed_data', 'seed_data'),            # Seed chunks and manifest
-        ('ui', 'ui'),                          # UI package
-        ('models', 'models'),                  # GGUF model files
     ],
     hiddenimports=[
         'chromadb',

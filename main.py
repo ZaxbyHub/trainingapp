@@ -33,7 +33,7 @@ def main():
     parser.add_argument("--db-path", type=str, default="./doc_qa_db",
                         help="Path to vector database")
     parser.add_argument("--model-path", type=str,
-                        help="Path to OpenVINO model")
+                        help="Path to GGUF model file (legacy alias for --gguf-path)")
     parser.add_argument("--ollama-url", type=str, default="http://localhost:11434",
                         help="Ollama server URL")
     parser.add_argument("--ollama-model", type=str, default="phi3:mini",
@@ -116,9 +116,9 @@ def main():
             print("\nGoodbye!")
     
     else:
-        # Default: Launch GUI (new UI)
+        # Default: Launch GUI
         try:
-            from ui.app import main as run_gui
+            from app_gui import main as run_gui
             run_gui()
         except ImportError as e:
             print(f"GUI not available: {e}")

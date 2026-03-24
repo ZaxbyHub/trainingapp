@@ -128,9 +128,10 @@ class TestQueryWithMockedVectorStore:
                 with patch('rag_engine.RAGEngine._save_config'):
                     # Setup mocks
                     mock_store_instance = MagicMock()
-                    mock_store_instance.get_chunks.return_value = [
-                        DocumentChunk(text="Context from document.", source="test.txt", chunk_index=0)
-                    ]
+                    mock_store_instance.get_context.return_value = (
+                        "Context from document.",
+                        ["test.txt"]
+                    )
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 1,
                         "chunk_count": 1,
@@ -159,7 +160,7 @@ class TestQueryWithMockedVectorStore:
             with patch('rag_engine.SmartLLM') as mock_llm:
                 with patch('rag_engine.RAGEngine._save_config'):
                     mock_store_instance = MagicMock()
-                    mock_store_instance.get_chunks.return_value = []
+                    mock_store_instance.get_context.return_value = ("", [])
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 0,
                         "chunk_count": 0,
@@ -167,13 +168,13 @@ class TestQueryWithMockedVectorStore:
                         "documents": []
                     }
                     mock_vector_store.return_value = mock_store_instance
-                    
+
                     mock_llm_instance = MagicMock()
                     mock_llm.return_value = mock_llm_instance
-                    
+
                     engine = RAGEngine()
                     result = engine.query("What is this about?")
-                    
+
                     # Should return fallback message
                     assert "couldn't find any relevant information" in result.answer.lower()
                     assert result.sources == []
@@ -221,7 +222,7 @@ class TestQueryGreetingBypass:
                     # Should still call LLM but with empty context
                     mock_llm_instance.answer_question.assert_called()
                     # Vector store should not be queried for greetings
-                    assert mock_store_instance.get_chunks.call_count == 0
+                    assert mock_store_instance.get_context.call_count == 0
     
     def test_greeting_variations(self):
         """Test various greeting variations."""
@@ -247,9 +248,7 @@ class TestQueryGreetingBypass:
             with patch('rag_engine.SmartLLM') as mock_llm:
                 with patch('rag_engine.RAGEngine._save_config'):
                     mock_store_instance = MagicMock()
-                    mock_store_instance.get_chunks.return_value = [
-                        DocumentChunk(text="Context", source="test.txt", chunk_index=0)
-                    ]
+                    mock_store_instance.get_context.return_value = ("Context", ["test.txt"])
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 1,
                         "chunk_count": 1,
@@ -257,16 +256,16 @@ class TestQueryGreetingBypass:
                         "documents": ["test.txt"]
                     }
                     mock_vector_store.return_value = mock_store_instance
-                    
+
                     mock_llm_instance = MagicMock()
                     mock_llm_instance.answer_question.return_value = "Answer."
                     mock_llm.return_value = mock_llm_instance
-                    
+
                     engine = RAGEngine()
                     result = engine.query("What is the meaning of life?")
-                    
+
                     # Should use RAG for non-greeting
-                    mock_store_instance.get_chunks.assert_called()
+                    mock_store_instance.get_context.assert_called()
 
 
 class TestNoRelevantInfo:
@@ -278,7 +277,7 @@ class TestNoRelevantInfo:
             with patch('rag_engine.SmartLLM') as mock_llm:
                 with patch('rag_engine.RAGEngine._save_config'):
                     mock_store_instance = MagicMock()
-                    mock_store_instance.get_chunks.return_value = []
+                    mock_store_instance.get_context.return_value = ("", [])
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 5,
                         "chunk_count": 10,
@@ -304,9 +303,7 @@ class TestNoRelevantInfo:
             with patch('rag_engine.SmartLLM') as mock_llm:
                 with patch('rag_engine.RAGEngine._save_config'):
                     mock_store_instance = MagicMock()
-                    mock_store_instance.get_chunks.return_value = [
-                        DocumentChunk(text="Some context", source="test.txt", chunk_index=0)
-                    ]
+                    mock_store_instance.get_context.return_value = ("Some context", ["test.txt"])
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 1,
                         "chunk_count": 1,

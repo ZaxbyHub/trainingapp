@@ -123,9 +123,9 @@ class TestPostAsk:
     
     def test_ask_question_empty_question(self):
         """Test asking with empty question."""
-        request = QuestionRequest(question="", n_results=3)
-        response = client.post("/ask", json=request.dict())
-        
+        # Bypass Pydantic model construction to test API-level validation
+        response = client.post("/ask", json={"question": "", "n_results": 3})
+
         # FastAPI validation should catch empty question
         assert response.status_code == 422
 

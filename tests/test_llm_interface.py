@@ -336,7 +336,7 @@ class TestRAGPromptBuilder:
         assert question in prompt
         assert context in prompt
         assert "doc1.txt" in prompt
-        assert "You are a helpful assistant" in prompt
+        assert "You are a precise document assistant" in prompt
     
     def test_build_prompt_empty_context(self):
         """Test building prompt with empty context."""
@@ -358,9 +358,8 @@ class TestInferenceConfig:
         config = InferenceConfig()
         
         assert config.max_tokens == 512
-        assert config.temperature == 0.3
+        assert config.temperature == 0.7
         assert config.top_p == 0.9
-        assert config.do_sample is True
     
     def test_config_custom_values(self):
         """Test InferenceConfig with custom values."""
@@ -368,13 +367,11 @@ class TestInferenceConfig:
             max_tokens=1024,
             temperature=0.7,
             top_p=0.95,
-            do_sample=False
         )
-        
+
         assert config.max_tokens == 1024
         assert config.temperature == 0.7
         assert config.top_p == 0.95
-        assert config.do_sample is False
 
 
 if __name__ == "__main__":

@@ -167,7 +167,10 @@ class GGUFBackend(BaseLLM):
         )
         
         # Return the generated text - llama-cpp-python returns a dict with 'choices' key
-        return result["choices"][0]["text"]
+        choices = result.get("choices") or []
+        if not choices:
+            raise RuntimeError("GGUF backend returned no choices")
+        return choices[0].get("text", "")
 
     def chat_complete(self, system_prompt: str, user_prompt: str, config: Optional[InferenceConfig] = None) -> str:
         """Generate response using chat completion API (applies model chat template).
@@ -192,7 +195,10 @@ class GGUFBackend(BaseLLM):
             repeat_penalty=1.1,
         )
 
-        raw = response["choices"][0]["message"]["content"]
+        choices = response.get("choices") or []
+        if not choices:
+            raise RuntimeError("GGUF chat backend returned no choices")
+        raw = choices[0].get("message", {}).get("content", "")
         # Strip think-tag blocks that Qwen3 may emit despite /no_think
         cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
         return cleaned
@@ -252,7 +258,7 @@ class OllamaLLM(BaseLLM):
             headers={"Content-Type": "application/json"}
         )
         
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=120) as response:
             data = json.loads(response.read().decode())
             return data.get("response", "")
     
@@ -296,9 +302,12 @@ class OpenAICompatibleLLM(BaseLLM):
             }
         )
         
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=120) as response:
             data = json.loads(response.read().decode())
-            return data["choices"][0]["message"]["content"]
+            choices = data.get("choices") or []
+            if not choices:
+                raise RuntimeError("OpenAI-compatible API returned no choices")
+            return choices[0].get("message", {}).get("content", "")
     
     def get_info(self) -> Dict[str, Any]:
         return {

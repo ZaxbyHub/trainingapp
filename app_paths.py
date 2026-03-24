@@ -9,6 +9,7 @@ structures on Windows.
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 
 def get_user_data_dir() -> Path:
@@ -20,7 +21,7 @@ def get_user_data_dir() -> Path:
     Returns:
         Path: The user data directory path
     """
-    local_app_data = os.environ.get('LOCALAPPDATA', os.path.expandvars('%LOCALAPPDATA%'))
+    local_app_data = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
     user_data_dir = Path(local_app_data) / 'AFOMIS Help and Support'
     user_data_dir.mkdir(parents=True, exist_ok=True)
     return user_data_dir
@@ -104,7 +105,7 @@ def _get_base_dir() -> Path:
         return Path(__file__).parent
 
 
-def find_bundled_model(ext: str) -> Path | None:
+def find_bundled_model(ext: str) -> Optional[Path]:
     """
     Find a bundled model file by extension in the models/ directory.
 

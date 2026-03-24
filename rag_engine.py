@@ -11,7 +11,11 @@ from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass
 import app_paths
+import logging
+logger = logging.getLogger(__name__)
 
+# Maximum characters of context to pass to LLM (~1 500 tokens within GGUF n_ctx budget)
+_SAFE_CONTEXT_CHARS = 6000
 
 
 from document_processor import DocumentProcessor, DocumentChunk
@@ -129,15 +133,15 @@ class RAGEngine:
         self.config = config or RAGConfig()
         self.gguf_path = gguf_path
         
-        print("=" * 50)
-        print("Initializing RAG Engine")
-        print("=" * 50)
-        
+        logger.info("=" * 50)
+        logger.info("Initializing RAG Engine")
+        logger.info("=" * 50)
+
         self.doc_processor = DocumentProcessor(
             chunk_size=self.config.chunk_size,
             chunk_overlap=self.config.chunk_overlap
         )
-        print("[OK] Document processor ready")
+        logger.info("[OK] Document processor ready")
         
         self.vector_store = VectorStore(
             db_path=self.config.db_path,
@@ -148,9 +152,9 @@ class RAGEngine:
         self._init_llm(model_path, ollama_model, ollama_url, api_url, api_model, device, gguf_path)
         
         self._save_config()
-        print("=" * 50)
-        print("RAG Engine Ready")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("RAG Engine Ready")
+        logger.info("=" * 50)
     
     def _init_llm(
         self,
@@ -175,10 +179,10 @@ class RAGEngine:
                 device=device,
                 gguf_path=gguf_path
             )
-            print(f"[OK] LLM initialized: {self.llm.get_info()['backend']}")
+            logger.info("[OK] LLM initialized: %s", self.llm.get_info()['backend'])
         except Exception as e:
-            print(f"[WARN] LLM not available: {e}")
-            print("  RAG engine will work for document ingestion only.")
+            logger.warning("[WARN] LLM not available: %s", e)
+            logger.info("  RAG engine will work for document ingestion only.")
             self.llm = None
     
     def _save_config(self):
@@ -214,7 +218,8 @@ class RAGEngine:
                 "success": False,
                 "message": "No documents found or processed",
                 "documents": 0,
-                "chunks": 0,
+                "chunks_total": 0,
+                "chunks_added": 0,
                 "time_seconds": time.time() - start_time
             }
         
@@ -370,9 +375,9 @@ class RAGEngine:
         )
 
         # Diagnostic logging
-        print(f"[DEBUG] Context type: {type(context)}, len: {len(context) if context else 'None'}")
-        print(f"[DEBUG] Sources: {sources}")
-        print(f"[DEBUG] Context preview: {context[:200] if context else 'None'}")
+        logger.debug("Context type: %s, len: %s", type(context), len(context) if context else 'None')
+        logger.debug("Sources: %s", sources)
+        logger.debug("Context preview: %s", context[:200] if context else 'None')
         
         if not context:
             return QueryResult(
@@ -384,8 +389,8 @@ class RAGEngine:
                 chunks_retrieved=0
             )
         
-        # Pre-truncate context to safe size (6000 chars ≈ 1500 tokens, within GGUF n_ctx=8192 budget)
-        safe_context = context[:6000]
+        # Pre-truncate context to stay within LLM context budget
+        safe_context = context[:_SAFE_CONTEXT_CHARS]
         
         # Use answer_question instead of generate for proper RAG handling
         answer = self.llm.answer_question(
@@ -483,6 +488,8 @@ def create_engine_from_env() -> RAGEngine:
     Returns:
         Configured RAGEngine instance
     """
+    import warnings
+    warnings.warn("create_engine_from_env() is deprecated, use engine_factory directly", DeprecationWarning, stacklevel=2)
     return _factory_create_engine_from_env()
 
 

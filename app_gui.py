@@ -6,6 +6,7 @@ A user-friendly interface for the RAG-based document question answering system.
 import os
 import sys
 import json
+import logging
 import threading
 import queue
 from pathlib import Path
@@ -26,6 +27,10 @@ try:
     import tkinter as tk
 except ImportError:
     pass
+
+import app_paths
+
+logger = logging.getLogger(__name__)
 
 
 def get_resource_path(relative_path: str) -> str:
@@ -194,6 +199,7 @@ class DocumentQAApp(CTk):
         
         self.settings = self._load_settings()
         self.engine = None
+        self.conversation_history = []
         self.message_queue = queue.Queue()
         
         self._create_widgets()
@@ -203,10 +209,7 @@ class DocumentQAApp(CTk):
     
     def _get_settings_path(self) -> str:
         """Get path to settings file."""
-        app_data = os.environ.get("APPDATA", os.path.expanduser("~"))
-        settings_dir = Path(app_data) / "DocumentQA"
-        settings_dir.mkdir(parents=True, exist_ok=True)
-        return str(settings_dir / self.SETTINGS_FILE)
+        return str(app_paths.get_settings_path())
     
     def _load_settings(self) -> dict:
         """Load settings from file."""
@@ -413,7 +416,8 @@ class DocumentQAApp(CTk):
                         size_mb = file_size / (1024 * 1024)
                         filename = os.path.basename(gguf_path)
                         self.model_label.configure(text=f"Model: {filename} ({size_mb:.1f}MB)")
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("Could not read model file info for %s: %s", gguf_path, e)
                         self.model_label.configure(text="Model: Unknown")
                 else:
                     self.model_label.configure(text="Model: None")
@@ -442,7 +446,8 @@ class DocumentQAApp(CTk):
                         size_mb = file_size / (1024 * 1024)
                         filename = os.path.basename(gguf_path)
                         self.model_label.configure(text=f"Model: {filename} ({size_mb:.1f}MB)")
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("Could not read model file info for %s: %s", gguf_path, e)
                         self.model_label.configure(text="Model: Unknown")
                 else:
                     self.model_label.configure(text="Model: None")
@@ -516,8 +521,11 @@ class DocumentQAApp(CTk):
         
         def query():
             try:
-                result = self.engine.query(question)
-                
+                result = self.engine.query(question, conversation_history=self.conversation_history)
+                self.conversation_history.append({"role": "user", "content": question})
+                self.conversation_history.append({"role": "assistant", "content": result.answer})
+                self.conversation_history = self.conversation_history[-20:]
+
                 self.message_queue.put(("message", "assistant", result.answer, result.sources))
                 self.message_queue.put(("status", f"Ready ({result.inference_time:.1f}s)"))
                 self.message_queue.put(("enable_input", True))

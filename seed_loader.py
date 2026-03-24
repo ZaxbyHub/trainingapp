@@ -103,11 +103,20 @@ class SeedDataLoader:
             chunks: List of all chunks (filtered by _import_doc method).
         """
         # Filter chunks to only those with matching doc_id
-        doc_chunks = [
-            {"doc_id": c["doc_id"], "chunk_id": c["chunk_id"], "text": c["text"], "embedding": c["embedding"], "metadata": c["metadata"]}
-            for c in chunks
-            if c.get("doc_id") == doc_id
-        ]
+        doc_chunks = []
+        for i, c in enumerate(chunks):
+            if c.get("doc_id") != doc_id:
+                continue
+            chunk_id = c.get("chunk_id") or f"{doc_id}_chunk_{i}"
+            metadata = dict(c.get("metadata", {}))
+            if "doc_id" not in metadata:
+                metadata["doc_id"] = doc_id
+            doc_chunks.append({
+                "chunk_id": chunk_id,
+                "text": c["text"],
+                "embedding": c["embedding"],
+                "metadata": metadata,
+            })
 
         # Call vector store to add chunks
         if doc_chunks:
