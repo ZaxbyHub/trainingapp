@@ -1,0 +1,47 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  nightly:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~\AppData\Local\pip\Cache
+            ~\AppData\Local\PyInstaller
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      
+      - name: Build
+        run: python scripts/build.py
+        timeout-minutes: 45
+      
+      - name: Create nightly archive
+        run: |
+          $date = Get-Date -Format "yyyy-MM-dd"
+          Compress-Archive -Path dist\DocumentQAApp\* -DestinationPath "DocumentQAApp-nightly-$date.zip"
+      
+      - name: Upload nightly build
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-build-${{ github.run_number }}
+          path: DocumentQAApp-nightly-*.zip
+          retention-days: 7
