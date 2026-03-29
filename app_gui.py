@@ -317,8 +317,23 @@ class DocumentQAApp(CTk):
     def _load_settings(self) -> dict:
         """Load settings from file."""
         settings_path = self._get_settings_path()
+
+        # Auto-detect bundled model if no settings file exists
+        bundled_model = ""
+        if not os.path.exists(settings_path):
+            bundled_models = [
+                Path("models") / "phi3-mini-int4.gguf",
+                Path("models") / "phi3.5-mini-instruct-int4-cw-ov",
+                Path("test_model.gguf"),
+            ]
+            for model_file in bundled_models:
+                if model_file.is_file():
+                    bundled_model = str(model_file)
+                    print(f"[INFO] Using bundled model: {model_file}")
+                    break
+
         default_settings = {
-            "gguf_path": "",
+            "gguf_path": bundled_model,
             "ollama_url": "http://localhost:11434",
             "ollama_model": "phi3:mini",
             "api_url": "",
