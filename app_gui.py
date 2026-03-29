@@ -209,7 +209,7 @@ class SettingsDialog(CTkToplevel):
         self.api_url_entry.insert(0, self.settings.get("api_url", ""))
         self.chunk_size_entry.insert(0, str(self.settings.get("chunk_size", 512)))
         self.n_results_entry.insert(0, str(self.settings.get("n_results", 3)))
-        self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", 512)))
+        self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", 1024)))
         self.temperature_entry.insert(0, str(self.settings.get("temperature", 0.3)))
         self.hybrid_search_var.set(
             "on" if self.settings.get("hybrid_search", True) else "off"
@@ -324,7 +324,7 @@ class DocumentQAApp(CTk):
             "api_url": "",
             "chunk_size": 512,
             "n_results": 3,
-            "max_tokens": 512,
+            "max_tokens": 1024,
             "temperature": 0.3,
             "db_path": str(Path(settings_path).parent / "doc_qa_db"),
         }
