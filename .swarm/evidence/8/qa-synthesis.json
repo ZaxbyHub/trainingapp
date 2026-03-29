@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "8.2",
+  "title": "Comprehensive QA Synthesis - All Phases 2-8",
+  "created_at": "2026-03-27T00:00:00Z",
+  "findings_count": 137,
+  "unique_after_dedup": 134,
+  "false_positives_removed_total": 11,
+  "by_severity": {"CRITICAL":2,"HIGH":40,"MEDIUM":64,"LOW":31},
+  "by_group": {"1":30,"2":17,"3":2,"4":30,"5":13,"6":21,"7":5,"8":19},
+  "by_phase": {"2":30,"3":39,"4":53,"5":15,"6":30,"7":23,"8":7},
+  "by_file_top10": {"api_server.py":18,"llm_interface.py":20,"app_gui.py":15,"vector_store.py":13,"CONFIGURATION.md":11,"rag_engine.py":12,"seed_loader.py":9,"engine_factory.py":3,"scripts/build_installer.py":7,"test_defect_002_api_gguf_env.py":3},
+  "claim_ledger": {
+    "CONTRADICTED": {"count":12,"findings":["paths-007","doc-004","doc-007","configdoc-001","configdoc-002","configdoc-003","configdoc-004","configdoc-006","configdoc-008","configdoc-009","configdoc-010","engine-017"]},
+    "UNSUPPORTED": {"count":6,"findings":["doc-001","configdoc-005","configdoc-007","configdoc-011","configdoc-013"]},
+    "STALE": {"count":7,"findings":["doc-002","doc-003","doc-005","doc-006","configdoc-012","remreport-003"]},
+    "STEALTH_CHANGED": {"count":2,"findings":["remreport-001","remreport-002"]},
+    "PARTIALLY_SUPPORTED": {"count":1,"findings":["paths-008"]}
+  },
+  "ai_pattern_clusters": {
+    "Happy-path-only error handling": ["vectorstore-005","engine-006","datapipeline-009","gui-001","gui-005","gui-006","seedloader-002","seedloader-007","llm-009","datapipeline-003"],
+    "Overly broad exception catching with information disclosure": ["api-007","api-008","api-009","api-014","api-015"],
+    "Type safety gap": ["llm-003","llm-004","llm-008","llm-007","datapipeline-011","datapipeline-012","datapipeline-013","api-004","seedloader-006"],
+    "Inconsistent patterns across backends": ["llm-010","llm-011","llm-013","llm-014"],
+    "Stale API usage / dead code": ["llm-005","llm-006","engine-001","datapipeline-006"],
+    "Static analysis instead of runtime test": ["regression-004","regression-005","regression-006"],
+    "Copy-paste patterns": ["api-001","api-002","datapipeline-004"],
+    "Hardcoded configuration value": ["engine-008","engine-009","engine-010","datapipeline-010","llm-017"]
+  },
+  "compound_severity_elevations": [
+    {"target":"vector_store.py add_chunks/add_document","count":6,"finding_ids":["vectorstore-001","vectorstore-002","vectorstore-003","vectorstore-004","vectorstore-005","vectorstore-008"],"severities":"2 CRITICAL, 2 HIGH, 2 MEDIUM","recommendation":"Treat as CRITICAL subsystem - BM25 thread safety + O(N) rebuild is the #1 performance and correctness risk"},
+    {"target":"api_server.py /ingest/file","count":4,"finding_ids":["api-001","api-004","api-005","api-007"],"severities":"3 HIGH, 1 MEDIUM","recommendation":"Treat as CRITICAL endpoint - path traversal + None crash + resource exhaustion + error disclosure"},
+    {"target":"api_server.py /ask","count":3,"finding_ids":["api-001","api-008","api-010"],"severities":"2 HIGH, 1 MEDIUM","recommendation":"Treat as HIGH endpoint - error disclosure + unsanitized input to embedding model"},
+    {"target":"llm_interface.py SmartLLM","count":4,"finding_ids":["llm-003","llm-004","llm-009","llm-012"],"severities":"1 HIGH, 3 MEDIUM","recommendation":"Treat as HIGH subsystem - type safety + no runtime fallback + no retry"},
+    {"target":"CONFIGURATION.md defaults section","count":8,"finding_ids":["configdoc-001","configdoc-003","configdoc-004","configdoc-005","configdoc-006","configdoc-008","configdoc-009","configdoc-010"],"severities":"7 HIGH, 1 MEDIUM","recommendation":"Treat as CRITICAL documentation issue - 8 wrong defaults in user-facing config docs mislead every user"}
+  ],
+  "dedup_notes": [
+    {"id":"cross-005","overlaps_with":["vectorstore-002","vectorstore-003","vectorstore-004"],"note":"BM25 synchronization gap is the same root issue as Phase 3 vector_store thread safety findings."},
+    {"id":"cross-001","overlaps_with":["engine-007","configdoc-003"],"note":"chunk_size default inconsistency spans engine_factory, CONFIGURATION.md, and cross-boundary. Same root cause."},
+    {"id":"cross-002","overlaps_with":["configdoc-006"],"note":"retrieval_window default inconsistency documented in both configdoc-006 and cross-002. Same root cause."}
+  ],
+  "positive_findings": [
+    "Chunk ID format consistent across all consumers",
+    "API query interface matches engine interface correctly",
+    "Circular import pattern between rag_engine and engine_factory is safe"
+  ],
+  "evidence_files": [
+    ".swarm/evidence/2/qa-findings-config-deps.json (5 findings)",
+    ".swarm/evidence/2/qa-findings-build-scripts.json (15 findings)",
+    ".swarm/evidence/2/qa-findings-app-paths.json (10 findings)",
+    ".swarm/evidence/3/qa-findings-vector-store.json (13 findings)",
+    ".swarm/evidence/3/qa-findings-data-pipeline.json (17 findings)",
+    ".swarm/evidence/3/qa-findings-seed-loader.json (9 findings)",
+    ".swarm/evidence/4/qa-findings-api-server.json (18 findings)",
+    ".swarm/evidence/4/qa-findings-rag-engine.json (17 findings)",
+    ".swarm/evidence/4/qa-findings-llm-interface.json (18 findings)",
+    ".swarm/evidence/5/qa-findings-app-gui.json (15 findings)",
+    ".swarm/evidence/6/qa-findings-unit-tests.json (16 findings)",
+    ".swarm/evidence/6/qa-findings-regression-tests.json (10 findings)",
+    ".swarm/evidence/6/qa-findings-orphan-tests.json (4 findings)",
+    ".swarm/evidence/7/qa-findings-readme-architecture.json (7 findings)",
+    ".swarm/evidence/7/qa-findings-configuration-docs.json (13 findings)",
+    ".swarm/evidence/7/qa-findings-remediation-report.json (3 findings)",
+    ".swarm/evidence/8/qa-findings-cross-boundary.json (7 findings)"
+  ]
+}

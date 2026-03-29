@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "scanned_at": "2026-03-29T02:26:53.015Z",
+  "files": [
+    {
+      "path": ".github\\agents\\ai_slop_reviewer.md",
+      "title": "ai_slop_reviewer.md",
+      "summary": "--- name: ai_slop_reviewer description: Expert code auditor that detects AI-generated code quality defects, hallucinated patterns, and structural anti-patterns across any codebase. --- You are a se...",
+      "lines": 294,
+      "mtime": 1774657995250
+    },
+    {
+      "path": ".github\\agents\\slop-remediator.md",
+      "title": "Slop Remediator",
+      "summary": "--- name: slop-remediator description: Reads persisted AI slop review reports from .github/reports/, triages findings by severity, and drives each one to a verified fix with tests and a PR-ready su...",
+      "lines": 293,
+      "mtime": 1774657995250
+    },
+    {
+      "path": ".github\\reports\\ai-slop-report-2026-03-12.md",
+      "title": "AI Slop Review Report",
+      "summary": "**Repository:** trainingapp (zaxbysauce/trainingapp) **Review Date:** 2026-03-12 **Reviewer:** ai_slop_reviewer **Report File:** .github/reports/ai-slop-report-2026-03-12.md **Overall Risk Level:**...",
+      "lines": 602,
+      "mtime": 1774657995251
+    },
+    {
+      "path": ".pytest_cache\\README.md",
+      "title": "pytest cache directory #",
+      "summary": "This directory contains data from the pytest's cache plugin, which provides the `--lf` and `--ff` options, as well as the `cache` fixture. **Do not** commit this to version control. See [the docs](...",
+      "lines": 9,
+      "mtime": 1772229173033
+    },
+    {
+      "path": "ARCHITECTURE.md",
+      "title": "Architecture Guide",
+      "summary": "Technical architecture overview of the Document Q&A Assistant, including system design, component interactions, and algorithmic details. 1. [System Overview](#system-overview) 2. [Component Archite...",
+      "lines": 586,
+      "mtime": 1774730763088
+    },
+    {
+      "path": "docs\\audit_model_gguf_paths.md",
+      "title": "Model Path vs GGUF Path Usage Audit",
+      "summary": "**Audit Date:** 2026-03-11 **Scope:** All Python files using `model_path` or `gguf_path` parameters **Auditor:** Phase 15.3 Task --- | Category | Status | |----------|--------| | Overall Status | *...",
+      "lines": 380,
+      "mtime": 1773261164516
+    },
+    {
+      "path": "docs\\bug_ledger.md",
+      "title": "Bug Ledger - Document Q&A Application",
+      "summary": "**Generated:** 2026-03-11 **Status:** Baseline Analysis Complete **Total Confirmed Defects:** 6 --- This document provides a comprehensive ledger of 6 confirmed defects identified during baseline t...",
+      "lines": 1023,
+      "mtime": 1773256128949
+    },
+    {
+      "path": "docs\\build_verification_checklist.md",
+      "title": "Build Verification Checklist - Task 19.3",
+      "summary": "**Date:** 2026-03-11 **Build Command:** `build_exe.bat` (which runs `pyinstaller AFOMIS.spec --clean --noconfirm`) - [ ] Python 3.10+ installed - [ ] Virtual environment activated (if used) - [ ] A...",
+      "lines": 92,
+      "mtime": 1773272546365
+    },
+    {
+      "path": "docs\\documentation_audit.md",
+      "title": "Documentation Audit Report",
+      "summary": "**Date:** 2026-03-11 **Auditor:** Architect **Scope:** README.md, API documentation, usage guides | # | Issue | Severity | Location | Recommendation | |---|-------|----------|----------|-----------...",
+      "lines": 62,
+      "mtime": 1773271307116
+    },
+    {
+      "path": "docs\\final_bug_ledger.md",
+      "title": "Final Bug Ledger - AFOMIS End-to-End Restoration",
+      "summary": "**Project:** AFOMIS End-to-End Functionality Restoration **Completion Date:** 2026-03-11 **Total Defects:** 6 **Status:** All Fixed ✅ --- All 6 confirmed defects from the restoration project have b...",
+      "lines": 230,
+      "mtime": 1773275728171
+    },
+    {
+      "path": "docs\\packaging_audit.md",
+      "title": "Packaging Audit Report",
+      "summary": "**Date:** 2026-03-11 **Auditor:** Architect **Scope:** AFOMIS.spec, build scripts, repository layout | # | Component | Status | Notes | |---|-----------|--------|-------| | 1 | Entry point (ui/app....",
+      "lines": 69,
+      "mtime": 1773272013388
+    },
+    {
+      "path": "docs\\postmortem_analysis.md",
+      "title": "Postmortem Analysis - AFOMIS End-to-End Restoration",
+      "summary": "**Project:** AFOMIS Help and Support - End-to-End Functionality Restoration **Date:** 2026-03-11 **Duration:** 7 Phases (14-20) **Defects Resolved:** 6 --- This postmortem analyzes why 6 critical i...",
+      "lines": 238,
+      "mtime": 1773276090707
+    },
+    {
+      "path": "docs\\regression_summary_phase15.md",
+      "title": "Phase 15 Regression Test Summary",
+      "summary": "**Test Run Date:** 2026-03-11 **Test Scope:** All 6 confirmed defects (DEFECT-001 through DEFECT-006) | Metric | Count | Status | |--------|-------|--------| | Total Tests | 49 | - | | Passed | 4 |...",
+      "lines": 185,
+      "mtime": 1773263235765
+    },
+    {
+      "path": "docs\\smoke_test_plan.md",
+      "title": "Packaged Application Smoke Test Plan - Task 19.4",
+      "summary": "**Objective:** Verify packaged GUI application launches and functions correctly **Test Environment:** - Windows 10/11 - Packaged app: `dist/AFOMIS/AFOMIS.exe` - Prerequisites: GGUF model in models/...",
+      "lines": 123,
+      "mtime": 1773272805609
+    },
+    {
+      "path": "README.md",
+      "title": "Document Q&A Assistant",
+      "summary": "A fully offline RAG-based document question answering system optimized for Windows PCs. Features semantic search, hybrid retrieval, and CPU-based LLM inference with GGUF models. - **Offline-First D...",
+      "lines": 551,
+      "mtime": 1774740459475
+    },
+    {
+      "path": "tests\\regression\\.pytest_cache\\README.md",
+      "title": "pytest cache directory #",
+      "summary": "This directory contains data from the pytest's cache plugin, which provides the `--lf` and `--ff` options, as well as the `cache` fixture. **Do not** commit this to version control. See [the docs](...",
+      "lines": 9,
+      "mtime": 1773275283131
+    }
+  ]
+}

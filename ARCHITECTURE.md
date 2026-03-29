@@ -35,7 +35,7 @@ User Question → Query Processing → Retrieval → Context Assembly → LLM Ge
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Document Processing | Python (pdfplumber, python-docx) | Text extraction |
+| Document Processing | Python (pdfplumber, python-docx, pypdf fallback) | Text extraction |
 | Vector Store | ChromaDB | Semantic search |
 | Keyword Search | rank-bm25 | BM25 indexing |
 | Fusion | Custom RRF | Combine search results |
@@ -59,7 +59,11 @@ doc_qa_app/
 ├── llm_interface.py           # LLM backends
 ├── reranking.py               # Cross-encoder reranking
 ├── query_transformer.py       # Query transformation
-└── utils.py                   # Utilities (RRF)
+├── app_paths.py               # Path management
+├── engine_factory.py          # Engine creation
+├── utils.py                   # Utilities (RRF)
+├── scripts/                   # Build and utility scripts
+└── tests/                     # Test suite
 ```
 
 ### Component Responsibilities
@@ -169,13 +173,13 @@ Indexed Documents
 @dataclass
 class RAGConfig:
     # Document processing
-    chunk_size: int = 256
+    chunk_size: int = 512
     chunk_overlap: int = 50
 
     # Retrieval
     n_results: int = 3
     min_similarity: float = 0.3
-    retrieval_window: int = 0
+    retrieval_window: int = 1
 
     # Search
     hybrid_search: bool = True
@@ -189,7 +193,7 @@ class RAGConfig:
     query_transformation_enabled: bool = False
 
     # Generation
-    max_tokens: int = 512
+    max_tokens: int = 1024
     temperature: float = 0.3
 ```
 
@@ -552,7 +556,7 @@ def chunk_text_semantic(self, text, source):
 | `/ingest` | POST | Ingest directory | `{directory}` | Stats |
 | `/ingest/file` | POST | Ingest file | `{filepath}` | Stats |
 | `/documents` | GET | List documents | None | List of filenames |
-| `/documents` | DELETE | Clear all | None | Success |
+| `/documents` | DELETE | Clear all | None | `{"status": "cleared"}` |
 
 ### Request/Response Format
 
@@ -573,17 +577,6 @@ Response:
   "inference_time": 1.23,
   "chunks_retrieved": 3
 }
-```
-
-### Streaming Support
-
-```python
-@app.post("/ask/stream")
-async def ask_stream(request: AskRequest):
-    async def generate():
-        for chunk in llm.generate_stream(prompt):
-            yield f"data: {chunk}\n\n"
-    return StreamingResponse(generate(), media_type="text/event-stream")
 ```
 
 ---

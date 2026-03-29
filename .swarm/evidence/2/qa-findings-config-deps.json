@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0.0",
+  "task_id": "2.1",
+  "created_at": "2026-03-28T01:00:00Z",
+  "type": "qa_findings",
+  "scope": "config-dependencies",
+  "summary": "5 findings: 1 CRITICAL (rank_bm25 missing from requirements.txt), 2 MEDIUM (no upper bounds, product name inconsistency), 2 LOW (hardcoded venv path, hardcoded model path)",
+  "entries": [
+    {
+      "id": "config-001",
+      "group": 9,
+      "severity": "CRITICAL",
+      "confidence": "HIGH",
+      "file": "requirements.txt",
+      "line": "1-28",
+      "title": "Missing required dependency - rank_bm25 not in requirements.txt",
+      "problem": "rank_bm25 is imported in vector_store.py:27 and is a core feature (Hybrid Retrieval: BM25 + Vector search). Documented in CONFIGURATION.md troubleshooting and AFOMIS.spec hiddenimports, but absent from requirements.txt.",
+      "fix": "Add rank-bm25>=0.2.0 to requirements.txt under the embeddings/vector store section",
+      "evidence": "vector_store.py:27 imports rank_bm25; AFOMIS.spec:25 declares it as hidden import; README.md:10 advertises BM25",
+      "size": "S"
+    },
+    {
+      "id": "config-002",
+      "group": 6,
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "file": "requirements.txt",
+      "line": "1-28",
+      "title": "No upper bounds on package versions",
+      "problem": "All 16 packages use only minimum version constraints (>=X.Y.Z) without upper bounds, allowing potentially breaking changes from future major version upgrades.",
+      "fix": "Add upper bounds for all packages or use a lock file strategy",
+      "size": "M"
+    },
+    {
+      "id": "config-003",
+      "group": 6,
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "file": "build_exe.bat",
+      "line": "5",
+      "title": "Hardcoded product name AFOMIS inconsistent with build.py DocumentQA",
+      "problem": "build_exe.bat hardcodes AFOMIS in echo statements while build.py:91 uses DocumentQA as executable name, creating naming inconsistency.",
+      "fix": "Extract product name to a variable; verify consistency with build.py output name",
+      "size": "S"
+    },
+    {
+      "id": "config-004",
+      "group": 6,
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "file": "build_exe.bat",
+      "line": "41",
+      "title": "Hardcoded virtual environment path may not match developer setup",
+      "problem": "Script assumes .venv\\Scripts\\activate.bat but developers may use different venv names.",
+      "fix": "Add check for common virtual environment names or require venv to be present",
+      "size": "S"
+    },
+    {
+      "id": "config-005",
+      "group": 9,
+      "severity": "LOW",
+      "confidence": "MEDIUM",
+      "file": "build_exe.bat",
+      "line": "10-14",
+      "title": "Hardcoded model path in build validation",
+      "problem": "Build script checks for bundled model at hardcoded path bundled_models\\bge-small-en-v1.5\\ which won't adapt to model changes. CONFIGURATION.md documents RAG_EMBEDDING_MODEL as configurable.",
+      "fix": "Extract model name to a configurable variable at script top",
+      "size": "S"
+    }
+  ]
+}

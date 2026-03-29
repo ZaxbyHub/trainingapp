@@ -1,0 +1,53 @@
+{
+  "task_id": "7.3",
+  "task_title": "Verify REMEDIATION_REPORT.md accuracy",
+  "check_groups": [4],
+  "files_audited": ["REMEDIATION_REPORT.md"],
+  "false_positives_removed": [],
+  "findings": [
+    {
+      "id": "remreport-001",
+      "group": 4,
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "file": "REMEDIATION_REPORT.md",
+      "line": 22,
+      "title": "Fix E1 incomplete: only 1 of 4 duplicate test files deleted",
+      "problem": "Report says 'Deleted duplicate test file (confirmed identical to test_gguf_path_wiring_final.py)' under E1. Only test_gguf_path_wiring.py was deleted. Three other root-level duplicates remain: test_main_gguf_path.py, test_phase1_adversarial.py, test_phase1_fixes.py (confirmed identical in Phase 6 task 6.3).",
+      "fix": "Update Files Deleted table to list all 4 duplicates, or note that only 1 was cleaned up.",
+      "claim_status": "STEALTH_CHANGED",
+      "size": "S"
+    },
+    {
+      "id": "remreport-002",
+      "group": 4,
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "file": "REMEDIATION_REPORT.md",
+      "line": 19,
+      "title": "Fix D2 mischaracterized: 'incremental' BM25 add still rebuilds full index",
+      "problem": "Report says D2 fixed add_chunks to use 'incremental bm25_index.add_document() calls per new chunk'. The Known Limitations section (line 94) correctly notes this is still O(N) per add. However, the Fix D2 description implies the fix was fully effective when the limitation section reveals it wasn't — BM25Okapi is reconstructed on the full corpus each time, making it O(N²) total for N chunks.",
+      "fix": "Update D2 description to clarify that add_document() still rebuilds BM25Okapi internally, making it O(N) per call.",
+      "claim_status": "STEALTH_CHANGED",
+      "size": "S"
+    },
+    {
+      "id": "remreport-003",
+      "group": 4,
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "file": "REMEDIATION_REPORT.md",
+      "line": 61,
+      "title": "Test suite count may be stale",
+      "problem": "Report says '51 collected — 50 passed, 1 failed, 2 warnings'. Current test suite may have changed since this report was written (new regression tests added). The count should be re-verified.",
+      "fix": "Re-run test suite and update counts.",
+      "claim_status": "STALE",
+      "size": "S"
+    }
+  ],
+  "summary": {
+    "total": 3,
+    "by_severity": { "CRITICAL": 0, "HIGH": 0, "MEDIUM": 2, "LOW": 1, "INFO": 0 },
+    "by_claim_status": { "STEALTH_CHANGED": 2, "STALE": 1 }
+  }
+}

@@ -21,18 +21,19 @@ def test_gui_passes_gguf_path_to_rag_engine():
     """
     Test that DocumentQAApp._initialize_engine passes gguf_path parameter
     to RAGEngine constructor, not model_path.
-    
+
     Fix applied in Phase 15.1: GUI now correctly passes gguf_path to RAGEngine.
     """
-    
-    with patch('app_gui.ctk') as mock_ctk, \
-         patch('app_gui.GUI_AVAILABLE', True), \
-         patch('app_gui.DocumentQAApp._create_widgets'), \
-         patch('app_gui.DocumentQAApp._start_message_processor'), \
-         patch('rag_engine.RAGEngine') as mock_engine:
-        
+
+    with (
+        patch("app_gui.ctk") as mock_ctk,
+        patch("app_gui.GUI_AVAILABLE", True),
+        patch("app_gui.DocumentQAApp._create_widgets"),
+        patch("app_gui.DocumentQAApp._start_message_processor"),
+        patch("rag_engine.RAGEngine") as mock_engine,
+    ):
         from app_gui import DocumentQAApp
-        
+
         # Create app with GGUF path in settings
         app = DocumentQAApp()
         app.settings = {
@@ -44,113 +45,118 @@ def test_gui_passes_gguf_path_to_rag_engine():
             "n_results": 3,
             "max_tokens": 512,
             "temperature": 0.3,
-            "db_path": "/tmp/db"
+            "db_path": "/tmp/db",
         }
-        
+
         # Mock message queue to avoid thread issues
         app.message_queue = Mock()
-        
+
         # Call _initialize_engine directly
         # This should create RAGEngine with gguf_path= parameter
         app._initialize_engine()
-        
+
         # Wait for thread to complete (mock it)
         import time
+
         time.sleep(0.1)
-        
+
         # Verify RAGEngine was called with correct parameters
         mock_engine.assert_called_once()
         call_kwargs = mock_engine.call_args.kwargs
-        
+
         # After fix: assert "gguf_path" in call_kwargs
         # Current bug: model_path is used instead
-        assert "gguf_path" in call_kwargs, \
+        assert "gguf_path" in call_kwargs, (
             "RAGEngine should be called with gguf_path parameter"
-        assert call_kwargs.get("gguf_path") == "/path/to/model.gguf", \
+        )
+        assert call_kwargs.get("gguf_path") == "/path/to/model.gguf", (
             "gguf_path should match settings"
-        
+        )
+
         # Ensure model_path is NOT used for GGUF files
         # (model_path may be passed but should be None or different from gguf_path)
         if "model_path" in call_kwargs:
-            assert call_kwargs["model_path"] != "/path/to/model.gguf", \
+            assert call_kwargs["model_path"] != "/path/to/model.gguf", (
                 "model_path should not be used for GGUF files"
+            )
 
 
 def test_settings_migration_from_model_path_to_gguf_path():
     """
     Test that old settings with 'model_path' key are migrated to 'gguf_path'.
-    
+
     When loading settings that contain 'model_path' but no 'gguf_path',
     the value should be migrated to 'gguf_path' and 'model_path' removed.
-    
+
     Fix applied in Phase 15.1: Settings migration from model_path to gguf_path works.
     """
-    
-    with patch('app_gui.ctk'), \
-         patch('app_gui.GUI_AVAILABLE', True), \
-         patch('app_gui.DocumentQAApp._create_widgets'), \
-         patch('app_gui.DocumentQAApp._start_message_processor'), \
-         patch('os.path.exists', return_value=True), \
-         patch('builtins.open', mock_open := MagicMock()):
-        
+
+    with (
+        patch("app_gui.ctk"),
+        patch("app_gui.GUI_AVAILABLE", True),
+        patch("app_gui.DocumentQAApp._create_widgets"),
+        patch("app_gui.DocumentQAApp._start_message_processor"),
+        patch("os.path.exists", return_value=True),
+        patch("builtins.open", mock_open := MagicMock()),
+    ):
         from app_gui import DocumentQAApp
-        
+
         # Simulate old settings file with model_path only
         old_settings = {
             "model_path": "/old/path/model.gguf",
             "ollama_url": "http://localhost:11434",
-            "ollama_model": "phi3:mini"
+            "ollama_model": "phi3:mini",
         }
-        
+
         # Mock file operations
         mock_file = MagicMock()
         mock_file.read.return_value = json.dumps(old_settings)
         mock_open.return_value.__enter__ = MagicMock(return_value=mock_file)
         mock_open.return_value.__exit__ = MagicMock(return_value=False)
-        
+
         # Create app instance which loads settings
-        with patch.object(DocumentQAApp, '_load_settings', return_value={
-            "gguf_path": "/old/path/model.gguf",  # Expected after migration
-            "ollama_url": "http://localhost:11434",
-            "ollama_model": "phi3:mini"
-        }):
-            app = DocumentQAApp()
-        
+        app = DocumentQAApp()
+
         # After fix: Verify settings migration occurred
-        assert "gguf_path" in app.settings, \
+        assert "gguf_path" in app.settings, (
             "Settings should contain gguf_path after migration"
-        assert app.settings["gguf_path"] == "/old/path/model.gguf", \
+        )
+        assert app.settings["gguf_path"] == "/old/path/model.gguf", (
             "gguf_path should have value from old model_path"
-        assert "model_path" not in app.settings, \
+        )
+        assert "model_path" not in app.settings, (
             "Old model_path key should be removed after migration"
+        )
 
 
 @pytest.mark.xfail(reason="Infrastructure issue - SettingsDialog test requires GUI")
 def test_settings_dialog_saves_gguf_path():
     """
     Test that SettingsDialog saves GGUF path to 'gguf_path' key in settings.
-    
+
     Fix applied in Phase 15.1: SettingsDialog now saves to gguf_path.
     Kept as xfail due to GUI infrastructure testing issues.
     """
-    
-    with patch('app_gui.ctk') as mock_ctk, \
-         patch('app_gui.GUI_AVAILABLE', True), \
-         patch('app_gui.filedialog') as mock_dialog:
-        
+
+    with (
+        patch("app_gui.ctk") as mock_ctk,
+        patch("app_gui.GUI_AVAILABLE", True),
+        patch("app_gui.filedialog") as mock_dialog,
+    ):
         from app_gui import SettingsDialog
-        
+
         # Mock the dialog creation
         mock_parent = Mock()
         current_settings = {"gguf_path": ""}
-        
-        with patch.object(SettingsDialog, '_create_widgets'), \
-             patch.object(SettingsDialog, '_populate_fields'):
-            
+
+        with (
+            patch.object(SettingsDialog, "_create_widgets"),
+            patch.object(SettingsDialog, "_populate_fields"),
+        ):
             dialog = SettingsDialog(mock_parent, current_settings)
             dialog.model_path_entry = Mock()
             dialog.model_path_entry.get.return_value = "/new/model.gguf"
-            
+
             # Mock other entry fields
             dialog.ollama_url_entry = Mock()
             dialog.ollama_url_entry.get.return_value = "http://localhost:11434"
@@ -172,55 +178,64 @@ def test_settings_dialog_saves_gguf_path():
             dialog.retrieval_window_entry.get.return_value = "1"
             dialog.reranking_var = Mock()
             dialog.reranking_var.get.return_value = "off"
-            
+
             # Call save
             dialog._save()
-            
+
             # Verify result contains gguf_path
             assert dialog.result is not None
-            assert "gguf_path" in dialog.result, \
+            assert "gguf_path" in dialog.result, (
                 "Settings result should contain gguf_path key"
-            assert dialog.result["gguf_path"] == "/new/model.gguf", \
+            )
+            assert dialog.result["gguf_path"] == "/new/model.gguf", (
                 "gguf_path should be saved correctly"
-            
+            )
+
             # Ensure old model_path key is not present
-            assert "model_path" not in dialog.result, \
+            assert "model_path" not in dialog.result, (
                 "model_path key should not be in saved settings"
+            )
 
 
 def test_load_settings_backward_compatibility():
     """
     Test that _load_settings properly migrates old 'model_path' to 'gguf_path'.
-    
+
     Fix applied in Phase 15.1: _load_settings properly migrates old settings.
     """
-    
-    with patch('app_gui.ctk'), \
-         patch('app_gui.GUI_AVAILABLE', True), \
-         patch('app_gui.DocumentQAApp._create_widgets'), \
-         patch('app_gui.DocumentQAApp._start_message_processor'):
-        
+
+    with (
+        patch("app_gui.ctk"),
+        patch("app_gui.GUI_AVAILABLE", True),
+        patch("app_gui.DocumentQAApp._create_widgets"),
+        patch("app_gui.DocumentQAApp._start_message_processor"),
+    ):
         from app_gui import DocumentQAApp
-        
+
         # Create temp settings file with old format
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             old_settings = {
                 "model_path": "/models/legacy.gguf",
-                "ollama_url": "http://localhost:11434"
+                "ollama_url": "http://localhost:11434",
             }
             json.dump(old_settings, f)
             temp_path = f.name
-        
+
         try:
-            with patch.object(DocumentQAApp, '_get_settings_path', return_value=temp_path):
+            with patch.object(
+                DocumentQAApp, "_get_settings_path", return_value=temp_path
+            ):
                 app = DocumentQAApp()
                 settings = app._load_settings()
-                
+
                 # Verify migration
-                assert settings.get("gguf_path") == "/models/legacy.gguf", \
+                assert settings.get("gguf_path") == "/models/legacy.gguf", (
                     "gguf_path should have migrated value from model_path"
-                assert "model_path" not in settings or settings.get("model_path") is None, \
-                    "model_path should be removed after migration"
+                )
+
+                assert (
+                    "model_path" not in settings or settings.get("model_path") is None
+                ), "model_path should be removed after migration"
         finally:
             os.unlink(temp_path)
 
@@ -228,42 +243,43 @@ def test_load_settings_backward_compatibility():
 def test_rag_engine_receives_gguf_path_not_model_path():
     """
     Integration test verifying RAGEngine receives gguf_path parameter correctly.
-    
+
     This test mocks at the RAGEngine level to ensure the correct parameter
     name is being used.
-    
+
     Fix applied in Phase 15.1: RAGEngine correctly receives gguf_path parameter.
     """
-    
-    with patch('rag_engine.SmartLLM') as mock_llm, \
-         patch('rag_engine.DocumentProcessor'), \
-         patch('rag_engine.VectorStore'):
-        
+
+    with (
+        patch("rag_engine.SmartLLM") as mock_llm,
+        patch("rag_engine.DocumentProcessor"),
+        patch("rag_engine.VectorStore"),
+    ):
         from rag_engine import RAGEngine
-        
+
         # Test that RAGEngine accepts gguf_path parameter
         engine = RAGEngine(gguf_path="/path/to/model.gguf")
-        
+
         # Verify SmartLLM was called with gguf_path
         mock_llm.assert_called_once()
         call_kwargs = mock_llm.call_args.kwargs
-        
+
         # After fix: gguf_path should be passed through to SmartLLM
-        assert "gguf_path" in call_kwargs, \
-            "SmartLLM should receive gguf_path parameter"
-        assert call_kwargs["gguf_path"] == "/path/to/model.gguf", \
+        assert "gguf_path" in call_kwargs, "SmartLLM should receive gguf_path parameter"
+        assert call_kwargs["gguf_path"] == "/path/to/model.gguf", (
             "gguf_path value should be passed correctly"
+        )
 
 
 def test_app_controller_initializes_with_correct_path_parameter():
     """
     Test that the app controller properly maps settings to RAGEngine parameters.
-    
+
     This verifies the wiring between settings and RAGEngine constructor.
-    
+
     Fix applied in Phase 15.1: App controller correctly maps gguf_path settings.
     """
-    
+
     settings = {
         "gguf_path": "/models/test.gguf",
         "ollama_model": "",
@@ -273,29 +289,41 @@ def test_app_controller_initializes_with_correct_path_parameter():
         "n_results": 3,
         "max_tokens": 512,
         "temperature": 0.3,
-        "db_path": "/tmp/test_db"
+        "db_path": "/tmp/test_db",
     }
-    
-    # Expected parameter mapping after fix
-    expected_kwargs = {
-        "config": None,  # Will be RAGConfig object
-        "gguf_path": "/models/test.gguf",  # Should use gguf_path
-        "ollama_model": "",
-        "ollama_url": "",
-        "api_url": None,
-        "model_path": None  # Should be None, not the GGUF path
-    }
-    
-    # The bug is that model_path gets set to settings.get("gguf_path")
-    # instead of gguf_path being set directly
-    
-    # After fix, this assertion should pass:
-    assert "gguf_path" in expected_kwargs, \
-        "Settings mapping should include gguf_path parameter"
-    assert expected_kwargs["gguf_path"] == "/models/test.gguf", \
-        "gguf_path should be mapped from settings"
-    
-    # Ensure we don't have the bug where model_path is used for GGUF
-    if expected_kwargs.get("model_path"):
-        assert expected_kwargs["model_path"] != "/models/test.gguf", \
-            "model_path should not contain GGUF path (bug condition)"
+
+    with (
+        patch("app_gui.ctk"),
+        patch("app_gui.GUI_AVAILABLE", True),
+        patch("app_gui.DocumentQAApp._create_widgets"),
+        patch("app_gui.DocumentQAApp._start_message_processor"),
+        patch("app_gui.DocumentQAApp._load_settings", return_value=settings),
+        patch("rag_engine.RAGEngine") as mock_engine,
+    ):
+        from app_gui import DocumentQAApp
+
+        app = DocumentQAApp()
+        app.message_queue = Mock()
+
+        # Call _initialize_engine to test parameter mapping
+        app._initialize_engine()
+
+        # Wait for thread to complete
+        import time
+
+        time.sleep(0.1)
+
+        # Verify RAGEngine called with correct parameters
+        mock_engine.assert_called_once()
+        call_kwargs = mock_engine.call_args.kwargs
+
+        assert "gguf_path" in call_kwargs, (
+            "RAGEngine should be called with gguf_path parameter"
+        )
+        assert call_kwargs["gguf_path"] == "/models/test.gguf", (
+            "gguf_path should come from settings"
+        )
+        # model_path should not be passed for GGUF configuration
+        assert "model_path" not in call_kwargs, (
+            "model_path should not be passed when gguf_path is used"
+        )

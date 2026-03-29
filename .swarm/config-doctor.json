@@ -1,7 +1,7 @@
 {
-  "timestamp": 1772283734418,
+  "timestamp": 1774788436772,
   "summary": {
-    "info": 6,
+    "info": 10,
     "warn": 0,
     "error": 1
   },
@@ -41,6 +41,42 @@
       "description": "Agent \"test_engineer\" in swarm \"paid\" may not be recognized.",
       "severity": "info",
       "path": "swarms.paid.agents.test_engineer",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"explore\" in swarm \"lowtier\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.lowtier.agents.explore",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"test_engineer\" in swarm \"lowtier\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.lowtier.agents.test_engineer",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"explore\" in swarm \"modelrelay\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.modelrelay.agents.explore",
+      "autoFixable": false,
+      "proposedFix": null
+    },
+    {
+      "id": "unknown-swarm-agent",
+      "title": "Unknown agent in swarm",
+      "description": "Agent \"test_engineer\" in swarm \"modelrelay\" may not be recognized.",
+      "severity": "info",
+      "path": "swarms.modelrelay.agents.test_engineer",
       "autoFixable": false,
       "proposedFix": null
     },

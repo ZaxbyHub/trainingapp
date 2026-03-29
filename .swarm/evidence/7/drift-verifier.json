@@ -1,0 +1,12 @@
+{
+  "entries": [
+    {
+      "type": "drift-verification",
+      "verdict": "approved",
+      "summary": "Minor drift detected (score: 0.25): Agent 'test_engineer' required but not dispatched in phase 7",
+      "timestamp": "2026-03-28T14:41:53.074Z",
+      "agent": "curator-drift",
+      "session_id": "curator"
+    }
+  ]
+}

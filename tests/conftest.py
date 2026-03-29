@@ -14,9 +14,11 @@ try:
     from document_processor import DocumentChunk
     from vector_store import VectorStore
     from llm_interface import SmartLLM, InferenceConfig
+
     MODULES_AVAILABLE = True
 except ImportError:
     MODULES_AVAILABLE = False
+
     # Create stub classes for tests when modules aren't available
     @dataclass
     class DocumentChunk:
@@ -67,7 +69,7 @@ def mock_llm(monkeypatch):
     mock.get_info.return_value = {
         "backend": "mock",
         "model": "test-model",
-        "device": "cpu"
+        "device": "cpu",
     }
 
     yield mock
@@ -89,23 +91,23 @@ def sample_chunks() -> List[DocumentChunk]:
             text="Python is a high-level programming language known for its simplicity and readability.",
             source="test1.pdf",
             page=1,
-            chunk_index=0
+            chunk_index=0,
         ),
         DocumentChunk(
             text="Machine learning is a subset of artificial intelligence that enables systems to learn from data.",
             source="test1.pdf",
             page=2,
-            chunk_index=1
+            chunk_index=1,
         ),
         DocumentChunk(
             text="Natural language processing involves the interaction between computers and human language.",
             source="test2.txt",
-            chunk_index=0
+            chunk_index=0,
         ),
         DocumentChunk(
             text="ChromaDB is an open-source embedding database for building AI applications with embeddings.",
             source="test3.md",
-            chunk_index=0
+            chunk_index=0,
         ),
     ]
 
@@ -203,8 +205,7 @@ def vector_store(temp_chroma_db, mock_llm, sample_chunks):
 
     # Create vector store with temporary path
     store = VectorStore(
-        db_path=str(temp_chroma_db),
-        embedding_model="BAAI/bge-small-en-v1.5"
+        db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
     )
 
     # Add sample chunks
@@ -238,34 +239,10 @@ def empty_vector_store(temp_chroma_db):
     from vector_store import VectorStore
 
     store = VectorStore(
-        db_path=str(temp_chroma_db),
-        embedding_model="BAAI/bge-small-en-v1.5"
+        db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
     )
 
     yield store
-
-
-@pytest.fixture
-def inference_config():
-    """
-    Default InferenceConfig for testing.
-
-    Provides a standard inference configuration that can be
-    customized in individual tests if needed.
-
-    Returns:
-        InferenceConfig: Configuration with typical test values
-    """
-    pytest.importorskip("llm_interface")
-
-    from llm_interface import InferenceConfig
-
-    return InferenceConfig(
-        max_tokens=128,
-        temperature=0.3,
-        top_p=0.9,
-        do_sample=True
-    )
 
 
 @pytest.fixture
@@ -288,5 +265,5 @@ It contains multiple paragraphs and various
 types of content for document processing tests.
 
 The third paragraph provides additional data for testing."""
-    file_path.write_text(content, encoding='utf-8')
+    file_path.write_text(content, encoding="utf-8")
     yield file_path

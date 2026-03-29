@@ -1,0 +1,106 @@
+{
+  "task_id": "7.1",
+  "task_title": "Verify README.md and ARCHITECTURE.md claims against code",
+  "check_groups": [4],
+  "files_audited": ["README.md", "ARCHITECTURE.md"],
+  "false_positives_removed": ["doc-001/002 assigned to task 7.2 scope (CONFIGURATION.md)"],
+  "findings": [
+    {
+      "id": "doc-001",
+      "group": 4,
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "file": "ARCHITECTURE.md",
+      "line": 578,
+      "title": "/ask/stream endpoint documented but does not exist in code",
+      "problem": "ARCHITECTURE.md lines 578-587 documents a '/ask/stream' streaming endpoint with full code example. This endpoint does NOT exist in api_server.py — no @app.post('/ask/stream') handler is defined. The documented feature is entirely fictional.",
+      "fix": "Remove the '/ask/stream' section from ARCHITECTURE.md, or implement the streaming endpoint if planned.",
+      "claim_status": "UNSUPPORTED",
+      "evidence": "grep '/ask/stream' in api_server.py → 0 matches",
+      "size": "M"
+    },
+    {
+      "id": "doc-002",
+      "group": 4,
+      "severity": "HIGH",
+      "confidence": "HIGH",
+      "file": "README.md",
+      "line": 20,
+      "title": "Model name inconsistency: Qwen3-1.7B vs Qwen2.5-1.5B",
+      "problem": "README.md line 20 mentions 'Qwen3-1.7B-Instruct-Q4_K' but line 99-100 references 'Qwen/Qwen2.5-1.5B-Instruct-GGUF' from HuggingFace. These are different models (Qwen3 vs Qwen2.5, 1.7B vs 1.5B).",
+      "fix": "Standardize on one model name. The HuggingFace repo (Qwen2.5-1.5B) is likely correct; update line 20 to match.",
+      "claim_status": "STALE",
+      "size": "S"
+    },
+    {
+      "id": "doc-003",
+      "group": 4,
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "file": "README.md",
+      "line": 269,
+      "title": "CLI arguments incomplete in documentation",
+      "problem": "README.md CLI documentation omits --db-path, --model-path (legacy alias), and --ollama-model which exist in main.py lines 33-43.",
+      "fix": "Add missing CLI arguments to the documentation table.",
+      "claim_status": "STALE",
+      "size": "M"
+    },
+    {
+      "id": "doc-004",
+      "group": 4,
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "file": "ARCHITECTURE.md",
+      "line": 555,
+      "title": "DELETE /documents response format contradicts code",
+      "problem": "ARCHITECTURE.md claims DELETE /documents returns 'Success'. api_server.py returns {'status': 'cleared'}.",
+      "fix": "Update ARCHITECTURE.md response to match actual: {\"status\": \"cleared\"}",
+      "claim_status": "CONTRADICTED",
+      "size": "S"
+    },
+    {
+      "id": "doc-005",
+      "group": 4,
+      "severity": "MEDIUM",
+      "confidence": "HIGH",
+      "file": "ARCHITECTURE.md",
+      "line": 51,
+      "title": "Module structure missing several files",
+      "problem": "ARCHITECTURE.md module structure omits app_paths.py, engine_factory.py, scripts/ directory, and tests/ directory — all of which exist.",
+      "fix": "Add missing modules to the architecture documentation.",
+      "claim_status": "STALE",
+      "size": "M"
+    },
+    {
+      "id": "doc-006",
+      "group": 4,
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "file": "README.md",
+      "line": null,
+      "title": "Version mismatch between README.md (1.1.0) and ARCHITECTURE.md (1.0.0)",
+      "problem": "README.md shows Version: 1.1.0, ARCHITECTURE.md shows Version: 1.0.0. Both should match.",
+      "fix": "Align versions across documentation files.",
+      "claim_status": "STALE",
+      "size": "S"
+    },
+    {
+      "id": "doc-007",
+      "group": 4,
+      "severity": "LOW",
+      "confidence": "HIGH",
+      "file": "ARCHITECTURE.md",
+      "line": 38,
+      "title": "Document processing omits pypdf fallback",
+      "problem": "ARCHITECTURE.md says 'pdfplumber, python-docx' but document_processor.py also uses pypdf as fallback when pdfplumber unavailable.",
+      "fix": "Add 'pypdf (fallback)' to the technology stack listing.",
+      "claim_status": "CONTRADICTED",
+      "size": "S"
+    }
+  ],
+  "summary": {
+    "total": 7,
+    "by_severity": { "CRITICAL": 0, "HIGH": 2, "MEDIUM": 3, "LOW": 2, "INFO": 0 },
+    "by_claim_status": { "UNSUPPORTED": 1, "CONTRADICTED": 2, "STALE": 4 }
+  }
+}

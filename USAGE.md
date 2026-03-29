@@ -332,7 +332,10 @@ python main.py --ollama-model "phi3:mini" --ollama-url "http://localhost:11434"
 
 **Use API**:
 ```powershell
-python main.py --api-url "https://api.openai.com/v1" --api-key "sk-..." --api-model "gpt-4"
+$env:RAG_API_URL="https://api.openai.com/v1"
+$env:RAG_API_KEY="sk-..."
+$env:RAG_API_MODEL="gpt-4"
+python main.py --query "What are the findings?"
 ```
 
 #### RAG Parameters
@@ -344,41 +347,46 @@ python main.py --chunk-size 256 --ingest "C:\Documents"
 
 **Adjust Results**:
 ```powershell
-python main.py --n-results 5 --query "What are the findings?"
+$env:RAG_N_RESULTS="5"
+python main.py --query "What are the findings?"
 ```
 
 **Adjust Temperature**:
 ```powershell
-python main.py --temperature 0.2 --query "Explain the results"
+$env:RAG_TEMPERATURE="0.2"
+python main.py --query "Explain the results"
 ```
 
 **Enable Hybrid Search**:
 ```powershell
-python main.py --hybrid-search --ingest "C:\Documents"
+$env:RAG_HYBRID_SEARCH="true"
+python main.py --ingest "C:\Documents"
 ```
 
 **Enable Window Expansion**:
 ```powershell
-python main.py --retrieval-window 2 --query "Explain the process"
+$env:RAG_RETRIEVAL_WINDOW="2"
+python main.py --query "Explain the process"
 ```
 
 **Enable Reranking**:
 ```powershell
-python main.py --reranking --query "What are the requirements?"
+$env:RAG_RERANKING_ENABLED="true"
+python main.py --query "What are the requirements?"
 ```
 
 #### Combine Options
 
 **Full Example**:
 ```powershell
+$env:RAG_N_RESULTS="3"
+$env:RAG_MAX_TOKENS="512"
+$env:RAG_TEMPERATURE="0.3"
+$env:RAG_HYBRID_SEARCH="true"
+$env:RAG_RETRIEVAL_WINDOW="1"
 python main.py \
   --gguf-path "C:\Models\qwen2.5-1.5b-instruct-q4_k_m.gguf" \
   --chunk-size 256 \
-  --n-results 3 \
-  --max-tokens 512 \
-  --temperature 0.3 \
-  --hybrid-search \
-  --retrieval-window 1 \
   --ingest "C:\Documents\reports"
 ```
 

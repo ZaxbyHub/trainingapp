@@ -17,7 +17,7 @@ The application tries backends in this priority order:
 
 1. **GGUF (Primary)** - CPU-only inference with llama-cpp-python
    - Set via: `RAG_GGUF_PATH` environment variable or `--gguf-path` CLI option
-   - Model: Qwen3-1.7B-Instruct-Q4_K (lightweight, high performance)
+   - Model: Qwen2.5-1.5B-Instruct-Q4_K_M (lightweight, high performance)
    - No GPU required
    - ~5-10 tokens/second on standard CPU
 
@@ -95,9 +95,9 @@ The application tries backends in this priority order:
 
    **GGUF Model (Required for LLM inference)**
    ```powershell
-   # Download Qwen3-1.7B-Instruct-Q4_K model
+   # Download Qwen2.5-1.5B-Instruct-Q4_K_M model
    # From Hugging Face: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
-   # Save as: qwen3-1.7b-instruct-q4_k_m.gguf
+   # Save as: qwen2.5-1.5b-instruct-q4_k_m.gguf
    ```
 
    **Embedding Model (Required for search)**
@@ -142,9 +142,9 @@ The application tries backends in this priority order:
 |----------|-------------|---------|
 | `RAG_DB_PATH` | Vector database location | `./doc_qa_db` |
 | `RAG_GGUF_PATH` | Path to GGUF model file | - |
-| `RAG_CHUNK_SIZE` | Document chunk size (words) | `256` |
+| `RAG_CHUNK_SIZE` | Document chunk size (words) | `512` |
 | `RAG_N_RESULTS` | Context chunks to retrieve | `3` |
-| `RAG_MAX_TOKENS` | Max response tokens | `512` |
+| `RAG_MAX_TOKENS` | Max response tokens | `1024` |
 | `RAG_TEMPERATURE` | LLM temperature | `0.3` |
 | `API_PORT` | API server port | `8080` |
 
@@ -271,20 +271,19 @@ Generates generalized queries to improve retrieval:
 python main.py [OPTIONS]
 
 Options:
-  --ingest PATH        Ingest documents from directory
-  --query QUESTION    Ask a question
-  --cli               Run in interactive CLI mode
-  --api               Run API server
-  --port PORT         API server port (default: 8080)
-  --model-path PATH   OpenVINO model path
-  --gguf-path PATH    GGUF model path
-  --ollama-model NAME Ollama model name
-  --ollama-url URL    Ollama server URL
-  --api-url URL       OpenAI-compatible API URL
-  --chunk-size SIZE   Chunk size (default: 256)
-  --n-results N       Number of results (default: 3)
-  --max-tokens N      Max tokens (default: 512)
-  --temperature T     Temperature (default: 0.3)
+  --api                         Run API server
+  --cli                         Run in interactive CLI mode
+  --ingest PATH                 Ingest documents from directory
+  --query QUESTION              Ask a question
+  --db-path PATH                Path to vector database (default: ./doc_qa_db)
+  --model-path PATH             Path to GGUF model file (legacy alias for --gguf-path)
+  --gguf-path PATH              GGUF model path
+  --ollama-url URL              Ollama server URL (default: http://localhost:11434)
+  --ollama-model NAME           Ollama model name (default: phi3:mini)
+  --api-url URL                 OpenAI-compatible API URL
+  --port PORT                   API server port (default: 8080)
+  --chunk-size SIZE             Chunk size in words (default: 512)
+  --chunk-overlap N             Chunk overlap in words (default: 50)
 ```
 
 ## 🏗️ Architecture
@@ -349,7 +348,7 @@ Options:
 **Solution 1: GGUF Model Not Found**
 ```powershell
 # Check if model file exists
-dir qwen3-1.7b-instruct-q4_k_m.gguf
+dir qwen2.5-1.5b-instruct-q4_k_m.gguf
 
 # If not, download from:
 # https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
@@ -396,12 +395,12 @@ python main.py --chunk-size 128
 
 **Solution 2: Increase chunk overlap**
 ```powershell
-python main.py --chunk-size 256 --overlap 100
+python main.py --chunk-size 256 --chunk-overlap 100
 ```
 
 **Solution 3: Reduce number of results**
 ```powershell
-python main.py --n-results 2
+$env:RAG_N_RESULTS=2
 ```
 
 ### Hybrid Search Not Working
@@ -444,7 +443,7 @@ import requests
 import json
 
 # Configure the engine
-os.environ["RAG_GGUF_PATH"] = "path/to/qwen3-1.7b-instruct-q4_k_m.gguf"
+os.environ["RAG_GGUF_PATH"] = "path/to/qwen2.5-1.5b-instruct-q4_k_m.gguf"
 
 # Start API server in another terminal
 # python main.py --api --port 8080

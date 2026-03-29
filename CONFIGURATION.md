@@ -23,7 +23,7 @@ The Document Q&A Assistant offers multiple configuration options through:
 - **Command-Line Arguments**: Runtime overrides
 
 **Configuration Storage**:
-- GUI settings: `AppData/DocumentQA/app_settings.json`
+- GUI settings: `%LOCALAPPDATA%\\AFOMIS Help and Support\\settings.json`
 - RAG config: `doc_qa_db/rag_config.json`
 - Database: `doc_qa_db/` (ChromaDB storage)
 
@@ -37,7 +37,7 @@ Set environment variables before running the application or in your system's env
 |----------|-------------|---------|----------|
 | `RAG_DB_PATH` | Vector database location | `./doc_qa_db` | No |
 | `RAG_GGUF_PATH` | Path to GGUF model file | None | Yes for GGUF backend |
-| `RAG_CHUNK_SIZE` | Document chunk size (words) | `256` | No |
+| `RAG_CHUNK_SIZE` | Document chunk size (words) | `512` | No |
 | `RAG_CHUNK_OVERLAP` | Chunk overlap (words) | `50` | No |
 | `RAG_N_RESULTS` | Context chunks to retrieve | `3` | No |
 | `RAG_MIN_SIMILARITY` | Minimum similarity threshold | `0.3` | No |
@@ -56,17 +56,15 @@ Set environment variables before running the application or in your system's env
 
 | Variable | Description | Default | Recommended |
 |----------|-------------|---------|-------------|
-| `RAG_MAX_TOKENS` | Max response tokens | `512` | 512-1024 |
-| `RAG_TEMPERATURE` | LLM temperature | `0.3` | 0.1-0.5 |
-| `RAG_TOP_P` | Top-p sampling | `0.9` | 0.9 |
-| `RAG_DO_SAMPLE` | Enable sampling | `True` | True |
-| `API_PORT` | API server port | `8080` | 8080 |
+ | `RAG_MAX_TOKENS` | Max response tokens | `1024` | 512-1024 |
+ | `RAG_TEMPERATURE` | LLM temperature | `0.3` | 0.1-0.5 |
+ | `API_PORT` | API server port | `8080` | 8080 |
 
 ### RAG Advanced Variables
 
 | Variable | Description | Default | Recommended |
 |----------|-------------|---------|-------------|
-| `RAG_RETRIEVAL_WINDOW` | Window expansion (chunks) | `0` | 0-2 |
+| `RAG_RETRIEVAL_WINDOW` | Window expansion (chunks) | `1` | 0-2 |
 | `RAG_HYBRID_SEARCH` | Enable BM25+Vector search | `True` | True |
 | `RAG_RERANKING_ENABLED` | Enable cross-encoder reranking | `False` | False |
 | `RAG_RERANKER_MODEL` | Reranker model name | `cross-encoder/ms-marco-MiniLM-L-2-v2` | Same |
@@ -264,8 +262,8 @@ Window=0: No expansion
 The application tries backends in this order:
 1. **GGUF** (User-provided path)
 2. **OpenVINO** (User-provided path)
-3. **Ollama** (Local server)
-4. **OpenAI API** (External API)
+3. **OpenAI API** (External API)
+4. **Ollama** (Local server)
 
 ### GGUF Configuration
 
@@ -431,9 +429,9 @@ Chunk 3
 
 **Recommended Settings**:
 ```python
-chunk_size=256
+chunk_size=512
 n_results=3
-max_tokens=512
+max_tokens=1024
 temperature=0.3
 hybrid_search=True
 window=1
@@ -558,7 +556,7 @@ max_context_length=2000  # characters
 
 ### GUI Settings (JSON)
 
-**Location**: `AppData/DocumentQA/app_settings.json`
+**Location**: `%LOCALAPPDATA%\\AFOMIS Help and Support\\settings.json`
 
 **Example**:
 ```json
@@ -569,9 +567,9 @@ max_context_length=2000  # characters
   "api_url": "",
   "chunk_size": 512,
   "n_results": 3,
-  "max_tokens": 512,
+  "max_tokens": 1024,
   "temperature": 0.3,
-  "db_path": "C:\\Users\\User\\AppData\\Roaming\\DocumentQA\\doc_qa_db",
+   "db_path": "C:\\Users\\User\\AppData\\Local\\AFOMIS Help and Support\\data\\vector_db",
   "hybrid_search": true,
   "retrieval_window": 1,
   "reranking_enabled": false
@@ -586,14 +584,14 @@ max_context_length=2000  # characters
 ```json
 {
   "db_path": "./doc_qa_db",
-  "chunk_size": 256,
+  "chunk_size": 512,
   "chunk_overlap": 50,
   "n_results": 3,
   "min_similarity": 0.3,
-  "max_tokens": 512,
+  "max_tokens": 1024,
   "temperature": 0.3,
   "embedding_model": "BAAI/bge-small-en-v1.5",
-  "retrieval_window": 0,
+  "retrieval_window": 1,
   "hybrid_search": true,
   "reranking_enabled": false,
   "reranker_model": "cross-encoder/ms-marco-MiniLM-L-2-v2",

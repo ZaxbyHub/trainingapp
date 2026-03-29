@@ -1,139 +1,82 @@
-# AFOMIS Help and Support — End-to-End Functionality Restoration
+# AFOMIS Document Q&A Assistant — Remediation Plan
 
-**Version:** 1.0.0  
-**Status:** Ready for Implementation  
-**Last Updated:** 2026-03-11
+**Version:** 1.0.0
+**Status:** Ready for Implementation
+**Last Updated:** 2026-03-27
+**Source:** Comprehensive QA Audit (qa-report.md, 137 raw findings, ~114 confirmed)
 
 ---
 
 ## 1. Feature Description
 
-Restore full end-to-end functionality for offline chat and document ingestion in the AFOMIS Help and Support RAG application. The application currently has architectural drift between the live codebase (top-level `app_gui.py`, `main.py`, `api_server.py`) and the build specification (which references obsolete `ui/app.py` paths). Additionally, there are confirmed integration defects preventing proper GGUF backend initialization, local endpoint access, and upload source identity preservation.
+Remediate all confirmed findings from the AI-hardened QA audit of the AFOMIS Document Q&A Assistant. The audit identified ~114 confirmed findings across 9 check groups spanning the entire codebase: vector store, API server, LLM interface, GUI, test suite, documentation, build scripts, and configuration.
 
-**Primary Goal:** Return the application to a known-good state with unified behavior across GUI, CLI, and API modes, while establishing a regression test suite to prevent recurrence.
+This is a **fix phase** — modifying existing source code, tests, build scripts, and documentation to address every confirmed finding from the audit. The remediation follows the audit's recommended priority order: safety-critical fixes first, then data integrity, then consistency/correctness, then dead code, then documentation, then polish.
 
-**Secondary Goal:** Align packaging and documentation with the actual runtime code structure.
+**Primary Goal:** Fix all ~114 confirmed audit findings in priority order, ensuring no regressions.
+
+**Secondary Goal:** Improve test quality to actually guard against the bugs found, not just pass.
 
 ---
 
 ## 2. User Scenarios
 
-### Scenario 1: GUI User with Bundled GGUF Model
-**As a** desktop application user  
-**I want to** launch the GUI and have it automatically use the bundled GGUF model  
-**So that** I can start chatting without manual configuration  
+### Scenario 1: Developer Fixing Findings
+**As a** developer
+**I want to** follow a prioritized remediation plan
+**So that** I fix the most dangerous bugs first and don't accidentally regress
 
-**Given** a valid GGUF file exists in the bundled models directory  
-**When** I launch the GUI application  
-**Then** the settings dialog shows the bundled model path  
-**And** the chat interface initializes with the GGUF backend  
-**And** I can ask questions and receive responses
+**Given** the remediation plan is approved
+**When** I work through tasks in order
+**Then** each task fixes one logical group of related findings
+**And** each task has clear acceptance criteria I can verify
 
-### Scenario 2: API Mode with Environment-Based GGUF
-**As a** system administrator deploying the API server  
-**I want to** configure the GGUF model path via environment variable  
-**So that** the API uses the correct backend without code changes  
+### Scenario 2: Project Lead Tracking Progress
+**As a** project lead
+**I want to** see which findings are fixed and which remain
+**So that** I can track remediation progress against the audit report
 
-**Given** the `RAG_GGUF_PATH` environment variable is set to a valid GGUF file  
-**When** I start the API server  
-**Then** the server initializes using the specified GGUF model  
-**And** the `/query` endpoint responds using the GGUF backend
-
-### Scenario 3: Local Ollama Integration
-**As a** developer testing with local Ollama  
-**I want to** configure `http://localhost:11434` as my LLM endpoint  
-**So that** I can use my local Ollama instance  
-
-**Given** Ollama is running on localhost:11434  
-**When** I configure the API URL to `http://localhost:11434`  
-**Then** the application accepts the configuration  
-**And** queries are sent to the local Ollama instance
-
-### Scenario 4: Single-File Upload with Source Preservation
-**As a** user uploading a document  
-**I want to** upload `report.pdf` and see it listed as "report.pdf"  
-**So that** I can identify and manage my documents correctly  
-
-**Given** I upload a file named `report.pdf` via the API  
-**When** the file is processed and indexed  
-**Then** the document appears in the library as "report.pdf"  
-**And** citations reference "report.pdf"  
-**And** delete operations target the correct document
-
-### Scenario 5: Packaged Application Smoke Test
-**As a** release engineer  
-**I want to** build and run the packaged application  
-**So that** I can verify the installer works correctly  
-
-**Given** the PyInstaller build completes successfully  
-**When** I run the packaged executable  
-**Then** the GUI launches without errors  
-**And** I can load a GGUF model  
-**And** I can ingest a document  
-**And** I can query and receive a response
+**Given** the remediation plan has phases
+**When** I check plan status
+**Then** I see completed, in-progress, and pending tasks
+**And** each task maps to specific audit finding IDs
 
 ---
 
 ## 3. Functional Requirements
 
-### FR-001: Unified GGUF Backend Initialization
-**MUST** Provide a single shared engine construction path used by GUI, CLI, and API modes that correctly passes `gguf_path` to the `RAGEngine` constructor.
+### FR-001: Critical Safety and Regression Fixes
+**MUST** Fix the most dangerous confirmed findings first: inverted regression test, error detail disclosure, None guard crashes, file size limits, GUI input validation.
 
-**Acceptance Criteria:**
-- GUI initialization passes `gguf_path` from settings (not `model_path`)
-- API lifespan startup reads `RAG_GGUF_PATH` and passes it to `RAGEngine`
-- CLI mode continues to work with direct parameter passing
-- All three modes produce identical engine configuration given the same inputs
+### FR-002: BM25 and Vector Store Overhaul
+**MUST** Fix the O(N^2) BM25 rebuild pattern, add threading synchronization for concurrent access, fix delete_document BM25 inconsistency, and add rank_bm25 to requirements.txt.
 
-### FR-002: Local Endpoint URL Validation
-**MUST** Allow localhost, 127.0.0.1, ::1, and private LAN addresses (RFC1918) for explicitly local backends while maintaining security against malicious URLs.
+### FR-003: Configuration Default Unification
+**MUST** Unify chunk_size, retrieval_window, and max_tokens defaults across RAGConfig, engine_factory, CLI, and CONFIGURATION.md to a single source of truth.
 
-**Acceptance Criteria:**
-- URLs to `http://localhost:11434` are accepted when explicitly configured as local
-- URLs to `http://127.0.0.1` and `http://[::1]` are accepted for local backends
-- Private IP ranges (10.x.x.x, 172.16-31.x.x, 192.168.x.x) are accepted when local mode is enabled
-- Malformed URLs and URLs with userinfo (user:pass@host) are rejected
-- Resolved IP addresses are validated against the whitelist (DNS rebinding protection)
-- Non-standard ports outside the allowed set require explicit opt-in
+### FR-004: Dead Code Removal
+**MUST** Remove dead code: seed_loader.py (zero callers), _expand_chunks_with_window (never called), unused imports, and orphan root-level test files.
 
-### FR-003: Path Validation for Local Files
-**MUST** Allow legitimate local file paths (including absolute Windows paths outside the repo directory) while preventing directory traversal attacks.
+### FR-005: LLM Interface Resilience
+**MUST** Add None guards for type safety, runtime fallback in SmartLLM, proper HTTP error handling, and consistent error patterns across all LLM backends.
 
-**Acceptance Criteria:**
-- Absolute paths like `C:\Models\model.gguf` validate successfully
-- Paths with parent directory references (`../`) are rejected
-- Path traversal attempts using encoded sequences are rejected
-- Windows reserved device names (CON, NUL, AUX, COM1-9, LPT1-9) are rejected
-- Symbolic links in path resolution are handled safely
+### FR-006: Data Pipeline Robustness
+**MUST** Fix silent pdfplumber fallback, exception swallowing in chunking, DRY violations, god function splits, and make chunk_size configurable.
 
-### FR-004: Upload Filename Preservation
-**MUST** Preserve the original uploaded filename through the entire ingest pipeline while sanitizing for safe filesystem storage.
+### FR-007: Test Suite Quality
+**MUST** Fix inverted assertion (regression-001), tautological assertions, mock-bypassing tests, delete orphan root test files, and improve assertion quality across the suite.
 
-**Acceptance Criteria:**
-- Original filename is extracted and sanitized (path traversal characters removed)
-- Sanitized filename is stored in document metadata as `source_name` or `display_name`
-- Document listing displays the original (sanitized) filename
-- Citations reference the original filename
-- Delete-by-document operations use the stable source identifier
-- Duplicate uploads of the same filename behave deterministically
+### FR-008: Build Scripts and Supply Chain
+**MUST** Fix PyInstaller cross-platform separator, flat copy issues, encoding problems, and ensure rank_bm25 is declared in requirements.txt.
 
-### FR-005: Consistent GUI and API Upload Behavior
-**SHOULD** Align GUI and API upload capabilities to match documented behavior.
+### FR-009: Documentation Accuracy
+**MUST** Fix all 8 wrong CONFIGURATION.md defaults, README inaccuracies, ARCHITECTURE.md stale claims, and USAGE.md phantom CLI flags.
 
-**Acceptance Criteria:**
-- API `/ingest/file` endpoint supports single-file upload (existing)
-- GUI provides explicit single-file upload option if not already present
-- GUI folder-based ingestion continues to work as documented
-- Documentation accurately describes available upload methods per mode
+### FR-010: API Server and GUI Polish
+**MUST** Add input validation to API endpoints, fix CORS configuration, standardize error responses, improve settings robustness, and address god class concerns.
 
-### FR-006: Build Specification Alignment
-**MUST** Update build scripts and PyInstaller spec to match the current repository layout.
-
-**Acceptance Criteria:**
-- `AFOMIS.spec` entry point references the correct application file (top-level, not `ui/app.py`)
-- Bundled paths in spec match the actual directory structure
-- `build_exe.bat` validates prerequisites against the correct paths
-- Packaged application launches and functions correctly
+### FR-011: Remaining Polish
+**MUST** Address remaining lower-priority findings: CLI factory consistency, vector store minor fixes, LLM interface cleanup, and build/config hardening.
 
 ---
 
@@ -141,111 +84,87 @@ Restore full end-to-end functionality for offline chat and document ingestion in
 
 | ID | Criterion | Measurement |
 |----|-----------|-------------|
-| SC-001 | GUI GGUF Auto-Detection | GUI startup with valid GGUF initializes SmartLLM on GGUF backend within 10 seconds |
-| SC-002 | API GGUF Environment Variable | API server with `RAG_GGUF_PATH` set initializes GGUF backend on first request |
-| SC-003 | Local Ollama Endpoint | API startup succeeds with `http://localhost:11434` configured as local endpoint |
-| SC-004 | Private LAN Endpoint | API accepts connections to `http://192.168.x.x:11434` when local mode is enabled |
-| SC-005 | Malicious URL Rejection | URLs with path traversal, userinfo, or non-whitelisted remote hosts are rejected with clear error messages |
-| SC-006 | Upload Source Identity | Uploading `report.pdf` results in "report.pdf" displayed everywhere (library, citations, deletion) |
-| SC-007 | Duplicate Upload Handling | Repeated uploads of identical files produce deterministic, non-conflicting behavior |
-| SC-008 | Packaged Application Startup | Clean PyInstaller build launches GUI without import errors or path issues |
-| SC-009 | End-to-End Packaged Functionality | Packaged app can load GGUF, ingest documents, and answer questions |
-| SC-010 | Regression Test Coverage | Each confirmed defect has a corresponding regression test that would catch recurrence |
+| SC-001 | Finding Coverage | Every confirmed finding from qa-report.md maps to at least one remediation task |
+| SC-002 | No Regression | Existing passing tests still pass after each task |
+| SC-003 | Test Quality | After remediation, test suite catches the bugs it was supposed to guard against |
+| SC-004 | Documentation Accuracy | Every config default, endpoint, and CLI flag in docs matches actual code |
+| SC-005 | Thread Safety | Vector store operations are safe for concurrent access |
+| SC-006 | Dependency Integrity | requirements.txt declares all imported packages |
+| SC-007 | Build Cross-Platform | Build scripts work on Windows without hardcoded Unix paths |
 
 ---
 
 ## 5. Key Entities
 
-- **RAGEngine**: Core orchestration class for RAG operations
-- **SmartLLM**: Backend selector that prefers GGUF when `gguf_path` is populated
-- **DocumentProcessor**: Handles text extraction and metadata assignment
-- **VectorStore**: ChromaDB wrapper for document storage and retrieval
-- **Settings/Configuration**: User preferences including `gguf_path`, `ollama_url`, etc.
-- **Bug Ledger**: Document tracking confirmed defects, root causes, fixes, and test status
+- **Source Modules**: api_server.py, app_gui.py, rag_engine.py, llm_interface.py, vector_store.py, document_processor.py, engine_factory.py, app_paths.py, main.py, query_transformer.py, reranking.py, seed_loader.py, utils.py
+- **Build Scripts**: build.py, scripts/build.py, scripts/build_installer.py, scripts/bundle_embedding_model.py, scripts/export_seed_chunks.py
+- **Test Files**: 6 unit test files, 6 regression test files, conftest.py, 4 orphan root-level test files
+- **Documentation**: README.md, ARCHITECTURE.md, CONFIGURATION.md, INSTALL.md, USAGE.md, REMEDIATION_REPORT.md
+- **Configuration**: requirements.txt, build_exe.bat
+- **Audit Reference**: qa-report.md (read-only), .swarm/evidence/ (read-only)
 
 ---
 
-## 6. Edge Cases and Failure Modes
+## 6. Edge Cases and Known Constraints
 
-### EC-001: Conflicting Configuration Sources
-**Scenario:** User sets `RAG_GGUF_PATH` environment variable AND provides `--model-path` CLI argument  
-**Expected Behavior:** Explicit CLI parameter takes precedence over environment variable; precedence order is documented
+### EC-001: Local-Only Desktop App
+This is a single-user localhost Windows desktop app. Do NOT add authentication, CORS hardening for remote access, or network-level security that a localhost app doesn't need.
 
-### EC-002: Empty or Malformed GGUF Path
-**Scenario:** Settings contain empty string or invalid path for `gguf_path`  
-**Expected Behavior:** Application gracefully falls back to next available backend (OpenVINO, Ollama, API) with clear logging
+### EC-002: Tkinter self.after() is Main-Thread
+GUI updates via self.after() are main-thread scheduled. Do NOT add unnecessary thread safety for Tkinter widget operations.
 
-### EC-003: Filename with Special Characters
-**Scenario:** User uploads file named `report [v2] (final).pdf` or `document\name.pdf`  
-**Expected Behavior:** Special characters are sanitized; original intent is preserved in display name; filesystem storage uses safe name
+### EC-003: Ollama Runs on Localhost
+Ollama backend connects to localhost:11434. Do NOT add retry logic for localhost connections that don't need it.
 
-### EC-004: Upload with Path Traversal Attempt
-**Scenario:** Malicious upload with filename `../../../etc/passwd`  
-**Expected Behavior:** Traversal attempt is detected and sanitized; file is stored with safe name only
+### EC-004: No Pytest.ini
+pytest configuration is in tests/conftest.py. Do not create pytest.ini.
 
-### EC-005: Concurrent Uploads of Same File
-**Scenario:** Multiple users upload `report.pdf` simultaneously  
-**Expected Behavior:** Each upload is processed independently; duplicate detection handles race conditions gracefully
-
-### EC-006: Packaged App Path Resolution
-**Scenario:** PyInstaller bundle runs from directory with spaces or non-ASCII characters  
-**Expected Behavior:** Path resolution uses `sys._MEIPASS` correctly; all bundled resources are accessible
-
-### EC-007: DNS Rebinding Attack
-**Scenario:** Attacker configures DNS to resolve `localhost.attacker.com` to `127.0.0.1`  
-**Expected Behavior:** URL validation resolves hostname and validates the IP address, not just the string
+### EC-005: phase_complete() and update_task_status() Don't Work
+These swarm tools have known issues in this environment. Track progress via evidence files and .swarm/plan.md manual updates only.
 
 ---
 
-## 7. Constraints and Non-Goals
+## 7. Constraints
 
 **In Scope:**
-- GGUF backend initialization across all modes
-- URL validation for local/offline endpoints
-- Path validation for local files
-- Upload filename preservation
-- Build specification alignment
-- Regression test suite
+- Fix all ~114 confirmed findings from the QA audit
+- Modify source files, test files, build scripts, and documentation
+- Add missing dependencies to requirements.txt
+- Delete dead code (seed_loader.py, orphan tests)
+- Improve test assertion quality
 
 **Out of Scope:**
-- New LLM backends or model formats
-- Changes to chunking or embedding logic
-- UI redesign or new features
-- Database schema changes
-- Network security beyond input validation
-- Cloud deployment configurations
+- New features or capability additions
+- Performance optimization beyond fixing the O(N^2) BM25 rebuild
+- Refactoring working code purely for style (only fix confirmed bugs)
+- Adding authentication or remote-access security
+- Modifying qa-report.md or evidence files (read-only reference)
 
 ---
 
 ## 8. Notes
 
-### Bug Ledger Structure
-Each confirmed defect must be documented with:
-- **Defect ID**: Unique identifier (e.g., BUG-001)
-- **Description**: What is broken
-- **Root Cause**: Why it broke
-- **Affected Files**: Where the bug lives
-- **Repro Steps**: How to trigger it
-- **Fix Status**: Pending / In Progress / Complete
-- **Regression Test**: Test file that prevents recurrence
+### False Positive Patterns to Avoid
+- Don't add authentication/CORS hardening beyond what a localhost app needs
+- Don't add retry logic for localhost connections
+- Don't refactor working code just because it "could be better"
+- Don't add tests for stdlib behavior
 
-### Architecture Drift Context
-The repository currently has:
-- **Live code**: `app_gui.py`, `main.py`, `api_server.py` at repository root
-- **Legacy code**: `ui/app.py` (may be obsolete or superseded)
-- **Build spec**: `AFOMIS.spec` references `ui/app.py` as entry point
+### Audit Lessons to Apply
+1. **Coder fabricates data** — never delegate data compilation tasks to coder
+2. **Critic makes factual errors** — cross-check critic claims against actual source code
+3. **Local-only app context** — focus on correctness and robustness, not remote access hardening
+4. **Tkinter self.after() is main-thread** — no unnecessary thread safety for GUI updates
 
-This drift must be resolved by determining which entry point is canonical and updating all references accordingly.
-
-### Test Requirements
-- Each FR must have at least one integration test
-- Each confirmed defect must have a regression test
-- Tests must cover GUI, CLI, and API modes where applicable
-- Packaged application requires smoke test (manual or automated)
+### Task Dependency Ordering
+- Phase 1 (safety) must complete first
+- Phase 2 (vector store) before Phase 6 (data pipeline)
+- Phase 7 (test fixes) depends on Phase 1 (safety fixes being in place)
+- Phase 10 (GUI refactor) should come last among source code work
+- Phase 11 (polish) is lowest priority
 
 ---
 
 ## 9. Clarification Log
 
-*No open clarifications. All requirements derived from confirmed defects and execution plan provided.*
-
+*No open clarifications. All requirements derived from qa-report.md findings.*

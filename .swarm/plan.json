@@ -1,324 +1,729 @@
 {
   "schema_version": "1.0.0",
-  "title": "AFOMIS End-to-End Functionality Restoration",
-  "swarm": "paid",
-  "current_phase": 14,
+  "title": "AFOMIS Document QA Assistant — Remediation Plan",
+  "swarm": "modelrelay",
+  "current_phase": 1,
   "phases": [
     {
-      "id": 14,
-      "name": "Phase 14: Establish Reproducible Baseline",
+      "id": 1,
+      "name": "Critical Safety and Regression Fixes",
       "status": "pending",
       "tasks": [
         {
-          "id": "14.1",
-          "phase": 14,
-          "status": "completed",
-          "size": "medium",
-          "description": "Create baseline test matrix covering GUI mode, CLI mode, and API mode with GGUF path variations and upload paths",
-          "depends": [],
-          "acceptance": "Matrix document exists with test scenarios for each mode and configuration combination",
-          "files_touched": []
-        },
-        {
-          "id": "14.2",
-          "phase": 14,
-          "status": "completed",
-          "size": "medium",
-          "description": "Execute baseline tests and capture failing code paths for each confirmed defect",
-          "depends": [],
-          "acceptance": "Bug ledger created with confirmed root cause, repro steps, and failing code locations for all 6 confirmed defects",
-          "files_touched": []
-        },
-        {
-          "id": "14.3",
-          "phase": 14,
-          "status": "in_progress",
-          "size": "small",
-          "description": "Create regression test stubs for each confirmed defect that will verify fixes",
-          "depends": [],
-          "acceptance": "Test files created in tests/regression/ directory with failing assertions for each defect",
-          "files_touched": []
-        }
-      ]
-    },
-    {
-      "id": 15,
-      "name": "Phase 15: Repair GGUF Backend Detection",
-      "status": "pending",
-      "tasks": [
-        {
-          "id": "15.1",
-          "phase": 15,
+          "id": "1.1",
+          "phase": 1,
           "status": "completed",
           "size": "small",
-          "description": "Fix GUI initialization in app_gui.py to pass gguf_path parameter instead of model_path to RAGEngine",
+          "description": "Fix inverted regression test assertion in tests/regression/test_defect_003_url_validation.py line 173. The test currently passes when the URL validation fix is broken (assertion is inverted). Correct the assertion so the test fails when the fix is removed. Finding: regression-001.",
           "depends": [],
-          "acceptance": "GUI passes gguf_path from settings to engine constructor; existing tests pass",
+          "acceptance": "Test fails when URL validation fix is commented out, passes when fix is present",
           "files_touched": []
         },
         {
-          "id": "15.2",
-          "phase": 15,
-          "status": "completed",
-          "size": "small",
-          "description": "Fix API server lifespan in api_server.py to read RAG_GGUF_PATH environment variable and pass to RAGEngine",
-          "depends": [],
-          "acceptance": "API server reads RAG_GGUF_PATH and passes gguf_path to engine; test verifies env var flows to engine",
-          "files_touched": []
-        },
-        {
-          "id": "15.3",
-          "phase": 15,
-          "status": "completed",
-          "size": "medium",
-          "description": "Audit repository for remaining semantic misuse of model_path versus gguf_path including migration code and tests",
-          "depends": [],
-          "acceptance": "Grep report shows all model_path/gguf_path usages; any mismatches are documented and fixed",
-          "files_touched": []
-        },
-        {
-          "id": "15.4",
-          "phase": 15,
-          "status": "completed",
-          "size": "medium",
-          "description": "Create unified engine construction helper if needed to ensure all modes use shared path",
-          "depends": [],
-          "acceptance": "All three modes (GUI, CLI, API) route through shared helper or equivalent normalization; tests verify consistency",
-          "files_touched": []
-        }
-      ]
-    },
-    {
-      "id": 16,
-      "name": "Phase 16: Repair Local Endpoint Handling",
-      "status": "pending",
-      "tasks": [
-        {
-          "id": "16.1",
-          "phase": 16,
-          "status": "completed",
-          "size": "small",
-          "description": "Update validate_url() in api_server.py to allow localhost, 127.0.0.1, ::1 for explicitly local backends",
-          "depends": [],
-          "acceptance": "Local URLs accepted when allow_local flag is set; remote URLs still rejected",
-          "files_touched": []
-        },
-        {
-          "id": "16.2",
-          "phase": 16,
-          "status": "completed",
-          "size": "small",
-          "description": "Add DNS rebinding protection by resolving hostname and validating IP against whitelist",
-          "depends": [],
-          "acceptance": "URL validation resolves hostname and checks resolved IP; DNS rebinding attacks are blocked",
-          "files_touched": []
-        },
-        {
-          "id": "16.3",
-          "phase": 16,
-          "status": "completed",
-          "size": "small",
-          "description": "Update validate_model_path() to allow absolute Windows paths while preventing traversal",
-          "depends": [],
-          "acceptance": "Absolute paths like C:\\Models\\model.gguf validate successfully; traversal attempts rejected",
-          "files_touched": []
-        },
-        {
-          "id": "16.4",
-          "phase": 16,
-          "status": "completed",
-          "size": "small",
-          "description": "Update validate_directory() with same path handling improvements",
-          "depends": [],
-          "acceptance": "Directory validation accepts legitimate absolute paths; blocks traversal attempts",
-          "files_touched": []
-        },
-        {
-          "id": "16.5",
-          "phase": 16,
-          "status": "completed",
-          "size": "small",
-          "description": "Add port whitelist validation for non-standard ports with explicit opt-in requirement",
-          "depends": [],
-          "acceptance": "Ports outside allowed set require explicit configuration; clear error messages guide user",
-          "files_touched": []
-        }
-      ]
-    },
-    {
-      "id": 17,
-      "name": "Phase 17: Rebuild Upload Ingestion",
-      "status": "pending",
-      "tasks": [
-        {
-          "id": "17.1",
-          "phase": 17,
-          "status": "completed",
-          "size": "medium",
-          "description": "Add source_name/display_name parameter through ingest pipeline from /ingest/file endpoint to DocumentProcessor",
-          "depends": [],
-          "acceptance": "Original filename flows from API endpoint through to document metadata without temp basename contamination",
-          "files_touched": []
-        },
-        {
-          "id": "17.2",
-          "phase": 17,
-          "status": "completed",
-          "size": "small",
-          "description": "Implement filename sanitization function to prevent path traversal while preserving display name",
-          "depends": [],
-          "acceptance": "Sanitization removes traversal characters, reserved names; returns safe filename and original display name",
-          "files_touched": []
-        },
-        {
-          "id": "17.3",
-          "phase": 17,
-          "status": "completed",
-          "size": "small",
-          "description": "Update DocumentProcessor.process_file() to use source_name parameter for metadata",
-          "depends": [],
-          "acceptance": "Process_file accepts source_name parameter and stores in metadata; existing behavior preserved when parameter not provided",
-          "files_touched": []
-        },
-        {
-          "id": "17.4",
-          "phase": 17,
-          "status": "completed",
-          "size": "medium",
-          "description": "Verify duplicate handling, deletion, document listing, and citations use stable source metadata",
-          "depends": [],
-          "acceptance": "All document operations reference stable source name; repeated uploads behave deterministically",
-          "files_touched": []
-        }
-      ]
-    },
-    {
-      "id": 18,
-      "name": "Phase 18: Align GUI, API, CLI, and Documentation",
-      "status": "pending",
-      "tasks": [
-        {
-          "id": "18.1",
-          "phase": 18,
-          "status": "in_progress",
-          "size": "medium",
-          "description": "Audit README and documentation for drift between documented and actual behavior",
-          "depends": [],
-          "acceptance": "Documentation audit report lists all discrepancies; each discrepancy ticketed for resolution",
-          "files_touched": []
-        },
-        {
-          "id": "18.2",
-          "phase": 18,
-          "status": "completed",
-          "size": "small",
-          "description": "Verify GUI upload capabilities match API surface or document intentional differences",
-          "depends": [],
-          "acceptance": "GUI and API upload capabilities documented; any intentional differences explained in README",
-          "files_touched": []
-        },
-        {
-          "id": "18.3",
-          "phase": 18,
-          "status": "completed",
-          "size": "small",
-          "description": "Update settings labels and backend naming to match actual code behavior",
-          "depends": [],
-          "acceptance": "Settings UI labels match configuration options; backend names are consistent",
-          "files_touched": []
-        },
-        {
-          "id": "18.4",
-          "phase": 18,
+          "id": "1.2",
+          "phase": 1,
           "status": "pending",
           "size": "small",
-          "description": "Document actual backend precedence and configuration knobs accurately",
+          "description": "Fix error detail disclosure in api_server.py: replace str(e) with generic error messages in /ingest/file (line 626), /ask (line 546), and /search (line 566). Return user-friendly messages without exposing internal paths, model details, or stack traces. Findings: api-007, api-008, api-009.",
+          "depends": [
+            "1.1"
+          ],
+          "acceptance": "Error responses contain no internal file paths, model names, or Python tracebacks",
+          "files_touched": []
+        },
+        {
+          "id": "1.3",
+          "phase": 1,
+          "status": "pending",
+          "size": "small",
+          "description": "Add None guard for file.filename in api_server.py line 600. file.filename can be None (malformed multipart request), which would cause TypeError in sanitize_filename. Return 400 Bad Request when filename is None. Finding: api-004.",
+          "depends": [
+            "1.2"
+          ],
+          "acceptance": "Request with null filename returns 400, not 500 TypeError",
+          "files_touched": []
+        },
+        {
+          "id": "1.4",
+          "phase": 1,
+          "status": "pending",
+          "size": "small",
+          "description": "Add file size limit to /ingest/file endpoint in api_server.py line 612. Cap uploaded file size (e.g., 50MB default) to prevent resource exhaustion. Return 413 Payload Too Large when exceeded. Finding: api-005.",
+          "depends": [
+            "1.3"
+          ],
+          "acceptance": "Files exceeding size limit return 413, large files are rejected before processing",
+          "files_touched": []
+        },
+        {
+          "id": "1.5",
+          "phase": 1,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix unvalidated numeric input in app_gui.py settings save (line 169). Wrap int() and float() conversions in try/except ValueError to prevent crashes when users enter non-numeric values in settings fields. Finding: gui-001.",
           "depends": [],
-          "acceptance": "README accurately describes: GGUF → OpenVINO → OpenAI-compatible → Ollama fallback order",
+          "acceptance": "Non-numeric values in numeric settings fields show error message, do not crash the app",
           "files_touched": []
         }
       ]
     },
     {
-      "id": 19,
-      "name": "Phase 19: Packaging and Distribution Validation",
+      "id": 2,
+      "name": "BM25 and Vector Store Overhaul",
       "status": "pending",
       "tasks": [
         {
-          "id": "19.1",
-          "phase": 19,
-          "status": "completed",
+          "id": "2.1",
+          "phase": 2,
+          "status": "pending",
           "size": "medium",
-          "description": "Audit AFOMIS.spec against current repository layout and update entry point and bundled paths",
-          "depends": [],
-          "acceptance": "Spec file references correct entry point; bundled paths match actual directory structure",
+          "description": "Replace per-document BM25 rebuild in vector_store.py add_document() (line 95-116) with batch accumulation pattern. Collect pending chunks and rebuild BM25Okapi index once after all chunks are added, not on every single add_document call. This fixes the O(N^2) batch ingestion problem. Finding: vectorstore-001, vectorstore-005.",
+          "depends": [
+            "1.1"
+          ],
+          "acceptance": "Batch add of 100 chunks rebuilds BM25 index exactly once, not 100 times",
           "files_touched": []
         },
         {
-          "id": "19.2",
-          "phase": 19,
+          "id": "2.2",
+          "phase": 2,
+          "status": "pending",
+          "size": "medium",
+          "description": "Add threading.Lock to vector_store.py for thread-safe concurrent access to shared BM25 index and ChromaDB collection. Protect add_chunks(), delete_document(), and hybrid_search() with a lock. This fixes race conditions when GUI spawns ingestion threads. Finding: vectorstore-002, vectorstore-003.",
+          "depends": [
+            "2.1"
+          ],
+          "acceptance": "Concurrent add_chunks calls from multiple threads complete without data corruption",
+          "files_touched": []
+        },
+        {
+          "id": "2.3",
+          "phase": 2,
           "status": "pending",
           "size": "small",
-          "description": "Update build_exe.bat to validate prerequisites against correct paths",
-          "depends": [],
-          "acceptance": "Build script checks exist at correct locations; exits with clear error if prerequisites missing",
+          "description": "Fix delete_document BM25 inconsistency in vector_store.py line 503. After deleting from ChromaDB, also rebuild the BM25 index so it stays in sync. Currently delete removes from ChromaDB but leaves stale entries in BM25. Finding: vectorstore-004.",
+          "depends": [
+            "2.2"
+          ],
+          "acceptance": "After delete_document, deleted chunks no longer appear in BM25 search results",
           "files_touched": []
         },
         {
-          "id": "19.3",
-          "phase": 19,
-          "status": "completed",
-          "size": "medium",
-          "description": "Perform clean package build and document any issues encountered",
-          "depends": [],
-          "acceptance": "Clean build completes; build log documents any warnings or issues",
+          "id": "2.4",
+          "phase": 2,
+          "status": "pending",
+          "size": "small",
+          "description": "Add corpus size limit or warning in vector_store.py. When BM25 index grows large (e.g., >10000 chunks), log a performance warning. This addresses the known limitation EC-003 without blocking functionality. Finding: vectorstore-008.",
+          "depends": [
+            "2.1"
+          ],
+          "acceptance": "Warning logged when corpus exceeds configurable threshold",
           "files_touched": []
         },
         {
-          "id": "19.4",
-          "phase": 19,
-          "status": "completed",
-          "size": "medium",
-          "description": "Execute packaged application smoke test: launch, load GGUF, ingest document, answer question",
-          "depends": [],
-          "acceptance": "Packaged app passes all smoke test steps; any failures documented with root cause",
+          "id": "2.5",
+          "phase": 2,
+          "status": "pending",
+          "size": "small",
+          "description": "Add rank_bm25 to requirements.txt. Currently imported in vector_store.py but not declared as a dependency. Finding: config-001.",
+          "depends": [
+            "2.1"
+          ],
+          "acceptance": "pip install -r requirements.txt succeeds and includes rank_bm25",
           "files_touched": []
         }
       ]
     },
     {
-      "id": 20,
-      "name": "Phase 20: Regression Test Suite and Bug Ledger",
+      "id": 3,
+      "name": "Configuration and Default Unification",
       "status": "pending",
       "tasks": [
         {
-          "id": "20.1",
-          "phase": 20,
+          "id": "3.1",
+          "phase": 3,
+          "status": "pending",
+          "size": "small",
+          "description": "Unify chunk_size default across RAGConfig (512), engine_factory, and CLI (main.py line 72 uses 256). Make all three code paths use the same default value of 512. Update CLI argument default in main.py. Findings: engine-002, cross-001, configdoc-003.",
+          "depends": [
+            "2.2"
+          ],
+          "acceptance": "grep shows chunk_size default is 512 in all three locations: RAGConfig, engine_factory, main.py",
+          "files_touched": []
+        },
+        {
+          "id": "3.2",
+          "phase": 3,
+          "status": "pending",
+          "size": "small",
+          "description": "Unify retrieval_window default across RAGConfig (1), engine_factory, and CONFIGURATION.md (documents 0). Make all code paths use default of 1. Update any code or docs that still reference 0. Findings: cross-002, configdoc-006.",
+          "depends": [
+            "3.1"
+          ],
+          "acceptance": "retrieval_window default is 1 in RAGConfig, engine_factory, and all documentation",
+          "files_touched": []
+        },
+        {
+          "id": "3.3",
+          "phase": 3,
+          "status": "pending",
+          "size": "small",
+          "description": "Unify max_tokens default. Verify RAGConfig, engine_factory, and all LLM backends use consistent max_tokens default (1024 recommended). Fix any that use 512. Findings: engine-008, engine-009.",
+          "depends": [],
+          "acceptance": "max_tokens default is consistent across all configuration paths",
+          "files_touched": []
+        },
+        {
+          "id": "3.4",
+          "phase": 3,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix settings path documentation in CONFIGURATION.md line 26. Currently documents AppData/DocumentQA/app_settings.json but actual code uses %LOCALAPPDATA%/AFOMIS Help and Support/settings.json via app_paths.py. Finding: configdoc-001, paths-007.",
+          "depends": [
+            "3.1"
+          ],
+          "acceptance": "CONFIGURATION.md settings path matches what app_paths.py actually resolves",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Dead Code Removal",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "4.1",
+          "phase": 4,
+          "status": "pending",
+          "size": "small",
+          "description": "Delete seed_loader.py entirely. SeedDataLoader has zero callers — it is dead code. Remove the file and any imports referencing it. Finding: seedloader-001 (dead code), seedloader-003, seedloader-004 (unreachable bugs).",
+          "depends": [],
+          "acceptance": "seed_loader.py no longer exists, no import errors in any other file",
+          "files_touched": []
+        },
+        {
+          "id": "4.2",
+          "phase": 4,
+          "status": "pending",
+          "size": "small",
+          "description": "Remove dead methods and imports across the codebase: _expand_chunks_with_window in rag_engine.py line 271 (never called), unused imports identified in the audit. Findings: engine-001, plus various unused import findings.",
+          "depends": [],
+          "acceptance": "No dead functions or unused imports remain in audited files",
+          "files_touched": []
+        },
+        {
+          "id": "4.3",
+          "phase": 4,
+          "status": "pending",
+          "size": "small",
+          "description": "Remove dead path functions from app_paths.py. Functions that exist but have no callers should be removed or marked deprecated with a comment explaining why they are kept. Finding: paths-003, gui-003, paths-010.",
+          "depends": [],
+          "acceptance": "Every function in app_paths.py has at least one caller or is explicitly documented as retained for future use",
+          "files_touched": []
+        },
+        {
+          "id": "4.4",
+          "phase": 4,
+          "status": "pending",
+          "size": "small",
+          "description": "Review get_resource_path usage in app_paths.py. Verify it is correctly used for PyInstaller frozen app detection and that the _MEIPASS fallback works. Finding: paths-008 (partially supported documentation).",
+          "depends": [
+            "4.3"
+          ],
+          "acceptance": "get_resource_path correctly resolves paths in both frozen and development mode",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "LLM Interface Resilience",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "5.1",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Add None guards in llm_interface.py for type safety. Fix lines where dict.get() results could be None but are used without checking (lines 378, 413, 481). Add proper None checks before attribute access. Findings: llm-003, llm-004, llm-007, llm-008.",
+          "depends": [
+            "3.3"
+          ],
+          "acceptance": "No AttributeError when LLM backend returns None or missing fields",
+          "files_touched": []
+        },
+        {
+          "id": "5.2",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Add runtime fallback in SmartLLM generate method. If the primary backend's generate() call fails at runtime (not just init), fall back to the next available backend. Currently init success is assumed to guarantee generate success. Finding: llm-009.",
+          "depends": [],
+          "acceptance": "If primary backend generate() throws, SmartLLM tries next backend without crashing",
+          "files_touched": []
+        },
+        {
+          "id": "5.3",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix HTTP error handling in Ollama and OpenAI backends in llm_interface.py. Handle connection refused, timeout, and non-200 status codes with user-friendly error messages instead of raw exception propagation. Findings: llm-010, llm-011, llm-013.",
+          "depends": [
+            "5.1"
+          ],
+          "acceptance": "Network errors from Ollama/OpenAI return structured error messages, not raw tracebacks",
+          "files_touched": []
+        },
+        {
+          "id": "5.4",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix re.sub None safety in llm_interface.py line 203. The second argument to re.sub can be None, causing TypeError. Add a guard. Finding: llm-008.",
+          "depends": [
+            "5.1"
+          ],
+          "acceptance": "re.sub call handles None input without crashing",
+          "files_touched": []
+        },
+        {
+          "id": "5.5",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix API key header handling. Verify API keys are passed correctly in request headers for OpenAI backend. Ensure no keys are logged or exposed in error messages. Finding: llm-012.",
+          "depends": [],
+          "acceptance": "API keys are passed in headers but never appear in logs or error responses",
+          "files_touched": []
+        },
+        {
+          "id": "5.6",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Add connection verification to LLM backend init. When initializing Ollama or OpenAI backends, verify the connection is reachable before marking the backend as available. Finding: llm-017.",
+          "depends": [
+            "5.3"
+          ],
+          "acceptance": "Backend reports unavailable if its endpoint is not reachable at init time",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Data Pipeline Robustness",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "6.1",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix silent pdfplumber fallback in document_processor.py line 46. When pdfplumber is not installed, the code silently falls back to pypdf without warning the user. Add a logging.warning() so users know they are running with degraded PDF extraction. Finding: datapipeline-001.",
+          "depends": [],
+          "acceptance": "Warning logged when pdfplumber is missing and pypdf fallback is used",
+          "files_touched": []
+        },
+        {
+          "id": "6.2",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix exception swallowing in document_processor.py chunking methods. Broad except clauses that silently discard errors should log the exception at minimum. Identify all bare except or overly broad Exception catches and add logging. Finding: datapipeline-009.",
+          "depends": [
+            "6.1"
+          ],
+          "acceptance": "No bare except or silent Exception catch remains in document_processor.py",
+          "files_touched": []
+        },
+        {
+          "id": "6.3",
+          "phase": 6,
           "status": "pending",
           "size": "medium",
-          "description": "Complete regression tests for all confirmed defects with PASS status",
-          "depends": [],
-          "acceptance": "All regression tests pass; each test would catch recurrence of its defect",
+          "description": "DRY refactor in document_processor.py. The audit identified copy-paste patterns (datapipeline-004) and duplicated chunking logic. Consolidate duplicated chunking code into shared helper functions. Finding: datapipeline-004.",
+          "depends": [
+            "6.2"
+          ],
+          "acceptance": "No duplicated chunking logic blocks in document_processor.py",
           "files_touched": []
         },
         {
-          "id": "20.2",
-          "phase": 20,
-          "status": "completed",
+          "id": "6.4",
+          "phase": 6,
+          "status": "pending",
           "size": "small",
-          "description": "Document final bug ledger with root cause, fix, and test for each defect",
+          "description": "Fix type safety gaps in document_processor.py. Lines 91-95 access .text and .table attributes on BaseShape without type checking. Add isinstance guards or proper type annotations. Findings: datapipeline-011, datapipeline-012, datapipeline-013.",
           "depends": [],
-          "acceptance": "Bug ledger is complete and accurate; can be used for postmortem analysis",
+          "acceptance": "No untyped attribute access on shape objects",
           "files_touched": []
         },
         {
-          "id": "20.3",
-          "phase": 20,
-          "status": "completed",
+          "id": "6.5",
+          "phase": 6,
+          "status": "pending",
           "size": "small",
-          "description": "Write postmortem analysis describing why regressions escaped and prevention measures",
+          "description": "Make chunk_size and chunk_overlap configurable in document_processor.py. Currently these may be hardcoded. Ensure they accept values from RAGConfig. Finding: datapipeline-010.",
+          "depends": [
+            "3.1"
+          ],
+          "acceptance": "chunk_size in document_processor.py is sourced from RAGConfig, not hardcoded",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Test Suite Quality",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "7.1",
+          "phase": 7,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix inverted regression test assertion in test_defect_003_url_validation.py. This is the same as task 1.1 but covers the full test file review — verify all assertions in the file test the correct behavior. Finding: regression-001.",
+          "depends": [
+            "1.1"
+          ],
+          "acceptance": "All assertions in test_defect_003 test correct behavior (not inverted)",
+          "files_touched": []
+        },
+        {
+          "id": "7.2",
+          "phase": 7,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix tautological assertions in test files: test_llm_interface.py line 350 (empty string in any string always passes), test_rag_engine.py line 152 (overly permissive substring match), unused fixture inference_config in conftest.py line 249. Findings: unittest-001, unittest-002, unittest-003.",
           "depends": [],
-          "acceptance": "Postmortem document exists with lessons learned and process improvements",
+          "acceptance": "Each test assertion tests specific expected behavior, not tautologies",
+          "files_touched": []
+        },
+        {
+          "id": "7.3",
+          "phase": 7,
+          "status": "pending",
+          "size": "large",
+          "description": "Fix mock-bypassing regression tests: test_defect_001_gui_gguf_wiring.py line 112 (mock bypasses settings migration), line 258 (test creates expected dict but never calls actual code), and test_defect_002_api_gguf_env.py lines 40/86/267 (string inspection instead of runtime behavior). Make tests actually exercise the code they claim to guard. Findings: regression-002, regression-003, regression-004, regression-005, regression-006.",
+          "depends": [
+            "1.1"
+          ],
+          "acceptance": "Each regression test actually calls the code path it guards, not just inspecting source strings",
+          "files_touched": []
+        },
+        {
+          "id": "7.4",
+          "phase": 7,
+          "status": "pending",
+          "size": "small",
+          "description": "Delete orphan root-level test files: test_gguf_path_wiring_final.py, test_main_gguf_path.py, test_phase1_adversarial.py, test_phase1_fixes.py. These are duplicates of tests already in tests/. Finding: orphan-tests from phase 6.3.",
+          "depends": [
+            "7.1"
+          ],
+          "acceptance": "No test_*.py files remain in repository root (only in tests/)",
+          "files_touched": []
+        },
+        {
+          "id": "7.5",
+          "phase": 7,
+          "status": "pending",
+          "size": "medium",
+          "description": "Improve assertion quality across all test files. Replace generic assertTrue/assertFalse with specific assertions (assertEqual, assertRaises, assertIn, etc.) where the audit identified weak assertions. Finding: unittest-004, unittest-005.",
+          "depends": [
+            "7.2"
+          ],
+          "acceptance": "No assertTrue(result) where assertEqual(result, expected) would be more specific",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "Build Scripts and Supply Chain",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "8.1",
+          "phase": 8,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix PyInstaller cross-platform separator in build.py. Replace hardcoded Unix path separators with os.path.join or Path objects. Finding: build-001.",
+          "depends": [],
+          "acceptance": "Build script uses os.path.join or pathlib.Path for all path construction",
+          "files_touched": []
+        },
+        {
+          "id": "8.2",
+          "phase": 8,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix os.chdir in scripts/build.py that breaks relative path resolution. Either eliminate chdir or use absolute paths. Finding: build-002.",
+          "depends": [
+            "8.1"
+          ],
+          "acceptance": "Build script works regardless of current working directory",
+          "files_touched": []
+        },
+        {
+          "id": "8.3",
+          "phase": 8,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix encoding issues in scripts/build_installer.py. Ensure file operations use explicit UTF-8 encoding. Finding: build-003.",
+          "depends": [],
+          "acceptance": "All file open() calls specify encoding='utf-8'",
+          "files_touched": []
+        },
+        {
+          "id": "8.4",
+          "phase": 8,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix hardcoded values in build scripts. Replace magic numbers, paths, and strings with named constants or configuration. Finding: build-004, build-005.",
+          "depends": [
+            "8.2"
+          ],
+          "acceptance": "No unexplained magic numbers or hardcoded paths in build scripts",
+          "files_touched": []
+        },
+        {
+          "id": "8.5",
+          "phase": 8,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix copy_app_files flat directory issue in scripts/build_installer.py that can cause file overwrites. Use proper directory structure in the copy. Finding: build-006.",
+          "depends": [
+            "8.3"
+          ],
+          "acceptance": "Build output has correct directory structure, no file overwrites",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "name": "Documentation Accuracy",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "9.1",
+          "phase": 9,
+          "status": "pending",
+          "size": "medium",
+          "description": "Fix all 8 wrong CONFIGURATION.md defaults: settings path (line 26), backend priority order (line 264), chunk_size (line 40), DB path (line 38), phantom env vars RAG_TOP_P/RAG_DO_SAMPLE (line 61), retrieval_window (line 69), and JSON examples. Findings: configdoc-001 through configdoc-010.",
+          "depends": [],
+          "acceptance": "Every config default in CONFIGURATION.md matches actual code behavior",
+          "files_touched": []
+        },
+        {
+          "id": "9.2",
+          "phase": 9,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix README.md inaccuracies: model name inconsistency Qwen3-1.7B vs Qwen2.5-1.5B (line 20), and any other stale claims identified in the audit. Finding: doc-002, doc-003, doc-005, doc-006.",
+          "depends": [],
+          "acceptance": "README model names, version dates, and CLI arguments match actual code",
+          "files_touched": []
+        },
+        {
+          "id": "9.3",
+          "phase": 9,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix ARCHITECTURE.md stale claims: remove /ask/stream endpoint (line 578) that does not exist, update any other stale architecture descriptions. Finding: doc-001, doc-004, doc-007.",
+          "depends": [
+            "9.2"
+          ],
+          "acceptance": "Every API endpoint in ARCHITECTURE.md exists in api_server.py",
+          "files_touched": []
+        },
+        {
+          "id": "9.4",
+          "phase": 9,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix USAGE.md phantom CLI flag --reranking (line 367) that does not exist. Remove or document actual CLI flags available. Finding: configdoc-007.",
+          "depends": [
+            "9.3"
+          ],
+          "acceptance": "Every CLI flag in USAGE.md is accepted by main.py argparse",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "name": "API Server and GUI Polish",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "10.1",
+          "phase": 10,
+          "status": "pending",
+          "size": "small",
+          "description": "Add input validation to remaining API endpoints in api_server.py. Validate query text in /ask and /search endpoints — reject empty or whitespace-only queries with 400 Bad Request. Finding: api-001, api-002.",
+          "depends": [],
+          "acceptance": "Empty or whitespace-only queries return 400, not 500 or empty results",
+          "files_touched": []
+        },
+        {
+          "id": "10.2",
+          "phase": 10,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix CORS configuration in api_server.py. Verify CORS settings are appropriate for a localhost-only app. Ensure no overly permissive origins. Finding: api-006.",
+          "depends": [
+            "10.1"
+          ],
+          "acceptance": "CORS allows only localhost origins",
+          "files_touched": []
+        },
+        {
+          "id": "10.3",
+          "phase": 10,
+          "status": "pending",
+          "size": "small",
+          "description": "Standardize error response format in api_server.py. All endpoints should return errors in a consistent JSON format with 'error' and 'detail' fields. Findings: api-014, api-015.",
+          "depends": [
+            "10.1"
+          ],
+          "acceptance": "All error responses follow the same JSON structure",
+          "files_touched": []
+        },
+        {
+          "id": "10.4",
+          "phase": 10,
+          "status": "pending",
+          "size": "medium",
+          "description": "Improve GUI settings robustness in app_gui.py. Add validation for all settings fields before saving: check numeric ranges, verify paths exist, validate model file paths. Finding: gui-001 (extended), gui-005, gui-006.",
+          "depends": [
+            "1.5"
+          ],
+          "acceptance": "Invalid settings values show specific error messages and are not saved",
+          "files_touched": []
+        },
+        {
+          "id": "10.5",
+          "phase": 10,
+          "status": "pending",
+          "size": "large",
+          "description": "Begin god class refactor of app_gui.py (552 lines). Extract settings management into a separate SettingsPanel class or module. This is a first-pass refactor — do NOT attempt full decomposition. Finding: gui-002.",
+          "depends": [
+            "10.4"
+          ],
+          "acceptance": "DocumentQAApp reduced by at least 100 lines through settings extraction, all existing functionality preserved",
+          "files_touched": []
+        },
+        {
+          "id": "10.6",
+          "phase": 10,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix GUI thread safety concerns. Verify that background thread operations (document ingestion, query processing) do not directly modify Tkinter widgets. Use self.after() for all GUI updates from background threads. Finding: gui-003.",
+          "depends": [
+            "10.5"
+          ],
+          "acceptance": "No direct widget modifications from non-main threads",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "name": "Remaining Polish",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "11.1",
+          "phase": 11,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix CLI factory consistency in main.py. Ensure CLI mode uses engine_factory for construction (currently bypasses it), and that all CLI arguments are properly wired to RAGConfig. Finding: engine-002 (extended), cross-003.",
+          "depends": [
+            "10.5"
+          ],
+          "acceptance": "CLI mode uses engine_factory.create_engine() instead of direct RAGEngine construction",
+          "files_touched": []
+        },
+        {
+          "id": "11.2",
+          "phase": 11,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix remaining vector_store.py issues: clean up .pkl shim in BM25Index save/load(), remove any remaining dead code or stale comments. Finding: EC-004 (.pkl compatibility shim).",
+          "depends": [
+            "2.3"
+          ],
+          "acceptance": "No .pkl references remain in vector_store.py",
+          "files_touched": []
+        },
+        {
+          "id": "11.3",
+          "phase": 11,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix remaining llm_interface.py issues: inconsistent patterns across backends, any remaining type safety gaps not covered in Phase 5. Findings: llm-010, llm-011, llm-013, llm-014.",
+          "depends": [
+            "5.3"
+          ],
+          "acceptance": "All LLM backends follow consistent error handling and type patterns",
+          "files_touched": []
+        },
+        {
+          "id": "11.4",
+          "phase": 11,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix remaining build and configuration issues: add version upper bounds to requirements.txt (config-002), clean up any remaining hardcoded values in config files. Finding: config-002.",
+          "depends": [
+            "8.4"
+          ],
+          "acceptance": "requirements.txt has upper bounds on all packages",
+          "files_touched": []
+        },
+        {
+          "id": "11.5",
+          "phase": 11,
+          "status": "pending",
+          "size": "small",
+          "description": "Fix remaining path function and docstring issues in app_paths.py and other modules. Ensure docstrings match actual function behavior (paths-010). Clean up any remaining audit findings below HIGH severity. Findings: various LOW/MEDIUM from all phases.",
+          "depends": [
+            "11.1"
+          ],
+          "acceptance": "All docstrings accurately describe function behavior, no remaining confirmed findings unaddressed",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "name": "Final Verification and Report Update",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "12.1",
+          "phase": 12,
+          "status": "pending",
+          "size": "medium",
+          "description": "Run full test suite and verify all tests pass after remediation. Fix any tests broken by the remediation changes. This is the final verification gate before the remediation is considered complete.",
+          "depends": [
+            "11.5"
+          ],
+          "acceptance": "pytest runs with zero failures, all previously passing tests still pass",
+          "files_touched": []
+        },
+        {
+          "id": "12.2",
+          "phase": 12,
+          "status": "pending",
+          "size": "medium",
+          "description": "Cross-check qa-report.md against current codebase state. Verify every finding has been addressed. Update REMEDIATION_REPORT.md to reflect the remediation performed. Do NOT modify qa-report.md.",
+          "depends": [
+            "12.1"
+          ],
+          "acceptance": "Every HIGH and CRITICAL finding in qa-report.md has a corresponding fix in the codebase",
           "files_touched": []
         }
       ]

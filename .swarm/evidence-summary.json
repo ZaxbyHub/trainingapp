@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0.0",
+  "generated_at": "2026-03-28T00:48:39.871Z",
+  "planTitle": "Comprehensive Codebase QA Review — AI-Hardened Edition",
+  "currentPhase": 1,
+  "phaseSummaries": [
+    {
+      "phaseId": 1,
+      "phaseName": "Codebase Inventory and Scoping",
+      "phaseStatus": "pending",
+      "totalTasks": 1,
+      "completedTasks": 0,
+      "tasksWithEvidence": 0,
+      "tasksWithCompleteEvidence": 0,
+      "completionRatio": 0,
+      "missingEvidenceByType": {
+        "review": [
+          "1.1"
+        ],
+        "test": [
+          "1.1"
+        ]
+      },
+      "blockers": [
+        {
+          "type": "missing_evidence",
+          "taskId": "1.1",
+          "reason": "review evidence missing for 1 task(s)",
+          "severity": "high"
+        },
+        {
+          "type": "missing_evidence",
+          "taskId": "1.1",
+          "reason": "test evidence missing for 1 task(s)",
+          "severity": "high"
+        }
+      ],
+      "tasks": [
+        {
+          "taskId": "1.1",
+          "phase": 1,
+          "taskStatus": "pending",
+          "evidenceCount": 0,
+          "hasReview": false,
+          "hasTest": false,
+          "hasApproval": false,
+          "missingEvidence": [
+            "review",
+            "test"
+          ],
+          "isComplete": false,
+          "blockers": [],
+          "lastEvidenceTimestamp": null
+        }
+      ]
+    }
+  ],
+  "overallCompletionRatio": 0,
+  "overallBlockers": [
+    {
+      "type": "missing_evidence",
+      "taskId": "1.1",
+      "reason": "review evidence missing for 1 task(s)",
+      "severity": "high"
+    },
+    {
+      "type": "missing_evidence",
+      "taskId": "1.1",
+      "reason": "test evidence missing for 1 task(s)",
+      "severity": "high"
+    }
+  ],
+  "summaryText": "Evidence Summary for \"Comprehensive Codebase QA Review — AI-Hardened Edition\"\nGenerated: 2026-03-28T00:48:39.871Z\n\nOverall Completion: 0.0%\nCurrent Phase: 1\n\n## Phase 1: Codebase Inventory and Scoping\n  Tasks: 0/1 completed (0.0%)\n  Evidence: 0/1 complete\n  Blockers:\n    - [high] review evidence missing for 1 task(s)\n    - [high] test evidence missing for 1 task(s)\n\n## Overall Blockers\n- [high] review evidence missing for 1 task(s)\n- [high] test evidence missing for 1 task(s)"
+}
