@@ -203,10 +203,27 @@ def create_engine_from_env() -> "RAGEngine":
         reranking_enabled=_parse_bool(os.environ.get("RAG_RERANKING_ENABLED"), False),
     )
 
+    # Auto-detect bundled model if no model specified
+    gguf_path = os.environ.get("RAG_GGUF_PATH")
+    model_path = os.environ.get("RAG_MODEL_PATH")
+
+    if not gguf_path and not model_path:
+        # Look for bundled models in order of preference
+        bundled_models = [
+            Path("models") / "phi3-mini-int4.gguf",
+            Path("models") / "phi3.5-mini-instruct-int4-cw-ov",
+            Path("test_model.gguf"),
+        ]
+        for model_file in bundled_models:
+            if model_file.is_file():
+                gguf_path = str(model_file)
+                print(f"[INFO] Using bundled model: {model_file}")
+                break
+
     return create_engine(
         config=config,
-        gguf_path=os.environ.get("RAG_GGUF_PATH"),
-        model_path=os.environ.get("RAG_MODEL_PATH"),  # Backward compat
+        gguf_path=gguf_path,
+        model_path=model_path,  # Backward compat
         ollama_model=os.environ.get("RAG_OLLAMA_MODEL"),
         ollama_url=os.environ.get("RAG_OLLAMA_URL"),
         api_url=os.environ.get("RAG_API_URL"),
