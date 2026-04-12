@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for AFOMIS Help and Support offline RAG desktop app.
+PyInstaller spec file for Document Q&A Assistant offline RAG desktop app.
 
 Build command: pyinstaller AFOMIS.spec --clean
 """
@@ -48,7 +48,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,  # Required for onedir mode
-    name='AFOMIS',
+    name='DocumentQA',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -69,5 +69,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='AFOMIS',
+    name='DocumentQA',
 )

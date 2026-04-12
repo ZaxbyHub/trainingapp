@@ -15,7 +15,8 @@ import sys
 import argparse
 
 
-def main():
+def create_parser():
+    """Create and return the argument parser."""
     parser = argparse.ArgumentParser(
         description="Document Q&A Assistant - RAG-based document question answering"
     )
@@ -63,7 +64,11 @@ def main():
         help="Chunk overlap in words (default: 50)",
     )
 
-    args = parser.parse_args()
+    return parser
+
+
+def main():
+    args = create_parser().parse_args()
 
     # Set environment variables from args
     if args.db_path:
