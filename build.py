@@ -60,10 +60,10 @@ hiddenimports += ['tiktoken_ext.openai_public', 'tiktoken_ext']
     
     if include_model and model_path:
         spec_content += f'''
-# Include OpenVINO model
-model_path = r"{model_path}"
-if os.path.exists(model_path):
-    datas += [(model_path, 'models')]
+# Include GGUF model
+gguf_model_path = r"{model_path}"
+if os.path.exists(gguf_model_path):
+    datas += [(gguf_model_path, 'models')]
 '''
     
     spec_content += '''
@@ -123,7 +123,7 @@ def build_executable(include_model: bool = False, model_path: str = None):
     print("\n[2/5] Creating spec file...")
     spec_content = create_spec_file(include_model, model_path)
     spec_path = Path("DocumentQA.spec")
-    spec_path.write_text(spec_content)
+    spec_path.write_text(spec_content, encoding='utf-8')
     print(f"✓ Created {spec_path}")
     
     print("\n[3/5] Cleaning previous builds...")
@@ -222,9 +222,9 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Build Document Q&A Assistant")
     parser.add_argument("--include-model", action="store_true", 
-                       help="Include OpenVINO model in build")
+                       help="Include GGUF model in build")
     parser.add_argument("--model-path", type=str,
-                       help="Path to OpenVINO model directory")
+                       help="Path to GGUF model file")
     parser.add_argument("--create-scripts", action="store_true",
                        help="Only create helper scripts, don't build")
     

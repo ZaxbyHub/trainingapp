@@ -17,7 +17,7 @@ from pathlib import Path
 APP_NAME = "DocumentQAApp"
 DIST_DIR = "dist"
 ENTRY_POINT = "main.py"
-LOG_LEVEL = "WARN"
+LOG_LEVEL = "WARNING"
 MODELS_DIR = "models"
 
 
@@ -81,7 +81,7 @@ def main():
     ]
 
     print("Running PyInstaller...")
-    result = subprocess.run(cmd)
+    result = subprocess.run(cmd, capture_output=True, check=False)
 
     if result.returncode != 0:
         print(f"Build failed with code {result.returncode}")

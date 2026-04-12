@@ -56,9 +56,43 @@ Set environment variables before running the application or in your system's env
 
 | Variable | Description | Default | Recommended |
 |----------|-------------|---------|-------------|
- | `RAG_MAX_TOKENS` | Max response tokens | `1024` | 512-1024 |
- | `RAG_TEMPERATURE` | LLM temperature | `0.3` | 0.1-0.5 |
- | `API_PORT` | API server port | `8080` | 8080 |
+| `RAG_MAX_TOKENS` | Max response tokens | `1024` | 512-1024 |
+| `RAG_TEMPERATURE` | LLM temperature | `0.3` | 0.1-0.5 |
+| `API_PORT` | API server port | `8080` | 8080 |
+
+### API Authentication Variables
+
+| Variable | Description | Default | Required for Production |
+|----------|-------------|---------|------------------------|
+| `ENABLE_AUTH` | Enable API authentication | `false` | YES |
+| `API_KEY` | API key for authentication | None | YES |
+| `JWT_SECRET` | Secret for JWT token signing | Random | Recommended |
+| `JWT_EXPIRATION_HOURS` | JWT token lifetime in hours | `24` | Optional |
+
+#### Security Warning
+
+⚠️ **Critical**: Leaving `ENABLE_AUTH=false` in production is a severe security risk. This disables authentication on your API, allowing unrestricted access to your application and potentially sensitive data. Always enable authentication in production environments.
+
+#### Generating Secure API Keys
+
+**Linux/macOS (OpenSSL)**:
+```bash
+# Generate a secure 64-character API key
+openssl rand -hex 32
+
+# Or generate a URL-safe base64 string
+openssl rand -base64 32
+```
+
+**Windows (PowerShell)**:
+```powershell
+# Generate a secure 64-character API key
+-[Convert]::ToBase64String((New-Object byte[] 32))
+
+# Or generate a hex string (requires .NET 5+)
+-([Security.Cryptography.RandomNumberGenerator]::Create()).GetBytes((New-Object byte[] 32))
+-b2a
+```
 
 ### RAG Advanced Variables
 
@@ -66,8 +100,8 @@ Set environment variables before running the application or in your system's env
 |----------|-------------|---------|-------------|
 | `RAG_RETRIEVAL_WINDOW` | Window expansion (chunks) | `1` | 0-2 |
 | `RAG_HYBRID_SEARCH` | Enable BM25+Vector search | `True` | True |
-| `RAG_RERANKING_ENABLED` | Enable cross-encoder reranking | `False` | False |
-| `RAG_RERANKER_MODEL` | Reranker model name | `cross-encoder/ms-marco-MiniLM-L-2-v2` | Same |
+| `RAG_RERANKING_ENABLED` | Enable cross-encoder reranking | `True` | True |
+| `RAG_RERANKER_MODEL` | Reranker model name | `cross-encoder/ms-marco-TinyBERT-L-2` | Same |
 | `RAG_QUERY_TRANSFORM_ENABLED` | Enable query transformation | `False` | False |
 | `RAG_INITIAL_RETRIEVAL_TOP_K` | Initial retrieval count | `20` | 10-30 |
 

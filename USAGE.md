@@ -134,9 +134,9 @@ python main.py
    - Range: `0-3`
 
 3. **Cross-Encoder Reranking**
-   - Default: **OFF**
+   - Default: **ON** (TinyBERT — lightweight reranker)
    - Re-ranks chunks for better accuracy
-   - Slower but more precise
+   - Minimal overhead on minimum-spec hardware
 
 ### Ingestion Process
 
@@ -425,6 +425,101 @@ python main.py --api --port 8080
 ```powershell
 curl http://localhost:8080/
 # Response: {"status": "ok"}
+```
+
+### Authentication
+
+**Note**: Set `ENABLE_AUTH=true` in your environment variables to enable authentication for all endpoints.
+
+When authentication is enabled, all protected endpoints require either:
+- A valid JWT Bearer token in the `Authorization: Bearer <token>` header
+- An API key in the `X-API-Key` header
+
+#### Checking Authentication Status
+
+Use the `/auth/status` endpoint to check if authentication is enabled and what methods are available:
+
+**curl**:
+```powershell
+curl http://localhost:8080/auth/status
+```
+
+**Example Response** (authentication disabled):
+```json
+{
+  "enabled": false,
+  "jwt_available": true,
+  "methods": []
+}
+```
+
+**Example Response** (authentication enabled):
+```json
+{
+  "enabled": true,
+  "jwt_available": true,
+  "methods": ["bearer", "api_key"]
+}
+```
+
+#### Using API Key
+
+API keys can be used directly via the `X-API-Key` header:
+
+**curl**:
+```powershell
+curl http://localhost:8080/stats -H "X-API-Key: your-api-key"
+```
+
+**Python**:
+```python
+import requests
+
+response = requests.get("http://localhost:8080/stats", headers={
+    "X-API-Key": "your-api-key"
+})
+print(response.json())
+```
+
+#### Using JWT Token
+
+JWT tokens provide an alternative to API keys with automatic expiration. Use a two-step process:
+
+**Step 1: Obtain JWT Token**
+```powershell
+curl -X POST http://localhost:8080/auth/token `
+  -H "Content-Type: application/json" `
+  -d '{"api_key": "your-api-key"}'
+```
+
+**Response**:
+```json
+{
+  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "token_type": "bearer"
+}
+```
+
+**Step 2: Use JWT Token**
+```powershell
+curl http://localhost:8080/stats -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+**Python**:
+```python
+import requests
+
+# Step 1: Get JWT token
+login_response = requests.post("http://localhost:8080/auth/token", json={
+    "api_key": "your-api-key"
+})
+access_token = login_response.json()["access_token"]
+
+# Step 2: Use JWT token
+response = requests.get("http://localhost:8080/stats", headers={
+    "Authorization": f"Bearer {access_token}"
+})
+print(response.json())
 ```
 
 ### API Endpoints

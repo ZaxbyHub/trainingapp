@@ -148,6 +148,70 @@ The application tries backends in this priority order:
 | `RAG_TEMPERATURE` | LLM temperature | `0.3` |
 | `API_PORT` | API server port | `8080` |
 
+## 🔐 API Authentication (Production Required)
+
+⚠️ **Warning**: Authentication is **disabled by default** for development convenience. **MUST be enabled** for any production or shared environment.
+
+### Enabling Authentication
+
+Set both environment variables to enable authentication:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `ENABLE_AUTH` | Enable authentication (any value enables) | `true` |
+| `API_KEY` | Secret API key for authentication | `your-secure-api-key` |
+
+#### Linux/macOS
+```bash
+export ENABLE_AUTH=true
+export API_KEY="your-secure-api-key"
+python main.py --api --port 8080
+```
+
+#### Windows PowerShell
+```powershell
+$env:ENABLE_AUTH=$true
+$env:API_KEY="your-secure-api-key"
+python main.py --api --port 8080
+```
+
+### Using Authentication
+
+All API requests require authentication headers:
+
+- **API Key**: `X-API-Key: <your-api-key>`
+- **JWT Bearer Token**: `Authorization: Bearer <jwt-token>`
+
+### Python Example
+
+```python
+import requests
+import os
+
+# Configure authentication
+os.environ["ENABLE_AUTH"] = "true"
+os.environ["API_KEY"] = "your-secure-api-key"
+
+# Make authenticated request
+headers = {
+    "X-API-Key": os.environ["API_KEY"]
+}
+
+response = requests.post("http://localhost:8080/ask", json={
+    "question": "What are the main findings?",
+    "n_results": 3
+}, headers=headers)
+
+print(response.json())
+```
+
+### Security Notes
+
+- Always use HTTPS in production
+- Rotate API keys regularly
+- Store API keys in environment variables, never in code
+- See [USAGE.md](USAGE.md) for complete authentication documentation
+
 **Backend Selection:**
 The application selects backends in priority order (GGUF → OpenVINO → API → Ollama).
 If `RAG_GGUF_PATH` is set, GGUF is used. Otherwise, falls through to next available backend.
@@ -233,16 +297,16 @@ Automatically fetches adjacent chunks around retrieved results:
 - Improves answer quality for multi-part questions
 
 #### Cross-Encoder Reranking
-Optional MS MARCO MiniLM reranker:
-- Ranks retrieved chunks by relevance
+MS MARCO TinyBERT reranker (enabled by default):
+- Ranks retrieved chunks by relevance after initial retrieval
 - Higher accuracy than pure hybrid search
-- Enabled via Settings dialog
+- Lightweight (~85MB) — optimized for minimum-spec hardware
+- Can be disabled via Settings dialog
 
 #### Step-back Query Transform
-Generates generalized queries to improve retrieval:
-- Uses LLM to rewrite specific questions
-- Helps retrieve broader context
-- Optional feature via Settings
+Keyword-based query expansion (disabled by default):
+- Extracts key terms from questions to improve retrieval
+- Note: The LLM-based step-back transformation is not wired (latency cost too high for minimum-spec hardware)
 
 ## ⚙️ Configuration
 

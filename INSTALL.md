@@ -81,12 +81,12 @@ Successfully installed pypdf-4.2.0 ...
 
 **Option B: Manual Download** (recommended for offline setup)
 1. Download Qwen3-1.7B-Instruct-Q4_K from Hugging Face:
-   - URL: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
-   - File: `qwen2.5-1.5b-instruct-q4_k_m.gguf` (~1.5 GB)
+    - URL: https://huggingface.co/Qwen/Qwen3-1.7B-Instruct-GGUF
+    - File: `qwen3-1.7b-instruct-q4_k_m.gguf` (~1.5 GB)
 
 2. Save to a known location:
-   - Example: `C:\Models\qwen2.5-1.5b-instruct-q4_k_m.gguf`
-   - Or in the application directory: `C:\doc_qa_app\models\qwen2.5-1.5b-instruct-q4_k_m.gguf`
+    - Example: `C:\Models\qwen3-1.7b-instruct-q4_k_m.gguf`
+    - Or in the application directory: `C:\doc_qa_app\models\qwen3-1.7b-instruct-q4_k_m.gguf`
 
 #### Embedding Model
 
@@ -164,9 +164,9 @@ This script will:
 
 #### 4. Download GGUF Model
 
-Download Qwen2.5-1.5B-Instruct-Q4_K:
-- From Hugging Face: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
-- Save as `qwen2.5-1.5b-instruct-q4_k_m.gguf`
+Download Qwen3-1.7B-Instruct-Q4_K_M:
+- From Hugging Face: https://huggingface.co/Qwen/Qwen3-1.7B-Instruct-GGUF
+- Save as `qwen3-1.7b-instruct-q4_k_m.gguf`
 - Place in `build_installer/models/`
 
 #### 5. Download Embedding Model
@@ -199,7 +199,7 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 
 ### GGUF Model Details
 
-**Recommended Model**: Qwen2.5-1.5B-Instruct-Q4_K
+**Recommended Model**: Qwen3-1.7B-Instruct-Q4_K_M
 
 **Specifications**:
 - Model Size: ~1.5 GB
@@ -208,7 +208,7 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 - Language: English (primary), Chinese (secondary)
 
 **Alternative Models**:
-- `qwen2.5-7b-instruct-q4_k_m` (7GB, better quality, slower)
+- `qwen3-7b-instruct-q4_k_m` (7GB, better quality, slower) - larger variant available
 - `llama3-8b-instruct-q4_k_m` (4.8GB, general purpose)
 - `phi-3-mini-4k-instruct-q4_k_m` (2.3GB, fastest)
 
@@ -303,7 +303,7 @@ Edit settings via GUI:
 **Solution**:
 ```powershell
 # Verify GGUF model exists
-dir C:\path\to\qwen2.5-1.5b-instruct-q4_k_m.gguf
+dir C:\path\to\qwen3-1.7b-instruct-q4_k_m.gguf
 
 # Check file size (should be ~1.5GB)
 ```
@@ -390,5 +390,5 @@ pip install -r requirements.txt
 
 ---
 
-**Version**: 1.0.0
-**Last Updated**: 2026-02-28
+**Version**: 1.1.0
+**Last Updated**: 2026-04-09

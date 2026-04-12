@@ -8,6 +8,7 @@ the application with Python embeddable, wheels, models, and app source.
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 # Build configuration
@@ -51,6 +52,8 @@ def download_wheels():
         # Run pip download to get all requirements as wheels
         subprocess.run(
             [
+                sys.executable,
+                "-m",
                 "pip",
                 "download",
                 "--dest",
@@ -73,10 +76,14 @@ def copy_app_files():
 
     # Get list of all Python files in the root directory
     app_files = []
+    build_dir_path = PROJECT_ROOT / BUILD_DIR
     for file in PROJECT_ROOT.rglob("*.py"):
-        # Exclude build directories and cache files
-        if not any(part in str(file) for part in [BUILD_DIR, "__pycache__", ".git"]):
-            app_files.append(file)
+        # Exclude build directories and cache files using proper path comparison
+        if file.is_relative_to(build_dir_path):
+            continue
+        if "__pycache__" in str(file) or ".git" in str(file):
+            continue
+        app_files.append(file)
 
     # Add requirements.txt
     requirements_file = PROJECT_ROOT / REQUIREMENTS_FILE
@@ -137,7 +144,7 @@ The Qwen3-1.7B GGUF model needs to be manually downloaded and placed in this dir
 Instructions:
 1. Download the GGUF model file from a source (e.g., Hugging Face or ModelScope)
 2. Place the .gguf file in this directory
-3. The file should be named something like: qwen3-1.7b-q4_k_m.gguf
+3. The file should be named something like: qwen3-1.7b-instruct-q4_k_m.gguf
 
 This model is used for LLM inference with llama-cpp-python.
 """
@@ -160,10 +167,10 @@ def create_inno_setup_script():
 [Setup]
 AppName=Document QA Application
 AppVersion=1.0.0
-AppPublisher=Your Company Name
-AppPublisherURL=https://yourcompany.com
-AppSupportURL=https://yourcompany.com/support
-AppUpdatesURL=https://yourcompany.com/updates
+AppPublisher=Document Q&A Assistant Project
+AppPublisherURL=https://github.com/CHANGE_ME/doc-qa-app  ; TODO: Update with actual repository URL
+AppSupportURL=https://github.com/CHANGE_ME/doc-qa-app/issues  ; TODO: Update with actual issues URL
+AppUpdatesURL=https://github.com/CHANGE_ME/doc-qa-app/releases  ; TODO: Update with actual releases URL
 DefaultDirName={{pf}}\\DocumentQAApp
 DisableDirPage=yes
 DisableProgramGroupPage=yes

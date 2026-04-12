@@ -186,8 +186,8 @@ class RAGConfig:
     initial_retrieval_top_k: int = 20
 
     # Reranking
-    reranking_enabled: bool = False
-    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-2-v2"
+    reranking_enabled: bool = True
+    reranker_model: str = "cross-encoder/ms-marco-TinyBERT-L-2"
 
     # Query transformation
     query_transformation_enabled: bool = False
@@ -252,11 +252,16 @@ if retrieval_window > 0:
     top_n = deduplicate(top_n)
 ```
 
-**Reranking** (Optional):
+**Reranking** (Enabled by default):
 ```python
 if reranking_enabled:
-    reranker = CrossEncoderReranker()
-    top_n = reranker.rerank(query, top_n, top_k=n_results)
+    # Split combined context string back into individual chunks
+    chunk_texts = context.split("\n\n---\n\n")
+    rerank_chunks = [DocumentChunk(text=t.strip(), source=source, chunk_index=i)
+                     for i, t in enumerate(chunk_texts) if t.strip()]
+    reranked = reranker.rerank(question, rerank_chunks, top_k=n_results)
+    context = "\n\n---\n\n".join(c.text for c, _ in reranked)
+    sources = list(dict.fromkeys(c.source for c, _ in reranked))
 ```
 
 #### Phase 3: Context Assembly
@@ -581,5 +586,5 @@ Response:
 
 ---
 
-**Version**: 1.0.0
-**Last Updated**: 2026-02-28
+**Version**: 1.1.0
+**Last Updated**: 2026-04-09

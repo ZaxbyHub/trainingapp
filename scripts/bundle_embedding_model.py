@@ -11,6 +11,7 @@ Arguments:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -63,9 +64,9 @@ def print_file_list(local_dir: Path) -> None:
     print(f"\nListing files in {local_dir}...")
     total_size = 0
 
-    for root, _, files in local_dir.walk():
+    for root, _, files in os.walk(local_dir):
         for file in files:
-            file_path = root / file
+            file_path = Path(root) / file
             size = file_path.stat().st_size
             total_size += size
             print(f"  {file_path.relative_to(local_dir):50s} {size:>12,} bytes")
