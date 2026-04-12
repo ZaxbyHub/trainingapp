@@ -669,6 +669,8 @@ class VectorStore:
                 # Build context from fused results
                 context_parts = []
                 sources = []
+                pages = []
+                chunk_indices = []
 
                 # For each fused result, get the chunk text from appropriate source
                 for doc_id, _ in fused[:n_results]:
@@ -677,9 +679,13 @@ class VectorStore:
                         # This is a vector search result
                         doc, meta, score = vector_results[doc_id]
                         source = meta.get("source", "Unknown")
+                        page = meta.get("page")
+                        chunk_idx = meta.get("chunk_index", doc_id)
                         context_parts.append(doc)
                         if source not in sources:
                             sources.append(source)
+                        pages.append(page)
+                        chunk_indices.append(chunk_idx)
                     else:
                         # This is a BM25 result - get from bm25_index.chunks
                         chunk_index = doc_id - len(vector_results)
@@ -689,13 +695,15 @@ class VectorStore:
                             source = chunk.source
                             if source not in sources:
                                 sources.append(source)
+                            pages.append(chunk.page)
+                            chunk_indices.append(chunk.chunk_index)
 
                 # Expand with neighboring chunks if window > 0
                 if retrieval_window > 0 and context_parts:
                     hybrid_chunks = [
                         DocumentChunk(
                             text=text, source=sources[min(i, len(sources)-1)],
-                            chunk_index=i, page=None,
+                            chunk_index=chunk_indices[i], page=pages[i],
                         )
                         for i, text in enumerate(context_parts)
                     ]

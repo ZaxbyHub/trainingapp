@@ -137,7 +137,7 @@ def _resolve_and_validate_host(hostname: str, allow_local: bool) -> None:
         if ip.is_loopback:
             if not allow_local:
                 raise ValueError(f"URL resolves to loopback address: {ip}")
-            continue
+            # Loopback is allowed (allow_local=True) but still check private IPs below
 
         # Check private networks
         if not allow_local:
@@ -151,10 +151,11 @@ def _resolve_and_validate_host(hostname: str, allow_local: bool) -> None:
             if ip.is_reserved:
                 raise ValueError(f"URL points to reserved address: {ip}")
 
-            if ip.version == 6:
-                for net in PRIVATE_IPV6:
-                    if ip in net:
-                        raise ValueError(f"URL points to private IPv6 address: {ip}")
+        # IPv6 private addresses (fc00::/7 ULA) are NEVER allowed, even with allow_local=True
+        if ip.version == 6:
+            for net in PRIVATE_IPV6:
+                if ip in net:
+                    raise ValueError(f"URL points to private IPv6 address: {ip}")
 
 
 def is_local_url(url: str) -> bool:
