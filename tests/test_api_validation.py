@@ -29,7 +29,7 @@ class TestQuestionRequestValidation:
         detail = data["detail"]
         if isinstance(detail, list):
             # Pydantic v2 format: list of errors
-            assert any("Question" in str(err) for err in detail)
+            assert any("question" in str(err).lower() for err in detail)
         else:
             # String format
             assert "Question" in str(detail) or "question" in str(detail)

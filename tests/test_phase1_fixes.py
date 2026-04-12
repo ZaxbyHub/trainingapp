@@ -56,8 +56,10 @@ def test_smartllm_initialization():
 def test_validate_url():
     """Test URL validation rejects localhost and accepts valid URLs."""
     import api_server
+    import security
+    from unittest.mock import patch
 
-    # Test valid URLs
+    # Test valid URLs (mock DNS resolution since we may not have network access)
     valid_urls = [
         "https://api.example.com",
         "http://docs.example.com",
@@ -65,12 +67,20 @@ def test_validate_url():
         "http://example.com:80/path",
     ]
 
+    # Mock socket.getaddrinfo to return public IPs for testing
+    def mock_getaddrinfo(host, *args, **kwargs):
+        # Return a mock result for public hosts
+        if host in ("api.example.com", "docs.example.com", "example.com"):
+            return [(2, 1, 6, '', ('93.184.216.34', 0))]  # Mock IP for example.com
+        raise Exception(f"Unknown host: {host}")
+
     for url in valid_urls:
-        try:
-            result = api_server.validate_url(url)
-            assert result == url
-        except Exception as e:
-            pytest.fail(f"Valid URL {url} was rejected: {e}")
+        with patch.object(security.socket, 'getaddrinfo', mock_getaddrinfo):
+            try:
+                result = api_server.validate_url(url)
+                assert result == url
+            except Exception as e:
+                pytest.fail(f"Valid URL {url} was rejected: {e}")
 
     # Test invalid URLs (localhost)
     invalid_urls = [

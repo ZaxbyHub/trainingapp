@@ -402,7 +402,7 @@ class TestSSRFVectors:
     def test_ipv6_mapped_ipv4_loopback(self):
         """IPv6-mapped IPv4 loopback (::ffff:127.0.0.1)."""
         url = "http://[::ffff:127.0.0.1]:11434"
-        with pytest.raises(ValueError, match="private|localhost|standard ports"):
+        with pytest.raises(ValueError, match="private|localhost|standard ports|loopback"):
             validate_url(url, allow_local=False)
 
     def test_ipv6_mapped_ipv4_loopback_allow_local(self):
@@ -505,7 +505,7 @@ class TestPropertyBasedInvariants:
         [
             "https://example.com",
             "http://example.com:80/path",
-            "https://sub.domain.example.com:443/api/v1?q=1",
+            "https://www.example.com:443/api/v1?q=1",
         ],
     )
     def test_idempotency(self, url):

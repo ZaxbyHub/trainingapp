@@ -24,17 +24,28 @@ def test_gui_passes_gguf_path_to_rag_engine():
 
     Fix applied in Phase 15.1: GUI now correctly passes gguf_path to RAGEngine.
     """
+    rag_engine_calls = []
+
+    class CapturingRAGEngine:
+        """Replacement RAGEngine that records calls but otherwise acts normally."""
+        def __init__(self, *args, **kwargs):
+            rag_engine_calls.append((args, kwargs))
+
+        def get_stats(self):
+            return {"document_count": 0}
+
+        def __getattr__(self, name):
+            # Passthrough for any other attribute access
+            return lambda *args, **kwargs: None
 
     with (
-        patch("app_gui.ctk") as mock_ctk,
+        patch("app_gui.ctk"),
         patch("app_gui.GUI_AVAILABLE", True),
         patch("app_gui.DocumentQAApp._create_widgets"),
         patch("app_gui.DocumentQAApp._start_message_processor"),
-        patch("rag_engine.RAGEngine") as mock_engine,
     ):
         from app_gui import DocumentQAApp
 
-        # Create app with GGUF path in settings
         app = DocumentQAApp()
         app.settings = {
             "gguf_path": "/path/to/model.gguf",
@@ -47,38 +58,30 @@ def test_gui_passes_gguf_path_to_rag_engine():
             "temperature": 0.3,
             "db_path": "/tmp/db",
         }
-
-        # Mock message queue to avoid thread issues
         app.message_queue = Mock()
 
-        # Call _initialize_engine directly
-        # This should create RAGEngine with gguf_path= parameter
-        app._initialize_engine()
+        # Replace RAGEngine in the rag_engine module
+        import rag_engine
+        original_rag_engine = rag_engine.RAGEngine
+        rag_engine.RAGEngine = CapturingRAGEngine
 
-        # Wait for thread to complete (mock it)
-        import time
+        try:
+            app._initialize_engine()
+        finally:
+            rag_engine.RAGEngine = original_rag_engine
 
-        time.sleep(0.1)
+    # Verify RAGEngine was called with gguf_path
+    assert len(rag_engine_calls) == 1, (
+        f"Expected 1 RAGEngine call, got {len(rag_engine_calls)}"
+    )
+    args, kwargs = rag_engine_calls[0]
 
-        # Verify RAGEngine was called with correct parameters
-        mock_engine.assert_called_once()
-        call_kwargs = mock_engine.call_args.kwargs
-
-        # After fix: assert "gguf_path" in call_kwargs
-        # Current bug: model_path is used instead
-        assert "gguf_path" in call_kwargs, (
-            "RAGEngine should be called with gguf_path parameter"
-        )
-        assert call_kwargs.get("gguf_path") == "/path/to/model.gguf", (
-            "gguf_path should match settings"
-        )
-
-        # Ensure model_path is NOT used for GGUF files
-        # (model_path may be passed but should be None or different from gguf_path)
-        if "model_path" in call_kwargs:
-            assert call_kwargs["model_path"] != "/path/to/model.gguf", (
-                "model_path should not be used for GGUF files"
-            )
+    assert "gguf_path" in kwargs, (
+        "RAGEngine should be called with gguf_path parameter"
+    )
+    assert kwargs["gguf_path"] == "/path/to/model.gguf", (
+        "gguf_path should match settings"
+    )
 
 
 def test_settings_migration_from_model_path_to_gguf_path():
@@ -279,7 +282,6 @@ def test_app_controller_initializes_with_correct_path_parameter():
 
     Fix applied in Phase 15.1: App controller correctly maps gguf_path settings.
     """
-
     settings = {
         "gguf_path": "/models/test.gguf",
         "ollama_model": "",
@@ -292,38 +294,54 @@ def test_app_controller_initializes_with_correct_path_parameter():
         "db_path": "/tmp/test_db",
     }
 
+    rag_engine_calls = []
+
+    class CapturingRAGEngine:
+        """Replacement RAGEngine that records calls but otherwise acts normally."""
+        def __init__(self, *args, **kwargs):
+            rag_engine_calls.append((args, kwargs))
+
+        def get_stats(self):
+            return {"document_count": 0}
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
     with (
         patch("app_gui.ctk"),
         patch("app_gui.GUI_AVAILABLE", True),
         patch("app_gui.DocumentQAApp._create_widgets"),
         patch("app_gui.DocumentQAApp._start_message_processor"),
         patch("app_gui.DocumentQAApp._load_settings", return_value=settings),
-        patch("rag_engine.RAGEngine") as mock_engine,
     ):
         from app_gui import DocumentQAApp
 
         app = DocumentQAApp()
         app.message_queue = Mock()
 
-        # Call _initialize_engine to test parameter mapping
-        app._initialize_engine()
+        # Replace RAGEngine in the rag_engine module
+        import rag_engine
+        original_rag_engine = rag_engine.RAGEngine
+        rag_engine.RAGEngine = CapturingRAGEngine
 
-        # Wait for thread to complete
-        import time
+        try:
+            app._initialize_engine()
+        finally:
+            rag_engine.RAGEngine = original_rag_engine
 
-        time.sleep(0.1)
+    # Verify RAGEngine called with correct parameters
+    assert len(rag_engine_calls) == 1, (
+        f"Expected 1 RAGEngine call, got {len(rag_engine_calls)}"
+    )
+    args, kwargs = rag_engine_calls[0]
 
-        # Verify RAGEngine called with correct parameters
-        mock_engine.assert_called_once()
-        call_kwargs = mock_engine.call_args.kwargs
-
-        assert "gguf_path" in call_kwargs, (
-            "RAGEngine should be called with gguf_path parameter"
-        )
-        assert call_kwargs["gguf_path"] == "/models/test.gguf", (
-            "gguf_path should come from settings"
-        )
-        # model_path should not be passed for GGUF configuration
-        assert "model_path" not in call_kwargs, (
-            "model_path should not be passed when gguf_path is used"
-        )
+    assert "gguf_path" in kwargs, (
+        "RAGEngine should be called with gguf_path parameter"
+    )
+    assert kwargs["gguf_path"] == "/models/test.gguf", (
+        "gguf_path should come from settings"
+    )
+    # model_path should not be passed for GGUF configuration
+    assert "model_path" not in kwargs, (
+        "model_path should not be passed when gguf_path is used"
+    )

@@ -32,7 +32,7 @@ def test_api_server_reads_rag_gguf_path_env_var():
         with (
             patch("api_server.RAGEngine") as mock_engine,
             patch("api_server.RAGConfig") as mock_config,
-            patch("api_server.validate_model_path", return_value=lambda x: x),
+            patch("api_server.validate_model_path", side_effect=lambda path, base_dir=None: path),
         ):
             from api_server import lifespan
 
@@ -195,7 +195,7 @@ def test_api_server_env_var_priority():
         with (
             patch("api_server.RAGEngine") as mock_engine,
             patch("api_server.RAGConfig") as mock_config,
-            patch("api_server.validate_model_path", return_value=lambda x: x),
+            patch("api_server.validate_model_path", side_effect=lambda path, base_dir=None: path),
         ):
             from api_server import lifespan
 
@@ -266,8 +266,17 @@ def test_api_server_environment_completeness():
             with (
                 patch("api_server.RAGEngine") as mock_engine,
                 patch("api_server.RAGConfig") as mock_config,
-                patch("api_server.validate_model_path", return_value=lambda x: x),
+                patch("api_server.validate_model_path", side_effect=lambda path, base_dir=None: path),
+                patch("api_server.validate_url", side_effect=lambda url, allow_local=False, **kwargs: url),
+                patch("api_server.settings") as mock_settings,
             ):
+                # Configure mock settings to return expected values
+                mock_settings.rag_db_path = tmpdir
+                mock_settings.rag_chunk_size = 256
+                mock_settings.rag_n_results = 5
+                mock_settings.rag_max_tokens = 1024
+                mock_settings.rag_temperature = 0.5
+                mock_settings.rag_embedding_model = "BAAI/bge-small-en-v1.5"
                 from api_server import lifespan
 
                 mock_app = Mock()

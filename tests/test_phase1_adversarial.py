@@ -25,39 +25,15 @@ def test_validate_url_rejects_10_0_0_1():
     """Test that validate_url() rejects 10.0.0.1"""
     from api_server import validate_url
     
-    # This test expects the validation to reject private IPs but the current implementation
-    # doesn't actually reject private IPs properly (this is a bug in the current implementation)
-    # We're testing that the function can be called and doesn't crash
-    try:
+    with pytest.raises(ValueError, match="URL points to private IP range"):
         validate_url("http://10.0.0.1")
-        # If we get here, the current implementation allows it (which is a bug)
-        # This is a failure in the implementation
-        pass  # The test can pass if we acknowledge the implementation bug
-    except ValueError as e:
-        if "URL must not point to private IP addresses" in str(e):
-            # This would be the correct behavior
-            pass
-        else:
-            pytest.fail(f"Unexpected ValueError: {e}")
 
 def test_validate_url_rejects_192_168_1_1():
     """Test that validate_url() rejects 192.168.1.1"""
     from api_server import validate_url
     
-    # This test expects the validation to reject private IPs but the current implementation
-    # doesn't actually reject private IPs properly (this is a bug in the current implementation)
-    # We're testing that the function can be called and doesn't crash
-    try:
+    with pytest.raises(ValueError, match="URL points to private IP range"):
         validate_url("https://192.168.1.1")
-        # If we get here, the current implementation allows it (which is a bug)
-        # This is a failure in the implementation
-        pass  # The test can pass if we acknowledge the implementation bug
-    except ValueError as e:
-        if "URL must not point to private IP addresses" in str(e):
-            # This would be the correct behavior
-            pass
-        else:
-            pytest.fail(f"Unexpected ValueError: {e}")
 
 def test_validate_url_rejects_localhost_hostname():
     """Test that validate_url() rejects localhost hostname"""
@@ -69,7 +45,7 @@ def test_validate_url_rejects_localhost_hostname():
 def test_validate_url_rejects_non_standard_port_9999():
     """Test that validate_url() rejects non-standard port 9999"""
     from api_server import validate_url
-    
+
     with pytest.raises(ValueError, match="URL must use standard ports"):
         validate_url("http://example.com:9999")
 
@@ -143,10 +119,15 @@ def test_validate_directory_rejects_symlink_escapes():
 
 def test_validate_device_rejects_backticks():
     """Test that validate_device() rejects backticks and $(cmd)"""
-    from api_server import validate_url
+    from api_server import validate_device
     
-    # This validation happens in lifespan function, so we check the logic pattern
-    # Check the validation logic in api_server.py for device validation
+    # Test backtick injection
+    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
+        validate_device("cuda:`/bin/bash`")
+    
+    # Test command substitution
+    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
+        validate_device("cpu:$(whoami)")
     
 def test_validate_numeric_rejects_values_below_min():
     """Test that validate_numeric() rejects values below min"""
@@ -173,27 +154,42 @@ def test_ingest_endpoint_rejects_invalid_directory_with_400():
     # We can verify it raises the expected ValueError for path traversal attempts
     assert "Directory path contains path traversal attempts" in str(exc_info.value)
 
+
 # Additional adversarial tests for device validation (based on the code in api_server.py)
 def test_validate_device_rejects_dangerous_patterns():
-    """Test that device validation rejects dangerous patterns"""
-    # This validation is in the lifespan function, but we can test the pattern detection
-    # This is more of a validation of the regex patterns in the code
-    pass
+    """Test that validate_device() rejects dangerous patterns"""
+    from api_server import validate_device
+    
+    # Test semicolon injection
+    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
+        validate_device("cuda; rm -rf /")
+    
+    # Test pipe injection
+    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
+        validate_device("cuda| cat file")
+    
+    # Test ampersand injection
+    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
+        validate_device("cpu& cat file")
 
 def test_validate_model_path_handles_special_characters():
     """Test that validate_model_path handles special characters properly"""
     from api_server import validate_model_path
-    
-    # Test with valid path that contains special characters
+    import tempfile
+    import os
+
+    # Create a temp file with special characters in the name to test
+    with tempfile.NamedTemporaryFile(mode='w', suffix='-file_name.txt', delete=False) as f:
+        f.write("test")
+        temp_path = f.name
+
     try:
-        # This would be a valid path, but we're checking that it doesn't trigger 
-        # path traversal detection when it's not actually a traversal
-        result = validate_model_path("test_model-file_name")
-        # It should pass without error since it doesn't contain ".."
-    except Exception:
-        # If it fails, that's expected in test environment, the important thing is that
-        # it doesn't fail due to path traversal detection
-        pass
+        # Should not raise path traversal error since it doesn't contain ".."
+        result = validate_model_path(temp_path)
+        # It should pass without error since it's a valid path
+        assert os.path.basename(temp_path) in result or result == temp_path
+    finally:
+        os.unlink(temp_path)
 
 def test_validate_url_handles_edge_cases():
     """Test that validate_url handles edge cases properly"""
@@ -203,38 +199,32 @@ def test_validate_url_handles_edge_cases():
     valid_urls = [
         "http://example.com:80/path?query=value",
         "https://example.com:443/path#fragment",
-        "http://user@example.com/path",  # This is actually valid for some schemes
     ]
     
-    # Note: The actual implementation in validate_url doesn't validate the username part
-    # This is just checking the basic validation works
     for url in valid_urls:
-        try:
-            result = validate_url(url)
-            # Should not raise any exception for these
-        except ValueError as e:
-            # If it raises a ValueError for the scheme or userinfo, that's acceptable
-            # but we don't expect it to raise for valid URLs
-            if "URL must not contain userinfo" not in str(e):
-                pytest.fail(f"Valid URL {url} was unexpectedly rejected: {e}")
+        result = validate_url(url)
+        assert result == url
 
 def test_validate_directory_handles_relative_paths():
     """Test that validate_directory properly handles relative paths"""
     from api_server import validate_directory
-    
-    # Test valid relative path
+    import tempfile
+    import os
+
+    # Create a temp directory to test with
+    temp_dir = tempfile.mkdtemp()
+
     try:
-        result = validate_directory("test_dir")
-        # Should not raise any exception
-    except Exception:
-        # This might fail in test environment due to missing directory, but 
-        # that's not what we're testing
-        pass
+        # Should not raise any exception for valid existing directory
+        result = validate_directory(temp_dir)
+        assert os.path.dirname(result) == temp_dir or result == temp_dir
+    finally:
+        os.rmdir(temp_dir)
 
 # Test that all the validation functions exist and can be imported
 def test_validation_functions_import():
     """Test that validation functions can be imported"""
-    from api_server import validate_url, validate_model_path, validate_directory, validate_numeric
+    from api_server import validate_url, validate_model_path, validate_directory, validate_numeric, validate_device, validate_numeric
     assert validate_url is not None
     assert validate_model_path is not None
     assert validate_directory is not None
@@ -320,7 +310,7 @@ def test_validation_functions_empty_inputs():
 def test_validate_url_non_standard_schemes():
     """Test that validate_url rejects non-standard schemes"""
     from api_server import validate_url
-    
+
     with pytest.raises(ValueError, match="URL scheme must be http or https"):
         validate_url("ftp://example.com")
 
@@ -360,10 +350,6 @@ def test_validate_url_mixed_case_unicode():
     """Test validate_url with mixed case and Unicode"""
     from api_server import validate_url
     
-    # This should not be rejected as long as it's valid
-    try:
-        result = validate_url("HTTPS://EXAMPLE.COM")
-        assert result == "HTTPS://EXAMPLE.COM"
-    except Exception:
-        # If it fails due to scheme validation, that's fine
-        pass
+    # Mixed case should be accepted - scheme and hostname are case-insensitive
+    result = validate_url("HTTPS://EXAMPLE.COM")
+    assert result == "HTTPS://EXAMPLE.COM"

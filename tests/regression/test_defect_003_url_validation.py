@@ -127,8 +127,6 @@ def test_validate_url_still_rejects_malicious_urls():
     - File:// URLs
     - Javascript:// URLs
     """
-    # TODO: Ensure these remain rejected after fix
-
     from api_server import validate_url
 
     malicious_urls = [
@@ -143,11 +141,18 @@ def test_validate_url_still_rejects_malicious_urls():
 
     for url, error_type in malicious_urls:
         # These should ALWAYS raise ValueError, regardless of allow_local settings
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match=error_type):
             validate_url(url, allow_local=True)
 
-    # Test passes if all malicious URLs are rejected
-    assert True, "All malicious URLs were correctly rejected"
+    # Verify that all malicious URL types were properly rejected
+    malicious_rejected = 0
+    for url, error_type in malicious_urls:
+        try:
+            validate_url(url, allow_local=True)
+        except ValueError:
+            malicious_rejected += 1
+    
+    assert malicious_rejected == len(malicious_urls), "All malicious URLs should be rejected"
 
 
 def test_lifespan_allows_localhost_for_ollama():
@@ -265,9 +270,6 @@ def test_private_ip_detection_accuracy():
     for ip in public_ips:
         addr = ipaddress.ip_address(ip)
         assert not addr.is_private, f"{ip} should be public"
-
-    # The fix should use ipaddress module correctly
-    assert True, "IP classification is correct"
 
 
 def test_validate_url_documentation():

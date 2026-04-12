@@ -265,20 +265,22 @@ class TestWindowExpansion:
         """Test expanding chunks with window."""
         # First add more chunks to create window context
         additional_chunks = [
-            DocumentChunk(text="Chunk 0 content", source="test.txt", chunk_index=0),
-            DocumentChunk(text="Chunk 1 content", source="test.txt", chunk_index=1),
-            DocumentChunk(text="Chunk 2 content", source="test.txt", chunk_index=2),
-            DocumentChunk(text="Chunk 3 content", source="test.txt", chunk_index=3),
+            DocumentChunk(text="Chunk 0 content about Python programming", source="test.txt", chunk_index=0),
+            DocumentChunk(text="Chunk 1 content about Python programming", source="test.txt", chunk_index=1),
+            DocumentChunk(text="Chunk 2 content about Python programming", source="test.txt", chunk_index=2),
+            DocumentChunk(text="Chunk 3 content about Python programming", source="test.txt", chunk_index=3),
         ]
         vector_store.add_chunks(additional_chunks)
         
         # Get a chunk and expand
-        chunks = vector_store.get_chunks("Chunk", n_results=1)
+        chunks = vector_store.get_chunks("Python programming", n_results=1)
         
         if chunks:
-            # This test verifies the method exists and works
-            # Actual expansion logic is in RAGEngine
+            # Verify chunk content and metadata
             assert len(chunks) >= 1
+            # Verify behavior: chunks should contain relevant content
+            chunk_text = chunks[0].text.lower()
+            assert "python" in chunk_text or "programming" in chunk_text
     
     def test_window_expansion_no_window(self, vector_store):
         """Test window expansion with window=0."""
@@ -286,6 +288,10 @@ class TestWindowExpansion:
         
         # Should return chunks without expansion
         assert isinstance(chunks, list)
+        if len(chunks) > 0:
+            # Verify behavior: chunks should have valid content and metadata
+            assert all(isinstance(c.text, str) and len(c.text) > 0 for c in chunks)
+            assert all(c.source and len(c.source) > 0 for c in chunks)
 
 
 class TestGetContextSimilarity:
@@ -302,6 +308,16 @@ class TestGetContextSimilarity:
         # All returned chunks should meet similarity threshold
         # (verified by the filtering logic in the method)
         assert isinstance(context, str)
+        # Verify context contains meaningful content
+        assert len(context) > 0
+        # Verify sources list contains expected document names
+        assert isinstance(sources, list)
+        if len(sources) > 0:
+            # If we have sources, they should be non-empty strings
+            assert all(isinstance(s, str) and len(s) > 0 for s in sources)
+            # Verify source names match expected document pattern
+            for source in sources:
+                assert "test" in source.lower() or "txt" in source.lower() or "pdf" in source.lower() or "md" in source.lower()
     
     def test_get_context_no_matches(self, vector_store):
         """Test get_context with no matching results."""
@@ -311,6 +327,42 @@ class TestGetContextSimilarity:
             min_similarity=0.9  # High threshold
         )
         
+        assert context == ""
+        assert sources == []
+    
+    def test_get_context_content_relevance(self, vector_store):
+        """Test that search returns documents relevant to the query."""
+        # Search for Python-related content
+        context, sources = vector_store.get_context(
+            "Python programming language",
+            n_results=3,
+            min_similarity=0.3
+        )
+        
+        # Verify context contains Python-related content
+        context_lower = context.lower()
+        if len(context) > 0:
+            # If we have content, it should be relevant to the query
+            assert "python" in context_lower or "programming" in context_lower or "language" in context_lower
+        
+        # Verify sources list contains expected document names
+        assert isinstance(sources, list)
+        # If we have sources, verify they follow expected document pattern
+        if len(sources) > 0:
+            for source in sources:
+                assert isinstance(source, str) and len(source) > 0
+                # Source should match expected document patterns
+                assert any(pattern in source.lower() for pattern in ["test", "txt", "pdf", "md"])
+    
+    def test_get_context_empty_query_handling(self, vector_store):
+        """Test that empty query returns empty context."""
+        context, sources = vector_store.get_context(
+            "",
+            n_results=3,
+            min_similarity=0.3
+        )
+        
+        # Empty query should return empty context and sources
         assert context == ""
         assert sources == []
     
@@ -325,6 +377,22 @@ class TestGetContextSimilarity:
         # May return empty if no matches meet threshold
         assert isinstance(context, str)
         assert isinstance(sources, list)
+        if len(sources) > 0:
+            assert all(isinstance(s, str) and len(s) > 0 for s in sources)
+            # Verify sources match expected documents
+            for source in sources:
+                assert "test" in source.lower() or "txt" in source.lower() or "pdf" in source.lower() or "md" in source.lower()
+        
+        # Test that high similarity threshold actually filters results
+        # Get results with lower threshold and compare
+        context_loose, sources_loose = vector_store.get_context(
+            "Python",
+            n_results=5,
+            min_similarity=0.3
+        )
+        # Higher threshold should return fewer or equal results
+        if len(sources) > 0 and len(sources_loose) > 0:
+            assert len(sources) <= len(sources_loose)
 
 
 class TestClear:
