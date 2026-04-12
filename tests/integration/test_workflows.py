@@ -123,7 +123,9 @@ class TestCompleteAPIWorkflow:
         # Step 1: Health check
         response = client.get("/")
         assert response.status_code == 200
-        assert response.json()["status"] == "ok"
+        data = response.json()
+        assert data["service"] == "Document Q&A API"
+        assert "version" in data
 
         # Step 2: Initial stats should show 0 documents (or 503 if engine not ready)
         response = client.get("/stats")

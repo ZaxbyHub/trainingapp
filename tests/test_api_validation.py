@@ -25,13 +25,12 @@ class TestQuestionRequestValidation:
         )
         data = response.json()
         assert "detail" in data
-        # Pydantic validation error should indicate the issue
-        detail = data["detail"]
-        if isinstance(detail, list):
-            # Pydantic v2 format: list of errors
-            assert any("question" in str(err).lower() for err in detail)
+        # Custom validation handler returns {"detail": "...", "errors": [...]}
+        # Check errors list for field name, or detail string as fallback
+        if "errors" in data:
+            assert any("question" in str(err).lower() for err in data["errors"])
         else:
-            # String format
+            detail = data["detail"]
             assert "Question" in str(detail) or "question" in str(detail)
 
     def test_whitespace_only_question_returns_422(self):

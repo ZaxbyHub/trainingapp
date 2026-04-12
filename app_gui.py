@@ -41,6 +41,27 @@ from config import MIN_CHUNK_SIZE, MAX_CHUNK_SIZE, DEFAULT_CHUNK_SIZE, MIN_MAX_T
 logger = logging.getLogger(__name__)
 
 
+def _classify_error(err: Exception, operation: str) -> str:
+    """Return a user-friendly message for engine errors, classified by type."""
+    msg = str(err)
+    if operation == "ingest":
+        if isinstance(err, (ConnectionError, OSError)) and "connect" in msg.lower():
+            return "Could not connect. Make sure Ollama is running and the URL is correct in Settings."
+        if isinstance(err, FileNotFoundError):
+            return f"File not found: {err}. Check the GGUF model path in Settings."
+        if "token" in msg.lower() and ("limit" in msg.lower() or "exceed" in msg.lower()):
+            return "Token limit exceeded. Try reducing Chunk Size or Results to Retrieve in Settings."
+        return f"Ingestion failed. Check the document directory and try again.\n\nError: {err}"
+    else:  # query
+        if isinstance(err, ConnectionError):
+            return "Could not connect to the LLM. Make sure Ollama or your API backend is running."
+        if "timeout" in msg.lower():
+            return "Request timed out. Try reducing Max Tokens in Settings."
+        if "token" in msg.lower() and ("limit" in msg.lower() or "exceed" in msg.lower()):
+            return "Token limit exceeded. Try reducing Max Tokens in Settings."
+        return f"Query failed. Make sure at least one LLM backend is configured in Settings.\n\nError: {err}"
+
+
 def get_resource_path(relative_path: str) -> str:
     """Get absolute path to resource, works for dev and for PyInstaller."""
     try:
@@ -76,6 +97,14 @@ class SettingsDialog(CTkToplevel):
             pady=(0, 10)
         )
 
+        # Backend priority hint
+        CTkLabel(
+            main_frame,
+            text="Only one backend needed. Priority if multiple set: GGUF → Ollama → OpenAI-Compatible",
+            font=("", 10),
+            text_color="gray",
+        ).pack(anchor="w", pady=(0, 10))
+
         # Model path
         CTkLabel(main_frame, text="GGUF Model Path:").pack(anchor="w")
         model_frame = CTkFrame(main_frame)
@@ -88,8 +117,12 @@ class SettingsDialog(CTkToplevel):
 
         # Ollama settings
         CTkLabel(main_frame, text="Ollama URL:").pack(anchor="w")
-        self.ollama_url_entry = CTkEntry(main_frame, width=430)
-        self.ollama_url_entry.pack(fill="x", pady=(0, 10))
+        ollama_frame = CTkFrame(main_frame)
+        ollama_frame.pack(fill="x", pady=(0, 10))
+        self.ollama_url_entry = CTkEntry(ollama_frame, width=350)
+        self.ollama_url_entry.pack(side="left", padx=(0, 5))
+        CTkButton(ollama_frame, text="Test", width=70,
+                  command=self._test_ollama).pack(side="left")
 
         CTkLabel(main_frame, text="Ollama Model:").pack(anchor="w")
         self.ollama_model_entry = CTkEntry(main_frame, width=430)
@@ -97,8 +130,12 @@ class SettingsDialog(CTkToplevel):
 
         # API settings
         CTkLabel(main_frame, text="API URL (OpenAI-compatible):").pack(anchor="w")
-        self.api_url_entry = CTkEntry(main_frame, width=430)
-        self.api_url_entry.pack(fill="x", pady=(0, 10))
+        api_frame = CTkFrame(main_frame)
+        api_frame.pack(fill="x", pady=(0, 10))
+        self.api_url_entry = CTkEntry(api_frame, width=350)
+        self.api_url_entry.pack(side="left", padx=(0, 5))
+        CTkButton(api_frame, text="Test", width=70,
+                  command=self._test_api).pack(side="left")
 
         # RAG Settings
         CTkLabel(main_frame, text="RAG Settings", font=("", 16, "bold")).pack(
@@ -198,6 +235,46 @@ class SettingsDialog(CTkToplevel):
             self.model_path_entry.delete(0, "end")
             self.model_path_entry.insert(0, path)
 
+    def _test_ollama(self):
+        url = self.ollama_url_entry.get().strip()
+        if not url:
+            messagebox.showerror("Test Failed", "Ollama URL is empty")
+            return
+        try:
+            from llm_interface import OllamaLLM
+            llm = OllamaLLM(
+                base_url=url,
+                model_name=self.ollama_model_entry.get().strip() or "phi3:mini",
+            )
+            info = llm.get_info()
+            messagebox.showinfo(
+                "Success",
+                f"Ollama connected:\nBackend: {info.get('backend')}\n"
+                f"Model: {info.get('model')}\nURL: {info.get('base_url')}",
+            )
+        except Exception as e:
+            messagebox.showerror("Test Failed", f"Could not connect to Ollama:\n{e}")
+
+    def _test_api(self):
+        url = self.api_url_entry.get().strip()
+        if not url:
+            messagebox.showerror("Test Failed", "API URL is empty")
+            return
+        try:
+            from llm_interface import OpenAICompatibleLLM
+            llm = OpenAICompatibleLLM(
+                base_url=url,
+                model_name="default",
+            )
+            info = llm.get_info()
+            messagebox.showinfo(
+                "Success",
+                f"API connected:\nBackend: {info.get('backend')}\n"
+                f"URL: {info.get('base_url')}",
+            )
+        except Exception as e:
+            messagebox.showerror("Test Failed", f"Could not connect to API:\n{e}")
+
     def _populate_fields(self):
         gguf = self.settings.get("gguf_path") or self.settings.get("model_path", "")
         self.model_path_entry.insert(0, gguf)
@@ -288,7 +365,7 @@ class DocumentQAApp(CTk):
     """Main application window."""
 
     APP_NAME = "Document Q&A Assistant"
-    VERSION = "1.1.2"
+    VERSION = "1.2.0"
     SETTINGS_FILE = "app_settings.json"
 
     def __init__(self):
@@ -559,10 +636,16 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("progress", 100))
 
                 backend = "No LLM"
+                model_name = ""
                 if self.engine.llm:
-                    backend = self.engine.llm.get_info()["backend"]
+                    info = self.engine.llm.get_info()
+                    backend = info.get("backend", "Unknown")
+                    model_name = info.get("model", "")
 
-                self.message_queue.put(("status", f"Ready ({backend})"))
+                if model_name:
+                    self.message_queue.put(("status", f"Ready ({backend} / {model_name})"))
+                else:
+                    self.message_queue.put(("status", f"Ready ({backend})"))
                 self.message_queue.put(("enable_input", True))
 
                 # Update model label with GGUF file info
@@ -677,7 +760,7 @@ class DocumentQAApp(CTk):
 
             except Exception as e:
                 self.message_queue.put(("status", f"Error: {e}"))
-                self.message_queue.put(("message", "system", f"Ingestion failed: {e}"))
+                self.message_queue.put(("message", "system", _classify_error(e, "ingest")))
                 self.message_queue.put(("enable_input", True))
 
         threading.Thread(target=ingest, daemon=True).start()
@@ -724,7 +807,7 @@ class DocumentQAApp(CTk):
 
             except Exception as e:
                 self.message_queue.put(("status", f"Error: {e}"))
-                self.message_queue.put(("message", "system", f"Query failed: {e}"))
+                self.message_queue.put(("message", "system", _classify_error(e, "query")))
                 self.message_queue.put(("enable_input", True))
 
         threading.Thread(target=query, daemon=True).start()

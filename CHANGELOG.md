@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.2.0] - 2026-04-12
+
+### Summary
+UX Phase 1-5: Fixed critical backend fallback bug, improved API types, error messages, and Settings UI.
+
+### Phase 1 — Chat Fallback Fix (D1)
+- **llm_interface.py**: `answer_question()` now iterates all backends explicitly (GGUF tries chat_complete then generate; non-GGUF uses generate). Previously only tried backends[0].
+
+### Phase 2 — API Typed Models (A1-A5)
+- **api_server.py**: Added `LoginRequest` Pydantic model for `/auth/token`
+- **api_server.py**: Added `DocumentsResponse`/`DocumentInfo` using `engine.get_all_documents()` for `/documents`
+- **api_server.py**: Root `GET /` now returns `version`, `docs`, `auth_status`
+- **api_server.py**: Auth-disabled at `/auth/token` now returns HTTP 503 (was 400)
+
+### Phase 3 — API Exception Handlers (A6-A7)
+- **api_server.py**: Added `RequestValidationError` custom handler returning structured `{"detail", "errors"}`
+- **api_server.py**: Added global catch-all `Exception` handler with correlation ID
+
+### Phase 4 — Error UX (B1-B2)
+- **app_gui.py**: Added `_classify_error()` helper — connection/timeout/token-limit errors now show actionable messages instead of raw exceptions
+- **llm_interface.py**: OpenAI-compatible URLError now appends "Is the server running?"
+
+### Phase 5 — Settings UI (C1-C3)
+- **app_gui.py**: Added backend priority hint label ("GGUF → Ollama → OpenAI-Compatible")
+- **app_gui.py**: Added "Test" buttons for Ollama URL and API URL
+- **app_gui.py**: Status bar now shows `Ready (Backend / model-name)` instead of just backend name
+
 ## [1.1.2] - 2026-04-12
 
 ### Summary

@@ -23,11 +23,13 @@ class TestHealthEndpoint:
     def test_root_returns_ok(self, test_client):
         """Test root endpoint returns health status."""
         response = test_client.get("/")
-        
+
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "ok"
         assert data["service"] == "Document Q&A API"
+        assert "version" in data
+        assert data["docs"] == "/docs"
+        assert data["auth_status"] == "/auth/status"
 
 
 class TestAuthEndpoints:

@@ -182,7 +182,9 @@ class TestAuthDisabledIntegration:
         client = TestClient(api_server.app)
         response = client.get("/")
         assert response.status_code == 200
-        assert response.json()["status"] == "ok"
+        data = response.json()
+        assert data["service"] == "Document Q&A API"
+        assert "version" in data
 
     def test_auth_status_shows_disabled(self):
         """Test /auth/status shows auth is disabled."""
@@ -221,7 +223,9 @@ class TestAuthEnabledIntegration:
         client = TestClient(api_server.app)
         response = client.get("/")
         assert response.status_code == 200
-        assert response.json()["status"] == "ok"
+        data = response.json()
+        assert data["service"] == "Document Q&A API"
+        assert "version" in data
 
     def test_auth_status_is_public(self):
         """Test /auth/status is public and shows auth is enabled."""
@@ -306,12 +310,12 @@ class TestAuthEnabledIntegration:
             assert response.status_code == 401
 
     def test_auth_token_endpoint_disabled_when_auth_disabled(self):
-        """Test /auth/token returns 400 when auth is disabled."""
+        """Test /auth/token returns 503 when auth is disabled."""
         _, api_server = reload_auth_module(enable_auth=False)
         client = TestClient(api_server.app)
         response = client.post("/auth/token", json={"api_key": "any-key"})
-        assert response.status_code == 400
-        assert "disabled" in response.json()["detail"].lower()
+        assert response.status_code == 503
+        assert "not enabled" in response.json()["detail"].lower()
 
 
 @pytest.mark.skipif(not JWT_AVAILABLE, reason="JWT library not installed")

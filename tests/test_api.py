@@ -35,16 +35,17 @@ class TestGetRoot:
     def test_root_health_check(self):
         """Test root endpoint returns health status with valid indicators."""
         response = client.get("/")
-        
+
         assert response.status_code == 200
         data = response.json()
-        
+
         # Verify structure and types of health indicators, not just hardcoded strings
-        assert "status" in data
         assert "service" in data
-        assert isinstance(data["status"], str)
+        assert "version" in data
+        assert "docs" in data
+        assert "auth_status" in data
         assert isinstance(data["service"], str)
-        assert len(data["status"]) > 0
+        assert isinstance(data["version"], str)
         assert len(data["service"]) > 0
 
 
@@ -239,29 +240,37 @@ class TestGetDocuments:
     def test_get_documents_success(self):
         """Test listing documents successfully."""
         with patch('api_server.engine') as mock_engine:
-            mock_engine.list_documents.return_value = ["doc1.txt", "doc2.txt", "doc3.md"]
-            
+            mock_engine.get_all_documents.return_value = [
+                {"id": "doc1.txt", "chunk_count": 5},
+                {"id": "doc2.txt", "chunk_count": 3},
+                {"id": "doc3.md", "chunk_count": 8},
+            ]
+
             response = client.get("/documents")
-            
+
             assert response.status_code == 200
             data = response.json()
-            
+
             assert "documents" in data
-            assert "doc1.txt" in data["documents"]
-            assert "doc2.txt" in data["documents"]
-            assert "doc3.md" in data["documents"]
-    
+            assert "total" in data
+            assert data["total"] == 3
+            ids = [d["id"] for d in data["documents"]]
+            assert "doc1.txt" in ids
+            assert "doc2.txt" in ids
+            assert "doc3.md" in ids
+
     def test_get_documents_empty(self):
         """Test listing documents when none exist."""
         with patch('api_server.engine') as mock_engine:
-            mock_engine.list_documents.return_value = []
-            
+            mock_engine.get_all_documents.return_value = []
+
             response = client.get("/documents")
-            
+
             assert response.status_code == 200
             data = response.json()
-            
+
             assert data["documents"] == []
+            assert data["total"] == 0
     
     def test_get_documents_engine_not_initialized(self):
         """Test listing documents when engine is not initialized."""

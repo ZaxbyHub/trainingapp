@@ -498,7 +498,7 @@ class OpenAICompatibleLLM(BaseLLM):
             )
         except urllib.error.URLError:
             raise RuntimeError(
-                f"Cannot connect to OpenAI-compatible endpoint at {self.base_url}"
+                f"Cannot connect to OpenAI-compatible endpoint at {self.base_url}. Is the server running?"
             )
         except TimeoutError:
             raise RuntimeError(
@@ -675,26 +675,56 @@ class SmartLLM:
                     lines.append(f"{label}: {content[:100]}")
                 history_prefix = "Previous conversation:\n" + "\n".join(lines) + "\n\n"
 
-        if isinstance(self.backends[0], GGUFBackend):
-            try:
-                sources_str = ", ".join(sources) if sources else "unknown"
-                user_prompt = (
-                    f"{history_prefix}"
-                    f"Context from documents:\n{context}\n\n"
-                    f"Sources: {sources_str}\n\n"
-                    f"Question: {question}"
-                )
-                return self.backends[0].chat_complete(
-                    system_prompt=RAGPromptBuilder.SYSTEM_PROMPT,
-                    user_prompt=user_prompt,
-                    config=config,
-                )
-            except Exception:
-                # Fall back to standard generate() which has its own fallback loop
-                pass
+        # Build the base prompt once (without history_prefix — that's per-backend)
+        sources_str = ", ".join(sources) if sources else "unknown"
+        base_user_prompt = (
+            f"Context from documents:\n{context}\n\n"
+            f"Sources: {sources_str}\n\n"
+            f"Question: {question}"
+        )
+
+        # Track whether we've already prepended history_prefix during this call.
+        # We only want to add it once — either to the first GGUF backend's
+        # chat_complete user_prompt, or to the final generate() call.
+        history_prefix_used = False
+
+        for backend in self.backends:
+            # GGUF backends: try chat_complete first (applies chat template).
+            # If it fails, fall back to generate() on the SAME backend.
+            if isinstance(backend, GGUFBackend):
+                # chat_complete gets history_prefix (if not already used)
+                user_prompt = (history_prefix if not history_prefix_used else "") + base_user_prompt
+                history_prefix_used = True
+                try:
+                    return backend.chat_complete(
+                        system_prompt=RAGPromptBuilder.SYSTEM_PROMPT,
+                        user_prompt=user_prompt,
+                        config=config,
+                    )
+                except Exception:
+                    # Fall back to generate() on the same GGUF backend — no
+                    # history_prefix here since it was already in the chat_complete prompt
+                    try:
+                        prompt = self.prompt_builder.build_prompt(question, context, sources)
+                        return backend.generate(prompt, config)
+                    except Exception:
+                        # This GGUF backend fully failed; try next backend
+                        continue
+
+            # Non-GGUF backends: use generate() directly
+            else:
+                prompt = self.prompt_builder.build_prompt(question, context, sources)
+                if history_prefix and not history_prefix_used:
+                    prompt = history_prefix + prompt
+                    history_prefix_used = True
+                try:
+                    return backend.generate(prompt, config)
+                except Exception:
+                    continue
+
+        # All backends exhausted — last-resort generate() with history_prefix
         prompt = self.prompt_builder.build_prompt(question, context, sources)
-        # Non-GGUF path: prepend history_prefix to the generated prompt
-        if history_prefix:
+        if history_prefix and not history_prefix_used:
             prompt = history_prefix + prompt
         return self.generate(prompt, config)
 

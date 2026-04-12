@@ -15,7 +15,10 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse, unquote
 import ipaddress
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Security
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Security, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
@@ -284,6 +287,26 @@ class QuestionRequest(BaseModel):
         return v.strip()
 
 
+class LoginRequest(BaseModel):
+    """Request model for authentication."""
+
+    api_key: str = Field(..., description="API key for authentication")
+
+
+class DocumentInfo(BaseModel):
+    """Document with metadata."""
+
+    id: str = Field(..., description="Document source path")
+    chunk_count: int = Field(..., description="Number of chunks for this document")
+
+
+class DocumentsResponse(BaseModel):
+    """Response model for listing documents."""
+
+    documents: List[DocumentInfo]
+    total: int
+
+
 class QuestionResponse(BaseModel):
     """Response model for question answers."""
 
@@ -361,7 +384,7 @@ async def lifespan(app: FastAPI):
 
         if ollama_url:
             try:
-                ollama_url = validate_url(ollama_url)
+                ollama_url = validate_url(ollama_url, allow_local=True)
             except ValueError as e:
                 logger.error("Invalid Ollama URL configuration: %s", e)
                 raise RuntimeError("Startup failed: Invalid configuration")
@@ -471,10 +494,47 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Return user-friendly validation error messages."""
+    errors = exc.errors()
+    detail_lines = []
+    for err in errors:
+        loc = ".".join(str(l) for l in err["loc"])
+        detail_lines.append(f"{loc}: {err['msg']}")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": "Request validation failed",
+            "errors": detail_lines,
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Catch-all handler — logs the error and returns a safe 500 response."""
+    corr_id = str(uuid.uuid4())[:8]
+    logger.error("Unhandled exception [%s] %s: %s", corr_id, type(exc).__name__, exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An internal error occurred. If the problem persists, contact support with "
+            f"correlation ID {corr_id}.",
+            "correlation_id": corr_id,
+        },
+    )
+
+
 @app.get("/")
 async def root():
     """Health check endpoint."""
-    return {"status": "ok", "service": "Document Q&A API"}
+    return {
+        "service": "Document Q&A API",
+        "version": "1.1.2",
+        "docs": "/docs",
+        "auth_status": "/auth/status",
+    }
 
 
 @app.get("/auth/status")
@@ -484,12 +544,9 @@ async def auth_status():
 
 
 @app.post("/auth/token")
-async def login(credentials: dict):
+async def login(request: LoginRequest):
     """
     Login endpoint to obtain JWT token.
-
-    Request body:
-        - api_key: API key for authentication
 
     Returns:
         - access_token: JWT token
@@ -498,10 +555,13 @@ async def login(credentials: dict):
     from auth import ENABLE_AUTH, API_KEY, create_access_token
 
     if not ENABLE_AUTH:
-        raise HTTPException(status_code=400, detail="Authentication is disabled")
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is not enabled on this server. "
+            "Check /auth/status for current configuration.",
+        )
 
-    provided_key = credentials.get("api_key")
-    if not provided_key or provided_key != API_KEY:
+    if request.api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
 
     access_token = create_access_token(data={"sub": "api_user"})
@@ -678,13 +738,14 @@ async def clear_documents(auth: dict = Security(require_auth())):
         )
 
 
-@app.get("/documents")
+@app.get("/documents", response_model=DocumentsResponse)
 async def list_documents(auth: dict = Security(require_auth())):
     """List all ingested documents."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
-    return {"documents": engine.list_documents()}
+    docs = engine.get_all_documents()
+    return DocumentsResponse(documents=docs, total=len(docs))
 
 
 def main():
