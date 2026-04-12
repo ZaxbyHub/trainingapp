@@ -40,11 +40,11 @@ jobs:
       
       - name: Test executable
         run: |
-          dist\DocumentQAApp\DocumentQAApp.exe --help
+          dist/DocumentQAApp/DocumentQAApp.exe --help
       
       - name: Create installer
         run: |
-          Compress-Archive -Path dist\DocumentQAApp\* -DestinationPath DocumentQAApp-windows.zip
+          python -c "import shutil; shutil.make_archive('DocumentQAApp-windows', 'zip', 'dist/DocumentQAApp')"
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4

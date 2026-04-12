@@ -22,7 +22,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       
       - name: Cache pip packages
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~\AppData\Local\pip\Cache
           key: ${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
@@ -37,11 +37,9 @@ jobs:
       
       - name: Run tests
         run: pytest tests/ -v --cov=. --cov-report=xml --tb=short
-        continue-on-error: true
       
       - name: Upload coverage
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
-        continue-on-error: true
