@@ -89,11 +89,16 @@ class BM25Index:
         self.chunks: List[DocumentChunk] = []
         self.bm25_index = None
 
+    def _tokenize(self, text: str) -> List[str]:
+        """Tokenize text for BM25: lowercase, remove stop words, filter short tokens."""
+        from query_transformer import STOP_WORDS
+        tokens = text.lower().split()
+        return [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
+
     def build_index(self, chunks: List[DocumentChunk]):
         """Build BM25 index from chunks."""
         self.chunks = chunks
-        # Tokenize each chunk.text (simple split on whitespace)
-        tokenized_corpus = [chunk.text.split() for chunk in chunks]
+        tokenized_corpus = [self._tokenize(chunk.text) for chunk in chunks]
         # Create BM25Okapi index from tokenized corpus
         if tokenized_corpus:
             if BM25_AVAILABLE:
@@ -106,29 +111,35 @@ class BM25Index:
             else:
                 self.bm25_index = None
 
-    def add_documents(self, chunks: List[DocumentChunk]):
-        """Add multiple documents to the BM25 index and rebuild once.
+    def add_documents(self, chunks: List[DocumentChunk], rebuild_index: bool = True):
+        """Add multiple documents to the BM25 index.
 
         Args:
             chunks: List of DocumentChunk objects to add.
+            rebuild_index: If True (default), rebuild the index after adding.
+                          If False, caller must manually call build_index() later.
         """
         self.chunks.extend(chunks)
-        # Rebuild index once after all additions
-        self.build_index(self.chunks)
+        # Rebuild index once after all additions if requested
+        if rebuild_index:
+            self.build_index(self.chunks)
 
-    def add_document(self, chunk_id: str, text: str):
+    def add_document(self, chunk_id: str, text: str, rebuild_index: bool = True):
         """Add a single document to the BM25 index.
 
         Args:
             chunk_id: Unique identifier for the document.
             text: Document text content.
+            rebuild_index: If True (default), rebuild the index after adding.
+                          If False, caller must manually call build_index() later.
         """
         self.add_documents(
             [
                 DocumentChunk(
                     text=text, source=chunk_id, chunk_index=len(self.chunks), page=None
                 )
-            ]
+            ],
+            rebuild_index=rebuild_index,
         )
 
     def search(self, query: str, top_k: int = 10) -> List[Tuple[int, float]]:
@@ -137,8 +148,7 @@ class BM25Index:
             return []
 
         try:
-            # Tokenize query (simple split)
-            tokenized_query = query.split()
+            tokenized_query = self._tokenize(query)
             # Get BM25 scores for all documents
             scores = self.bm25_index.get_scores(tokenized_query)
             # Return list of (chunk_index, score) sorted by score descending
@@ -174,7 +184,7 @@ class BM25Index:
             DocumentChunk(**chunk_dict) for chunk_dict in data.get("chunks", [])
         ]
         # Rebuild BM25Okapi from corpus
-        tokenized_corpus = [chunk.text.split() for chunk in self.chunks]
+        tokenized_corpus = [self._tokenize(chunk.text) for chunk in self.chunks]
         if tokenized_corpus:
             if BM25_AVAILABLE:
                 self.bm25_index = BM25Okapi(tokenized_corpus)
@@ -243,7 +253,7 @@ class VectorStore:
                             f"[OK] BM25 index rebuilt on startup: {len(all_chunks)} chunks"
                         )
             except Exception as e:
-                print(f"[WARN] BM25 index rebuild failed on startup: {e}")
+                logger.warning("BM25 index rebuild failed on startup", exc_info=True)
 
         print(f"[OK] Vector store initialized at {self.db_path}")
         print(f"  Documents: {self.metadata.get('document_count', 0)}")
@@ -557,11 +567,11 @@ class VectorStore:
 
             # Remove from BM25 index
             if self.bm25_index:
-                prefix = f"{sanitized_id}_"
+                # Remove chunks with exact source match (not startswith)
                 self.bm25_index.chunks = [
                     chunk
                     for chunk in self.bm25_index.chunks
-                    if not chunk.source.startswith(prefix)
+                    if chunk.source != sanitized_id
                 ]
                 # Rebuild BM25 index after removing chunks
                 if self.bm25_index.chunks:
@@ -594,15 +604,51 @@ class VectorStore:
 
             return True
 
+    def _expand_chunks_with_neighbors(
+        self, chunks: List[DocumentChunk], window: int
+    ) -> List[DocumentChunk]:
+        """Expand each chunk with its ±window neighbors from the same source."""
+        if window <= 0:
+            return chunks
+
+        expanded = []
+        seen = set()
+
+        for chunk in chunks:
+            source_chunks = self.get_chunks_by_source(chunk.source)
+            if not source_chunks:
+                key = (chunk.source, chunk.chunk_index)
+                if key not in seen:
+                    seen.add(key)
+                    expanded.append(chunk)
+                continue
+
+            start_idx = max(0, chunk.chunk_index - window)
+            end_idx = min(len(source_chunks) - 1, chunk.chunk_index + window)
+
+            for idx in range(start_idx, end_idx + 1):
+                neighbor = source_chunks[idx]
+                key = (neighbor.source, neighbor.chunk_index)
+                if key not in seen:
+                    seen.add(key)
+                    expanded.append(neighbor)
+
+        expanded.sort(key=lambda c: (c.source, c.chunk_index))
+        return expanded
+
     def get_context(
         self,
         query: str,
         n_results: int = 3,
         min_similarity: float = 0.3,
         hybrid_search: bool = False,
+        retrieval_window: int = 0,
     ) -> Tuple[str, List[str]]:
         """Get context for RAG from similar documents."""
         with self._lock:
+            # Handle empty query - return no context
+            if not query or not query.strip():
+                return "", []
             if hybrid_search and self.bm25_index:
                 # Get vector search results
                 vector_results = self.search(query, n_results=n_results * 2)
@@ -644,6 +690,19 @@ class VectorStore:
                             if source not in sources:
                                 sources.append(source)
 
+                # Expand with neighboring chunks if window > 0
+                if retrieval_window > 0 and context_parts:
+                    hybrid_chunks = [
+                        DocumentChunk(
+                            text=text, source=sources[min(i, len(sources)-1)],
+                            chunk_index=i, page=None,
+                        )
+                        for i, text in enumerate(context_parts)
+                    ]
+                    expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
+                    context_parts = [c.text for c in expanded]
+                    sources = list(dict.fromkeys(c.source for c in expanded))
+
                 context = "\n\n---\n\n".join(context_parts)
                 return context, sources
             else:
@@ -667,6 +726,19 @@ class VectorStore:
                     context_parts.append(doc)  # Don't add source prefix - just the text
                     if source not in sources:
                         sources.append(source)
+
+                # Expand with neighboring chunks if window > 0
+                if retrieval_window > 0:
+                    filtered_chunks = [
+                        DocumentChunk(
+                            text=doc, source=meta.get("source", "Unknown"),
+                            chunk_index=meta.get("chunk_index", i), page=meta.get("page"),
+                        )
+                        for i, (doc, meta, sim) in enumerate(filtered)
+                    ]
+                    expanded = self._expand_chunks_with_neighbors(filtered_chunks, retrieval_window)
+                    context_parts = [c.text for c in expanded]
+                    sources = list(dict.fromkeys(c.source for c in expanded))
 
                 context = "\n\n---\n\n".join(context_parts)
                 return context, sources

@@ -15,93 +15,11 @@ from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from security import validate_url
+
 # Security constants
 MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_PROMPT_LENGTH = 16384  # 16K characters
-
-# Private IP ranges for SSRF protection (excluding loopback)
-PRIVATE_NETWORKS = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("169.254.0.0/16"),  # link-local
-]
-
-# IPv6 private networks (excluding loopback)
-PRIVATE_IPV6 = [
-    ipaddress.ip_network("fc00::/7"),  # unique local addresses
-]
-
-
-def validate_url(url: str) -> None:
-    """Validate URL to prevent SSRF attacks.
-
-    Rejects:
-    - Non-http/https schemes
-    - Private IP ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16)
-    - Link-local addresses
-    - Reserved addresses
-    - IPv6 unique local addresses (fc00::/7)
-
-    Note: Loopback addresses (127.0.0.0/8, ::1) are allowed to support local services like Ollama.
-
-    Raises:
-        ValueError: If URL fails validation
-    """
-    parsed = urlparse(url)
-
-    # Check scheme
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(
-            f"Invalid URL scheme: {parsed.scheme}. Only http and https are allowed."
-        )
-
-    # Check hostname resolves to IP
-    try:
-        host = parsed.hostname
-        if not host:
-            raise ValueError("URL must have a hostname")
-
-        # Try to resolve hostname to IP addresses
-        import socket
-
-        try:
-            # Get all IP addresses for the hostname
-            addr_info = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-            for family, _, _, _, sockaddr in addr_info:
-                ip_str = sockaddr[0]
-                ip = ipaddress.ip_address(ip_str)
-
-                # Allow loopback addresses (127.0.0.0/8 and ::1) for local services like Ollama
-                if ip.is_loopback:
-                    continue
-
-                # Check if it's a private/reserved address
-                for network in PRIVATE_NETWORKS:
-                    if ip in network:
-                        raise ValueError(
-                            f"URL points to private/reserved IP range: {ip}"
-                        )
-
-                if ip.is_link_local:
-                    raise ValueError(f"URL points to link-local address: {ip}")
-
-                if ip.is_reserved:
-                    raise ValueError(f"URL points to reserved address: {ip}")
-
-                if ip.version == 6:
-                    for net in PRIVATE_IPV6:
-                        if ip in net:
-                            raise ValueError(
-                                f"URL points to private IPv6 address: {ip}"
-                            )
-        except socket.gaierror:
-            # Hostname couldn't be resolved - this is suspicious
-            raise ValueError(f"Cannot resolve hostname: {host}")
-    except Exception as e:
-        if isinstance(e, ValueError):
-            raise
-        raise ValueError(f"URL validation failed: {e}")
 
 
 def _sanitize_error(error_msg: str) -> str:
@@ -391,7 +309,8 @@ class OllamaLLM(BaseLLM):
         self, model_name: str = "phi3:mini", base_url: str = "http://localhost:11434"
     ):
         # Validate base_url for SSRF protection
-        validate_url(base_url)
+        # Ollama runs locally, so we allow local URLs
+        validate_url(base_url, allow_local=True)
 
         self.model_name = model_name
         self.base_url = base_url.rstrip("/")
@@ -605,8 +524,12 @@ class RAGPromptBuilder:
         "Answer using ONLY the context supplied. "
         "If the context lacks the answer, respond exactly: "
         '"I don\'t have enough information to answer that question based on the available documents." '
-        "Rules: no speculation. Provide a comprehensive answer — include all relevant steps, sub-steps, and details present in the context. Do not truncate or summarise when the context contains full detail. "
-        "Cite the source filename at the end of your answer in brackets, e.g. [report.pdf]."
+        "Rules: "
+        "(1) No speculation. "
+        "(2) Include all relevant steps and details from the context — do not truncate. "
+        "(3) If multiple documents contain conflicting information, present all perspectives. "
+        "(4) Cite the source filename in brackets after relevant statements, e.g. [report.pdf]. "
+        "(5) Use bullet points for multi-step or enumerated answers."
     )
 
     @staticmethod
@@ -733,33 +656,24 @@ class SmartLLM:
         """
         history_prefix = ""
         if conversation_history:
-            # Extract last user + last assistant messages (up to 2 turns)
-            # Use .get("content", "") to avoid KeyError on malformed messages
-            last_user = next(
-                (
-                    m.get("content", "")
-                    for m in reversed(conversation_history)
-                    if isinstance(m, dict) and m.get("role") == "user"
-                ),
-                None,
-            )
-            last_assistant = next(
-                (
-                    m.get("content", "")
-                    for m in reversed(conversation_history)
-                    if isinstance(m, dict) and m.get("role") == "assistant"
-                ),
-                None,
-            )
-            if last_user and last_assistant:
-                # Truncate both to 300 chars to protect token budget
-                user_snippet = last_user[:300]
-                assistant_snippet = last_assistant[:300]
-                history_prefix = (
-                    f"Previous conversation:\n"
-                    f"User: {user_snippet}\n"
-                    f"Assistant: {assistant_snippet}\n\n"
-                )
+            history_parts = []
+            for msg in reversed(conversation_history):
+                if not isinstance(msg, dict):
+                    continue
+                role = msg.get("role")
+                content = msg.get("content", "")
+                if role in ("user", "assistant") and content:
+                    history_parts.append((role, content[:250]))
+                    if len(history_parts) >= 4:  # Last 2 user + 2 assistant
+                        break
+
+            if len(history_parts) >= 2:
+                history_parts.reverse()
+                lines = []
+                for role, content in history_parts:
+                    label = "User" if role == "user" else "Assistant"
+                    lines.append(f"{label}: {content[:100]}")
+                history_prefix = "Previous conversation:\n" + "\n".join(lines) + "\n\n"
 
         if isinstance(self.backends[0], GGUFBackend):
             try:

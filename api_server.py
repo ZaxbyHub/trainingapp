@@ -9,132 +9,24 @@ import re
 import socket
 import logging
 import unicodedata
-from typing import Optional, List, Set, Tuple
+from typing import Optional, Set, Tuple, List
 from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse, unquote
 import ipaddress
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
 from rag_engine import RAGEngine, RAGConfig
+from security import validate_url, DEFAULT_ALLOWED_PORTS
+from auth import authenticate, require_auth, get_auth_status, API_KEY, create_access_token
+from config import settings
 
 # Set up logger
 logger = logging.getLogger(__name__)
-
-# Default allowed ports for URL validation
-DEFAULT_ALLOWED_PORTS = {80, 443, 11434}  # HTTP, HTTPS, Ollama
-
-
-def validate_url(
-    url: str, allow_local: bool = False, allowed_ports: Optional[set] = None
-) -> str:
-    """
-    Validate URL to prevent injection attacks.
-
-    Args:
-        url: URL string to validate
-        allow_local: If True, allow localhost and private IPs for local backends
-        allowed_ports: Set of allowed port numbers. If None, uses DEFAULT_ALLOWED_PORTS
-
-    Returns:
-        Validated URL string
-
-    Raises:
-        ValueError: If URL is invalid
-    """
-    if not url:
-        raise ValueError("URL cannot be empty")
-
-    # Check for scheme
-    parsed = urlparse(url)
-    if not parsed.scheme:
-        raise ValueError("URL must have a scheme (http/https)")
-
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError("URL scheme must be http or https")
-
-    # Reject userinfo in URL (user:pass@host)
-    if parsed.username or parsed.password:
-        raise ValueError("URL must not contain userinfo (username:password)")
-
-    # Check for localhost and private IP addresses
-    if parsed.hostname:
-        # Check for localhost
-        if parsed.hostname in ("localhost", "127.0.0.1", "::1"):
-            if not allow_local:
-                raise ValueError("URL must not point to localhost")
-
-        # Check for private IP addresses
-        if parsed.hostname:
-            try:
-                ip_addr = ipaddress.ip_address(parsed.hostname)
-            except ValueError:
-                # Not an IP address, skip IP checks
-                pass
-            else:
-                # Successfully parsed as IP - check if private
-                if ip_addr.is_private and not allow_local:
-                    raise ValueError("URL must not point to private IP addresses")
-
-    # Port validation
-    if parsed.port:
-        # Use provided allowed_ports or default
-        ports = allowed_ports if allowed_ports is not None else DEFAULT_ALLOWED_PORTS
-
-        if parsed.port not in ports:
-            raise ValueError(
-                f"URL must use standard ports (got {parsed.port}, allowed: {sorted(ports)})"
-            )
-
-    # DNS rebinding protection - resolve hostname and validate IP
-    if parsed.hostname:
-        _resolve_and_validate_host(parsed.hostname, allow_local)
-
-    return url
-
-
-def _resolve_and_validate_host(hostname: str, allow_local: bool) -> None:
-    """Resolve hostname and validate IP against whitelist.
-
-    Args:
-        hostname: Hostname to resolve
-        allow_local: Whether to allow local/private IPs
-
-    Raises:
-        ValueError: If resolved IP is not in whitelist
-    """
-    if not hostname:
-        return
-
-    try:
-        # Resolve hostname to IP(s)
-        addr_info = socket.getaddrinfo(hostname, None)
-
-        for info in addr_info:
-            ip_str = info[4][0]
-            try:
-                ip_addr = ipaddress.ip_address(ip_str)
-
-                # Check if IP is localhost
-                if ip_addr.is_loopback and not allow_local:
-                    raise ValueError(f"Hostname resolves to loopback: {ip_str}")
-
-                # Check if IP is private
-                if ip_addr.is_private and not allow_local:
-                    raise ValueError(f"Hostname resolves to private IP: {ip_str}")
-
-            except ValueError:
-                # Not a valid IP, skip
-                continue
-
-    except socket.gaierror:
-        # Hostname resolution failed - this is OK for validation
-        # (actual connection will fail later if invalid)
-        pass
 
 
 def validate_model_path(path: str, base_dir: Path = Path(".")) -> str:
@@ -341,6 +233,44 @@ def sanitize_filename(filename: str) -> Tuple[str, str]:
 engine: Optional[RAGEngine] = None
 
 
+def validate_device(device: str) -> str:
+    """
+    Validate device string to prevent command injection attacks.
+
+    Args:
+        device: Device string to validate (e.g., "cpu", "cuda", "mps")
+
+    Returns:
+        Validated device string
+
+    Raises:
+        ValueError: If device string contains dangerous patterns
+    """
+    if not device:
+        raise ValueError("Device cannot be empty")
+
+    # Reject device string if it's not a known valid value
+    if device not in ("cpu", "cuda", "mps"):
+        # Additional validation - check for potentially dangerous shell patterns
+        dangerous_patterns = (
+            ";",
+            "|",
+            "&",
+            "&&",
+            "||",
+            ">",
+            "<",
+            "`",
+            "$(",
+            "'",
+            '"',
+        )
+        if any(pattern in device for pattern in dangerous_patterns):
+            raise ValueError("Device string contains dangerous shell patterns")
+
+    return device
+
+
 class QuestionRequest(BaseModel):
     """Request model for asking questions."""
 
@@ -407,7 +337,7 @@ class StatsResponse(BaseModel):
     chunk_count: int
     embedding_model: str
     llm_backend: Optional[str]
-    documents: List[str]
+    documents: List[str] = []
 
 
 @asynccontextmanager
@@ -418,17 +348,12 @@ async def lifespan(app: FastAPI):
     print("Starting Document Q&A API Server...")
 
     try:
-        # Validate environment variables before creating RAGConfig and RAGEngine
-        db_path = os.environ.get("RAG_DB_PATH", "./doc_qa_db")
-        chunk_size = int(os.environ.get("RAG_CHUNK_SIZE", "512"))
-        n_results = int(os.environ.get("RAG_N_RESULTS", "3"))
-        max_tokens = int(os.environ.get("RAG_MAX_TOKENS", "1024"))
-        temperature = float(os.environ.get("RAG_TEMPERATURE", "0.3"))
-
-        # Validate numeric values
-        chunk_size = validate_numeric(chunk_size, 100, 10000, "chunk_size")
-        max_tokens = validate_numeric(max_tokens, 100, 4000, "max_tokens")
-        n_results = validate_numeric(n_results, 1, 20, "n_results")
+        # Use centralized settings with Pydantic validation
+        db_path = settings.rag_db_path
+        chunk_size = settings.rag_chunk_size
+        n_results = settings.rag_n_results
+        max_tokens = settings.rag_max_tokens
+        temperature = settings.rag_temperature
 
         # Validate URL environment variables
         ollama_url = os.environ.get("RAG_OLLAMA_URL")
@@ -438,14 +363,14 @@ async def lifespan(app: FastAPI):
             try:
                 ollama_url = validate_url(ollama_url)
             except ValueError as e:
-                logger.error("Invalid Ollama URL configuration")
+                logger.error("Invalid Ollama URL configuration: %s", e)
                 raise RuntimeError("Startup failed: Invalid configuration")
 
         if api_url:
             try:
                 api_url = validate_url(api_url)
             except ValueError as e:
-                logger.error("Invalid API URL configuration")
+                logger.error("Invalid API URL configuration: %s", e)
                 raise RuntimeError("Startup failed: Invalid configuration")
 
         # Validate model paths
@@ -455,7 +380,7 @@ async def lifespan(app: FastAPI):
             try:
                 model_path = validate_model_path(model_path, Path("."))
             except ValueError as e:
-                logger.error("Invalid model path configuration")
+                logger.error("Invalid model path configuration: %s", e)
                 raise RuntimeError("Startup failed: Invalid configuration")
 
         # Validate GGUF path if provided
@@ -465,31 +390,17 @@ async def lifespan(app: FastAPI):
             try:
                 gguf_path = validate_model_path(gguf_path, Path("."))
             except ValueError as e:
-                logger.error("Invalid GGUF path configuration")
+                logger.error("Invalid GGUF path configuration: %s", e)
                 raise RuntimeError("Startup failed: Invalid configuration")
 
         # Validate device string if provided
         device = os.environ.get("RAG_DEVICE")
         if device:
-            # Basic validation - ensure it's a reasonable device string
-            if device not in ("cpu", "cuda", "mps"):
-                # Additional validation - check for potentially dangerous patterns
-                dangerous_patterns = (
-                    ";",
-                    "|",
-                    "&",
-                    "&&",
-                    "||",
-                    ">",
-                    "<",
-                    "`",
-                    "$(",
-                    "'",
-                    '"',
-                )
-                if any(pattern in device for pattern in dangerous_patterns):
-                    logger.error("Invalid device string configuration")
-                    raise RuntimeError("Startup failed: Invalid configuration")
+            try:
+                device = validate_device(device)
+            except ValueError as e:
+                logger.error("Invalid device string configuration: %s", e)
+                raise RuntimeError("Startup failed: Invalid configuration")
 
         # Validate model names if provided
         ollama_model = os.environ.get("RAG_OLLAMA_MODEL")
@@ -521,7 +432,7 @@ async def lifespan(app: FastAPI):
             n_results=n_results,
             max_tokens=max_tokens,
             temperature=temperature,
-            embedding_model="BAAI/bge-small-en-v1.5",
+            embedding_model=settings.rag_embedding_model,
         )
 
         engine = RAGEngine(
@@ -547,20 +458,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Document Q&A API",
     description="RAG-based document question answering API",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost",
-        "http://127.0.0.1",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-    ],
+    allow_origins=settings.get_cors_origins_list(),
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -571,8 +477,39 @@ async def root():
     return {"status": "ok", "service": "Document Q&A API"}
 
 
+@app.get("/auth/status")
+async def auth_status():
+    """Get authentication status and configuration."""
+    return get_auth_status()
+
+
+@app.post("/auth/token")
+async def login(credentials: dict):
+    """
+    Login endpoint to obtain JWT token.
+
+    Request body:
+        - api_key: API key for authentication
+
+    Returns:
+        - access_token: JWT token
+        - token_type: "bearer"
+    """
+    from auth import ENABLE_AUTH, API_KEY, create_access_token
+
+    if not ENABLE_AUTH:
+        raise HTTPException(status_code=400, detail="Authentication is disabled")
+
+    provided_key = credentials.get("api_key")
+    if not provided_key or provided_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+
+    access_token = create_access_token(data={"sub": "api_user"})
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
 @app.get("/stats", response_model=StatsResponse)
-async def get_stats():
+async def get_stats(auth: dict = Security(require_auth())):
     """Get engine statistics."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -583,12 +520,14 @@ async def get_stats():
         chunk_count=stats["chunk_count"],
         embedding_model=stats["embedding_model"],
         llm_backend=stats["llm"]["backend"] if stats["llm"] else None,
-        documents=stats["documents"],
+        documents=stats.get("documents", []),
     )
 
 
 @app.post("/ask", response_model=QuestionResponse)
-async def ask_question(request: QuestionRequest):
+async def ask_question(
+    request: QuestionRequest, auth: dict = Security(require_auth())
+):
     """Ask a question about the ingested documents."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -613,7 +552,9 @@ async def ask_question(request: QuestionRequest):
 
 
 @app.post("/search", response_model=List[SearchResult])
-async def search_documents(request: SearchRequest):
+async def search_documents(
+    request: SearchRequest, auth: dict = Security(require_auth())
+):
     """Search documents without generating an answer."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -630,7 +571,9 @@ async def search_documents(request: SearchRequest):
 
 
 @app.post("/ingest", response_model=IngestResponse)
-async def ingest_directory(request: IngestRequest):
+async def ingest_directory(
+    request: IngestRequest, auth: dict = Security(require_auth())
+):
     """Ingest documents from a directory."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -657,7 +600,9 @@ async def ingest_directory(request: IngestRequest):
 
 
 @app.post("/ingest/file")
-async def ingest_file(file: UploadFile = File(...)):
+async def ingest_file(
+    file: UploadFile = File(...), auth: dict = Security(require_auth())
+):
     """Ingest a single uploaded file."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -718,7 +663,7 @@ async def ingest_file(file: UploadFile = File(...)):
 
 
 @app.delete("/documents")
-async def clear_documents():
+async def clear_documents(auth: dict = Security(require_auth())):
     """Clear all ingested documents."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
@@ -734,7 +679,7 @@ async def clear_documents():
 
 
 @app.get("/documents")
-async def list_documents():
+async def list_documents(auth: dict = Security(require_auth())):
     """List all ingested documents."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")

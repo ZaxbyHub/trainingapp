@@ -12,22 +12,39 @@ from pathlib import Path
 from dataclasses import dataclass
 import app_paths
 import logging
+from config import DEFAULT_MAX_TOKENS
+import re
 
 logger = logging.getLogger(__name__)
 
 # Maximum characters of context to pass to LLM (~1 500 tokens within GGUF n_ctx budget)
-_SAFE_CONTEXT_CHARS = 6000
+# Configurable via RAG_CONTEXT_TRUNCATION environment variable, defaults to 6000
 
-
+from config import settings
 from document_processor import DocumentProcessor
 from vector_store import VectorStore
 from llm_interface import SmartLLM, InferenceConfig
 
 # Import unified factory functions
 from engine_factory import (
-    create_engine,
     create_engine_from_env as _factory_create_engine_from_env,
 )
+
+
+def _truncate_at_sentence(text: str, max_chars: int) -> str:
+    """Truncate text at the last complete sentence before max_chars."""
+    if len(text) <= max_chars:
+        return text
+    # Scan backwards from cutoff for sentence boundary
+    for i in range(max_chars - 1, max(0, max_chars - 300), -1):
+        if text[i] in {'.', '!', '?'}:
+            if i + 1 >= len(text) or text[i + 1] in {' ', '\n', '\t'}:
+                return text[:i + 1].strip()
+    # Fallback: word boundary
+    for i in range(max_chars - 1, max(0, max_chars - 100), -1):
+        if text[i] == ' ':
+            return text[:i].strip()
+    return text[:max_chars].strip()
 
 
 @dataclass
@@ -52,13 +69,13 @@ class RAGConfig:
         chunk_overlap: int = 50,
         n_results: int = 3,
         min_similarity: float = 0.3,
-        max_tokens: int = 1024,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 0.3,
         embedding_model: str = "BAAI/bge-small-en-v1.5",
         retrieval_window: int = 1,
         hybrid_search: bool = True,
-        reranking_enabled: bool = False,
-        reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-2-v2",
+        reranking_enabled: bool = True,
+        reranker_model: str = "cross-encoder/ms-marco-TinyBERT-L-2",
         query_transformation_enabled: bool = False,
         initial_retrieval_top_k: int = 20,
     ):
@@ -104,12 +121,12 @@ class RAGConfig:
             chunk_overlap=data.get("chunk_overlap", 50),
             n_results=data.get("n_results", 3),
             min_similarity=data.get("min_similarity", 0.3),
-            max_tokens=data.get("max_tokens", 1024),
+            max_tokens=data.get("max_tokens", DEFAULT_MAX_TOKENS),
             temperature=data.get("temperature", 0.3),
             embedding_model=data.get("embedding_model", "BAAI/bge-small-en-v1.5"),
             retrieval_window=data.get("retrieval_window", 1),
             hybrid_search=data.get("hybrid_search", True),
-            reranking_enabled=data.get("reranking_enabled", False),
+            reranking_enabled=data.get("reranking_enabled", True),
             reranker_model=data.get(
                 "reranker_model", "cross-encoder/ms-marco-MiniLM-L-2-v2"
             ),
@@ -159,6 +176,9 @@ class RAGEngine:
         self._init_llm(
             model_path, ollama_model, ollama_url, api_url, api_model, device, gguf_path
         )
+
+        # Lazy-init reranker only when reranking is enabled
+        self.reranker = None
 
         self._save_config()
         logger.info("=" * 50)
@@ -341,44 +361,41 @@ class RAGEngine:
         # Follow-up query detection
         retrieval_query = question
         if conversation_history is not None and conversation_history:
-            # Check if there are any assistant messages in history
-            has_assistant = any(
-                isinstance(m, dict) and m.get("role") == "assistant"
-                for m in conversation_history
+            last_user_msg = next(
+                (
+                    m.get("content", "")
+                    for m in reversed(conversation_history)
+                    if isinstance(m, dict) and m.get("role") == "user" and m.get("content", "").strip()
+                ),
+                None,
             )
-            if has_assistant:
-                # Check if question is short or contains follow-up keywords
-                is_short = len(question.split()) <= 6
-                followup_keywords = {
-                    "more",
-                    "elaborate",
-                    "detail",
-                    "detailed",
-                    "explain",
-                    "expand",
-                    "deeper",
-                    "further",
-                    "again",
+            if last_user_msg:
+                question_lower = question.lower().strip()
+                should_combine = False
+
+                # Pattern 1: Pronoun/anaphora references
+                anaphora_pattern = r'\b(it|this|that|these|those|the above|the previous)\b'
+                if re.search(anaphora_pattern, question_lower):
+                    should_combine = True
+
+                # Pattern 2: Very short non-wh questions
+                if len(question.split()) <= 4:
+                    wh_words = {'what', 'who', 'when', 'where', 'which', 'how', 'why'}
+                    if not any(question_lower.startswith(w) for w in wh_words):
+                        should_combine = True
+
+                # Pattern 3: Continuation keywords
+                followup_words = {
+                    'more', 'elaborate', 'detail', 'explain', 'expand', 'further',
+                    'also', 'another', 'compare', 'difference', 'versus', 'vs',
+                    'similar', 'unlike', 'elaborate', 'deeper',
                 }
-                has_keyword = any(
-                    keyword in question.lower() for keyword in followup_keywords
-                )
+                if any(w in question_lower.split() for w in followup_words):
+                    should_combine = True
 
-                if is_short or has_keyword:
-                    # Find last user message in conversation history
-                    last_user_content = None
-                    for msg in reversed(conversation_history):
-                        if isinstance(msg, dict) and msg.get("role") == "user":
-                            content = msg.get("content", "")
-                            if content and content.strip():
-                                last_user_content = content
-                                break
-
-                    if last_user_content:
-                        retrieval_query = last_user_content
-                        print(
-                            f"[INFO] Follow-up detected — retrieval query: '{retrieval_query[:80]}'"
-                        )
+                if should_combine:
+                    retrieval_query = f"{last_user_msg} {question}"
+                    print(f"[INFO] Follow-up detected — retrieval query: '{retrieval_query[:80]}'")
 
         # Retrieve context — hybrid (BM25+vector+RRF) if enabled, else vector-only
         context, sources = self.vector_store.get_context(
@@ -386,7 +403,32 @@ class RAGEngine:
             n_results=n,
             min_similarity=self.config.min_similarity,
             hybrid_search=self.config.hybrid_search,
+            retrieval_window=self.config.retrieval_window,
         )
+
+        # Apply cross-encoder reranking if enabled
+        if self.config.reranking_enabled and context:
+            if self.reranker is None:
+                from reranking import CrossEncoderReranker
+                self.reranker = CrossEncoderReranker(self.config.reranker_model)
+
+            # Split context back into individual chunks for reranking
+            chunk_texts = context.split("\n\n---\n\n")
+            from document_processor import DocumentChunk
+            rerank_chunks = [
+                DocumentChunk(
+                    text=t.strip(),
+                    source=sources[min(i, len(sources) - 1)] if sources else "unknown",
+                    chunk_index=i,
+                )
+                for i, t in enumerate(chunk_texts)
+                if t.strip()
+            ]
+
+            if rerank_chunks:
+                reranked = self.reranker.rerank(question, rerank_chunks, top_k=self.config.n_results)
+                context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
+                sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
 
         # Diagnostic logging
         logger.debug(
@@ -408,7 +450,7 @@ class RAGEngine:
             )
 
         # Pre-truncate context to stay within LLM context budget
-        safe_context = context[:_SAFE_CONTEXT_CHARS]
+        safe_context = _truncate_at_sentence(context, settings.rag_context_truncation)
 
         # Use answer_question instead of generate for proper RAG handling
         answer = self.llm.answer_question(

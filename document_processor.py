@@ -10,6 +10,14 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from pathlib import Path
 
+ABBREVIATIONS = frozenset({
+    'dr', 'mr', 'mrs', 'ms', 'prof', 'jr', 'sr', 'st', 'ave', 'blvd',
+    'dept', 'rev', 'vol', 'fig', 'ed', 'eds', 'repr', 'trans', 'pt',
+    'ch', 'sec', 'app', 'ex', 'cf', 'eg', 'ie', 'etc', 'approx',
+    'esp', 'viz', 'al', 'vs', 'inc', 'corp', 'ltd', 'govt', 'est',
+    'acct', 'tel', 'ref',
+})
+
 
 @dataclass
 class DocumentChunk:
@@ -27,6 +35,14 @@ class DocumentProcessor:
     SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md"}
 
     def __init__(self, chunk_size: int = 256, chunk_overlap: int = 50):
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be positive, got {chunk_size}")
+        if chunk_overlap < 0:
+            raise ValueError(f"chunk_overlap must be non-negative, got {chunk_overlap}")
+        if chunk_overlap >= chunk_size:
+            raise ValueError(
+                f"chunk_overlap ({chunk_overlap}) must be less than chunk_size ({chunk_size})"
+            )
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
@@ -128,20 +144,22 @@ class DocumentProcessor:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
 
-    def extract_document(self, filepath: str) -> str:
-        """Extract text from any supported document type."""
+    def extract_document(self, filepath: str) -> Tuple[str, List[Tuple[int, str]]]:
+        """Extract text from any supported document type.
+        Returns (full_text, pages) where pages is [(page_num, page_text), ...].
+        For non-PDF formats, pages is empty.
+        """
         filepath = str(filepath)
         ext = Path(filepath).suffix.lower()
 
         if ext == ".pdf":
-            text, _ = self.extract_pdf(filepath)
-            return text
+            return self.extract_pdf(filepath)
         elif ext in {".docx", ".doc"}:
-            return self.extract_docx(filepath)
+            return self.extract_docx(filepath), []
         elif ext in {".pptx", ".ppt"}:
-            return self.extract_pptx(filepath)
+            return self.extract_pptx(filepath), []
         elif ext in {".txt", ".md"}:
-            return self.extract_text_file(filepath)
+            return self.extract_text_file(filepath), []
         else:
             raise ValueError(f"Unsupported file format: {ext}")
 
@@ -151,6 +169,22 @@ class DocumentProcessor:
         text = re.sub(r"\n\s*\n", "\n\n", text)
         text = text.strip()
         return text
+
+    def _split_sentences(self, paragraph: str) -> List[str]:
+        """Split paragraph into sentences, respecting common abbreviations."""
+        protected = paragraph
+        for abbr in ABBREVIATIONS:
+            protected = re.sub(
+                rf'\b{abbr}\.',
+                f'{abbr}\x00',
+                protected,
+                flags=re.IGNORECASE,
+            )
+        def _protect_initial(m):
+            return m.group(1) + '\x00'
+        protected = re.sub(r'\b([A-Z])\.', _protect_initial, protected)
+        sentences = re.split(r'(?<=[.!?])\s+', protected)
+        return [s.replace('\x00', '.').strip() for s in sentences if s.strip()]
 
     def _calculate_overlap(
         self, sentences: List[str], overlap_size: int
@@ -167,9 +201,30 @@ class DocumentProcessor:
                 break
         return overlap_sentences, overlap_word_count
 
-    def chunk_text(self, text: str, source: str) -> List[DocumentChunk]:
+    def chunk_text(self, text: str, source: str, pages: Optional[List[Tuple[int, str]]] = None) -> List[DocumentChunk]:
         """Split text into overlapping chunks respecting paragraph and sentence boundaries."""
         text = self.clean_text(text)
+        # Build page mapping from PDF pages
+        para_page_map: dict = {}
+        if pages:
+            for page_num, page_text in pages:
+                cleaned = re.sub(r"\s+", " ", page_text.strip())
+                for segment in cleaned.split("\n\n"):
+                    seg = segment.strip()
+                    if seg:
+                        para_page_map[seg[:80]] = page_num
+
+        def _find_page(chunk_text: str) -> Optional[int]:
+            """Find the page number for a chunk text using prefix matching."""
+            if not para_page_map:
+                return None
+            # Try longest prefix match first
+            for length in range(len(chunk_text), 0, -1):
+                prefix = chunk_text[:length].strip()
+                if prefix in para_page_map:
+                    return para_page_map[prefix]
+            return None
+
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
 
         chunks = []
@@ -178,7 +233,7 @@ class DocumentProcessor:
         current_chunk_word_count = 0
 
         for paragraph in paragraphs:
-            sentences = re.split(r"(?<=[.!?])\s+", paragraph)
+            sentences = self._split_sentences(paragraph)
 
             for sentence in sentences:
                 sentence = sentence.strip()
@@ -199,7 +254,8 @@ class DocumentProcessor:
                         chunk_text = " ".join(chunk_words)
                         chunks.append(
                             DocumentChunk(
-                                text=chunk_text, source=source, chunk_index=chunk_index
+                                text=chunk_text, source=source, chunk_index=chunk_index,
+                                page=_find_page(chunk_text),
                             )
                         )
                         chunk_index += 1
@@ -221,7 +277,8 @@ class DocumentProcessor:
                     chunk_text = " ".join(current_chunk_sentences)
                     chunks.append(
                         DocumentChunk(
-                            text=chunk_text, source=source, chunk_index=chunk_index
+                            text=chunk_text, source=source, chunk_index=chunk_index,
+                            page=_find_page(chunk_text),
                         )
                     )
                     chunk_index += 1
@@ -240,7 +297,8 @@ class DocumentProcessor:
         if current_chunk_sentences:
             chunk_text = " ".join(current_chunk_sentences)
             chunks.append(
-                DocumentChunk(text=chunk_text, source=source, chunk_index=chunk_index)
+                DocumentChunk(text=chunk_text, source=source, chunk_index=chunk_index,
+                               page=_find_page(chunk_text))
             )
 
         return chunks
@@ -254,12 +312,12 @@ class DocumentProcessor:
         filename = source_name if source_name else Path(filepath).name
 
         try:
-            text = self.extract_document(filepath)
+            text, pages = self.extract_document(filepath)
             if not text.strip():
                 logging.warning(f"Empty content: {filename}")
                 return []
 
-            chunks = self.chunk_text(text, filename)
+            chunks = self.chunk_text(text, filename, pages=pages)
             logging.info(f"Processed: {filename} ({len(chunks)} chunks)")
             return chunks
         except ValueError as e:
@@ -276,15 +334,36 @@ class DocumentProcessor:
         all_chunks = []
         directory = Path(directory)
 
+        # Get max file size from environment variable (default 100MB)
+        try:
+            max_file_size_mb = int(os.environ.get("RAG_MAX_FILE_SIZE", "100"))
+            if max_file_size_mb <= 0:
+                max_file_size_mb = 100
+        except ValueError:
+            max_file_size_mb = 100
+        max_file_size_bytes = max_file_size_mb * 1024 * 1024
+
+        skipped_files = []
+
         for root, _, files in os.walk(directory):
             for file in files:
                 filepath = Path(root) / file
                 ext = filepath.suffix.lower()
 
                 if ext in self.SUPPORTED_EXTENSIONS:
+                    # Check file size before processing
+                    file_size = filepath.stat().st_size
+                    if file_size > max_file_size_bytes:
+                        size_mb = file_size / (1024 * 1024)
+                        skipped_files.append((filepath.name, size_mb))
+                        print(f"⚠️  Skipping {filepath.name}: {size_mb:.1f}MB > {max_file_size_mb}MB limit")
+                        continue
+
                     chunks = self.process_file(str(filepath))
                     all_chunks.extend(chunks)
 
+        if skipped_files:
+            print(f"\n⚠️  Skipped {len(skipped_files)} file(s) exceeding {max_file_size_mb}MB limit")
         print(f"\n📊 Total: {len(all_chunks)} chunks from {directory}")
         return all_chunks
 
