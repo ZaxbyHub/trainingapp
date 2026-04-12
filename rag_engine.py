@@ -128,7 +128,7 @@ class RAGConfig:
             hybrid_search=data.get("hybrid_search", True),
             reranking_enabled=data.get("reranking_enabled", True),
             reranker_model=data.get(
-                "reranker_model", "cross-encoder/ms-marco-MiniLM-L-2-v2"
+                "reranker_model", "cross-encoder/ms-marco-TinyBERT-L-2"
             ),
             query_transformation_enabled=data.get(
                 "query_transformation_enabled", False

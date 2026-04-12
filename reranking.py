@@ -13,7 +13,7 @@ from document_processor import DocumentChunk
 class CrossEncoderReranker:
     """CrossEncoder based reranker for document chunks."""
     
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-2-v2"):
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-TinyBERT-L-2"):
         """
         Initialize the CrossEncoderReranker.
         

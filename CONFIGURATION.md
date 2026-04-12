@@ -279,7 +279,7 @@ Window=0: No expansion
 
 **Purpose**: Rerank retrieved chunks for better relevance
 
-**Model**: `cross-encoder/ms-marco-MiniLM-L-2-v2`
+**Model**: `cross-encoder/ms-marco-TinyBERT-L-2`
 
 **Impact**:
 - Increases accuracy (~10-20%)
@@ -430,7 +430,7 @@ window=1   # Fetch 1 chunk before and after
 **Configuration**:
 ```python
 reranking_enabled=False
-reranker_model="cross-encoder/ms-marco-MiniLM-L-2-v2"
+reranker_model="cross-encoder/ms-marco-TinyBERT-L-2"
 ```
 
 **Benefits**:
@@ -553,12 +553,12 @@ query_transform_enabled=True
 
 **Purpose**: Re-rank for higher accuracy
 
-**Model**: MS MARCO MiniLM
+**Model**: MS MARCO TinyBERT
 
 **Configuration**:
 ```python
 reranking_enabled=True
-reranker_model="cross-encoder/ms-marco-MiniLM-L-2-v2"
+reranker_model="cross-encoder/ms-marco-TinyBERT-L-2"
 ```
 
 **Performance Impact**:
@@ -628,7 +628,7 @@ max_context_length=2000  # characters
   "retrieval_window": 1,
   "hybrid_search": true,
   "reranking_enabled": false,
-  "reranker_model": "cross-encoder/ms-marco-MiniLM-L-2-v2",
+  "reranker_model": "cross-encoder/ms-marco-TinyBERT-L-2",
   "query_transformation_enabled": false,
   "initial_retrieval_top_k": 20
 }

@@ -49,7 +49,7 @@ Before deploying to production, complete the following security checks:
 | `ENABLE_AUTH` | Enable authentication (set to `true`) | N/A | **MUST be `true`** for production |
 | `API_KEY` | API key for authentication | `openssl rand -hex 32` | Store in environment, never in code |
 | `JWT_SECRET` | Secret for JWT token signing | `openssl rand -hex 64` | Use strong random generation |
-| `RAG_MAX_FILE_SIZE` | Max upload size in MB | N/A (default: 50) | Limit based on org policy |
+| `RAG_MAX_FILE_SIZE` | Max upload size in MB | N/A (default: 100) | Limit based on org policy |
 
 ### Recommended
 

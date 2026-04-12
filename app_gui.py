@@ -288,7 +288,7 @@ class DocumentQAApp(CTk):
     """Main application window."""
 
     APP_NAME = "Document Q&A Assistant"
-    VERSION = "1.1.0"
+    VERSION = "1.1.2"
     SETTINGS_FILE = "app_settings.json"
 
     def __init__(self):

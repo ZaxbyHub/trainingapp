@@ -43,6 +43,7 @@ class RAGSettings(BaseSettings):
     rag_embedding_model: str = Field(default="BAAI/bge-small-en-v1.5", validation_alias="RAG_EMBEDDING_MODEL")
     rag_hybrid_search: bool = Field(default=True, validation_alias="RAG_HYBRID_SEARCH")
     rag_reranking_enabled: bool = Field(default=True, validation_alias="RAG_RERANKING_ENABLED")
+    rag_reranker_model: str = Field(default="cross-encoder/ms-marco-TinyBERT-L-2", validation_alias="RAG_RERANKER_MODEL")
 
     # Context truncation settings
     rag_context_truncation: int = Field(default=6000, validation_alias="RAG_CONTEXT_TRUNCATION")
