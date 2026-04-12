@@ -36,6 +36,7 @@ except ImportError:
     pass
 
 import app_paths
+from config import MIN_CHUNK_SIZE, MAX_CHUNK_SIZE, DEFAULT_CHUNK_SIZE, MIN_MAX_TOKENS, MAX_MAX_TOKENS, DEFAULT_MAX_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -207,9 +208,9 @@ class SettingsDialog(CTkToplevel):
             0, self.settings.get("ollama_model", "phi3:mini")
         )
         self.api_url_entry.insert(0, self.settings.get("api_url", ""))
-        self.chunk_size_entry.insert(0, str(self.settings.get("chunk_size", 512)))
+        self.chunk_size_entry.insert(0, str(self.settings.get("chunk_size", DEFAULT_CHUNK_SIZE)))
         self.n_results_entry.insert(0, str(self.settings.get("n_results", 3)))
-        self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", 1024)))
+        self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", DEFAULT_MAX_TOKENS)))
         self.temperature_entry.insert(0, str(self.settings.get("temperature", 0.3)))
         self.hybrid_search_var.set(
             "on" if self.settings.get("hybrid_search", True) else "off"
@@ -226,9 +227,9 @@ class SettingsDialog(CTkToplevel):
         errors = []
 
         try:
-            chunk_size = int(self.chunk_size_entry.get() or 512)
-            if not (128 <= chunk_size <= 2048):
-                errors.append(f"Chunk Size must be between 128 and 2048")
+            chunk_size = int(self.chunk_size_entry.get() or DEFAULT_CHUNK_SIZE)
+            if not (MIN_CHUNK_SIZE <= chunk_size <= MAX_CHUNK_SIZE):
+                errors.append(f"Chunk Size must be between {MIN_CHUNK_SIZE} and {MAX_CHUNK_SIZE}")
         except ValueError:
             errors.append("Chunk Size must be a valid integer")
 
@@ -240,9 +241,9 @@ class SettingsDialog(CTkToplevel):
             errors.append("Results to Retrieve must be a valid integer")
 
         try:
-            max_tokens = int(self.max_tokens_entry.get() or 1024)
-            if not (256 <= max_tokens <= 4096):
-                errors.append(f"Max Tokens must be between 256 and 4096")
+            max_tokens = int(self.max_tokens_entry.get() or DEFAULT_MAX_TOKENS)
+            if not (MIN_MAX_TOKENS <= max_tokens <= MAX_MAX_TOKENS):
+                errors.append(f"Max Tokens must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}")
         except ValueError:
             errors.append("Max Tokens must be a valid integer")
 
@@ -287,7 +288,7 @@ class DocumentQAApp(CTk):
     """Main application window."""
 
     APP_NAME = "Document Q&A Assistant"
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
     SETTINGS_FILE = "app_settings.json"
 
     def __init__(self):
@@ -339,7 +340,7 @@ class DocumentQAApp(CTk):
             "api_url": "",
             "chunk_size": 512,
             "n_results": 3,
-            "max_tokens": 1024,
+            "max_tokens": DEFAULT_MAX_TOKENS,
             "temperature": 0.3,
             "db_path": str(Path(settings_path).parent / "doc_qa_db"),
         }
@@ -511,8 +512,6 @@ class DocumentQAApp(CTk):
 
         self.after(100, process)
 
-        self.after(100, process)
-
     def _initialize_engine(self):
         """Initialize the RAG engine in a background thread."""
 
@@ -531,13 +530,27 @@ class DocumentQAApp(CTk):
                     temperature=self.settings["temperature"],
                 )
 
-                self.engine = RAGEngine(
-                    config=config,
-                    gguf_path=self.settings.get("gguf_path") or None,
-                    ollama_model=self.settings.get("ollama_model"),
-                    ollama_url=self.settings.get("ollama_url"),
-                    api_url=self.settings.get("api_url") or None,
-                )
+                try:
+                    self.engine = RAGEngine(
+                        config=config,
+                        gguf_path=self.settings.get("gguf_path") or None,
+                        ollama_model=self.settings.get("ollama_model"),
+                        ollama_url=self.settings.get("ollama_url"),
+                        api_url=self.settings.get("api_url") or None,
+                    )
+                except Exception as engine_error:
+                    logger.error("Failed to initialize RAG engine: %s", engine_error)
+                    self.message_queue.put(("status", "Engine initialization failed"))
+                    self.message_queue.put((
+                        "message", "system",
+                        f"Failed to initialize RAG engine: {engine_error}\n\n"
+                        "Please check:\n"
+                        "1. GGUF model path is correct in Settings\n"
+                        "2. Ollama is running (if using Ollama backend)\n"
+                        "3. API URL is accessible (if using API backend)\n\n"
+                        "Go to Settings to configure the LLM backend."
+                    ))
+                    return
 
                 stats = self.engine.get_stats()
                 doc_count = stats.get("document_count", 0)

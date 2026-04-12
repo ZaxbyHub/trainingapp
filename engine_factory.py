@@ -2,9 +2,23 @@
 
 from typing import Optional, Dict, Any, TYPE_CHECKING
 from pathlib import Path
+from config import DEFAULT_MAX_TOKENS
 
 if TYPE_CHECKING:
     from rag_engine import RAGEngine, RAGConfig
+
+
+# Cache for lazy-loaded RAGEngine and RAGConfig classes
+_rag_classes_cache = None
+
+
+def _get_rag_classes():
+    """Lazy import RAGEngine and RAGConfig with caching to avoid circular dependencies."""
+    global _rag_classes_cache
+    if _rag_classes_cache is None:
+        from rag_engine import RAGEngine, RAGConfig
+        _rag_classes_cache = (RAGEngine, RAGConfig)
+    return _rag_classes_cache
 
 
 def create_engine(
@@ -43,10 +57,7 @@ def create_engine(
     Returns:
         Configured RAGEngine instance
     """
-    from rag_engine import (
-        RAGEngine,
-        RAGConfig,
-    )  # Lazy import to avoid circular dependency
+    RAGEngine, RAGConfig = _get_rag_classes()
 
     # Normalize config
     if config is None:
@@ -118,10 +129,7 @@ def create_engine_from_settings(settings: Dict[str, Any]) -> "RAGEngine":
     Returns:
         Configured RAGEngine instance
     """
-    from rag_engine import (
-        RAGEngine,
-        RAGConfig,
-    )  # Lazy import to avoid circular dependency
+    RAGEngine, RAGConfig = _get_rag_classes()
 
     # Extract RAG config parameters with defaults
     config = RAGConfig(
@@ -129,12 +137,12 @@ def create_engine_from_settings(settings: Dict[str, Any]) -> "RAGEngine":
         chunk_size=settings.get("chunk_size", 512),
         chunk_overlap=settings.get("chunk_overlap", 50),
         n_results=settings.get("n_results", 3),
-        max_tokens=settings.get("max_tokens", 1024),
+        max_tokens=settings.get("max_tokens", DEFAULT_MAX_TOKENS),
         temperature=settings.get("temperature", 0.3),
         embedding_model=settings.get("embedding_model", "BAAI/bge-small-en-v1.5"),
         hybrid_search=settings.get("hybrid_search", True),
         retrieval_window=settings.get("retrieval_window", 1),
-        reranking_enabled=settings.get("reranking_enabled", False),
+        reranking_enabled=settings.get("reranking_enabled", True),
     )
 
     return create_engine(
@@ -160,7 +168,7 @@ def create_engine_from_env() -> "RAGEngine":
         RAG_CHUNK_SIZE: Chunk size (default: 512)
         RAG_CHUNK_OVERLAP: Chunk overlap (default: 50)
         RAG_N_RESULTS: Number of results (default: 3)
-        RAG_MAX_TOKENS: Max tokens (default: 512)
+        RAG_MAX_TOKENS: Max tokens (default: see DEFAULT_MAX_TOKENS constant in config.py)
         RAG_TEMPERATURE: Temperature (default: 0.3)
         RAG_EMBEDDING_MODEL: Embedding model (default: BAAI/bge-small-en-v1.5)
         RAG_HYBRID_SEARCH: Enable hybrid search (default: true)
@@ -178,10 +186,7 @@ def create_engine_from_env() -> "RAGEngine":
         Configured RAGEngine instance
     """
     import os
-    from rag_engine import (
-        RAGEngine,
-        RAGConfig,
-    )  # Lazy import to avoid circular dependency
+    RAGEngine, RAGConfig = _get_rag_classes()
 
     # Helper function to parse boolean from env var
     def _parse_bool(value: Optional[str], default: bool) -> bool:
@@ -189,18 +194,21 @@ def create_engine_from_env() -> "RAGEngine":
             return default
         return value.lower() in ("true", "1", "yes", "on")
 
-    # Build config from environment with safe type conversion
+    # Build config from centralized settings with validation
+    from config import settings
+
     config = RAGConfig(
-        db_path=os.environ.get("RAG_DB_PATH", "./doc_qa_db"),
-        chunk_size=int(os.environ.get("RAG_CHUNK_SIZE", "512")),
-        chunk_overlap=int(os.environ.get("RAG_CHUNK_OVERLAP", "50")),
-        n_results=int(os.environ.get("RAG_N_RESULTS", "3")),
-        max_tokens=int(os.environ.get("RAG_MAX_TOKENS", "1024")),
-        temperature=float(os.environ.get("RAG_TEMPERATURE", "0.3")),
-        embedding_model=os.environ.get("RAG_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5"),
-        hybrid_search=_parse_bool(os.environ.get("RAG_HYBRID_SEARCH"), True),
-        retrieval_window=int(os.environ.get("RAG_RETRIEVAL_WINDOW", "1")),
-        reranking_enabled=_parse_bool(os.environ.get("RAG_RERANKING_ENABLED"), False),
+        db_path=settings.rag_db_path,
+        chunk_size=settings.rag_chunk_size,
+        chunk_overlap=settings.rag_chunk_overlap,
+        n_results=settings.rag_n_results,
+        min_similarity=settings.rag_min_similarity,
+        max_tokens=settings.rag_max_tokens,
+        temperature=settings.rag_temperature,
+        embedding_model=settings.rag_embedding_model,
+        hybrid_search=settings.rag_hybrid_search,
+        retrieval_window=settings.rag_retrieval_window,
+        reranking_enabled=settings.rag_reranking_enabled,
     )
 
     # Auto-detect bundled model if no model specified
@@ -209,6 +217,9 @@ def create_engine_from_env() -> "RAGEngine":
 
     if not gguf_path and not model_path:
         # Look for bundled models in order of preference
+        # Note: This is a blocking filesystem check, only called at startup.
+        # For API server use, consider calling this from asyncio.to_thread() or
+        # implement an async version that wraps these file operations.
         bundled_models = [
             Path("models") / "phi3-mini-int4.gguf",
             Path("models") / "phi3.5-mini-instruct-int4-cw-ov",

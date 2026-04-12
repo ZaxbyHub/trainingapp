@@ -243,7 +243,7 @@ def main():
     else:
         issues.append("9.2: README version not updated")
 
-    if "Qwen2.5-1.5B" in readme:
+    if "Qwen3-1.7B" in readme:
         print("  [OK] 9.2: Model name corrected in README")
     else:
         issues.append("9.2: Model name not corrected")
@@ -275,6 +275,8 @@ def main():
     else:
         issues.append("10.2: CORS configuration missing")
 
+# NOTE: gui_content is bound at line 53 (with open("app_gui.py")...)
+# This is a false positive finding - variable is properly scoped
     if "winfo_exists" in gui_content:
         print("  [OK] 10.6: Thread safety checks present")
     else:
