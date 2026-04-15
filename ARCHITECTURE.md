@@ -87,11 +87,8 @@ doc_qa_app/
 #### LLMInterface
 - **Input**: Prompts
 - **Output**: Generated text
-- **Backends**:
-  - GGUFBackend: CPU-only inference
-  - OpenVINOLLM: Intel acceleration
-  - OllamaLLM: Local LLM runtime
-  - OpenAICompatibleLLM: External API
+- **Backend**: GGUF-only via llama-cpp-python
+- **Model**: Gemma 4 E2B (Q5_K_M GGUF, ~3.1GB)
 
 #### RAGEngine
 - **Input**: User questions

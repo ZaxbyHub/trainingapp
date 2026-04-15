@@ -1,5 +1,8 @@
+import logging
 import re
 from typing import Set
+
+logger = logging.getLogger(__name__)
 
 # Common English stop words to filter out during keyword extraction
 STOP_WORDS: Set[str] = {
@@ -39,7 +42,13 @@ Step-Back Query: """
         # 50 tokens: enough for a concise step-back query without excess
         # 0.3 temperature: low randomness for consistent, focused output
         config = InferenceConfig(max_tokens=50, temperature=0.3)
-        transformed = self.llm.generate(prompt, config).strip()
+        try:
+            transformed = self.llm.generate(prompt, config).strip()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
+            logger.warning("Query transformation failed: %s", e)
+            return query
         
         # If transformation failed or returned empty, return original
         if not transformed or len(transformed) < 5:

@@ -30,6 +30,8 @@ seed_data/
 # PyInstaller output
 *.exe
 *.app
+dist2/
+build_v120/
 
 # IDE / OS
 .vscode/

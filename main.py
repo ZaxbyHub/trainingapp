@@ -13,6 +13,7 @@ Usage:
 import os
 import sys
 import argparse
+import logging
 
 
 def create_parser():
@@ -34,21 +35,6 @@ def create_parser():
     parser.add_argument(
         "--db-path", type=str, default="./doc_qa_db", help="Path to vector database"
     )
-    parser.add_argument(
-        "--model-path",
-        type=str,
-        help="Path to GGUF model file (legacy alias for --gguf-path)",
-    )
-    parser.add_argument(
-        "--ollama-url",
-        type=str,
-        default="http://localhost:11434",
-        help="Ollama server URL",
-    )
-    parser.add_argument(
-        "--ollama-model", type=str, default="phi3:mini", help="Ollama model name"
-    )
-    parser.add_argument("--api-url", type=str, help="OpenAI-compatible API URL")
     parser.add_argument("--gguf-path", type=str, help="Path to GGUF model file")
     parser.add_argument("--port", type=int, default=8080, help="API server port")
     parser.add_argument(
@@ -68,19 +54,24 @@ def create_parser():
 
 
 def main():
+    # Set up file logging for PyInstaller frozen mode (console=False swallows stdout)
+    log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "Document Q&A Assistant")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, "app.log")
+    logging.basicConfig(
+        filename=log_file,
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        filemode="w",  # Overwrite on each launch for fresh logs
+        force=True,
+    )
+    logging.getLogger(__name__).info("Application starting")
+
     args = create_parser().parse_args()
 
     # Set environment variables from args
     if args.db_path:
         os.environ["RAG_DB_PATH"] = args.db_path
-    if args.model_path:
-        os.environ["RAG_MODEL_PATH"] = args.model_path
-    if args.ollama_url:
-        os.environ["RAG_OLLAMA_URL"] = args.ollama_url
-    if args.ollama_model:
-        os.environ["RAG_OLLAMA_MODEL"] = args.ollama_model
-    if args.api_url:
-        os.environ["RAG_API_URL"] = args.api_url
     if args.gguf_path:
         os.environ["RAG_GGUF_PATH"] = args.gguf_path
     os.environ["API_PORT"] = str(args.port)
@@ -141,6 +132,9 @@ def main():
             print(f"GUI not available: {e}")
             print("Install with: pip install customtkinter")
             print("\nUse --cli for command line mode or --api for server mode")
+            sys.exit(1)
+        except Exception as e:
+            logging.getLogger(__name__).critical("Unhandled exception during GUI launch", exc_info=True)
             sys.exit(1)
 
 

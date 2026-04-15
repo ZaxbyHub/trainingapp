@@ -1,0 +1,10 @@
+{
+  "entries": [
+    {
+      "type": "drift-verification",
+      "verdict": "approved",
+      "summary": "Phase 2 drift verification: 5/7 tasks ALIGNED. 2 minor drifts found and fixed: (1) FR-604 BM25 failure must set empty BM25Index instance not None — fixed in vector_store.py; (2) security.py offline URL validation had contradictory comment/logic — fixed with consistent HTTP/HTTPS-only early rejection.",
+      "timestamp": "2026-04-14T16:46:20.043Z"
+    }
+  ]
+}

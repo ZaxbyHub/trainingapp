@@ -27,30 +27,21 @@ def test_imports():
 def test_smartllm_initialization():
     """Test SmartLLM initialization accepts corrected parameter set."""
     # Mock the external dependencies to avoid actual LLM calls
-    with (
-        patch("llm_interface.OpenVINOLLM") as mock_openvino,
-        patch("llm_interface.OllamaLLM") as mock_ollama,
-        patch("llm_interface.OpenAICompatibleLLM") as mock_api,
-    ):
-        # Mock successful OpenVINO initialization
-        mock_openvino.return_value = MagicMock()
+    with patch("llm_interface.GGUFBackend") as mock_gguf:
+        mock_gguf_instance = MagicMock()
+        mock_gguf.return_value = mock_gguf_instance
 
         # Import the module after mocking
         import llm_interface
 
-        # Create SmartLLM instance with corrected parameters
+        # Create SmartLLM instance with GGUF backend only
         smart_llm = llm_interface.SmartLLM(
-            model_path="./test_model.gguf",
-            ollama_model="phi3:mini",
-            ollama_url="http://localhost:11434",
-            api_url="http://localhost:8080",
-            api_model="test-model",
-            device="cpu",
+            gguf_path="./test_model.gguf",
         )
 
         # Verify that the SmartLLM was initialized successfully
         assert smart_llm is not None
-        assert len(smart_llm.backends) > 0
+        assert smart_llm.backend is not None
 
 
 def test_validate_url():
@@ -175,38 +166,6 @@ def test_validate_directory():
     with pytest.raises(ValueError):
         api_server.validate_directory("")
 
-
-def test_validate_numeric():
-    """Test numeric validation bounds parameters correctly."""
-    import api_server
-
-    # Test valid values
-    valid_values = [
-        (500, 100, 10000, "chunk_size"),
-        (1000, 100, 4000, "max_tokens"),
-        (5, 1, 20, "n_results"),
-    ]
-
-    for value, min_val, max_val, param_name in valid_values:
-        try:
-            result = api_server.validate_numeric(value, min_val, max_val, param_name)
-            assert result == value
-        except Exception as e:
-            pytest.fail(f"Valid numeric value {value} was rejected: {e}")
-
-    # Test invalid values (out of bounds)
-    invalid_values = [
-        (50, 100, 10000, "chunk_size"),  # Too low
-        (15000, 100, 10000, "chunk_size"),  # Too high
-        (50, 100, 4000, "max_tokens"),  # Too low
-        (5000, 100, 4000, "max_tokens"),  # Too high
-        (0, 1, 20, "n_results"),  # Too low
-        (25, 1, 20, "n_results"),  # Too high
-    ]
-
-    for value, min_val, max_val, param_name in invalid_values:
-        with pytest.raises(ValueError):
-            api_server.validate_numeric(value, min_val, max_val, param_name)
 
 
 def test_device_validation():

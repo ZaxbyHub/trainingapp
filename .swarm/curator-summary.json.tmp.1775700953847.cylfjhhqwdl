@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "session_id": "session-1775700890602",
+  "last_updated": "2026-04-09T02:15:53.846Z",
+  "last_phase_covered": 2,
+  "digest": "### Phase 2\nPhase 2 completed. 0/7 tasks completed. 2 compliance observations.",
+  "phase_digests": [
+    {
+      "phase": 2,
+      "timestamp": "2026-04-09T02:14:32.351Z",
+      "summary": "Phase 2 completed. 0/7 tasks completed. 2 compliance observations.",
+      "agents_used": [
+        "architect",
+        "explorer"
+      ],
+      "tasks_completed": 0,
+      "tasks_total": 7,
+      "key_decisions": [],
+      "blockers_resolved": []
+    }
+  ],
+  "compliance_observations": [
+    {
+      "phase": 2,
+      "timestamp": "2026-04-09T02:14:32.351Z",
+      "type": "workflow_deviation",
+      "severity": "warning",
+      "description": "Agent 'reviewer' required but not dispatched in phase 2"
+    },
+    {
+      "phase": 2,
+      "timestamp": "2026-04-09T02:14:32.351Z",
+      "type": "workflow_deviation",
+      "severity": "warning",
+      "description": "Agent 'test_engineer' required but not dispatched in phase 2"
+    }
+  ],
+  "knowledge_recommendations": [
+    {
+      "action": "promote",
+      "lesson": "\"Phase activation gates require explicit agent dispatching — a phase that dispatches only 2 of 4 expected agents should be flagged for workflow review before proceeding to next phase.\" (confidence: 0.4, category: process)",
+      "reason": "\"Phase activation gates require explicit agent dispatching — a phase that dispatches only 2 of 4 expected agents should be flagged for workflow review before proceeding to next phase.\" (confidence: 0.4, category: process)"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:14:50.634Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:14:53.437Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:14:53.774Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:14:54.034Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:14:54.280Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:14:54.529Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:14:54.756Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:15:35.882Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T02:15:53.820Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    }
+  ]
+}

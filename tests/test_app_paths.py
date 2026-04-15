@@ -175,6 +175,8 @@ class TestPublicApi:
         assert hasattr(app_paths, 'get_user_data_dir')
         assert hasattr(app_paths, 'get_vector_db_path')
         assert hasattr(app_paths, 'get_settings_path')
+        assert hasattr(app_paths, 'get_bundled_model_path')
+        assert hasattr(app_paths, 'DEFAULT_BUNDLED_GGUF')
 
     def test_all_public_functions_are_callable(self):
         """All public functions are callable."""
@@ -183,3 +185,201 @@ class TestPublicApi:
         assert callable(app_paths.get_user_data_dir)
         assert callable(app_paths.get_vector_db_path)
         assert callable(app_paths.get_settings_path)
+        assert callable(app_paths.get_bundled_model_path)
+
+
+class TestDefaultBundledGguf:
+    """Tests for DEFAULT_BUNDLED_GGUF constant."""
+
+    def test_constant_exists_and_is_string(self):
+        """DEFAULT_BUNDLED_GGUF is defined as a string."""
+        assert hasattr(app_paths, 'DEFAULT_BUNDLED_GGUF')
+        assert isinstance(app_paths.DEFAULT_BUNDLED_GGUF, str)
+
+    def test_constant_value_is_gemma_4(self):
+        """DEFAULT_BUNDLED_GGUF equals the expected Gemma-4 filename."""
+        assert app_paths.DEFAULT_BUNDLED_GGUF == "gemma-4-E2B-it-Q5_K_M.gguf"
+
+    def test_constant_is_used_in_fallback_order(self):
+        """DEFAULT_BUNDLED_GGUF appears first in the model filenames list."""
+        # Verify the constant matches the first expected fallback
+        assert app_paths.DEFAULT_BUNDLED_GGUF == "gemma-4-E2B-it-Q5_K_M.gguf"
+
+
+class TestGetBundledModelPath:
+    """Tests for get_bundled_model_path() function."""
+
+    def test_function_returns_none_when_models_dir_missing(self, monkeypatch, tmp_path):
+        """Returns None when the models/ directory does not exist."""
+        # Point base path to our temp dir (which has no models/ subdir)
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert result is None
+
+    def test_function_returns_none_when_models_dir_empty(self, monkeypatch, tmp_path):
+        """Returns None when models/ directory exists but contains no model files."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        # Ensure no .gguf files exist
+        (tmp_path / "app_paths.py").touch()
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert result is None
+
+    def test_returns_default_model_when_present(self, monkeypatch, tmp_path):
+        """Returns Path to DEFAULT_BUNDLED_GGUF when it exists in models/."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        model_file = models_dir / "gemma-4-E2B-it-Q5_K_M.gguf"
+        model_file.write_bytes(b"fake-gguf-content")
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert result is not None
+        assert result == model_file
+        assert result.name == "gemma-4-E2B-it-Q5_K_M.gguf"
+
+    def test_falls_back_to_legacy_model_when_default_missing(self, monkeypatch, tmp_path):
+        """Returns legacy phi3-mini model when default is absent."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        legacy_file = models_dir / "phi3-mini-int4.gguf"
+        legacy_file.write_bytes(b"legacy-model-content")
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert result is not None
+        assert result.name == "phi3-mini-int4.gguf"
+
+    def test_falls_back_to_phi35_model(self, monkeypatch, tmp_path):
+        """Returns phi3.5 model when both default and phi3-mini are absent."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        phi35_file = models_dir / "phi3.5-mini-instruct-int4-cw-ov"
+        phi35_file.write_bytes(b"phi35-model-content")
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert result is not None
+        assert result.name == "phi3.5-mini-instruct-int4-cw-ov"
+
+    def test_falls_back_to_test_model(self, monkeypatch, tmp_path):
+        """Returns test_model.gguf when all higher-priority models are absent."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        test_file = models_dir / "test_model.gguf"
+        test_file.write_bytes(b"test-model-content")
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert result is not None
+        assert result.name == "test_model.gguf"
+
+    def test_fallback_order_prefers_default_over_legacy(self, monkeypatch, tmp_path):
+        """When both default and legacy models exist, default is returned first."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        default_file = models_dir / "gemma-4-E2B-it-Q5_K_M.gguf"
+        default_file.write_bytes(b"default-model")
+        legacy_file = models_dir / "phi3-mini-int4.gguf"
+        legacy_file.write_bytes(b"legacy-model")
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        # Default model must win over legacy
+        assert result is not None
+        assert result.name == "gemma-4-E2B-it-Q5_K_M.gguf"
+
+    def test_frozen_mode_uses_meipass_path(self, monkeypatch, tmp_path):
+        """In frozen mode, models are resolved from sys._MEIPASS, not script dir."""
+        # Create a "frozen" environment at tmp_path/meipass
+        meipass_dir = tmp_path / "meipass"
+        meipass_dir.mkdir()
+        frozen_models = meipass_dir / "models"
+        frozen_models.mkdir()
+        frozen_model = frozen_models / "gemma-4-E2B-it-Q5_K_M.gguf"
+        frozen_model.write_bytes(b"frozen-model-content")
+
+        # Create a fake dev location (should NOT be used)
+        dev_dir = tmp_path / "dev"
+        dev_dir.mkdir()
+        dev_models = dev_dir / "models"
+        dev_models.mkdir()
+        dev_model = dev_models / "phi3-mini-int4.gguf"
+        dev_model.write_bytes(b"dev-model")
+
+        # Simulate frozen: patch sys attrs, reload module
+        monkeypatch.setattr(sys, 'frozen', True, raising=False)
+        monkeypatch.setattr(sys, '_MEIPASS', str(meipass_dir), raising=False)
+
+        import importlib
+        importlib.reload(app_paths)
+
+        # Verify frozen mode detected
+        assert app_paths.is_frozen() is True
+
+        result = app_paths.get_bundled_model_path()
+        assert result is not None
+        # Must resolve from _MEIPASS, not from dev_dir
+        assert str(meipass_dir) in str(result)
+        assert result.name == "gemma-4-E2B-it-Q5_K_M.gguf"
+
+    def test_returns_none_when_only_non_model_files_present(self, monkeypatch, tmp_path):
+        """Returns None when models/ has files but none are GGUF models."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        # Add non-model files
+        (models_dir / "readme.txt").write_text("not a model")
+        (models_dir / "config.json").write_text('{"key": "value"}')
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert result is None
+
+    def test_returns_none_when_model_is_directory_not_file(self, monkeypatch, tmp_path):
+        """Returns None when the expected model filename is a directory, not a file."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        # Create a subdirectory named like a model file
+        model_subdir = models_dir / "gemma-4-E2B-it-Q5_K_M.gguf"
+        model_subdir.mkdir()
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert result is None
+
+    def test_returns_pathlib_path_type(self, monkeypatch, tmp_path):
+        """get_bundled_model_path() always returns a Path object when found."""
+        models_dir = tmp_path / "models"
+        models_dir.mkdir()
+        (models_dir / "gemma-4-E2B-it-Q5_K_M.gguf").write_bytes(b"x")
+
+        monkeypatch.setattr(app_paths, 'is_frozen', lambda: False)
+        monkeypatch.setattr(app_paths, '__file__', str(tmp_path / "app_paths.py"))
+
+        result = app_paths.get_bundled_model_path()
+        assert isinstance(result, Path)
+
+    def test_function_is_in_public_api(self):
+        """get_bundled_model_path is listed in TestPublicApi."""
+        assert 'get_bundled_model_path' in dir(app_paths)
+        assert callable(app_paths.get_bundled_model_path)

@@ -13,10 +13,48 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Default bundled GGUF model filename
+DEFAULT_BUNDLED_GGUF = "gemma-4-E2B-it-Q5_K_M.gguf"
+
 
 def is_frozen() -> bool:
     """Check if running in PyInstaller frozen environment."""
     return getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS')
+
+
+def get_bundled_model_path() -> Optional[Path]:
+    """
+    Get path to bundled GGUF model file.
+    
+    Searches for the default model in models/ directory.
+    Works in both PyInstaller frozen and development modes.
+    
+    Returns:
+        Path: Path to the first model file found, or None if no model found
+    """
+    # Define models to search (default only)
+    model_filenames = [
+        DEFAULT_BUNDLED_GGUF,
+    ]
+    
+    # Determine base path for models directory
+    if is_frozen():
+        base_path = Path(sys._MEIPASS)
+    else:
+        base_path = Path(__file__).parent
+    
+    models_dir = base_path / "models"
+    
+    if not models_dir.exists():
+        return None
+    
+    # Search for each model filename
+    for filename in model_filenames:
+        model_path = models_dir / filename
+        if model_path.exists() and model_path.is_file():
+            return model_path
+    
+    return None
 
 
 def get_resource_path(relative_path: str) -> Path:

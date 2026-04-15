@@ -139,12 +139,12 @@ def prepare_gguf_model():
     readme_content = """
 # GGUF Model Preparation
 
-The Qwen3-1.7B GGUF model needs to be manually downloaded and placed in this directory.
+The Gemma 4 E2B GGUF model needs to be manually downloaded and placed in this directory.
 
 Instructions:
-1. Download the GGUF model file from a source (e.g., Hugging Face or ModelScope)
+1. Download the GGUF model file (gemma-4-E2B-it-Q5_K_M.gguf) from a trusted source
 2. Place the .gguf file in this directory
-3. The file should be named something like: qwen3-1.7b-instruct-q4_k_m.gguf
+3. The model file should be: gemma-4-E2B-it-Q5_K_M.gguf (~3.1 GB)
 
 This model is used for LLM inference with llama-cpp-python.
 """

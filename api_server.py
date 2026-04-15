@@ -32,121 +32,51 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
-def validate_model_path(path: str, base_dir: Path = Path(".")) -> str:
-    """
-    Validate model path to prevent path traversal and ensure safety.
-
-    Allows absolute paths (like C:\\Models\\model.gguf) while still
-    preventing directory traversal attacks.
-
-    Args:
-        path: Model path string to validate
-        base_dir: Base directory to resolve relative paths against
-
-    Returns:
-        Validated model path string
-
-    Raises:
-        ValueError: If model path is invalid
-    """
-    if not path:
-        raise ValueError("Model path cannot be empty")
-
-    # Normalize path using unquote to handle %2e%2e encoding
+def _resolve_and_validate_path(path: str, base_dir: Path = Path(".")) -> Path:
+    """Shared path resolution and validation for model and directory paths."""
     normalized_path = unquote(path)
-
-    # Check for path traversal attempts
+    
+    if not path:
+        raise ValueError("Path cannot be empty")
+    
     if ".." in normalized_path:
-        raise ValueError("Model path contains path traversal attempts")
-
-    # Parse the input path
+        raise ValueError("Path contains path traversal attempts")
+    
+    # Reject null bytes — can truncate paths on some systems
+    if "\x00" in normalized_path:
+        raise ValueError("Path contains null bytes")
+    
     input_path = Path(normalized_path)
-
+    
     if input_path.is_absolute():
-        # Absolute paths: resolve as-is (allows C:\\Models\\model.gguf)
         resolved_path = input_path.resolve(strict=False)
     else:
-        # Relative paths: join with base_dir first, then resolve
         resolved_path = (base_dir / input_path).resolve(strict=False)
-
-        # Verify the resolved path stays within base_dir
         try:
             resolved_path.relative_to(base_dir.resolve())
         except ValueError:
-            raise ValueError("Model path is outside the allowed directory")
+            raise ValueError("Path is outside the allowed directory")
+    
+    return resolved_path
 
-    # Check file/directory exists
+
+def validate_model_path(path: str, base_dir: Path = Path(".")) -> str:
+    """Validate model path to prevent path traversal and ensure safety."""
+    if not path:
+        raise ValueError("Model path cannot be empty")
+    resolved_path = _resolve_and_validate_path(path, base_dir)
     if not os.path.exists(resolved_path):
         raise ValueError("Model path does not exist")
-
     return str(resolved_path)
 
 
-def validate_numeric(value: int, min_val: int, max_val: int, param_name: str) -> int:
-    """
-    Validate numeric value is within specified range.
-
-    Args:
-        value: Value to validate
-        min_val: Minimum allowed value
-        max_val: Maximum allowed value
-        param_name: Name of parameter for error message
-
-    Returns:
-        Validated value
-
-    Raises:
-        ValueError: If value is out of range
-    """
-    if not min_val <= value <= max_val:
-        raise ValueError(f"{param_name} must be between {min_val} and {max_val}")
-    return value
-
-
 def validate_directory(path: str, base_dir: Path = Path(".")) -> str:
-    """
-    Validate directory path to prevent path traversal and ensure safety.
-
-    Args:
-        path: Directory path string to validate
-        base_dir: Base directory to resolve relative paths against (default: current directory)
-
-    Returns:
-        Validated directory path string
-
-    Raises:
-        ValueError: If directory path is invalid
-    """
+    """Validate directory path to prevent path traversal and ensure safety."""
     if not path:
         raise ValueError("Directory path cannot be empty")
-
-    # Unquote URL-encoded input
-    normalized_path = unquote(path)
-
-    # Reject any path containing ".." segments
-    if ".." in normalized_path:
-        raise ValueError("Directory path contains path traversal attempts")
-
-    # Parse the input path
-    input_path = Path(normalized_path)
-
-    if input_path.is_absolute():
-        # Absolute paths: resolve as-is
-        resolved_path = input_path.resolve(strict=False)
-    else:
-        # Relative paths: join with base_dir, then resolve
-        resolved_path = (base_dir / input_path).resolve(strict=False)
-
-        # Verify the resolved path stays within base_dir
-        try:
-            resolved_path.relative_to(base_dir.resolve())
-        except ValueError:
-            raise ValueError("Directory path is outside the allowed directory")
-
-    # Check if directory exists
+    resolved_path = _resolve_and_validate_path(path, base_dir)
     if not os.path.isdir(resolved_path):
         raise ValueError("Directory does not exist")
-
     return str(resolved_path)
 
 
@@ -234,44 +164,6 @@ def sanitize_filename(filename: str) -> Tuple[str, str]:
 
 # Global engine instance
 engine: Optional[RAGEngine] = None
-
-
-def validate_device(device: str) -> str:
-    """
-    Validate device string to prevent command injection attacks.
-
-    Args:
-        device: Device string to validate (e.g., "cpu", "cuda", "mps")
-
-    Returns:
-        Validated device string
-
-    Raises:
-        ValueError: If device string contains dangerous patterns
-    """
-    if not device:
-        raise ValueError("Device cannot be empty")
-
-    # Reject device string if it's not a known valid value
-    if device not in ("cpu", "cuda", "mps"):
-        # Additional validation - check for potentially dangerous shell patterns
-        dangerous_patterns = (
-            ";",
-            "|",
-            "&",
-            "&&",
-            "||",
-            ">",
-            "<",
-            "`",
-            "$(",
-            "'",
-            '"',
-        )
-        if any(pattern in device for pattern in dangerous_patterns):
-            raise ValueError("Device string contains dangerous shell patterns")
-
-    return device
 
 
 class QuestionRequest(BaseModel):
@@ -378,34 +270,6 @@ async def lifespan(app: FastAPI):
         max_tokens = settings.rag_max_tokens
         temperature = settings.rag_temperature
 
-        # Validate URL environment variables
-        ollama_url = os.environ.get("RAG_OLLAMA_URL")
-        api_url = os.environ.get("RAG_API_URL")
-
-        if ollama_url:
-            try:
-                ollama_url = validate_url(ollama_url, allow_local=True)
-            except ValueError as e:
-                logger.error("Invalid Ollama URL configuration: %s", e)
-                raise RuntimeError("Startup failed: Invalid configuration")
-
-        if api_url:
-            try:
-                api_url = validate_url(api_url)
-            except ValueError as e:
-                logger.error("Invalid API URL configuration: %s", e)
-                raise RuntimeError("Startup failed: Invalid configuration")
-
-        # Validate model paths
-        model_path = os.environ.get("RAG_MODEL_PATH")
-
-        if model_path is not None:
-            try:
-                model_path = validate_model_path(model_path, Path("."))
-            except ValueError as e:
-                logger.error("Invalid model path configuration: %s", e)
-                raise RuntimeError("Startup failed: Invalid configuration")
-
         # Validate GGUF path if provided
         gguf_path = os.environ.get("RAG_GGUF_PATH")
 
@@ -414,39 +278,6 @@ async def lifespan(app: FastAPI):
                 gguf_path = validate_model_path(gguf_path, Path("."))
             except ValueError as e:
                 logger.error("Invalid GGUF path configuration: %s", e)
-                raise RuntimeError("Startup failed: Invalid configuration")
-
-        # Validate device string if provided
-        device = os.environ.get("RAG_DEVICE")
-        if device:
-            try:
-                device = validate_device(device)
-            except ValueError as e:
-                logger.error("Invalid device string configuration: %s", e)
-                raise RuntimeError("Startup failed: Invalid configuration")
-
-        # Validate model names if provided
-        ollama_model = os.environ.get("RAG_OLLAMA_MODEL")
-        api_model = os.environ.get("RAG_API_MODEL")
-
-        if ollama_model:
-            # Basic validation - ensure it's a reasonable model name
-            if (
-                ollama_model.startswith(".")
-                or ollama_model.startswith("/")
-                or ".." in ollama_model
-            ):
-                logger.error("Invalid Ollama model name configuration")
-                raise RuntimeError("Startup failed: Invalid configuration")
-
-        if api_model:
-            # Basic validation - ensure it's a reasonable model name
-            if (
-                api_model.startswith(".")
-                or api_model.startswith("/")
-                or ".." in api_model
-            ):
-                logger.error("Invalid API model name configuration")
                 raise RuntimeError("Startup failed: Invalid configuration")
 
         config = RAGConfig(
@@ -460,12 +291,6 @@ async def lifespan(app: FastAPI):
 
         engine = RAGEngine(
             config=config,
-            model_path=model_path,
-            ollama_model=ollama_model,
-            ollama_url=ollama_url,
-            api_url=api_url,
-            api_model=api_model,
-            device=device,
             gguf_path=gguf_path,
         )
 

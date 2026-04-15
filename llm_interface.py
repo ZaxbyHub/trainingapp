@@ -1,21 +1,18 @@
 """
 LLM Interface Module
-Provides unified interface for LLM inference with automatic hardware detection.
-Supports OpenVINO (NPU/CPU/GPU), Ollama, and OpenAI-compatible APIs.
+Provides unified interface for LLM inference using GGUF models only.
 """
 
 import os
 import re
 import json
-import ipaddress
-from urllib.parse import urljoin, urlparse
-
+import logging
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from pathlib import Path
 
-from security import validate_url
+logger = logging.getLogger(__name__)
 
 # Security constants
 MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -78,70 +75,6 @@ class BaseLLM(ABC):
     def get_info(self) -> Dict[str, Any]:
         """Get information about the model and device."""
         pass
-
-
-class OpenVINOLLM(BaseLLM):
-    """LLM using OpenVINO GenAI for NPU/CPU/GPU inference."""
-
-    def __init__(self, model_path: str, device: Optional[str] = None):
-        try:
-            from openvino_genai import LLMPipeline
-        except ImportError:
-            raise ImportError(
-                "openvino-genai not installed. Run: pip install openvino-genai"
-            )
-
-        self.model_path = Path(model_path)
-        if not self.model_path.exists():
-            raise FileNotFoundError(f"Model path not found: {model_path}")
-
-        self.device = device or self._detect_best_device()
-        print(f"Initializing OpenVINO LLM on {self.device}...")
-
-        self.pipeline = LLMPipeline(str(self.model_path), self.device)
-        print(f"[OK] Model loaded: {self.model_path.name}")
-
-    def _detect_best_device(self) -> str:
-        """Auto-detect the best available device."""
-        try:
-            from openvino import Core
-
-            core = Core()
-            devices = core.available_devices
-
-            if "NPU" in devices:
-                print("  NPU detected")
-                return "NPU"
-            elif "GPU" in devices:
-                print("  GPU detected")
-                return "GPU"
-            else:
-                print("  Using CPU")
-                return "CPU"
-        except Exception:
-            return "CPU"
-
-    def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:
-        """Generate response using OpenVINO."""
-        config = config or InferenceConfig()
-
-        response = self.pipeline.generate(
-            prompt,
-            max_new_tokens=config.max_tokens,
-            temperature=config.temperature,
-            top_p=config.top_p,
-            stop_sequences=config.stop_sequences,
-        )
-
-        return response
-
-    def get_info(self) -> Dict[str, Any]:
-        return {
-            "backend": "OpenVINO",
-            "model": self.model_path.name,
-            "device": self.device,
-            "model_path": str(self.model_path),
-        }
 
 
 class GGUFBackend(BaseLLM):
@@ -208,7 +141,12 @@ class GGUFBackend(BaseLLM):
         # Detect Qwen3 model for /no_think suppression and chat template use
         self.is_qwen3 = "qwen3" in self.model_path.name.lower()
         if self.is_qwen3:
-            print("[OK] Qwen3 model detected — thinking mode suppressed via /no_think")
+            logger.info("[OK] Qwen3 model detected — thinking mode suppressed via /no_think")
+
+        # Detect Gemma 4 model for <|think|> stop token suppression
+        self.is_gemma4 = "gemma-4" in self.model_path.name.lower() or "gemma_4" in self.model_path.name.lower()
+        if self.is_gemma4:
+            logger.info("[OK] Gemma 4 model detected — thinking mode suppressed via stop token")
 
     def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:
         """Generate response using GGUF model."""
@@ -222,6 +160,8 @@ class GGUFBackend(BaseLLM):
 
             config = config or InferenceConfig()
 
+            stop = ["<|think|>"] if self.is_gemma4 else None
+
             # Call the llama model with the provided parameters
             result = self.llama(
                 prompt,
@@ -229,7 +169,7 @@ class GGUFBackend(BaseLLM):
                 temperature=config.temperature,
                 top_p=config.top_p,
                 repeat_penalty=1.1,
-                stop=None,
+                stop=stop,
             )
 
             # Return the generated text - llama-cpp-python returns a dict with 'choices' key
@@ -272,12 +212,15 @@ class GGUFBackend(BaseLLM):
                 {"role": "user", "content": user_prompt},
             ]
 
+            stop = ["<|think|>"] if self.is_gemma4 else None
+
             response = self.llama.create_chat_completion(
                 messages=messages,
                 max_tokens=config.max_tokens,
                 temperature=config.temperature,
                 top_p=config.top_p,
                 repeat_penalty=1.1,
+                stop=stop,
             )
 
             choices = response.get("choices") or []
@@ -299,220 +242,7 @@ class GGUFBackend(BaseLLM):
             "model": self.model_path.name,
             "n_ctx": self.n_ctx,
             "n_threads": self.n_threads,
-        }
-
-
-class OllamaLLM(BaseLLM):
-    """LLM using Ollama API."""
-
-    def __init__(
-        self, model_name: str = "phi3:mini", base_url: str = "http://localhost:11434"
-    ):
-        # Validate base_url for SSRF protection
-        # Ollama runs locally, so we allow local URLs
-        validate_url(base_url, allow_local=True)
-
-        self.model_name = model_name
-        self.base_url = base_url.rstrip("/")
-        self._verify_connection()
-
-    def _verify_connection(self):
-        """Verify Ollama is accessible."""
-        import urllib.request
-        import urllib.error
-
-        try:
-            endpoint = urljoin(self.base_url, "/api/tags")
-            req = urllib.request.Request(endpoint)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode())
-                models = [m["name"] for m in data.get("models", [])]
-                print(f"[OK] Ollama connected. Models: {len(models)}")
-        except Exception as e:
-            sanitized = _sanitize_error(str(e))
-            raise ConnectionError(
-                f"Cannot connect to Ollama at {self.base_url}: {sanitized}"
-            )
-
-    def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:
-        """Generate response using Ollama."""
-        import urllib.request
-        import urllib.error
-
-        # API-006: Prompt validation - max length
-        if len(prompt) > MAX_PROMPT_LENGTH:
-            raise ValueError(
-                f"Prompt exceeds maximum length of {MAX_PROMPT_LENGTH} characters. "
-                f"Provided: {len(prompt)}"
-            )
-
-        config = config or InferenceConfig()
-
-        payload = {
-            "model": self.model_name,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "temperature": config.temperature,
-                "top_p": config.top_p,
-                "num_predict": config.max_tokens,
-            },
-        }
-
-        endpoint = urljoin(self.base_url, "/api/generate")
-        req = urllib.request.Request(
-            endpoint,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                # API-004: JSON decoding safety - size limit before parsing
-                content = response.read()
-                if len(content) > MAX_RESPONSE_SIZE:
-                    raise RuntimeError(
-                        f"Response exceeds maximum size of {MAX_RESPONSE_SIZE} bytes"
-                    )
-                # Use charset from response if available, default to utf-8
-                charset = response.headers.get_content_charset() or "utf-8"
-                data = json.loads(content.decode(charset))
-                return data.get("response", "")
-        except urllib.error.HTTPError as e:
-            # API-002: Sanitize error messages - don't leak sensitive details
-            error_msg = e.read().decode("utf-8", errors="ignore") if e.fp else ""
-            sanitized = _sanitize_error(error_msg)
-            raise RuntimeError(
-                f"Ollama returned HTTP {e.code}: {e.reason}. Details: {sanitized}"
-            )
-        except urllib.error.URLError:
-            raise RuntimeError(
-                f"Cannot connect to Ollama at {self.base_url}. Is Ollama running?"
-            )
-        except TimeoutError:
-            raise RuntimeError("Request to Ollama timed out after 30 seconds")
-        except Exception as e:
-            sanitized = _sanitize_error(str(e))
-            raise RuntimeError(f"Ollama backend failed: {sanitized}")
-
-    def get_info(self) -> Dict[str, Any]:
-        return {
-            "backend": "Ollama",
-            "model": self.model_name,
-            "base_url": self.base_url,
-        }
-
-
-class OpenAICompatibleLLM(BaseLLM):
-    """LLM using OpenAI-compatible API (works with local servers)."""
-
-    def __init__(
-        self, base_url: str, model_name: str = "default", api_key: str = "not-required"
-    ):
-        # Validate base_url for SSRF protection
-        validate_url(base_url)
-
-        self.base_url = base_url.rstrip("/")
-        self.model_name = model_name
-        self.api_key = api_key
-        self._verify_connection()
-
-    def _verify_connection(self):
-        """Verify the OpenAI-compatible API endpoint is accessible."""
-        import urllib.request
-        import urllib.error
-
-        try:
-            endpoint = urljoin(self.base_url, "/models")
-            headers = {}
-            if self.api_key and self.api_key != "not-required":
-                headers["Authorization"] = f"Bearer {self.api_key}"
-            req = urllib.request.Request(
-                endpoint,
-                headers=headers,
-            )
-            with urllib.request.urlopen(req, timeout=5) as response:
-                # Just check we can connect; don't need to parse response
-                pass
-            print(f"[OK] OpenAI-compatible API connected")
-        except Exception as e:
-            sanitized = _sanitize_error(str(e))
-            raise ConnectionError(
-                f"Cannot connect to OpenAI-compatible API at {self.base_url}: {sanitized}"
-            )
-
-    def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:
-        """Generate response using OpenAI-compatible API."""
-        import urllib.request
-        import urllib.error
-
-        # API-006: Prompt validation - max length
-        if len(prompt) > MAX_PROMPT_LENGTH:
-            raise ValueError(
-                f"Prompt exceeds maximum length of {MAX_PROMPT_LENGTH} characters. "
-                f"Provided: {len(prompt)}"
-            )
-
-        config = config or InferenceConfig()
-
-        payload = {
-            "model": self.model_name,
-            "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": config.max_tokens,
-            "temperature": config.temperature,
-            "top_p": config.top_p,
-        }
-
-        endpoint = urljoin(self.base_url, "/chat/completions")
-        headers = {"Content-Type": "application/json"}
-        if self.api_key and self.api_key != "not-required":
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        req = urllib.request.Request(
-            endpoint,
-            data=json.dumps(payload).encode(),
-            headers=headers,
-        )
-
-        try:
-            with urllib.request.urlopen(req, timeout=30) as response:
-                # API-004: JSON decoding safety - size limit before parsing
-                content = response.read()
-                if len(content) > MAX_RESPONSE_SIZE:
-                    raise RuntimeError(
-                        f"Response exceeds maximum size of {MAX_RESPONSE_SIZE} bytes"
-                    )
-                # Use charset from response if available, default to utf-8
-                charset = response.headers.get_content_charset() or "utf-8"
-                data = json.loads(content.decode(charset))
-                choices = data.get("choices") or []
-                if not choices:
-                    raise RuntimeError("OpenAI-compatible API returned no choices")
-                message = choices[0].get("message") or {}
-                return message.get("content", "")
-        except urllib.error.HTTPError as e:
-            # API-002: Sanitize error messages
-            error_msg = e.read().decode("utf-8", errors="ignore") if e.fp else ""
-            sanitized = _sanitize_error(error_msg)
-            raise RuntimeError(
-                f"OpenAI-compatible endpoint returned HTTP {e.code}: {e.reason}. Details: {sanitized}"
-            )
-        except urllib.error.URLError:
-            raise RuntimeError(
-                f"Cannot connect to OpenAI-compatible endpoint at {self.base_url}. Is the server running?"
-            )
-        except TimeoutError:
-            raise RuntimeError(
-                "Request to OpenAI-compatible endpoint timed out after 30 seconds"
-            )
-        except Exception as e:
-            sanitized = _sanitize_error(str(e))
-            raise RuntimeError(f"OpenAI-compatible backend failed: {sanitized}")
-
-    def get_info(self) -> Dict[str, Any]:
-        return {
-            "backend": "OpenAI-compatible",
-            "model": self.model_name,
-            "base_url": self.base_url,
+            "is_gemma4": self.is_gemma4,
         }
 
 
@@ -550,71 +280,35 @@ Answer:"""
 
 class SmartLLM:
     """
-    Unified LLM interface with automatic backend selection.
-    Tries OpenVINO first, then GGUF, then Ollama, then OpenAI-compatible API.
+    Unified LLM interface using GGUF backend only.
     """
 
     def __init__(
         self,
-        model_path: Optional[str] = None,
-        ollama_model: Optional[str] = None,
-        ollama_url: Optional[str] = None,
-        api_url: Optional[str] = None,
-        api_model: Optional[str] = None,
-        device: Optional[str] = None,
         gguf_path: Optional[str] = None,
         gguf_n_ctx: int = 8192,
         gguf_n_threads: Optional[int] = None,
         gguf_verbose: bool = False,
     ):
-        self.backends: List[BaseLLM] = []
+        self.backend: GGUFBackend = None
         self.prompt_builder = RAGPromptBuilder()
 
         if gguf_path and Path(gguf_path).exists():
             try:
-                backend = GGUFBackend(
+                self.backend = GGUFBackend(
                     gguf_path=gguf_path,
                     n_ctx=gguf_n_ctx,
                     n_threads=gguf_n_threads,
                     verbose=gguf_verbose,
                 )
-                self.backends.append(backend)
             except Exception as e:
-                print(f"[WARN] GGUF failed: {e}")
+                logger.warning("GGUF backend initialization failed: %s", e)
 
-        if model_path and Path(model_path).exists():
-            try:
-                backend = OpenVINOLLM(model_path, device)
-                self.backends.append(backend)
-            except Exception as e:
-                print(f"[WARN] OpenVINO failed: {e}")
-
-        if api_url:
-            try:
-                backend = OpenAICompatibleLLM(
-                    base_url=api_url, model_name=api_model or "default"
-                )
-                self.backends.append(backend)
-            except Exception as e:
-                print(f"[WARN] API failed: {e}")
-
-        if ollama_url or ollama_model:
-            try:
-                backend = OllamaLLM(
-                    model_name=ollama_model or "phi3:mini",
-                    base_url=ollama_url or "http://localhost:11434",
-                )
-                self.backends.append(backend)
-            except Exception as e:
-                print(f"[WARN] Ollama failed: {e}")
-
-        if not self.backends:
-            raise RuntimeError(
-                "No LLM backend available. Provide model_path, gguf_path, ollama settings, or api_url."
-            )
+        if not self.backend:
+            raise RuntimeError("No GGUF backend available. Provide a valid gguf_path.")
 
     def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:
-        """Generate a response with automatic fallback to next available backend if primary fails."""
+        """Generate a response using the GGUF backend."""
         # API-006: Prompt validation - max length
         if len(prompt) > MAX_PROMPT_LENGTH:
             raise ValueError(
@@ -622,14 +316,7 @@ class SmartLLM:
                 f"Provided: {len(prompt)}"
             )
 
-        errors = []
-        for backend in self.backends:
-            try:
-                return backend.generate(prompt, config)
-            except Exception as e:
-                errors.append(f"{backend.get_info()['backend']}: {e}")
-                continue
-        raise RuntimeError(f"All LLM backends failed: {'; '.join(errors)}")
+        return self.backend.generate(prompt, config)
 
     def answer_question(
         self,
@@ -641,9 +328,8 @@ class SmartLLM:
     ) -> str:
         """Answer a question using RAG context.
 
-        GGUF backends use the chat completion API (applies model chat template
-        and suppresses Qwen3 thinking mode).  All other backends fall back to
-        the plain-text prompt path.
+        GGUF backend uses the chat completion API (applies model chat template
+        and suppresses Qwen3 thinking mode).
 
         Args:
             question: The user's question.
@@ -675,7 +361,7 @@ class SmartLLM:
                     lines.append(f"{label}: {content[:100]}")
                 history_prefix = "Previous conversation:\n" + "\n".join(lines) + "\n\n"
 
-        # Build the base prompt once (without history_prefix — that's per-backend)
+        # Build the base prompt once
         sources_str = ", ".join(sources) if sources else "unknown"
         base_user_prompt = (
             f"Context from documents:\n{context}\n\n"
@@ -683,65 +369,33 @@ class SmartLLM:
             f"Question: {question}"
         )
 
-        # Track whether we've already prepended history_prefix during this call.
-        # We only want to add it once — either to the first GGUF backend's
-        # chat_complete user_prompt, or to the final generate() call.
-        history_prefix_used = False
-
-        for backend in self.backends:
-            # GGUF backends: try chat_complete first (applies chat template).
-            # If it fails, fall back to generate() on the SAME backend.
-            if isinstance(backend, GGUFBackend):
-                # chat_complete gets history_prefix (if not already used)
-                user_prompt = (history_prefix if not history_prefix_used else "") + base_user_prompt
-                history_prefix_used = True
-                try:
-                    return backend.chat_complete(
-                        system_prompt=RAGPromptBuilder.SYSTEM_PROMPT,
-                        user_prompt=user_prompt,
-                        config=config,
-                    )
-                except Exception:
-                    # Fall back to generate() on the same GGUF backend — no
-                    # history_prefix here since it was already in the chat_complete prompt
-                    try:
-                        prompt = self.prompt_builder.build_prompt(question, context, sources)
-                        return backend.generate(prompt, config)
-                    except Exception:
-                        # This GGUF backend fully failed; try next backend
-                        continue
-
-            # Non-GGUF backends: use generate() directly
-            else:
-                prompt = self.prompt_builder.build_prompt(question, context, sources)
-                if history_prefix and not history_prefix_used:
-                    prompt = history_prefix + prompt
-                    history_prefix_used = True
-                try:
-                    return backend.generate(prompt, config)
-                except Exception:
-                    continue
-
-        # All backends exhausted — last-resort generate() with history_prefix
-        prompt = self.prompt_builder.build_prompt(question, context, sources)
-        if history_prefix and not history_prefix_used:
-            prompt = history_prefix + prompt
-        return self.generate(prompt, config)
+        # GGUF backend always uses chat_complete with history_prefix
+        user_prompt = history_prefix + base_user_prompt
+        try:
+            return self.backend.chat_complete(
+                system_prompt=RAGPromptBuilder.SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                config=config,
+            )
+        except Exception:
+            # Fall back to generate() — no history_prefix since it was already in chat_complete
+            prompt = self.prompt_builder.build_prompt(question, context, sources)
+            return self.backend.generate(prompt, config)
 
     def get_info(self) -> Dict[str, Any]:
         """Get backend information."""
-        return self.backends[0].get_info()
+        return self.backend.get_info()
 
 
 if __name__ == "__main__":
-    print("Testing LLM backends...\n")
+    logger.info("Testing GGUF backend...")
 
     try:
-        llm = SmartLLM(ollama_model="phi3:mini")
-        print(f"\nBackend: {llm.get_info()}")
+        llm = SmartLLM(gguf_path="models/gemma-4-E2B-it-Q5_K_M.gguf")
+        logger.info("Backend: %s", llm.get_info())
 
         response = llm.generate("What is 2+2? Answer briefly.")
-        print(f"\nTest response: {response[:200]}...")
+        logger.info("Test response: %s...", response[:200])
 
         context = (
             "Python is a programming language created by Guido van Rossum in 1991."
@@ -749,7 +403,7 @@ if __name__ == "__main__":
         answer = llm.answer_question(
             question="Who created Python?", context=context, sources=["test.txt"]
         )
-        print(f"\nRAG answer: {answer[:200]}...")
+        logger.info("RAG answer: %s...", answer[:200])
 
     except Exception as e:
-        print(f"Error: {e}")
+        logger.error("Error: %s", e)

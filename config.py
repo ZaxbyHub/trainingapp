@@ -132,7 +132,13 @@ class _SettingsProxy:
     """Proxy attribute access to the lazily-initialized settings instance."""
 
     def __getattr__(self, name):
-        return getattr(get_settings(), name)
+        try:
+            return getattr(get_settings(), name)
+        except AttributeError:
+            raise AttributeError(
+                f"'{type(get_settings()).__name__}' has no attribute '{name}'. "
+                f"Check CONFIGURATION.md for available settings."
+            )
 
     def __setattr__(self, name, value):
         return setattr(get_settings(), name, value)

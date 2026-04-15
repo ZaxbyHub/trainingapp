@@ -1,0 +1,561 @@
+{
+  "schema_version": "1.0.0",
+  "title": "Comprehensive Codebase QA Review — AI-Hardened Edition v5.1",
+  "swarm": "paid",
+  "current_phase": 1,
+  "phases": [
+    {
+      "id": 1,
+      "name": "Phase 0: Codebase Inventory and Mental Map",
+      "status": "in_progress",
+      "tasks": [
+        {
+          "id": "1.1",
+          "phase": 1,
+          "status": "completed",
+          "size": "small",
+          "description": "Read root directory listing and identify all top-level folders",
+          "depends": [],
+          "acceptance": "Directory listing captured, folder purposes documented",
+          "files_touched": []
+        },
+        {
+          "id": "1.2",
+          "phase": 1,
+          "status": "in_progress",
+          "size": "small",
+          "description": "Read dependency manifests (requirements.txt, package.json, etc.) and catalog all dependencies with versions",
+          "depends": [],
+          "acceptance": "All dependencies listed with versions, suspicious packages flagged",
+          "files_touched": []
+        },
+        {
+          "id": "1.3",
+          "phase": 1,
+          "status": "in_progress",
+          "size": "medium",
+          "description": "Read README.md, ARCHITECTURE.md, USAGE.md and extract all user-facing claims",
+          "depends": [],
+          "acceptance": "Claims extracted and broken into atomic obligations",
+          "files_touched": []
+        },
+        {
+          "id": "1.4",
+          "phase": 1,
+          "status": "in_progress",
+          "size": "medium",
+          "description": "Read CI/CD workflows (.github/workflows/) and identify public surfaces and trust boundaries",
+          "depends": [],
+          "acceptance": "All workflows analyzed, trust boundaries mapped",
+          "files_touched": []
+        },
+        {
+          "id": "1.5",
+          "phase": 1,
+          "status": "pending",
+          "size": "medium",
+          "description": "Produce mental map: tech stack, directory layout, public surface inventory, trust boundary inventory, estimated file count",
+          "depends": [],
+          "acceptance": "Mental map documented in context.md",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Phase 1: Serial-Batched Explorer Candidate Generation",
+      "status": "in_progress",
+      "tasks": [
+        {
+          "id": "2.1",
+          "phase": 2,
+          "status": "in_progress",
+          "size": "medium",
+          "description": "Dispatch Config & Infrastructure explorer subagent for dotfiles, CI/CD, Dockerfiles, lockfiles",
+          "depends": [],
+          "acceptance": "Config explorer returns candidate findings for all infrastructure files",
+          "files_touched": []
+        },
+        {
+          "id": "2.2",
+          "phase": 2,
+          "status": "pending",
+          "size": "large",
+          "description": "Dispatch Batch 1: Core source files explorer (max 20 files) for Check Groups 1-3",
+          "depends": [],
+          "acceptance": "Batch 1 explorer returns candidates with file paths, line numbers, disprove_attempts for CRITICAL/HIGH",
+          "files_touched": []
+        },
+        {
+          "id": "2.3",
+          "phase": 2,
+          "status": "pending",
+          "size": "large",
+          "description": "Dispatch Batch 2: Core source files explorer (max 20 files) for Check Groups 4-6",
+          "depends": [],
+          "acceptance": "Batch 2 explorer returns candidates with file paths, line numbers, disprove_attempts for CRITICAL/HIGH",
+          "files_touched": []
+        },
+        {
+          "id": "2.4",
+          "phase": 2,
+          "status": "pending",
+          "size": "large",
+          "description": "Dispatch Batch 3: Core source files explorer (max 20 files) for Check Groups 7-9",
+          "depends": [],
+          "acceptance": "Batch 3 explorer returns candidates with file paths, line numbers, disprove_attempts for CRITICAL/HIGH",
+          "files_touched": []
+        },
+        {
+          "id": "2.5",
+          "phase": 2,
+          "status": "pending",
+          "size": "large",
+          "description": "Dispatch Test files explorer for test quality analysis (Check Group 8)",
+          "depends": [],
+          "acceptance": "Test explorer returns candidates for all test files",
+          "files_touched": []
+        },
+        {
+          "id": "2.6",
+          "phase": 2,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Documentation explorer for claim verification (Check Group 4)",
+          "depends": [],
+          "acceptance": "Doc explorer returns claim-vs-implementation mismatches",
+          "files_touched": []
+        },
+        {
+          "id": "2.7",
+          "phase": 2,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Cross-Boundary explorer with accumulated findings for contract/integration seam checks",
+          "depends": [],
+          "acceptance": "Cross-boundary explorer returns findings for module boundaries, shared state, import chains",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Phase 2: Candidate Validation and Inline Routing",
+      "status": "in_progress",
+      "tasks": [
+        {
+          "id": "3.1",
+          "phase": 3,
+          "status": "in_progress",
+          "size": "large",
+          "description": "Dispatch Reviewer Batch 1: Validate Config & Infrastructure candidates",
+          "depends": [],
+          "acceptance": "Reviewer returns CONFIRMED/DISPROVED/UNVERIFIED/PRE_EXISTING for all config candidates",
+          "files_touched": []
+        },
+        {
+          "id": "3.2",
+          "phase": 3,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Inline Critic for CRITICAL/HIGH from Config Reviewer Batch 1",
+          "depends": [],
+          "acceptance": "Critic returns UPHELD/DOWNGRADED/OVERTURNED/REFINED for all CRITICAL/HIGH config findings",
+          "files_touched": []
+        },
+        {
+          "id": "3.3",
+          "phase": 3,
+          "status": "pending",
+          "size": "large",
+          "description": "Dispatch Reviewer Batch 2: Validate Core Source Batch 1 candidates",
+          "depends": [],
+          "acceptance": "Reviewer returns validation results with inline_routing for all source batch 1 candidates",
+          "files_touched": []
+        },
+        {
+          "id": "3.4",
+          "phase": 3,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Inline Critic for CRITICAL/HIGH from Source Batch 1",
+          "depends": [],
+          "acceptance": "Critic challenges all CRITICAL/HIGH from source batch 1",
+          "files_touched": []
+        },
+        {
+          "id": "3.5",
+          "phase": 3,
+          "status": "pending",
+          "size": "large",
+          "description": "Dispatch Reviewer Batch 3: Validate Core Source Batch 2 candidates",
+          "depends": [],
+          "acceptance": "Reviewer returns validation results with inline_routing for all source batch 2 candidates",
+          "files_touched": []
+        },
+        {
+          "id": "3.6",
+          "phase": 3,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Inline Critic for CRITICAL/HIGH from Source Batch 2",
+          "depends": [],
+          "acceptance": "Critic challenges all CRITICAL/HIGH from source batch 2",
+          "files_touched": []
+        },
+        {
+          "id": "3.7",
+          "phase": 3,
+          "status": "pending",
+          "size": "large",
+          "description": "Dispatch Reviewer Batch 4: Validate Core Source Batch 3 candidates",
+          "depends": [],
+          "acceptance": "Reviewer returns validation results with inline_routing for all source batch 3 candidates",
+          "files_touched": []
+        },
+        {
+          "id": "3.8",
+          "phase": 3,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Inline Critic for CRITICAL/HIGH from Source Batch 3",
+          "depends": [],
+          "acceptance": "Critic challenges all CRITICAL/HIGH from source batch 3",
+          "files_touched": []
+        },
+        {
+          "id": "3.9",
+          "phase": 3,
+          "status": "pending",
+          "size": "large",
+          "description": "Dispatch Reviewer Batch 5: Validate Test candidates",
+          "depends": [],
+          "acceptance": "Reviewer returns validation results with inline_routing for all test candidates",
+          "files_touched": []
+        },
+        {
+          "id": "3.10",
+          "phase": 3,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Inline Critic for CRITICAL/HIGH from Test Reviewer",
+          "depends": [],
+          "acceptance": "Critic challenges all CRITICAL/HIGH test findings",
+          "files_touched": []
+        },
+        {
+          "id": "3.11",
+          "phase": 3,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Reviewer Batch 6: Validate Documentation candidates",
+          "depends": [],
+          "acceptance": "Reviewer returns validation results for all documentation candidates",
+          "files_touched": []
+        },
+        {
+          "id": "3.12",
+          "phase": 3,
+          "status": "pending",
+          "size": "small",
+          "description": "Dispatch Inline Critic for CRITICAL/HIGH from Doc Reviewer",
+          "depends": [],
+          "acceptance": "Critic challenges all CRITICAL/HIGH documentation findings",
+          "files_touched": []
+        },
+        {
+          "id": "3.13",
+          "phase": 3,
+          "status": "pending",
+          "size": "medium",
+          "description": "Dispatch Reviewer Batch 7: Validate Cross-Boundary candidates",
+          "depends": [],
+          "acceptance": "Reviewer returns validation results for all cross-boundary candidates",
+          "files_touched": []
+        },
+        {
+          "id": "3.14",
+          "phase": 3,
+          "status": "pending",
+          "size": "small",
+          "description": "Dispatch Inline Critic for CRITICAL/HIGH from Cross-Boundary Reviewer",
+          "depends": [],
+          "acceptance": "Critic challenges all CRITICAL/HIGH cross-boundary findings",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "Phase 3: Evidence Persistence and Formatting",
+      "status": "in_progress",
+      "tasks": [
+        {
+          "id": "4.1",
+          "phase": 4,
+          "status": "in_progress",
+          "size": "medium",
+          "description": "Persist all explorer candidate findings as qa_candidate_findings evidence bundles",
+          "depends": [],
+          "acceptance": "All candidate findings saved to .swarm/evidence/qa_findings/",
+          "files_touched": []
+        },
+        {
+          "id": "4.2",
+          "phase": 4,
+          "status": "pending",
+          "size": "medium",
+          "description": "Persist all reviewer validation results as qa_validated_findings evidence bundles",
+          "depends": [],
+          "acceptance": "All validation results saved to .swarm/evidence/qa_validated/",
+          "files_touched": []
+        },
+        {
+          "id": "4.3",
+          "phase": 4,
+          "status": "pending",
+          "size": "medium",
+          "description": "Persist all critic results as qa_critic_results evidence bundles",
+          "depends": [],
+          "acceptance": "All critic results saved to .swarm/evidence/qa_critique/",
+          "files_touched": []
+        },
+        {
+          "id": "4.4",
+          "phase": 4,
+          "status": "pending",
+          "size": "small",
+          "description": "Verify all CRITICAL/HIGH candidates have disprove_attempt fields, downgrade any missing",
+          "depends": [],
+          "acceptance": "All CRITICAL/HIGH have valid disprove_attempts, non-compliant downgraded to MEDIUM",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Phase 4: Architect Synthesis",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "5.1",
+          "phase": 5,
+          "status": "pending",
+          "size": "medium",
+          "description": "Load and deduplicate all qa_candidate_findings, qa_validated_findings, qa_critic_results",
+          "depends": [],
+          "acceptance": "All evidence bundles loaded, duplicates identified",
+          "files_touched": []
+        },
+        {
+          "id": "5.2",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Drop all DISPROVED and OVERTURNED findings from main report set",
+          "depends": [],
+          "acceptance": "DISPROVED and OVERTURNED findings excluded from final set",
+          "files_touched": []
+        },
+        {
+          "id": "5.3",
+          "phase": 5,
+          "status": "pending",
+          "size": "medium",
+          "description": "Cluster confirmed findings by AI failure mode pattern",
+          "depends": [],
+          "acceptance": "Findings grouped by pattern: phantom-dependency, happy-path-only, off-by-one, etc.",
+          "files_touched": []
+        },
+        {
+          "id": "5.4",
+          "phase": 5,
+          "status": "pending",
+          "size": "medium",
+          "description": "Build claim ledger: supported, partially_supported, unsupported, contradicted, stealth_change",
+          "depends": [],
+          "acceptance": "Claim ledger complete with counts for each category",
+          "files_touched": []
+        },
+        {
+          "id": "5.5",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Count findings by check group (1-9) and severity (CRITICAL/HIGH/MEDIUM/LOW/INFO)",
+          "depends": [],
+          "acceptance": "Count table produced with all group/severity combinations",
+          "files_touched": []
+        },
+        {
+          "id": "5.6",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Count validation outcomes: confirmed, disproved, unverified, pre_existing",
+          "depends": [],
+          "acceptance": "Validation statistics documented",
+          "files_touched": []
+        },
+        {
+          "id": "5.7",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Count inline critic outcomes: upheld, refined, downgraded, overturned",
+          "depends": [],
+          "acceptance": "Critic statistics documented",
+          "files_touched": []
+        },
+        {
+          "id": "5.8",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Count inline reviewer finalization outcomes: finalized, downgraded",
+          "depends": [],
+          "acceptance": "Finalization statistics documented",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "Phase 5: Final Report Generation",
+      "status": "in_progress",
+      "tasks": [
+        {
+          "id": "6.1",
+          "phase": 6,
+          "status": "in_progress",
+          "size": "medium",
+          "description": "Generate qa-report.md with executive summary and findings count table",
+          "depends": [],
+          "acceptance": "Report header and summary sections complete",
+          "files_touched": []
+        },
+        {
+          "id": "6.2",
+          "phase": 6,
+          "status": "pending",
+          "size": "medium",
+          "description": "Document all CRITICAL findings with full detail in report",
+          "depends": [],
+          "acceptance": "All CRITICAL findings in report with file, line, problem, fix, evidence",
+          "files_touched": []
+        },
+        {
+          "id": "6.3",
+          "phase": 6,
+          "status": "pending",
+          "size": "medium",
+          "description": "Document all HIGH findings with full detail in report",
+          "depends": [],
+          "acceptance": "All HIGH findings in report with file, line, problem, fix, evidence",
+          "files_touched": []
+        },
+        {
+          "id": "6.4",
+          "phase": 6,
+          "status": "pending",
+          "size": "medium",
+          "description": "Document all MEDIUM findings with full detail in report",
+          "depends": [],
+          "acceptance": "All MEDIUM findings in report with file, line, problem, fix, evidence",
+          "files_touched": []
+        },
+        {
+          "id": "6.5",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document all LOW/INFO findings (condensed) in report",
+          "depends": [],
+          "acceptance": "LOW/INFO findings in report",
+          "files_touched": []
+        },
+        {
+          "id": "6.6",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document pre-existing findings section in report",
+          "depends": [],
+          "acceptance": "Pre-existing findings section complete",
+          "files_touched": []
+        },
+        {
+          "id": "6.7",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document unsupported/contradicted claims section in report",
+          "depends": [],
+          "acceptance": "Claim mismatches documented",
+          "files_touched": []
+        },
+        {
+          "id": "6.8",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document stealth changes section in report",
+          "depends": [],
+          "acceptance": "Stealth changes documented",
+          "files_touched": []
+        },
+        {
+          "id": "6.9",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document dominant AI failure modes section in report",
+          "depends": [],
+          "acceptance": "AI pattern analysis complete",
+          "files_touched": []
+        },
+        {
+          "id": "6.10",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document supply chain and dependency notes in report",
+          "depends": [],
+          "acceptance": "Dependency findings documented",
+          "files_touched": []
+        },
+        {
+          "id": "6.11",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document coverage notes section in report",
+          "depends": [],
+          "acceptance": "Coverage gaps and unverified items noted",
+          "files_touched": []
+        },
+        {
+          "id": "6.12",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document validation notes with all statistics in report",
+          "depends": [],
+          "acceptance": "Validation statistics in report",
+          "files_touched": []
+        },
+        {
+          "id": "6.13",
+          "phase": 6,
+          "status": "pending",
+          "size": "small",
+          "description": "Document recommended remediation order in report",
+          "depends": [],
+          "acceptance": "Prioritized fix order documented",
+          "files_touched": []
+        }
+      ]
+    }
+  ],
+  "migration_status": "native"
+}

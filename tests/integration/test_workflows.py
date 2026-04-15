@@ -30,10 +30,10 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def api_client(tmp_path):
     """
-    Create a test API client with mocked LLM backends.
+    Create a test API client for integration testing.
     
-    Patches LLM classes BEFORE importing the API app to ensure the lifespan
-    context uses mocked backends.
+    The LLM (SmartLLM) is not patched because rag_engine.py handles LLM initialization
+    failures gracefully. Tests account for 503 responses when the engine isn't ready.
     """
     db_path = str(tmp_path / "test_api_db")
     
@@ -50,38 +50,16 @@ def api_client(tmp_path):
         os.environ[k] = v
     
     # Mock LLM classes at module level BEFORE importing api_server
-    mock_ollama_cls = MagicMock()
-    mock_ollama_instance = MagicMock()
-    mock_ollama_instance.generate.return_value = "Mock answer."
-    mock_ollama_instance.answer_question.return_value = "Mock answer from context."
-    mock_ollama_instance.get_info.return_value = {"backend": "mock_ollama", "model": "test"}
-    mock_ollama_cls.return_value = mock_ollama_instance
+    # Note: OllamaLLM, OpenAICompatibleLLM, and OpenVINOLLM have been removed
+    # from llm_interface - no longer need to patch these classes
+    # SmartLLM is not patched because rag_engine.py already handles LLM initialization failures gracefully
+
+    # Now import and create app
+    from fastapi.testclient import TestClient
+    from api_server import app
     
-    mock_openai_cls = MagicMock()
-    mock_openai_instance = MagicMock()
-    mock_openai_instance.generate.return_value = "Mock OpenAI answer."
-    mock_openai_instance.answer_question.return_value = "Mock OpenAI answer."
-    mock_openai_instance.get_info.return_value = {"backend": "mock_openai", "model": "test"}
-    mock_openai_cls.return_value = mock_openai_instance
-    
-    mock_openvino_cls = MagicMock()
-    mock_openvino_instance = MagicMock()
-    mock_openvino_instance.generate.return_value = "Mock OpenVINO answer."
-    mock_openvino_instance.answer_question.return_value = "Mock OpenVINO answer."
-    mock_openvino_instance.get_info.return_value = {"backend": "mock_openvino", "model": "test"}
-    mock_openvino_cls.return_value = mock_openvino_instance
-    
-    # Patch at the llm_interface module level (where SmartLLM imports from)
-    with patch("llm_interface.OllamaLLM", mock_ollama_cls), \
-         patch("llm_interface.OpenAICompatibleLLM", mock_openai_cls), \
-         patch("llm_interface.OpenVINOLLM", mock_openvino_cls):
-        
-        # Now import and create app
-        from fastapi.testclient import TestClient
-        from api_server import app
-        
-        client = TestClient(app)
-        yield client
+    client = TestClient(app)
+    yield client
     
     # Restore env
     for k, v in saved_env.items():

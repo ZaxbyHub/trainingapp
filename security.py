@@ -12,7 +12,7 @@ from typing import Optional, Set
 from urllib.parse import urlparse
 
 # Default allowed ports for URL validation
-DEFAULT_ALLOWED_PORTS: Set[int] = {80, 443, 11434}  # HTTP, HTTPS, Ollama
+DEFAULT_ALLOWED_PORTS: Set[int] = {80, 443}  # HTTP, HTTPS
 
 # Private IP ranges for SSRF protection (excluding loopback)
 PRIVATE_NETWORKS = [
@@ -45,7 +45,7 @@ def validate_url(
         url: URL string to validate
         allow_local: If True, allow localhost, loopback, and private IPs.
                     Use only for trusted local LLM configurations.
-        allowed_ports: Set of allowed port numbers. Defaults to {80, 443, 11434}.
+        allowed_ports: Set of allowed port numbers. Defaults to {80, 443}.
         allowed_schemes: Set of allowed URL schemes. Defaults to {"http", "https"}.
 
     Returns:
@@ -67,6 +67,13 @@ def validate_url(
 
     # Parse URL
     parsed = urlparse(url)
+
+    # Offline app: reject non-HTTP schemes early (ftp, gopher, data, etc.)
+    if parsed.scheme and parsed.scheme not in ("http", "https"):
+        raise ValueError(
+            f"URL scheme '{parsed.scheme}' is not allowed. "
+            f"This is an offline application — only HTTP/HTTPS URLs are supported."
+        )
 
     # Validate scheme
     schemes = allowed_schemes if allowed_schemes is not None else {"http", "https"}
@@ -92,6 +99,10 @@ def validate_url(
         if not allow_local:
             raise ValueError("URL must not point to localhost")
         # If allow_local is True, we still validate the port
+
+    # Reject 0.0.0.0 — listener address, not a valid destination (SSRF risk)
+    if parsed.hostname == "0.0.0.0":
+        raise ValueError("URL must not point to 0.0.0.0 (all-interfaces listener, private network security)")
 
     # Port validation
     if parsed.port is not None:

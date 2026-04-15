@@ -4,6 +4,8 @@ from typing import Optional, Dict, Any, TYPE_CHECKING
 from pathlib import Path
 from config import DEFAULT_MAX_TOKENS
 
+from app_paths import get_bundled_model_path
+
 if TYPE_CHECKING:
     from rag_engine import RAGEngine, RAGConfig
 
@@ -24,12 +26,6 @@ def _get_rag_classes():
 def create_engine(
     config: Optional["RAGConfig"] = None,
     gguf_path: Optional[str] = None,
-    model_path: Optional[str] = None,  # For backward compatibility
-    ollama_model: Optional[str] = None,
-    ollama_url: Optional[str] = None,
-    api_url: Optional[str] = None,
-    api_model: Optional[str] = None,
-    device: Optional[str] = None,
     embedding_model: Optional[str] = None,
 ) -> "RAGEngine":
     """Create a RAGEngine with consistent configuration.
@@ -39,19 +35,12 @@ def create_engine(
 
     Priority order for GGUF path:
     1. gguf_path parameter (explicit)
-    2. model_path parameter (backward compatibility)
-    3. RAG_GGUF_PATH environment variable
-    4. None (use other backends)
+    2. RAG_GGUF_PATH environment variable
+    3. None (use other backends)
 
     Args:
         config: RAGConfig instance (creates default if None)
         gguf_path: Path to GGUF model file (preferred)
-        model_path: Path to model (backward compatibility, maps to gguf_path)
-        ollama_model: Ollama model name
-        ollama_url: Ollama server URL
-        api_url: OpenAI-compatible API URL
-        api_model: API model name
-        device: Device for inference (cpu, cuda, etc.)
         embedding_model: Embedding model name/path
 
     Returns:
@@ -64,7 +53,7 @@ def create_engine(
         config = RAGConfig()
 
     # Normalize GGUF path with priority order
-    final_gguf_path = _resolve_gguf_path(gguf_path, model_path)
+    final_gguf_path = _resolve_gguf_path(gguf_path)
 
     # Override embedding_model in config if provided
     if embedding_model is not None:
@@ -74,29 +63,20 @@ def create_engine(
     return RAGEngine(
         config=config,
         gguf_path=final_gguf_path,
-        model_path=None,  # Don't pass model_path to avoid confusion
-        ollama_model=ollama_model,
-        ollama_url=ollama_url,
-        api_url=api_url,
-        api_model=api_model,
-        device=device,
     )
 
 
-def _resolve_gguf_path(
-    gguf_path: Optional[str], model_path: Optional[str]
-) -> Optional[str]:
+def _resolve_gguf_path(gguf_path: Optional[str]) -> Optional[str]:
     """Resolve GGUF path with priority order.
 
     Priority order:
     1. gguf_path parameter (explicit)
-    2. model_path parameter (backward compatibility)
-    3. RAG_GGUF_PATH environment variable
+    2. RAG_GGUF_PATH environment variable
+    3. get_bundled_model_path() from app_paths
     4. None (use other backends)
 
     Args:
         gguf_path: Explicit GGUF path parameter
-        model_path: Backward compatibility model_path parameter
 
     Returns:
         Resolved GGUF path or None
@@ -104,17 +84,18 @@ def _resolve_gguf_path(
     import os
 
     # Priority 1: Explicit gguf_path parameter
-    if gguf_path:
+    if gguf_path and gguf_path.strip():
         return gguf_path
 
-    # Priority 2: Backward compatibility model_path
-    if model_path:
-        return model_path
-
-    # Priority 3: Environment variable
+    # Priority 2: Environment variable
     env_gguf = os.environ.get("RAG_GGUF_PATH")
     if env_gguf:
         return env_gguf
+
+    # Priority 3: Bundled model from app_paths
+    bundled_model = get_bundled_model_path()
+    if bundled_model:
+        return str(bundled_model)
 
     # Priority 4: None
     return None
@@ -124,7 +105,7 @@ def create_engine_from_settings(settings: Dict[str, Any]) -> "RAGEngine":
     """Create engine from settings dictionary (for GUI mode).
 
     Args:
-        settings: Dictionary with keys like 'gguf_path', 'ollama_url', etc.
+        settings: Dictionary with keys like 'gguf_path', etc.
 
     Returns:
         Configured RAGEngine instance
@@ -148,12 +129,6 @@ def create_engine_from_settings(settings: Dict[str, Any]) -> "RAGEngine":
     return create_engine(
         config=config,
         gguf_path=settings.get("gguf_path"),
-        model_path=settings.get("model_path"),  # Backward compat
-        ollama_model=settings.get("ollama_model"),
-        ollama_url=settings.get("ollama_url"),
-        api_url=settings.get("api_url"),
-        api_model=settings.get("api_model"),
-        device=settings.get("device"),
     )
 
 
@@ -175,12 +150,6 @@ def create_engine_from_env() -> "RAGEngine":
         RAG_RETRIEVAL_WINDOW: Retrieval window (default: 1)
         RAG_RERANKING_ENABLED: Enable reranking (default: false)
         RAG_GGUF_PATH: Path to GGUF model
-        RAG_MODEL_PATH: Backward compat path to model
-        RAG_OLLAMA_MODEL: Ollama model name
-        RAG_OLLAMA_URL: Ollama server URL
-        RAG_API_URL: OpenAI-compatible API URL
-        RAG_API_MODEL: API model name
-        RAG_DEVICE: Device for inference
 
     Returns:
         Configured RAGEngine instance
@@ -211,33 +180,15 @@ def create_engine_from_env() -> "RAGEngine":
         reranking_enabled=settings.rag_reranking_enabled,
     )
 
-    # Auto-detect bundled model if no model specified
+    # Get GGUF path from env var or bundled model
     gguf_path = os.environ.get("RAG_GGUF_PATH")
-    model_path = os.environ.get("RAG_MODEL_PATH")
-
-    if not gguf_path and not model_path:
-        # Look for bundled models in order of preference
-        # Note: This is a blocking filesystem check, only called at startup.
-        # For API server use, consider calling this from asyncio.to_thread() or
-        # implement an async version that wraps these file operations.
-        bundled_models = [
-            Path("models") / "phi3-mini-int4.gguf",
-            Path("models") / "phi3.5-mini-instruct-int4-cw-ov",
-            Path("test_model.gguf"),
-        ]
-        for model_file in bundled_models:
-            if model_file.is_file():
-                gguf_path = str(model_file)
-                print(f"[INFO] Using bundled model: {model_file}")
-                break
+    if not gguf_path:
+        bundled_model = get_bundled_model_path()
+        if bundled_model:
+            gguf_path = str(bundled_model)
+            print(f"[INFO] Using bundled model: {bundled_model}")
 
     return create_engine(
         config=config,
         gguf_path=gguf_path,
-        model_path=model_path,  # Backward compat
-        ollama_model=os.environ.get("RAG_OLLAMA_MODEL"),
-        ollama_url=os.environ.get("RAG_OLLAMA_URL"),
-        api_url=os.environ.get("RAG_API_URL"),
-        api_model=os.environ.get("RAG_API_MODEL"),
-        device=os.environ.get("RAG_DEVICE"),
     )

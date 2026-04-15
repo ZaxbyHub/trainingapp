@@ -28,8 +28,7 @@ Complete installation guide for the Document Q&A Assistant, including standard P
 - **Python**: 3.11 or higher
 
 ### Optional Components
-- **NVIDIA GPU**: For OpenVINO GPU acceleration (not required for GGUF backend)
-- **Intel NPU**: For OpenVINO NPU acceleration (not required for GGUF backend)
+- **NVIDIA GPU**: Not required for GGUF backend (CPU-only inference)
 
 ## Standard Installation
 
@@ -80,13 +79,15 @@ Successfully installed pypdf-4.2.0 ...
 - Stored in cache: `%LOCALAPPDATA%\huggingface\hub`
 
 **Option B: Manual Download** (recommended for offline setup)
-1. Download Qwen3-1.7B-Instruct-Q4_K from Hugging Face:
-    - URL: https://huggingface.co/Qwen/Qwen3-1.7B-Instruct-GGUF
-    - File: `qwen3-1.7b-instruct-q4_k_m.gguf` (~1.5 GB)
+1. Download Gemma 4 E2B from Hugging Face:
+    - URL: https://huggingface.co/google/gemma-4-2b-it-gguf
+    - File: `gemma-4-e2b-it-q5_k_m.gguf` (~3.1 GB)
 
 2. Save to a known location:
-    - Example: `C:\Models\qwen3-1.7b-instruct-q4_k_m.gguf`
-    - Or in the application directory: `C:\doc_qa_app\models\qwen3-1.7b-instruct-q4_k_m.gguf`
+    - Example: `C:\Models\gemma-4-E2B-it-Q5_K-M.gguf`
+    - Or in the application directory: `C:\doc_qa_app\models\gemma-4-E2B-it-Q5_K-M.gguf`
+
+Note: The application includes Gemma 4 E2B bundled in the `models/` directory.
 
 #### Embedding Model
 
@@ -164,9 +165,12 @@ This script will:
 
 #### 4. Download GGUF Model
 
-Download Qwen3-1.7B-Instruct-Q4_K_M:
-- From Hugging Face: https://huggingface.co/Qwen/Qwen3-1.7B-Instruct-GGUF
-- Save as `qwen3-1.7b-instruct-q4_k_m.gguf`
+The application bundles Gemma 4 E2B in the `models/` directory.
+To use a custom model:
+
+Download any GGUF format model:
+- From Hugging Face: https://huggingface.co/models?search=gguf
+- Save as `your-model.gguf`
 - Place in `build_installer/models/`
 
 #### 5. Download Embedding Model
@@ -199,18 +203,17 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 
 ### GGUF Model Details
 
-**Recommended Model**: Qwen3-1.7B-Instruct-Q4_K_M
+**Bundled Model**: Gemma 4 E2B (Q5_K_M)
 
 **Specifications**:
-- Model Size: ~1.5 GB
-- Architecture: Transformer-based
-- Quantization: Q4_K_M (balanced quality/speed)
-- Language: English (primary), Chinese (secondary)
+- Model Size: ~3.1 GB
+- Architecture: Gemma 4 (Google)
+- Quantization: Q5_K_M (high quality)
+- Language: English (primary)
 
 **Alternative Models**:
-- `qwen3-7b-instruct-q4_k_m` (7GB, better quality, slower) - larger variant available
-- `llama3-8b-instruct-q4_k_m` (4.8GB, general purpose)
-- `phi-3-mini-4k-instruct-q4_k_m` (2.3GB, fastest)
+- Any GGUF format model from Hugging Face
+- Recommended: Gemma 4 2B, Qwen2.5 1.5B, Llama 3 3B
 
 ### Embedding Model Details
 
@@ -252,16 +255,7 @@ Not required. Application runs as a standard executable.
 
 ### System Requirements for Power Users
 
-**NVIDIA GPU Support**:
-1. Install NVIDIA CUDA Toolkit
-2. Install cuDNN
-3. Install PyTorch with CUDA support
-4. Use OpenVINO backend instead of GGUF
-
-**Intel NPU Support**:
-1. Install Intel OpenVINO Toolkit
-2. Use OpenVINO backend
-3. GGUF will automatically fallback to CPU
+The application runs CPU-only using GGUF models. No GPU or NPU acceleration is required.
 
 ## Post-Installation
 
@@ -302,10 +296,10 @@ Edit settings via GUI:
 
 **Solution**:
 ```powershell
-# Verify GGUF model exists
-dir C:\path\to\qwen3-1.7b-instruct-q4_k_m.gguf
+# Verify GGUF model exists (default bundled model)
+dir C:\path\to\gemma-4-E2B-it-Q5_K-M.gguf
 
-# Check file size (should be ~1.5GB)
+# Check file size (should be ~3.1GB for Q5_K_M)
 ```
 
 **Problem**: "chromadb not installed"

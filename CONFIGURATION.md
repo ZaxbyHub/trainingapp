@@ -46,11 +46,7 @@ Set environment variables before running the application or in your system's env
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `RAG_MODEL_PATH` | OpenVINO model path | None | Yes for OpenVINO |
-| `RAG_OLLAMA_URL` | Ollama server URL | `http://localhost:11434` | No |
-| `RAG_OLLAMA_MODEL` | Ollama model name | `phi3:mini` | No |
-| `RAG_API_URL` | OpenAI-compatible API URL | None | No |
-| `RAG_API_MODEL` | API model name | `default` | No |
+| `RAG_GGUF_PATH` | Path to GGUF model file | Bundled Gemma 4 E2B | No |
 
 ### Performance Variables
 
@@ -131,54 +127,21 @@ openssl rand -base64 32
 
 **Recommended Path**:
 ```
-C:\Models\qwen2.5-1.5b-instruct-q4_k_m.gguf
+C:\Models\gemma-4-E2B-it-Q5_K-M.gguf
 ```
 
 **File Requirements**:
 - Must start with "GGUF" magic bytes
-- Size: 1-2 GB for 1.5B-8B models
-- Format: Q4_K_M (recommended)
+- Size: 1-4 GB for 2B-8B models
+- Format: Q5_K_M (recommended for quality/size balance)
+
+**Bundled Model**:
+The application ships with `gemma-4-E2B-it-Q5_K-M.gguf` located in the `models/` directory. This model is automatically detected on first run if no custom model is configured.
 
 **Troubleshooting**:
 ```
 Error: Invalid GGUF file
 Solution: Check file integrity and magic bytes
-```
-
-#### Ollama Settings
-
-**Purpose**: Connect to local Ollama runtime
-
-**Ollama URL**:
-```
-http://localhost:11434
-```
-
-**Ollama Model**:
-```
-phi3:mini
-# Or: qwen2.5:7b
-```
-
-**Prerequisites**:
-1. Install Ollama: https://ollama.ai/download
-2. Run `ollama serve`
-3. Pull model: `ollama pull phi3:mini`
-
-#### API Settings
-
-**Purpose**: Connect to OpenAI-compatible API
-
-**API URL**:
-```
-http://localhost:8000/v1  # Local server
-https://api.openai.com/v1  # OpenAI
-```
-
-**API Model**:
-```
-gpt-4
-gpt-3.5-turbo
 ```
 
 ### RAG Settings
@@ -291,13 +254,9 @@ Window=0: No expansion
 
 ## LLM Backend Configuration
 
-### Backend Priority
+### Supported Backends
 
-The application tries backends in this order:
-1. **GGUF** (User-provided path)
-2. **OpenVINO** (User-provided path)
-3. **OpenAI API** (External API)
-4. **Ollama** (Local server)
+Only GGUF models are supported through the GUI Settings dialog. The application uses the GGUF model specified in the settings.
 
 ### GGUF Configuration
 
@@ -314,55 +273,10 @@ n_threads=4       # CPU threads
 ```
 
 **Model Selection**:
-- Qwen2.5-1.5B (1.5GB, recommended)
+- Gemma 4 2B (2GB, recommended - bundled)
+- Qwen2.5-1.5B (1.5GB)
 - Qwen2.5-7B (7GB, better quality)
 - Llama3-8B (4.8GB, general purpose)
-- Phi-3-Mini (2.3GB, fastest)
-
-### OpenVINO Configuration
-
-**Requirements**:
-- Intel CPU, GPU, or NPU
-- Install OpenVINO Toolkit
-
-**Advantages**:
-- Hardware acceleration
-- Best performance
-
-**Configuration**:
-```
-device=NPU         # Use NPU
-device=GPU         # Use GPU
-device=CPU         # Use CPU
-```
-
-### Ollama Configuration
-
-**Requirements**:
-- Install Ollama
-- Run `ollama serve`
-
-**Configuration**:
-```bash
-# Pull model
-ollama pull phi3:mini
-
-# Run server
-ollama serve
-```
-
-### OpenAI API Configuration
-
-**Requirements**:
-- API key
-- Network access
-
-**Configuration**:
-```
-API URL: https://api.openai.com/v1
-API Key: sk-...
-Model: gpt-4
-```
 
 ## RAG Pipeline Configuration
 
@@ -476,40 +390,6 @@ window=1
 - Retrieval: 100-200 ms
 - Overall: ~1-2 seconds per query
 
-### With NVIDIA GPU (OpenVINO)
-
-**Recommended Settings**:
-```python
-chunk_size=512
-n_results=5
-max_tokens=1024
-temperature=0.2
-hybrid_search=True
-window=2
-```
-
-**Performance**:
-- Inference: 30-50 tokens/sec
-- Retrieval: 50-100 ms
-- Overall: ~0.3-0.5 seconds per query
-
-### With Intel NPU (OpenVINO)
-
-**Recommended Settings**:
-```python
-chunk_size=512
-n_results=5
-max_tokens=1024
-temperature=0.2
-hybrid_search=True
-window=2
-```
-
-**Performance**:
-- Inference: 25-35 tokens/sec
-- Retrieval: 50-100 ms
-- Overall: ~0.4-0.6 seconds per query
-
 ### Memory Optimization
 
 **For Limited RAM**:
@@ -595,15 +475,12 @@ max_context_length=2000  # characters
 **Example**:
 ```json
 {
-  "gguf_path": "C:\\Models\\qwen2.5-1.5b-instruct-q4_k_m.gguf",
-  "ollama_url": "http://localhost:11434",
-  "ollama_model": "phi3:mini",
-  "api_url": "",
+  "gguf_path": "C:\\Models\\gemma-4-E2B-it-Q5_K-M.gguf",
   "chunk_size": 512,
   "n_results": 3,
   "max_tokens": 1024,
   "temperature": 0.3,
-   "db_path": "C:\\Users\\User\\AppData\\Local\\AFOMIS Help and Support\\data\\vector_db",
+  "db_path": "C:\\Users\\User\\AppData\\Local\\AFOMIS Help and Support\\data\\vector_db",
   "hybrid_search": true,
   "retrieval_window": 1,
   "reranking_enabled": false
@@ -644,7 +521,7 @@ python main.py [OPTIONS]
 **Example**:
 ```bash
 python main.py \
-  --gguf-path "C:\Models\qwen2.5-1.5b-instruct-q4_k_m.gguf" \
+  --gguf-path "C:\Models\gemma-4-E2B-it-Q5_K-M.gguf" \
   --chunk-size 512 \
   --n-results 5 \
   --max-tokens 1024 \
@@ -665,12 +542,12 @@ python main.py \
 **Solutions**:
 ```powershell
 # Verify GGUF model
-dir C:\path\to\qwen2.5-1.5b-instruct-q4_k_m.gguf
+dir C:\path\to\gemma-4-E2B-it-Q5_K-M.gguf
 
-# Check file size (should be ~1.5GB)
+# Check file size (should be ~3.1GB for Q5_K_M)
 
-# Try alternative backend
-set RAG_MODEL_PATH=C:\AImodels\phi3.5-mini-instruct-int4-cw-ov
+# If using custom model, set RAG_GGUF_PATH
+set RAG_GGUF_PATH=C:\Models\your-model.gguf
 python main.py
 ```
 

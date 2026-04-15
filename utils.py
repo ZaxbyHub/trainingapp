@@ -1,4 +1,5 @@
 from typing import List, Tuple
+from collections import defaultdict
 
 def rrf_fuse(results_list: List[List[Tuple[int, float]]], k: int = 60) -> List[Tuple[int, float]]:
     """
@@ -27,8 +28,6 @@ def rrf_fuse(results_list: List[List[Tuple[int, float]]], k: int = 60) -> List[T
     Returns:
         List of (doc_id, rrf_score) sorted by score descending
     """
-    from collections import defaultdict
-    
     rrf_scores = defaultdict(float)
     
     for results in results_list:

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "13cb6a91-95a2-4a51-bc84-d27901d9259f",
+  "receipt_type": "rejected",
+  "verdict": "rejected",
+  "reviewer": {
+    "agent": "curator"
+  },
+  "reviewed_at": "2026-04-09T19:55:06.226Z",
+  "scope_fingerprint": {
+    "hash": "549683dd190dfc6d157def60405bd25ddfd8c6819234b3f1f86aca8b5111b27a",
+    "scope_description": "phase-digest",
+    "content_length": 66
+  },
+  "blocking_findings": [
+    {
+      "location": "phase-9",
+      "summary": "Agent 'reviewer' required but not dispatched in phase 9",
+      "severity": "medium"
+    },
+    {
+      "location": "phase-9",
+      "summary": "Agent 'test_engineer' required but not dispatched in phase 9",
+      "severity": "medium"
+    }
+  ],
+  "evidence_references": [],
+  "pass_conditions": [
+    "resolve all compliance warnings before phase completion"
+  ]
+}

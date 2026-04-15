@@ -678,169 +678,15 @@ class TestConfigBoundaryValues:
 class TestLLMBackendFailures:
     """LLM backend failure scenarios."""
 
-    def test_ollama_server_down_connection_refused(self):
-        """Ollama server not running should raise ConnectionError."""
-        from llm_interface import OllamaLLM
 
-        with patch("llm_interface.validate_url", return_value=True):
-            with pytest.raises(ConnectionError, match="Cannot connect to Ollama"):
-                OllamaLLM(base_url="http://localhost:9999")
 
-    def test_ollama_server_timeout(self):
-        """Ollama timeout should raise RuntimeError."""
-        from llm_interface import OllamaLLM, InferenceConfig
-        import urllib.error
 
-        with patch("llm_interface.validate_url", return_value=True):
-            with patch("llm_interface.OllamaLLM._verify_connection"):
-                llm = OllamaLLM(base_url="http://localhost:11434")
 
-                with patch("urllib.request.urlopen") as mock_urlopen:
-                    mock_urlopen.side_effect = TimeoutError()
-                    with pytest.raises(RuntimeError, match="timed out"):
-                        llm.generate("test prompt")
 
-    def test_ollama_http_error(self):
-        """Ollama returning HTTP error should raise RuntimeError."""
-        import urllib.error as urllib_error
-        from llm_interface import OllamaLLM
 
-        with patch("llm_interface.validate_url", return_value=True):
-            with patch("llm_interface.OllamaLLM._verify_connection"):
-                llm = OllamaLLM(base_url="http://localhost:11434")
 
-                with patch("urllib.request.urlopen") as mock_urlopen:
-                    mock_response = MagicMock()
-                    mock_response.read.return_value = b'{"error": "model not found"}'
-                    mock_response.fp = mock_response
-                    mock_response.code = 404
-                    mock_response.reason = "Not Found"
 
-                    # Create an HTTPError
-                    err = urllib_error.HTTPError(
-                        url="http://localhost:11434",
-                        code=404,
-                        msg="Not Found",
-                        hdrs={},
-                        fp=mock_response,
-                    )
-                    mock_urlopen.side_effect = err
 
-                    with pytest.raises(RuntimeError, match="HTTP 404"):
-                        llm.generate("test prompt")
-
-    def test_openai_compatible_no_choices(self):
-        """OpenAI-compatible API returning no choices should raise RuntimeError."""
-        from llm_interface import OpenAICompatibleLLM
-
-        with patch("llm_interface.validate_url", return_value=True):
-            with patch("llm_interface.OpenAICompatibleLLM._verify_connection"):
-                llm = OpenAICompatibleLLM(base_url="http://localhost:8000")
-
-                with patch("urllib.request.urlopen") as mock_urlopen:
-                    mock_response = MagicMock()
-                    mock_response.read.return_value = b'{"choices": []}'
-                    mock_response.headers = MagicMock()
-                    mock_response.headers.get_content_charset.return_value = "utf-8"
-                    mock_urlopen.return_value.__enter__.return_value = mock_response
-
-                    with pytest.raises(RuntimeError, match="no choices"):
-                        llm.generate("test prompt")
-
-    def test_openai_compatible_oversized_response(self):
-        """OpenAI-compatible API response exceeding MAX_RESPONSE_SIZE should be rejected."""
-        from llm_interface import OpenAICompatibleLLM, MAX_RESPONSE_SIZE
-
-        assert MAX_RESPONSE_SIZE > 0  # Verify constant exists
-
-        with patch("llm_interface.validate_url", return_value=True):
-            with patch("llm_interface.OpenAICompatibleLLM._verify_connection"):
-                llm = OpenAICompatibleLLM(base_url="http://localhost:8000")
-
-                with patch("urllib.request.urlopen") as mock_urlopen:
-                    mock_response = MagicMock()
-                    # Response larger than MAX_RESPONSE_SIZE
-                    mock_response.read.return_value = b"x" * (MAX_RESPONSE_SIZE + 1)
-                    mock_urlopen.return_value.__enter__.return_value = mock_response
-
-                    with pytest.raises(RuntimeError, match="exceeds maximum"):
-                        llm.generate("test prompt")
-
-    def test_prompt_exceeds_max_length_rejected(self):
-        """Prompt exceeding MAX_PROMPT_LENGTH should raise ValueError before API call."""
-        from llm_interface import OllamaLLM, MAX_PROMPT_LENGTH
-
-        assert MAX_PROMPT_LENGTH > 0
-
-        with patch("llm_interface.validate_url", return_value=True):
-            with patch("llm_interface.OllamaLLM._verify_connection"):
-                llm = OllamaLLM(base_url="http://localhost:11434")
-
-                # Very long prompt
-                long_prompt = "x" * (MAX_PROMPT_LENGTH + 1)
-
-                with pytest.raises(ValueError, match="exceeds maximum length"):
-                    llm.generate(long_prompt)
-
-    def test_smartllm_all_backends_fail_with_errors(self, tmp_path):
-        """When all backends fail, RuntimeError should aggregate errors."""
-        from llm_interface import SmartLLM
-
-        gguf_path = tmp_path / "model.gguf"
-        gguf_path.write_bytes(b"GGUF" + b"\x00" * 100)
-
-        openvino_path = tmp_path / "openvino"
-        openvino_path.mkdir()
-
-        with patch("llm_interface.GGUFBackend") as mock_gguf:
-            with patch("llm_interface.OpenVINOLLM") as mock_ov:
-                with patch("llm_interface.OpenAICompatibleLLM") as mock_api:
-                    with patch("llm_interface.OllamaLLM") as mock_ollama:
-                        mock_gguf.side_effect = FileNotFoundError("GGUF not found")
-                        mock_ov.side_effect = FileNotFoundError("OpenVINO model not found")
-                        mock_api.side_effect = ConnectionError("API unreachable")
-                        mock_ollama.side_effect = ConnectionError("Ollama not running")
-
-                        with pytest.raises(RuntimeError, match="No LLM backend available"):
-                            SmartLLM(
-                                gguf_path=str(gguf_path),
-                                model_path=str(openvino_path),
-                                api_url="http://localhost:8000",
-                                ollama_model="phi3",
-                            )
-
-    def test_gguf_file_missing_raises_filenotfound(self, tmp_path):
-        """GGUFBackend with non-existent file raises FileNotFoundError."""
-        from llm_interface import GGUFBackend
-
-        nonexistent = str(tmp_path / "missing.gguf")
-        with pytest.raises(FileNotFoundError, match="GGUF model path not found"):
-            GGUFBackend(gguf_path=nonexistent)
-
-    def test_smartllm_fallback_preserves_error_messages(self, tmp_path):
-        """Fallback chain should aggregate error messages."""
-        from llm_interface import SmartLLM
-
-        gguf_path = tmp_path / "model.gguf"
-        gguf_path.write_bytes(b"GGUF" + b"\x00" * 100)
-
-        with patch("llm_interface.GGUFBackend") as mock_gguf:
-            with patch("llm_interface.OpenVINOLLM") as mock_ov:
-                with patch("llm_interface.OpenAICompatibleLLM") as mock_api:
-                    mock_gguf.side_effect = RuntimeError("GGUF init failed")
-                    mock_ov.side_effect = RuntimeError("OpenVINO init failed")
-                    mock_api.side_effect = RuntimeError("API connection refused")
-
-                    with pytest.raises(RuntimeError) as exc_info:
-                        SmartLLM(
-                            gguf_path=str(gguf_path),
-                            model_path="/fake/openvino",
-                            api_url="http://localhost:8000",
-                        )
-
-                    error_msg = str(exc_info.value)
-                    # Should mention that no backend is available
-                    assert "No LLM backend available" in error_msg or "GGUF" in error_msg
 
 
 # =============================================================================
@@ -1275,27 +1121,6 @@ class TestTokenAndLengthLimits:
 
         assert MAX_RESPONSE_SIZE > 0
         assert isinstance(MAX_RESPONSE_SIZE, int)
-
-    def test_prompt_at_exact_max_length(self):
-        """Prompt at exactly MAX_PROMPT_LENGTH should be accepted."""
-        from llm_interface import OllamaLLM, MAX_PROMPT_LENGTH
-
-        with patch("llm_interface.validate_url", return_value=True):
-            with patch("llm_interface.OllamaLLM._verify_connection"):
-                llm = OllamaLLM(base_url="http://localhost:11434")
-
-                exact_prompt = "x" * MAX_PROMPT_LENGTH
-
-                with patch("urllib.request.urlopen") as mock_urlopen:
-                    mock_response = MagicMock()
-                    mock_response.read.return_value = b'{"response": "ok"}'
-                    mock_response.headers = MagicMock()
-                    mock_response.headers.get_content_charset.return_value = "utf-8"
-                    mock_urlopen.return_value.__enter__.return_value = mock_response
-
-                    # Should not raise ValueError
-                    result = llm.generate(exact_prompt)
-                    assert isinstance(result, str)
 
     def test_gguf_magic_bytes_boundary(self, tmp_path):
         """GGUF file with exactly 4 bytes (correct magic) should be accepted."""

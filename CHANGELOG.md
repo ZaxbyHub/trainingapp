@@ -1,5 +1,54 @@
 # Changelog
 
+## [2.0.0] - 2026-04-14
+
+### Changed
+- **Model upgrade**: Replaced phi3-mini-int4 with Gemma 4 E2B (Q5_K_M GGUF, 3.13 GB)
+- **Single backend**: Removed OpenVINO, Ollama, and OpenAI-compatible API backends; GGUF (llama-cpp-python) is now the only backend
+- **Offline hardened**: Eliminated all network access — no HuggingFace downloads, no API calls, no telemetry
+- **Security**: Added non-HTTP scheme rejection, 0.0.0.0 binding rejection, null-byte injection prevention, path traversal protection
+- **UI/UX**: Segoe UI font, 36px button height, accessibility labels, keyboard shortcuts (Ctrl+O, Ctrl+Enter, Escape), progress animation
+- **Error handling**: Structured logging (replaced print()), TimeoutError classification, SettingsProxy AttributeError wrapping
+- **Resilience**: Lazy loading for embedding model, BM25, and SentenceTransformer; try/except wrappers on all I/O
+- **Build system**: Updated PyInstaller spec, removed Ollama env vars from build scripts
+- **Dead code cleanup**: Removed unused validate_numeric(), validate_device(), legacy model fallbacks, deprecated import aliases
+
+### Removed
+- OpenVINOLLM backend and OpenVINO dependencies
+- OllamaLLM backend and Ollama configuration
+- OpenAICompatibleLLM backend and API configuration
+- Dead CLI arguments (--model-path, --ollama-url, --api-url, etc.)
+- Legacy model filename fallbacks (phi3-mini-int4.gguf, phi3.5-mini-instruct-int4-cw-ov)
+
+## [1.2.1] - 2026-04-12
+
+### Changes
+
+#### SettingsDialog Simplification (Task 3.2)
+- **app_gui.py**: Removed backend priority label showing "GGUF → Ollama → OpenAI-Compatible" order
+- **app_gui.py**: Removed all Ollama-related widgets (URL entry, Model entry, Test button)
+- **app_gui.py**: Removed all API-related widgets (URL entry, Model entry, Test button)
+- **app_gui.py**: Removed `_test_ollama()` method
+- **app_gui.py**: Removed `_test_api()` method
+- **app_gui.py**: Updated `_populate_fields()` to remove ollama_url, ollama_model, api_url field insertions
+- **app_gui.py**: Updated `_save()` to remove ollama_url, ollama_model, api_url from saved settings
+- **app_gui.py**: Updated `_load_settings()` to remove ollama_url, ollama_model, api_url from default settings
+- **app_gui.py**: Replaced bundled_models list (with 3 legacy models) with single Gemma 4 model
+
+### Migration Notes
+Settings dialog now only supports:
+- GGUF Model Path (with Browse button)
+- RAG Settings (chunk_size, n_results, max_tokens, temperature)
+- Advanced RAG Settings (hybrid_search, retrieval_window, reranking)
+
+Users who previously used Ollama or OpenAI-compatible API backends must:
+1. Obtain a GGUF model file (.gguf format)
+2. Configure the GGUF Model Path in Settings
+
+For environment variable configuration (advanced users):
+- Ollama: Set `RAG_OLLAMA_URL` and `RAG_OLLAMA_MODEL` in environment
+- API: Set `RAG_API_URL` and `RAG_API_MODEL` in environment
+
 ## [1.2.0] - 2026-04-12
 
 ### Summary

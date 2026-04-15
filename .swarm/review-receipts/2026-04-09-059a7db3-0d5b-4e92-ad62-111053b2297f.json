@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "059a7db3-0d5b-4e92-ad62-111053b2297f",
+  "receipt_type": "approved",
+  "verdict": "approved",
+  "reviewer": {
+    "agent": "curator"
+  },
+  "reviewed_at": "2026-04-09T12:36:55.834Z",
+  "scope_fingerprint": {
+    "hash": "d1f2e2c183026065ba758dc79d71622fd803241ce4a5dad6f1033046ac41bd8d",
+    "scope_description": "phase-digest",
+    "content_length": 68
+  },
+  "checked_aspects": [
+    "phase_compliance",
+    "knowledge_recommendations",
+    "phase_digest"
+  ],
+  "validated_claims": [
+    "phase: 3",
+    "agents_dispatched: 5",
+    "knowledge_recommendations: 1"
+  ]
+}

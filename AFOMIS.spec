@@ -18,6 +18,7 @@ a = Analysis(
     datas=[
         ('bundled_models', 'bundled_models'),  # Bundled embedding model
         ('seed_data', 'seed_data'),            # Seed chunks and manifest
+        ('models', 'models'),                  # GGUF model files
     ],
     hiddenimports=[
         'chromadb',

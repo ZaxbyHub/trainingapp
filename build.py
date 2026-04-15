@@ -157,7 +157,7 @@ def build_executable(include_model: bool = False, model_path: str = None):
     print("=" * 60)
     print(f"\nExecutable: {exe_path.absolute()}")
     print("\nTo run: double-click DocumentQA.exe")
-    print("\nNote: First run will download embedding model (~133MB)")
+    print("\nNote: The embedding model and GGUF model must be placed in the models/ directory before first run.")
 
 
 def create_installer_script():
@@ -204,8 +204,6 @@ pause
     
     api_batch = '''@echo off
 cd /d "%~dp0"
-set RAG_OLLAMA_MODEL=phi3:mini
-set RAG_OLLAMA_URL=http://localhost:11434
 set API_PORT=8080
 echo Starting API server on port %API_PORT%...
 python api_server.py

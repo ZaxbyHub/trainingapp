@@ -10,6 +10,8 @@ from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 ABBREVIATIONS = frozenset({
     'dr', 'mr', 'mrs', 'ms', 'prof', 'jr', 'sr', 'st', 'ave', 'blvd',
     'dept', 'rev', 'vol', 'fig', 'ed', 'eds', 'repr', 'trans', 'pt',
@@ -63,9 +65,7 @@ class DocumentProcessor:
 
             return "\n\n".join(full_text), pages_text
         except ImportError:
-            import logging
-
-            logging.warning(
+            logger.warning(
                 "pdfplumber not installed. Falling back to pypdf for PDF extraction. "
                 "Consider installing pdfplumber for better extraction quality: pip install pdfplumber"
             )
@@ -314,19 +314,19 @@ class DocumentProcessor:
         try:
             text, pages = self.extract_document(filepath)
             if not text.strip():
-                logging.warning(f"Empty content: {filename}")
+                logger.warning("Empty content: %s", filename)
                 return []
 
             chunks = self.chunk_text(text, filename, pages=pages)
-            logging.info(f"Processed: {filename} ({len(chunks)} chunks)")
+            logger.info("Processed: %s (%d chunks)", filename, len(chunks))
             return chunks
         except ValueError as e:
             # Known error (unsupported format, etc.)
-            logging.error(f"Failed to process {filename}: {e}")
+            logger.error("Failed to process %s: %s", filename, e)
             return []
         except Exception as e:
             # Unexpected error - log full exception details
-            logging.exception(f"Unexpected error processing {filename}")
+            logger.exception("Unexpected error processing %s", filename)
             return []
 
     def process_directory(self, directory: str) -> List[DocumentChunk]:
@@ -356,15 +356,15 @@ class DocumentProcessor:
                     if file_size > max_file_size_bytes:
                         size_mb = file_size / (1024 * 1024)
                         skipped_files.append((filepath.name, size_mb))
-                        print(f"⚠️  Skipping {filepath.name}: {size_mb:.1f}MB > {max_file_size_mb}MB limit")
+                        logger.info("Skipping %s: %.1fMB > %.0fMB limit", filepath.name, size_mb, max_file_size_mb)
                         continue
 
                     chunks = self.process_file(str(filepath))
                     all_chunks.extend(chunks)
 
         if skipped_files:
-            print(f"\n⚠️  Skipped {len(skipped_files)} file(s) exceeding {max_file_size_mb}MB limit")
-        print(f"\n📊 Total: {len(all_chunks)} chunks from {directory}")
+            logger.info("Skipped %d file(s) exceeding %.0fMB limit", len(skipped_files), max_file_size_mb)
+        logger.info("Total: %d chunks from %s", len(all_chunks), directory)
         return all_chunks
 
 
@@ -380,6 +380,6 @@ if __name__ == "__main__":
         else:
             chunks = processor.process_file(path)
 
-        print(f"\nExtracted {len(chunks)} chunks")
-        if chunks:
-            print(f"\nFirst chunk preview:\n{chunks[0].text[:200]}...")
+    logger.info("Extracted %d chunks", len(chunks))
+    if chunks:
+        logger.info("First chunk preview:\n%s...", chunks[0].text[:200])

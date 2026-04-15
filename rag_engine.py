@@ -25,11 +25,6 @@ from document_processor import DocumentProcessor
 from vector_store import VectorStore
 from llm_interface import SmartLLM, InferenceConfig
 
-# Import unified factory functions
-from engine_factory import (
-    create_engine_from_env as _factory_create_engine_from_env,
-)
-
 
 def _truncate_at_sentence(text: str, max_chars: int) -> str:
     """Truncate text at the last complete sentence before max_chars."""
@@ -145,23 +140,22 @@ class RAGEngine:
 
     CONFIG_FILE = "rag_config.json"
 
+    @staticmethod
+    def _log_init_banner(message: str):
+        """Log a section banner during initialization."""
+        logger.info("=" * 50)
+        logger.info(message)
+        logger.info("=" * 50)
+
     def __init__(
         self,
         config: Optional[RAGConfig] = None,
-        model_path: Optional[str] = None,
-        ollama_model: Optional[str] = None,
-        ollama_url: Optional[str] = None,
-        api_url: Optional[str] = None,
-        api_model: Optional[str] = None,
-        device: Optional[str] = None,
         gguf_path: Optional[str] = None,
     ):
         self.config = config or RAGConfig()
         self.gguf_path = gguf_path
 
-        logger.info("=" * 50)
-        logger.info("Initializing RAG Engine")
-        logger.info("=" * 50)
+        self._log_init_banner("Initializing RAG Engine")
 
         self.doc_processor = DocumentProcessor(
             chunk_size=self.config.chunk_size, chunk_overlap=self.config.chunk_overlap
@@ -173,41 +167,19 @@ class RAGEngine:
         )
 
         self.llm: Optional[SmartLLM] = None
-        self._init_llm(
-            model_path, ollama_model, ollama_url, api_url, api_model, device, gguf_path
-        )
+        self._init_llm(gguf_path)
 
         # Lazy-init reranker only when reranking is enabled
         self.reranker = None
 
         self._save_config()
-        logger.info("=" * 50)
-        logger.info("RAG Engine Ready")
-        logger.info("=" * 50)
+        self._log_init_banner("RAG Engine Ready")
 
-    def _init_llm(
-        self,
-        model_path: Optional[str],
-        ollama_model: Optional[str],
-        ollama_url: Optional[str],
-        api_url: Optional[str],
-        api_model: Optional[str],
-        device: Optional[str],
-        gguf_path: Optional[str],
-    ):
-        """Initialize LLM with fallback chain."""
+    def _init_llm(self, gguf_path: Optional[str]):
+        """Initialize LLM with GGUF model only."""
         try:
             # Use root SmartLLM which auto-detects GGUF model
-            # Parameters are passed as-is; GGUF takes priority
-            self.llm = SmartLLM(
-                model_path=model_path,
-                ollama_model=ollama_model,
-                ollama_url=ollama_url,
-                api_url=api_url,
-                api_model=api_model,
-                device=device,
-                gguf_path=gguf_path,
-            )
+            self.llm = SmartLLM(gguf_path=gguf_path)
             logger.info("[OK] LLM initialized: %s", self.llm.get_info()["backend"])
         except Exception as e:
             logger.warning("[WARN] LLM not available: %s", e)
@@ -216,9 +188,12 @@ class RAGEngine:
 
     def _save_config(self):
         """Save configuration to database directory."""
-        config_path = Path(self.config.db_path) / self.CONFIG_FILE
-        with open(config_path, "w") as f:
-            json.dump(self.config.to_dict(), f, indent=2)
+        try:
+            config_path = Path(self.config.db_path) / self.CONFIG_FILE
+            with open(config_path, "w") as f:
+                json.dump(self.config.to_dict(), f, indent=2)
+        except Exception as e:
+            logger.error("Failed to save configuration to %s: %s", self.config.db_path, e)
 
     def ingest_directory(self, directory: str, callback=None) -> Dict[str, Any]:
         """
@@ -358,8 +333,19 @@ class RAGEngine:
         n = n_results if n_results is not None else self.config.n_results
         n = max(1, n)
 
+        # Apply query transformation if enabled
+        if self.config.query_transformation_enabled and self.llm:
+            try:
+                from query_transformer import QueryTransformer
+                transformer = QueryTransformer(self.llm)
+                retrieval_query = transformer.transform_step_back(question)
+            except Exception as e:
+                logger.warning("Query transformation failed, using original query: %s", e)
+                retrieval_query = question
+        else:
+            retrieval_query = question
+
         # Follow-up query detection
-        retrieval_query = question
         if conversation_history is not None and conversation_history:
             last_user_msg = next(
                 (
@@ -395,7 +381,7 @@ class RAGEngine:
 
                 if should_combine:
                     retrieval_query = f"{last_user_msg} {question}"
-                    print(f"[INFO] Follow-up detected — retrieval query: '{retrieval_query[:80]}'")
+                    logger.info("Follow-up detected — retrieval query: '%s'", retrieval_query[:80])
 
         # Retrieve context — hybrid (BM25+vector+RRF) if enabled, else vector-only
         context, sources = self.vector_store.get_context(
@@ -409,8 +395,12 @@ class RAGEngine:
         # Apply cross-encoder reranking if enabled
         if self.config.reranking_enabled and context:
             if self.reranker is None:
-                from reranking import CrossEncoderReranker
-                self.reranker = CrossEncoderReranker(self.config.reranker_model)
+                try:
+                    from reranking import CrossEncoderReranker
+                    self.reranker = CrossEncoderReranker(self.config.reranker_model)
+                except Exception as e:
+                    logger.warning("Reranker initialization failed: %s", e)
+                    self.reranker = None
 
             # Split context back into individual chunks for reranking
             chunk_texts = context.split("\n\n---\n\n")
@@ -425,7 +415,7 @@ class RAGEngine:
                 if t.strip()
             ]
 
-            if rerank_chunks:
+            if rerank_chunks and self.reranker is not None:
                 reranked = self.reranker.rerank(question, rerank_chunks, top_k=self.config.n_results)
                 context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
                 sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
@@ -541,29 +531,10 @@ class RAGEngine:
         return self.vector_store.delete_document(doc_id)
 
 
-def create_engine_from_env() -> RAGEngine:
-    """Create engine from environment variables.
-
-    DEPRECATED: This function is now a wrapper around engine_factory.create_engine_from_env()
-    for backward compatibility. New code should import directly from engine_factory.
-
-    Returns:
-        Configured RAGEngine instance
-    """
-    import warnings
-
-    warnings.warn(
-        "create_engine_from_env() is deprecated, use engine_factory directly",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return _factory_create_engine_from_env()
-
-
 if __name__ == "__main__":
     import sys
 
-    engine = RAGEngine(ollama_model="phi3:mini", ollama_url="http://localhost:11434")
+    engine = RAGEngine()
 
     if len(sys.argv) > 1:
         path = sys.argv[1]

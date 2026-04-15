@@ -35,6 +35,7 @@ except ImportError:
 
 from document_processor import DocumentChunk
 from utils import rrf_fuse
+from query_transformer import STOP_WORDS
 
 import logging
 
@@ -52,31 +53,107 @@ class EmbeddingModel:
                 "sentence-transformers not installed. Run: pip install sentence-transformers"
             )
 
+        self.model_name = model_name or self.DEFAULT_MODEL
+        self._model_args = {"local_files_only": True}
+        self.model = None
+
+        local_model_path = Path("./models/bge-small-en-v1.5/")
+
         if getattr(sys, "frozen", False):
-            # Running in PyInstaller bundle - use bundled model
+            # Running in PyInstaller bundle
             bundle_path = Path(sys._MEIPASS) / "bundled_models" / "bge-small-en-v1.5"
-            if not bundle_path.exists():
-                raise FileNotFoundError(
-                    f"Bundled embedding model not found at {bundle_path}"
-                )
-            self.model_name = str(bundle_path)
-            print(f"Loading embedding model from bundle: {self.model_name}")
-            self.model = SentenceTransformer(self.model_name, local_files_only=True)
-            print("[OK] Embedding model loaded")
+            if bundle_path.exists() and any(bundle_path.iterdir()):
+                # Bundle has model files - use them
+                self.model_name = str(bundle_path)
+                logger.info("Loading embedding model from bundle: %s", self.model_name)
+            else:
+                # No bundled model - try local fallback
+                logger.warning("Bundled embedding model not found, checking local fallback...")
+                if local_model_path.exists() and any(local_model_path.iterdir()):
+                    # Use local fallback with local_files_only to prevent download
+                    self.model_name = str(local_model_path)
+                    logger.info("Loading embedding model from local fallback: %s", self.model_name)
+                else:
+                    # Model not found anywhere - raise clear error
+                    expected_path = local_model_path.resolve()
+                    raise FileNotFoundError(
+                        f"Embedding model not found.\n"
+                        f"  Expected path: {expected_path}\n"
+                        f"  Install instructions: Download BAAI/bge-small-en-v1.5 to {expected_path}"
+                    )
         else:
-            # Running in development - use model from HuggingFace cache
-            self.model_name = model_name or self.DEFAULT_MODEL
-            print(f"Loading embedding model: {self.model_name}")
-            self.model = SentenceTransformer(self.model_name)
-            print("[OK] Embedding model loaded")
+            # Running in development mode
+            if local_model_path.exists() and any(local_model_path.iterdir()):
+                # Use local model with local_files_only to prevent download
+                self.model_name = str(local_model_path)
+                logger.info("Loading embedding model from local path: %s", self.model_name)
+            else:
+                # Try HuggingFace cache with local_files_only=True to prevent download
+                logger.info("Loading embedding model: %s (cache-only)", self.model_name)
+
+    def _ensure_model_loaded(self):
+        """Lazy-load the SentenceTransformer model if not already loaded."""
+        if self.model is None:
+            local_model_path = Path("./models/bge-small-en-v1.5/")
+
+            if getattr(sys, "frozen", False):
+                # Running in PyInstaller bundle
+                bundle_path = Path(sys._MEIPASS) / "bundled_models" / "bge-small-en-v1.5"
+                if bundle_path.exists() and any(bundle_path.iterdir()):
+                    # Bundle has model files - use them
+                    self.model_name = str(bundle_path)
+                    logger.info("Loading embedding model from bundle: %s", self.model_name)
+                    self.model = SentenceTransformer(self.model_name, **self._model_args)
+                    logger.info("[OK] Embedding model loaded")
+                else:
+                    # No bundled model - try local fallback
+                    logger.warning("Bundled embedding model not found, checking local fallback...")
+                    if local_model_path.exists() and any(local_model_path.iterdir()):
+                        # Use local fallback with local_files_only to prevent download
+                        self.model_name = str(local_model_path)
+                        logger.info("Loading embedding model from local fallback: %s", self.model_name)
+                        self.model = SentenceTransformer(self.model_name, **self._model_args)
+                        logger.info("[OK] Embedding model loaded")
+                    else:
+                        # Model not found anywhere - raise clear error
+                        expected_path = local_model_path.resolve()
+                        raise FileNotFoundError(
+                            f"Embedding model not found.\n"
+                            f"  Expected path: {expected_path}\n"
+                            f"  Install instructions: Download BAAI/bge-small-en-v1.5 to {expected_path}"
+                        )
+            else:
+                # Running in development mode
+                if local_model_path.exists() and any(local_model_path.iterdir()):
+                    # Use local model with local_files_only to prevent download
+                    logger.info("Loading embedding model from local path: %s", self.model_name)
+                    self.model = SentenceTransformer(self.model_name, **self._model_args)
+                    logger.info("[OK] Embedding model loaded")
+                else:
+                    # Try HuggingFace cache with local_files_only=True to prevent download
+                    logger.info("Loading embedding model: %s (cache-only)", self.model_name)
+                    try:
+                        self.model = SentenceTransformer(self.model_name, **self._model_args)
+                        logger.info("[OK] Embedding model loaded")
+                    except OSError as e:
+                        # Model not in cache - raise helpful error
+                        expected_path = local_model_path.resolve()
+                        raise FileNotFoundError(
+                            f"Embedding model not found in HuggingFace cache.\n"
+                            f"  Model name: {self.model_name}\n"
+                            f"  Expected local path: {expected_path}\n"
+                            f"  Install instructions: Download BAAI/bge-small-en-v1.5 to {expected_path}"
+                        ) from e
 
     def encode(self, texts: List[str]) -> List[List[float]]:
         """Encode texts to embeddings."""
+        self._ensure_model_loaded()
         embeddings = self.model.encode(texts, show_progress_bar=len(texts) > 10)
         return embeddings.tolist()
 
     def encode_single(self, text: str) -> List[float]:
         """Encode a single text to embedding."""
+        self._ensure_model_loaded()
         embedding = self.model.encode([text])
         return embedding[0].tolist()
 
@@ -91,7 +168,6 @@ class BM25Index:
 
     def _tokenize(self, text: str) -> List[str]:
         """Tokenize text for BM25: lowercase, remove stop words, filter short tokens."""
-        from query_transformer import STOP_WORDS
         tokens = text.lower().split()
         return [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
 
@@ -156,7 +232,8 @@ class BM25Index:
             results = [(i, score) for i, score in enumerate(scores) if score > 0]
             results.sort(key=lambda x: x[1], reverse=True)
             return results[:top_k]
-        except Exception:
+        except Exception as e:
+            logger.warning("BM25 search failed for query '%s': %s", query, e)
             return []
 
     def save(self, path: str):
@@ -223,41 +300,49 @@ class VectorStore:
 
         self._load_metadata()
         self._lock = threading.RLock()
+        self._bm25_needs_rebuild = self.metadata.get("chunk_count", 0) > 0
 
-        # Rebuild BM25 index from persisted ChromaDB data if documents exist
-        if self.metadata.get("chunk_count", 0) > 0:
-            try:
-                all_data = self.collection.get(include=["documents", "metadatas"])
-                docs = all_data.get("documents") or []
-                metas = all_data.get("metadatas") or []
-                if docs and metas:
-                    all_chunks = []
-                    for doc, meta in zip(docs, metas):
-                        if (
-                            not meta
-                            or "source" not in meta
-                            or "chunk_index" not in meta
-                        ):
-                            continue
-                        chunk = DocumentChunk(
-                            text=doc,
-                            source=meta["source"],
-                            chunk_index=meta["chunk_index"],
-                            page=meta.get("page"),
-                        )
-                        all_chunks.append(chunk)
-                    if all_chunks:
-                        self.bm25_index = BM25Index()
-                        self.bm25_index.build_index(all_chunks)
-                        print(
-                            f"[OK] BM25 index rebuilt on startup: {len(all_chunks)} chunks"
-                        )
-            except Exception as e:
-                logger.warning("BM25 index rebuild failed on startup", exc_info=True)
+        logger.info("[OK] Vector store initialized at %s", self.db_path)
+        logger.info("  Documents: %d", self.metadata.get("document_count", 0))
+        logger.info("  Chunks: %d", self.collection.count())
 
-        print(f"[OK] Vector store initialized at {self.db_path}")
-        print(f"  Documents: {self.metadata.get('document_count', 0)}")
-        print(f"  Chunks: {self.collection.count()}")
+    def _rebuild_bm25_if_needed(self):
+        """Rebuild BM25 index lazily on first search if needed."""
+        if not self._bm25_needs_rebuild:
+            return
+
+        try:
+            all_data = self.collection.get(include=["documents", "metadatas"])
+            docs = all_data.get("documents") or []
+            metas = all_data.get("metadatas") or []
+            if docs and metas:
+                all_chunks = []
+                for doc, meta in zip(docs, metas):
+                    if (
+                        not meta
+                        or "source" not in meta
+                        or "chunk_index" not in meta
+                    ):
+                        continue
+                    chunk = DocumentChunk(
+                        text=doc,
+                        source=meta["source"],
+                        chunk_index=meta["chunk_index"],
+                        page=meta.get("page"),
+                    )
+                    all_chunks.append(chunk)
+                if all_chunks:
+                    self.bm25_index = BM25Index()
+                    self.bm25_index.build_index(all_chunks)
+                    logger.info(
+                        "[OK] BM25 index rebuilt on first search: %d chunks", len(all_chunks)
+                    )
+        except Exception as e:
+            logger.warning("BM25 index rebuild failed on first search: %s", e)
+            self.bm25_index = BM25Index()
+
+        # Always reset flag, even on failure - don't keep retrying
+        self._bm25_needs_rebuild = False
 
     def _load_metadata(self):
         """Load store metadata from disk."""
@@ -322,9 +407,7 @@ class VectorStore:
                     added += len(new_indices)
                     added_chunks.extend([batch[j] for j in new_indices])
 
-                print(
-                    f"  Processed {min(i + batch_size, len(chunks))}/{len(chunks)} chunks"
-                )
+                logger.info("  Processed %d/%d chunks", min(i + batch_size, len(chunks)), len(chunks))
 
             for chunk in chunks:
                 if chunk.source not in self.metadata["documents"]:
@@ -653,6 +736,9 @@ class VectorStore:
                 # Get vector search results
                 vector_results = self.search(query, n_results=n_results * 2)
 
+                # Ensure BM25 index is built before searching
+                self._rebuild_bm25_if_needed()
+
                 # Get BM25 results
                 bm25_results = self.bm25_index.search(query, top_k=n_results * 2)
 
@@ -760,7 +846,7 @@ class VectorStore:
             )
             self.metadata = {"document_count": 0, "chunk_count": 0, "documents": {}}
             self._save_metadata()
-            print("[OK] Vector store cleared")
+            logger.info("[OK] Vector store cleared")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get statistics about the vector store."""

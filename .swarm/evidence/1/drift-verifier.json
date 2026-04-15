@@ -3,10 +3,8 @@
     {
       "type": "drift-verification",
       "verdict": "approved",
-      "summary": "Drift check passed: all requirements aligned",
-      "timestamp": "2026-03-28T13:19:18.327Z",
-      "agent": "curator-drift",
-      "session_id": "curator"
+      "summary": "Phase 1 drift verification: All 8 tasks aligned with spec. No drift detected.",
+      "timestamp": "2026-04-14T12:06:22.955Z"
     }
   ]
 }

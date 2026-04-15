@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
+from engine_factory import create_engine_from_settings
+
 try:
     import customtkinter as ctk
     from customtkinter import CTk, CTkFrame, CTkLabel, CTkButton, CTkEntry, CTkTextbox
@@ -40,21 +42,38 @@ from config import MIN_CHUNK_SIZE, MAX_CHUNK_SIZE, DEFAULT_CHUNK_SIZE, MIN_MAX_T
 
 logger = logging.getLogger(__name__)
 
+# FR-710: Segoe UI font family for consistent typography
+FONT_FAMILY = "Segoe UI"
+
+# FR-708: Minimum button height for WCAG 2.5.5 compliance
+DEFAULT_BUTTON_HEIGHT = 36  # 36px visual height meets 44px touch target with default CTkButton padding
+
+
+def _make_button(parent, text, command, **kwargs):
+    """Create a CTkButton with minimum 36px height for WCAG 2.5.5 compliance.
+    
+    CTkButton default height is ~32px. Setting height=36 ensures the visual
+    button area meets WCAG 2.5.5 target size guidelines when combined with
+    the default widget padding.
+    """
+    kwargs.setdefault("height", DEFAULT_BUTTON_HEIGHT)
+    return CTkButton(parent, text=text, command=command, **kwargs)
+
 
 def _classify_error(err: Exception, operation: str) -> str:
     """Return a user-friendly message for engine errors, classified by type."""
     msg = str(err)
     if operation == "ingest":
         if isinstance(err, (ConnectionError, OSError)) and "connect" in msg.lower():
-            return "Could not connect. Make sure Ollama is running and the URL is correct in Settings."
+            return "Could not load the model. Make sure the GGUF model path in Settings is correct and the file exists."
         if isinstance(err, FileNotFoundError):
             return f"File not found: {err}. Check the GGUF model path in Settings."
         if "token" in msg.lower() and ("limit" in msg.lower() or "exceed" in msg.lower()):
             return "Token limit exceeded. Try reducing Chunk Size or Results to Retrieve in Settings."
         return f"Ingestion failed. Check the document directory and try again.\n\nError: {err}"
     else:  # query
-        if isinstance(err, ConnectionError):
-            return "Could not connect to the LLM. Make sure Ollama or your API backend is running."
+        if isinstance(err, (ConnectionError, TimeoutError)):
+            return "Could not load the LLM. Make sure the GGUF model file exists and the path in Settings is correct."
         if "timeout" in msg.lower():
             return "Request timed out. Try reducing Max Tokens in Settings."
         if "token" in msg.lower() and ("limit" in msg.lower() or "exceed" in msg.lower()):
@@ -86,6 +105,7 @@ class SettingsDialog(CTkToplevel):
 
         self._create_widgets()
         self._populate_fields()
+        self.model_path_entry.focus_set()
 
     def _create_widgets(self):
         # Main frame
@@ -93,17 +113,9 @@ class SettingsDialog(CTkToplevel):
         main_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
         # LLM Settings
-        CTkLabel(main_frame, text="LLM Settings", font=("", 16, "bold")).pack(
+        CTkLabel(main_frame, text="LLM Settings", font=(FONT_FAMILY, 16, "bold")).pack(
             pady=(0, 10)
         )
-
-        # Backend priority hint
-        CTkLabel(
-            main_frame,
-            text="Only one backend needed. Priority if multiple set: GGUF → Ollama → OpenAI-Compatible",
-            font=("", 10),
-            text_color="gray",
-        ).pack(anchor="w", pady=(0, 10))
 
         # Model path
         CTkLabel(main_frame, text="GGUF Model Path:").pack(anchor="w")
@@ -111,34 +123,12 @@ class SettingsDialog(CTkToplevel):
         model_frame.pack(fill="x", pady=(0, 10))
         self.model_path_entry = CTkEntry(model_frame, width=350)
         self.model_path_entry.pack(side="left", padx=(0, 5))
-        CTkButton(
-            model_frame, text="Browse", width=70, command=self._browse_model
+        _make_button(
+            model_frame, text="Browse", command=self._browse_model, width=70
         ).pack(side="left")
 
-        # Ollama settings
-        CTkLabel(main_frame, text="Ollama URL:").pack(anchor="w")
-        ollama_frame = CTkFrame(main_frame)
-        ollama_frame.pack(fill="x", pady=(0, 10))
-        self.ollama_url_entry = CTkEntry(ollama_frame, width=350)
-        self.ollama_url_entry.pack(side="left", padx=(0, 5))
-        CTkButton(ollama_frame, text="Test", width=70,
-                  command=self._test_ollama).pack(side="left")
-
-        CTkLabel(main_frame, text="Ollama Model:").pack(anchor="w")
-        self.ollama_model_entry = CTkEntry(main_frame, width=430)
-        self.ollama_model_entry.pack(fill="x", pady=(0, 10))
-
-        # API settings
-        CTkLabel(main_frame, text="API URL (OpenAI-compatible):").pack(anchor="w")
-        api_frame = CTkFrame(main_frame)
-        api_frame.pack(fill="x", pady=(0, 10))
-        self.api_url_entry = CTkEntry(api_frame, width=350)
-        self.api_url_entry.pack(side="left", padx=(0, 5))
-        CTkButton(api_frame, text="Test", width=70,
-                  command=self._test_api).pack(side="left")
-
         # RAG Settings
-        CTkLabel(main_frame, text="RAG Settings", font=("", 16, "bold")).pack(
+        CTkLabel(main_frame, text="RAG Settings", font=(FONT_FAMILY, 16, "bold")).pack(
             pady=(20, 10)
         )
 
@@ -170,7 +160,7 @@ class SettingsDialog(CTkToplevel):
         self.temperature_entry.grid(row=3, column=1, padx=10, pady=5)
 
         # Advanced RAG Settings
-        CTkLabel(main_frame, text="Advanced RAG Settings", font=("", 16, "bold")).pack(
+        CTkLabel(main_frame, text="Advanced RAG Settings", font=(FONT_FAMILY, 16, "bold")).pack(
             pady=(20, 10)
         )
 
@@ -220,10 +210,12 @@ class SettingsDialog(CTkToplevel):
         button_frame = CTkFrame(main_frame)
         button_frame.pack(fill="x", pady=(20, 0))
 
-        CTkButton(button_frame, text="Cancel", command=self.destroy).pack(
+        _make_button(button_frame, "Cancel", self.destroy,
+                   fg_color="#444444", hover_color="#555555", text_color="white", border_width=1).pack(
             side="right", padx=5
         )
-        CTkButton(button_frame, text="Save", command=self._save).pack(
+        _make_button(button_frame, "Save", self._save,
+                   fg_color="#1a73e8", hover_color="#1557b0", text_color="white").pack(
             side="right", padx=5
         )
 
@@ -235,56 +227,9 @@ class SettingsDialog(CTkToplevel):
             self.model_path_entry.delete(0, "end")
             self.model_path_entry.insert(0, path)
 
-    def _test_ollama(self):
-        url = self.ollama_url_entry.get().strip()
-        if not url:
-            messagebox.showerror("Test Failed", "Ollama URL is empty")
-            return
-        try:
-            from llm_interface import OllamaLLM
-            llm = OllamaLLM(
-                base_url=url,
-                model_name=self.ollama_model_entry.get().strip() or "phi3:mini",
-            )
-            info = llm.get_info()
-            messagebox.showinfo(
-                "Success",
-                f"Ollama connected:\nBackend: {info.get('backend')}\n"
-                f"Model: {info.get('model')}\nURL: {info.get('base_url')}",
-            )
-        except Exception as e:
-            messagebox.showerror("Test Failed", f"Could not connect to Ollama:\n{e}")
-
-    def _test_api(self):
-        url = self.api_url_entry.get().strip()
-        if not url:
-            messagebox.showerror("Test Failed", "API URL is empty")
-            return
-        try:
-            from llm_interface import OpenAICompatibleLLM
-            llm = OpenAICompatibleLLM(
-                base_url=url,
-                model_name="default",
-            )
-            info = llm.get_info()
-            messagebox.showinfo(
-                "Success",
-                f"API connected:\nBackend: {info.get('backend')}\n"
-                f"URL: {info.get('base_url')}",
-            )
-        except Exception as e:
-            messagebox.showerror("Test Failed", f"Could not connect to API:\n{e}")
-
     def _populate_fields(self):
         gguf = self.settings.get("gguf_path") or self.settings.get("model_path", "")
         self.model_path_entry.insert(0, gguf)
-        self.ollama_url_entry.insert(
-            0, self.settings.get("ollama_url", "http://localhost:11434")
-        )
-        self.ollama_model_entry.insert(
-            0, self.settings.get("ollama_model", "phi3:mini")
-        )
-        self.api_url_entry.insert(0, self.settings.get("api_url", ""))
         self.chunk_size_entry.insert(0, str(self.settings.get("chunk_size", DEFAULT_CHUNK_SIZE)))
         self.n_results_entry.insert(0, str(self.settings.get("n_results", 3)))
         self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", DEFAULT_MAX_TOKENS)))
@@ -344,9 +289,6 @@ class SettingsDialog(CTkToplevel):
 
         self.result = {
             "gguf_path": self.model_path_entry.get(),
-            "ollama_url": self.ollama_url_entry.get(),
-            "ollama_model": self.ollama_model_entry.get(),
-            "api_url": self.api_url_entry.get(),
             "chunk_size": chunk_size,
             "n_results": n_results,
             "max_tokens": max_tokens,
@@ -365,7 +307,7 @@ class DocumentQAApp(CTk):
     """Main application window."""
 
     APP_NAME = "Document Q&A Assistant"
-    VERSION = "1.2.0"
+    VERSION = "2.0.0"
     SETTINGS_FILE = "app_settings.json"
 
     def __init__(self):
@@ -378,14 +320,17 @@ class DocumentQAApp(CTk):
         ctk.set_appearance_mode("system")
         ctk.set_default_color_theme("blue")
 
-        self.settings = self._load_settings()
+        # Defer settings + widget init to allow first render before blocking I/O
         self.engine = None
         self.conversation_history = []
         self.message_queue = queue.Queue()
+        self.after(50, self._load_settings_and_init)
 
+    def _load_settings_and_init(self):
+        """Load settings and initialize widgets (deferred to allow first render)."""
+        self.settings = self._load_settings()
         self._create_widgets()
         self._start_message_processor()
-
         self.after(100, self._initialize_engine)
 
     def _get_settings_path(self) -> str:
@@ -400,21 +345,16 @@ class DocumentQAApp(CTk):
         bundled_model = ""
         if not os.path.exists(settings_path):
             bundled_models = [
-                Path("models") / "phi3-mini-int4.gguf",
-                Path("models") / "phi3.5-mini-instruct-int4-cw-ov",
-                Path("test_model.gguf"),
+                Path("models") / "gemma-4-E2B-it-Q5_K-M.gguf",
             ]
             for model_file in bundled_models:
                 if model_file.is_file():
                     bundled_model = str(model_file)
-                    print(f"[INFO] Using bundled model: {model_file}")
+                    logger.info("Using bundled model: %s", model_file)
                     break
 
         default_settings = {
             "gguf_path": bundled_model,
-            "ollama_url": "http://localhost:11434",
-            "ollama_model": "phi3:mini",
-            "api_url": "",
             "chunk_size": 512,
             "n_results": 3,
             "max_tokens": DEFAULT_MAX_TOKENS,
@@ -450,32 +390,32 @@ class DocumentQAApp(CTk):
         top_bar = CTkFrame(self)
         top_bar.pack(fill="x", padx=10, pady=5)
 
-        CTkLabel(top_bar, text=self.APP_NAME, font=("", 20, "bold")).pack(side="left")
+        CTkLabel(top_bar, text=self.APP_NAME, font=(FONT_FAMILY, 20, "bold")).pack(side="left")
 
-        CTkButton(
-            top_bar, text="⚙ Settings", width=100, command=self._open_settings
-        ).pack(side="right", padx=5)
-        CTkButton(
-            top_bar, text="📁 Ingest", width=100, command=self._ingest_documents
-        ).pack(side="right", padx=5)
+        _make_button(top_bar, "⚙ Settings", self._open_settings, width=100).pack(
+            side="right", padx=5
+        )
+        _make_button(top_bar, "📁 Ingest", self._ingest_documents, width=100).pack(
+            side="right", padx=5
+        )
 
         # Status bar
         self.status_frame = CTkFrame(self)
         self.status_frame.pack(fill="x", padx=10, pady=5)
 
         self.status_label = CTkLabel(
-            self.status_frame, text="Initializing...", font=("", 12)
+            self.status_frame, text="Initializing...", font=(FONT_FAMILY, 12)
         )
         self.status_label.pack(side="left")
 
         # Create a middle frame to hold model label to prevent overlapping
         middle_frame = CTkFrame(self.status_frame)
         middle_frame.pack(side="left", expand=True, fill="x")
-        self.model_label = CTkLabel(middle_frame, text="Model: None", font=("", 12))
+        self.model_label = CTkLabel(middle_frame, text="Model: None", font=(FONT_FAMILY, 12))
         self.model_label.pack(side="left", padx=20)
 
         self.doc_count_label = CTkLabel(
-            self.status_frame, text="Documents: 0", font=("", 12)
+            self.status_frame, text="Documents: 0", font=(FONT_FAMILY, 12)
         )
         self.doc_count_label.pack(side="right")
 
@@ -483,6 +423,13 @@ class DocumentQAApp(CTk):
         self.progress = CTkProgressBar(self)
         self.progress.pack(fill="x", padx=10, pady=5)
         self.progress.set(0)
+
+        # Progress label - FR-705
+        self.progress_label = CTkLabel(self, text="", font=(FONT_FAMILY, 11), text_color="gray")
+        self.progress_label.pack(fill="x", padx=10, pady=(0, 5))
+
+        self._thinking_animation_id = None
+        self._is_operation_active = False
 
         # Chat area
         self.chat_frame = CTkScrollableFrame(self)
@@ -505,17 +452,29 @@ class DocumentQAApp(CTk):
             input_frame, placeholder_text="Ask a question about your documents..."
         )
         self.question_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        self.question_entry.bind("<Return>", lambda e: self._ask_question())
 
-        self.ask_button = CTkButton(
-            input_frame, text="Ask", width=80, command=self._ask_question
+        # FR-701: Bind Ctrl+Enter on main window for question submission
+        self.bind("<Control-Return>", lambda e: self._ask_question())
+        # FR-702: Bind Ctrl+L to clear chat
+        self.bind("<Control-l>", lambda e: self._confirm_clear_chat())
+        # FR-703: Bind Ctrl+, to open settings
+        self.bind("<Control-comma>", lambda e: self._open_settings())
+
+        # FR-707: Bind WM_DELETE_WINDOW for close confirmation during active operations
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self.ask_button = _make_button(
+            input_frame, text="Ask", command=self._ask_question,
+            width=80, fg_color="#1a73e8", hover_color="#1557b0", text_color="white"
         )
         self.ask_button.pack(side="right")
 
-        # Clear button
-        CTkButton(input_frame, text="Clear", width=60, command=self._clear_chat).pack(
-            side="right", padx=5
+        # Clear button - FR-704b: store reference and add styling
+        self.clear_button = _make_button(
+            input_frame, text="Clear", command=self._confirm_clear_chat,
+            width=60, fg_color="#444444", hover_color="#555555", text_color="white", border_width=1
         )
+        self.clear_button.pack(side="right", padx=5)
 
     def _add_message(self, role: str, content: str, sources: list = None):
         """Add a message to the chat area."""
@@ -546,16 +505,21 @@ class DocumentQAApp(CTk):
         if sources:
             sources_text = "Sources: " + ", ".join(sources)
             sources_label = CTkLabel(
-                msg_frame, text=sources_text, font=("", 10), text_color="gray"
+                msg_frame, text=sources_text, font=(FONT_FAMILY, 10), text_color="gray"
             )
             sources_label.pack(fill="x", padx=10, pady=(0, 5))
 
         self.chat_frame._parent_canvas.yview_moveto(1.0)
 
-    def _clear_chat(self):
-        """Clear the chat history."""
+    def _do_clear_chat(self):
+        """Clear the chat history - actual implementation."""
         for widget in self.chat_frame.winfo_children():
             widget.destroy()
+
+    def _confirm_clear_chat(self):
+        """Clear the chat history with user confirmation - FR-704a."""
+        if messagebox.askyesno("Clear Chat", "Are you sure you want to clear the chat history?"):
+            self._do_clear_chat()
 
     def _start_message_processor(self):
         """Start background message processor."""
@@ -570,6 +534,12 @@ class DocumentQAApp(CTk):
                     elif msg[0] == "progress":
                         if self.winfo_exists() and hasattr(self, "progress"):
                             self.progress.set(msg[1] / 100)
+                    elif msg[0] == "progress_label":
+                        if self.winfo_exists() and hasattr(self, "progress_label"):
+                            self.progress_label.configure(text=msg[1])
+                    elif msg[0] == "progress_clear":
+                        if self.winfo_exists() and hasattr(self, "progress_label"):
+                            self.progress_label.configure(text="")
                     elif msg[0] == "message":
                         if self.winfo_exists():
                             self._add_message(*msg[1:])
@@ -578,6 +548,7 @@ class DocumentQAApp(CTk):
                             self.doc_count_label.configure(text=f"Documents: {msg[1]}")
                     elif msg[0] == "enable_input":
                         if self.winfo_exists():
+                            self._stop_thinking_animation()
                             if hasattr(self, "ask_button"):
                                 self.ask_button.configure(state="normal")
                             if hasattr(self, "question_entry"):
@@ -593,28 +564,14 @@ class DocumentQAApp(CTk):
         """Initialize the RAG engine in a background thread."""
 
         def init():
+            self._is_operation_active = True
             try:
                 self.message_queue.put(("status", "Initializing RAG engine..."))
                 self.message_queue.put(("progress", 20))
-
-                from rag_engine import RAGEngine, RAGConfig
-
-                config = RAGConfig(
-                    db_path=self.settings["db_path"],
-                    chunk_size=self.settings["chunk_size"],
-                    n_results=self.settings["n_results"],
-                    max_tokens=self.settings["max_tokens"],
-                    temperature=self.settings["temperature"],
-                )
+                self.message_queue.put(("progress_label", "20% — Initializing RAG engine..."))
 
                 try:
-                    self.engine = RAGEngine(
-                        config=config,
-                        gguf_path=self.settings.get("gguf_path") or None,
-                        ollama_model=self.settings.get("ollama_model"),
-                        ollama_url=self.settings.get("ollama_url"),
-                        api_url=self.settings.get("api_url") or None,
-                    )
+                    self.engine = create_engine_from_settings(self.settings)
                 except Exception as engine_error:
                     logger.error("Failed to initialize RAG engine: %s", engine_error)
                     self.message_queue.put(("status", "Engine initialization failed"))
@@ -622,11 +579,10 @@ class DocumentQAApp(CTk):
                         "message", "system",
                         f"Failed to initialize RAG engine: {engine_error}\n\n"
                         "Please check:\n"
-                        "1. GGUF model path is correct in Settings\n"
-                        "2. Ollama is running (if using Ollama backend)\n"
-                        "3. API URL is accessible (if using API backend)\n\n"
-                        "Go to Settings to configure the LLM backend."
+                        "1. GGUF model path is correct in Settings\n\n"
+                        "Go to Settings to configure."
                     ))
+                    self._is_operation_active = False
                     return
 
                 stats = self.engine.get_stats()
@@ -634,6 +590,7 @@ class DocumentQAApp(CTk):
 
                 self.message_queue.put(("doc_count", doc_count))
                 self.message_queue.put(("progress", 100))
+                self.message_queue.put(("progress_label", "80% — Engine ready, loading stats..."))
 
                 backend = "No LLM"
                 model_name = ""
@@ -646,7 +603,12 @@ class DocumentQAApp(CTk):
                     self.message_queue.put(("status", f"Ready ({backend} / {model_name})"))
                 else:
                     self.message_queue.put(("status", f"Ready ({backend})"))
+                self.message_queue.put(("progress_label", "100% — Ready"))
                 self.message_queue.put(("enable_input", True))
+                self._is_operation_active = False
+
+                # Clear progress label after 3 seconds - FR-705
+                self.after(3000, lambda: self.message_queue.put(("progress_clear",)))
 
                 # Update model label with GGUF file info
                 gguf_path = self.settings.get("gguf_path", "")
@@ -667,6 +629,7 @@ class DocumentQAApp(CTk):
                     self.model_label.configure(text="Model: None")
 
             except Exception as e:
+                self._is_operation_active = False
                 self.message_queue.put(("status", f"Error: {e}"))
                 self.message_queue.put(
                     (
@@ -677,6 +640,38 @@ class DocumentQAApp(CTk):
                 )
 
         threading.Thread(target=init, daemon=True).start()
+
+    def _start_thinking_animation(self):
+        """Start animated ellipsis for thinking state — FR-706."""
+        self._thinking_frames = ["Thinking.", "Thinking..", "Thinking..."]
+        self._thinking_frame_idx = 0
+        self._animate_thinking()
+
+    def _animate_thinking(self):
+        """Cycle through thinking animation frames."""
+        if not self.winfo_exists():
+            return
+        frame = self._thinking_frames[self._thinking_frame_idx % len(self._thinking_frames)]
+        self.status_label.configure(text=frame)
+        self._thinking_frame_idx += 1
+        self._thinking_animation_id = self.after(500, self._animate_thinking)
+
+    def _stop_thinking_animation(self):
+        """Stop the thinking animation — FR-706."""
+        if self._thinking_animation_id is not None:
+            self.after_cancel(self._thinking_animation_id)
+            self._thinking_animation_id = None
+
+    def _on_close(self):
+        """Handle window close — FR-707: confirm before closing during active operations."""
+        if self._is_operation_active:
+            if not messagebox.askyesno(
+                "Confirm Close",
+                "An operation is still running. Are you sure you want to close?"
+            ):
+                return
+        self._stop_thinking_animation()
+        self.destroy()
 
     def _open_settings(self):
         """Open settings dialog."""
@@ -723,6 +718,7 @@ class DocumentQAApp(CTk):
 
         self.ask_button.configure(state="disabled")
         self.question_entry.configure(state="disabled")
+        self._is_operation_active = True
 
         def ingest():
             try:
@@ -730,6 +726,7 @@ class DocumentQAApp(CTk):
                 def callback(msg, progress):
                     self.message_queue.put(("status", msg))
                     self.message_queue.put(("progress", progress))
+                    self.message_queue.put(("progress_label", f"{progress}% — {msg}"))
 
                 stats = self.engine.ingest_directory(directory, callback)
 
@@ -746,6 +743,8 @@ class DocumentQAApp(CTk):
                     self.message_queue.put(
                         ("doc_count", self.engine.get_stats()["document_count"])
                     )
+                    self.message_queue.put(("progress_clear",))
+                    self._is_operation_active = False
                 else:
                     self.message_queue.put(
                         (
@@ -755,13 +754,16 @@ class DocumentQAApp(CTk):
                         )
                     )
 
-                self.message_queue.put(("status", "Ready"))
-                self.message_queue.put(("enable_input", True))
+                    self.message_queue.put(("status", "Ready"))
+                    self.message_queue.put(("enable_input", True))
+                    self.message_queue.put(("progress_clear",))
+                    self._is_operation_active = False
 
             except Exception as e:
                 self.message_queue.put(("status", f"Error: {e}"))
                 self.message_queue.put(("message", "system", _classify_error(e, "ingest")))
                 self.message_queue.put(("enable_input", True))
+                self._is_operation_active = False
 
         threading.Thread(target=ingest, daemon=True).start()
 
@@ -784,7 +786,8 @@ class DocumentQAApp(CTk):
 
         self.ask_button.configure(state="disabled")
         self.question_entry.configure(state="disabled")
-        self.status_label.configure(text="Thinking...")
+        self._is_operation_active = True
+        self._start_thinking_animation()
 
         def query():
             try:
@@ -804,11 +807,13 @@ class DocumentQAApp(CTk):
                     ("status", f"Ready ({result.inference_time:.1f}s)")
                 )
                 self.message_queue.put(("enable_input", True))
+                self._is_operation_active = False
 
             except Exception as e:
                 self.message_queue.put(("status", f"Error: {e}"))
                 self.message_queue.put(("message", "system", _classify_error(e, "query")))
                 self.message_queue.put(("enable_input", True))
+                self._is_operation_active = False
 
         threading.Thread(target=query, daemon=True).start()
 

@@ -9,44 +9,25 @@ from unittest.mock import Mock, patch, MagicMock
 
 
 @pytest.fixture
-def mock_llm_backends():
+def mock_llm_backend():
     """
-    Mock LLM backends to prevent real HTTP calls during tests.
-    
-    This patches the LLM classes in llm_interface to return mock responses
-    instead of making real HTTP requests.
+    Mock GGUFBackend to prevent real model loading during tests.
     """
-    with patch('llm_interface.OllamaLLM') as mock_ollama, \
-         patch('llm_interface.OpenAICompatibleLLM') as mock_openai, \
-         patch('llm_interface.OpenVINOLLM') as mock_openvino:
-        
-        # Configure mock Ollama
-        mock_ollama_instance = MagicMock()
-        mock_ollama_instance.generate.return_value = "This is a mock answer from Ollama."
-        mock_ollama.return_value = mock_ollama_instance
-        
-        # Configure mock OpenAI-compatible
-        mock_openai_instance = MagicMock()
-        mock_openai_instance.generate.return_value = "This is a mock answer from OpenAI-compatible API."
-        mock_openai.return_value = mock_openai_instance
-        
-        # Configure mock OpenVINO
-        mock_openvino_instance = MagicMock()
-        mock_openvino_instance.generate.return_value = "This is a mock answer from OpenVINO."
-        mock_openvino.return_value = mock_openvino_instance
+    with patch('llm_interface.GGUFBackend') as mock_gguf:
+        mock_gguf_instance = MagicMock()
+        mock_gguf_instance.generate.return_value = "This is a mock answer."
+        mock_gguf_instance.chat_complete.return_value = "This is a mock chat answer."
+        mock_gguf_instance.get_info.return_value = {"backend": "gguf", "model": "mock-model.gguf"}
+        mock_gguf.return_value = mock_gguf_instance
         
         yield {
-            'ollama': mock_ollama,
-            'openai': mock_openai,
-            'openvino': mock_openvino,
-            'ollama_instance': mock_ollama_instance,
-            'openai_instance': mock_openai_instance,
-            'openvino_instance': mock_openvino_instance,
+            'gguf': mock_gguf,
+            'instance': mock_gguf_instance,
         }
 
 
 @pytest.fixture
-def test_client(mock_llm_backends):
+def test_client(mock_llm_backend):
     """Create a test client with mocked LLM backends."""
     import os
     from fastapi.testclient import TestClient

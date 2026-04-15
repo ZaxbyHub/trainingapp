@@ -1,0 +1,676 @@
+{
+  "schema_version": 1,
+  "session_id": "session-1775700890602",
+  "last_updated": "2026-04-09T14:44:40.214Z",
+  "last_phase_covered": 3,
+  "digest": "### Phase 2\nPhase 2 completed. 0/7 tasks completed. 2 compliance observations.\n\n### Phase 3\nPhase 3 completed. 12/12 tasks completed. 0 compliance observations.",
+  "phase_digests": [
+    {
+      "phase": 2,
+      "timestamp": "2026-04-09T02:14:32.351Z",
+      "summary": "Phase 2 completed. 0/7 tasks completed. 2 compliance observations.",
+      "agents_used": [
+        "architect",
+        "explorer"
+      ],
+      "tasks_completed": 0,
+      "tasks_total": 7,
+      "key_decisions": [],
+      "blockers_resolved": []
+    },
+    {
+      "phase": 3,
+      "timestamp": "2026-04-09T12:36:36.612Z",
+      "summary": "Phase 3 completed. 12/12 tasks completed. 0 compliance observations.",
+      "agents_used": [
+        "architect",
+        "coder",
+        "critic",
+        "reviewer",
+        "test_engineer"
+      ],
+      "tasks_completed": 12,
+      "tasks_total": 12,
+      "key_decisions": [],
+      "blockers_resolved": []
+    }
+  ],
+  "compliance_observations": [
+    {
+      "phase": 2,
+      "timestamp": "2026-04-09T02:14:32.351Z",
+      "type": "workflow_deviation",
+      "severity": "warning",
+      "description": "Agent 'reviewer' required but not dispatched in phase 2"
+    },
+    {
+      "phase": 2,
+      "timestamp": "2026-04-09T02:14:32.351Z",
+      "type": "workflow_deviation",
+      "severity": "warning",
+      "description": "Agent 'test_engineer' required but not dispatched in phase 2"
+    }
+  ],
+  "knowledge_recommendations": [
+    {
+      "action": "promote",
+      "lesson": "\"Phase activation without task execution is a workflow failure mode — empty PHASE_EVENTS with agent dispatches indicates the swarm task system did not record any work, requiring investigation before phase completion can be claimed.\"",
+      "reason": "\"Phase activation without task execution is a workflow failure mode — empty PHASE_EVENTS with agent dispatches indicates the swarm task system did not record any work, requiring investigation before phase completion can be claimed.\""
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:36:55.899Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:37:03.045Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:45:34.143Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:45:47.244Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:45:47.515Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:46:09.652Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:46:26.133Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:46:44.970Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:46:47.652Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:46:50.301Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:46:54.349Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:47:16.377Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:47:33.095Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:47:36.104Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:47:48.513Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:47:49.037Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:47:51.675Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:47:52.037Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:48:03.367Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:49:12.602Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:49:12.782Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:49:19.622Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:49:19.761Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:49:28.413Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:49:38.670Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:49:48.518Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:49:48.862Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:02.862Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:05.683Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:09.727Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:16.052Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:27.472Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:30.754Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:36.818Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:44.726Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:52.243Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:50:59.955Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T12:51:00.344Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:46:11.403Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:46:11.897Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:46:12.051Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:46:31.333Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:46:31.352Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:47:26.238Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:47:43.765Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:47:50.270Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:48:03.849Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:48:20.760Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:48:40.343Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:48:47.063Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:48:59.851Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:49:20.988Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:49:31.931Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:49:44.710Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:01.880Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:08.918Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:15.980Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:42.523Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:43.037Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:50.071Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:50.349Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:53.783Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:50:53.887Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:51:00.304Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:51:18.999Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:51:36.003Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:51:54.138Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:52:07.513Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:52:25.485Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:52:28.247Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:52:36.479Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:52:42.468Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:52:51.777Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:52:59.819Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:53:07.320Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:53:15.309Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:53:16.011Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:53:36.348Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:54:02.069Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:54:23.025Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:54:35.339Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:54:40.543Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:54:52.005Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:55:05.690Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:55:14.154Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:55:22.289Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:55:22.543Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:55:30.792Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:55:43.884Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T13:55:46.720Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:37:22.099Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:37:25.346Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:37:28.291Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:37:41.273Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:37:44.871Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:37:47.808Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:38:01.506Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:38:10.867Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:38:23.504Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:38:34.046Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:38:56.753Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:39:33.359Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:39:47.118Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:39:55.262Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:40:01.390Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:40:07.818Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:40:13.051Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:40:21.891Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:40:39.925Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:42:08.425Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:42:08.628Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:42:13.286Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:42:19.796Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:42:33.580Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:42:47.891Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:43:54.363Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:43:57.985Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:44:02.181Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:44:10.736Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:44:28.401Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:44:28.423Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:44:33.529Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    },
+    {
+      "action": "promote",
+      "lesson": "Hive promotion: 0 new, 0 encounters, 0 advancements, 16 total entries",
+      "reason": "{\"timestamp\":\"2026-04-09T14:44:40.172Z\",\"new_promotions\":0,\"encounters_incremented\":0,\"advancements\":0,\"total_hive_entries\":16}"
+    }
+  ]
+}

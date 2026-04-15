@@ -12,26 +12,14 @@ A fully offline RAG-based document question answering system optimized for Windo
 - **Smart Chunking**: Paragraph and sentence boundary aware
 - **Cross-Encoder Reranking**: Optional MS MARCO MiniLM for precise ranking
 
-### LLM Backends (Priority Order)
-The application tries backends in this priority order:
+### LLM Backend (GGUF-Only)
+The application uses GGUF models via llama-cpp-python for fully offline inference:
 
-1. **GGUF (Primary)** - CPU-only inference with llama-cpp-python
-   - Set via: `RAG_GGUF_PATH` environment variable or `--gguf-path` CLI option
-   - Model: Qwen2.5-1.5B-Instruct-Q4_K_M (lightweight, high performance)
-   - No GPU required
-   - ~5-10 tokens/second on standard CPU
-
-2. **OpenVINO** - NPU/GPU/CPU acceleration (Intel)
-   - Set via: `--model-path` CLI option
-   - Falls back to GGUF if not configured
-
-3. **OpenAI-compatible API** - External API integration
-   - Set via: `RAG_API_URL` environment variable or `--api-url` CLI option
-   - Falls back to previous backends if not configured
-
-4. **Ollama** - Local LLM runtime
-   - Set via: `RAG_OLLAMA_URL` environment variable or `--ollama-url` CLI option
-   - Fallback option when other backends unavailable
+- **Default Model**: Gemma 4 E2B (Q5_K_M GGUF, ~3.1GB) — bundled
+- Set via: `RAG_GGUF_PATH` environment variable or `--gguf-path` CLI option
+- No GPU required
+- No network access required
+- ~5-10 tokens/second on standard CPU
 
 ### Hardware Requirements
 #### Minimum (Intel 11th Gen i5, 16GB RAM)
@@ -52,8 +40,7 @@ The application tries backends in this priority order:
 #### High-Performance (Intel 13th Gen i9, 64GB RAM)
 - High-end CPU (Intel Core i9 or AMD Ryzen 9)
 - 64GB RAM
-- Intel Arc or NVIDIA discrete GPU for OpenVINO acceleration
-- **Performance**: 20-30+ tokens/second
+- **Performance**: ~15-20 tokens/second (CPU-only with GGUF)
 
 ## 🆕 New Features (Version 1.1.0)
 
@@ -95,9 +82,9 @@ The application tries backends in this priority order:
 
    **GGUF Model (Required for LLM inference)**
    ```powershell
-   # Download Qwen2.5-1.5B-Instruct-Q4_K_M model
-   # From Hugging Face: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
-   # Save as: qwen2.5-1.5b-instruct-q4_k_m.gguf
+   # Default model: Gemma 4 E2B (Q5_K_M) is bundled
+   # To use a custom model, download any GGUF format model
+   # From Hugging Face: https://huggingface.co/models?search=gguf
    ```
 
    **Embedding Model (Required for search)**
@@ -213,8 +200,8 @@ print(response.json())
 - See [USAGE.md](USAGE.md) for complete authentication documentation
 
 **Backend Selection:**
-The application selects backends in priority order (GGUF → OpenVINO → API → Ollama).
-If `RAG_GGUF_PATH` is set, GGUF is used. Otherwise, falls through to next available backend.
+The application uses GGUF models only via llama-cpp-python.
+If `RAG_GGUF_PATH` is set, that model is used. Otherwise, defaults to bundled Gemma 4.
 
 ## 📖 Usage
 
@@ -314,9 +301,6 @@ Keyword-based query expansion (disabled by default):
 
 **LLM Settings**:
 - GGUF Model Path: Path to `.gguf` model file
-- Ollama URL: Local Ollama server endpoint
-- Ollama Model: Ollama model name
-- API URL: OpenAI-compatible API endpoint
 
 **RAG Settings**:
 - Chunk Size: Number of words per chunk
@@ -342,9 +326,6 @@ Options:
   --db-path PATH                Path to vector database (default: ./doc_qa_db)
   --model-path PATH             Path to GGUF model file (legacy alias for --gguf-path)
   --gguf-path PATH              GGUF model path
-  --ollama-url URL              Ollama server URL (default: http://localhost:11434)
-  --ollama-model NAME           Ollama model name (default: phi3:mini)
-  --api-url URL                 OpenAI-compatible API URL
   --port PORT                   API server port (default: 8080)
   --chunk-size SIZE             Chunk size in words (default: 512)
   --chunk-overlap N             Chunk overlap in words (default: 50)
@@ -361,8 +342,8 @@ Options:
 │                                                               │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
 │  │ Document     │    │ Vector Store │    │ LLM Interface│  │
-│  │ Processor    │───▶│ (ChromaDB+   │    │ (GGUF/OpenVINO│  │
-│  │              │    │  BM25+RRF)   │◀───│   /Ollama)   │  │
+│  │ Processor    │───▶│ (ChromaDB+   │    │ (GGUF-only)  │  │
+│  │              │    │  BM25+RRF)   │◀───│             │  │
 │  └──────────────┘    └──────────────┘    └──────────────┘  │
 │         │                   │                    │          │
 │         └───────────────────┴────────────────────┘          │
@@ -394,10 +375,7 @@ Options:
 - Window expansion for context fetching
 
 **LLM Interface**
-- GGUF backend (primary): llama-cpp-python
-- OpenVINO backend: Intel GenAI
-- Ollama backend: Local LLM runtime
-- OpenAI-compatible: External APIs
+- GGUF via llama-cpp-python (CPU-only, fully offline)
 
 **RAG Engine**
 - Query processing and routing
@@ -411,11 +389,11 @@ Options:
 
 **Solution 1: GGUF Model Not Found**
 ```powershell
-# Check if model file exists
-dir qwen2.5-1.5b-instruct-q4_k_m.gguf
+# Check if model file exists (default bundled model)
+dir gemma-4-E2B-it-Q5_K-M.gguf
 
 # If not, download from:
-# https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+# https://huggingface.co/google/gemma-4-2b-it-gguf
 ```
 
 **Solution 2: Wrong Model Path**
@@ -507,7 +485,7 @@ import requests
 import json
 
 # Configure the engine
-os.environ["RAG_GGUF_PATH"] = "path/to/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+os.environ["RAG_GGUF_PATH"] = "path/to/gemma-4-E2B-it-Q5_K-M.gguf"
 
 # Start API server in another terminal
 # python main.py --api --port 8080
@@ -569,7 +547,7 @@ doc_qa_app/
 ├── rag_engine.py           # RAG orchestration
 ├── document_processor.py   # Document extraction & semantic chunking
 ├── vector_store.py         # Vector search (ChromaDB + BM25 + RRF)
-├── llm_interface.py        # LLM backends (GGUF/OpenVINO/Ollama)
+├── llm_interface.py        # LLM interface (GGUF-only)
 ├── reranking.py            # Cross-encoder reranking
 ├── query_transformer.py    # Query transformation
 ├── utils.py                # Utility functions (RRF fusion)
@@ -604,7 +582,6 @@ MIT License - See LICENSE file for details.
 - [ChromaDB](https://www.trychroma.com/) - Vector database
 - [Sentence Transformers](https://www.sbert.net/) - Embedding models
 - [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) - GGUF inference
-- [OpenVINO](https://docs.openvino.ai/) - Intel inference optimization
 - [PyMuPDF](https://pymupdf.readthedocs.io/) - PDF processing
 - [CustomTkinter](https://customtkinter.tomschimansky.com/) - Modern GUI toolkit
 
