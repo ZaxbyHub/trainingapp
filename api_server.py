@@ -170,7 +170,7 @@ class QuestionRequest(BaseModel):
     """Request model for asking questions."""
 
     question: str = Field(..., min_length=1, max_length=2000)
-    n_results: Optional[int] = Field(default=3, ge=1, le=10)
+    n_results: Optional[int] = Field(default=6, ge=1, le=10)
 
     @validator("question")
     def validate_question_not_whitespace(cls, v):

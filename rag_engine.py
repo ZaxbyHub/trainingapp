@@ -399,8 +399,12 @@ class RAGEngine:
         if effective_top_k <= 0:
             effective_top_k = 1
 
+        # Guard against None from get_context() returning (None, None, None)
+        if retrieved_chunks is None:
+            retrieved_chunks = []
+
         # Initialize chunks_retrieved for later use
-        chunks_retrieved = len(retrieved_chunks) if retrieved_chunks is not None else 0
+        chunks_retrieved = len(retrieved_chunks)
 
         # Apply cross-encoder reranking if enabled
         if self.config.reranking_enabled and context:
