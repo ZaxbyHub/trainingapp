@@ -61,18 +61,19 @@ class RAGConfig:
         self,
         db_path: str = str(app_paths.get_vector_db_path()),
         chunk_size: int = 512,
-        chunk_overlap: int = 50,
-        n_results: int = 3,
+        chunk_overlap: int = 100,
+        n_results: int = 6,
         min_similarity: float = 0.3,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = 0.3,
         embedding_model: str = "BAAI/bge-small-en-v1.5",
-        retrieval_window: int = 1,
+        retrieval_window: int = 2,
         hybrid_search: bool = True,
         reranking_enabled: bool = True,
-        reranker_model: str = "cross-encoder/ms-marco-TinyBERT-L-2",
+        reranker_model: str = "cross-encoder/ms-marco-MiniLM-L6-v2",
         query_transformation_enabled: bool = False,
-        initial_retrieval_top_k: int = 20,
+        initial_retrieval_top_k: int = 30,
+        rerank_top_k: int = 6,
     ):
         self.db_path = db_path
         self.chunk_size = chunk_size
@@ -88,6 +89,7 @@ class RAGConfig:
         self.reranker_model = reranker_model
         self.query_transformation_enabled = query_transformation_enabled
         self.initial_retrieval_top_k = initial_retrieval_top_k
+        self.rerank_top_k = rerank_top_k
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -105,6 +107,7 @@ class RAGConfig:
             "reranker_model": self.reranker_model,
             "query_transformation_enabled": self.query_transformation_enabled,
             "initial_retrieval_top_k": self.initial_retrieval_top_k,
+            "rerank_top_k": self.rerank_top_k,
         }
 
     @classmethod
@@ -113,22 +116,23 @@ class RAGConfig:
         return cls(
             db_path=data.get("db_path", str(app_paths.get_vector_db_path())),
             chunk_size=data.get("chunk_size", 512),
-            chunk_overlap=data.get("chunk_overlap", 50),
-            n_results=data.get("n_results", 3),
+            chunk_overlap=data.get("chunk_overlap", 100),
+            n_results=data.get("n_results", 6),
             min_similarity=data.get("min_similarity", 0.3),
             max_tokens=data.get("max_tokens", DEFAULT_MAX_TOKENS),
             temperature=data.get("temperature", 0.3),
             embedding_model=data.get("embedding_model", "BAAI/bge-small-en-v1.5"),
-            retrieval_window=data.get("retrieval_window", 1),
+            retrieval_window=data.get("retrieval_window", 2),
             hybrid_search=data.get("hybrid_search", True),
             reranking_enabled=data.get("reranking_enabled", True),
             reranker_model=data.get(
-                "reranker_model", "cross-encoder/ms-marco-TinyBERT-L-2"
+                "reranker_model", "cross-encoder/ms-marco-MiniLM-L6-v2"
             ),
             query_transformation_enabled=data.get(
                 "query_transformation_enabled", False
             ),
-            initial_retrieval_top_k=data.get("initial_retrieval_top_k", 20),
+            initial_retrieval_top_k=data.get("initial_retrieval_top_k", 30),
+            rerank_top_k=data.get("rerank_top_k", 6),
         )
 
 
@@ -330,8 +334,6 @@ class RAGEngine:
             )
 
         # Determine number of chunks to retrieve (always at least 1)
-        n = n_results if n_results is not None else self.config.n_results
-        n = max(1, n)
 
         # Apply query transformation if enabled
         if self.config.query_transformation_enabled and self.llm:
@@ -384,13 +386,17 @@ class RAGEngine:
                     logger.info("Follow-up detected — retrieval query: '%s'", retrieval_query[:80])
 
         # Retrieve context — hybrid (BM25+vector+RRF) if enabled, else vector-only
-        context, sources = self.vector_store.get_context(
+        context, sources, retrieved_chunks = self.vector_store.get_context(
             retrieval_query,
-            n_results=n,
+            n_results=self.config.initial_retrieval_top_k,
             min_similarity=self.config.min_similarity,
             hybrid_search=self.config.hybrid_search,
             retrieval_window=self.config.retrieval_window,
-        )
+        )  # Calculate effective rerank top_k: use n_results if provided, otherwise fall back to config
+        effective_top_k = n_results if n_results is not None else self.config.rerank_top_k
+
+        # Initialize chunks_retrieved for later use
+        chunks_retrieved = len(retrieved_chunks) if retrieved_chunks is not None else 0
 
         # Apply cross-encoder reranking if enabled
         if self.config.reranking_enabled and context:
@@ -402,23 +408,19 @@ class RAGEngine:
                     logger.warning("Reranker initialization failed: %s", e)
                     self.reranker = None
 
-            # Split context back into individual chunks for reranking
-            chunk_texts = context.split("\n\n---\n\n")
-            from document_processor import DocumentChunk
-            rerank_chunks = [
-                DocumentChunk(
-                    text=t.strip(),
-                    source=sources[min(i, len(sources) - 1)] if sources else "unknown",
-                    chunk_index=i,
-                )
-                for i, t in enumerate(chunk_texts)
-                if t.strip()
-            ]
+            rerank_chunks = retrieved_chunks
 
             if rerank_chunks and self.reranker is not None:
-                reranked = self.reranker.rerank(question, rerank_chunks, top_k=self.config.n_results)
-                context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
-                sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
+                reranked = self.reranker.rerank(question, rerank_chunks, top_k=effective_top_k)
+                if reranked:
+                    context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
+                    sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
+                    chunks_retrieved = len(reranked)
+                else:
+                    reranked = [(chunk, 0.0) for chunk in rerank_chunks[:effective_top_k]]
+                    context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
+                    sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
+                    chunks_retrieved = len(reranked)
 
         # Diagnostic logging
         logger.debug(
@@ -478,7 +480,7 @@ class RAGEngine:
             sources=sources,
             context_length=len(safe_context),
             inference_time=time.time() - start_time,
-            chunks_retrieved=len(sources),
+            chunks_retrieved=chunks_retrieved,
         )
 
     def search_documents(

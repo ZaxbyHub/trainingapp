@@ -221,10 +221,10 @@ class TestDefaultValues:
         s = RAGSettings()
         assert s.rag_db_path == "./doc_qa_db"
         assert s.rag_chunk_size == 512
-        assert s.rag_chunk_overlap == 50
-        assert s.rag_n_results == 3
+        assert s.rag_chunk_overlap == 100
+        assert s.rag_n_results == 6
         assert s.rag_min_similarity == 0.3
-        assert s.rag_retrieval_window == 1
+        assert s.rag_retrieval_window == 2
         assert s.rag_max_tokens == 1024
         assert s.rag_temperature == 0.3
         assert s.rag_embedding_model == "BAAI/bge-small-en-v1.5"

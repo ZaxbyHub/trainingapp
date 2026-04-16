@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Security constants
 MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10MB
-MAX_PROMPT_LENGTH = 16384  # 16K characters
+MAX_PROMPT_LENGTH = 24000  # was 16384; safe for 8192-token models with max_tokens=1024
 
 
 def _sanitize_error(error_msg: str) -> str:
@@ -255,11 +255,13 @@ class RAGPromptBuilder:
         "If the context lacks the answer, respond exactly: "
         '"I don\'t have enough information to answer that question based on the available documents." '
         "Rules: "
-        "(1) No speculation. "
-        "(2) Include all relevant steps and details from the context — do not truncate. "
-        "(3) If multiple documents contain conflicting information, present all perspectives. "
+        "(1) No speculation or information from outside the provided context. "
+        "(2) Include ALL relevant steps and details from the context — do not truncate or abbreviate. "
+        "(3) Use numbered lists for multi-step procedures; use bullet points for feature or option lists. "
         "(4) Cite the source filename in brackets after relevant statements, e.g. [report.pdf]. "
-        "(5) Use bullet points for multi-step or enumerated answers."
+        "(5) If multiple documents contain conflicting information, present all perspectives. "
+        "(6) If the context contains a partial procedure, present all visible steps and note "
+        "    that the source document may contain additional steps not shown."
     )
 
     @staticmethod

@@ -886,7 +886,7 @@ class TestGracefulDegradation:
         assert stats['chunk_count'] == 20, "Stats should be accurate"
         
         # Get context
-        context, sources = store.get_context("content 10", n_results=3)
+        context, sources, chunks = store.get_context("content 10", n_results=3)
         assert isinstance(context, str), "Context should be string"
         
         # Clear

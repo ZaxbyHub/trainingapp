@@ -516,7 +516,7 @@ async def ingest_file(
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     ext = Path(safe_filename).suffix.lower()
-    if ext not in {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md"}:
+    if ext not in {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md", ".xlsx"}:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
 
     import tempfile

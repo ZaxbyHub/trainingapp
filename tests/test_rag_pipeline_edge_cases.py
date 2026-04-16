@@ -919,7 +919,7 @@ class TestRAGEngineEdgeCases:
             with patch("rag_engine.SmartLLM") as mock_llm:
                 with patch("rag_engine.RAGEngine._save_config"):
                     mock_vs_instance = MagicMock()
-                    mock_vs_instance.get_context.return_value = ("Some context", ["test.txt"])
+                    mock_vs_instance.get_context.return_value = ("Some context", ["test.txt"], [])
                     mock_vs_instance.get_stats.return_value = {
                         "document_count": 1, "chunk_count": 1,
                         "embedding_model": "test", "documents": ["test.txt"]
@@ -944,7 +944,7 @@ class TestRAGEngineEdgeCases:
             with patch("rag_engine.SmartLLM") as mock_llm:
                 with patch("rag_engine.RAGEngine._save_config"):
                     mock_vs_instance = MagicMock()
-                    mock_vs_instance.get_context.return_value = ("Context", [])
+                    mock_vs_instance.get_context.return_value = ("Context", [], [])
                     mock_vs_instance.get_stats.return_value = {
                         "document_count": 0, "chunk_count": 0,
                         "embedding_model": "test", "documents": []
@@ -971,7 +971,7 @@ class TestRAGEngineEdgeCases:
                     long_context = "word " * 10000
 
                     mock_vs_instance = MagicMock()
-                    mock_vs_instance.get_context.return_value = (long_context, ["test.txt"])
+                    mock_vs_instance.get_context.return_value = (long_context, ["test.txt"], [])
                     mock_vs_instance.get_stats.return_value = {
                         "document_count": 1, "chunk_count": 100,
                         "embedding_model": "test", "documents": ["test.txt"]
@@ -1191,7 +1191,8 @@ class TestDataIntegrityAndRecovery:
                     mock_vs_instance = MagicMock()
                     mock_vs_instance.get_context.return_value = (
                         "日本語テスト context with émoji 🚀 and 中文",
-                        ["test.txt"]
+                        ["test.txt"],
+                        []
                     )
                     mock_vs_instance.get_stats.return_value = {
                         "document_count": 1, "chunk_count": 1,
@@ -1217,7 +1218,7 @@ class TestDataIntegrityAndRecovery:
             with patch("rag_engine.SmartLLM") as mock_llm:
                 with patch("rag_engine.RAGEngine._save_config"):
                     mock_vs_instance = MagicMock()
-                    mock_vs_instance.get_context.return_value = ("context", ["test.txt"])
+                    mock_vs_instance.get_context.return_value = ("context", ["test.txt"], [])
                     mock_vs_instance.get_stats.return_value = {
                         "document_count": 1, "chunk_count": 1,
                         "embedding_model": "test", "documents": ["test.txt"]

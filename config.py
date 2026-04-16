@@ -28,12 +28,12 @@ class RAGSettings(BaseSettings):
 
     # Chunking settings
     rag_chunk_size: int = Field(default=DEFAULT_CHUNK_SIZE, validation_alias="RAG_CHUNK_SIZE")
-    rag_chunk_overlap: int = Field(default=50, validation_alias="RAG_CHUNK_OVERLAP")
+    rag_chunk_overlap: int = Field(default=100, validation_alias="RAG_CHUNK_OVERLAP")
 
     # Retrieval settings
-    rag_n_results: int = Field(default=3, validation_alias="RAG_N_RESULTS")
+    rag_n_results: int = Field(default=6, validation_alias="RAG_N_RESULTS")
     rag_min_similarity: float = Field(default=0.3, validation_alias="RAG_MIN_SIMILARITY")
-    rag_retrieval_window: int = Field(default=1, validation_alias="RAG_RETRIEVAL_WINDOW")
+    rag_retrieval_window: int = Field(default=2, validation_alias="RAG_RETRIEVAL_WINDOW")
 
     # LLM settings
     rag_max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, validation_alias="RAG_MAX_TOKENS")
@@ -43,10 +43,12 @@ class RAGSettings(BaseSettings):
     rag_embedding_model: str = Field(default="BAAI/bge-small-en-v1.5", validation_alias="RAG_EMBEDDING_MODEL")
     rag_hybrid_search: bool = Field(default=True, validation_alias="RAG_HYBRID_SEARCH")
     rag_reranking_enabled: bool = Field(default=True, validation_alias="RAG_RERANKING_ENABLED")
-    rag_reranker_model: str = Field(default="cross-encoder/ms-marco-TinyBERT-L-2", validation_alias="RAG_RERANKER_MODEL")
+    rag_reranker_model: str = Field(default="cross-encoder/ms-marco-MiniLM-L6-v2", validation_alias="RAG_RERANKER_MODEL")
 
     # Context truncation settings
-    rag_context_truncation: int = Field(default=6000, validation_alias="RAG_CONTEXT_TRUNCATION")
+    rag_context_truncation: int = Field(default=20000, validation_alias="RAG_CONTEXT_TRUNCATION")
+    rag_initial_retrieval_top_k: int = Field(default=30, validation_alias="RAG_INITIAL_RETRIEVAL_TOP_K")
+    rag_rerank_top_k: int = Field(default=6, validation_alias="RAG_RERANK_TOP_K")
 
     # CORS settings
     rag_cors_origins: str = Field(default="http://localhost,http://127.0.0.1", validation_alias="RAG_CORS_ORIGINS")

@@ -726,79 +726,97 @@ class VectorStore:
         min_similarity: float = 0.3,
         hybrid_search: bool = False,
         retrieval_window: int = 0,
-    ) -> Tuple[str, List[str]]:
+    ) -> Tuple[str, List[str], List["DocumentChunk"]]:
         """Get context for RAG from similar documents."""
         with self._lock:
             # Handle empty query - return no context
             if not query or not query.strip():
-                return "", []
+                return "", [], []
             if hybrid_search and self.bm25_index:
-                # Get vector search results
-                vector_results = self.search(query, n_results=n_results * 2)
-
-                # Ensure BM25 index is built before searching
                 self._rebuild_bm25_if_needed()
 
-                # Get BM25 results
+                vector_results = self.search(query, n_results=n_results * 2)
                 bm25_results = self.bm25_index.search(query, top_k=n_results * 2)
 
-                # Prepare results for fusion
-                # Vector results are (doc, meta, score) tuples
-                # BM25 results are (index, score) tuples where index refers to bm25_index.chunks
-                vector_ranked = [
-                    (i, score) for i, (_, _, score) in enumerate(vector_results)
-                ]
+                # --- Namespace-safe RRF ---
+                OFFSET = 1_000_000  # large enough to avoid any collision with vector indices
 
-                # Fuse using RRF
-                fused = rrf_fuse([vector_ranked, bm25_results])
+                vector_ranked = [(i, score) for i, (_, _, score) in enumerate(vector_results)]
+                bm25_ranked = [(corpus_idx + OFFSET, score) for corpus_idx, score in bm25_results]
 
-                # Build context from fused results
+                fused = rrf_fuse([vector_ranked, bm25_ranked])
+
                 context_parts = []
-                sources = []
-                pages = []
-                chunk_indices = []
+                per_chunk_sources = []   # one source per chunk, NOT deduplicated
+                per_chunk_pages = []
+                per_chunk_indices = []
+                sources = []             # deduplicated for display
+                seen_keys = set()
 
-                # For each fused result, get the chunk text from appropriate source
-                for doc_id, _ in fused[:n_results]:
-                    # Check if it's a vector result (index < len(vector_results)) or BM25 result (index >= len(vector_results))
-                    if doc_id < len(vector_results):
-                        # This is a vector search result
-                        doc, meta, score = vector_results[doc_id]
-                        source = meta.get("source", "Unknown")
-                        page = meta.get("page")
-                        chunk_idx = meta.get("chunk_index", doc_id)
-                        context_parts.append(doc)
-                        if source not in sources:
-                            sources.append(source)
-                        pages.append(page)
-                        chunk_indices.append(chunk_idx)
+                for fused_id, _ in fused[:n_results]:
+                    if fused_id >= OFFSET:
+                        # BM25 result — resolve against bm25_index.chunks
+                        corpus_idx = fused_id - OFFSET
+                        if corpus_idx < len(self.bm25_index.chunks):
+                            chunk = self.bm25_index.chunks[corpus_idx]
+                            key = (chunk.source, chunk.chunk_index)
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                context_parts.append(chunk.text)
+                                per_chunk_sources.append(chunk.source)
+                                per_chunk_pages.append(chunk.page)
+                                per_chunk_indices.append(chunk.chunk_index)
+                                if chunk.source not in sources:
+                                    sources.append(chunk.source)
                     else:
-                        # This is a BM25 result - get from bm25_index.chunks
-                        chunk_index = doc_id - len(vector_results)
-                        if chunk_index < len(self.bm25_index.chunks):
-                            chunk = self.bm25_index.chunks[chunk_index]
-                            context_parts.append(chunk.text)
-                            source = chunk.source
-                            if source not in sources:
-                                sources.append(source)
-                            pages.append(chunk.page)
-                            chunk_indices.append(chunk.chunk_index)
+                        # Vector result — resolve against vector_results list
+                        vec_idx = fused_id
+                        if vec_idx < len(vector_results):
+                            doc, meta, score = vector_results[vec_idx]
+                            # Apply min_similarity (currently bypassed in hybrid — fixed here)
+                            if score < min_similarity:
+                                continue
+                            source = meta.get("source", "Unknown")
+                            chunk_idx = meta.get("chunk_index", vec_idx)
+                            page = meta.get("page")
+                            key = (source, chunk_idx)
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                context_parts.append(doc)
+                                per_chunk_sources.append(source)
+                                per_chunk_pages.append(page)
+                                per_chunk_indices.append(chunk_idx)
+                                if source not in sources:
+                                    sources.append(source)
 
-                # Expand with neighboring chunks if window > 0
+                # Expand with neighbors if window > 0
                 if retrieval_window > 0 and context_parts:
                     hybrid_chunks = [
                         DocumentChunk(
-                            text=text, source=sources[min(i, len(sources)-1)],
-                            chunk_index=chunk_indices[i], page=pages[i],
+                            text=text,
+                            source=per_chunk_sources[i],
+                            chunk_index=per_chunk_indices[i],
+                            page=per_chunk_pages[i],
                         )
                         for i, text in enumerate(context_parts)
                     ]
                     expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
                     context_parts = [c.text for c in expanded]
+                    per_chunk_sources = [c.source for c in expanded]
+                    per_chunk_pages = [c.page for c in expanded]
+                    per_chunk_indices = [c.chunk_index for c in expanded]
                     sources = list(dict.fromkeys(c.source for c in expanded))
 
+                # Build result chunks for structured return
+                result_chunks = [
+                    DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
+                    for text, src, idx, pg in zip(
+                        context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
+                    )
+                ]
+
                 context = "\n\n---\n\n".join(context_parts)
-                return context, sources
+                return context, sources, result_chunks
             else:
                 # Original vector-only search logic
                 matches = self.search(query, n_results=n_results)
@@ -810,18 +828,26 @@ class VectorStore:
                 ]
 
                 if not filtered:
-                    return "", []
+                    return "", [], []
 
                 context_parts = []
+                per_chunk_sources = []
+                per_chunk_pages = []
+                per_chunk_indices = []
                 sources = []
 
-                for doc, meta, sim in filtered:
+                for i, (doc, meta, sim) in enumerate(filtered):
                     source = meta.get("source", "Unknown")
-                    context_parts.append(doc)  # Don't add source prefix - just the text
+                    chunk_idx = meta.get("chunk_index", i)
+                    page = meta.get("page")
+                    context_parts.append(doc)
+                    per_chunk_sources.append(source)
+                    per_chunk_pages.append(page)
+                    per_chunk_indices.append(chunk_idx)
                     if source not in sources:
                         sources.append(source)
 
-                # Expand with neighboring chunks if window > 0
+                # Expand with neighbors if window > 0
                 if retrieval_window > 0:
                     filtered_chunks = [
                         DocumentChunk(
@@ -832,10 +858,21 @@ class VectorStore:
                     ]
                     expanded = self._expand_chunks_with_neighbors(filtered_chunks, retrieval_window)
                     context_parts = [c.text for c in expanded]
+                    per_chunk_sources = [c.source for c in expanded]
+                    per_chunk_pages = [c.page for c in expanded]
+                    per_chunk_indices = [c.chunk_index for c in expanded]
                     sources = list(dict.fromkeys(c.source for c in expanded))
 
+                # Build result chunks
+                result_chunks = [
+                    DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
+                    for text, src, idx, pg in zip(
+                        context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
+                    )
+                ]
+
                 context = "\n\n---\n\n".join(context_parts)
-                return context, sources
+                return context, sources, result_chunks
 
     def clear(self):
         """Clear all documents from the store."""
@@ -884,6 +921,6 @@ if __name__ == "__main__":
     for doc, meta, score in results:
         print(f"  [{score:.3f}] {meta['source']}: {doc[:50]}...")
 
-    context, sources = store.get_context("Tell me about programming")
+    context, sources, chunks = store.get_context("Tell me about programming")
     print(f"\nContext from: {sources}")
     print(f"Context length: {len(context)} chars")

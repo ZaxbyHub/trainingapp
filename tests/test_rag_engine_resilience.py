@@ -113,7 +113,7 @@ class TestRerankerErrorHandling:
         mock_llm.get_info.return_value = {"backend": "gguf"}
 
         mock_vs = MagicMock()
-        mock_vs.get_context.return_value = ("some context\n\n---\n\nmore", ["source1", "source2"])
+        mock_vs.get_context.return_value = ("some context\n\n---\n\nmore", ["source1", "source2"], [])
 
         engine = RAGEngine.__new__(RAGEngine)
         engine.config = config
@@ -146,7 +146,7 @@ class TestRerankerErrorHandling:
         mock_llm.answer_question.return_value = "answer based on context"
 
         mock_vs = MagicMock()
-        mock_vs.get_context.return_value = ("context chunk", ["source1"])
+        mock_vs.get_context.return_value = ("context chunk", ["source1"], [])
 
         engine = RAGEngine.__new__(RAGEngine)
         engine.config = config
@@ -174,7 +174,7 @@ class TestRerankerErrorHandling:
         mock_llm.answer_question.return_value = "reranked answer"
 
         mock_vs = MagicMock()
-        mock_vs.get_context.return_value = ("chunk1\n\n---\n\nchunk2", ["src1", "src2"])
+        mock_vs.get_context.return_value = ("chunk1\n\n---\n\nchunk2", ["src1", "src2"], [])
 
         mock_reranker = MagicMock()
         mock_reranker.rerank.return_value = [
@@ -212,7 +212,7 @@ class TestQueryTransformerGating:
         mock_llm.answer_question.return_value = "answer"
 
         mock_vs = MagicMock()
-        mock_vs.get_context.return_value = ("ctx", ["src"])
+        mock_vs.get_context.return_value = ("ctx", ["src"], [])
 
         engine = RAGEngine.__new__(RAGEngine)
         engine.config = config
@@ -235,7 +235,7 @@ class TestQueryTransformerGating:
         config = RAGConfig(query_transformation_enabled=True)
 
         mock_vs = MagicMock()
-        mock_vs.get_context.return_value = ("ctx", ["src"])
+        mock_vs.get_context.return_value = ("ctx", ["src"], [])
 
         engine = RAGEngine.__new__(RAGEngine)
         engine.config = config
@@ -257,7 +257,7 @@ class TestQueryTransformerGating:
         mock_llm.answer_question.return_value = "fallback answer"
 
         mock_vs = MagicMock()
-        mock_vs.get_context.return_value = ("context", ["src"])
+        mock_vs.get_context.return_value = ("context", ["src"], [])
 
         mock_qt_instance = MagicMock()
         mock_qt_instance.transform_step_back.side_effect = RuntimeError("LLM error")
@@ -291,7 +291,7 @@ class TestQueryTransformerGating:
         mock_llm.answer_question.return_value = "transformed answer"
 
         mock_vs = MagicMock()
-        mock_vs.get_context.return_value = ("ctx", ["src"])
+        mock_vs.get_context.return_value = ("ctx", ["src"], [])
 
         mock_qt_instance = MagicMock()
         mock_qt_instance.transform_step_back.return_value = "transformed query"

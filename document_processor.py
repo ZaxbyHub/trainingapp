@@ -34,7 +34,7 @@ class DocumentChunk:
 class DocumentProcessor:
     """Processes various document formats and extracts text."""
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md"}
+    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md", ".xlsx"}
 
     def __init__(self, chunk_size: int = 256, chunk_overlap: int = 50):
         if chunk_size <= 0:
@@ -130,6 +130,22 @@ class DocumentProcessor:
 
         return "\n\n".join(slides_text)
 
+    def extract_xlsx(self, filepath: str) -> str:
+        """Extract text from Excel .xlsx files, preserving sheet and row structure."""
+        import openpyxl
+        wb = openpyxl.load_workbook(filepath, data_only=True)
+        sheets_text = []
+        for sheet in wb.worksheets:
+            rows = []
+            for row in sheet.iter_rows(values_only=True):
+                cells = [str(cell) for cell in row if cell is not None]
+                row_text = " | ".join(cells)
+                if row_text.strip():
+                    rows.append(row_text)
+            if rows:
+                sheets_text.append(f"[Sheet: {sheet.title}]\n" + "\n".join(rows))
+        return "\n\n".join(sheets_text)
+
     def extract_text_file(self, filepath: str) -> str:
         """Extract text from plain text or markdown files."""
         encodings = ["utf-8", "utf-16", "latin-1", "cp1252"]
@@ -158,17 +174,33 @@ class DocumentProcessor:
             return self.extract_docx(filepath), []
         elif ext in {".pptx", ".ppt"}:
             return self.extract_pptx(filepath), []
+        elif ext == ".xlsx":
+            return self.extract_xlsx(filepath), []
         elif ext in {".txt", ".md"}:
             return self.extract_text_file(filepath), []
         else:
             raise ValueError(f"Unsupported file format: {ext}")
 
     def clean_text(self, text: str) -> str:
-        """Clean and normalize text."""
-        text = re.sub(r"\s+", " ", text)
-        text = re.sub(r"\n\s*\n", "\n\n", text)
-        text = text.strip()
-        return text
+        """Clean and normalize text while preserving paragraph and list structure."""
+        text = str(text)
+        # Step 1: Normalize line endings to \n
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Step 2: Collapse runs of 3+ blank lines to exactly 2 (paragraph break)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+
+        # Step 3: Collapse horizontal whitespace (spaces/tabs) within each line,
+        #         but DO NOT collapse \n characters
+        lines = text.split("\n")
+        lines = [re.sub(r"[ \t]+", " ", line).strip() for line in lines]
+        text = "\n".join(lines)
+
+        # Step 4: Remove empty lines that are not paragraph breaks
+        # (single blank lines between non-empty lines are preserved as \n\n)
+        text = re.sub(r"\n{2,}", "\n\n", text)
+
+        return text.strip()
 
     def _split_sentences(self, paragraph: str) -> List[str]:
         """Split paragraph into sentences, respecting common abbreviations."""

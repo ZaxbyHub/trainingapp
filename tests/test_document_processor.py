@@ -404,7 +404,7 @@ class TestUnsupportedExtension:
         """Test that SUPPORTED_EXTENSIONS includes all expected formats."""
         processor = DocumentProcessor()
 
-        expected = {'.pdf', '.docx', '.doc', '.pptx', '.ppt', '.txt', '.md'}
+        expected = {'.pdf', '.docx', '.doc', '.pptx', '.ppt', '.txt', '.md', '.xlsx'}
         assert processor.SUPPORTED_EXTENSIONS == expected
 
 
@@ -562,6 +562,412 @@ class TestCleanText:
         processor = DocumentProcessor()
         assert processor.clean_text("") == ""
         assert processor.clean_text("   ") == ""
+
+
+class TestCleanTextParagraphStructure:
+    """Focused tests for clean_text paragraph-structure preservation per Phase 1.1."""
+
+    def test_paragraph_breaks_preserved(self):
+        """Paragraph breaks (\\n\\n) must remain as \\n\\n after cleaning."""
+        processor = DocumentProcessor()
+        text = "First paragraph\n\nSecond paragraph\n\nThird paragraph"
+        cleaned = processor.clean_text(text)
+        # Each adjacent pair of paragraphs must be separated by exactly \n\n
+        paragraphs = cleaned.split("\n\n")
+        assert len(paragraphs) == 3, f"Expected 3 paragraphs, got {len(paragraphs)}: {repr(cleaned)}"
+        assert paragraphs[0] == "First paragraph"
+        assert paragraphs[1] == "Second paragraph"
+        assert paragraphs[2] == "Third paragraph"
+
+    def test_single_blank_line_preserved_between_paragraphs(self):
+        """A single blank line between paragraphs (\\n\\n) must survive cleaning."""
+        processor = DocumentProcessor()
+        text = "Para one\n\nPara two"
+        cleaned = processor.clean_text(text)
+        # Must contain exactly one \n\n between paragraphs (not stripped to \n)
+        assert cleaned.count("\n\n") >= 1, f"Expected \\n\\n paragraph break, got: {repr(cleaned)}"
+        assert "Para one" in cleaned
+        assert "Para two" in cleaned
+
+    def test_three_consecutive_blank_lines_collapse_to_two(self):
+        """Runs of 3+ blank lines must collapse to exactly 2 (\\n\\n)."""
+        processor = DocumentProcessor()
+        text = "Para one\n\n\n\nPara two"
+        cleaned = processor.clean_text(text)
+        # After collapsing 4 newlines -> 2, should have \n\n between paragraphs
+        assert "\n\n" in cleaned, f"Expected \\n\\n, got: {repr(cleaned)}"
+        assert "\n\n\n" not in cleaned, "Triple+ newlines should be absent"
+        paragraphs = cleaned.split("\n\n")
+        assert len(paragraphs) == 2, f"Expected 2 paragraphs separated by \\n\\n, got: {repr(cleaned)}"
+        assert paragraphs[0].strip() == "Para one"
+        assert paragraphs[1].strip() == "Para two"
+
+    def test_five_consecutive_newlines_collapse_to_two(self):
+        """5 consecutive \\n should collapse to \\n\\n."""
+        processor = DocumentProcessor()
+        text = "First\n\n\n\n\nLast"
+        cleaned = processor.clean_text(text)
+        # 5 newlines -> step 2: \n{3,} -> \n\n -> "First\n\nLast"
+        # Step 3: split ["First", "", "Last"], strip -> ["First", "", "Last"]
+        # Join: "First\n\nLast"
+        # Step 4: \n\n -> stays \n\n
+        assert cleaned == "First\n\nLast", f"Expected 'First\\n\\nLast', got: {repr(cleaned)}"
+
+    def test_leading_and_trailing_newlines_stripped(self):
+        """Leading/trailing newlines must be stripped from output."""
+        processor = DocumentProcessor()
+        text = "\n\nContent here\n\n"
+        cleaned = processor.clean_text(text)
+        assert not cleaned.startswith("\n"), f"Should not start with \\n: {repr(cleaned)}"
+        assert not cleaned.endswith("\n"), f"Should not end with \\n: {repr(cleaned)}"
+        assert cleaned == "Content here", f"Expected 'Content here', got: {repr(cleaned)}"
+
+
+class TestCleanTextLineEndings:
+    """Tests for mixed line ending normalization."""
+
+    def test_windows_line_endings_normalized(self):
+        """\\r\\n must be normalized to \\n."""
+        processor = DocumentProcessor()
+        text = "Line one\r\nLine two\r\nLine three"
+        cleaned = processor.clean_text(text)
+        # No carriage returns should remain
+        assert "\r" not in cleaned, f"Carriage returns should be gone: {repr(cleaned)}"
+        assert cleaned == "Line one\nLine two\nLine three", f"Got: {repr(cleaned)}"
+
+    def test_mac_classic_line_endings_normalized(self):
+        """Legacy \\r (old Mac) must be normalized to \\n."""
+        processor = DocumentProcessor()
+        text = "Line one\rLine two\rLine three"
+        cleaned = processor.clean_text(text)
+        assert "\r" not in cleaned, f"Carriage returns should be gone: {repr(cleaned)}"
+        assert cleaned == "Line one\nLine two\nLine three", f"Got: {repr(cleaned)}"
+
+    def test_mixed_crlf_and_lf_normalized(self):
+        """Mixed \\r\\n and \\n should all become \\n."""
+        processor = DocumentProcessor()
+        text = "Para one\r\n\r\nPara two\n\nPara three"
+        cleaned = processor.clean_text(text)
+        assert "\r" not in cleaned, f"Carriage returns should be gone: {repr(cleaned)}"
+        # Paragraphs separated by blank lines
+        paragraphs = cleaned.split("\n\n")
+        assert len(paragraphs) >= 2, f"Expected paragraph separation, got: {repr(cleaned)}"
+
+    def test_crlf_with_multiple_blank_lines(self):
+        """\\r\\n + multiple blank lines should normalize correctly."""
+        processor = DocumentProcessor()
+        text = "First\r\n\r\n\r\n\r\nSecond"
+        cleaned = processor.clean_text(text)
+        assert "\r" not in cleaned
+        # 4+ newlines -> collapse to 2 -> paragraph break
+        assert "\n\n" in cleaned or "\n" in cleaned
+
+
+class TestCleanTextHorizontalWhitespace:
+    """Tests for horizontal whitespace (spaces/tabs) collapsing within lines."""
+
+    def test_multiple_spaces_collapsed_to_one(self):
+        """Multiple spaces within a line collapse to a single space."""
+        processor = DocumentProcessor()
+        text = "This  has    multiple     spaces   here."
+        cleaned = processor.clean_text(text)
+        assert cleaned == "This has multiple spaces here.", f"Got: {repr(cleaned)}"
+
+    def test_tabs_collapsed_to_single_space(self):
+        """Tabs within a line collapse to a single space."""
+        processor = DocumentProcessor()
+        text = "Word1\t\tWord2\tWord3"
+        cleaned = processor.clean_text(text)
+        assert "\t" not in cleaned, f"Tabs should be removed: {repr(cleaned)}"
+        # Tabs replaced by single spaces, adjacent ones merged
+        assert "Word1" in cleaned
+        assert "Word3" in cleaned
+
+    def test_leading_and_trailing_spaces_stripped_per_line(self):
+        """Leading/trailing spaces on each line must be stripped."""
+        processor = DocumentProcessor()
+        text = "   leading\ntrailing   \nboth   ends   "
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert lines[0] == "leading", f"Got: {repr(lines[0])}"
+        assert lines[1] == "trailing", f"Got: {repr(lines[1])}"
+        assert lines[2] == "both ends", f"Got: {repr(lines[2])}"
+
+    def test_horizontal_whitespace_in_multiline_preserved_structure(self):
+        """Horizontal whitespace collapsing must not affect \\n line structure."""
+        processor = DocumentProcessor()
+        text = "Line  one     with   extra    spaces\nSecond  line    here"
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert len(lines) == 2, f"Expected 2 lines, got {len(lines)}: {repr(cleaned)}"
+        assert lines[0] == "Line one with extra spaces"
+        assert lines[1] == "Second line here"
+
+    def test_indentation_whitespace_collapsed(self):
+        """Leading indentation (spaces at line start) must be stripped."""
+        processor = DocumentProcessor()
+        text = "    Indented line with trailing spaces     "
+        cleaned = processor.clean_text(text)
+        assert cleaned == "Indented line with trailing spaces", f"Got: {repr(cleaned)}"
+
+
+class TestCleanTextEdgeCases:
+    """Boundary and edge case tests for clean_text."""
+
+    def test_empty_string_returns_empty(self):
+        """Empty input string must return empty string."""
+        processor = DocumentProcessor()
+        assert processor.clean_text("") == ""
+
+    def test_whitespace_only_returns_empty(self):
+        """Input containing only whitespace must return empty string."""
+        processor = DocumentProcessor()
+        assert processor.clean_text("   ") == ""
+        assert processor.clean_text("\n\n\n") == ""
+        assert processor.clean_text("  \n  \t  \n  ") == ""
+
+    def test_single_character(self):
+        """Single character input is preserved."""
+        processor = DocumentProcessor()
+        assert processor.clean_text("x") == "x"
+        assert processor.clean_text(" ") == ""
+
+    def test_no_newlines_single_line(self):
+        """Text with no newlines is returned with collapsed horizontal whitespace."""
+        processor = DocumentProcessor()
+        text = "Simple   text   with   spaces"
+        cleaned = processor.clean_text(text)
+        assert cleaned == "Simple text with spaces", f"Got: {repr(cleaned)}"
+
+    def test_unicode_characters_preserved(self):
+        """Unicode characters must survive cleaning unchanged."""
+        processor = DocumentProcessor()
+        text = "Unicode: \u00e9\u00e8\u00ea \u4e2d\u6587 \U0001F600"
+        cleaned = processor.clean_text(text)
+        assert "\u00e9" in cleaned
+        assert "\u4e2d" in cleaned
+        # Emoji is a surrogate pair in UTF-16, but Python 3 handles it natively
+        emoji = "\U0001F600"
+        assert emoji in cleaned
+
+    def test_paragraph_with_multiple_lines(self):
+        """A paragraph with multiple lines (single \\n) inside it stays intact."""
+        processor = DocumentProcessor()
+        text = "Line one of paragraph\nLine two of paragraph\nLine three"
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert len(lines) == 3, f"Expected 3 lines within paragraph, got: {repr(cleaned)}"
+
+    def test_leading_whitespace_on_all_lines(self):
+        """Leading whitespace on every line is stripped."""
+        processor = DocumentProcessor()
+        text = "    Line one\n  \t  Line two  \n   \t  Line three"
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert lines[0] == "Line one"
+        assert lines[1] == "Line two"
+        assert lines[2] == "Line three"
+
+    def test_newlines_at_various_positions(self):
+        """Newlines at start, middle, and end are handled correctly."""
+        processor = DocumentProcessor()
+        text = "\nFirst\n\nMiddle\n\n\nLast\n"
+        cleaned = processor.clean_text(text)
+        # Leading/trailing stripped, 3+ newlines collapsed
+        assert not cleaned.startswith("\n")
+        assert not cleaned.endswith("\n")
+        # Should have at least 3 content segments
+        parts = cleaned.split("\n\n")
+        assert len(parts) >= 3, f"Expected 3+ parts, got {len(parts)}: {repr(cleaned)}"
+
+
+class TestCleanTextListsAndProcedures:
+    """Tests for numbered lists, step procedures, and structured content."""
+
+    def test_numbered_list_survives_cleaning(self):
+        """Numbered list items must survive cleaning with correct numbering."""
+        processor = DocumentProcessor()
+        text = "1. First step\n2. Second step\n3. Third step"
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert len(lines) == 3, f"Expected 3 lines, got: {repr(cleaned)}"
+        assert lines[0] == "1. First step"
+        assert lines[1] == "2. Second step"
+        assert lines[2] == "3. Third step"
+
+    def test_multi_digit_numbered_list(self):
+        """Multi-digit numbered list (10+, 100+) survives cleaning."""
+        processor = DocumentProcessor()
+        text = "10.  Item ten\n11.  Item eleven\n12.  Item twelve"
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert lines[0] == "10. Item ten", f"Got: {repr(lines[0])}"
+        assert lines[1] == "11. Item eleven", f"Got: {repr(lines[1])}"
+        assert lines[2] == "12. Item twelve", f"Got: {repr(lines[2])}"
+
+    def test_bulleted_list_preserved(self):
+        """Bulleted list items survive cleaning."""
+        processor = DocumentProcessor()
+        text = "- First item\n- Second item\n- Third item"
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert len(lines) == 3
+        assert lines[0] == "- First item"
+        assert lines[1] == "- Second item"
+        assert lines[2] == "- Third item"
+
+    def test_code_block_like_content(self):
+        """Code-like content with indentation preserves structure via \\n separation."""
+        processor = DocumentProcessor()
+        text = "def hello():\n    print('hello')\n    return True"
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert len(lines) == 3
+        assert lines[0] == "def hello():"
+        assert lines[1] == "print('hello')"
+        assert lines[2] == "return True"
+
+    def test_step_procedure_with_blank_lines(self):
+        """Step procedure with blank lines between steps preserves both list and breaks."""
+        processor = DocumentProcessor()
+        text = "Step 1: Do this\n\nStep 2: Do that\n\nStep 3: Verify"
+        cleaned = processor.clean_text(text)
+        # Paragraph breaks should be preserved
+        paragraphs = cleaned.split("\n\n")
+        assert len(paragraphs) == 3, f"Expected 3 step paragraphs, got {len(paragraphs)}: {repr(cleaned)}"
+        assert "Step 1" in paragraphs[0]
+        assert "Step 2" in paragraphs[1]
+        assert "Step 3" in paragraphs[2]
+
+    def test_list_with_extra_spaces(self):
+        """List items with extra spaces between number and text are normalized."""
+        processor = DocumentProcessor()
+        text = "1.    Extra   spaces\n2.    More    here\n3.    Last    one"
+        cleaned = processor.clean_text(text)
+        lines = cleaned.split("\n")
+        assert lines[0] == "1. Extra spaces", f"Got: {repr(lines[0])}"
+        assert lines[1] == "2. More here", f"Got: {repr(lines[1])}"
+        assert lines[2] == "3. Last one", f"Got: {repr(lines[2])}"
+
+    def test_nested_structure_with_blank_lines(self):
+        """Nested content with blank lines preserves hierarchy."""
+        processor = DocumentProcessor()
+        text = "Section A\n\nSubsection A1\nContent under A1\n\nSubsection A2\nContent under A2\n\nSection B\n\nSubsection B1"
+        cleaned = processor.clean_text(text)
+        # Blank lines between subsections create paragraph breaks (\n\n).
+        # Single \n within each subsection are preserved as line breaks.
+        # Split by \n\n gives: [SectionA-part, A1-part, A2-part, SectionB-part, B1-part]
+        sections = cleaned.split("\n\n")
+        assert len(sections) == 5, f"Expected 5 sections, got {len(sections)}: {repr(cleaned)}"
+        assert "Section A" in sections[0]
+        assert "Subsection A1" in sections[1]
+        assert "Subsection A2" in sections[2]
+        assert "Section B" in sections[3]
+        assert "Subsection B1" in sections[4]
+        # Verify single \n line structure is preserved within each section
+        lines_p1 = sections[1].split("\n")
+        assert len(lines_p1) == 2, f"Expected 2 lines in subsection A1, got: {repr(lines_p1)}"
+
+
+class TestExtractXlsx:
+    """Tests for XLSX file extraction (extract_xlsx)."""
+
+    def test_extract_xlsx_basic(self, tmp_path):
+        """Test basic XLSX extraction with openpyxl."""
+        from document_processor import DocumentProcessor
+        import openpyxl
+        
+        proc = DocumentProcessor()
+        filepath = tmp_path / "test.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "TestSheet"
+        ws.append(["Header1", "Header2"])
+        ws.append(["Row1Col1", "Row1Col2"])
+        wb.save(filepath)
+        result = proc.extract_xlsx(str(filepath))
+        assert "[Sheet: TestSheet]" in result
+        assert "Header1 | Header2" in result
+        assert "Row1Col1 | Row1Col2" in result
+
+    def test_extract_xlsx_multiple_sheets(self, tmp_path):
+        """Test XLSX with multiple sheets separated by blank lines."""
+        from document_processor import DocumentProcessor
+        import openpyxl
+        
+        proc = DocumentProcessor()
+        filepath = tmp_path / "multi_sheet.xlsx"
+        wb = openpyxl.Workbook()
+        
+        # First sheet
+        ws1 = wb.active
+        ws1.title = "Sheet1"
+        ws1.append(["A1", "B1"])
+        
+        # Create second sheet
+        ws2 = wb.create_sheet("Sheet2")
+        ws2.append(["A2", "B2"])
+        
+        wb.save(filepath)
+        result = proc.extract_xlsx(str(filepath))
+        assert "[Sheet: Sheet1]" in result
+        assert "[Sheet: Sheet2]" in result
+        # Multiple sheets should be separated by blank lines
+        assert "\n\n" in result
+
+    def test_extract_xlsx_empty_rows_skipped(self, tmp_path):
+        """Test that empty rows are skipped in XLSX extraction."""
+        from document_processor import DocumentProcessor
+        import openpyxl
+        
+        proc = DocumentProcessor()
+        filepath = tmp_path / "empty_rows.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "TestData"
+        ws.append(["Header1", "Header2"])
+        ws.append(["Data1", "Data2"])
+        ws.append([])  # Empty row
+        ws.append(["Data3", "Data4"])
+        wb.save(filepath)
+        result = proc.extract_xlsx(str(filepath))
+        assert "Header1 | Header2" in result
+        assert "Data1 | Data2" in result
+        assert "Data3 | Data4" in result
+        # Empty row should not appear as empty separator
+        lines = result.split("\n")
+        empty_lines = [line for line in lines if line.strip() == ""]
+        assert len(empty_lines) == 0 or result.count("\n\n") <= 1
+
+    def test_extract_xlsx_no_data(self, tmp_path):
+        """Test XLSX with no data rows (headers only)."""
+        from document_processor import DocumentProcessor
+        import openpyxl
+        
+        proc = DocumentProcessor()
+        filepath = tmp_path / "headers_only.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Headers"
+        ws.append(["Col1", "Col2", "Col3"])
+        wb.save(filepath)
+        result = proc.extract_xlsx(str(filepath))
+        assert "Col1 | Col2 | Col3" in result
+
+    def test_extract_xlsx_different_sheet_names(self, tmp_path):
+        """Test that sheet names appear correctly in output."""
+        from document_processor import DocumentProcessor
+        import openpyxl
+        
+        proc = DocumentProcessor()
+        filepath = tmp_path / "special_names.xlsx"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Data$1"
+        ws.append(["Test"])
+        wb.save(filepath)
+        result = proc.extract_xlsx(str(filepath))
+        assert "[Sheet: Data$1]" in result
 
 
 if __name__ == "__main__":

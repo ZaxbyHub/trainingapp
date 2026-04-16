@@ -195,7 +195,7 @@ class SettingsDialog(CTkToplevel):
             row=2, column=0, sticky="w", pady=5
         )
         self.reranking_var = tk.StringVar(
-            value="on" if self.settings.get("reranking_enabled", False) else "off"
+            value="on" if self.settings.get("reranking_enabled", True) else "off"
         )
         self.reranking_switch = CTkSwitch(
             advanced_frame,
@@ -238,10 +238,10 @@ class SettingsDialog(CTkToplevel):
             "on" if self.settings.get("hybrid_search", True) else "off"
         )
         self.retrieval_window_entry.insert(
-            0, str(self.settings.get("retrieval_window", 1))
+            0, str(self.settings.get("retrieval_window", 2))
         )
         self.reranking_var.set(
-            "on" if self.settings.get("reranking_enabled", False) else "off"
+            "on" if self.settings.get("reranking_enabled", True) else "off"
         )
 
     def _save(self):

@@ -884,7 +884,7 @@ class TestRAGEngineAdversarial:
             mock_vs = MagicMock()
             mock_vs_cls.return_value = mock_vs
             mock_vs.add_chunks.return_value = 0
-            mock_vs.get_context.return_value = ("test context", ["test.txt"])
+            mock_vs.get_context.return_value = ("test context", ["test.txt"], [])
             mock_vs.get_stats.return_value = {"document_count": 0, "chunk_count": 0}
 
             mock_dp = MagicMock()
@@ -931,7 +931,7 @@ class TestRAGEngineAdversarial:
 
             mock_vs = MagicMock()
             mock_vs_cls.return_value = mock_vs
-            mock_vs.get_context.return_value = ("ctx1\n\n---\n\nctx2", ["a.txt", "b.txt"])
+            mock_vs.get_context.return_value = ("ctx1\n\n---\n\nctx2", ["a.txt", "b.txt"], [])
             mock_vs.get_stats.return_value = {"document_count": 1, "chunk_count": 2}
 
             mock_dp = MagicMock()
@@ -1245,7 +1245,7 @@ class TestLLMInterfaceAdversarial:
         assert "exceeds maximum length" in src
 
         # Also verify the constant value
-        assert MAX_PROMPT_LENGTH == 16384
+        assert MAX_PROMPT_LENGTH == 24000
         oversized = "a" * (MAX_PROMPT_LENGTH + 1)
         assert len(oversized) == MAX_PROMPT_LENGTH + 1
 

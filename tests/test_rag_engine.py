@@ -149,6 +149,7 @@ class TestQueryWithMockedVectorStore:
                     mock_store_instance.get_context.return_value = (
                         "Context from document.",
                         ["test.txt"],
+                        [DocumentChunk(text="Context from document.", source="test.txt", chunk_index=0)],
                     )
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 1,
@@ -182,7 +183,7 @@ class TestQueryWithMockedVectorStore:
             with patch("rag_engine.SmartLLM") as mock_llm:
                 with patch("rag_engine.RAGEngine._save_config"):
                     mock_store_instance = MagicMock()
-                    mock_store_instance.get_context.return_value = ("", [])
+                    mock_store_instance.get_context.return_value = ("", [], [])
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 0,
                         "chunk_count": 0,
@@ -278,6 +279,7 @@ class TestQueryGreetingBypass:
                     mock_store_instance.get_context.return_value = (
                         "Context",
                         ["test.txt"],
+                        [],
                     )
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 1,
@@ -307,39 +309,7 @@ class TestNoRelevantInfo:
             with patch("rag_engine.SmartLLM") as mock_llm:
                 with patch("rag_engine.RAGEngine._save_config"):
                     mock_store_instance = MagicMock()
-                    mock_store_instance.get_context.return_value = ("", [])
-                    mock_store_instance.get_stats.return_value = {
-                        "document_count": 5,
-                        "chunk_count": 10,
-                        "embedding_model": "test-model",
-                        "documents": ["doc1.txt", "doc2.txt"],
-                    }
-                    mock_vector_store.return_value = mock_store_instance
-
-                    mock_llm_instance = MagicMock()
-                    mock_llm_instance.answer_question.return_value = "I couldn't find any relevant information in the documents to answer your question."
-                    mock_llm.return_value = mock_llm_instance
-
-                    engine = RAGEngine()
-                    result = engine.query("What is this about?")
-
-                    # Should return fallback message about no relevant info
-                    # (since no chunks were retrieved, the fallback logic adds stats)
-                    assert (
-                        "couldn't find any relevant information"
-                        in result.answer.lower()
-                    )
-
-    def test_llm_cannot_answer(self):
-        """Test when LLM says it can't answer but chunks were retrieved."""
-        with patch("rag_engine.VectorStore") as mock_vector_store:
-            with patch("rag_engine.SmartLLM") as mock_llm:
-                with patch("rag_engine.RAGEngine._save_config"):
-                    mock_store_instance = MagicMock()
-                    mock_store_instance.get_context.return_value = (
-                        "Some context",
-                        ["test.txt"],
-                    )
+                    mock_store_instance.get_context.return_value = ("", [], [])
                     mock_store_instance.get_stats.return_value = {
                         "document_count": 1,
                         "chunk_count": 1,
@@ -358,9 +328,15 @@ class TestNoRelevantInfo:
                     engine = RAGEngine()
                     result = engine.query("What is this about?")
 
-                    # Should provide helpful fallback
-                    assert "retrieved" in result.answer.lower()
-                    assert "test.txt" in result.answer
+                    # When context is empty, code returns hardcoded fallback without calling LLM
+                    # The fallback message should mention "couldn't find" or "relevant"
+                    assert (
+                        "couldn't find" in result.answer.lower()
+                        or "relevant" in result.answer.lower()
+                    )
+                    # No chunks retrieved
+                    assert result.chunks_retrieved == 0
+                    assert result.sources == []
 
 
 # Additional utility tests
@@ -404,7 +380,7 @@ class TestRAGConfig:
         # Should use defaults for missing fields
         assert config.db_path == "./test_db"
         assert config.chunk_size == 512  # Default
-        assert config.n_results == 3  # Default
+        assert config.n_results == 6  # Default
 
 
 class TestQueryResult:

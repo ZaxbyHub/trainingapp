@@ -162,7 +162,7 @@ class TestHybridSearchOutput:
     
     def test_hybrid_search_returns_context(self, vector_store):
         """Test that hybrid search returns context string."""
-        context, sources = vector_store.get_context(
+        context, sources, chunks = vector_store.get_context(
             "Python programming",
             n_results=2,
             hybrid_search=True
@@ -173,7 +173,7 @@ class TestHybridSearchOutput:
     
     def test_hybrid_search_returns_sources(self, vector_store):
         """Test that hybrid search returns source list."""
-        context, sources = vector_store.get_context(
+        context, sources, chunks = vector_store.get_context(
             "Python programming",
             n_results=2,
             hybrid_search=True
@@ -186,7 +186,7 @@ class TestHybridSearchOutput:
     
     def test_hybrid_search_with_empty_store(self, empty_vector_store):
         """Test hybrid search on empty vector store."""
-        context, sources = empty_vector_store.get_context(
+        context, sources, chunks = empty_vector_store.get_context(
             "query",
             n_results=2,
             hybrid_search=True
@@ -200,7 +200,7 @@ class TestHybridSearchOutput:
         # Temporarily disable BM25 index
         vector_store.bm25_index = None
         
-        context, sources = vector_store.get_context(
+        context, sources, chunks = vector_store.get_context(
             "Python programming",
             n_results=2,
             hybrid_search=True
@@ -299,7 +299,7 @@ class TestGetContextSimilarity:
     
     def test_get_context_filters_by_similarity(self, vector_store):
         """Test that get_context filters by minimum similarity."""
-        context, sources = vector_store.get_context(
+        context, sources, chunks = vector_store.get_context(
             "Python programming",
             n_results=5,
             min_similarity=0.5
@@ -321,7 +321,7 @@ class TestGetContextSimilarity:
     
     def test_get_context_no_matches(self, vector_store):
         """Test get_context with no matching results."""
-        context, sources = vector_store.get_context(
+        context, sources, chunks = vector_store.get_context(
             "xyz123nonexistentquery",
             n_results=5,
             min_similarity=0.9  # High threshold
@@ -333,7 +333,7 @@ class TestGetContextSimilarity:
     def test_get_context_content_relevance(self, vector_store):
         """Test that search returns documents relevant to the query."""
         # Search for Python-related content
-        context, sources = vector_store.get_context(
+        context, sources, chunks = vector_store.get_context(
             "Python programming language",
             n_results=3,
             min_similarity=0.3
@@ -356,7 +356,7 @@ class TestGetContextSimilarity:
     
     def test_get_context_empty_query_handling(self, vector_store):
         """Test that empty query returns empty context."""
-        context, sources = vector_store.get_context(
+        context, sources, chunks = vector_store.get_context(
             "",
             n_results=3,
             min_similarity=0.3
@@ -368,7 +368,7 @@ class TestGetContextSimilarity:
     
     def test_get_context_high_similarity(self, vector_store):
         """Test get_context with high similarity threshold."""
-        context, sources = vector_store.get_context(
+        context, sources, chunks = vector_store.get_context(
             "Python",
             n_results=3,
             min_similarity=0.8
@@ -385,7 +385,7 @@ class TestGetContextSimilarity:
         
         # Test that high similarity threshold actually filters results
         # Get results with lower threshold and compare
-        context_loose, sources_loose = vector_store.get_context(
+        context_loose, sources_loose, chunks_loose = vector_store.get_context(
             "Python",
             n_results=5,
             min_similarity=0.3
