@@ -271,6 +271,71 @@ class TestErrorHandling:
 
     @patch("engine_factory.create_engine_from_env")
     @patch("reingest.Path")
+    def test_ingest_error_prints_data_loss_warning(self, mock_path, mock_create_engine, capsys):
+        """Task 8.5: When ingest_directory fails, prints the data-loss warning message."""
+        mock_engine = MagicMock()
+        mock_engine.ingest_directory.side_effect = Exception("PDF parse error")
+        mock_create_engine.return_value = mock_engine
+
+        mock_path_instance = MagicMock()
+        mock_path_instance.exists.return_value = False
+        mock_path.return_value = mock_path_instance
+
+        with patch.object(sys, "argv", ["reingest.py", "/documents", "--force"]):
+            from reingest import main
+            result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        # The specific safety message must appear
+        assert "Your vector store is now EMPTY" in captured.out
+        assert "Re-ingestion failed after documents were cleared" in captured.out
+
+    @patch("engine_factory.create_engine_from_env")
+    @patch("reingest.Path")
+    def test_ingest_error_prints_rerun_command(self, mock_path, mock_create_engine, capsys):
+        """Task 8.5: When ingest_directory fails, prints the re-run command with the directory."""
+        mock_engine = MagicMock()
+        mock_engine.ingest_directory.side_effect = Exception("File not found")
+        mock_create_engine.return_value = mock_engine
+
+        mock_path_instance = MagicMock()
+        mock_path_instance.exists.return_value = False
+        mock_path.return_value = mock_path_instance
+
+        with patch.object(sys, "argv", ["reingest.py", "/my/docs", "--force"]):
+            from reingest import main
+            result = main()
+
+        assert result == 1
+        captured = capsys.readouterr()
+        # The re-run command must include the directory argument
+        assert "python scripts/reingest.py" in captured.out
+        assert "/my/docs" in captured.out
+
+    @patch("engine_factory.create_engine_from_env")
+    @patch("reingest.Path")
+    def test_clear_before_ingest_on_success(self, mock_path, mock_create_engine):
+        """Task 8.5: Success path unchanged — clear still called before ingest."""
+        mock_engine = MagicMock()
+        mock_engine.ingest_directory.return_value = {"files": 3, "chunks": 7}
+        mock_create_engine.return_value = mock_engine
+
+        mock_path_instance = MagicMock()
+        mock_path_instance.exists.return_value = False
+        mock_path.return_value = mock_path_instance
+
+        with patch.object(sys, "argv", ["reingest.py", "/data", "--force"]):
+            from reingest import main
+            result = main()
+
+        assert result == 0
+        # On success, no inner exception block output should appear
+        mock_engine.clear_documents.assert_called_once()
+        mock_engine.ingest_directory.assert_called_once_with("/data")
+
+    @patch("engine_factory.create_engine_from_env")
+    @patch("reingest.Path")
     def test_returns_0_on_success(self, mock_path, mock_create_engine, capsys):
         """Verify returns 0 on successful completion."""
         mock_engine = MagicMock()

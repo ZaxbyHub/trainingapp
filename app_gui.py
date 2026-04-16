@@ -206,6 +206,20 @@ class SettingsDialog(CTkToplevel):
         )
         self.reranking_switch.grid(row=2, column=1, padx=10, pady=5)
 
+        # Initial Retrieval Top-K
+        CTkLabel(advanced_frame, text="Initial Retrieval Top-K:").grid(
+            row=3, column=0, sticky="w", pady=5
+        )
+        self.initial_retrieval_top_k_entry = CTkEntry(advanced_frame, width=100)
+        self.initial_retrieval_top_k_entry.grid(row=3, column=1, padx=10, pady=5)
+
+        # Rerank Top-K
+        CTkLabel(advanced_frame, text="Rerank Top-K:").grid(
+            row=4, column=0, sticky="w", pady=5
+        )
+        self.rerank_top_k_entry = CTkEntry(advanced_frame, width=100)
+        self.rerank_top_k_entry.grid(row=4, column=1, padx=10, pady=5)
+
         # Buttons
         button_frame = CTkFrame(main_frame)
         button_frame.pack(fill="x", pady=(20, 0))
@@ -231,7 +245,7 @@ class SettingsDialog(CTkToplevel):
         gguf = self.settings.get("gguf_path") or self.settings.get("model_path", "")
         self.model_path_entry.insert(0, gguf)
         self.chunk_size_entry.insert(0, str(self.settings.get("chunk_size", DEFAULT_CHUNK_SIZE)))
-        self.n_results_entry.insert(0, str(self.settings.get("n_results", 3)))
+        self.n_results_entry.insert(0, str(self.settings.get("n_results", 6)))
         self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", DEFAULT_MAX_TOKENS)))
         self.temperature_entry.insert(0, str(self.settings.get("temperature", 0.3)))
         self.hybrid_search_var.set(
@@ -243,6 +257,8 @@ class SettingsDialog(CTkToplevel):
         self.reranking_var.set(
             "on" if self.settings.get("reranking_enabled", True) else "off"
         )
+        self.initial_retrieval_top_k_entry.insert(0, str(self.settings.get("initial_retrieval_top_k", 30)))
+        self.rerank_top_k_entry.insert(0, str(self.settings.get("rerank_top_k", 6)))
 
     def _save(self):
         # Validate numeric ranges
@@ -256,7 +272,7 @@ class SettingsDialog(CTkToplevel):
             errors.append("Chunk Size must be a valid integer")
 
         try:
-            n_results = int(self.n_results_entry.get() or 3)
+            n_results = int(self.n_results_entry.get() or 6)
             if not (1 <= n_results <= 20):
                 errors.append(f"Results to Retrieve must be between 1 and 20")
         except ValueError:
@@ -277,11 +293,25 @@ class SettingsDialog(CTkToplevel):
             errors.append("Temperature must be a valid number")
 
         try:
-            retrieval_window = int(self.retrieval_window_entry.get() or 1)
+            retrieval_window = int(self.retrieval_window_entry.get() or 2)
             if not (0 <= retrieval_window <= 5):
                 errors.append(f"Window Expansion must be between 0 and 5")
         except ValueError:
             errors.append("Window Expansion must be a valid integer")
+
+        try:
+            initial_retrieval_top_k = int(self.initial_retrieval_top_k_entry.get() or 30)
+            if not (1 <= initial_retrieval_top_k <= 100):
+                errors.append("Initial Retrieval Top-K must be between 1 and 100")
+        except ValueError:
+            errors.append("Initial Retrieval Top-K must be a valid integer")
+
+        try:
+            rerank_top_k = int(self.rerank_top_k_entry.get() or 6)
+            if not (1 <= rerank_top_k <= 100):
+                errors.append("Rerank Top-K must be between 1 and 100")
+        except ValueError:
+            errors.append("Rerank Top-K must be a valid integer")
 
         if errors:
             messagebox.showerror("Validation Error", "\n".join(errors))
@@ -296,6 +326,8 @@ class SettingsDialog(CTkToplevel):
             "hybrid_search": self.hybrid_search_var.get() == "on",
             "retrieval_window": retrieval_window,
             "reranking_enabled": self.reranking_var.get() == "on",
+            "initial_retrieval_top_k": initial_retrieval_top_k,
+            "rerank_top_k": rerank_top_k,
         }
         # Clean up old "model_path" key if present
         if "model_path" in self.result:
@@ -356,7 +388,7 @@ class DocumentQAApp(CTk):
         default_settings = {
             "gguf_path": bundled_model,
             "chunk_size": 512,
-            "n_results": 3,
+            "n_results": 6,
             "max_tokens": DEFAULT_MAX_TOKENS,
             "temperature": 0.3,
             "db_path": str(Path(settings_path).parent / "doc_qa_db"),

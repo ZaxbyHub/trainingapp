@@ -36,7 +36,7 @@ class DocumentProcessor:
 
     SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md", ".xlsx"}
 
-    def __init__(self, chunk_size: int = 256, chunk_overlap: int = 50):
+    def __init__(self, chunk_size: int = 256, chunk_overlap: int = 100):
         if chunk_size <= 0:
             raise ValueError(f"chunk_size must be positive, got {chunk_size}")
         if chunk_overlap < 0:

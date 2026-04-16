@@ -287,6 +287,15 @@ async def lifespan(app: FastAPI):
             max_tokens=max_tokens,
             temperature=temperature,
             embedding_model=settings.rag_embedding_model,
+            chunk_overlap=settings.rag_chunk_overlap,
+            min_similarity=settings.rag_min_similarity,
+            retrieval_window=settings.rag_retrieval_window,
+            hybrid_search=settings.rag_hybrid_search,
+            reranking_enabled=settings.rag_reranking_enabled,
+            reranker_model=settings.rag_reranker_model,
+            query_transformation_enabled=False,
+            initial_retrieval_top_k=settings.rag_initial_retrieval_top_k,
+            rerank_top_k=settings.rag_rerank_top_k,
         )
 
         engine = RAGEngine(

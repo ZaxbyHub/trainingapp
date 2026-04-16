@@ -73,7 +73,8 @@ def main():
         print("  ✓ Engine created successfully")
         print()
         
-        # Clear existing documents
+        # WARNING: Data loss risk — if ingest_directory fails below, the vector store will be empty.
+        # There is no automatic rollback. The user must re-run this script after fixing the issue.
         print("Clearing existing documents from vector store...")
         engine.clear_documents()
         print("  ✓ Existing documents cleared")
@@ -81,9 +82,17 @@ def main():
         
         # Re-ingest documents
         print(f"Ingesting documents from: {directory}")
-        stats = engine.ingest_directory(directory)
-        print(f"  ✓ Re-ingestion complete: {stats}")
-        print()
+        try:
+            stats = engine.ingest_directory(directory)
+            print(f"  ✓ Re-ingestion complete: {stats}")
+            print()
+        except Exception as e:
+            print(f"ERROR: Re-ingestion failed after documents were cleared.")
+            print(f"  Details: {e}")
+            print()
+            print("Your vector store is now EMPTY. To recover, fix the issue above and re-run this script.")
+            print(f"  Command: python scripts/reingest.py \"{directory}\"")
+            raise
         
         print("=" * 70)
         print("SUCCESS: Re-ingestion completed successfully")

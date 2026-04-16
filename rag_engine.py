@@ -395,6 +395,10 @@ class RAGEngine:
         )  # Calculate effective rerank top_k: use n_results if provided, otherwise fall back to config
         effective_top_k = n_results if n_results is not None else self.config.rerank_top_k
 
+        # Guard against effective_top_k <= 0
+        if effective_top_k <= 0:
+            effective_top_k = 1
+
         # Initialize chunks_retrieved for later use
         chunks_retrieved = len(retrieved_chunks) if retrieved_chunks is not None else 0
 
@@ -421,6 +425,16 @@ class RAGEngine:
                     context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
                     sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
                     chunks_retrieved = len(reranked)
+
+        else:
+            # Non-reranking path: truncate to n_results or config.n_results
+            final_top_k = n_results if n_results is not None else self.config.n_results
+            if final_top_k <= 0:
+                final_top_k = 1
+            final_chunks = retrieved_chunks[:final_top_k]
+            context = "\n\n---\n\n".join(chunk.text for chunk in final_chunks)
+            sources = list(dict.fromkeys(chunk.source for chunk in final_chunks))
+            chunks_retrieved = len(final_chunks)
 
         # Diagnostic logging
         logger.debug(
