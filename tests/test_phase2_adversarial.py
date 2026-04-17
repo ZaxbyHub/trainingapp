@@ -650,22 +650,6 @@ class TestAPIServerPathTraversal:
         assert validate_device("cuda") == "cuda"
         assert validate_device("mps") == "mps"
 
-    def test_validate_numeric_out_of_range(self):
-        """validate_numeric raises for out-of-range values."""
-        from api_server import validate_numeric
-
-        assert validate_numeric(5, 1, 10, "test") == 5
-        with pytest.raises(ValueError, match="must be between"):
-            validate_numeric(15, 1, 10, "test")
-
-    def test_validate_numeric_at_boundaries(self):
-        """validate_numeric accepts boundary values."""
-        from api_server import validate_numeric
-
-        assert validate_numeric(1, 1, 10, "test") == 1
-        assert validate_numeric(10, 1, 10, "test") == 10
-
-
 # =============================================================================
 # 4. SECURITY.PY URL ATTACKS
 # =============================================================================

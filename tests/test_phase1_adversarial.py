@@ -129,19 +129,7 @@ def test_validate_device_rejects_backticks():
     with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
         validate_device("cpu:$(whoami)")
     
-def test_validate_numeric_rejects_values_below_min():
-    """Test that validate_numeric() rejects values below min"""
-    from api_server import validate_numeric
-    
-    with pytest.raises(ValueError, match="chunk_size must be between 100 and 10000"):
-        validate_numeric(50, 100, 10000, "chunk_size")
 
-def test_validate_numeric_rejects_values_above_max():
-    """Test that validate_numeric() rejects values above max"""
-    from api_server import validate_numeric
-    
-    with pytest.raises(ValueError, match="chunk_size must be between 100 and 10000"):
-        validate_numeric(15000, 100, 10000, "chunk_size")
 
 def test_ingest_endpoint_rejects_invalid_directory_with_400():
     """Test /ingest endpoint rejects invalid directory with 400 status"""
@@ -224,11 +212,11 @@ def test_validate_directory_handles_relative_paths():
 # Test that all the validation functions exist and can be imported
 def test_validation_functions_import():
     """Test that validation functions can be imported"""
-    from api_server import validate_url, validate_model_path, validate_directory, validate_numeric, validate_device, validate_numeric
+    from api_server import validate_url, validate_model_path, validate_directory, validate_device
     assert validate_url is not None
     assert validate_model_path is not None
     assert validate_directory is not None
-    assert validate_numeric is not None
+    assert validate_device is not None
 
 # Test the actual behavior of path traversal detection
 def test_validate_model_path_path_traversal_detection():
@@ -267,28 +255,12 @@ def test_validate_directory_path_traversal_detection():
         with pytest.raises(ValueError, match="Directory path contains path traversal attempts"):
             validate_directory(pattern)
 
-# Test numeric validation edge cases
-def test_validate_numeric_edge_cases():
-    """Test validate_numeric edge cases"""
-    from api_server import validate_numeric
-    
-    # Test boundary values
-    try:
-        result = validate_numeric(100, 100, 10000, "chunk_size")
-        assert result == 100
-    except Exception as e:
-        pytest.fail(f"Boundary value 100 was rejected: {e}")
-    
-    try:
-        result = validate_numeric(10000, 100, 10000, "chunk_size")
-        assert result == 10000
-    except Exception as e:
-        pytest.fail(f"Boundary value 10000 was rejected: {e}")
+
 
 # Test validation functions with empty and null inputs
 def test_validation_functions_empty_inputs():
     """Test validation functions with empty and null inputs"""
-    from api_server import validate_url, validate_model_path, validate_directory, validate_numeric
+    from api_server import validate_url, validate_model_path, validate_directory
     
     # Test empty URL
     with pytest.raises(ValueError, match="URL cannot be empty"):
@@ -301,10 +273,6 @@ def test_validation_functions_empty_inputs():
     # Test empty directory path
     with pytest.raises(ValueError, match="Directory path cannot be empty"):
         validate_directory("")
-    
-    # Test empty numeric (this is a bit tricky since it's a value)
-    with pytest.raises(ValueError, match="chunk_size must be between 100 and 10000"):
-        validate_numeric(0, 100, 10000, "chunk_size")
 
 # Test URL validation for non-standard schemes
 def test_validate_url_non_standard_schemes():

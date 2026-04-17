@@ -14,7 +14,7 @@ from fastapi import HTTPException
 
 from api_server import (
     app, engine, validate_url, validate_model_path,
-    validate_directory, validate_numeric,
+    validate_directory,
     QuestionRequest, QuestionResponse,
     SearchRequest, SearchResult,
     IngestRequest, IngestResponse,
@@ -393,25 +393,6 @@ class TestValidateDirectory:
         
         with pytest.raises(ValueError, match="path traversal"):
             validate_directory(path)
-
-
-class TestValidateNumeric:
-    """Tests for numeric validation."""
-    
-    def test_validate_numeric_valid(self):
-        """Test validating a valid numeric value."""
-        result = validate_numeric(5, 1, 10, "test_param")
-        assert result == 5
-    
-    def test_validate_numeric_below_min(self):
-        """Test value below minimum is rejected."""
-        with pytest.raises(ValueError, match="must be between"):
-            validate_numeric(0, 1, 10, "test_param")
-    
-    def test_validate_numeric_above_max(self):
-        """Test value above maximum is rejected."""
-        with pytest.raises(ValueError, match="must be between"):
-            validate_numeric(15, 1, 10, "test_param")
 
 
 if __name__ == "__main__":
