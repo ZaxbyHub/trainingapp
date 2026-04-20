@@ -602,6 +602,15 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("progress", 20))
                 self.message_queue.put(("progress_label", "20% — Initializing RAG engine..."))
 
+                # Fix torch DLL loading in PyInstaller frozen builds
+                if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                    torch_lib = os.path.join(sys._MEIPASS, "torch", "lib")
+                    logger.debug("Frozen mode detected, torch_lib exists=%s", os.path.isdir(torch_lib))
+                    if os.path.isdir(torch_lib):
+                        os.add_dll_directory(torch_lib)
+                        os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+                        logger.debug("torch DLL directory added to search path")
+
                 try:
                     self.engine = create_engine_from_settings(self.settings)
                 except Exception as engine_error:
@@ -615,6 +624,7 @@ class DocumentQAApp(CTk):
                         "Go to Settings to configure."
                     ))
                     self._is_operation_active = False
+                    self.message_queue.put(("enable_input", True))
                     return
 
                 stats = self.engine.get_stats()
@@ -670,6 +680,7 @@ class DocumentQAApp(CTk):
                         f"Failed to initialize: {e}\n\nPlease check Settings.",
                     )
                 )
+                self.message_queue.put(("enable_input", True))
 
         threading.Thread(target=init, daemon=True).start()
 
@@ -739,9 +750,21 @@ class DocumentQAApp(CTk):
                 self._initialize_engine()
 
     def _ingest_documents(self):
-        """Open directory picker and ingest documents."""
-        directory = filedialog.askdirectory(title="Select Document Folder")
-        if not directory:
+        """Open file picker and ingest documents."""
+        files = filedialog.askopenfilenames(
+            title="Select Documents",
+            filetypes=[
+                ("Text files", "*.txt"),
+                ("PDF files", "*.pdf"),
+                ("Word files", "*.docx"),
+                ("Markdown files", "*.md"),
+                ("HTML files", "*.html"),
+                ("JSON files", "*.json"),
+                ("CSV files", "*.csv"),
+                ("All files", "*.*"),
+            ],
+        )
+        if not files:
             return
 
         if not self.engine:
@@ -754,22 +777,45 @@ class DocumentQAApp(CTk):
 
         def ingest():
             try:
+                total_documents = 0
+                total_chunks_added = 0
+                total_time_seconds = 0.0
+                failed_files = []
 
                 def callback(msg, progress):
                     self.message_queue.put(("status", msg))
                     self.message_queue.put(("progress", progress))
                     self.message_queue.put(("progress_label", f"{progress}% — {msg}"))
 
-                stats = self.engine.ingest_directory(directory, callback)
+                for i, file_path in enumerate(files, 1):
+                    callback(f"Processing file {i} of {len(files)}: {os.path.basename(file_path)}", int((i / len(files)) * 100))
 
-                if stats["success"]:
+                    try:
+                        source_name = os.path.basename(file_path)
+                        file_stats = self.engine.ingest_file(file_path, source_name=source_name)
+                        if file_stats.get("success"):
+                            total_documents += 1
+                            total_chunks_added += file_stats.get("chunks_added", 0)
+                            total_time_seconds += file_stats.get("time_seconds", 0)
+                        else:
+                            failed_files.append((file_path, ValueError(file_stats.get("message", "No content extracted"))))
+                            self.message_queue.put(
+                                ("message", "system", f"Failed to ingest {os.path.basename(file_path)}: {file_stats.get('message', 'No content extracted')}")
+                            )
+                    except Exception as file_error:
+                        failed_files.append((file_path, file_error))
+                        self.message_queue.put(
+                            ("message", "system", f"Failed to ingest {os.path.basename(file_path)}: {file_error}")
+                        )
+
+                if not failed_files:
                     self.message_queue.put(
                         (
                             "message",
                             "system",
-                            f"✓ Ingested {stats['documents']} documents "
-                            f"({stats['chunks_added']} new chunks) "
-                            f"in {stats['time_seconds']:.1f}s",
+                            f"✓ Ingested {total_documents} documents "
+                            f"({total_chunks_added} new chunks) "
+                            f"in {total_time_seconds:.1f}s",
                         )
                     )
                     self.message_queue.put(
@@ -777,19 +823,29 @@ class DocumentQAApp(CTk):
                     )
                     self.message_queue.put(("progress_clear",))
                     self._is_operation_active = False
+                    self.message_queue.put(("enable_input", True))
                 else:
+                    total_files = len(files)
+                    successful_files = total_files - len(failed_files)
                     self.message_queue.put(
                         (
                             "message",
                             "system",
-                            f"⚠ {stats.get('message', 'Ingestion failed')}",
+                            f"✓ Ingested {successful_files}/{total_files} files "
+                            f"({total_documents} documents, {total_chunks_added} new chunks) "
+                            f"in {total_time_seconds:.1f}s",
                         )
                     )
-
-                    self.message_queue.put(("status", "Ready"))
-                    self.message_queue.put(("enable_input", True))
+                    for failed_path, failed_error in failed_files:
+                        self.message_queue.put(
+                            ("message", "system", f"Failed to ingest {os.path.basename(failed_path)}: {failed_error}")
+                        )
+                    self.message_queue.put(
+                        ("doc_count", self.engine.get_stats()["document_count"])
+                    )
                     self.message_queue.put(("progress_clear",))
                     self._is_operation_active = False
+                    self.message_queue.put(("enable_input", True))
 
             except Exception as e:
                 self.message_queue.put(("status", f"Error: {e}"))

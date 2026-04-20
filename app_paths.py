@@ -26,33 +26,50 @@ def get_bundled_model_path() -> Optional[Path]:
     """
     Get path to bundled GGUF model file.
     
-    Searches for the default model in models/ directory.
-    Works in both PyInstaller frozen and development modes.
+    In frozen mode: searches bundled_models/ first, then models/ as fallback.
+    In dev mode: searches only models/.
     
     Returns:
         Path: Path to the first model file found, or None if no model found
     """
-    # Define models to search (default only)
-    model_filenames = [
-        DEFAULT_BUNDLED_GGUF,
-    ]
-    
     # Determine base path for models directory
     if is_frozen():
         base_path = Path(sys._MEIPASS)
+        # First check bundled_models/ directory
+        bundled_models_dir = base_path / "bundled_models"
+        if bundled_models_dir.exists():
+            # First try the hardcoded DEFAULT_BUNDLED_GGUF filename
+            default_model_path = bundled_models_dir / DEFAULT_BUNDLED_GGUF
+            if default_model_path.exists() and default_model_path.is_file():
+                return default_model_path
+            
+            # If that doesn't exist, search for ANY .gguf file
+            for gguf_file in bundled_models_dir.glob("*.gguf"):
+                if gguf_file.is_file():
+                    return gguf_file
+        
+        # If not found in bundled_models/, fall back to models/
+        models_dir = base_path / "models"
+        if not models_dir.exists():
+            return None
     else:
+        # Dev mode: only check models/
         base_path = Path(__file__).parent
+        models_dir = base_path / "models"
+        
+        if not models_dir.exists():
+            return None
     
-    models_dir = base_path / "models"
+    # (Reused for both frozen fallback and dev mode)
+    # First try the hardcoded DEFAULT_BUNDLED_GGUF filename (for backward compatibility)
+    default_model_path = models_dir / DEFAULT_BUNDLED_GGUF
+    if default_model_path.exists() and default_model_path.is_file():
+        return default_model_path
     
-    if not models_dir.exists():
-        return None
-    
-    # Search for each model filename
-    for filename in model_filenames:
-        model_path = models_dir / filename
-        if model_path.exists() and model_path.is_file():
-            return model_path
+    # If that doesn't exist, search for ANY .gguf file
+    for gguf_file in models_dir.glob("*.gguf"):
+        if gguf_file.is_file():
+            return gguf_file
     
     return None
 
