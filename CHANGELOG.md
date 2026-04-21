@@ -19,15 +19,12 @@
   - `rag_min_similarity`: Minimum similarity threshold (0.0-1.0)
   - `rag_context_truncation`: Maximum context length (256-32768 characters)
   - `rag_db_path`: Configurable vector database path (Task 4.1)
+- **Settings placeholder hints**: Model path, chunk_size, n_results, max_tokens, temperature, retrieval_window, initial_top_k, and rerank_top_k entries now show placeholder text to guide users (Task 5.2)
 
 ### Changed
 - **Cancel button behavior**: Now appears during all background operations (engine init, ingestion, querying) and disappears when operation completes or is cancelled
 - **Escape key handler**: Delegates to `_cancel_operation()` when an operation is active, providing consistent cancellation behavior
 - **Button border width**: All buttons created via `_make_button()` now consistently use `border_width=1` (standardized from Task 5.1)
-- **Settings placeholder text**: All settings CTkEntry widgets now display placeholder text matching their config defaults (Task 5.2)
-
-### Added
-- **Settings placeholder hints**: Model path, chunk_size, n_results, max_tokens, temperature, retrieval_window, initial_top_k, and rerank_top_k entries now show placeholder text to guide users (Task 5.2)
 
 ### Fixed
 - **Text overflow**: Long chat messages no longer overflow the chat area due to dynamic wraplength calculation

@@ -49,7 +49,7 @@ class ColorTokens:
 
     @classmethod
     def text_on_secondary(cls) -> str:
-        return "#ffffff" if cls._is_dark() else "#ffffff"
+        return "#ffffff" if cls._is_dark() else "#333333"
 
     @classmethod
     def text_on_bubble(cls, role: str) -> str:
