@@ -42,7 +42,22 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - 64GB RAM
 - **Performance**: ~15-20 tokens/second (CPU-only with GGUF)
 
-## 🆕 New Features (Version 1.1.0)
+## 🆕 New Features (Version 2.0.0)
+
+### Layout and Responsive Behavior (Phase 3)
+- **Dynamic Text Wrapping**: Chat messages automatically wrap based on window width — text reflows as you resize the window
+- **Empty State Guide**: Friendly placeholder shown when no documents are loaded, with sample questions and quick-start button
+- **Operation Cancellation**: Cancel long-running operations (ingestion, querying, engine init) via Cancel button or Escape key
+
+### Interactive Source Pills (Phase 4)
+- **Clickable Source Badges**: Document sources in chat messages are now interactive pills with document icons
+- **Inline Snippet Preview**: Click a source pill to expand an inline card showing the relevant text snippet from the document
+- **Horizontal Layout**: Multiple sources displayed in a wrap-enabled horizontal row
+
+### Settings Tooltips (Phase 4)
+- **CTkTooltip Class**: Non-blocking hover tooltips with 500ms delay for all settings fields
+- **Contextual Help**: Each RAG configuration field has descriptive hint text explaining its purpose
+- **Dark Theme Tooltips**: Tooltips use dark background (#3a3a4e) with white text for consistent visibility
 
 ### Settings (Phase 6)
 - **Real-time UI Updates**: Font size slider now applies to all widgets immediately when saved
@@ -56,6 +71,16 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - **Feedback System**: Working thumbs up/down buttons that persist to database
 - **Conversation Context Menu**: Right-click options to delete or rename conversations
 - **Time Display**: Relative timestamps in sidebar (e.g., "2 min ago", "Yesterday")
+
+### Keyboard Shortcuts & UX (Phase 2)
+- **Enter Key Submission**: Press Enter to submit questions (no need to click "Ask" button)
+- **Escape Key**: Clears input field or cancels active operations
+- **Ctrl+Enter**: Alternative shortcut for submitting questions
+- **Ctrl+L**: Quick clear chat shortcut
+- **Ctrl+,**: Open settings dialog shortcut
+- **Inline Typing Indicator**: "Thinking..." indicator appears in chat area while processing (replaces status bar overwrite)
+- **Clear Chat Confirmation**: Clear button requires a second click within 3 seconds to prevent accidental deletion
+- **Settings Switch Labels**: CTkSwitch widgets now display descriptive text labels ("Enable Hybrid Search", "Enable Reranking")
 
 ## 📦 Installation
 

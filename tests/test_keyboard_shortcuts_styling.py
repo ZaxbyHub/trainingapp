@@ -55,8 +55,39 @@ def test_ctrl_comma_binding_exists():
         "Missing <Control-comma> binding for Ctrl+, settings"
 
 
+def test_enter_key_submits_question():
+    """FR-701: question_entry Enter key must call _ask_question()."""
+    try:
+        import app_gui
+    except ImportError:
+        pytest.skip("customtkinter not installed")
+
+    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    assert 'question_entry.bind("<Return>"' in source, \
+        "Missing <Return> binding on question_entry"
+    assert "_ask_question" in source, \
+        "Enter binding must call _ask_question"
+    # Verify it returns "break" to prevent default behavior
+    assert 'or "break"' in source, \
+        "Enter binding must return 'break' to prevent default Return behavior"
+
+
+def test_escape_key_clears_or_cancels():
+    """FR-702: question_entry Escape key must clear input or cancel operation."""
+    try:
+        import app_gui
+    except ImportError:
+        pytest.skip("customtkinter not installed")
+
+    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    assert 'question_entry.bind("<Escape>"' in source, \
+        "Missing <Escape> binding on question_entry"
+    assert "_handle_escape" in source, \
+        "Escape binding must call _handle_escape"
+
+
 def test_clear_chat_requires_confirmation():
-    """FR-704a: Clear chat must require user confirmation."""
+    """FR-704a: Clear chat must require user confirmation via inline two-click pattern."""
     try:
         import app_gui
     except ImportError:
@@ -66,10 +97,10 @@ def test_clear_chat_requires_confirmation():
     assert hasattr(app_gui.DocumentQAApp, '_confirm_clear_chat'), \
         "_confirm_clear_chat method must exist"
 
-    # Verify it calls messagebox.askyesno
+    # Verify it uses the inline confirm pattern (not messagebox.askyesno)
     source = inspect.getsource(app_gui.DocumentQAApp._confirm_clear_chat)
-    assert "askyesno" in source, \
-        "_confirm_clear_chat must call messagebox.askyesno"
+    assert "_clear_confirm_pending" in source, \
+        "_confirm_clear_chat must use _clear_confirm_pending flag for inline confirm state"
     assert "_do_clear_chat" in source, \
         "_confirm_clear_chat must call _do_clear_chat when confirmed"
 
@@ -86,13 +117,13 @@ def test_ask_button_has_primary_style():
     assert 'input_frame, text="Ask"' in source, \
         "ask_button must be created with _make_button"
 
-    # Verify primary styling colors
-    assert 'fg_color="#1a73e8"' in source, \
-        "ask_button must have primary fg_color=#1a73e8 (blue)"
-    assert 'hover_color="#1557b0"' in source, \
-        "ask_button must have hover_color=#1557b0"
-    assert 'text_color="white"' in source, \
-        "ask_button must have text_color=white"
+    # Verify primary styling uses ColorTokens methods
+    assert 'ColorTokens.primary()' in source, \
+        "ask_button must use ColorTokens.primary()"
+    assert 'ColorTokens.primary_hover()' in source, \
+        "ask_button must use ColorTokens.primary_hover()"
+    assert 'ColorTokens.text_on_primary()' in source, \
+        "ask_button must use ColorTokens.text_on_primary()"
 
 
 def test_clear_button_has_secondary_style():
@@ -107,13 +138,11 @@ def test_clear_button_has_secondary_style():
     assert 'input_frame, text="Clear"' in source, \
         "clear_button must be created with _make_button"
 
-    # Verify secondary styling colors
-    assert 'fg_color="#444444"' in source, \
-        "clear_button must have secondary fg_color=#444444 (gray)"
-    assert 'hover_color="#555555"' in source, \
-        "clear_button must have hover_color=#555555"
-    assert 'border_width=1' in source, \
-        "clear_button must have border_width=1 for secondary styling"
+    # Verify secondary styling uses ColorTokens methods
+    assert 'ColorTokens.secondary()' in source, \
+        "clear_button must use ColorTokens.secondary()"
+    assert 'ColorTokens.secondary_hover()' in source, \
+        "clear_button must use ColorTokens.secondary_hover()"
 
 
 def test_settings_save_button_has_primary_style():
@@ -141,10 +170,10 @@ def test_settings_save_button_has_primary_style():
 
     assert save_button_match is not None, \
         "Save button _make_button creation not found"
-    assert 'fg_color="#1a73e8"' in save_button_match, \
-        "Save button must have primary fg_color=#1a73e8 (blue)"
-    assert 'hover_color="#1557b0"' in save_button_match, \
-        "Save button must have hover_color=#1557b0"
+    assert 'ColorTokens.primary()' in save_button_match, \
+        "Save button must use ColorTokens.primary()"
+    assert 'ColorTokens.primary_hover()' in save_button_match, \
+        "Save button must use ColorTokens.primary_hover()"
 
 
 def test_settings_cancel_button_has_secondary_style():
@@ -171,14 +200,12 @@ def test_settings_cancel_button_has_secondary_style():
 
     assert cancel_button_match is not None, \
         "Cancel button _make_button creation not found"
-    assert 'fg_color="#444444"' in cancel_button_match, \
-        "Cancel button must have secondary fg_color=#444444 (gray)"
-    assert 'border_width=1' in cancel_button_match, \
-        "Cancel button must have border_width=1 for secondary styling"
+    assert 'ColorTokens.secondary()' in cancel_button_match, \
+        "Cancel button must use ColorTokens.secondary()"
 
 
 def test_confirm_clear_chat_calls_do_clear_on_yes():
-    """FR-704a: _confirm_clear_chat must call _do_clear_chat when user confirms."""
+    """FR-704a: _confirm_clear_chat must call _do_clear_chat on second click (inline confirm)."""
     try:
         import app_gui
     except ImportError:
@@ -188,13 +215,16 @@ def test_confirm_clear_chat_calls_do_clear_on_yes():
     assert hasattr(app_gui.DocumentQAApp, '_do_clear_chat'), \
         "_do_clear_chat method must exist for actual clearing"
 
-    # Verify _confirm_clear_chat calls _do_clear_chat inside the if block
+    # Verify _confirm_clear_chat uses the inline two-click pattern
     source = inspect.getsource(app_gui.DocumentQAApp._confirm_clear_chat)
-    assert "askyesno" in source, \
-        "_confirm_clear_chat must call askyesno"
-    # The logic should be: if askyesno returns True, call _do_clear_chat
+    # The inline pattern uses _clear_confirm_pending flag and calls _do_clear_chat on second click
+    assert "_clear_confirm_pending" in source, \
+        "_confirm_clear_chat must use _clear_confirm_pending flag to track confirm state"
     assert "_do_clear_chat()" in source, \
-        "_confirm_clear_chat must call _do_clear_chat when confirmed"
+        "_confirm_clear_chat must call _do_clear_chat() on second click (confirmation)"
+    # Verify the timer-based auto-revert mechanism exists
+    assert "after(" in source, \
+        "_confirm_clear_chat must use after() to start auto-revert timer"
 
 
 def test_no_old_clear_chat_method():
