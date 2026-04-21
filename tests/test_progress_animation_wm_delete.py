@@ -68,12 +68,14 @@ def _create_mocked_app():
             app.ask_button = ctk.CTkButton(app, text="Ask")
             app.question_entry = ctk.CTkEntry(app)
 
+            # Chat frame — needed for _show_typing_indicator (FR-706)
+            app.chat_frame = MagicMock()
+            app.chat_frame.winfo_exists = MagicMock(return_value=True)
+            app.chat_frame._parent_canvas = MagicMock()
+
             # Instance flags — FR-706, FR-707
-            app._thinking_animation_id = None
+            app._typing_animation_id = None
             app._is_operation_active = False
-            # Thinking animation frames (initialized on first use)
-            app._thinking_frames = ["Thinking.", "Thinking..", "Thinking..."]
-            app._thinking_frame_idx = 0
 
             # Bind WM_DELETE_WINDOW — FR-707
             app.protocol("WM_DELETE_WINDOW", app._on_close)
@@ -82,9 +84,9 @@ def _create_mocked_app():
     finally:
         # Cleanup Tk resources
         try:
-            if hasattr(app, "_thinking_animation_id") and app._thinking_animation_id is not None:
+            if hasattr(app, "_typing_animation_id") and app._typing_animation_id is not None:
                 try:
-                    app.after_cancel(app._thinking_animation_id)
+                    app.after_cancel(app._typing_animation_id)
                 except Exception:
                     pass
         except Exception:
@@ -187,60 +189,44 @@ class TestProgressLabelWidget:
 
 
 # =============================================================================
-# FR-706: Thinking Animation
+# FR-706: Typing Indicator
 # =============================================================================
 
-class TestThinkingAnimation:
-    """Tests for FR-706: thinking animation start/stop/idempotency."""
+class TestTypingIndicator:
+    """Tests for FR-706: typing indicator start/stop/idempotency."""
 
-    def test_start_thinking_animation_sets_frames(self):
-        """Calling _start_thinking_animation should initialize _thinking_frames and schedule animation."""
+    def test_show_typing_indicator_creates_frame(self):
+        """Calling _show_typing_indicator should create _typing_frame inside chat_frame."""
         for app in _create_mocked_app():
             try:
                 # Track after() calls
                 after_calls = []
-                original_after = app.after
 
                 def tracking_after(delay, callback=None):
                     after_calls.append((delay, callback))
                     return 999  # fake timer id
 
                 app.after = tracking_after
-                app._start_thinking_animation()
+                app._typing_animation_id = None
+                app._show_typing_indicator()
 
-                assert hasattr(app, "_thinking_frames"), \
-                    "_thinking_frames attribute should exist after start"
-                assert app._thinking_frames == ["Thinking.", "Thinking..", "Thinking..."], \
-                    f"Unexpected frames: {app._thinking_frames}"
-                assert app._thinking_animation_id is not None, \
-                    "_thinking_animation_id should be set after start"
+                assert hasattr(app, "_typing_frame"), \
+                    "_typing_frame attribute should exist after show"
+                assert hasattr(app, "_typing_label"), \
+                    "_typing_label attribute should exist after show"
+                assert app._typing_animation_id is not None, \
+                    "_typing_animation_id should be set after show"
                 assert len(after_calls) >= 1, \
-                    f"_start_thinking_animation should schedule after() calls, got {len(after_calls)}"
+                    f"_show_typing_indicator should schedule after() calls, got {len(after_calls)}"
+                # Cleanup
+                app._hide_typing_indicator()
             finally:
                 pass
 
-    def test_thinking_animation_cycles_frames(self):
-        """Verify status_label cycles through 'Thinking.', 'Thinking..', 'Thinking...' each frame."""
+    def test_hide_typing_indicator_cancels_timer(self):
+        """Start indicator, call _hide_typing_indicator(), verify after_cancel is called."""
         for app in _create_mocked_app():
             try:
-                frames_seen = []
-
-                for i in range(3):
-                    app._thinking_frame_idx = i
-                    frame = app._thinking_frames[app._thinking_frame_idx % len(app._thinking_frames)]
-                    app.status_label.configure(text=frame)
-                    frames_seen.append(app.status_label.cget("text"))
-
-                assert frames_seen == ["Thinking.", "Thinking..", "Thinking..."], \
-                    f"Expected cycling frames, got {frames_seen}"
-            finally:
-                pass
-
-    def test_stop_thinking_animation_cancels_timer(self):
-        """Start animation, call _stop_thinking_animation(), verify after_cancel is called."""
-        for app in _create_mocked_app():
-            try:
-                # Start animation
                 cancel_calls = []
 
                 def tracking_cancel(tid):
@@ -251,24 +237,25 @@ class TestThinkingAnimation:
 
                 app.after = tracking_after
                 app.after_cancel = tracking_cancel
+                app._typing_animation_id = None
 
-                app._start_thinking_animation()
-                assert app._thinking_animation_id is not None, \
-                    "Timer id should be set after start"
+                app._show_typing_indicator()
+                assert app._typing_animation_id is not None, \
+                    "Timer id should be set after show"
 
-                app._stop_thinking_animation()
+                app._hide_typing_indicator()
 
                 assert len(cancel_calls) == 1, \
                     f"after_cancel should be called exactly once, got {len(cancel_calls)}"
                 assert cancel_calls[0] == 999, \
                     f"after_cancel should be called with the timer id (999), got {cancel_calls[0]}"
-                assert app._thinking_animation_id is None, \
-                    f"_thinking_animation_id should be None after stop, got {app._thinking_animation_id}"
+                assert app._typing_animation_id is None, \
+                    f"_typing_animation_id should be None after hide, got {app._typing_animation_id}"
             finally:
                 pass
 
-    def test_stop_thinking_animation_idempotent(self):
-        """Calling _stop_thinking_animation() twice should not raise an error."""
+    def test_hide_typing_indicator_idempotent(self):
+        """Calling _hide_typing_indicator() twice should not raise an error."""
         for app in _create_mocked_app():
             try:
                 def tracking_after(delay, callback=None):
@@ -281,21 +268,22 @@ class TestThinkingAnimation:
 
                 app.after = tracking_after
                 app.after_cancel = tracking_cancel
+                app._typing_animation_id = None
 
-                app._start_thinking_animation()
-                app._stop_thinking_animation()
-                assert app._thinking_animation_id is None
+                app._show_typing_indicator()
+                app._hide_typing_indicator()
+                assert app._typing_animation_id is None
 
-                # Second stop should not raise
+                # Second hide should not raise
                 try:
-                    app._stop_thinking_animation()
+                    app._hide_typing_indicator()
                 except Exception as e:
-                    pytest.fail(f"_stop_thinking_animation() raised on second call: {e}")
+                    pytest.fail(f"_hide_typing_indicator() raised on second call: {e}")
             finally:
                 pass
 
-    def test_stop_thinking_animation_on_never_started(self):
-        """Calling _stop_thinking_animation() without starting should not raise."""
+    def test_hide_typing_indicator_on_never_started(self):
+        """Calling _hide_typing_indicator() without starting should not raise."""
         for app in _create_mocked_app():
             try:
                 cancel_calls = []
@@ -304,12 +292,12 @@ class TestThinkingAnimation:
                     cancel_calls.append(tid)
 
                 app.after_cancel = tracking_cancel
-                app._thinking_animation_id = None  # ensure it's None
+                app._typing_animation_id = None  # ensure it's None
 
                 try:
-                    app._stop_thinking_animation()
+                    app._hide_typing_indicator()
                 except Exception as e:
-                    pytest.fail(f"_stop_thinking_animation() raised without starting: {e}")
+                    pytest.fail(f"_hide_typing_indicator() raised without starting: {e}")
 
                 assert len(cancel_calls) == 0, \
                     "after_cancel should not be called when timer was never started"
@@ -344,7 +332,7 @@ class TestWM_DELETE_WINDOW:
         for app in _create_mocked_app():
             try:
                 app._is_operation_active = False
-                app._thinking_animation_id = None
+                app._typing_animation_id = None
 
                 destroy_called = []
 
@@ -369,7 +357,7 @@ class TestWM_DELETE_WINDOW:
         for app in _create_mocked_app():
             try:
                 app._is_operation_active = True
-                app._thinking_animation_id = None
+                app._typing_animation_id = None
 
                 destroy_called = []
 
@@ -399,7 +387,7 @@ class TestWM_DELETE_WINDOW:
         for app in _create_mocked_app():
             try:
                 app._is_operation_active = True
-                app._thinking_animation_id = None
+                app._typing_animation_id = None
 
                 destroy_called = []
 
@@ -421,8 +409,8 @@ class TestWM_DELETE_WINDOW:
                 app.destroy = original_destroy
                 app._is_operation_active = False
 
-    def test_on_close_stops_thinking_animation(self):
-        """_on_close should call _stop_thinking_animation to clean up animation timer."""
+    def test_on_close_stops_typing_indicator(self):
+        """_on_close should call _hide_typing_indicator to clean up animation timer."""
         for app in _create_mocked_app():
             try:
                 cancel_calls = []
@@ -441,19 +429,20 @@ class TestWM_DELETE_WINDOW:
                 app.after_cancel = tracking_cancel
                 original_destroy = app.destroy
                 app.destroy = tracking_destroy
+                app._typing_animation_id = None
 
                 # Start animation
-                app._start_thinking_animation()
-                assert app._thinking_animation_id is not None
+                app._show_typing_indicator()
+                assert app._typing_animation_id is not None
 
                 with patch("app_gui.messagebox.askyesno", return_value=True):
                     app._on_close()
 
-                # Verify stop_thinking_animation was called (timer cancelled)
+                # Verify hide_typing_indicator was called (timer cancelled)
                 assert len(cancel_calls) == 1, \
-                    f"after_cancel should be called during _on_close (stop animation), got {len(cancel_calls)}"
+                    f"after_cancel should be called during _on_close (hide indicator), got {len(cancel_calls)}"
                 assert len(destroy_calls) == 1, \
-                    f"destroy() should be called after animation stopped, got {len(destroy_calls)}"
+                    f"destroy() should be called after indicator hidden, got {len(destroy_calls)}"
             finally:
                 app.destroy = original_destroy
 
@@ -504,7 +493,7 @@ class TestOperationActiveFlag:
         for app in _create_mocked_app():
             try:
                 app._is_operation_active = True
-                app._thinking_animation_id = None
+                app._typing_animation_id = None
 
                 destroy_called = []
 
@@ -528,7 +517,7 @@ class TestOperationActiveFlag:
         for app in _create_mocked_app():
             try:
                 app._is_operation_active = True
-                app._thinking_animation_id = None
+                app._typing_animation_id = None
 
                 destroy_called = []
 

@@ -1,5 +1,38 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Dynamic text wrapping**: Chat messages automatically reflow based on window width — resize the window and text wraps accordingly (Task 3.1)
+- **Empty state guide**: Friendly placeholder with document icon, heading, descriptive text, and sample question buttons shown when no documents are loaded (Task 3.2)
+- **Operation cancellation**: Cancel button and Escape key support for interrupting long-running operations including engine initialization, document ingestion, and question querying (Task 3.3)
+- **Sample question buttons**: Quick-start questions in empty state to help users get started immediately
+- **Interactive source pills**: Document sources displayed as clickable badge frames with document icons and truncated filenames (Task 4.2)
+- **Inline snippet cards**: Clicking a source pill expands an inline card showing the relevant text snippet from the document (Task 4.2)
+- **CTkTooltip class**: Non-blocking hover tooltips using CTkToplevel with 500ms delay (Task 4.3)
+- **Settings field hints**: Descriptive tooltip text for all RAG configuration fields including chunk_size, n_results, max_tokens, temperature, hybrid_search, reranking, retrieval_window, initial_top_k, rerank_top_k, context_truncation, chunk_overlap, min_similarity, and db_path (Task 4.3)
+- **Database settings section**: New section in Settings dialog with database path entry and Browse button (Task 4.1)
+- **Additional RAG configuration fields**: 
+  - `rag_embedding_model`: Read-only display of current embedding model
+  - `rag_reranker_model`: Read-only display of current reranker model
+  - `rag_chunk_overlap`: Configurable chunk overlap (0-512 words)
+  - `rag_min_similarity`: Minimum similarity threshold (0.0-1.0)
+  - `rag_context_truncation`: Maximum context length (256-32768 characters)
+  - `rag_db_path`: Configurable vector database path (Task 4.1)
+
+### Changed
+- **Cancel button behavior**: Now appears during all background operations (engine init, ingestion, querying) and disappears when operation completes or is cancelled
+- **Escape key handler**: Delegates to `_cancel_operation()` when an operation is active, providing consistent cancellation behavior
+- **Button border width**: All buttons created via `_make_button()` now consistently use `border_width=1` (standardized from Task 5.1)
+- **Settings placeholder text**: All settings CTkEntry widgets now display placeholder text matching their config defaults (Task 5.2)
+
+### Added
+- **Settings placeholder hints**: Model path, chunk_size, n_results, max_tokens, temperature, retrieval_window, initial_top_k, and rerank_top_k entries now show placeholder text to guide users (Task 5.2)
+
+### Fixed
+- **Text overflow**: Long chat messages no longer overflow the chat area due to dynamic wraplength calculation
+- **Empty chat confusion**: Users now see clear guidance and sample questions when no documents are loaded
+
 ## [2.0.0] - 2026-04-14
 
 ### Changed
@@ -12,6 +45,12 @@
 - **Resilience**: Lazy loading for embedding model, BM25, and SentenceTransformer; try/except wrappers on all I/O
 - **Build system**: Updated PyInstaller spec, removed Ollama env vars from build scripts
 - **Dead code cleanup**: Removed unused validate_numeric(), validate_device(), legacy model fallbacks, deprecated import aliases
+
+### Added
+- **Keyboard shortcuts**: Enter to submit questions, Escape to clear input/cancel operations, Ctrl+L for clear chat, Ctrl+, for settings
+- **Inline typing indicator**: "Thinking..." animation in chat area during processing (replaces status bar overwrite)
+- **Clear chat confirmation**: Two-click confirm pattern with 3-second timeout to prevent accidental deletion
+- **Settings switch labels**: CTkSwitch widgets with descriptive text ("Enable Hybrid Search", "Enable Reranking")
 
 ### Removed
 - OpenVINOLLM backend and OpenVINO dependencies

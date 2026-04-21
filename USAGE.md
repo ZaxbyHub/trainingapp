@@ -83,6 +83,10 @@ python main.py
 └─────────────────────────────────────────────────────────────┘
 ```
 
+**Responsive Layout**: The chat area automatically adjusts text wrapping as you resize the window — longer messages wrap to fit the available width.
+
+**Cancel Button**: Appears during long-running operations (engine initialization, document ingestion, querying) to allow interruption. Press Escape or click Cancel to stop the operation.
+
 ### Settings Dialog
 
 **LLM Settings Section**:
@@ -91,14 +95,98 @@ python main.py
    - Manual entry with file browser
    - Must end with `.gguf`
    - Example: `C:\Models\qwen2.5-1.5b-instruct-q4_k_m.gguf`
+   - **Tooltip**: Hover over the field to see help text
 
-2. **Ollama Settings**
-   - URL: `http://localhost:11434` (default)
-   - Model: `phi3:mini` (default)
+2. **Embedding Model** (Read-only)
+   - Displays the currently configured embedding model
+   - Cannot be changed via GUI
 
-3. **API Settings**
-   - URL: Your OpenAI-compatible API endpoint
-   - Model: API model name
+3. **Reranker Model** (Read-only)
+   - Displays the currently configured reranker model
+   - Cannot be changed via GUI
+
+**RAG Settings Section**:
+
+1. **Chunk Size**
+   - Default: `512` words
+   - Range: `128-1024`
+   - Smaller = more precise, larger = faster
+   - **Tooltip**: "Number of tokens per document chunk"
+
+2. **Results to Retrieve**
+   - Default: `6` chunks
+   - Range: `1-20`
+   - Combined with window expansion
+   - **Tooltip**: "How many retrieved chunks to include in context"
+
+3. **Max Tokens**
+   - Default: `1024` tokens
+   - Range: `256-1024`
+   - **Tooltip**: "Maximum tokens in LLM response"
+
+4. **Temperature**
+   - Default: `0.3`
+   - Range: `0.0-2.0`
+   - Lower = more factual, Higher = more creative
+   - **Tooltip**: "LLM creativity (0=exact, 1=creative)"
+
+5. **Chunk Overlap**
+   - Default: `100` words
+   - Range: `0-512`
+   - Token overlap between consecutive chunks to preserve context
+   - **Tooltip**: "Token overlap between consecutive chunks to preserve context"
+
+6. **Min Similarity**
+   - Default: `0.5`
+   - Range: `0.0-1.0`
+   - Minimum cosine similarity threshold for retrieved chunks
+   - **Tooltip**: "Minimum cosine similarity threshold for retrieved chunks"
+
+**Advanced RAG Settings Section**:
+
+1. **Hybrid Search Toggle**
+   - Default: **ON** (recommended)
+   - Combines BM25 and vector search
+   - Improves accuracy
+   - **Tooltip**: "Combine dense and sparse retrieval"
+
+2. **Window Expansion**
+   - Default: `2` chunks
+   - Range: `0-5`
+   - Fetches adjacent chunks around retrieved results
+   - **Tooltip**: "Window of chunks around matched chunk"
+
+3. **Cross-Encoder Reranking**
+   - Default: **ON** (TinyBERT — lightweight reranker)
+   - Re-ranks chunks for better accuracy
+   - Minimal overhead on minimum-spec hardware
+   - **Tooltip**: "Re-rank results with cross-encoder"
+
+4. **Initial Retrieval Top-K**
+   - Default: `30`
+   - Range: `1-100`
+   - Initial retrieval candidates before reranking
+   - **Tooltip**: "Initial retrieval candidates before reranking"
+
+5. **Rerank Top-K**
+   - Default: `6`
+   - Range: `1-100`
+   - Final candidates after reranking
+   - **Tooltip**: "Final candidates after reranking"
+
+6. **Context Truncation**
+   - Default: `20000` characters
+   - Range: `256-32768`
+   - Maximum characters of combined context sent to the LLM
+   - **Tooltip**: "Maximum characters of combined context sent to the LLM"
+
+**Database Section**:
+
+1. **Database Path**
+   - Default: `./doc_qa_db`
+   - Directory path for ChromaDB persistent storage
+   - Manual entry with Browse button
+   - **Tooltip**: "Directory path for ChromaDB persistent storage"
 
 **RAG Settings Section**:
 
@@ -162,14 +250,54 @@ Building BM25 index...
 [OK] Ingested 3 documents (20 new chunks) in 5.2s
 ```
 
+### Empty State (No Documents)
+
+When no documents are loaded, the chat area displays an **empty state** with:
+
+- **Document icon** (📄)
+- **"No documents yet"** heading
+- **Descriptive text** explaining how to get started
+- **Sample question buttons** for quick exploration:
+  - "How do I use this app?"
+  - "What can I ask about?"
+  - "How do I add documents?"
+- **"Ingest Documents" button** to start adding documents immediately
+
+**Clicking a sample question** will automatically open the document picker so you can ingest documents and try the question.
+
 ### Asking Questions
 
 **Simple Questions**:
 ```
 You: What is the company's annual revenue?
 Assistant: According to the annual report, the company's revenue was $10M.
-Sources: annual_report_2024.pdf
+Sources: 📄 annual_report_2024.pdf
 ```
+
+**Interactive Source Pills**:
+- Sources are displayed as clickable pill badges with document icons (📄)
+- Click a source pill to expand an inline snippet card showing the relevant text from the document
+- Multiple sources are displayed horizontally with wrap
+- The snippet card shows:
+  - Full filename at the top
+  - Preview of the relevant text excerpt
+- Click the pill again to collapse the snippet card
+- Only one snippet card is expanded at a time
+
+**Cancelling Operations**:
+
+While the application is processing (engine initialization, document ingestion, or querying), you can cancel the operation:
+
+- **Click the Cancel button** that appears below the progress bar
+- **Press the Escape key** to interrupt the operation
+
+When cancelled:
+- The operation stops gracefully
+- A system message confirms the cancellation
+- The UI returns to normal state
+- Any partial results are discarded
+
+**Note**: Some operations may take a moment to complete cancellation (e.g., while finishing a file during ingestion).
 
 **Multi-Part Questions**:
 ```
