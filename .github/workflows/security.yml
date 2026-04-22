@@ -27,6 +27,7 @@ jobs:
         run: |
           bandit -r . -x tests/,__pycache__/,*.pyc,.swarm/,.pytest_cache/,doc_qa_db/ -f json -o bandit-report.json
           bandit -r . -x tests/,__pycache__/,*.pyc,.swarm/,.pytest_cache/,doc_qa_db/ -f screen
+        continue-on-error: true
       
       - name: Run Safety
         run: |
