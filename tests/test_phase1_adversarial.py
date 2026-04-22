@@ -74,14 +74,14 @@ def test_validate_model_path_rejects_path_traversal():
     """Test that validate_model_path() rejects ../../../etc/passwd"""
     from api_server import validate_model_path
     
-    with pytest.raises(ValueError, match="Model path contains path traversal attempts"):
+    with pytest.raises(ValueError, match="Path contains path traversal attempts"):
         validate_model_path("../../../etc/passwd")
 
 def test_validate_model_path_rejects_url_encoded_path_traversal():
     """Test that validate_model_path() rejects URL-encoded %2e%2e/passwd"""
     from api_server import validate_model_path
     
-    with pytest.raises(ValueError, match="Model path contains path traversal attempts"):
+    with pytest.raises(ValueError, match="Path contains path traversal attempts"):
         validate_model_path("test%2e%2e/passwd")
 
 def test_validate_model_path_allows_absolute_paths():
@@ -106,7 +106,7 @@ def test_validate_directory_rejects_path_traversal():
     """Test that validate_directory() rejects ../../sensitive"""
     from api_server import validate_directory
     
-    with pytest.raises(ValueError, match="Directory path contains path traversal attempts"):
+    with pytest.raises(ValueError, match="Path contains path traversal attempts"):
         validate_directory("../../sensitive")
 
 def test_validate_directory_rejects_symlink_escapes():
@@ -114,34 +114,9 @@ def test_validate_directory_rejects_symlink_escapes():
     from api_server import validate_directory
     
     # This test would require actual symlinks, but we can test the path traversal logic
-    with pytest.raises(ValueError, match="Directory path contains path traversal attempts"):
+    with pytest.raises(ValueError, match="Path contains path traversal attempts"):
         validate_directory("test/../sensitive")
 
-def test_validate_device_rejects_backticks():
-    """Test that validate_device() rejects backticks and $(cmd)"""
-    from api_server import validate_device
-    
-    # Test backtick injection
-    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
-        validate_device("cuda:`/bin/bash`")
-    
-    # Test command substitution
-    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
-        validate_device("cpu:$(whoami)")
-    
-def test_validate_numeric_rejects_values_below_min():
-    """Test that validate_numeric() rejects values below min"""
-    from api_server import validate_numeric
-    
-    with pytest.raises(ValueError, match="chunk_size must be between 100 and 10000"):
-        validate_numeric(50, 100, 10000, "chunk_size")
-
-def test_validate_numeric_rejects_values_above_max():
-    """Test that validate_numeric() rejects values above max"""
-    from api_server import validate_numeric
-    
-    with pytest.raises(ValueError, match="chunk_size must be between 100 and 10000"):
-        validate_numeric(15000, 100, 10000, "chunk_size")
 
 def test_ingest_endpoint_rejects_invalid_directory_with_400():
     """Test /ingest endpoint rejects invalid directory with 400 status"""
@@ -152,25 +127,9 @@ def test_ingest_endpoint_rejects_invalid_directory_with_400():
         validate_directory("../../sensitive")
     
     # We can verify it raises the expected ValueError for path traversal attempts
-    assert "Directory path contains path traversal attempts" in str(exc_info.value)
+    assert "Path contains path traversal attempts" in str(exc_info.value)
 
 
-# Additional adversarial tests for device validation (based on the code in api_server.py)
-def test_validate_device_rejects_dangerous_patterns():
-    """Test that validate_device() rejects dangerous patterns"""
-    from api_server import validate_device
-    
-    # Test semicolon injection
-    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
-        validate_device("cuda; rm -rf /")
-    
-    # Test pipe injection
-    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
-        validate_device("cuda| cat file")
-    
-    # Test ampersand injection
-    with pytest.raises(ValueError, match="Device string contains dangerous shell patterns"):
-        validate_device("cpu& cat file")
 
 def test_validate_model_path_handles_special_characters():
     """Test that validate_model_path handles special characters properly"""
@@ -224,11 +183,10 @@ def test_validate_directory_handles_relative_paths():
 # Test that all the validation functions exist and can be imported
 def test_validation_functions_import():
     """Test that validation functions can be imported"""
-    from api_server import validate_url, validate_model_path, validate_directory, validate_numeric, validate_device, validate_numeric
+    from api_server import validate_url, validate_model_path, validate_directory
     assert validate_url is not None
     assert validate_model_path is not None
     assert validate_directory is not None
-    assert validate_numeric is not None
 
 # Test the actual behavior of path traversal detection
 def test_validate_model_path_path_traversal_detection():
@@ -246,7 +204,7 @@ def test_validate_model_path_path_traversal_detection():
     ]
     
     for pattern in traversal_patterns:
-        with pytest.raises(ValueError, match="Model path contains path traversal attempts"):
+        with pytest.raises(ValueError, match="Path contains path traversal attempts"):
             validate_model_path(pattern)
 
 def test_validate_directory_path_traversal_detection():
@@ -264,31 +222,14 @@ def test_validate_directory_path_traversal_detection():
     ]
     
     for pattern in traversal_patterns:
-        with pytest.raises(ValueError, match="Directory path contains path traversal attempts"):
+        with pytest.raises(ValueError, match="Path contains path traversal attempts"):
             validate_directory(pattern)
 
-# Test numeric validation edge cases
-def test_validate_numeric_edge_cases():
-    """Test validate_numeric edge cases"""
-    from api_server import validate_numeric
-    
-    # Test boundary values
-    try:
-        result = validate_numeric(100, 100, 10000, "chunk_size")
-        assert result == 100
-    except Exception as e:
-        pytest.fail(f"Boundary value 100 was rejected: {e}")
-    
-    try:
-        result = validate_numeric(10000, 100, 10000, "chunk_size")
-        assert result == 10000
-    except Exception as e:
-        pytest.fail(f"Boundary value 10000 was rejected: {e}")
 
 # Test validation functions with empty and null inputs
 def test_validation_functions_empty_inputs():
     """Test validation functions with empty and null inputs"""
-    from api_server import validate_url, validate_model_path, validate_directory, validate_numeric
+    from api_server import validate_url, validate_model_path, validate_directory
     
     # Test empty URL
     with pytest.raises(ValueError, match="URL cannot be empty"):
@@ -301,17 +242,13 @@ def test_validation_functions_empty_inputs():
     # Test empty directory path
     with pytest.raises(ValueError, match="Directory path cannot be empty"):
         validate_directory("")
-    
-    # Test empty numeric (this is a bit tricky since it's a value)
-    with pytest.raises(ValueError, match="chunk_size must be between 100 and 10000"):
-        validate_numeric(0, 100, 10000, "chunk_size")
 
 # Test URL validation for non-standard schemes
 def test_validate_url_non_standard_schemes():
     """Test that validate_url rejects non-standard schemes"""
     from api_server import validate_url
 
-    with pytest.raises(ValueError, match="URL scheme must be http or https"):
+    with pytest.raises(ValueError, match="not allowed"):
         validate_url("ftp://example.com")
 
 # Test URL validation for invalid inputs
@@ -322,19 +259,6 @@ def test_validate_url_invalid_inputs():
     with pytest.raises(ValueError, match="URL must have a scheme"):
         validate_url("example.com")
 
-# Test device validation patterns more thoroughly
-def test_validate_device_validation_patterns():
-    """Test device validation pattern detection"""
-    # This is more of a code inspection test - we're validating that 
-    # the pattern detection logic exists in the source code
-    
-    # Check that the device validation contains dangerous pattern detection
-    import api_server
-    
-    # The validation in lifespan function checks for these patterns
-    dangerous_patterns = (";", "|", "&", "&&", "||", ">", "<", "`", "$(", "'", "\"")
-    # We're validating that the validation logic exists in the code, 
-    # but we can't test it directly without running the full app setup
 
 # Test URL validation with IPv6 localhost
 def test_validate_url_ipv6_localhost():

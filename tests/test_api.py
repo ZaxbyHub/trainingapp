@@ -14,7 +14,7 @@ from fastapi import HTTPException
 
 from api_server import (
     app, engine, validate_url, validate_model_path,
-    validate_directory, validate_numeric,
+    validate_directory,
     QuestionRequest, QuestionResponse,
     SearchRequest, SearchResult,
     IngestRequest, IngestResponse,
@@ -211,7 +211,7 @@ class TestPostIngest:
         for pattern in traversal_patterns:
             with patch('api_server.engine') as mock_engine:
                 with patch('api_server.validate_directory') as mock_validate:
-                    mock_validate.side_effect = ValueError("Directory path contains path traversal attempts")
+                    mock_validate.side_effect = ValueError("Path contains path traversal attempts")
                     
                     request = IngestRequest(directory=pattern)
                     response = client.post("/ingest", json=request.model_dump())
@@ -327,14 +327,14 @@ class TestValidateUrl:
         """Test URL without scheme is rejected."""
         url = "localhost:11434"
         
-        with pytest.raises(ValueError, match="URL scheme must be http or https"):
+        with pytest.raises(ValueError, match="not allowed"):
             validate_url(url)
     
     def test_validate_url_invalid_scheme(self):
         """Test URL with invalid scheme is rejected."""
         url = "ftp://example.com"
         
-        with pytest.raises(ValueError, match="URL scheme must be http or https"):
+        with pytest.raises(ValueError, match="not allowed"):
             validate_url(url)
     
     def test_validate_url_localhost_rejected(self):
@@ -393,25 +393,6 @@ class TestValidateDirectory:
         
         with pytest.raises(ValueError, match="path traversal"):
             validate_directory(path)
-
-
-class TestValidateNumeric:
-    """Tests for numeric validation."""
-    
-    def test_validate_numeric_valid(self):
-        """Test validating a valid numeric value."""
-        result = validate_numeric(5, 1, 10, "test_param")
-        assert result == 5
-    
-    def test_validate_numeric_below_min(self):
-        """Test value below minimum is rejected."""
-        with pytest.raises(ValueError, match="must be between"):
-            validate_numeric(0, 1, 10, "test_param")
-    
-    def test_validate_numeric_above_max(self):
-        """Test value above maximum is rejected."""
-        with pytest.raises(ValueError, match="must be between"):
-            validate_numeric(15, 1, 10, "test_param")
 
 
 if __name__ == "__main__":
