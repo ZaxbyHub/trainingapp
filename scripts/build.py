@@ -98,14 +98,15 @@ def main():
 
     print("PyInstaller completed successfully")
 
-    # Fix torch DLLs - copy to root _internal folder
-    internal_dir = Path(DIST_DIR) / APP_NAME / "_internal"
+    # Fix torch DLLs - copy to root app directory for Windows one-dir builds
+    app_dir = Path(DIST_DIR) / APP_NAME
+    internal_dir = app_dir / "_internal"
     torch_lib = internal_dir / "torch" / "lib"
 
     if torch_lib.exists():
         print("Fixing torch DLLs...")
         for dll in torch_lib.glob("*.dll"):
-            dest = internal_dir / dll.name
+            dest = app_dir / dll.name
             if not dest.exists():
                 shutil.copy2(dll, dest)
                 print(f"  Copied {dll.name}")

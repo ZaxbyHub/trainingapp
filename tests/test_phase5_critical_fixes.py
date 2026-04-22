@@ -35,9 +35,6 @@ class TestRagEngineQueryNResultsFix:
         When query() is called with n_results=3, the reranker.rerank()
         must be invoked with top_k=3 — NOT with the config default (6).
         """
-        import importlib
-        import rag_engine
-        importlib.reload(rag_engine)
         from rag_engine import RAGEngine
         from document_processor import DocumentChunk
 
@@ -92,9 +89,6 @@ class TestRagEngineQueryNResultsFix:
         """
         When n_results is None, reranker must receive config.rerank_top_k (6).
         """
-        import importlib
-        import rag_engine as rag_mod
-        importlib.reload(rag_mod)
         from rag_engine import RAGEngine
         from document_processor import DocumentChunk
 
@@ -143,9 +137,6 @@ class TestRagEngineQueryNResultsFix:
 
     def test_n_results_1_uses_top_k_1(self):
         """Boundary: n_results=1 must pass top_k=1 to reranker."""
-        import importlib
-        import rag_engine as rag_mod
-        importlib.reload(rag_mod)
         from rag_engine import RAGEngine
         from document_processor import DocumentChunk
 
