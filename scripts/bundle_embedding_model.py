@@ -105,7 +105,7 @@ def main() -> int:
 
     try:
         # Download the model using HuggingFace Hub
-        snapshot_download(
+        snapshot_download(  # nosec: B410 — intentional, always download latest model version
             repo_id="BAAI/bge-small-en-v1.5",
             local_dir=str(local_dir),
             local_files_only=False,
