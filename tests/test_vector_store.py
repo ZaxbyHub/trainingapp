@@ -16,7 +16,6 @@ class TestAddChunksDedup:
     """Tests for add_chunks deduplication (test_add_chunks_dedup)."""
     
     @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_add_chunks_no_duplicates(self, temp_chroma_db, sample_chunks):
         """Test adding chunks without duplicates."""
         store = VectorStore(
@@ -29,7 +28,6 @@ class TestAddChunksDedup:
         assert added == len(sample_chunks)
         assert store.collection.count() == len(sample_chunks)
     
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_add_chunks_deduplicates_existing(self, temp_chroma_db, sample_chunks):
         """Test that adding same chunks again doesn't create duplicates."""
@@ -461,7 +459,6 @@ class TestClear:
 class TestEmbeddingModel:
     """Tests for embedding model functionality."""
     
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_embedding_model_encode(self, sample_chunks):
         """Test encoding multiple texts."""

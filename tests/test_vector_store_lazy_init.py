@@ -140,7 +140,7 @@ class TestStopWordsModuleLevel:
         assert "fox" in tokens
         
         # Verify STOP_WORDS is being used (stop words should be filtered)
-        assert "the" not in STOP_WORDS or "The" not in STOP_WORDS  # Case insensitive check
+        assert "the" in STOP_WORDS, "STOP_WORDS should contain 'the' for tokenization filtering"
 
 
 class TestBM25LazyRebuild:

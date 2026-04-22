@@ -696,23 +696,6 @@ class TestLLMBackendFailures:
 class TestVectorStoreEdgeCases:
     """Vector store edge cases and failure modes."""
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
-    def test_add_chunks_with_none_metadata(self, temp_chroma_db):
-        """Chunks with None metadata should not crash."""
-        pytest.importorskip("chromadb")
-        pytest.importorskip("sentence_transformers")
-        from vector_store import VectorStore, DocumentChunk
-
-        store = VectorStore(db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5")
-
-        chunks = [
-            DocumentChunk(text="Test chunk", source="test.txt", page=None, chunk_index=0)
-        ]
-
-        # Should not crash
-        added = store.add_chunks(chunks)
-        assert added >= 0
-
     def test_get_chunks_empty_query(self, temp_chroma_db):
         """Empty query string should be handled."""
         pytest.importorskip("chromadb")
