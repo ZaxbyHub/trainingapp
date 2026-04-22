@@ -153,7 +153,7 @@ def test_create_engine_from_env_includes_gguf():
                 patch("rag_engine.DocumentProcessor"),
                 patch("rag_engine.SmartLLM") as mock_llm,
             ):
-                from rag_engine import create_engine_from_env
+                from engine_factory import create_engine_from_env
 
                 engine = create_engine_from_env()
 

@@ -4,7 +4,8 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 # Import the modules to test
-from rag_engine import RAGEngine, create_engine_from_env
+from rag_engine import RAGEngine
+from engine_factory import create_engine_from_env
 from llm_interface import SmartLLM
 
 
