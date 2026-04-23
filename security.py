@@ -118,6 +118,35 @@ def validate_url(
     return url
 
 
+# Device validation: block shell metacharacters that could be exploited in injection
+_DEVICE_DANGEROUS_PATTERNS = re.compile(
+    r"[`$\\<>&|;'\"]|%0a|%0d|&&|\|\||\$\(|\$\{"
+)
+
+
+def validate_device(device: str) -> str:
+    """Validate device string to prevent command injection.
+
+    Args:
+        device: Device string (e.g., 'cpu', 'cuda', '/dev/cuda:0')
+
+    Returns:
+        The validated device string
+
+    Raises:
+        ValueError: If device contains dangerous shell metacharacters
+    """
+    if not isinstance(device, str):
+        raise ValueError("device must be a string")
+
+    if _DEVICE_DANGEROUS_PATTERNS.search(device):
+        raise ValueError(
+            f"dangerous device value rejected: {device!r}"
+        )
+
+    return device
+
+
 def _resolve_and_validate_host(hostname: str, allow_local: bool) -> None:
     """
     Resolve hostname to IP addresses and validate against SSRF patterns.

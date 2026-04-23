@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
 from rag_engine import RAGEngine, RAGConfig
-from security import validate_url, DEFAULT_ALLOWED_PORTS
+from security import validate_url, validate_device, DEFAULT_ALLOWED_PORTS
 from auth import authenticate, require_auth, get_auth_status, API_KEY, create_access_token
 from config import settings
 
