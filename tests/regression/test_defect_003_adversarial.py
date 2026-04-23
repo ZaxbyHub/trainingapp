@@ -173,7 +173,9 @@ class TestAllowLocalAcceptsGoodTargets:
         ],
     )
     def test_accepts_local_urls(self, url):
-        result = validate_url(url, allow_local=True)
+        # Add 11434 to allowed_ports for URLs using that port
+        allowed_ports = {80, 443, 11434} if ":11434" in url else {80, 443}
+        result = validate_url(url, allow_local=True, allowed_ports=allowed_ports)
         assert result == url
 
 
@@ -241,7 +243,7 @@ class TestAllowLocalStillRejectionInjection:
         the function doesn't crash on them — it should either accept (the
         path/query is not sanitized) or raise ValueError."""
         try:
-            result = validate_url(url, allow_local=True)
+            result = validate_url(url, allow_local=True, allowed_ports={80, 443, 11434})
             # If accepted, at minimum it should return the original URL
             assert result == url
         except ValueError:
@@ -409,7 +411,7 @@ class TestSSRFVectors:
         """With allow_local=True, IPv6-mapped loopback should be accepted."""
         url = "http://[::ffff:127.0.0.1]:11434"
         try:
-            result = validate_url(url, allow_local=True)
+            result = validate_url(url, allow_local=True, allowed_ports={80, 443, 11434})
             assert result == url
         except ValueError:
             # Some implementations may still reject this — acceptable
@@ -523,8 +525,8 @@ class TestPropertyBasedInvariants:
     )
     def test_idempotency_allow_local(self, url):
         """Idempotency holds with allow_local=True."""
-        first = validate_url(url, allow_local=True)
-        second = validate_url(first, allow_local=True)
+        first = validate_url(url, allow_local=True, allowed_ports={80, 443, 11434})
+        second = validate_url(first, allow_local=True, allowed_ports={80, 443, 11434})
         assert first == second
 
     def test_allow_local_false_is_default(self):

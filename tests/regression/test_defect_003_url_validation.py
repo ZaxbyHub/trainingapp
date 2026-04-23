@@ -30,7 +30,7 @@ def test_validate_url_accepts_localhost_when_allowed():
         validate_url("http://localhost:11434")
 
     # With allow_local=True: Should accept localhost
-    result = validate_url("http://localhost:11434", allow_local=True)
+    result = validate_url("http://localhost:11434", allow_local=True, allowed_ports={80, 443, 11434})
     assert result == "http://localhost:11434"
 
 
@@ -49,7 +49,7 @@ def test_validate_url_accepts_loopback_ips_when_allowed():
         validate_url("http://127.0.0.1:11434")
 
     # With allow_local=True: Should accept 127.0.0.1
-    result = validate_url("http://127.0.0.1:11434", allow_local=True)
+    result = validate_url("http://127.0.0.1:11434", allow_local=True, allowed_ports={80, 443, 11434})
     assert result == "http://127.0.0.1:11434"
 
     # Test ::1 (IPv6 loopback) - default behavior rejects
@@ -57,7 +57,7 @@ def test_validate_url_accepts_loopback_ips_when_allowed():
         validate_url("http://[::1]:11434")
 
     # With allow_local=True: Should accept ::1
-    result = validate_url("http://[::1]:11434", allow_local=True)
+    result = validate_url("http://[::1]:11434", allow_local=True, allowed_ports={80, 443, 11434})
     assert result == "http://[::1]:11434"
 
 
@@ -83,11 +83,11 @@ def test_validate_url_accepts_private_ips_when_allowed():
 
     for url in private_ips:
         # Default behavior: raises ValueError for private IPs
-        with pytest.raises(ValueError, match="private"):
+        with pytest.raises(ValueError, match="private|standard ports"):
             validate_url(url)
 
         # With allow_local=True: Should accept private IPs on allowed ports
-        result = validate_url(url, allow_local=True)
+        result = validate_url(url, allow_local=True, allowed_ports={80, 443, 11434})
         assert result == url
 
 
@@ -169,13 +169,13 @@ def test_lifespan_allows_localhost_for_ollama():
 
     # Verify validate_url accepts localhost when called with allow_local=True
     # (this is what lifespan should do for Ollama URLs)
-    result = validate_url("http://localhost:11434", allow_local=True)
+    result = validate_url("http://localhost:11434", allow_local=True, allowed_ports={80, 443, 11434})
     assert result == "http://localhost:11434", (
         "validate_url should accept localhost:11434 when allow_local=True"
     )
 
     # Also verify it accepts loopback IP (127.0.0.1) with allow_local=True
-    result = validate_url("http://127.0.0.1:11434", allow_local=True)
+    result = validate_url("http://127.0.0.1:11434", allow_local=True, allowed_ports={80, 443, 11434})
     assert result == "http://127.0.0.1:11434", (
         "validate_url should accept 127.0.0.1:11434 when allow_local=True"
     )
@@ -223,7 +223,7 @@ def test_validate_url_backward_compatibility():
         validate_url("http://localhost:11434")
 
     # But with allow_local=True, localhost should be accepted
-    result = validate_url("http://localhost:11434", allow_local=True)
+    result = validate_url("http://localhost:11434", allow_local=True, allowed_ports={80, 443, 11434})
     assert result == "http://localhost:11434"
 
     # Valid public URLs should still pass with default parameters

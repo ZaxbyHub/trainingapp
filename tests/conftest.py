@@ -2,10 +2,11 @@
 Shared pytest fixtures for the test suite.
 """
 
+import sys
 import pytest
 from pathlib import Path
 from typing import List, Dict, Any
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, patch
 from dataclasses import dataclass
 
 
@@ -195,25 +196,50 @@ def vector_store(temp_chroma_db, mock_llm, sample_chunks):
         VectorStore: Initialized vector store with sample data
 
     Note:
-        This fixture requires ChromaDB and sentence-transformers to be installed.
-        If not available, it will skip the test.
+        This fixture requires ChromaDB to be installed.
+        The embedding model is mocked to avoid requiring sentence-transformers.
     """
     pytest.importorskip("chromadb")
-    pytest.importorskip("sentence_transformers")
+    import numpy as np
 
-    from vector_store import VectorStore
+    def _deterministic_embedding(text):
+        """Generate deterministic embedding based on hash of input text."""
+        hash_val = hash(text)
+        embedding = np.array([((hash_val >> (i * 3)) % 1000) / 1000.0 for i in range(384)], dtype=np.float32)
+        return embedding
 
-    # Create vector store with temporary path
-    store = VectorStore(
-        db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
-    )
+    # Create a mock EmbeddingModel class that behaves correctly
+    class MockEmbeddingModel:
+        """Mock EmbeddingModel that returns deterministic embeddings."""
+        def __init__(self, model_name=None):
+            self.model_name = model_name or "mock-model"
+        
+        def encode(self, texts):
+            """Encode multiple texts with deterministic embeddings."""
+            return [_deterministic_embedding(str(text)).tolist() for text in texts]
+        
+        def encode_single(self, text):
+            """Encode single text with deterministic embedding."""
+            return _deterministic_embedding(str(text)).tolist()
 
-    # Add sample chunks
-    store.add_chunks(sample_chunks)
+    # Clear any cached imports first to ensure patching works
+    modules_to_clear = [k for k in list(sys.modules.keys()) if k.startswith("vector_store")]
+    for mod in modules_to_clear:
+        del sys.modules[mod]
 
-    yield store
+    # Patch the EmbeddingModel class in the vector_store module namespace
+    with patch("vector_store.EmbeddingModel", MockEmbeddingModel):
+        from vector_store import VectorStore
+        
+        # Create vector store with temporary path
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="mock-model"
+        )
 
-    # Cleanup is handled by temp_chroma_db fixture
+        # Add sample chunks
+        store.add_chunks(sample_chunks)
+
+        yield store
 
 
 # Additional utility fixtures for convenience
@@ -234,15 +260,37 @@ def empty_vector_store(temp_chroma_db):
         VectorStore: Empty vector store ready for use
     """
     pytest.importorskip("chromadb")
-    pytest.importorskip("sentence_transformers")
 
     from vector_store import VectorStore
+    import numpy as np
 
-    store = VectorStore(
-        db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
-    )
+    def _deterministic_embedding(text):
+        """Generate deterministic embedding based on hash of input text."""
+        hash_val = hash(text)
+        embedding = np.array([((hash_val >> (i * 3)) % 1000) / 1000.0 for i in range(384)], dtype=np.float32)
+        return embedding
 
-    yield store
+    # Create mock embedder with deterministic encode method
+    mock_embedder = MagicMock()
+    
+    def mock_encode(texts):
+        """Encode multiple texts with deterministic embeddings."""
+        return [_deterministic_embedding(str(text)).tolist() for text in texts]
+    
+    def mock_encode_single(text):
+        """Encode single text with deterministic embedding."""
+        return _deterministic_embedding(str(text)).tolist()
+    
+    mock_embedder.encode.side_effect = mock_encode
+    mock_embedder.encode_single.side_effect = mock_encode_single
+
+    # Patch SentenceTransformer in the vector_store module to prevent model loading
+    with patch("vector_store.SentenceTransformer", return_value=mock_embedder):
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="mock-model"
+        )
+
+        yield store
 
 
 @pytest.fixture
