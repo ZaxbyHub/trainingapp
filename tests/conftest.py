@@ -2,10 +2,12 @@
 Shared pytest fixtures for the test suite.
 """
 
+import sys
+
 import pytest
 from pathlib import Path
 from typing import List, Dict, Any
-from unittest.mock import Mock, MagicMock
+from unittest.mock import Mock, MagicMock, patch
 from dataclasses import dataclass
 
 
@@ -178,7 +180,79 @@ startxref
 
 
 @pytest.fixture
-def vector_store(temp_chroma_db, mock_llm, sample_chunks):
+def mock_embedding_model():
+    """
+    Mock EmbeddingModel that generates word-bag embeddings.
+
+    This fixture provides a mock for the EmbeddingModel class used in vector_store.
+    It patches the EmbeddingModel in the vector_store module to avoid requiring
+    actual embedding models or sentence-transformers in tests.
+
+    Yields:
+        type: Mocked EmbeddingModel class
+    """
+    import numpy as np
+
+    def _word_hash_embedding(text, dim=384):
+        """Generate embedding where shared words produce similar embeddings.
+
+        Each word sets 8 dimensions to 10.0 based on its hash.
+        Texts sharing words will have overlapping 10.0 dimensions,
+        producing high cosine similarity for word overlap.
+        """
+        words = str(text).lower().split()
+        embedding = np.zeros(dim, dtype=np.float32)
+        for word in words:
+            word_hash = hash(word)
+            for offset in range(8):
+                dim_idx = (word_hash + offset * 97) % dim
+                embedding[dim_idx] = 10.0
+        return embedding
+
+    class MockEmbeddingModel:
+        """Mock EmbeddingModel that generates word-bag embeddings.
+
+        This mock completely bypasses the real EmbeddingModel initialization,
+        which checks for local model paths and tries to load SentenceTransformer.
+        Instead, it returns deterministic word-bag embeddings.
+        """
+
+        def __init__(self, model_name=None, *args, **kwargs):
+            # Do NOT call super().__init__ or access any filesystem
+            # This bypasses the local_model_path.exists() check in the real EmbeddingModel
+            self.model_name = model_name or "mock-model"
+
+        def encode(self, texts, *args, **kwargs):
+            """Encode multiple texts into embeddings."""
+            embeddings = []
+            for text in texts:
+                emb = _word_hash_embedding(text)
+                embeddings.append(emb)
+            return np.array(embeddings)
+
+        def encode_single(self, text, *args, **kwargs):
+            """Encode single text into embedding."""
+            return _word_hash_embedding(text)
+
+    # Patch the EmbeddingModel class in vector_store module
+    # This must be done before importing VectorStore to prevent
+    # the real EmbeddingModel from being instantiated
+    vector_store_module = __import__("vector_store", fromlist=["EmbeddingModel"])
+    patcher = patch.object(vector_store_module, "EmbeddingModel", MockEmbeddingModel)
+    patcher.start()
+
+    yield MockEmbeddingModel
+
+    # Clean up the patch
+    patcher.stop()
+
+    # Clear cached modules to ensure clean state for next test
+    if "vector_store" in sys.modules:
+        del sys.modules["vector_store"]
+
+
+@pytest.fixture
+def vector_store(temp_chroma_db, mock_llm, sample_chunks, mock_embedding_model):
     """
     Initialized VectorStore for testing.
 
@@ -190,22 +264,23 @@ def vector_store(temp_chroma_db, mock_llm, sample_chunks):
         temp_chroma_db: Temporary directory for ChromaDB storage
         mock_llm: Mock LLM (not used directly but ensures LLM context)
         sample_chunks: Sample document chunks to add to the store
+        mock_embedding_model: Mocked EmbeddingModel fixture
 
     Yields:
         VectorStore: Initialized vector store with sample data
 
     Note:
-        This fixture requires ChromaDB and sentence-transformers to be installed.
-        If not available, it will skip the test.
+        This fixture requires ChromaDB to be installed.
+        The embedding model is mocked to avoid requiring sentence-transformers.
     """
     pytest.importorskip("chromadb")
-    pytest.importorskip("sentence_transformers")
 
+    # Import VectorStore after mock_embedding_model has patched EmbeddingModel
     from vector_store import VectorStore
 
     # Create vector store with temporary path
     store = VectorStore(
-        db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
+        db_path=str(temp_chroma_db), embedding_model="mock-model"
     )
 
     # Add sample chunks
@@ -213,14 +288,12 @@ def vector_store(temp_chroma_db, mock_llm, sample_chunks):
 
     yield store
 
-    # Cleanup is handled by temp_chroma_db fixture
-
 
 # Additional utility fixtures for convenience
 
 
 @pytest.fixture
-def empty_vector_store(temp_chroma_db):
+def empty_vector_store(temp_chroma_db, mock_embedding_model):
     """
     Empty VectorStore for testing.
 
@@ -229,17 +302,21 @@ def empty_vector_store(temp_chroma_db):
 
     Args:
         temp_chroma_db: Temporary directory for ChromaDB storage
+        mock_embedding_model: Mocked EmbeddingModel fixture
 
     Yields:
         VectorStore: Empty vector store ready for use
+
+    Note:
+        This fixture requires ChromaDB to be installed.
     """
     pytest.importorskip("chromadb")
-    pytest.importorskip("sentence_transformers")
 
+    # Import VectorStore after mock_embedding_model has patched EmbeddingModel
     from vector_store import VectorStore
 
     store = VectorStore(
-        db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
+        db_path=str(temp_chroma_db), embedding_model="mock-model"
     )
 
     yield store
