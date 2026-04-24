@@ -275,11 +275,25 @@ def vector_store(temp_chroma_db, mock_llm, sample_chunks, mock_embedding_model):
     pytest.importorskip("chromadb")
     import numpy as np
 
-    def _deterministic_embedding(text):
-        """Generate deterministic embedding based on hash of input text."""
-        hash_val = hash(text)
-        embedding = np.array([((hash_val >> (i * 3)) % 1000) / 1000.0 for i in range(384)], dtype=np.float32)
+    def _word_hash_embedding(text, dim=384):
+        """Generate embedding where shared words produce similar embeddings.
+
+        Each word sets 8 dimensions to 1.0 based on its hash.
+        Texts sharing words will have overlapping 1.0 dimensions,
+        producing high cosine similarity for word overlap.
+        """
+        words = str(text).lower().split()
+        embedding = np.zeros(dim, dtype=np.float32)
+        for word in words:
+            word_hash = hash(word)
+            for offset in range(8):
+                dim_idx = (word_hash + offset * 97) % dim
+                embedding[dim_idx] = 10.0
         return embedding
+
+    def _deterministic_embedding(text):
+        """Generate deterministic embedding where similar texts produce similar vectors."""
+        return _word_hash_embedding(text)
 
     # Create a mock EmbeddingModel class that behaves correctly
     class MockEmbeddingModel:

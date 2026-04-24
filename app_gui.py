@@ -1200,6 +1200,15 @@ class DocumentQAApp(CTk):
                     elif msg[0] == "progress_clear":
                         if self.winfo_exists() and hasattr(self, "progress_label"):
                             self.progress_label.configure(text="")
+                    elif msg[0] == "progress_clear_delayed":
+                        if self.winfo_exists():
+                            self.after(3000, lambda: self.message_queue.put(("progress_clear",)))
+                    elif msg[0] == "cancel_button_show":
+                        if self.winfo_exists() and hasattr(self, "cancel_button"):
+                            self.cancel_button.pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.SM))
+                    elif msg[0] == "cancel_button_hide":
+                        if self.winfo_exists() and hasattr(self, "cancel_button"):
+                            self.cancel_button.pack_forget()
                     elif msg[0] == "message":
                         if self.winfo_exists():
                             self._add_message(*msg[1:])
@@ -1218,6 +1227,12 @@ class DocumentQAApp(CTk):
                                 self.ask_button.configure(state="normal")
                             if hasattr(self, "question_entry"):
                                 self.question_entry.configure(state="normal")
+                    elif msg[0] == "hide_typing":
+                        if self.winfo_exists():
+                            self._hide_typing_indicator()
+                    elif msg[0] == "model_label":
+                        if self.winfo_exists() and hasattr(self, "model_label"):
+                            self.model_label.configure(text=msg[1])
             except queue.Empty:
                 pass
             if self.winfo_exists():
@@ -1232,7 +1247,7 @@ class DocumentQAApp(CTk):
             self._is_operation_active = True
             self._operation_cancelled.clear()
             # Show cancel button
-            self.after(100, lambda: self.cancel_button.pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.SM)))
+            self.message_queue.put(("cancel_button_show",))
             try:
                 self.message_queue.put(("status", "Initializing RAG engine..."))
                 self.message_queue.put(("progress", 20))
@@ -1251,7 +1266,7 @@ class DocumentQAApp(CTk):
                 if self._operation_cancelled.is_set():
                     self._operation_cancelled.clear()
                     self._is_operation_active = False
-                    self.after(100, lambda: self.cancel_button.pack_forget())
+                    self.message_queue.put(("cancel_button_hide",))
                     self.message_queue.put(("enable_input", True))
                     return
 
@@ -1271,7 +1286,7 @@ class DocumentQAApp(CTk):
                     ))
                     self._operation_cancelled.clear()
                     self._is_operation_active = False
-                    self.after(100, lambda: self.cancel_button.pack_forget())
+                    self.message_queue.put(("cancel_button_hide",))
                     self.message_queue.put(("enable_input", True))
                     return
 
@@ -1297,10 +1312,10 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("enable_input", True))
                 self._operation_cancelled.clear()
                 self._is_operation_active = False
-                self.after(100, lambda: self.cancel_button.pack_forget())
+                self.message_queue.put(("cancel_button_hide",))
 
                 # Clear progress label after 3 seconds - FR-705
-                self.after(3000, lambda: self.message_queue.put(("progress_clear",)))
+                self.message_queue.put(("progress_clear_delayed",))
 
                 # Update model label with GGUF file info
                 gguf_path = self.settings.get("gguf_path", "")
@@ -1309,21 +1324,19 @@ class DocumentQAApp(CTk):
                         file_size = os.path.getsize(gguf_path)
                         size_mb = file_size / (1024 * 1024)
                         filename = os.path.basename(gguf_path)
-                        self.model_label.configure(
-                            text=f"Model: {filename} ({size_mb:.1f}MB)"
-                        )
+                        self.message_queue.put(("model_label", f"Model: {filename} ({size_mb:.1f}MB)"))
                     except Exception as e:
                         logger.warning(
                             "Could not read model file info for %s: %s", gguf_path, e
                         )
-                        self.model_label.configure(text="Model: Unknown")
+                        self.message_queue.put(("model_label", "Model: Unknown"))
                 else:
-                    self.model_label.configure(text="Model: None")
+                    self.message_queue.put(("model_label", "Model: None"))
 
             except Exception as e:
                 self._operation_cancelled.clear()
                 self._is_operation_active = False
-                self.after(100, lambda: self.cancel_button.pack_forget())
+                self.message_queue.put(("cancel_button_hide",))
                 self.message_queue.put(("status", f"Error: {e}"))
                 self.message_queue.put(
                     (
@@ -1457,7 +1470,7 @@ class DocumentQAApp(CTk):
         self._is_operation_active = True
         self._operation_cancelled.clear()
         # Show cancel button
-        self.after(100, lambda: self.cancel_button.pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.SM)))
+        self.message_queue.put(("cancel_button_show",))
 
         def ingest():
             try:
@@ -1498,7 +1511,7 @@ class DocumentQAApp(CTk):
                         self.message_queue.put(("progress_clear",))
                         self._operation_cancelled.clear()
                         self._is_operation_active = False
-                        self.after(100, lambda: self.cancel_button.pack_forget())
+                        self.message_queue.put(("cancel_button_hide",))
                         self.message_queue.put(("enable_input", True))
                         return
 
@@ -1520,7 +1533,7 @@ class DocumentQAApp(CTk):
                     self.message_queue.put(("progress_clear",))
                     self._operation_cancelled.clear()
                     self._is_operation_active = False
-                    self.after(100, lambda: self.cancel_button.pack_forget())
+                    self.message_queue.put(("cancel_button_hide",))
                     self.message_queue.put(("enable_input", True))
                 else:
                     total_files = len(files)
@@ -1546,7 +1559,7 @@ class DocumentQAApp(CTk):
                     self.message_queue.put(("progress_clear",))
                     self._operation_cancelled.clear()
                     self._is_operation_active = False
-                    self.after(100, lambda: self.cancel_button.pack_forget())
+                    self.message_queue.put(("cancel_button_hide",))
                     self.message_queue.put(("enable_input", True))
 
             except Exception as e:
@@ -1555,7 +1568,7 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("enable_input", True))
                 self._operation_cancelled.clear()
                 self._is_operation_active = False
-                self.after(100, lambda: self.cancel_button.pack_forget())
+                self.message_queue.put(("cancel_button_hide",))
 
         threading.Thread(target=ingest, daemon=True).start()
 
@@ -1582,7 +1595,7 @@ class DocumentQAApp(CTk):
         self._is_operation_active = True
         self._operation_cancelled.clear()
         # Show cancel button
-        self.after(100, lambda: self.cancel_button.pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.SM)))
+        self.message_queue.put(("cancel_button_show",))
         self._show_typing_indicator()
 
         def query():
@@ -1595,8 +1608,8 @@ class DocumentQAApp(CTk):
                 if self._operation_cancelled.is_set():
                     self._operation_cancelled.clear()
                     self._is_operation_active = False
-                    self.after(100, lambda: self.cancel_button.pack_forget())
-                    self._hide_typing_indicator()
+                    self.message_queue.put(("cancel_button_hide",))
+                    self.message_queue.put(("hide_typing",))
                     self.message_queue.put(("enable_input", True))
                     return
                 self.conversation_history.append({"role": "user", "content": question})
@@ -1614,8 +1627,8 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("enable_input", True))
                 self._operation_cancelled.clear()
                 self._is_operation_active = False
-                self.after(100, lambda: self.cancel_button.pack_forget())
-                self._hide_typing_indicator()
+                self.message_queue.put(("cancel_button_hide",))
+                self.message_queue.put(("hide_typing",))
 
             except Exception as e:
                 self.message_queue.put(("status", f"Error: {e}"))
@@ -1623,8 +1636,8 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("enable_input", True))
                 self._operation_cancelled.clear()
                 self._is_operation_active = False
-                self.after(100, lambda: self.cancel_button.pack_forget())
-                self._hide_typing_indicator()
+                self.message_queue.put(("cancel_button_hide",))
+                self.message_queue.put(("hide_typing",))
 
         threading.Thread(target=query, daemon=True).start()
 

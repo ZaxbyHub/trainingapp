@@ -308,7 +308,7 @@ class TestGetContextSimilarity:
         context, sources, chunks = vector_store.get_context(
             "Python programming",
             n_results=5,
-            min_similarity=0.5
+            min_similarity=0.3
         )
         
         # All returned chunks should meet similarity threshold

@@ -630,7 +630,7 @@ class TestAPIServerPathTraversal:
 
     def test_sanitize_filename_length_limit(self):
         """sanitize_filename limits to 255 chars."""
-        from api_server import sanitize_filename
+        from api_server import sanitize_filename, validate_device
 
         long_name = "a" * 300 + ".txt"
         safe, display = sanitize_filename(long_name)
