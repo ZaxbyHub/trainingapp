@@ -3,7 +3,6 @@ Shared pytest fixtures for the test suite.
 """
 
 import sys
-
 import pytest
 from pathlib import Path
 from typing import List, Dict, Any
@@ -274,19 +273,46 @@ def vector_store(temp_chroma_db, mock_llm, sample_chunks, mock_embedding_model):
         The embedding model is mocked to avoid requiring sentence-transformers.
     """
     pytest.importorskip("chromadb")
+    import numpy as np
 
-    # Import VectorStore after mock_embedding_model has patched EmbeddingModel
-    from vector_store import VectorStore
+    def _deterministic_embedding(text):
+        """Generate deterministic embedding based on hash of input text."""
+        hash_val = hash(text)
+        embedding = np.array([((hash_val >> (i * 3)) % 1000) / 1000.0 for i in range(384)], dtype=np.float32)
+        return embedding
 
-    # Create vector store with temporary path
-    store = VectorStore(
-        db_path=str(temp_chroma_db), embedding_model="mock-model"
-    )
+    # Create a mock EmbeddingModel class that behaves correctly
+    class MockEmbeddingModel:
+        """Mock EmbeddingModel that returns deterministic embeddings."""
+        def __init__(self, model_name=None):
+            self.model_name = model_name or "mock-model"
+        
+        def encode(self, texts):
+            """Encode multiple texts with deterministic embeddings."""
+            return [_deterministic_embedding(str(text)).tolist() for text in texts]
+        
+        def encode_single(self, text):
+            """Encode single text with deterministic embedding."""
+            return _deterministic_embedding(str(text)).tolist()
 
-    # Add sample chunks
-    store.add_chunks(sample_chunks)
+    # Clear any cached imports first to ensure patching works
+    modules_to_clear = [k for k in list(sys.modules.keys()) if k.startswith("vector_store")]
+    for mod in modules_to_clear:
+        del sys.modules[mod]
 
-    yield store
+    # Patch the EmbeddingModel class in the vector_store module namespace
+    with patch("vector_store.EmbeddingModel", MockEmbeddingModel):
+        from vector_store import VectorStore
+
+        # Create vector store with temporary path
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="mock-model"
+        )
+
+        # Add sample chunks
+        store.add_chunks(sample_chunks)
+
+        yield store
 
 
 # Additional utility fixtures for convenience
@@ -315,11 +341,12 @@ def empty_vector_store(temp_chroma_db, mock_embedding_model):
     # Import VectorStore after mock_embedding_model has patched EmbeddingModel
     from vector_store import VectorStore
 
-    store = VectorStore(
-        db_path=str(temp_chroma_db), embedding_model="mock-model"
-    )
+    with patch("vector_store.EmbeddingModel", mock_embedding_model):
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="mock-model"
+        )
 
-    yield store
+        yield store
 
 
 @pytest.fixture

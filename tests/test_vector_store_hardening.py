@@ -31,9 +31,14 @@ def setup_sentence_transformers_mock(st_mock):
 
 
 def teardown_sentence_transformers_mock():
-    for dep in ["sentence_transformers"] + list(sys.modules.keys()):
-        if dep.startswith("sentence_transformers"):
-            sys.modules.pop(dep, None)
+    # Clean up all modules that setup_sentence_transformers_mock added
+    for dep in ["sentence_transformers", "chromadb", "chromadb.config", "rank_bm25", 
+                "document_processor", "utils", "query_transformer"]:
+        sys.modules.pop(dep, None)
+    # Also clean any sentence_transformers submodules
+    for mod_name in list(sys.modules.keys()):
+        if mod_name.startswith("sentence_transformers"):
+            sys.modules.pop(mod_name, None)
 
 
 # ------------------------------------------------------------------------------------------------
@@ -64,7 +69,12 @@ def test_pyinstaller_bundle_used(mock_sys, mock_path_cls, mock_st_cls):
 
     try:
         from vector_store import EmbeddingModel
+        # Model is NOT loaded during __init__ (lazy loading)
         em = EmbeddingModel()
+        mock_st_cls.assert_not_called()
+        
+        # Now trigger lazy load by calling encode
+        em.encode(["test"])
         mock_st_cls.assert_called_once()
         assert mock_st_cls.call_args[1]["local_files_only"] is True
     finally:
@@ -101,7 +111,12 @@ def test_pyinstaller_local_fallback(mock_sys, mock_path_cls, mock_st_cls):
 
     try:
         from vector_store import EmbeddingModel
+        # Model is NOT loaded during __init__ (lazy loading)
         em = EmbeddingModel()
+        mock_st_cls.assert_not_called()
+        
+        # Now trigger lazy load
+        em.encode(["test"])
         mock_st_cls.assert_called_once()
         assert mock_st_cls.call_args[1]["local_files_only"] is True
     finally:
@@ -110,7 +125,7 @@ def test_pyinstaller_local_fallback(mock_sys, mock_path_cls, mock_st_cls):
 
 
 # ------------------------------------------------------------------------------------------------
-# Test 3: Path B — Both missing → FileNotFoundError, SentenceTransformer NOT called
+# Test 3: Path B — Both missing → FileNotFoundError raised during lazy load
 # ------------------------------------------------------------------------------------------------
 @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
 @patch("vector_store.SentenceTransformer")
@@ -118,7 +133,6 @@ def test_pyinstaller_local_fallback(mock_sys, mock_path_cls, mock_st_cls):
 @patch("vector_store.sys")
 def test_pyinstaller_no_model_raises(mock_sys, mock_path_cls, mock_st_cls):
     clear_vector_store()
-    setup_sentence_transformers_mock(mock_st_cls)
 
     mock_sys.frozen = True
     mock_sys._MEIPASS = "/app"
@@ -128,27 +142,24 @@ def test_pyinstaller_no_model_raises(mock_sys, mock_path_cls, mock_st_cls):
     bundle_path.iterdir.return_value = []
     bundle_path.__truediv__ = MagicMock(return_value=bundle_path)
 
-    # Path B: local exists → SentenceTransformer fails → FileNotFoundError
+    # Both bundle and local missing → raises FileNotFoundError directly
     local_path = MagicMock()
-    local_path.exists.return_value = True
-    resolved_mock = MagicMock()
-    resolved_mock.__str__ = MagicMock(return_value="C:/app/models/bge-small-en-v1.5")
-    local_path_sub = MagicMock()
-    local_path_sub.resolve.return_value = resolved_mock
-    local_path.__truediv__ = MagicMock(return_value=local_path_sub)
-    mock_st_cls.side_effect = OSError("Model files not found or corrupt")
+    local_path.exists.return_value = False
+    local_path.resolve.return_value = Path("C:/app/models/bge-small-en-v1.5")
 
     # Order: local_model_path = Path(...) is called FIRST, then bundle_path = Path(sys._MEIPASS) is called SECOND
     mock_path_cls.side_effect = [local_path, bundle_path]
 
     try:
         from vector_store import EmbeddingModel
+        # __init__ should NOT raise - model not loaded yet
+        em = EmbeddingModel()
+        mock_st_cls.assert_not_called()
+        
+        # Now trigger lazy load - this should raise (both bundle and local missing)
         with pytest.raises(FileNotFoundError, match="Embedding model not found"):
-            EmbeddingModel()
-        mock_st_cls.assert_called_once()
+            em.encode(["test"])
     finally:
-        mock_st_cls.side_effect = None  # reset for other tests
-        teardown_sentence_transformers_mock()
         clear_vector_store()
 
 
@@ -169,7 +180,12 @@ def test_dev_mode_local_model(mock_path_cls, mock_st_cls):
 
     try:
         from vector_store import EmbeddingModel
+        # Model NOT loaded during __init__
         em = EmbeddingModel()
+        mock_st_cls.assert_not_called()
+        
+        # Trigger lazy load
+        em.encode(["test"])
         mock_st_cls.assert_called_once()
         assert mock_st_cls.call_args[1]["local_files_only"] is True
     finally:
@@ -196,7 +212,12 @@ def test_dev_mode_cache_fallback(mock_path_cls, mock_st_cls):
 
     try:
         from vector_store import EmbeddingModel
+        # Model NOT loaded during __init__
         em = EmbeddingModel()
+        mock_st_cls.assert_not_called()
+        
+        # Trigger lazy load
+        em.encode(["test"])
         mock_st_cls.assert_called_once()
         assert mock_st_cls.call_args[1]["local_files_only"] is True
     finally:
@@ -205,14 +226,13 @@ def test_dev_mode_cache_fallback(mock_path_cls, mock_st_cls):
 
 
 # ------------------------------------------------------------------------------------------------
-# Test 6: Path C — Dev mode, nothing found → FileNotFoundError
+# Test 6: Path C — Dev mode, nothing found → FileNotFoundError during lazy load
 # ------------------------------------------------------------------------------------------------
 @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
 @patch("vector_store.SentenceTransformer", side_effect=OSError("not found"))
 @patch("vector_store.Path")
 def test_dev_mode_no_model_raises(mock_path_cls, mock_st_cls):
     clear_vector_store()
-    setup_sentence_transformers_mock(mock_st_cls)
 
     local_path = MagicMock()
     local_path.exists.return_value = False
@@ -221,10 +241,14 @@ def test_dev_mode_no_model_raises(mock_path_cls, mock_st_cls):
 
     try:
         from vector_store import EmbeddingModel
+        # __init__ should NOT raise - model not loaded yet
+        em = EmbeddingModel()
+        mock_st_cls.assert_not_called()
+        
+        # Trigger lazy load - this should raise (OSError caught and re-raised as FileNotFoundError)
         with pytest.raises(FileNotFoundError, match="not found in HuggingFace cache"):
-            EmbeddingModel()
+            em.encode(["test"])
     finally:
-        teardown_sentence_transformers_mock()
         clear_vector_store()
 
 
@@ -235,34 +259,31 @@ def test_dev_mode_no_model_raises(mock_path_cls, mock_st_cls):
 @patch("vector_store.SentenceTransformer")
 @patch("vector_store.Path")
 @patch("vector_store.sys")
-def test_error_message_contains_path(mock_sys, mock_path_cls, mock_st_cls):
+def test_error_message_contains_path(mock_sys, mock_path_cls):
     """
     Test 7: FileNotFoundError message contains model name, path info, and download instructions.
-    Uses a single mock Path return value and patches __truediv__ to simulate the bundle path check.
+    Uses a single mock Path return value that returns False for exists() to trigger the error path.
+    Error is raised during lazy load (encode), not during __init__.
     """
     clear_vector_store()
-    setup_sentence_transformers_mock(mock_st_cls)
 
     mock_sys.frozen = True
     mock_sys._MEIPASS = "/app"
 
-    # Build a call log so we can control what each Path() call returns
-    path_calls = []
-
-    def path_factory(*args, **kwargs):
-        result = MagicMock()
-        path_calls.append(result)
-        return result
-
-    mock_path_cls.side_effect = path_factory
-
-    # SentenceTransformer fails → FileNotFoundError with path in message
-    mock_st_cls.side_effect = OSError("Model files not found or corrupt")
+    mock_path = MagicMock()
+    mock_path.exists.return_value = False
+    mock_path.resolve.return_value = Path("C:/app/models/bge-small-en-v1.5")
+    mock_path.__truediv__ = MagicMock(return_value=mock_path)
+    mock_path_cls.return_value = mock_path
 
     try:
         from vector_store import EmbeddingModel
+        # __init__ should not raise
+        em = EmbeddingModel()
+        
+        # Now trigger lazy load - this should raise (both bundle and local missing)
         with pytest.raises(FileNotFoundError) as exc_info:
-            EmbeddingModel()
+            em.encode(["test"])
 
         err = str(exc_info.value)
         # Verify key content in the error message
@@ -270,8 +291,6 @@ def test_error_message_contains_path(mock_sys, mock_path_cls, mock_st_cls):
         assert "models" in err, f"Error should mention models path. Got: {err}"
         assert "Download BAAI/bge-small-en-v1.5" in err, f"Error should mention download instructions. Got: {err}"
     finally:
-        mock_st_cls.side_effect = None
-        teardown_sentence_transformers_mock()
         clear_vector_store()
 
 
@@ -292,7 +311,12 @@ def test_no_print_calls(mock_path_cls, mock_st_cls, capsys):
 
     try:
         from vector_store import EmbeddingModel
-        EmbeddingModel()
+        # __init__ should not print
+        em = EmbeddingModel()
+        
+        # Trigger lazy load
+        em.encode(["test"])
+        
         captured = capsys.readouterr()
         assert captured.out == ""
         assert captured.err == ""

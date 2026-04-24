@@ -1,34 +1,32 @@
 {
   "schema_version": "1.0.0",
-  "title": "Offline-First Hardening & Model Upgrade",
-  "swarm": "paid",
+  "title": "UI/UX Modernization",
+  "swarm": "lowtier",
   "current_phase": 1,
   "phases": [
     {
       "id": 1,
-      "name": "Backend Refactor — Remove non-GGUF backends, add Gemma 4 support",
+      "name": "Foundation — theme.py module with design tokens",
       "status": "complete",
       "tasks": [
         {
           "id": "1.1",
           "phase": 1,
           "status": "completed",
-          "size": "small",
-          "description": "Add DEFAULT_BUNDLED_GGUF constant and get_bundled_model_path() function to app_paths.py. The constant holds 'gemma-4-E2B-it-Q5_K_M.gguf'. The function searches for the default model first, then falls back to legacy paths (phi3-mini-int4.gguf, phi3.5-mini-instruct-int4-cw-ov, test_model.gguf). Covers FR-103.",
+          "size": "medium",
+          "description": "Create theme.py with ColorTokens, TypeScale, Spacing classes. ColorTokens uses @classmethod that reads ctk.get_appearance_mode() to return light/dark adaptive colors. Define: primary(), primary_hover(), secondary(), secondary_hover(), text_on_primary(), text_on_secondary(), bubble_user(), bubble_assistant(), bubble_system(), text_on_bubble(role), source_pill_bg(), danger(). TypeScale returns (FONT_FAMILY, size, weight) tuples: display(24), h1(20), h2(16), h3(14), body(13), caption(11), small(10). Spacing defines 4px-base grid: XS=2, SM=4, MD=8, LG=12, XL=16, XXL=20, XXXL=24, SECTION=32 plus compound presets. Import theme in app_gui.py replacing local FONT_FAMILY.",
           "depends": [],
-          "acceptance": "DEFAULT_BUNDLED_GGUF constant exists in app_paths.py; get_bundled_model_path() returns correct path for bundled model and legacy fallbacks",
           "files_touched": []
         },
         {
           "id": "1.2",
           "phase": 1,
           "status": "completed",
-          "size": "medium",
-          "description": "Remove OpenVINOLLM class (lines 83-144), OllamaLLM class (lines 305-403), and OpenAICompatibleLLM class (lines 406-517) from llm_interface.py. Then simplify SmartLLM (lines 551-733) to only support GGUFBackend — remove multi-backend fallback chain, Ollama/API parameters, and backend iteration loop. Covers FR-104, FR-105, FR-106, FR-107.",
+          "size": "small",
+          "description": "Migrate 4 button color sets in app_gui.py to use ColorTokens: Ask button → primary()/primary_hover()/text_on_primary(); Clear button → secondary()/secondary_hover()/text_on_secondary(); Settings Cancel → same as Clear; Settings Save → primary()/primary_hover()/text_on_primary(). Also add text_color to all CTkButton calls that currently omit it.",
           "depends": [
             "1.1"
           ],
-          "acceptance": "No OpenVINOLLM, OllamaLLM, or OpenAICompatibleLLM class definitions remain; SmartLLM only uses GGUFBackend",
           "files_touched": []
         },
         {
@@ -36,9 +34,10 @@
           "phase": 1,
           "status": "completed",
           "size": "small",
-          "description": "Add Gemma 4 model detection to GGUFBackend in llm_interface.py. Check for 'gemma-4' or 'gemma_4' in model filename. When detected, add '<|think|>' token to the stop parameter in chat_complete() and generate() to suppress thinking mode for RAG use. Covers FR-108.",
-          "depends": [],
-          "acceptance": "Gemma 4 model detected by filename; <|think|> added to stop tokens; non-Gemma models unaffected",
+          "description": "Migrate 3 chat bubble colors in _add_message() to ColorTokens.bubble_user()/bubble_assistant()/bubble_system(). Add text_color=ColorTokens.text_on_bubble(role) to message labels. This is color migration only — no role header or timestamp changes in this task.",
+          "depends": [
+            "1.1"
+          ],
           "files_touched": []
         },
         {
@@ -46,21 +45,21 @@
           "phase": 1,
           "status": "completed",
           "size": "small",
-          "description": "Remove online parameters from RAGEngine.__init__() and _init_llm() in rag_engine.py. Remove: ollama_model, ollama_url, api_url, api_model, device parameters. Covers FR-109.",
-          "depends": [],
-          "acceptance": "RAGEngine.__init__() no longer accepts ollama_model, ollama_url, api_url, api_model, or device; _init_llm() uses only GGUFBackend",
+          "description": "Add role header row with timestamp to _add_message(). Remove role prefix from content string. Add CTkLabel header showing role name ('You'/'Assistant'/'System') and timestamp in small muted font. Update _add_message() signature to accept timestamp parameter. Update all callers of _add_message() to pass timestamp.",
+          "depends": [
+            "1.3"
+          ],
           "files_touched": []
         },
         {
           "id": "1.5",
           "phase": 1,
           "status": "completed",
-          "size": "medium",
-          "description": "Remove online parameters from engine_factory.py. In create_engine(), create_engine_from_settings(), and create_engine_from_env(): remove ollama_model, ollama_url, api_url, api_model params. Remove model_path backward-compat param and RAG_MODEL_PATH env var handling. Replace inline bundled model lists with get_bundled_model_path() from app_paths.py. Covers FR-110.",
+          "size": "small",
+          "description": "Normalize all inline font tuples in app_gui.py to use TypeScale constants: H1 for section headers, H2 for subsection headers, body for content, caption for labels, small for timestamps. Remove local FONT_FAMILY from app_gui.py — import from theme.",
           "depends": [
             "1.1"
           ],
-          "acceptance": "All three factory functions accept only GGUF-relevant params; get_bundled_model_path() used instead of inline model lists",
           "files_touched": []
         },
         {
@@ -68,9 +67,10 @@
           "phase": 1,
           "status": "completed",
           "size": "small",
-          "description": "Remove dead code in main.py that references undefined args (model_path, ollama_url, ollama_model, api_url) at lines 61-68. Also remove RAG_MODEL_PATH environment variable handling. Note: create_parser() does NOT define these CLI args — they are dead references in the usage code. Covers FR-111.",
-          "depends": [],
-          "acceptance": "main.py has no references to args.model_path, args.ollama_url, args.ollama_model, args.api_url, or RAG_MODEL_PATH",
+          "description": "Replace all inline spacing values (padx, pady, pad, ipadx, ipady) with Spacing constants throughout app_gui.py. Focus on: Settings dialog frame padding, button frame padding, chat message padding, input area padding.",
+          "depends": [
+            "1.1"
+          ],
           "files_touched": []
         },
         {
@@ -78,36 +78,30 @@
           "phase": 1,
           "status": "completed",
           "size": "small",
-          "description": "Remove environment variable validations from api_server.py lifespan: RAG_MODEL_PATH, RAG_OLLAMA_MODEL, RAG_OLLAMA_URL, RAG_API_URL, RAG_API_MODEL, RAG_DEVICE. Remove model_path and device parameters from RAGEngine() construction at line 461. Covers FR-112.",
-          "depends": [],
-          "acceptance": "api_server.py lifespan does not read or validate RAG_MODEL_PATH, RAG_OLLAMA_MODEL, RAG_OLLAMA_URL, RAG_API_URL, RAG_API_MODEL, or RAG_DEVICE; RAGEngine() call has no model_path or device param",
-          "files_touched": []
-        },
-        {
-          "id": "1.8",
-          "phase": 1,
-          "status": "completed",
-          "size": "small",
-          "description": "Update requirements.txt: remove openvino and openvino-genai lines (lines 13-14), update llama-cpp-python constraint to >=0.2.30. Covers FR-201, FR-203.",
-          "depends": [],
-          "acceptance": "requirements.txt has no openvino or openvino-genai entries; llama-cpp-python >= 0.2.30",
+          "description": "Verify light-mode rendering by running app_gui.py with CTK_APPEARANCE_MODE=light or toggling system appearance. Check all migrated elements: buttons, chat bubbles, status labels. Fix any remaining hardcoded colors that were missed.",
+          "depends": [
+            "1.2",
+            "1.3",
+            "1.4",
+            "1.5",
+            "1.6"
+          ],
           "files_touched": []
         }
       ]
     },
     {
       "id": 2,
-      "name": "Resilience & Code Quality — Embedding hardening, lazy init, error handling",
+      "name": "Interaction fixes — keyboard shortcuts, typing indicator, clear confirmation",
       "status": "complete",
       "tasks": [
         {
           "id": "2.1",
           "phase": 2,
           "status": "completed",
-          "size": "medium",
-          "description": "Harden EmbeddingModel in vector_store.py: always pass local_files_only=True to SentenceTransformer in both PyInstaller and dev mode; add ./models/bge-small-en-v1.5/ as secondary search path; raise clear FileNotFoundError with expected path when model not found. Covers FR-301, FR-302, FR-303.",
+          "size": "small",
+          "description": "Add <Return> key binding to question_entry that calls _ask_question(). Keep existing Ctrl+Return binding. Add <Escape> binding that clears input field when _is_operation_active is False, or cancels operation when True.",
           "depends": [],
-          "acceptance": "SentenceTransformer always called with local_files_only=True; secondary dev path checked; FileNotFoundError raised with message on missing model",
           "files_touched": []
         },
         {
@@ -115,11 +109,10 @@
           "phase": 2,
           "status": "completed",
           "size": "medium",
-          "description": "Implement lazy initialization in vector_store.py: defer BM25 index rebuild to first bm25_search() call. Make SentenceTransformer lazy — load on first encode()/encode_single() call, not in __init__(). On BM25 failure, set empty BM25Index instance with warning. Add BM25 search failure logging. Move STOP_WORDS import to module level. Covers FR-501, FR-502, FR-604, FR-606, FR-804.",
+          "description": "Move thinking indicator from status bar to inline chat bubble. Create _create_typing_indicator() that appends a CTkFrame with animated dots inside chat area. _ask_question() calls _show_typing_indicator() before thread start. Response handler calls _hide_typing_indicator() which destroys the frame. Status bar no longer overwritten. Rename _start_thinking_animation/_stop_thinking_animation to _show_typing_indicator/_hide_typing_indicator.",
           "depends": [
-            "2.1"
+            "1.1"
           ],
-          "acceptance": "BM25 index rebuilt on first search; SentenceTransformer loaded on first encode; BM25 failure produces warning not None; STOP_WORDS import at module level",
           "files_touched": []
         },
         {
@@ -127,9 +120,8 @@
           "phase": 2,
           "status": "completed",
           "size": "small",
-          "description": "Wrap LLM call in query_transformer.py in try/except. On failure, log warning and return original query unchanged. Replace all print() calls in llm_interface.py with logger.warning() or logger.info(). Covers FR-601, FR-602.",
+          "description": "Replace messagebox.askyesno() clear chat confirmation with inline 3-second confirm pattern. clear_button text changes to 'Confirm?' in danger color on first click. Second click within 3s clears chat. Timeout reverts button. Use self.after(3000, callback). Cancel timer on window close.",
           "depends": [],
-          "acceptance": "query_transformer.py LLM call wrapped in try/except; llm_interface.py has zero print() calls (all replaced with logger)",
           "files_touched": []
         },
         {
@@ -137,61 +129,24 @@
           "phase": 2,
           "status": "completed",
           "size": "small",
-          "description": "Replace remaining print() calls in document_processor.py (lines 359, 366, 367, 383, 385) with logger.warning() or logger.info(). Verify adequate structured logging exists at document processing start/completion (file name, chunk count). If gaps exist, add them. Covers FR-603, FR-602.",
+          "description": "Standardize all CTkSwitch widgets to use the text= parameter instead of separate CTkLabel widgets. Hybrid search switch: text='Enable Hybrid Search'. Reranking switch: text='Enable Reranking'. Remove the separate label widgets that precede these switches.",
           "depends": [],
-          "acceptance": "document_processor.py has zero print() calls; logging includes file name, chunk count at start/completion",
-          "files_touched": []
-        },
-        {
-          "id": "2.5",
-          "phase": 2,
-          "status": "completed",
-          "size": "medium",
-          "description": "Add try/except wrappers in rag_engine.py: wrap reranker initialization with fallback to None + warning; wrap _save_config() with user-facing error message. Extract _log_init_banner() helper from __init__() to eliminate duplicated logger.info banner blocks. Gate query_transformer call on RAGConfig.query_transformation_enabled flag. Covers FR-605, FR-607, FR-802, FR-805.",
-          "depends": [
-            "1.4"
-          ],
-          "acceptance": "Reranker failure sets None with warning; save_config error shows user message; init banner extracted to helper; query_transformer gated on flag",
-          "files_touched": []
-        },
-        {
-          "id": "2.6",
-          "phase": 2,
-          "status": "completed",
-          "size": "medium",
-          "description": "Code quality fixes: extract _resolve_and_validate_path() helper in api_server.py to share duplicated path-resolution logic (FR-801); move 'from collections import defaultdict' import to module level in utils.py (FR-803); fix _SettingsProxy in config.py to wrap AttributeError with informative message (FR-806); simplify security.py URL validation to reject non-local URL schemes (FR-901). Covers FR-801, FR-803, FR-806, FR-901.",
-          "depends": [],
-          "acceptance": "api_server.py path validation uses shared helper; utils.py defaultdict import at module level; config.py SettingsProxy has informative AttributeError; security.py rejects non-local URLs",
-          "files_touched": []
-        },
-        {
-          "id": "2.7",
-          "phase": 2,
-          "status": "completed",
-          "size": "small",
-          "description": "Defer _load_settings() in app_gui.py with self.after(50, self._load_settings_and_init) to allow first render before blocking I/O. Note: wrap _load_settings() call at line 381 and the subsequent widget initialization code in the deferred function. There is no existing _load_settings_and_init method — create one that combines _load_settings() and _initialize_widgets(). Covers FR-503.",
-          "depends": [],
-          "acceptance": "_load_settings() and subsequent widget init called via self.after(50, ...) in __init__",
           "files_touched": []
         }
       ]
     },
     {
       "id": 3,
-      "name": "UI/UX & Settings — Settings cleanup, _initialize_engine fix, UI polish",
+      "name": "Layout and responsive behavior",
       "status": "complete",
       "tasks": [
         {
           "id": "3.1",
           "phase": 3,
           "status": "completed",
-          "size": "medium",
-          "description": "Fix _initialize_engine() bypass in app_gui.py: replace direct RAGEngine construction (lines 592-649) with engine_factory.create_engine_from_settings(). Remove Ollama/API parameter passing. Covers FR-405.",
-          "depends": [
-            "1.4",
-            "1.5"
-          ],
-          "acceptance": "_initialize_engine() calls engine_factory.create_engine_from_settings(); no direct RAGEngine construction with online params",
+          "size": "small",
+          "description": "Implement dynamic wraplength for chat messages. Add _get_wraplength() method that returns chat_frame.winfo_width() - 80 with fallback. Bind chat_frame to <Configure> event calling _on_chat_resize(). Store _last_chat_width to avoid redundant updates. New messages use calculated wraplength.",
+          "depends": [],
           "files_touched": []
         },
         {
@@ -199,9 +154,10 @@
           "phase": 3,
           "status": "completed",
           "size": "medium",
-          "description": "Remove all online-related widgets and methods from SettingsDialog in app_gui.py: ollama_url_entry, ollama_model_entry, api_url_entry widgets; _test_ollama() and _test_api() methods; backend priority label text at line 103. Stop reading/writing ollama_url, ollama_model, api_url in _populate_fields() and _save(). Remove bundled model duplicate list in _load_settings() (lines 402-406). Covers FR-401, FR-402, FR-403, FR-404, FR-110.",
-          "depends": [],
-          "acceptance": "SettingsDialog has no Ollama/API widgets; no Test Connection buttons; no backend priority label; no ollama/api keys in populate/save methods; duplicate model list removed",
+          "description": "Add _create_empty_state() method showing: document icon, 'No documents yet' heading (TypeScale.h2), descriptive subtext (TypeScale.body, muted), sample questions as clickable CTkButtons, prominent 'Ingest Documents' button. Show when document count is 0. Hide when documents ingested.",
+          "depends": [
+            "1.1"
+          ],
           "files_touched": []
         },
         {
@@ -209,36 +165,15 @@
           "phase": 3,
           "status": "completed",
           "size": "medium",
-          "description": "Add keyboard shortcuts to app_gui.py: Ctrl+Enter (submit question), Ctrl+L (clear chat), Ctrl+, (open settings). Add confirmation dialog before clearing chat. Style Ask button as primary, Clear button as secondary. Style Save button in SettingsDialog as primary. Covers FR-701, FR-702, FR-703, FR-704.",
+          "description": "Implement threading.Event-based operation cancellation. Add _operation_cancelled = threading.Event() in __init__. Set event in _cancel_operation(). Worker threads check is_set() in their loops. Add cancel button next to progress bar during ingest/query. Completion handlers check event state. Keep _is_operation_active boolean for UI state only.",
           "depends": [],
-          "acceptance": "Keyboard shortcuts work; clear chat shows confirmation; Ask button visually primary; Clear button visually secondary; Settings Save button visually primary",
-          "files_touched": []
-        },
-        {
-          "id": "3.4",
-          "phase": 3,
-          "status": "completed",
-          "size": "medium",
-          "description": "Add progress bar improvements in app_gui.py: display percentage and phase labels. Add animated Thinking state (rotating ellipsis). Handle WM_DELETE_WINDOW with confirmation during active operations. Covers FR-705, FR-706, FR-707.",
-          "depends": [],
-          "acceptance": "Progress bar shows percentage and phase text; thinking state animates; closing during active ops shows confirmation",
-          "files_touched": []
-        },
-        {
-          "id": "3.5",
-          "phase": 3,
-          "status": "completed",
-          "size": "small",
-          "description": "Accessibility and polish in app_gui.py: set minimum CTkButton height of 44px globally for WCAG 2.5.5 compliance; call focus_set() on first focusable widget in SettingsDialog; specify 'Segoe UI' as font family for Windows consistency. Covers FR-708, FR-709, FR-710.",
-          "depends": [],
-          "acceptance": "All buttons >= 44px height; SettingsDialog auto-focuses first widget; Segoe UI used as font family",
           "files_touched": []
         }
       ]
     },
     {
       "id": 4,
-      "name": "Build System, Tests & Documentation — Packaging, test updates, doc cleanup",
+      "name": "Settings expansion and source improvements",
       "status": "complete",
       "tasks": [
         {
@@ -246,40 +181,94 @@
           "phase": 4,
           "status": "completed",
           "size": "medium",
-          "description": "Update build system files: root build.py — update default model path to Gemma 4; scripts/build.py — add Gemma 4 model validation, remove OpenVINO build steps; scripts/build_installer.py — update Qwen3-1.7B references to Gemma 4 E2B (lines 134-156 README generation); AFOMIS.spec — add models/ directory to datas list. Update run_api.bat to remove Ollama environment variables. Covers FR-1001, FR-1002, FR-1003, FR-1004, FR-1005.",
-          "depends": [
-            "1.8"
-          ],
-          "acceptance": "All build scripts reference Gemma 4 model; AFOMIS.spec includes models/ in datas; no OpenVINO build steps; no Ollama env vars in run_api.bat",
+          "description": "Add 6 missing RAGConfig fields to SettingsDialog in logical groups. Model Settings: rag_embedding_model (read-only display), rag_reranker_model (read-only display). Search Settings: rag_chunk_overlap (CTkEntry, int validation), rag_min_similarity (CTkEntry, float 0-1). Advanced: rag_context_truncation (CTkEntry, int). Database: rag_db_path (CTkEntry + Browse). Each new field gets placeholder_text AND tooltip. Update _populate_fields() and _save() with exact field names.",
+          "depends": [],
           "files_touched": []
         },
         {
           "id": "4.2",
           "phase": 4,
           "status": "completed",
-          "size": "large",
-          "description": "Update test files: remove all mocks/imports of OllamaLLM, OpenAICompatibleLLM, OpenVINOLLM from test_llm_interface.py, test_rag_pipeline_edge_cases.py, test_phase1_fixes.py, test_workflows.py, integration/conftest.py, regression/test_defect_002_api_gguf_env.py. Replace with GGUFBackend mocks. Add dedicated GGUFBackend tests: Gemma 4 detection, thinking mode suppression, error handling. Covers FR-1101, FR-1102, FR-1103.",
+          "size": "medium",
+          "description": "Replace plain-text source citation rendering in _add_message() with interactive source pills. Each source becomes a CTkFrame badge with document filename (truncated to 30 chars + ellipsis). On click: expand inline card showing relevant text snippet. Use ColorTokens.source_pill_bg() for background. Cursor changes to hand2 on hover.",
           "depends": [
-            "1.2",
-            "1.3",
-            "1.5",
-            "1.7"
+            "1.1"
           ],
-          "acceptance": "No test file references OllamaLLM, OpenAICompatibleLLM, or OpenVINOLLM; new GGUFBackend tests pass for Gemma 4 detection, stop tokens, and error handling",
           "files_touched": []
         },
         {
           "id": "4.3",
           "phase": 4,
           "status": "completed",
-          "size": "medium",
-          "description": "Update documentation files to remove all OpenVINO references and update model names: ARCHITECTURE.md (remove OpenVINO backend docs, describe GGUF-only), CONFIGURATION.md (remove OpenVINO config references at lines 49, 298, 322, 326, 479, 496), INSTALL.md (remove OpenVINO install instructions at lines 31-32), README.md (remove OpenVINO docs, update model references to Gemma 4). Add CHANGELOG.md entry for model upgrade and backend removal. Covers FR-1201, FR-1202, FR-1203, FR-1204, FR-1205.",
+          "size": "small",
+          "description": "Create CTkTooltip class using CTkToplevel for settings field hints. Apply to: chunk_size, n_results, max_tokens, temperature, hybrid_search, reranking, retrieval_window, initial_top_k, rerank_top_k. Tooltip appears after 500ms hover delay. Uses theme colors and TypeScale.small() font.",
           "depends": [],
-          "acceptance": "No OpenVINO references in ARCHITECTURE.md, CONFIGURATION.md, INSTALL.md, README.md; all model names updated to Gemma 4 E2B; CHANGELOG.md has upgrade entry",
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "Polish, consistency, and test updates",
+      "status": "pending",
+      "tasks": [
+        {
+          "id": "5.1",
+          "phase": 5,
+          "status": "completed",
+          "size": "small",
+          "description": "Standardize border_width on all _make_button calls: Save, Cancel, Ingest, Ask, Clear all use consistent border_width value. Document the chosen standard.",
+          "depends": [],
+          "files_touched": []
+        },
+        {
+          "id": "5.2",
+          "phase": 5,
+          "status": "completed",
+          "size": "small",
+          "description": "Add placeholder_text to existing settings CTkEntry widgets that lack it. Scope: only pre-4.1 fields (model path, chunk_size, n_results, max_tokens, temperature, hybrid_search, reranking, retrieval_window, initial_top_k, rerank_top_k). New fields added in 4.1 already have placeholder_text per 4.1 acceptance criteria.",
+          "depends": [],
+          "files_touched": []
+        },
+        {
+          "id": "5.3",
+          "phase": 5,
+          "status": "completed",
+          "size": "medium",
+          "description": "Update test files that assert hardcoded hex color values. test_keyboard_shortcuts_styling.py asserts fg_color='#1a73e8', '#444444', '#1557b0', '#555555' — update these to use ColorTokens.primary(), ColorTokens.secondary() etc. Verify all color assertions use tokens instead of hex literals.",
+          "depends": [
+            "1.2"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "5.4",
+          "phase": 5,
+          "status": "pending",
+          "size": "small",
+          "description": "Verify all 18 audit findings are addressed. Run through each finding from the audit report and confirm implementation. Generate a verification checklist showing each finding ID (CR-1, CR-2, H-1 through H-4, M-1 through M-9, L-1 through L-3) and its implementation status.",
+          "depends": [
+            "1.7",
+            "2.1",
+            "2.2",
+            "2.3",
+            "2.4",
+            "3.1",
+            "3.2",
+            "3.3",
+            "4.1",
+            "4.2",
+            "4.3",
+            "5.1",
+            "5.2",
+            "5.3"
+          ],
           "files_touched": []
         }
       ]
     }
   ],
-  "migration_status": "native"
+  "migration_status": "native",
+  "specMtime": "2026-04-21T00:19:40.195Z",
+  "specHash": "ea73291a774f959ed560897561ba9f2c99c91d2ecc8030ebf630e69b392ffcc9"
 }

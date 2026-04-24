@@ -16,7 +16,8 @@ from typing import get_type_hints
 
 import pytest
 
-pytestmark = pytest.mark.skip(reason="Pre-existing failures unrelated to PR #4 — requires real embedding model, GUI runtime, or environment setup")
+# Skip tests that reference DEFAULT_BUNDLED_GGUF which no longer exists in engine_factory
+pytestmark = pytest.mark.skip(reason="Tests reference DEFAULT_BUNDLED_GGUF which no longer exists in engine_factory — requires refactor")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CRITICAL BUG HUNT: app_gui.py references removed classes

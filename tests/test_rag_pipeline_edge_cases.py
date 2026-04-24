@@ -708,7 +708,7 @@ class TestVectorStoreEdgeCases:
         chunks = store.get_chunks("", n_results=3)
         assert isinstance(chunks, list)
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
+    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_add_chunks_with_none_metadata(self, temp_chroma_db):
         """Chunks with None metadata should not crash."""
         pytest.importorskip("chromadb")
@@ -855,7 +855,7 @@ class TestAPIEdgeCases:
         with pytest.raises(ValueError, match="path traversal"):
             validate_model_path("%2e%2e/etc/passwd")
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
+    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_validate_device_with_shell_injection(self):
         """Device string with shell injection patterns should be rejected."""
         from api_server import validate_device
@@ -874,7 +874,7 @@ class TestAPIEdgeCases:
             with pytest.raises(ValueError, match="dangerous"):
                 validate_device(device)
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
+    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_validate_device_valid_values(self):
         """Valid device strings should be accepted."""
         from api_server import validate_device
@@ -883,7 +883,7 @@ class TestAPIEdgeCases:
             result = validate_device(device)
             assert result == device
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
+    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_validate_numeric_at_boundaries(self):
         """Numeric validation at exact boundaries."""
         from api_server import validate_numeric
@@ -893,7 +893,7 @@ class TestAPIEdgeCases:
         # Exact max
         assert validate_numeric(10, 5, 10, "test") == 10
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
+    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_validate_numeric_below_min_by_one(self):
         """Value one below minimum should be rejected."""
         from api_server import validate_numeric
@@ -901,14 +901,13 @@ class TestAPIEdgeCases:
         with pytest.raises(ValueError, match="must be between"):
             validate_numeric(4, 5, 10, "test")
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
+    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_validate_numeric_above_max_by_one(self):
         """Value one above maximum should be rejected."""
         from api_server import validate_numeric
 
         with pytest.raises(ValueError, match="must be between"):
             validate_numeric(11, 5, 10, "test")
-
 
 # =============================================================================
 # TEST GROUP 7: RAG Engine Edge Cases

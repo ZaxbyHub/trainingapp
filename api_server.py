@@ -586,7 +586,7 @@ def main():
     """Run the API server."""
     import uvicorn
 
-    host = os.environ.get("API_HOST", "0.0.0.0")
+    host = os.environ.get("API_HOST", "0.0.0.0")  # nosec: B104 — intentional, configurable via API_HOST env var
     port = int(os.environ.get("API_PORT", "8080"))
 
     print(f"Starting server on {host}:{port}")

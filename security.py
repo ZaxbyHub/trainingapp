@@ -101,7 +101,7 @@ def validate_url(
         # If allow_local is True, we still validate the port
 
     # Reject 0.0.0.0 — listener address, not a valid destination (SSRF risk)
-    if parsed.hostname == "0.0.0.0":
+    if parsed.hostname == "0.0.0.0":  # nosec: B104 — this IS a security check rejecting 0.0.0.0, not binding to it
         raise ValueError("URL must not point to 0.0.0.0 (all-interfaces listener, private network security)")
 
     # Port validation
