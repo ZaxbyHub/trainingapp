@@ -581,7 +581,7 @@ class SettingsDialog(CTkToplevel):
 
         # Validate context truncation
         try:
-            context_truncation = int(self.context_truncation_entry.get() or 1024)
+            context_truncation = int(self.context_truncation_entry.get() or 20000)
             if not (256 <= context_truncation <= 32768):
                 errors.append("Context Truncation must be between 256 and 32768")
         except ValueError:
