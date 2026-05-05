@@ -56,7 +56,7 @@ if "theme" not in sys.modules:
     _theme_mock = MagicMock()
     _theme_mock.ColorTokens = type("ColorTokens", (), {})()
     _theme_mock.TypeScale = type("TypeScale", (), {})()
-    _theme_mock.FONT_FAMILY = "Helvetica"
+    _theme_mock.FONT_FAMILY = "Segoe UI"
 
     class _Spacing:
         XS = 2; SM = 4; MD = 8; LG = 12; XL = 16

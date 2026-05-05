@@ -15,6 +15,24 @@ from dataclasses import dataclass
 # if the package is already installed.
 sys.modules.setdefault("llama_cpp", MagicMock())
 
+# Pre-mock jose if the cryptography backend is broken (e.g. pyo3/cffi version mismatch
+# in some dev environments). This only activates when jose itself is unusable — on CI
+# (Windows, fresh pip install) jose imports fine and this block is a no-op.
+try:
+    from jose import JWTError, jwt as _jwt_check  # noqa: F401
+except BaseException:
+    for _k in list(sys.modules.keys()):
+        if _k.startswith("jose"):
+            del sys.modules[_k]
+    _jose_mock = MagicMock()
+    _jose_mock.JWTError = Exception
+    _jose_mock.jwt = MagicMock()
+    for _name in [
+        "jose", "jose.jwt", "jose.jws", "jose.jwk",
+        "jose.backends", "jose.backends.base", "jose.backends.cryptography_backend",
+    ]:
+        sys.modules[_name] = _jose_mock
+
 # Try to import from project modules, handle gracefully for test env
 try:
     from document_processor import DocumentChunk
