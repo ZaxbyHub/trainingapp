@@ -307,6 +307,8 @@ class TestDefaultValuesFlowThrough:
         mock.rag_context_truncation = 20000
         mock.rag_initial_retrieval_top_k = 30
         mock.rag_rerank_top_k = 6
+        mock.rag_gguf_n_ctx = 4096
+        mock.rag_gguf_n_threads = 4
 
         kwargs = await _build_ragconfig_via_lifespan_async(mock)
 
@@ -355,6 +357,8 @@ class TestRAGEngineReceivesRAGConfig:
         mock.rag_context_truncation = 20000
         mock.rag_initial_retrieval_top_k = 30
         mock.rag_rerank_top_k = 6
+        mock.rag_gguf_n_ctx = 4096
+        mock.rag_gguf_n_threads = 4
 
         captured_engine_calls = []
 
@@ -412,6 +416,8 @@ class TestGGUFPathValidation:
         mock.rag_context_truncation = 20000
         mock.rag_initial_retrieval_top_k = 30
         mock.rag_rerank_top_k = 6
+        mock.rag_gguf_n_ctx = 4096
+        mock.rag_gguf_n_threads = 4
 
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_gguf = os.path.join(tmpdir, "model.gguf")
@@ -465,6 +471,8 @@ class TestGGUFPathValidation:
         mock.rag_context_truncation = 20000
         mock.rag_initial_retrieval_top_k = 30
         mock.rag_rerank_top_k = 6
+        mock.rag_gguf_n_ctx = 4096
+        mock.rag_gguf_n_threads = 4
 
         with patch.dict(os.environ, {"RAG_GGUF_PATH": "/nonexistent/path/model.gguf"}):
             with patch("api_server.settings", mock):
