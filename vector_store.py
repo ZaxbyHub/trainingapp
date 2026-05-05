@@ -536,6 +536,8 @@ class VectorStore:
                     source=meta.get("source", chunk_id),
                     chunk_index=meta.get("chunk_index", i),
                     page=meta.get("page"),
+                    doc_id=meta.get("doc_id"),
+                    source_path=meta.get("source_path"),
                 )
                 for i, (chunk_id, text, meta) in enumerate(
                     zip(ids, documents, metadatas)
