@@ -3,6 +3,7 @@ Document Processor Module
 Handles extraction and chunking of PDF, DOCX, and PPTX files.
 """
 
+import hashlib
 import os
 import re
 import logging
@@ -29,6 +30,8 @@ class DocumentChunk:
     source: str
     page: Optional[int] = None
     chunk_index: int = 0
+    doc_id: Optional[str] = None        # Stable hash-based document identifier
+    source_path: Optional[str] = None   # Full file path for deduplication
 
 
 class DocumentProcessor:
@@ -342,6 +345,8 @@ class DocumentProcessor:
         filepath = str(filepath)
         # Use provided source_name or fall back to filename from path
         filename = source_name if source_name else Path(filepath).name
+        canonical_path = str(Path(filepath).resolve())
+        doc_id = hashlib.sha256(canonical_path.encode()).hexdigest()[:16]
 
         try:
             text, pages = self.extract_document(filepath)
@@ -350,6 +355,9 @@ class DocumentProcessor:
                 return []
 
             chunks = self.chunk_text(text, filename, pages=pages)
+            for chunk in chunks:
+                chunk.doc_id = doc_id
+                chunk.source_path = canonical_path
             logger.info("Processed: %s (%d chunks)", filename, len(chunks))
             return chunks
         except ValueError as e:

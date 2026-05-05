@@ -222,14 +222,14 @@ class TestDefaultValues:
         assert s.rag_db_path == "./doc_qa_db"
         assert s.rag_chunk_size == 512
         assert s.rag_chunk_overlap == 100
-        assert s.rag_n_results == 6
+        assert s.rag_n_results == 4
         assert s.rag_min_similarity == 0.3
-        assert s.rag_retrieval_window == 2
-        assert s.rag_max_tokens == 1024
+        assert s.rag_retrieval_window == 1
+        assert s.rag_max_tokens == 512
         assert s.rag_temperature == 0.3
         assert s.rag_embedding_model == "BAAI/bge-small-en-v1.5"
         assert s.rag_hybrid_search is True
-        assert s.rag_reranking_enabled is True
+        assert s.rag_reranking_enabled is False
         assert s.rag_cors_origins == "http://localhost,http://127.0.0.1"
 
     def test_global_settings_instance_exists(self):

@@ -2,11 +2,16 @@
 Tests for LLM Interface Module (Phase 4.4)
 """
 
+import sys
 import pytest
 import os
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, mock_open
 from dataclasses import dataclass
+
+# Pre-register llama_cpp as a mock so tests pass when the optional
+# dependency is not installed. Has no effect when it is installed.
+sys.modules.setdefault("llama_cpp", MagicMock())
 
 from llm_interface import (
     SmartLLM,

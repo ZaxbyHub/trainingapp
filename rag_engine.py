@@ -12,7 +12,6 @@ from pathlib import Path
 from dataclasses import dataclass
 import app_paths
 import logging
-from config import DEFAULT_MAX_TOKENS
 import re
 
 logger = logging.getLogger(__name__)
@@ -20,7 +19,6 @@ logger = logging.getLogger(__name__)
 # Maximum characters of context to pass to LLM (~1 500 tokens within GGUF n_ctx budget)
 # Configurable via RAG_CONTEXT_TRUNCATION environment variable, defaults to 6000
 
-from config import settings
 from document_processor import DocumentProcessor
 from vector_store import VectorStore
 from llm_interface import SmartLLM, InferenceConfig
@@ -52,6 +50,7 @@ class QueryResult:
     context_length: int
     inference_time: float
     chunks_retrieved: int
+    retrieved_chunks: Optional[List[Dict[str, Any]]] = None
 
 
 class RAGConfig:
@@ -59,23 +58,26 @@ class RAGConfig:
 
     def __init__(
         self,
-        db_path: str = str(app_paths.get_vector_db_path()),
+        db_path: Optional[str] = None,
         chunk_size: int = 512,
         chunk_overlap: int = 100,
-        n_results: int = 6,
+        n_results: int = 4,
         min_similarity: float = 0.3,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
+        max_tokens: int = 512,
         temperature: float = 0.3,
         embedding_model: str = "BAAI/bge-small-en-v1.5",
-        retrieval_window: int = 2,
+        retrieval_window: int = 1,
         hybrid_search: bool = True,
-        reranking_enabled: bool = True,
+        reranking_enabled: bool = False,
         reranker_model: str = "cross-encoder/ms-marco-MiniLM-L6-v2",
         query_transformation_enabled: bool = False,
-        initial_retrieval_top_k: int = 30,
-        rerank_top_k: int = 6,
+        initial_retrieval_top_k: int = 12,
+        rerank_top_k: int = 4,
+        context_truncation: int = 20000,
+        gguf_n_ctx: int = 4096,
+        gguf_n_threads: int = 4,
     ):
-        self.db_path = db_path
+        self.db_path = db_path if db_path is not None else str(app_paths.get_vector_db_path())
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.n_results = n_results
@@ -90,6 +92,9 @@ class RAGConfig:
         self.query_transformation_enabled = query_transformation_enabled
         self.initial_retrieval_top_k = initial_retrieval_top_k
         self.rerank_top_k = rerank_top_k
+        self.context_truncation = context_truncation
+        self.gguf_n_ctx = gguf_n_ctx
+        self.gguf_n_threads = gguf_n_threads
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -108,31 +113,37 @@ class RAGConfig:
             "query_transformation_enabled": self.query_transformation_enabled,
             "initial_retrieval_top_k": self.initial_retrieval_top_k,
             "rerank_top_k": self.rerank_top_k,
+            "context_truncation": self.context_truncation,
+            "gguf_n_ctx": self.gguf_n_ctx,
+            "gguf_n_threads": self.gguf_n_threads,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "RAGConfig":
         # Handle backward compatibility - provide defaults for new fields
         return cls(
-            db_path=data.get("db_path", str(app_paths.get_vector_db_path())),
+            db_path=data.get("db_path"),  # None resolves lazily in __init__
             chunk_size=data.get("chunk_size", 512),
             chunk_overlap=data.get("chunk_overlap", 100),
-            n_results=data.get("n_results", 6),
+            n_results=data.get("n_results", 4),
             min_similarity=data.get("min_similarity", 0.3),
-            max_tokens=data.get("max_tokens", DEFAULT_MAX_TOKENS),
+            max_tokens=data.get("max_tokens", 512),
             temperature=data.get("temperature", 0.3),
             embedding_model=data.get("embedding_model", "BAAI/bge-small-en-v1.5"),
-            retrieval_window=data.get("retrieval_window", 2),
+            retrieval_window=data.get("retrieval_window", 1),
             hybrid_search=data.get("hybrid_search", True),
-            reranking_enabled=data.get("reranking_enabled", True),
+            reranking_enabled=data.get("reranking_enabled", False),
             reranker_model=data.get(
                 "reranker_model", "cross-encoder/ms-marco-MiniLM-L6-v2"
             ),
             query_transformation_enabled=data.get(
                 "query_transformation_enabled", False
             ),
-            initial_retrieval_top_k=data.get("initial_retrieval_top_k", 30),
-            rerank_top_k=data.get("rerank_top_k", 6),
+            initial_retrieval_top_k=data.get("initial_retrieval_top_k", 12),
+            rerank_top_k=data.get("rerank_top_k", 4),
+            context_truncation=data.get("context_truncation", 20000),
+            gguf_n_ctx=data.get("gguf_n_ctx", 4096),
+            gguf_n_threads=data.get("gguf_n_threads", 4),
         )
 
 
@@ -183,7 +194,7 @@ class RAGEngine:
         """Initialize LLM with GGUF model only."""
         try:
             # Use root SmartLLM which auto-detects GGUF model
-            self.llm = SmartLLM(gguf_path=gguf_path)
+            self.llm = SmartLLM(gguf_path=gguf_path, gguf_n_ctx=self.config.gguf_n_ctx, gguf_n_threads=self.config.gguf_n_threads)
             logger.info("[OK] LLM initialized: %s", self.llm.get_info()["backend"])
         except Exception as e:
             logger.warning("[WARN] LLM not available: %s", e)
@@ -321,7 +332,7 @@ class RAGEngine:
                 question,
                 "",
                 [],
-                config=InferenceConfig(max_tokens=self.config.max_tokens),
+                config=InferenceConfig(max_tokens=self.config.max_tokens, temperature=self.config.temperature),
                 conversation_history=conversation_history,
             )
             return QueryResult(
@@ -385,6 +396,9 @@ class RAGEngine:
                     retrieval_query = f"{last_user_msg} {question}"
                     logger.info("Follow-up detected — retrieval query: '%s'", retrieval_query[:80])
 
+        # Will be populated by whichever retrieval path runs
+        final_chunks_with_scores: List[Tuple[Any, Optional[float]]] = []
+
         # Retrieve context — hybrid (BM25+vector+RRF) if enabled, else vector-only
         context, sources, retrieved_chunks = self.vector_store.get_context(
             retrieval_query,
@@ -418,17 +432,33 @@ class RAGEngine:
 
             rerank_chunks = retrieved_chunks
 
+            reranked = None
             if rerank_chunks and self.reranker is not None:
-                reranked = self.reranker.rerank(question, rerank_chunks, top_k=effective_top_k)
-                if reranked:
-                    context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
-                    sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
-                    chunks_retrieved = len(reranked)
-                else:
+                try:
+                    reranked = self.reranker.rerank(question, rerank_chunks, top_k=effective_top_k)
+                except Exception as rerank_err:
+                    logger.warning("Reranking failed, falling back to top-k: %s", rerank_err)
+                    reranked = None
+
+            if reranked is not None:
+                # Reranker ran — if it returned nothing, build scored fallback with 0.0
+                if not reranked:
                     reranked = [(chunk, 0.0) for chunk in rerank_chunks[:effective_top_k]]
-                    context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
-                    sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
-                    chunks_retrieved = len(reranked)
+                context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
+                sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
+                chunks_retrieved = len(reranked)
+                final_chunks_with_scores = [(chunk, score) for chunk, score in reranked]
+            else:
+                # Reranker unavailable (init/rerank failed) or no chunks — top-k fallback
+                fallback_top_k = n_results if n_results is not None else self.config.n_results
+                if fallback_top_k <= 0:
+                    fallback_top_k = 1
+                fallback = rerank_chunks[:fallback_top_k]
+                if fallback:
+                    context = "\n\n---\n\n".join(chunk.text for chunk in fallback)
+                    sources = list(dict.fromkeys(chunk.source for chunk in fallback))
+                chunks_retrieved = len(fallback)
+                final_chunks_with_scores = [(chunk, None) for chunk in fallback]
 
         else:
             # Non-reranking path: truncate to n_results or config.n_results
@@ -439,6 +469,7 @@ class RAGEngine:
             context = "\n\n---\n\n".join(chunk.text for chunk in final_chunks)
             sources = list(dict.fromkeys(chunk.source for chunk in final_chunks))
             chunks_retrieved = len(final_chunks)
+            final_chunks_with_scores = [(chunk, None) for chunk in final_chunks]
 
         # Diagnostic logging
         logger.debug(
@@ -460,14 +491,14 @@ class RAGEngine:
             )
 
         # Pre-truncate context to stay within LLM context budget
-        safe_context = _truncate_at_sentence(context, settings.rag_context_truncation)
+        safe_context = _truncate_at_sentence(context, self.config.context_truncation)
 
         # Use answer_question instead of generate for proper RAG handling
         answer = self.llm.answer_question(
             question=question,
             context=safe_context,
             sources=sources,
-            config=InferenceConfig(max_tokens=self.config.max_tokens),
+            config=InferenceConfig(max_tokens=self.config.max_tokens, temperature=self.config.temperature),
             conversation_history=conversation_history,
         )
 
@@ -492,6 +523,19 @@ class RAGEngine:
                 f"Try asking a more specific question about the content of these documents: {', '.join(sources[:3])}"
             )
 
+        chunk_details = [
+            {
+                "source_display": chunk.source,
+                "doc_id": getattr(chunk, "doc_id", None),
+                "source_path": getattr(chunk, "source_path", None),
+                "page": chunk.page,
+                "chunk_index": chunk.chunk_index,
+                "snippet": chunk.text[:300] if chunk.text else "",
+                **({"score": float(score)} if score is not None else {}),
+            }
+            for chunk, score in final_chunks_with_scores
+        ]
+
         return QueryResult(
             question=question,
             answer=answer,
@@ -499,6 +543,7 @@ class RAGEngine:
             context_length=len(safe_context),
             inference_time=time.time() - start_time,
             chunks_retrieved=chunks_retrieved,
+            retrieved_chunks=chunk_details,
         )
 
     def search_documents(
@@ -529,15 +574,16 @@ class RAGEngine:
         """Get all ingested documents with metadata.
 
         Returns a list of dicts with keys:
-            id (str): document source path
+            id (str): document doc_id (stable hash-based identifier)
             chunk_count (int): number of chunks for this document
+            source_display (str): display name for the document
+            source_path (str): original file path
         """
-        metadata = self.vector_store.metadata or {}
-        docs_meta = metadata.get("documents", {})
-        return [
-            {"id": source, "chunk_count": meta.get("chunks", 0)}
-            for source, meta in docs_meta.items()
-        ]
+        docs = self.vector_store.get_all_documents()
+        for doc in docs:
+            if "chunk_count" not in doc:
+                doc["chunk_count"] = doc.get("chunks", 0)
+        return docs
 
     def delete_document(self, doc_id: str) -> bool:
         """Delete a document and all its chunks from the vector store.

@@ -69,22 +69,22 @@ class TestRAGSettingsPhase5Defaults:
         assert s.rag_context_truncation == 20000
 
     def test_rag_initial_retrieval_top_k_default(self, monkeypatch, clear_env):
-        """rag_initial_retrieval_top_k defaults to 30."""
+        """rag_initial_retrieval_top_k defaults to 12."""
         import config
         config._settings = None
         importlib.reload(config)
         from config import RAGSettings
         s = RAGSettings()
-        assert s.rag_initial_retrieval_top_k == 30
+        assert s.rag_initial_retrieval_top_k == 12
 
     def test_rag_rerank_top_k_default(self, monkeypatch, clear_env):
-        """rag_rerank_top_k defaults to 6."""
+        """rag_rerank_top_k defaults to 4."""
         import config
         config._settings = None
         importlib.reload(config)
         from config import RAGSettings
         s = RAGSettings()
-        assert s.rag_rerank_top_k == 6
+        assert s.rag_rerank_top_k == 4
 
     def test_rag_reranker_model_default(self, monkeypatch, clear_env):
         """rag_reranker_model defaults to cross-encoder/ms-marco-MiniLM-L6-v2."""
@@ -96,22 +96,22 @@ class TestRAGSettingsPhase5Defaults:
         assert s.rag_reranker_model == "cross-encoder/ms-marco-MiniLM-L6-v2"
 
     def test_rag_retrieval_window_default(self, monkeypatch, clear_env):
-        """rag_retrieval_window defaults to 2."""
+        """rag_retrieval_window defaults to 1."""
         import config
         config._settings = None
         importlib.reload(config)
         from config import RAGSettings
         s = RAGSettings()
-        assert s.rag_retrieval_window == 2
+        assert s.rag_retrieval_window == 1
 
     def test_rag_n_results_default(self, monkeypatch, clear_env):
-        """rag_n_results defaults to 6."""
+        """rag_n_results defaults to 4."""
         import config
         config._settings = None
         importlib.reload(config)
         from config import RAGSettings
         s = RAGSettings()
-        assert s.rag_n_results == 6
+        assert s.rag_n_results == 4
 
     def test_rag_chunk_overlap_default(self, monkeypatch, clear_env):
         """rag_chunk_overlap defaults to 100."""
@@ -129,13 +129,13 @@ class TestRAGSettingsPhase5Defaults:
         importlib.reload(config)
         from config import RAGSettings
         s = RAGSettings()
-        assert s.rag_n_results == 6
+        assert s.rag_n_results == 4
         assert s.rag_chunk_overlap == 100
-        assert s.rag_retrieval_window == 2
+        assert s.rag_retrieval_window == 1
         assert s.rag_reranker_model == "cross-encoder/ms-marco-MiniLM-L6-v2"
         assert s.rag_context_truncation == 20000
-        assert s.rag_initial_retrieval_top_k == 30
-        assert s.rag_rerank_top_k == 6
+        assert s.rag_initial_retrieval_top_k == 12
+        assert s.rag_rerank_top_k == 4
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ class TestCreateEngineFromSettingsPhase5Mapping:
         engine_factory.create_engine_from_settings({})
         mock_config_cls.assert_called_once()
         call_kwargs = mock_config_cls.call_args[1]
-        assert call_kwargs["n_results"] == 6
+        assert call_kwargs["n_results"] == 4
 
     @patch("engine_factory.create_engine")
     @patch("rag_engine.RAGConfig")
@@ -165,7 +165,7 @@ class TestCreateEngineFromSettingsPhase5Mapping:
         engine_factory.create_engine_from_settings({})
         mock_config_cls.assert_called_once()
         call_kwargs = mock_config_cls.call_args[1]
-        assert call_kwargs["retrieval_window"] == 2
+        assert call_kwargs["retrieval_window"] == 1
 
     @patch("engine_factory.create_engine")
     @patch("rag_engine.RAGConfig")
@@ -187,7 +187,7 @@ class TestCreateEngineFromSettingsPhase5Mapping:
         engine_factory.create_engine_from_settings({})
         mock_config_cls.assert_called_once()
         call_kwargs = mock_config_cls.call_args[1]
-        assert call_kwargs["initial_retrieval_top_k"] == 30
+        assert call_kwargs["initial_retrieval_top_k"] == 12
 
     @patch("engine_factory.create_engine")
     @patch("rag_engine.RAGConfig")
@@ -198,7 +198,7 @@ class TestCreateEngineFromSettingsPhase5Mapping:
         engine_factory.create_engine_from_settings({})
         mock_config_cls.assert_called_once()
         call_kwargs = mock_config_cls.call_args[1]
-        assert call_kwargs["rerank_top_k"] == 6
+        assert call_kwargs["rerank_top_k"] == 4
 
     @patch("engine_factory.create_engine")
     @patch("rag_engine.RAGConfig")
@@ -236,15 +236,15 @@ class TestCreateEngineFromSettingsPhase5Mapping:
         assert call_kwargs["db_path"] == "./doc_qa_db"
         assert call_kwargs["chunk_size"] == 512
         assert call_kwargs["chunk_overlap"] == 100
-        assert call_kwargs["n_results"] == 6
-        assert call_kwargs["max_tokens"] == 1024
+        assert call_kwargs["n_results"] == 4
+        assert call_kwargs["max_tokens"] == 512
         assert call_kwargs["temperature"] == 0.3
         assert call_kwargs["embedding_model"] == "BAAI/bge-small-en-v1.5"
         assert call_kwargs["hybrid_search"] is True
-        assert call_kwargs["retrieval_window"] == 2
-        assert call_kwargs["reranking_enabled"] is True
-        assert call_kwargs["initial_retrieval_top_k"] == 30
-        assert call_kwargs["rerank_top_k"] == 6
+        assert call_kwargs["retrieval_window"] == 1
+        assert call_kwargs["reranking_enabled"] is False
+        assert call_kwargs["initial_retrieval_top_k"] == 12
+        assert call_kwargs["rerank_top_k"] == 4
         assert call_kwargs["reranker_model"] == "cross-encoder/ms-marco-MiniLM-L6-v2"
         assert call_kwargs["min_similarity"] == 0.3
 
@@ -287,6 +287,7 @@ class TestCreateEngineFromEnvGetattrFallback:
                                         "rag_n_results", "rag_min_similarity", "rag_max_tokens",
                                         "rag_temperature", "rag_embedding_model", "rag_hybrid_search",
                                         "rag_retrieval_window", "rag_reranking_enabled",
+                                        "rag_context_truncation",
                                         "rag_rerank_top_k", "rag_reranker_model"])
         # Remove the attribute to simulate missing field
         del mock_settings.rag_initial_retrieval_top_k
@@ -297,8 +298,8 @@ class TestCreateEngineFromEnvGetattrFallback:
 
         mock_config_cls.assert_called_once()
         call_kwargs = mock_config_cls.call_args[1]
-        # getattr(settings, "rag_initial_retrieval_top_k", 30) should return 30
-        assert call_kwargs["initial_retrieval_top_k"] == 30
+        # getattr(settings, "rag_initial_retrieval_top_k", 12) should return 12
+        assert call_kwargs["initial_retrieval_top_k"] == 12
 
     @patch("engine_factory.create_engine")
     @patch("rag_engine.RAGConfig")
@@ -313,6 +314,7 @@ class TestCreateEngineFromEnvGetattrFallback:
                                         "rag_n_results", "rag_min_similarity", "rag_max_tokens",
                                         "rag_temperature", "rag_embedding_model", "rag_hybrid_search",
                                         "rag_retrieval_window", "rag_reranking_enabled",
+                                        "rag_context_truncation",
                                         "rag_initial_retrieval_top_k", "rag_reranker_model"])
         del mock_settings.rag_rerank_top_k
 
@@ -322,7 +324,7 @@ class TestCreateEngineFromEnvGetattrFallback:
 
         mock_config_cls.assert_called_once()
         call_kwargs = mock_config_cls.call_args[1]
-        assert call_kwargs["rerank_top_k"] == 6
+        assert call_kwargs["rerank_top_k"] == 4
 
     @patch("engine_factory.create_engine")
     @patch("rag_engine.RAGConfig")
@@ -337,6 +339,7 @@ class TestCreateEngineFromEnvGetattrFallback:
                                         "rag_n_results", "rag_min_similarity", "rag_max_tokens",
                                         "rag_temperature", "rag_embedding_model", "rag_hybrid_search",
                                         "rag_retrieval_window", "rag_reranking_enabled",
+                                        "rag_context_truncation",
                                         "rag_initial_retrieval_top_k", "rag_rerank_top_k"])
         del mock_settings.rag_reranker_model
 
@@ -361,7 +364,8 @@ class TestCreateEngineFromEnvGetattrFallback:
         mock_settings = MagicMock(spec=["rag_db_path", "rag_chunk_size", "rag_chunk_overlap",
                                         "rag_n_results", "rag_min_similarity", "rag_max_tokens",
                                         "rag_temperature", "rag_embedding_model", "rag_hybrid_search",
-                                        "rag_retrieval_window", "rag_reranking_enabled"])
+                                        "rag_retrieval_window", "rag_reranking_enabled",
+                                        "rag_context_truncation"])
         del mock_settings.rag_initial_retrieval_top_k
         del mock_settings.rag_rerank_top_k
         del mock_settings.rag_reranker_model
@@ -372,8 +376,8 @@ class TestCreateEngineFromEnvGetattrFallback:
 
         mock_config_cls.assert_called_once()
         call_kwargs = mock_config_cls.call_args[1]
-        assert call_kwargs["initial_retrieval_top_k"] == 30
-        assert call_kwargs["rerank_top_k"] == 6
+        assert call_kwargs["initial_retrieval_top_k"] == 12
+        assert call_kwargs["rerank_top_k"] == 4
         assert call_kwargs["reranker_model"] == "cross-encoder/ms-marco-MiniLM-L6-v2"
 
     @patch("engine_factory.create_engine")
@@ -431,7 +435,7 @@ class TestDefaultValueConsistency:
     """Defaults in RAGSettings match defaults in RAGConfig for cross-module consistency."""
 
     def test_default_n_results_consistent(self, monkeypatch, clear_env):
-        """RAGSettings.rag_n_results default == RAGConfig default (6)."""
+        """RAGSettings.rag_n_results default == RAGConfig default (4)."""
         import config
         config._settings = None
         from config import RAGSettings
@@ -439,10 +443,10 @@ class TestDefaultValueConsistency:
 
         settings_default = RAGSettings().rag_n_results
         ragconfig_default = RAGConfig().n_results
-        assert settings_default == ragconfig_default == 6
+        assert settings_default == ragconfig_default == 4
 
     def test_default_retrieval_window_consistent(self, monkeypatch, clear_env):
-        """RAGSettings.rag_retrieval_window default == RAGConfig default (2)."""
+        """RAGSettings.rag_retrieval_window default == RAGConfig default (1)."""
         import config
         config._settings = None
         from config import RAGSettings
@@ -450,7 +454,7 @@ class TestDefaultValueConsistency:
 
         settings_default = RAGSettings().rag_retrieval_window
         ragconfig_default = RAGConfig().retrieval_window
-        assert settings_default == ragconfig_default == 2
+        assert settings_default == ragconfig_default == 1
 
     def test_default_reranker_model_consistent(self, monkeypatch, clear_env):
         """RAGSettings.rag_reranker_model default == RAGConfig default."""
@@ -464,7 +468,7 @@ class TestDefaultValueConsistency:
         assert settings_default == ragconfig_default == "cross-encoder/ms-marco-MiniLM-L6-v2"
 
     def test_default_initial_retrieval_top_k_consistent(self, monkeypatch, clear_env):
-        """RAGSettings.rag_initial_retrieval_top_k default == RAGConfig default (30)."""
+        """RAGSettings.rag_initial_retrieval_top_k default == RAGConfig default (12)."""
         import config
         config._settings = None
         from config import RAGSettings
@@ -472,10 +476,10 @@ class TestDefaultValueConsistency:
 
         settings_default = RAGSettings().rag_initial_retrieval_top_k
         ragconfig_default = RAGConfig().initial_retrieval_top_k
-        assert settings_default == ragconfig_default == 30
+        assert settings_default == ragconfig_default == 12
 
     def test_default_rerank_top_k_consistent(self, monkeypatch, clear_env):
-        """RAGSettings.rag_rerank_top_k default == RAGConfig default (6)."""
+        """RAGSettings.rag_rerank_top_k default == RAGConfig default (4)."""
         import config
         config._settings = None
         from config import RAGSettings
@@ -483,7 +487,7 @@ class TestDefaultValueConsistency:
 
         settings_default = RAGSettings().rag_rerank_top_k
         ragconfig_default = RAGConfig().rerank_top_k
-        assert settings_default == ragconfig_default == 6
+        assert settings_default == ragconfig_default == 4
 
     def test_default_chunk_overlap_consistent(self, monkeypatch, clear_env):
         """RAGSettings.rag_chunk_overlap default == RAGConfig default (100)."""

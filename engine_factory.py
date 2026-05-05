@@ -112,22 +112,33 @@ def create_engine_from_settings(settings: Dict[str, Any]) -> "RAGEngine":
     """
     RAGEngine, RAGConfig = _get_rag_classes()
 
+    def _get(key, default=None):
+        """Check canonical key first, then rag_ prefixed legacy key."""
+        val = settings.get(key)
+        if val is None:
+            val = settings.get(f"rag_{key}")
+        return val if val is not None else default
+
     # Extract RAG config parameters with defaults
     config = RAGConfig(
-        db_path=settings.get("db_path", "./doc_qa_db"),
-        chunk_size=settings.get("chunk_size", 512),
-        chunk_overlap=settings.get("chunk_overlap", 100),
-        n_results=settings.get("n_results", 6),
-        max_tokens=settings.get("max_tokens", DEFAULT_MAX_TOKENS),
-        temperature=settings.get("temperature", 0.3),
-        embedding_model=settings.get("embedding_model", "BAAI/bge-small-en-v1.5"),
-        hybrid_search=settings.get("hybrid_search", True),
-        retrieval_window=settings.get("retrieval_window", 2),
-        reranking_enabled=settings.get("reranking_enabled", True),
-        initial_retrieval_top_k=settings.get("initial_retrieval_top_k", 30),
-        rerank_top_k=settings.get("rerank_top_k", 6),
-        reranker_model=settings.get("reranker_model", "cross-encoder/ms-marco-MiniLM-L6-v2"),
-        min_similarity=settings.get("min_similarity", 0.3),
+        db_path=_get("db_path", "./doc_qa_db"),
+        chunk_size=_get("chunk_size", 512),
+        chunk_overlap=_get("chunk_overlap", 100),
+        n_results=_get("n_results", 4),
+        max_tokens=_get("max_tokens", 512),
+        temperature=_get("temperature", 0.3),
+        embedding_model=_get("embedding_model", "BAAI/bge-small-en-v1.5"),
+        hybrid_search=_get("hybrid_search", True),
+        retrieval_window=_get("retrieval_window", 1),
+        reranking_enabled=_get("reranking_enabled", False),
+        initial_retrieval_top_k=_get("initial_retrieval_top_k", 12),
+        rerank_top_k=_get("rerank_top_k", 4),
+        reranker_model=_get("reranker_model", "cross-encoder/ms-marco-MiniLM-L6-v2"),
+        min_similarity=_get("min_similarity", 0.3),
+        context_truncation=_get("context_truncation", 20000),
+        query_transformation_enabled=_get("query_transformation_enabled", False),
+        gguf_n_ctx=_get("gguf_n_ctx", 4096),
+        gguf_n_threads=_get("gguf_n_threads", 4),
     )
 
     return create_engine(
@@ -146,16 +157,16 @@ def create_engine_from_env() -> "RAGEngine":
         RAG_DB_PATH: Database path (default: ./doc_qa_db)
         RAG_CHUNK_SIZE: Chunk size (default: 512)
         RAG_CHUNK_OVERLAP: Chunk overlap (default: 100)
-        RAG_N_RESULTS: Number of results (default: 6)
+        RAG_N_RESULTS: Number of results (default: 4)
         RAG_MAX_TOKENS: Max tokens (default: see DEFAULT_MAX_TOKENS constant in config.py)
         RAG_TEMPERATURE: Temperature (default: 0.3)
         RAG_EMBEDDING_MODEL: Embedding model (default: BAAI/bge-small-en-v1.5)
         RAG_HYBRID_SEARCH: Enable hybrid search (default: true)
-        RAG_RETRIEVAL_WINDOW: Retrieval window (default: 2)
-        RAG_RERANKING_ENABLED: Enable reranking (default: true)
+        RAG_RETRIEVAL_WINDOW: Retrieval window (default: 1)
+        RAG_RERANKING_ENABLED: Enable reranking (default: false)
         RAG_RERANKER_MODEL: Reranker model (default: cross-encoder/ms-marco-MiniLM-L6-v2)
-        RAG_INITIAL_RETRIEVAL_TOP_K: Initial retrieval top-k (default: 30)
-        RAG_RERANK_TOP_K: Rerank top-k (default: 6)
+        RAG_INITIAL_RETRIEVAL_TOP_K: Initial retrieval top-k (default: 12)
+        RAG_RERANK_TOP_K: Rerank top-k (default: 4)
         RAG_GGUF_PATH: Path to GGUF model
 
     Returns:
@@ -185,9 +196,12 @@ def create_engine_from_env() -> "RAGEngine":
         hybrid_search=settings.rag_hybrid_search,
         retrieval_window=settings.rag_retrieval_window,
         reranking_enabled=settings.rag_reranking_enabled,
-        initial_retrieval_top_k=getattr(settings, "rag_initial_retrieval_top_k", 30),
-        rerank_top_k=getattr(settings, "rag_rerank_top_k", 6),
+        initial_retrieval_top_k=getattr(settings, "rag_initial_retrieval_top_k", 12),
+        rerank_top_k=getattr(settings, "rag_rerank_top_k", 4),
         reranker_model=getattr(settings, "rag_reranker_model", "cross-encoder/ms-marco-MiniLM-L6-v2"),
+        context_truncation=settings.rag_context_truncation,
+        gguf_n_ctx=getattr(settings, "rag_gguf_n_ctx", 4096),
+        gguf_n_threads=getattr(settings, "rag_gguf_n_threads", 4),
     )
 
     # Get GGUF path from env var or bundled model
