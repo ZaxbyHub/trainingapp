@@ -9,6 +9,11 @@ from typing import List, Dict, Any
 from unittest.mock import Mock, MagicMock, patch
 from dataclasses import dataclass
 
+# Pre-register optional C-extension dependencies so tests that use
+# `with patch("llama_cpp.Llama"):` work regardless of collection order
+# and without the optional package being installed.  setdefault is a no-op
+# if the package is already installed.
+sys.modules.setdefault("llama_cpp", MagicMock())
 
 # Try to import from project modules, handle gracefully for test env
 try:
