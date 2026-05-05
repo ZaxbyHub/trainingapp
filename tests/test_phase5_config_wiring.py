@@ -287,6 +287,7 @@ class TestCreateEngineFromEnvGetattrFallback:
                                         "rag_n_results", "rag_min_similarity", "rag_max_tokens",
                                         "rag_temperature", "rag_embedding_model", "rag_hybrid_search",
                                         "rag_retrieval_window", "rag_reranking_enabled",
+                                        "rag_context_truncation",
                                         "rag_rerank_top_k", "rag_reranker_model"])
         # Remove the attribute to simulate missing field
         del mock_settings.rag_initial_retrieval_top_k
@@ -313,6 +314,7 @@ class TestCreateEngineFromEnvGetattrFallback:
                                         "rag_n_results", "rag_min_similarity", "rag_max_tokens",
                                         "rag_temperature", "rag_embedding_model", "rag_hybrid_search",
                                         "rag_retrieval_window", "rag_reranking_enabled",
+                                        "rag_context_truncation",
                                         "rag_initial_retrieval_top_k", "rag_reranker_model"])
         del mock_settings.rag_rerank_top_k
 
@@ -337,6 +339,7 @@ class TestCreateEngineFromEnvGetattrFallback:
                                         "rag_n_results", "rag_min_similarity", "rag_max_tokens",
                                         "rag_temperature", "rag_embedding_model", "rag_hybrid_search",
                                         "rag_retrieval_window", "rag_reranking_enabled",
+                                        "rag_context_truncation",
                                         "rag_initial_retrieval_top_k", "rag_rerank_top_k"])
         del mock_settings.rag_reranker_model
 
@@ -361,7 +364,8 @@ class TestCreateEngineFromEnvGetattrFallback:
         mock_settings = MagicMock(spec=["rag_db_path", "rag_chunk_size", "rag_chunk_overlap",
                                         "rag_n_results", "rag_min_similarity", "rag_max_tokens",
                                         "rag_temperature", "rag_embedding_model", "rag_hybrid_search",
-                                        "rag_retrieval_window", "rag_reranking_enabled"])
+                                        "rag_retrieval_window", "rag_reranking_enabled",
+                                        "rag_context_truncation"])
         del mock_settings.rag_initial_retrieval_top_k
         del mock_settings.rag_rerank_top_k
         del mock_settings.rag_reranker_model

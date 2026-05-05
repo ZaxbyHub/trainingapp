@@ -199,6 +199,7 @@ def create_engine_from_env() -> "RAGEngine":
         initial_retrieval_top_k=getattr(settings, "rag_initial_retrieval_top_k", 12),
         rerank_top_k=getattr(settings, "rag_rerank_top_k", 4),
         reranker_model=getattr(settings, "rag_reranker_model", "cross-encoder/ms-marco-MiniLM-L6-v2"),
+        context_truncation=settings.rag_context_truncation,
         gguf_n_ctx=getattr(settings, "rag_gguf_n_ctx", 4096),
         gguf_n_threads=getattr(settings, "rag_gguf_n_threads", 4),
     )

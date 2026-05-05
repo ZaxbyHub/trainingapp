@@ -331,6 +331,7 @@ class VectorStore:
                         chunk_index=meta["chunk_index"],
                         page=meta.get("page"),
                         doc_id=meta.get("doc_id"),
+                        source_path=meta.get("source_path"),
                     )
                     all_chunks.append(chunk)
                 if all_chunks:
@@ -588,12 +589,13 @@ class VectorStore:
 
             chunks = []
             for doc, meta, sim in filtered:
-                source = meta.get("source", "Unknown")
-                chunk_index = meta.get("chunk_index", -1)
-                page = meta.get("page", None)
-
                 chunk = DocumentChunk(
-                    text=doc, source=source, chunk_index=chunk_index, page=page
+                    text=doc,
+                    source=meta.get("source", "Unknown"),
+                    chunk_index=meta.get("chunk_index", -1),
+                    page=meta.get("page"),
+                    doc_id=meta.get("doc_id"),
+                    source_path=meta.get("source_path"),
                 )
                 chunks.append(chunk)
 
@@ -614,11 +616,38 @@ class VectorStore:
                             text=doc,
                             source=meta["source"],
                             chunk_index=meta["chunk_index"],
-                            page=meta["page"] if "page" in meta else None,
+                            page=meta.get("page"),
+                            doc_id=meta.get("doc_id"),
+                            source_path=meta.get("source_path"),
                         )
                         chunks.append(chunk)
 
-                # Sort by chunk_index
+                chunks.sort(key=lambda c: c.chunk_index)
+                return chunks
+            except Exception:
+                return []
+
+    def get_chunks_by_doc_id(self, doc_id: str) -> List[DocumentChunk]:
+        """Get all chunks for a document by doc_id (collision-safe alternative to get_chunks_by_source)."""
+        with self._lock:
+            try:
+                all_data = self.collection.get(
+                    where={"doc_id": doc_id}, include=["documents", "metadatas"]
+                )
+                chunks = []
+
+                if all_data.get("documents"):
+                    for doc, meta in zip(all_data["documents"], all_data["metadatas"]):
+                        chunk = DocumentChunk(
+                            text=doc,
+                            source=meta["source"],
+                            chunk_index=meta["chunk_index"],
+                            page=meta.get("page"),
+                            doc_id=meta.get("doc_id"),
+                            source_path=meta.get("source_path"),
+                        )
+                        chunks.append(chunk)
+
                 chunks.sort(key=lambda c: c.chunk_index)
                 return chunks
             except Exception:
@@ -682,7 +711,10 @@ class VectorStore:
                 remaining = [
                     c
                     for c in self.bm25_index.chunks
-                    if c.source != source_display and getattr(c, "doc_id", None) != doc_id
+                    if not (
+                        getattr(c, "doc_id", None) == doc_id  # primary: match by doc_id
+                        or (not getattr(c, "doc_id", None) and c.source == source_display)  # fallback: no doc_id, match by source
+                    )
                 ]
                 if remaining:
                     self.bm25_index.build_index(remaining)
@@ -717,7 +749,11 @@ class VectorStore:
     def _expand_chunks_with_neighbors(
         self, chunks: List[DocumentChunk], window: int
     ) -> List[DocumentChunk]:
-        """Expand each chunk with its ±window neighbors from the same source."""
+        """Expand each chunk with its ±window neighbors from the same source.
+
+        Uses doc_id for dedup and neighbor lookup when available (collision-safe for
+        same-basename files). Falls back to source for legacy chunks without doc_id.
+        """
         if window <= 0:
             return chunks
 
@@ -725,9 +761,19 @@ class VectorStore:
         seen = set()
 
         for chunk in chunks:
-            source_chunks = self.get_chunks_by_source(chunk.source)
+            cid = getattr(chunk, "doc_id", None)
+            # Use doc_id-based lookup to avoid same-basename collisions
+            if cid:
+                source_chunks = self.get_chunks_by_doc_id(cid)
+            else:
+                source_chunks = self.get_chunks_by_source(chunk.source)
+
+            def _dedup_key(c):
+                did = getattr(c, "doc_id", None)
+                return (did, c.chunk_index) if did else (c.source, c.chunk_index)
+
             if not source_chunks:
-                key = (chunk.source, chunk.chunk_index)
+                key = _dedup_key(chunk)
                 if key not in seen:
                     seen.add(key)
                     expanded.append(chunk)
@@ -738,7 +784,7 @@ class VectorStore:
 
             for idx in range(start_idx, end_idx + 1):
                 neighbor = source_chunks[idx]
-                key = (neighbor.source, neighbor.chunk_index)
+                key = _dedup_key(neighbor)
                 if key not in seen:
                     seen.add(key)
                     expanded.append(neighbor)
@@ -784,6 +830,8 @@ class VectorStore:
                 per_chunk_sources = []   # one source per chunk, NOT deduplicated
                 per_chunk_pages = []
                 per_chunk_indices = []
+                per_chunk_doc_ids = []
+                per_chunk_source_paths = []
                 sources = []             # deduplicated for display
                 seen_keys = set()
 
@@ -793,13 +841,16 @@ class VectorStore:
                         corpus_idx = fused_id - OFFSET
                         if corpus_idx < len(self.bm25_index.chunks):
                             chunk = self.bm25_index.chunks[corpus_idx]
-                            key = (chunk.source, chunk.chunk_index)
+                            cid = getattr(chunk, "doc_id", None)
+                            key = (cid or chunk.source, chunk.chunk_index)
                             if key not in seen_keys:
                                 seen_keys.add(key)
                                 context_parts.append(chunk.text)
                                 per_chunk_sources.append(chunk.source)
                                 per_chunk_pages.append(chunk.page)
                                 per_chunk_indices.append(chunk.chunk_index)
+                                per_chunk_doc_ids.append(cid)
+                                per_chunk_source_paths.append(getattr(chunk, "source_path", None))
                                 if chunk.source not in sources:
                                     sources.append(chunk.source)
                     else:
@@ -813,13 +864,16 @@ class VectorStore:
                             source = meta.get("source", "Unknown")
                             chunk_idx = meta.get("chunk_index", vec_idx)
                             page = meta.get("page")
-                            key = (source, chunk_idx)
+                            cid = meta.get("doc_id")
+                            key = (cid or source, chunk_idx)
                             if key not in seen_keys:
                                 seen_keys.add(key)
                                 context_parts.append(doc)
                                 per_chunk_sources.append(source)
                                 per_chunk_pages.append(page)
                                 per_chunk_indices.append(chunk_idx)
+                                per_chunk_doc_ids.append(cid)
+                                per_chunk_source_paths.append(meta.get("source_path"))
                                 if source not in sources:
                                     sources.append(source)
 
@@ -827,25 +881,33 @@ class VectorStore:
                 if retrieval_window > 0 and context_parts:
                     hybrid_chunks = [
                         DocumentChunk(
-                            text=text,
+                            text=context_parts[i],
                             source=per_chunk_sources[i],
                             chunk_index=per_chunk_indices[i],
                             page=per_chunk_pages[i],
+                            doc_id=per_chunk_doc_ids[i],
+                            source_path=per_chunk_source_paths[i],
                         )
-                        for i, text in enumerate(context_parts)
+                        for i in range(len(context_parts))
                     ]
                     expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
                     context_parts = [c.text for c in expanded]
                     per_chunk_sources = [c.source for c in expanded]
                     per_chunk_pages = [c.page for c in expanded]
                     per_chunk_indices = [c.chunk_index for c in expanded]
+                    per_chunk_doc_ids = [getattr(c, "doc_id", None) for c in expanded]
+                    per_chunk_source_paths = [getattr(c, "source_path", None) for c in expanded]
                     sources = list(dict.fromkeys(c.source for c in expanded))
 
                 # Build result chunks for structured return
                 result_chunks = [
-                    DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
-                    for text, src, idx, pg in zip(
-                        context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
+                    DocumentChunk(
+                        text=text, source=src, chunk_index=idx, page=pg,
+                        doc_id=did, source_path=sp,
+                    )
+                    for text, src, idx, pg, did, sp in zip(
+                        context_parts, per_chunk_sources, per_chunk_indices,
+                        per_chunk_pages, per_chunk_doc_ids, per_chunk_source_paths,
                     )
                 ]
 
@@ -868,6 +930,8 @@ class VectorStore:
                 per_chunk_sources = []
                 per_chunk_pages = []
                 per_chunk_indices = []
+                per_chunk_doc_ids = []
+                per_chunk_source_paths = []
                 sources = []
 
                 for i, (doc, meta, sim) in enumerate(filtered):
@@ -878,6 +942,8 @@ class VectorStore:
                     per_chunk_sources.append(source)
                     per_chunk_pages.append(page)
                     per_chunk_indices.append(chunk_idx)
+                    per_chunk_doc_ids.append(meta.get("doc_id"))
+                    per_chunk_source_paths.append(meta.get("source_path"))
                     if source not in sources:
                         sources.append(source)
 
@@ -885,8 +951,12 @@ class VectorStore:
                 if retrieval_window > 0:
                     filtered_chunks = [
                         DocumentChunk(
-                            text=doc, source=meta.get("source", "Unknown"),
-                            chunk_index=meta.get("chunk_index", i), page=meta.get("page"),
+                            text=doc,
+                            source=meta.get("source", "Unknown"),
+                            chunk_index=meta.get("chunk_index", i),
+                            page=meta.get("page"),
+                            doc_id=meta.get("doc_id"),
+                            source_path=meta.get("source_path"),
                         )
                         for i, (doc, meta, sim) in enumerate(filtered)
                     ]
@@ -895,13 +965,19 @@ class VectorStore:
                     per_chunk_sources = [c.source for c in expanded]
                     per_chunk_pages = [c.page for c in expanded]
                     per_chunk_indices = [c.chunk_index for c in expanded]
+                    per_chunk_doc_ids = [getattr(c, "doc_id", None) for c in expanded]
+                    per_chunk_source_paths = [getattr(c, "source_path", None) for c in expanded]
                     sources = list(dict.fromkeys(c.source for c in expanded))
 
                 # Build result chunks
                 result_chunks = [
-                    DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
-                    for text, src, idx, pg in zip(
-                        context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
+                    DocumentChunk(
+                        text=text, source=src, chunk_index=idx, page=pg,
+                        doc_id=did, source_path=sp,
+                    )
+                    for text, src, idx, pg, did, sp in zip(
+                        context_parts, per_chunk_sources, per_chunk_indices,
+                        per_chunk_pages, per_chunk_doc_ids, per_chunk_source_paths,
                     )
                 ]
 
@@ -927,7 +1003,10 @@ class VectorStore:
                 "document_count": self.metadata.get("document_count", 0),
                 "chunk_count": self.collection.count(),
                 "embedding_model": self.embedder.model_name,
-                "documents": self.get_all_documents(),
+                "documents": [
+                    entry.get("source_display", key) if isinstance(entry, dict) else key
+                    for key, entry in self.metadata.get("documents", {}).items()
+                ],
             }
 
     def get_all_documents(self) -> List[Dict[str, Any]]:
