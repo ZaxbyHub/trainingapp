@@ -250,14 +250,17 @@ class TestQueryTransformerGating:
     def test_transformation_failure_falls_back_to_original(self, caplog):
         from rag_engine import RAGEngine, RAGConfig
         from rag_engine import QueryResult
+        from document_processor import DocumentChunk
 
         config = RAGConfig(query_transformation_enabled=True)
 
         mock_llm = MagicMock()
         mock_llm.answer_question.return_value = "fallback answer"
 
+        # Provide real chunks so the engine rebuilds context from them
+        chunks = [DocumentChunk(text="relevant context", source="src.txt", chunk_index=0)]
         mock_vs = MagicMock()
-        mock_vs.get_context.return_value = ("context", ["src"], [])
+        mock_vs.get_context.return_value = ("relevant context", ["src.txt"], chunks)
 
         mock_qt_instance = MagicMock()
         mock_qt_instance.transform_step_back.side_effect = RuntimeError("LLM error")
@@ -277,7 +280,7 @@ class TestQueryTransformerGating:
         mock_qt_instance.transform_step_back.assert_called_once_with("test question")
         # Warning was logged about failure
         assert any("Query transformation failed" in r.message for r in caplog.records)
-        # Query still returned a result
+        # Query still returned a result using the original query with real context
         assert isinstance(result, QueryResult)
         assert result.answer == "fallback answer"
 

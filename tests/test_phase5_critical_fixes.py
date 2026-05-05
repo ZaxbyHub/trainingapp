@@ -202,10 +202,10 @@ class TestAppGuiRetrievalWindowFix:
     when it is absent from settings.
     """
 
-    def test_populate_fields_retrieval_window_default_is_2(self):
+    def test_populate_fields_retrieval_window_default_is_1(self):
         """
-        _populate_fields must insert 2 (as string) when settings has no
-        'retrieval_window' key.
+        _populate_fields must insert 1 (as string) when settings has no
+        'retrieval_window' key (minimum-hardware default).
         """
         try:
             import app_gui
@@ -214,14 +214,13 @@ class TestAppGuiRetrievalWindowFix:
 
         source = inspect.getsource(app_gui.SettingsDialog._populate_fields)
 
-        # The fix: str(self.settings.get("retrieval_window", 2))
-        assert 'self.settings.get("retrieval_window", 2)' in source, (
-            "_populate_fields must use 2 as the default for retrieval_window. "
-            "Expected: self.settings.get('retrieval_window', 2)"
+        # The fix: str(self.settings.get("retrieval_window", 1))
+        assert 'self.settings.get("retrieval_window", 1)' in source, (
+            "_populate_fields must use 1 as the default for retrieval_window. "
+            "Expected: self.settings.get('retrieval_window', 1)"
         )
-        # Must NOT default to 0 or 1
+        # Must NOT default to 0
         assert 'self.settings.get("retrieval_window", 0)' not in source
-        assert 'self.settings.get("retrieval_window", 1)' not in source
 
     def test_retrieval_window_missing_from_settings_defaults_to_2(self):
         """
@@ -238,8 +237,8 @@ class TestAppGuiRetrievalWindowFix:
         value = int(settings.get("retrieval_window", 2))
         assert value == 5
 
-    def test_retrieval_window_entry_insertion_value_is_string_2(self):
-        """The entry must be inserted with str(2), not bare 2."""
+    def test_retrieval_window_entry_insertion_value_is_string_1(self):
+        """The entry must be inserted with str(1), not bare 1."""
         try:
             import app_gui
         except ImportError:
@@ -247,7 +246,7 @@ class TestAppGuiRetrievalWindowFix:
 
         source = inspect.getsource(app_gui.SettingsDialog._populate_fields)
         # Must use str() wrapper for the default
-        assert "str(self.settings.get(\"retrieval_window\", 2))" in source, (
+        assert "str(self.settings.get(\"retrieval_window\", 1))" in source, (
             "Entry must be populated with str() of the default value"
         )
 

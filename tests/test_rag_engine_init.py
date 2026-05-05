@@ -103,9 +103,8 @@ class TestInitLLMSingleParam:
     """Verify _init_llm() is called with only gguf_path and SmartLLM is
     constructed with only gguf_path."""
 
-    def test_init_llm_called_with_only_gguf_path(self):
-        """_init_llm() is invoked with the gguf_path kwarg, not model_path or
-        other removed kwargs."""
+    def test_init_llm_called_with_gguf_path(self):
+        """_init_llm() is invoked with gguf_path kwarg (plus optional context/thread params)."""
         from rag_engine import RAGEngine
 
         with patch("rag_engine.SmartLLM") as mock_smartllm:
@@ -115,11 +114,10 @@ class TestInitLLMSingleParam:
                     with patch("rag_engine.DocumentProcessor"):
                         engine = RAGEngine(gguf_path="/models/test.gguf")
 
-                        # SmartLLM should have been called with only gguf_path
-                        mock_smartllm.assert_called_once_with(gguf_path="/models/test.gguf")
+                        mock_smartllm.assert_called_once()
                         call_kwargs = mock_smartllm.call_args.kwargs
                         assert "gguf_path" in call_kwargs
-                        assert len(call_kwargs) == 1
+                        assert call_kwargs["gguf_path"] == "/models/test.gguf"
 
     def test_init_llm_called_with_none_path(self):
         """_init_llm() is called with gguf_path=None when no path provided."""
@@ -132,12 +130,10 @@ class TestInitLLMSingleParam:
                     with patch("rag_engine.DocumentProcessor"):
                         engine = RAGEngine()
 
-                        # SmartLLM should have been called with gguf_path=None
-                        mock_smartllm.assert_called_once_with(gguf_path=None)
+                        mock_smartllm.assert_called_once()
                         call_kwargs = mock_smartllm.call_args.kwargs
                         assert "gguf_path" in call_kwargs
                         assert call_kwargs["gguf_path"] is None
-                        assert len(call_kwargs) == 1
 
     def test_smartllm_not_called_with_removed_kwargs(self):
         """SmartLLM is never called with model_path, ollama_model, ollama_url,

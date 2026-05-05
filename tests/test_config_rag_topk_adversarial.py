@@ -403,7 +403,7 @@ class TestNewFieldDefaults:
     """Verify default values for the two new fields."""
 
     def test_initial_retrieval_top_k_default(self, clear_env, monkeypatch):
-        """Default rag_initial_retrieval_top_k is 30."""
+        """Default rag_initial_retrieval_top_k is 12 (minimum-hardware default)."""
         monkeypatch.delenv("RAG_INITIAL_RETRIEVAL_TOP_K", raising=False)
         monkeypatch.delenv("RAG_RERANK_TOP_K", raising=False)
         # Reset singleton so defaults are recomputed
@@ -411,17 +411,17 @@ class TestNewFieldDefaults:
         cfg_module._settings = None
         from config import RAGSettings
         s = RAGSettings()
-        assert s.rag_initial_retrieval_top_k == 30
+        assert s.rag_initial_retrieval_top_k == 12
 
     def test_rerank_top_k_default(self, clear_env, monkeypatch):
-        """Default rag_rerank_top_k is 6."""
+        """Default rag_rerank_top_k is 4 (minimum-hardware default)."""
         monkeypatch.delenv("RAG_INITIAL_RETRIEVAL_TOP_K", raising=False)
         monkeypatch.delenv("RAG_RERANK_TOP_K", raising=False)
         import config as cfg_module
         cfg_module._settings = None
         from config import RAGSettings
         s = RAGSettings()
-        assert s.rag_rerank_top_k == 6
+        assert s.rag_rerank_top_k == 4
 
     def test_defaults_coexist(self, clear_env, monkeypatch):
         """Both new fields coexist without conflict."""
@@ -431,8 +431,8 @@ class TestNewFieldDefaults:
         cfg_module._settings = None
         from config import RAGSettings
         s = RAGSettings()
-        assert s.rag_initial_retrieval_top_k == 30
-        assert s.rag_rerank_top_k == 6
+        assert s.rag_initial_retrieval_top_k == 12
+        assert s.rag_rerank_top_k == 4
 
     def test_both_fields_via_proxy(self, clear_env, monkeypatch):
         """Both new fields are accessible via the settings proxy."""
@@ -441,5 +441,5 @@ class TestNewFieldDefaults:
         import config as cfg_module
         cfg_module._settings = None
         from config import settings
-        assert settings.rag_initial_retrieval_top_k == 30
-        assert settings.rag_rerank_top_k == 6
+        assert settings.rag_initial_retrieval_top_k == 12
+        assert settings.rag_rerank_top_k == 4

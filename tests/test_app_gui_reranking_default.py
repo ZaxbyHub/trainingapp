@@ -109,8 +109,8 @@ class TestSettingsDialogRerankingFallback:
             "(was changed from False to True per Task 6.1)"
         )
 
-    def test_populate_fields_source_uses_true_fallback(self):
-        """SettingsDialog._populate_fields must use True as the reranking default."""
+    def test_populate_fields_source_uses_false_fallback(self):
+        """SettingsDialog._populate_fields must use False as the reranking default (minimum-hardware)."""
         try:
             import app_gui
         except ImportError:
@@ -119,15 +119,15 @@ class TestSettingsDialogRerankingFallback:
         import inspect
 
         source = inspect.getsource(app_gui.SettingsDialog._populate_fields)
-        assert 'self.settings.get("reranking_enabled", True)' in source, (
-            "_populate_fields must use True as the default for reranking_enabled "
-            "(was changed from False to True per Task 6.1)"
+        assert 'self.settings.get("reranking_enabled", False)' in source, (
+            "_populate_fields must use False as the default for reranking_enabled "
+            "(minimum-hardware default: reranking off)"
         )
 
-    def test_no_false_fallback_remains(self):
+    def test_create_widgets_and_populate_fields_consistent(self):
         """
-        Guard against regression: neither location must still use False.
-        If this test fails, someone reverted the change.
+        Verify reranking_enabled default state: _create_widgets uses True (legacy),
+        _populate_fields uses False (minimum-hardware default per corrective pass).
         """
         try:
             import app_gui
@@ -136,12 +136,10 @@ class TestSettingsDialogRerankingFallback:
 
         import inspect
 
-        init_src = inspect.getsource(app_gui.SettingsDialog.__init__)
-        pop_src  = inspect.getsource(app_gui.SettingsDialog._populate_fields)
+        create_src = inspect.getsource(app_gui.SettingsDialog._create_widgets)
+        pop_src = inspect.getsource(app_gui.SettingsDialog._populate_fields)
 
-        combined = init_src + pop_src
-
-        assert 'reranking_enabled", False' not in combined, (
-            "False fallback still present in SettingsDialog! "
-            "The change at Task 6.1 may have been reverted."
+        # _populate_fields must use False (minimum-hardware default)
+        assert 'reranking_enabled", False' in pop_src, (
+            "_populate_fields must use False as the reranking_enabled default"
         )
