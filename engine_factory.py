@@ -157,16 +157,16 @@ def create_engine_from_env() -> "RAGEngine":
         RAG_DB_PATH: Database path (default: ./doc_qa_db)
         RAG_CHUNK_SIZE: Chunk size (default: 512)
         RAG_CHUNK_OVERLAP: Chunk overlap (default: 100)
-        RAG_N_RESULTS: Number of results (default: 6)
+        RAG_N_RESULTS: Number of results (default: 4)
         RAG_MAX_TOKENS: Max tokens (default: see DEFAULT_MAX_TOKENS constant in config.py)
         RAG_TEMPERATURE: Temperature (default: 0.3)
         RAG_EMBEDDING_MODEL: Embedding model (default: BAAI/bge-small-en-v1.5)
         RAG_HYBRID_SEARCH: Enable hybrid search (default: true)
-        RAG_RETRIEVAL_WINDOW: Retrieval window (default: 2)
-        RAG_RERANKING_ENABLED: Enable reranking (default: true)
+        RAG_RETRIEVAL_WINDOW: Retrieval window (default: 1)
+        RAG_RERANKING_ENABLED: Enable reranking (default: false)
         RAG_RERANKER_MODEL: Reranker model (default: cross-encoder/ms-marco-MiniLM-L6-v2)
-        RAG_INITIAL_RETRIEVAL_TOP_K: Initial retrieval top-k (default: 30)
-        RAG_RERANK_TOP_K: Rerank top-k (default: 6)
+        RAG_INITIAL_RETRIEVAL_TOP_K: Initial retrieval top-k (default: 12)
+        RAG_RERANK_TOP_K: Rerank top-k (default: 4)
         RAG_GGUF_PATH: Path to GGUF model
 
     Returns:
