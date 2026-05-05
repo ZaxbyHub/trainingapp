@@ -574,15 +574,16 @@ class RAGEngine:
         """Get all ingested documents with metadata.
 
         Returns a list of dicts with keys:
-            id (str): document source path
+            id (str): document doc_id (stable hash-based identifier)
             chunk_count (int): number of chunks for this document
+            source_display (str): display name for the document
+            source_path (str): original file path
         """
-        metadata = self.vector_store.metadata or {}
-        docs_meta = metadata.get("documents", {})
-        return [
-            {"id": source, "chunk_count": meta.get("chunks", 0)}
-            for source, meta in docs_meta.items()
-        ]
+        docs = self.vector_store.get_all_documents()
+        for doc in docs:
+            if "chunk_count" not in doc:
+                doc["chunk_count"] = doc.get("chunks", 0)
+        return docs
 
     def delete_document(self, doc_id: str) -> bool:
         """Delete a document and all its chunks from the vector store.
