@@ -222,36 +222,28 @@ class TestNoFieldsDropped:
             assert field in kwargs, f"Field '{field}' is missing from RAGConfig call"
 
     @pytest.mark.asyncio
-    async def test_all_15_ragconfig_fields_present(self, mock_settings):
-        """All 15 RAGConfig constructor parameters are passed."""
+    async def test_all_ragconfig_fields_present(self, mock_settings):
+        """All RAGConfig constructor parameters are passed (now 18 fields after fixes 2 and 8)."""
         kwargs = await _build_ragconfig_via_lifespan_async(mock_settings)
 
-        expected = {
+        # Core 15 original fields plus 3 added in remediation (context_truncation, gguf_n_ctx, gguf_n_threads)
+        required = {
             "db_path", "chunk_size", "n_results", "max_tokens", "temperature",
             "embedding_model", "chunk_overlap", "min_similarity", "retrieval_window",
             "hybrid_search", "reranking_enabled", "reranker_model",
             "query_transformation_enabled", "initial_retrieval_top_k", "rerank_top_k",
+            "context_truncation", "gguf_n_ctx", "gguf_n_threads",
         }
-        assert set(kwargs.keys()) == expected, (
-            f"Expected fields {expected}, got {set(kwargs.keys())}. "
-            f"Missing: {expected - set(kwargs.keys())}, "
-            f"Extra: {set(kwargs.keys()) - expected}"
-        )
+        missing = required - set(kwargs.keys())
+        assert not missing, f"Missing RAGConfig fields: {missing}"
 
 
 # ---------------------------------------------------------------------------
 # TEST: rag_context_truncation NOT wired (RAGConfig has no such parameter)
 # ---------------------------------------------------------------------------
 
-class TestContextTruncationNotWired:
-    """rag_context_truncation exists in RAGSettings but NOT in RAGConfig — verify not passed."""
-
-    @pytest.mark.asyncio
-    async def test_rag_context_truncation_not_in_ragconfig(self, mock_settings):
-        """rag_context_truncation is not a RAGConfig parameter and is not passed."""
-        kwargs = await _build_ragconfig_via_lifespan_async(mock_settings)
-        assert "context_truncation" not in kwargs
-        assert "rag_context_truncation" not in kwargs
+class TestContextTruncationWired:
+    """context_truncation is now a RAGConfig field — verify it is present and defaults correctly."""
 
     def test_rag_settings_has_rag_context_truncation(self):
         """Sanity check: RAGSettings does have rag_context_truncation."""
@@ -260,14 +252,31 @@ class TestContextTruncationNotWired:
         assert hasattr(s, "rag_context_truncation")
         assert s.rag_context_truncation == 20000
 
-    def test_ragconfig_has_no_context_truncation_param(self):
-        """Sanity check: RAGConfig.__init__ has no context_truncation parameter."""
+    def test_ragconfig_has_context_truncation_param(self):
+        """RAGConfig.__init__ now has context_truncation parameter (fix 2)."""
         import inspect
         from rag_engine import RAGConfig
         sig = inspect.signature(RAGConfig.__init__)
         params = set(sig.parameters.keys())
-        assert "context_truncation" not in params
+        assert "context_truncation" in params, (
+            "context_truncation must be a RAGConfig parameter — it was added in fix 2"
+        )
         assert "rag_context_truncation" not in params
+
+    def test_ragconfig_context_truncation_default(self):
+        """RAGConfig.context_truncation defaults to 20000."""
+        from rag_engine import RAGConfig
+        c = RAGConfig()
+        assert c.context_truncation == 20000
+
+    def test_ragconfig_context_truncation_roundtrip(self):
+        """context_truncation survives to_dict/from_dict roundtrip."""
+        from rag_engine import RAGConfig
+        c = RAGConfig(context_truncation=15000)
+        d = c.to_dict()
+        assert d["context_truncation"] == 15000
+        c2 = RAGConfig.from_dict(d)
+        assert c2.context_truncation == 15000
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@ Manages document embeddings and similarity search using ChromaDB.
 """
 
 import os
+import re
 import sys
 import json
 import threading
@@ -167,14 +168,14 @@ class BM25Index:
         self.bm25_index = None
 
     def _tokenize(self, text: str) -> List[str]:
-        """Tokenize text for BM25: lowercase, remove stop words, filter short tokens."""
-        tokens = text.lower().split()
+        """Tokenize text for BM25: lowercase, strip punctuation via regex, remove stop words, filter short tokens."""
+        tokens = re.findall(r"[a-zA-Z0-9]+", text.lower())
         return [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
 
     def build_index(self, chunks: List[DocumentChunk]):
         """Build BM25 index from chunks."""
         self.chunks = chunks
-        tokenized_corpus = [self._tokenize(chunk.text) for chunk in chunks]
+        tokenized_corpus = [self._tokenize(chunk if isinstance(chunk, str) else chunk.text) for chunk in chunks]
         # Create BM25Okapi index from tokenized corpus
         if tokenized_corpus:
             if BM25_AVAILABLE:
@@ -329,6 +330,7 @@ class VectorStore:
                         source=meta["source"],
                         chunk_index=meta["chunk_index"],
                         page=meta.get("page"),
+                        doc_id=meta.get("doc_id"),
                     )
                     all_chunks.append(chunk)
                 if all_chunks:
@@ -353,6 +355,18 @@ class VectorStore:
         else:
             self.metadata = {"document_count": 0, "chunk_count": 0, "documents": {}}
 
+        # Migrate legacy entries that lack new-style fields
+        for key, entry in list(self.metadata.get("documents", {}).items()):
+            if isinstance(entry, dict) and "source_display" not in entry:
+                # Old-style entry — the key IS the source/basename
+                self.metadata["documents"][key] = {
+                    "doc_id": key,
+                    "source_display": key,
+                    "source_path": key,
+                    "chunks": entry.get("chunks", 0),
+                    "added_at": entry.get("added_at", ""),
+                }
+
     def _save_metadata(self):
         """Save store metadata to disk."""
         metadata_path = self.db_path / self.METADATA_FILE
@@ -373,12 +387,17 @@ class VectorStore:
                 texts = [chunk.text for chunk in batch]
                 embeddings = self.embedder.encode(texts)
 
-                ids = [f"{chunk.source}_{chunk.chunk_index}" for chunk in batch]
+                ids = [
+                    f"{getattr(chunk, 'doc_id', None) or chunk.source}_{chunk.chunk_index}"
+                    for chunk in batch
+                ]
                 metadatas = [
                     {
                         "source": chunk.source,
                         "chunk_index": chunk.chunk_index,
-                        "page": chunk.page if chunk.page else -1,
+                        "page": chunk.page if chunk.page is not None else -1,
+                        "doc_id": getattr(chunk, "doc_id", None) or chunk.source,
+                        "source_path": getattr(chunk, "source_path", None) or chunk.source,
                     }
                     for chunk in batch
                 ]
@@ -410,8 +429,12 @@ class VectorStore:
                 logger.info("  Processed %d/%d chunks", min(i + batch_size, len(chunks)), len(chunks))
 
             for chunk in chunks:
-                if chunk.source not in self.metadata["documents"]:
-                    self.metadata["documents"][chunk.source] = {
+                meta_key = chunk.doc_id or chunk.source
+                if meta_key not in self.metadata["documents"]:
+                    self.metadata["documents"][meta_key] = {
+                        "doc_id": chunk.doc_id or chunk.source,
+                        "source_display": chunk.source,
+                        "source_path": getattr(chunk, "source_path", None) or chunk.source,
                         "chunks": 0,
                         "added_at": str(
                             Path(chunk.source).stat().st_mtime
@@ -419,8 +442,8 @@ class VectorStore:
                             else ""
                         ),
                     }
-                self.metadata["documents"][chunk.source]["chunks"] = max(
-                    self.metadata["documents"][chunk.source]["chunks"],
+                self.metadata["documents"][meta_key]["chunks"] = max(
+                    self.metadata["documents"][meta_key]["chunks"],
                     chunk.chunk_index + 1,
                 )
 
@@ -602,69 +625,75 @@ class VectorStore:
                 return []
 
     def delete_document(self, doc_id: str) -> bool:
-        """Delete a document and all its chunks from the vector store.
+        """Delete a document and all its chunks by doc_id.
 
-        Args:
-            doc_id: The filename or document ID to delete.
+        Accepts doc_id (new-style hash) or source/basename (legacy).
 
         Returns:
             True if the document existed and was removed, False otherwise.
         """
+        if not doc_id or not isinstance(doc_id, str):
+            return False
+
         with self._lock:
-            # Guard clause: return False if doc_id is falsy or not a string
-            if not doc_id or not isinstance(doc_id, str):
+            doc_id = doc_id.strip()
+
+            # Find the metadata entry: try exact match first (new-style doc_id key)
+            entry = self.metadata.get("documents", {}).get(doc_id)
+
+            # Backward compat: if not found by doc_id, try as source/basename
+            if entry is None:
+                basename = os.path.basename(doc_id)
+                entry = self.metadata.get("documents", {}).get(basename)
+                if entry is not None:
+                    doc_id = basename  # use the key we found
+
+            if entry is None:
+                logger.warning("delete_document: no entry found for %r", doc_id)
                 return False
 
-            # Sanitize doc_id using basename and strip whitespace
-            sanitized_id = os.path.basename(doc_id).strip()
+            # Capture removed_chunks for fallback chunk count calculation
+            removed_chunks = entry.get("chunks", 0) if isinstance(entry, dict) else 0
 
-            # Return False if sanitized id is empty
-            if not sanitized_id:
-                return False
-
-            # Return False if document doesn't exist in metadata
-            if sanitized_id not in self.metadata.get("documents", {}):
-                return False
-
-            # Capture the document metadata before deleting it
-            doc_meta = self.metadata.get("documents", {}).get(sanitized_id, {})
-            removed_chunks = doc_meta.get("chunks", 0)
-
-            # Return False if there are no chunks to remove
-            if removed_chunks == 0:
-                return False
-
+            # Delete from Chroma: use doc_id metadata field if available, else source
             try:
-                # Verify collection can be queried before deleting
-                self.collection.get(where={"source": sanitized_id})
-            except Exception:
-                # Handle exception gracefully, return False
+                if (
+                    isinstance(entry, dict)
+                    and entry.get("doc_id")
+                    and entry["doc_id"] != entry.get("source_display")
+                ):
+                    # New-style: delete by doc_id metadata field
+                    self.collection.delete(where={"doc_id": entry["doc_id"]})
+                else:
+                    # Legacy or simple source-keyed entry
+                    source_display = (
+                        entry.get("source_display", doc_id) if isinstance(entry, dict) else doc_id
+                    )
+                    self.collection.delete(where={"source": source_display})
+            except Exception as e:
+                logger.warning("delete_document: Chroma deletion failed for %r: %s", doc_id, e)
                 return False
 
-            try:
-                # Delete all chunks with matching source from ChromaDB collection
-                self.collection.delete(where={"source": sanitized_id})
-            except Exception:
-                # Handle exception gracefully, return False
-                return False
-
-            # Remove from BM25 index
-            if self.bm25_index:
-                # Remove chunks with exact source match (not startswith)
-                self.bm25_index.chunks = [
-                    chunk
-                    for chunk in self.bm25_index.chunks
-                    if chunk.source != sanitized_id
+            # Remove from BM25 index if present
+            if self.bm25_index and self.bm25_index.chunks:
+                source_display = (
+                    entry.get("source_display", doc_id) if isinstance(entry, dict) else doc_id
+                )
+                remaining = [
+                    c
+                    for c in self.bm25_index.chunks
+                    if c.source != source_display and getattr(c, "doc_id", None) != doc_id
                 ]
-                # Rebuild BM25 index after removing chunks
-                if self.bm25_index.chunks:
-                    self.bm25_index.build_index(self.bm25_index.chunks)
+                if remaining:
+                    self.bm25_index.build_index(remaining)
+                    self.bm25_index.chunks = remaining
                 else:
                     self.bm25_index.bm25_index = None
+                    self.bm25_index.chunks = []
+                self._bm25_needs_rebuild = len(remaining) == 0
 
-            # Remove the document from metadata
-            if sanitized_id in self.metadata.get("documents", {}):
-                del self.metadata["documents"][sanitized_id]
+            # Remove from metadata
+            del self.metadata["documents"][doc_id]
 
             # Update document count
             self.metadata["document_count"] = len(self.metadata["documents"])
@@ -672,11 +701,9 @@ class VectorStore:
             # Update chunk count - try to get from collection.count(), fall back to calculation
             try:
                 new_chunk_count = self.collection.count()
-                # Verify it's actually an integer
                 if not isinstance(new_chunk_count, int):
                     raise ValueError("count() did not return an integer")
             except Exception:
-                # Fall back to subtracting removed chunks from previous count
                 previous_chunk_count = self.metadata.get("chunk_count", 0)
                 new_chunk_count = max(0, previous_chunk_count - removed_chunks)
 
@@ -732,9 +759,16 @@ class VectorStore:
             # Handle empty query - return no context
             if not query or not query.strip():
                 return "", [], []
-            if hybrid_search and self.bm25_index:
+            if hybrid_search:
                 self._rebuild_bm25_if_needed()
 
+                if self.bm25_index is None:
+                    logger.warning(
+                        "BM25 index unavailable after rebuild attempt; falling back to vector-only search."
+                    )
+                    hybrid_search = False
+
+            if hybrid_search:
                 vector_results = self.search(query, n_results=n_results * 2)
                 bm25_results = self.bm25_index.search(query, top_k=n_results * 2)
 
@@ -893,8 +927,36 @@ class VectorStore:
                 "document_count": self.metadata.get("document_count", 0),
                 "chunk_count": self.collection.count(),
                 "embedding_model": self.embedder.model_name,
-                "documents": list(self.metadata.get("documents", {}).keys()),
+                "documents": self.get_all_documents(),
             }
+
+    def get_all_documents(self) -> List[Dict[str, Any]]:
+        """Return metadata for all ingested documents.
+
+        Returns list of dicts with: id, source_display, source_path, chunks, added_at.
+        Handles both new-style entries (keyed by doc_id) and old-style (keyed by source).
+        """
+        with self._lock:
+            result = []
+            for key, entry in self.metadata.get("documents", {}).items():
+                if isinstance(entry, dict):
+                    result.append({
+                        "id": entry.get("doc_id", key),
+                        "source_display": entry.get("source_display", key),
+                        "source_path": entry.get("source_path", key),
+                        "chunks": entry.get("chunks", 0),
+                        "added_at": entry.get("added_at", ""),
+                    })
+                else:
+                    # Legacy scalar value — shouldn't happen, but be defensive
+                    result.append({
+                        "id": key,
+                        "source_display": key,
+                        "source_path": key,
+                        "chunks": 0,
+                        "added_at": "",
+                    })
+            return result
 
 
 if __name__ == "__main__":

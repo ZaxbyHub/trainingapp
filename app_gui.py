@@ -43,6 +43,31 @@ from theme import ColorTokens, TypeScale, FONT_FAMILY, Spacing
 
 logger = logging.getLogger(__name__)
 
+# Maps legacy rag_-prefixed keys to canonical equivalents
+_LEGACY_KEY_MAP = {
+    "rag_chunk_overlap": "chunk_overlap",
+    "rag_min_similarity": "min_similarity",
+    "rag_context_truncation": "context_truncation",
+    "rag_db_path": "db_path",
+    "rag_embedding_model": "embedding_model",
+    "rag_reranker_model": "reranker_model",
+    "model_path": "gguf_path",  # already handled, but include for completeness
+}
+
+def normalize_settings(settings: dict) -> dict:
+    """Migrate legacy rag_*-prefixed keys to canonical equivalents.
+
+    Canonical key takes precedence if both are present.
+    """
+    result = dict(settings)
+    for legacy, canonical in _LEGACY_KEY_MAP.items():
+        if legacy in result:
+            if canonical not in result:
+                result[canonical] = result.pop(legacy)
+            else:
+                del result[legacy]  # canonical present, drop legacy
+    return result
+
 # FR-708: Minimum button height for WCAG 2.5.5 compliance
 DEFAULT_BUTTON_HEIGHT = 36  # 36px visual height meets 44px touch target with default CTkButton padding
 
@@ -304,7 +329,7 @@ class SettingsDialog(CTkToplevel):
         CTkLabel(settings_frame, text="Max Tokens:").grid(
             row=2, column=0, sticky="w", pady=Spacing.SM
         )
-        self.max_tokens_entry = CTkEntry(settings_frame, width=100, placeholder_text="1024")
+        self.max_tokens_entry = CTkEntry(settings_frame, width=100, placeholder_text=str(DEFAULT_MAX_TOKENS))
         self.max_tokens_entry.grid(row=2, column=1, padx=Spacing.LG, pady=Spacing.SM)
         attach_field_tooltip(settings_frame, self.max_tokens_entry, "max_tokens")
 
@@ -446,32 +471,32 @@ class SettingsDialog(CTkToplevel):
         gguf = self.settings.get("gguf_path") or self.settings.get("model_path", "")
         self.model_path_entry.insert(0, gguf)
         self.chunk_size_entry.insert(0, str(self.settings.get("chunk_size", DEFAULT_CHUNK_SIZE)))
-        self.n_results_entry.insert(0, str(self.settings.get("n_results", 6)))
-        self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", DEFAULT_MAX_TOKENS)))
+        self.n_results_entry.insert(0, str(self.settings.get("n_results", 4)))
+        self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", 512)))
         self.temperature_entry.insert(0, str(self.settings.get("temperature", 0.3)))
         self.hybrid_search_var.set(
             "on" if self.settings.get("hybrid_search", True) else "off"
         )
         self.retrieval_window_entry.insert(
-            0, str(self.settings.get("retrieval_window", 2))
+            0, str(self.settings.get("retrieval_window", 1))
         )
         self.reranking_var.set(
-            "on" if self.settings.get("reranking_enabled", True) else "off"
+            "on" if self.settings.get("reranking_enabled", False) else "off"
         )
-        self.initial_retrieval_top_k_entry.insert(0, str(self.settings.get("initial_retrieval_top_k", 30)))
-        self.rerank_top_k_entry.insert(0, str(self.settings.get("rerank_top_k", 6)))
+        self.initial_retrieval_top_k_entry.insert(0, str(self.settings.get("initial_retrieval_top_k", 12)))
+        self.rerank_top_k_entry.insert(0, str(self.settings.get("rerank_top_k", 4)))
 
         # Read-only model info
-        embedding = self.settings.get("rag_embedding_model", "default")
-        reranker = self.settings.get("rag_reranker_model", "none")
+        embedding = self.settings.get("embedding_model", "default")
+        reranker = self.settings.get("reranker_model", "none")
         self.embedding_model_label.configure(text=embedding)
         self.reranker_model_label.configure(text=reranker)
 
         # New fields
-        self.chunk_overlap_entry.insert(0, str(self.settings.get("rag_chunk_overlap", 100)))
-        self.min_similarity_entry.insert(0, str(self.settings.get("rag_min_similarity", 0.3)))
-        self.context_truncation_entry.insert(0, str(self.settings.get("rag_context_truncation", 20000)))
-        self.db_path_entry.insert(0, str(self.settings.get("rag_db_path", "./doc_qa_db")))
+        self.chunk_overlap_entry.insert(0, str(self.settings.get("chunk_overlap", 100)))
+        self.min_similarity_entry.insert(0, str(self.settings.get("min_similarity", 0.3)))
+        self.context_truncation_entry.insert(0, str(self.settings.get("context_truncation", 20000)))
+        self.db_path_entry.insert(0, str(self.settings.get("db_path", "./doc_qa_db")))
 
     def _save(self):
         # Validate numeric ranges
@@ -485,14 +510,14 @@ class SettingsDialog(CTkToplevel):
             errors.append("Chunk Size must be a valid integer")
 
         try:
-            n_results = int(self.n_results_entry.get() or 6)
+            n_results = int(self.n_results_entry.get() or 4)
             if not (1 <= n_results <= 20):
                 errors.append(f"Results to Retrieve must be between 1 and 20")
         except ValueError:
             errors.append("Results to Retrieve must be a valid integer")
 
         try:
-            max_tokens = int(self.max_tokens_entry.get() or DEFAULT_MAX_TOKENS)
+            max_tokens = int(self.max_tokens_entry.get() or 512)
             if not (MIN_MAX_TOKENS <= max_tokens <= MAX_MAX_TOKENS):
                 errors.append(f"Max Tokens must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}")
         except ValueError:
@@ -506,21 +531,21 @@ class SettingsDialog(CTkToplevel):
             errors.append("Temperature must be a valid number")
 
         try:
-            retrieval_window = int(self.retrieval_window_entry.get() or 2)
+            retrieval_window = int(self.retrieval_window_entry.get() or 1)
             if not (0 <= retrieval_window <= 5):
                 errors.append(f"Window Expansion must be between 0 and 5")
         except ValueError:
             errors.append("Window Expansion must be a valid integer")
 
         try:
-            initial_retrieval_top_k = int(self.initial_retrieval_top_k_entry.get() or 30)
+            initial_retrieval_top_k = int(self.initial_retrieval_top_k_entry.get() or 12)
             if not (1 <= initial_retrieval_top_k <= 100):
                 errors.append("Initial Retrieval Top-K must be between 1 and 100")
         except ValueError:
             errors.append("Initial Retrieval Top-K must be a valid integer")
 
         try:
-            rerank_top_k = int(self.rerank_top_k_entry.get() or 6)
+            rerank_top_k = int(self.rerank_top_k_entry.get() or 4)
             if not (1 <= rerank_top_k <= 100):
                 errors.append("Rerank Top-K must be between 1 and 100")
         except ValueError:
@@ -533,6 +558,18 @@ class SettingsDialog(CTkToplevel):
                 errors.append("Chunk Overlap must be between 0 and 512")
         except ValueError:
             errors.append("Chunk Overlap must be a valid integer")
+
+        if errors:
+            messagebox.showerror("Validation Error", "\n".join(errors))
+            return
+
+        if chunk_overlap >= chunk_size:
+            messagebox.showerror(
+                "Invalid Settings",
+                f"Chunk overlap ({chunk_overlap}) must be less than chunk size ({chunk_size}).",
+                parent=self
+            )
+            return
 
         # Validate min similarity
         try:
@@ -565,10 +602,10 @@ class SettingsDialog(CTkToplevel):
             "reranking_enabled": self.reranking_var.get() == "on",
             "initial_retrieval_top_k": initial_retrieval_top_k,
             "rerank_top_k": rerank_top_k,
-            "rag_chunk_overlap": chunk_overlap,
-            "rag_min_similarity": min_similarity,
-            "rag_context_truncation": context_truncation,
-            "rag_db_path": self.db_path_entry.get(),
+            "chunk_overlap": chunk_overlap,
+            "min_similarity": min_similarity,
+            "context_truncation": context_truncation,
+            "db_path": self.db_path_entry.get(),
         }
         # Clean up old "model_path" key if present
         if "model_path" in self.result:
@@ -597,6 +634,7 @@ class DocumentQAApp(CTk):
         self.engine = None
         self.conversation_history = []
         self.message_queue = queue.Queue()
+        self._prev_settings = None
         self.after(50, self._load_settings_and_init)
 
     def _load_settings_and_init(self):
@@ -636,10 +674,13 @@ class DocumentQAApp(CTk):
         default_settings = {
             "gguf_path": bundled_model,
             "chunk_size": 512,
-            "n_results": 6,
-            "max_tokens": DEFAULT_MAX_TOKENS,
+            "n_results": 4,
+            "max_tokens": 512,
             "temperature": 0.3,
             "db_path": str(Path(settings_path).parent / "doc_qa_db"),
+            "chunk_overlap": 100,
+            "min_similarity": 0.3,
+            "context_truncation": 20000,
         }
 
         try:
@@ -649,7 +690,9 @@ class DocumentQAApp(CTk):
                     # Backward compatibility: migrate old "model_path" to "gguf_path"
                     if "model_path" in saved and not saved.get("gguf_path"):
                         saved["gguf_path"] = saved.pop("model_path")
-                    default_settings.update(saved)
+                    # Normalize legacy rag_* keys BEFORE merging so that the saved
+                    # value correctly overrides the canonical default (not the reverse).
+                    default_settings.update(normalize_settings(saved))
         except Exception:
             pass
 
@@ -1274,6 +1317,11 @@ class DocumentQAApp(CTk):
                     self.engine = create_engine_from_settings(self.settings)
                 except Exception as engine_error:
                     logger.error("Failed to initialize RAG engine: %s", engine_error)
+                    # Rollback to previous settings if available
+                    if hasattr(self, "_prev_settings") and self._prev_settings is not None:
+                        self.settings = self._prev_settings
+                        self._prev_settings = None
+                        self._save_settings()
                     self.message_queue.put(("status", "Engine initialization failed"))
                     self.message_queue.put((
                         "message", "system",
@@ -1332,6 +1380,11 @@ class DocumentQAApp(CTk):
                         self.message_queue.put(("model_label", "Model: Unknown"))
                 else:
                     self.message_queue.put(("model_label", "Model: None"))
+
+                # Clear backup settings after successful restart
+                self._prev_settings = None
+                # Clear conversation history on successful engine restart (Fix 6c)
+                self.conversation_history = []
 
             except Exception as e:
                 self._operation_cancelled.clear()
@@ -1415,6 +1468,7 @@ class DocumentQAApp(CTk):
         self.wait_window(dialog)
 
         if dialog.result:
+            prev_settings = dict(self.settings)
             self.settings.update(dialog.result)
             self._save_settings()
 
@@ -1440,6 +1494,7 @@ class DocumentQAApp(CTk):
             if messagebox.askyesno(
                 "Restart Required", "Settings changed. Restart the engine now?"
             ):
+                self._prev_settings = prev_settings
                 self._initialize_engine()
 
     def _ingest_documents(self):
