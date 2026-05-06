@@ -530,14 +530,14 @@ def test_no_bare_ctkbutton_calls_in_source():
 # ─────────────────────────────────────────────
 
 def test_progress_label_widget_exists():
-    """progress_label widget must be defined in _create_widgets."""
+    """progress_label widget must be defined in _create_chat_page (nav-rail refactor moved it there)."""
     from app_gui import DocumentQAApp
 
     import inspect
-    source = inspect.getsource(DocumentQAApp._create_widgets)
+    source = inspect.getsource(DocumentQAApp._create_chat_page)
 
     assert 'progress_label' in source, (
-        "_create_widgets() must create progress_label widget"
+        "_create_chat_page() must create progress_label widget"
     )
     assert 'CTkLabel' in source, (
         "progress_label must be a CTkLabel"
@@ -555,8 +555,9 @@ def test_progress_label_receives_progress_label_message():
     assert 'msg[0] == "progress_label"' in source, (
         "Message processor must handle 'progress_label' messages"
     )
-    assert 'progress_label.configure' in source, (
-        "Message processor must update progress_label text"
+    # Progress update goes through _show_progress helper or direct configure
+    assert '_show_progress' in source or 'progress_label.configure' in source, (
+        "Message processor must update progress_label via _show_progress or direct configure"
     )
 
 
