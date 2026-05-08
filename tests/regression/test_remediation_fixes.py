@@ -563,6 +563,7 @@ class TestFix9BM25Tokenization:
         Note: BM25Okapi IDF=0 for terms in >=50% of a tiny corpus (2 docs),
         so we use 4 documents where only 1 contains 'procedure.' to get non-zero scores.
         """
+        pytest.importorskip("rank_bm25", reason="rank_bm25 not installed — BM25 search pipeline unavailable")
         from vector_store import BM25Index
         b = BM25Index()
         b.build_index([

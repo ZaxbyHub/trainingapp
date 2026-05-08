@@ -82,19 +82,21 @@ class TestRerankingDefaultOn:
 
 
 # ---------------------------------------------------------------------------
-# GUI integration — verify the fallback is True, not False
+# GUI integration — verify the fallback is False (minimum-hardware safety)
 # ---------------------------------------------------------------------------
 
 class TestSettingsDialogRerankingFallback:
     """
-    Verify SettingsDialog uses True as the default for reranking_enabled.
+    Verify SettingsDialog uses False as the default for reranking_enabled.
 
-    We inspect the source of the two lines that set the reranking variable
-    (lines 197-199 and 243-245 in app_gui.py) to confirm the default is True.
+    We inspect the source of the lines that set the reranking variable in
+    both _create_widgets and _populate_fields to confirm the default is False.
+    The corrective pass (v0.2.0) changed _create_widgets from True to False
+    to match _populate_fields and prevent silent reranking on minimum hardware.
     """
 
-    def test_create_widgets_source_uses_true_fallback(self):
-        """SettingsDialog._create_widgets reranking_var must default to True."""
+    def test_create_widgets_source_uses_false_fallback(self):
+        """SettingsDialog._create_widgets reranking_var must default to False."""
         try:
             import app_gui
         except ImportError:
@@ -104,9 +106,9 @@ class TestSettingsDialogRerankingFallback:
 
         # The reranking_var is set inside _create_widgets (called from __init__)
         source = inspect.getsource(app_gui.SettingsDialog._create_widgets)
-        assert 'self.settings.get("reranking_enabled", True)' in source, (
-            "reranking_var in SettingsDialog._create_widgets must use True as the default "
-            "(was changed from False to True per Task 6.1)"
+        assert 'self.settings.get("reranking_enabled", False)' in source, (
+            "reranking_var in SettingsDialog._create_widgets must use False as the default "
+            "(changed from True to False in v0.2.0 corrective pass — minimum-hardware safety)"
         )
 
     def test_populate_fields_source_uses_false_fallback(self):
