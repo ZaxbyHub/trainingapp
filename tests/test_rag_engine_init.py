@@ -113,6 +113,8 @@ class TestInitLLMSingleParam:
                 with patch("rag_engine.VectorStore"):
                     with patch("rag_engine.DocumentProcessor"):
                         engine = RAGEngine(gguf_path="/models/test.gguf")
+                        # Trigger lazy _ensure_llm() which calls _init_llm() -> SmartLLM
+                        engine._ensure_llm()
 
                         mock_smartllm.assert_called_once()
                         call_kwargs = mock_smartllm.call_args.kwargs
@@ -129,6 +131,8 @@ class TestInitLLMSingleParam:
                 with patch("rag_engine.VectorStore"):
                     with patch("rag_engine.DocumentProcessor"):
                         engine = RAGEngine()
+                        # Trigger lazy _ensure_llm() which calls _init_llm() -> SmartLLM
+                        engine._ensure_llm()
 
                         mock_smartllm.assert_called_once()
                         call_kwargs = mock_smartllm.call_args.kwargs
@@ -154,7 +158,9 @@ class TestInitLLMSingleParam:
             with patch("rag_engine.RAGEngine._save_config"):
                 with patch("rag_engine.VectorStore"):
                     with patch("rag_engine.DocumentProcessor"):
-                        RAGEngine(gguf_path="/models/test.gguf")
+                        engine = RAGEngine(gguf_path="/models/test.gguf")
+                        # Trigger lazy _ensure_llm() which calls _init_llm() -> SmartLLM
+                        engine._ensure_llm()
 
                         call_kwargs = mock_smartllm.call_args.kwargs
                         for removed_kwarg in REMOVED_KWARGS:
@@ -179,6 +185,8 @@ class TestInitLLMSuccess:
                 with patch("rag_engine.VectorStore"):
                     with patch("rag_engine.DocumentProcessor"):
                         engine = RAGEngine(gguf_path="/models/test.gguf")
+                        # Trigger lazy _ensure_llm() which calls _init_llm() -> SmartLLM
+                        engine._ensure_llm()
                         assert engine.llm is mock_llm_instance
 
 

@@ -1,0 +1,7 @@
+# Safety policy configuration
+# See https://docs.pyup.io/docs/safety-20-policy-file for reference
+
+version: "2.0"
+
+security:
+  ignore-unpinned-requirements: false
