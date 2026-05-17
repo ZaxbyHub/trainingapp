@@ -83,11 +83,4 @@ security:
       reason: "range scan false positive - min version constraint patches this"
     90571:
       reason: "range scan false positive - min version constraint patches this"
-    SFTY-20260416-29160:
-      reason: "range scan false positive - min version constraint patches this"
-    SFTY-20260416-67376:
-      reason: "range scan false positive - min version constraint patches this"
-    SFTY-20260416-76786:
-      reason: "range scan false positive - min version constraint patches this"
-    SFTY-20260415-03316:
-      reason: "range scan false positive - min version constraint patches this"
+
