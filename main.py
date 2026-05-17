@@ -75,6 +75,10 @@ def main():
     if args.gguf_path:
         os.environ["RAG_GGUF_PATH"] = args.gguf_path
     os.environ["API_PORT"] = str(args.port)
+    if args.chunk_size is not None:
+        os.environ["RAG_CHUNK_SIZE"] = str(args.chunk_size)
+    if args.chunk_overlap is not None:
+        os.environ["RAG_CHUNK_OVERLAP"] = str(args.chunk_overlap)
 
     if args.api:
         # Run API server

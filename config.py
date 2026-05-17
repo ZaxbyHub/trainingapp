@@ -7,7 +7,7 @@ type coercion, and environment variable support.
 
 import threading
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,7 +19,7 @@ DEFAULT_CHUNK_SIZE = 512
 # Max tokens constraints
 MIN_MAX_TOKENS = 256
 MAX_MAX_TOKENS = 4096
-DEFAULT_MAX_TOKENS = 1024
+DEFAULT_MAX_TOKENS = 512  # matches RAGConfig/RAGSettings defaults for minimum-hardware targets
 
 
 class RAGSettings(BaseSettings):
@@ -33,24 +33,28 @@ class RAGSettings(BaseSettings):
     rag_chunk_overlap: int = Field(default=100, validation_alias="RAG_CHUNK_OVERLAP")
 
     # Retrieval settings
-    rag_n_results: int = Field(default=6, validation_alias="RAG_N_RESULTS")
+    rag_n_results: int = Field(default=4, validation_alias="RAG_N_RESULTS")
     rag_min_similarity: float = Field(default=0.3, validation_alias="RAG_MIN_SIMILARITY")
-    rag_retrieval_window: int = Field(default=2, validation_alias="RAG_RETRIEVAL_WINDOW")
+    rag_retrieval_window: int = Field(default=1, validation_alias="RAG_RETRIEVAL_WINDOW")
 
     # LLM settings
-    rag_max_tokens: int = Field(default=DEFAULT_MAX_TOKENS, validation_alias="RAG_MAX_TOKENS")
+    rag_max_tokens: int = Field(default=512, validation_alias="RAG_MAX_TOKENS")
     rag_temperature: float = Field(default=0.3, validation_alias="RAG_TEMPERATURE")
 
     # Model settings
     rag_embedding_model: str = Field(default="BAAI/bge-small-en-v1.5", validation_alias="RAG_EMBEDDING_MODEL")
     rag_hybrid_search: bool = Field(default=True, validation_alias="RAG_HYBRID_SEARCH")
-    rag_reranking_enabled: bool = Field(default=True, validation_alias="RAG_RERANKING_ENABLED")
+    rag_reranking_enabled: bool = Field(default=False, validation_alias="RAG_RERANKING_ENABLED")
     rag_reranker_model: str = Field(default="cross-encoder/ms-marco-MiniLM-L6-v2", validation_alias="RAG_RERANKER_MODEL")
 
     # Context truncation settings
     rag_context_truncation: int = Field(default=20000, validation_alias="RAG_CONTEXT_TRUNCATION")
-    rag_initial_retrieval_top_k: int = Field(default=30, validation_alias="RAG_INITIAL_RETRIEVAL_TOP_K")
-    rag_rerank_top_k: int = Field(default=6, validation_alias="RAG_RERANK_TOP_K")
+    rag_initial_retrieval_top_k: int = Field(default=12, validation_alias="RAG_INITIAL_RETRIEVAL_TOP_K")
+    rag_rerank_top_k: int = Field(default=4, validation_alias="RAG_RERANK_TOP_K")
+
+    # GGUF model settings
+    rag_gguf_n_ctx: int = Field(default=4096, validation_alias=AliasChoices("rag_gguf_n_ctx", "RAG_GGUF_N_CTX"))
+    rag_gguf_n_threads: int = Field(default=4, validation_alias=AliasChoices("rag_gguf_n_threads", "RAG_GGUF_N_THREADS"))
 
     # CORS settings
     rag_cors_origins: str = Field(default="http://localhost,http://127.0.0.1", validation_alias="RAG_CORS_ORIGINS")

@@ -297,6 +297,9 @@ async def lifespan(app: FastAPI):
             query_transformation_enabled=False,
             initial_retrieval_top_k=settings.rag_initial_retrieval_top_k,
             rerank_top_k=settings.rag_rerank_top_k,
+            context_truncation=settings.rag_context_truncation,
+            gguf_n_ctx=settings.rag_gguf_n_ctx,
+            gguf_n_threads=settings.rag_gguf_n_threads,
         )
 
         engine = RAGEngine(

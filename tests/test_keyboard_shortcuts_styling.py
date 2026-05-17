@@ -22,7 +22,7 @@ def test_ctrl_enter_binding_exists():
         pytest.skip("customtkinter not installed")
 
     # Check that the binding method exists and has correct implementation
-    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
     assert 'bind("<Control-Return>"' in source, \
         "Missing <Control-Return> binding for Ctrl+Enter question submission"
     assert "_ask_question" in source, \
@@ -36,7 +36,7 @@ def test_ctrl_l_binding_exists():
     except ImportError:
         pytest.skip("customtkinter not installed")
 
-    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
     assert 'bind("<Control-l>"' in source, \
         "Missing <Control-l> binding for Ctrl+L clear chat"
     assert "_confirm_clear_chat" in source, \
@@ -50,26 +50,27 @@ def test_ctrl_comma_binding_exists():
     except ImportError:
         pytest.skip("customtkinter not installed")
 
-    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
     assert 'bind("<Control-comma>"' in source, \
         "Missing <Control-comma> binding for Ctrl+, settings"
 
 
-def test_enter_key_submits_question():
-    """FR-701: question_entry Enter key must call _ask_question()."""
+def test_enter_key_allows_newline():
+    """FR-701: question_entry Enter key must allow newlines in multiline mode."""
     try:
         import app_gui
     except ImportError:
         pytest.skip("customtkinter not installed")
 
-    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
     assert 'question_entry.bind("<Return>"' in source, \
         "Missing <Return> binding on question_entry"
-    assert "_ask_question" in source, \
-        "Enter binding must call _ask_question"
-    # Verify it returns "break" to prevent default behavior
-    assert 'or "break"' in source, \
-        "Enter binding must return 'break' to prevent default Return behavior"
+    # In multiline mode, Return should allow newlines (not submit)
+    assert 'lambda e: None' in source or 'allow' in source.lower(), \
+        "Return key must allow newlines in multiline mode"
+    # Ctrl+Return should be the submit key instead
+    assert 'bind("<Control-Return>"' in source, \
+        "Ctrl+Return must be the submit key in multiline mode"
 
 
 def test_escape_key_clears_or_cancels():
@@ -79,7 +80,7 @@ def test_escape_key_clears_or_cancels():
     except ImportError:
         pytest.skip("customtkinter not installed")
 
-    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
     assert 'question_entry.bind("<Escape>"' in source, \
         "Missing <Escape> binding on question_entry"
     assert "_handle_escape" in source, \
@@ -112,9 +113,9 @@ def test_ask_button_has_primary_style():
     except ImportError:
         pytest.skip("customtkinter not installed")
 
-    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
     # Find the ask_button creation block (now uses _make_button helper)
-    assert 'input_frame, text="Ask"' in source, \
+    assert 'text="Ask"' in source, \
         "ask_button must be created with _make_button"
 
     # Verify primary styling uses ColorTokens methods
@@ -133,9 +134,9 @@ def test_clear_button_has_secondary_style():
     except ImportError:
         pytest.skip("customtkinter not installed")
 
-    source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+    source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
     # Find the clear_button creation block (now uses _make_button helper)
-    assert 'input_frame, text="Clear"' in source, \
+    assert 'text="Clear"' in source, \
         "clear_button must be created with _make_button"
 
     # Verify secondary styling uses ColorTokens methods

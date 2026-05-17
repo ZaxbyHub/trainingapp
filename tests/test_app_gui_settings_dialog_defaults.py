@@ -347,8 +347,8 @@ class TestSavePersistsAllFields:
 class TestSourceDefaults:
     """Inspect app_gui.py source to verify defaults are hardcoded correctly."""
 
-    def test_populate_fields_n_results_uses_6(self):
-        """Line 248: n_results default must be 6."""
+    def test_populate_fields_n_results_uses_4(self):
+        """n_results default must be 4 (minimum-hardware default)."""
         try:
             import app_gui
         except ImportError:
@@ -356,12 +356,12 @@ class TestSourceDefaults:
 
         import inspect
         source = inspect.getsource(app_gui.SettingsDialog._populate_fields)
-        assert '"n_results", 6)' in source, (
-            "_populate_fields must default n_results to 6"
+        assert '"n_results", 4)' in source, (
+            "_populate_fields must default n_results to 4"
         )
 
-    def test_populate_fields_retrieval_window_uses_2(self):
-        """Line 254-255: retrieval_window default must be 2."""
+    def test_populate_fields_retrieval_window_uses_1(self):
+        """retrieval_window default must be 1 (minimum-hardware default)."""
         try:
             import app_gui
         except ImportError:
@@ -369,12 +369,12 @@ class TestSourceDefaults:
 
         import inspect
         source = inspect.getsource(app_gui.SettingsDialog._populate_fields)
-        assert '"retrieval_window", 2)' in source, (
-            "_populate_fields must default retrieval_window to 2"
+        assert '"retrieval_window", 1)' in source, (
+            "_populate_fields must default retrieval_window to 1"
         )
 
-    def test_populate_fields_initial_retrieval_top_k_uses_30(self):
-        """Line 260: initial_retrieval_top_k default must be 30."""
+    def test_populate_fields_initial_retrieval_top_k_uses_12(self):
+        """initial_retrieval_top_k default must be 12 (minimum-hardware default)."""
         try:
             import app_gui
         except ImportError:
@@ -382,12 +382,12 @@ class TestSourceDefaults:
 
         import inspect
         source = inspect.getsource(app_gui.SettingsDialog._populate_fields)
-        assert '"initial_retrieval_top_k", 30)' in source, (
-            "_populate_fields must default initial_retrieval_top_k to 30"
+        assert '"initial_retrieval_top_k", 12)' in source, (
+            "_populate_fields must default initial_retrieval_top_k to 12"
         )
 
-    def test_populate_fields_rerank_top_k_uses_6(self):
-        """Line 261: rerank_top_k default must be 6."""
+    def test_populate_fields_rerank_top_k_uses_4(self):
+        """rerank_top_k default must be 4 (minimum-hardware default)."""
         try:
             import app_gui
         except ImportError:
@@ -395,8 +395,8 @@ class TestSourceDefaults:
 
         import inspect
         source = inspect.getsource(app_gui.SettingsDialog._populate_fields)
-        assert '"rerank_top_k", 6)' in source, (
-            "_populate_fields must default rerank_top_k to 6"
+        assert '"rerank_top_k", 4)' in source, (
+            "_populate_fields must default rerank_top_k to 4"
         )
 
     def test_save_validation_initial_retrieval_top_k_range(self):
