@@ -8,12 +8,13 @@ import sys
 import json
 import time
 import threading
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Callable
 from pathlib import Path
 from dataclasses import dataclass
 import app_paths
 import logging
 import re
+from llm_interface import QueryCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,7 @@ class RAGEngine:
         """Lazily initialize QueryTransformer once."""
         if self._query_transformer is None and not self._query_transformer_failed and self.config.query_transformation_enabled and self.llm:
             with self._init_lock:
-                if self._query_transformer is None:  # Double-check
+                if self._query_transformer is None and not self._query_transformer_failed:  # Double-check
                     try:
                         from query_transformer import QueryTransformer
                         self._query_transformer = QueryTransformer(self.llm)
@@ -314,7 +315,7 @@ class RAGEngine:
         n_results: Optional[int] = None,
         conversation_history: Optional[list] = None,
         cancellation_event: Optional[threading.Event] = None,
-        stream_callback: Optional[callable] = None,
+        stream_callback: Optional[Callable[[str], None]] = None,
     ) -> QueryResult:
         """
         Answer a question using RAG.
@@ -395,7 +396,7 @@ class RAGEngine:
                     cancellation_event=cancellation_event,
                 )
             except Exception as e:
-                if "cancelled" in str(e).lower():
+                if isinstance(e, QueryCancelled):
                     logger.info("Query cancelled during greeting LLM generation")
                     return QueryResult(
                         question=question,
@@ -513,10 +514,6 @@ class RAGEngine:
                 # Reranker ran — if it returned nothing, build scored fallback with 0.0
                 if not reranked:
                     reranked = [(chunk, 0.0) for chunk in rerank_chunks[:effective_top_k]]
-            if reranked is not None:
-                # Reranker ran — if it returned nothing, build scored fallback with 0.0
-                if not reranked:
-                    reranked = [(chunk, 0.0) for chunk in rerank_chunks[:effective_top_k]]
                 context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
                 sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
                 chunks_retrieved = len(reranked)
@@ -614,7 +611,7 @@ class RAGEngine:
                 cancellation_event=cancellation_event,
             )
         except Exception as e:
-            if "cancelled" in str(e).lower():
+            if isinstance(e, QueryCancelled):
                 logger.info("Query cancelled during LLM generation")
                 return QueryResult(
                     question=question,

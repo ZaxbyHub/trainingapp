@@ -412,10 +412,9 @@ class TestQueryTransformerGracefulDegradation:
     def test_query_transformer_failure_on_subsequent_queries_still_works(self, tmp_path):
         """Criterion 5: QueryTransformer failure on first query doesn't break subsequent queries.
 
-        Note: After failure, _query_transformer is set to None, so subsequent queries
-        will retry initialization. The code's "Mark as failed to avoid retry" comment
-        in rag_engine.py is misleading - setting to None doesn't actually prevent retry.
-        The important thing is that each query doesn't crash and graceful degradation works.
+        After failure, _query_transformer_failed is set to True, preventing
+        further construction attempts. Subsequent queries skip the transformer
+        and still work correctly.
         """
         db_path = tmp_path / "test_db"
         db_path.mkdir()

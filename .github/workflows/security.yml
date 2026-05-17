@@ -32,7 +32,6 @@ jobs:
       - name: Run Safety
         run: |
           safety check -r requirements.txt -i SFTY-20260416-29160 -i SFTY-20260416-67376 -i SFTY-20260416-76786 -i SFTY-20260415-03316
-        continue-on-error: true
       
       - name: Upload security report
         uses: actions/upload-artifact@v4

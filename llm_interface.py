@@ -21,6 +21,11 @@ MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_PROMPT_LENGTH = 24000  # was 16384; safe for 8192-token models with max_tokens=1024
 
 
+class QueryCancelled(Exception):
+    """Raised when a user cancels an ongoing query."""
+    pass
+
+
 def _sanitize_error(error_msg: str) -> str:
     """Remove sensitive information from error messages.
 
@@ -196,7 +201,7 @@ class GGUFBackend(BaseLLM):
                 ):
                     # Check for cancellation at the top of the loop
                     if cancellation_event is not None and cancellation_event.is_set():
-                        raise Exception("cancelled")
+                        raise QueryCancelled()
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -225,7 +230,7 @@ class GGUFBackend(BaseLLM):
                 return choices[0].get("text", "")
         except Exception as e:
             # Preserve cancellation exceptions without wrapping
-            if "cancelled" in str(e).lower():
+            if isinstance(e, QueryCancelled):
                 raise
             sanitized = _sanitize_error(str(e))
             raise RuntimeError(f"GGUF backend failed: {sanitized}")
@@ -291,7 +296,7 @@ class GGUFBackend(BaseLLM):
                 ):
                     # Check for cancellation at the top of the loop
                     if cancellation_event is not None and cancellation_event.is_set():
-                        raise Exception("cancelled")
+                        raise QueryCancelled()
                     choices = chunk.get("choices") or []
                     if not choices:
                         continue
@@ -324,9 +329,10 @@ class GGUFBackend(BaseLLM):
                 raw = message.get("content", "") or ""
                 # Strip think-tag blocks that Qwen3 may emit despite /no_think
                 cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                return cleaned
         except Exception as e:
             # Preserve cancellation exceptions without wrapping
-            if "cancelled" in str(e).lower():
+            if isinstance(e, QueryCancelled):
                 raise
             sanitized = _sanitize_error(str(e))
             raise RuntimeError(f"GGUF backend failed: {sanitized}")
@@ -454,7 +460,7 @@ class SmartLLM:
         """
         # Check for cancellation before doing any work
         if cancellation_event is not None and cancellation_event.is_set():
-            raise Exception("cancelled")
+            raise QueryCancelled()
 
         history_prefix = ""
         if conversation_history:
@@ -497,7 +503,7 @@ class SmartLLM:
             )
         except Exception as e:
             # Preserve cancellation exceptions without falling back to generate()
-            if "cancelled" in str(e).lower():
+            if isinstance(e, QueryCancelled):
                 raise
             # Fall back to generate() — no history_prefix since it was already in chat_complete
             prompt = self.prompt_builder.build_prompt(question, context, sources)
