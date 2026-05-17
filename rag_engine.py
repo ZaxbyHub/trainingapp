@@ -7,12 +7,14 @@ import os
 import sys
 import json
 import time
-from typing import Optional, List, Dict, Any, Tuple
+import threading
+from typing import Optional, List, Dict, Any, Tuple, Callable
 from pathlib import Path
 from dataclasses import dataclass
 import app_paths
 import logging
 import re
+from llm_interface import QueryCancelled
 
 logger = logging.getLogger(__name__)
 
@@ -182,10 +184,15 @@ class RAGEngine:
         )
 
         self.llm: Optional[SmartLLM] = None
-        self._init_llm(gguf_path)
+        # LLM will be lazily initialized on first query() call
 
         # Lazy-init reranker only when reranking is enabled
         self.reranker = None
+
+        # Lazy-init QueryTransformer for query transformation
+        self._query_transformer: Optional[Any] = None
+        self._query_transformer_failed = False
+        self._init_lock = threading.Lock()
 
         self._save_config()
         self._log_init_banner("RAG Engine Ready")
@@ -200,6 +207,23 @@ class RAGEngine:
             logger.warning("[WARN] LLM not available: %s", e)
             logger.info("  RAG engine will work for document ingestion only.")
             self.llm = None
+
+    def _ensure_llm(self):
+        """Lazily initialize LLM on first use."""
+        if self.llm is None:
+            self._init_llm(self.gguf_path)
+
+    def _ensure_query_transformer(self):
+        """Lazily initialize QueryTransformer once."""
+        if self._query_transformer is None and not self._query_transformer_failed and self.config.query_transformation_enabled and self.llm:
+            with self._init_lock:
+                if self._query_transformer is None and not self._query_transformer_failed:  # Double-check
+                    try:
+                        from query_transformer import QueryTransformer
+                        self._query_transformer = QueryTransformer(self.llm)
+                    except Exception as e:
+                        logger.warning("QueryTransformer init failed: %s", e)
+                        self._query_transformer_failed = True  # Mark as failed to avoid retry
 
     def _save_config(self):
         """Save configuration to database directory."""
@@ -290,6 +314,8 @@ class RAGEngine:
         question: str,
         n_results: Optional[int] = None,
         conversation_history: Optional[list] = None,
+        cancellation_event: Optional[threading.Event] = None,
+        stream_callback: Optional[Callable[[str], None]] = None,
     ) -> QueryResult:
         """
         Answer a question using RAG.
@@ -300,10 +326,16 @@ class RAGEngine:
             conversation_history: Optional list of prior turns as
                 [{"role": "user"/"assistant", "content": "..."}].
                 Used for follow-up query detection and passed to the LLM.
+            cancellation_event: Optional threading.Event that signals cancellation.
+                If set, the query will stop at the next checkpoint and return
+                a cancelled result.
 
         Returns:
             QueryResult with answer and metadata
         """
+        # Lazily initialize LLM on first query
+        self._ensure_llm()
+        
         if not self.llm:
             raise RuntimeError("LLM not initialized. Cannot answer questions.")
 
@@ -324,17 +356,57 @@ class RAGEngine:
             "yo",
         }
         words = question.lower().split()
+        # Determine number of chunks to retrieve (always at least 1)
+
+        # Apply query transformation if enabled
+        self._ensure_query_transformer()
+        if self._query_transformer is not None:
+            try:
+                retrieval_query = self._query_transformer.transform_step_back(question)
+            except Exception as e:
+                logger.warning("Query transformation failed, using original query: %s", e)
+                retrieval_query = question
+        else:
+            retrieval_query = question
+
+        # Checkpoint (a): After query transformation
+        if cancellation_event is not None and cancellation_event.is_set():
+            logger.info("Query cancelled by user")
+            return QueryResult(
+                question=question,
+                answer="[Cancelled]",
+                sources=[],
+                context_length=0,
+                inference_time=time.time() - start_time,
+                chunks_retrieved=0,
+            )
+
+        # Handle greeting directly
         if len(words) <= 3 and any(
             keyword in question.lower() for keyword in greeting_keywords
         ):
-            # Handle greeting directly
-            answer = self.llm.answer_question(
-                question,
-                "",
-                [],
-                config=InferenceConfig(max_tokens=self.config.max_tokens, temperature=self.config.temperature),
-                conversation_history=conversation_history,
-            )
+            try:
+                answer = self.llm.answer_question(
+                    question,
+                    "",
+                    [],
+                    config=InferenceConfig(max_tokens=self.config.max_tokens, temperature=self.config.temperature),
+                    conversation_history=conversation_history,
+                    stream_callback=stream_callback,
+                    cancellation_event=cancellation_event,
+                )
+            except Exception as e:
+                if isinstance(e, QueryCancelled):
+                    logger.info("Query cancelled during greeting LLM generation")
+                    return QueryResult(
+                        question=question,
+                        answer="[Cancelled]",
+                        sources=[],
+                        context_length=0,
+                        inference_time=time.time() - start_time,
+                        chunks_retrieved=0,
+                    )
+                raise
             return QueryResult(
                 question=question,
                 answer=answer,
@@ -343,20 +415,6 @@ class RAGEngine:
                 inference_time=time.time() - start_time,
                 chunks_retrieved=0,
             )
-
-        # Determine number of chunks to retrieve (always at least 1)
-
-        # Apply query transformation if enabled
-        if self.config.query_transformation_enabled and self.llm:
-            try:
-                from query_transformer import QueryTransformer
-                transformer = QueryTransformer(self.llm)
-                retrieval_query = transformer.transform_step_back(question)
-            except Exception as e:
-                logger.warning("Query transformation failed, using original query: %s", e)
-                retrieval_query = question
-        else:
-            retrieval_query = question
 
         # Follow-up query detection
         if conversation_history is not None and conversation_history:
@@ -406,7 +464,19 @@ class RAGEngine:
             min_similarity=self.config.min_similarity,
             hybrid_search=self.config.hybrid_search,
             retrieval_window=self.config.retrieval_window,
-        )  # Calculate effective rerank top_k: use n_results if provided, otherwise fall back to config
+        )
+
+        # Checkpoint (b): After vector store retrieval
+        if cancellation_event is not None and cancellation_event.is_set():
+            logger.info("Query cancelled by user")
+            return QueryResult(
+                question=question,
+                answer="[Cancelled]",
+                sources=[],
+                context_length=0,
+                inference_time=time.time() - start_time,
+                chunks_retrieved=0,
+            )
         effective_top_k = n_results if n_results is not None else self.config.rerank_top_k
 
         # Guard against effective_top_k <= 0
@@ -460,6 +530,7 @@ class RAGEngine:
                 chunks_retrieved = len(fallback)
                 final_chunks_with_scores = [(chunk, None) for chunk in fallback]
 
+
         else:
             # Non-reranking path: truncate to n_results or config.n_results
             final_top_k = n_results if n_results is not None else self.config.n_results
@@ -471,6 +542,18 @@ class RAGEngine:
             chunks_retrieved = len(final_chunks)
             final_chunks_with_scores = [(chunk, None) for chunk in final_chunks]
 
+        # Checkpoint (c): After reranking (or non-reranking path)
+        if cancellation_event is not None and cancellation_event.is_set():
+            logger.info("Query cancelled by user")
+            return QueryResult(
+                question=question,
+                answer="[Cancelled]",
+                sources=[],
+                context_length=0,
+                inference_time=time.time() - start_time,
+                chunks_retrieved=0,
+            )
+
         # Diagnostic logging
         logger.debug(
             "Context type: %s, len: %s",
@@ -481,6 +564,17 @@ class RAGEngine:
         logger.debug("Context preview: %s", context[:200] if context else "None")
 
         if not context:
+            # Check cancellation before returning empty-context fallback
+            if cancellation_event is not None and cancellation_event.is_set():
+                logger.info("Query cancelled by user (empty context)")
+                return QueryResult(
+                    question=question,
+                    answer="[Cancelled]",
+                    sources=[],
+                    context_length=0,
+                    inference_time=time.time() - start_time,
+                    chunks_retrieved=chunks_retrieved,
+                )
             return QueryResult(
                 question=question,
                 answer="I couldn't find any relevant information in the documents to answer your question.",
@@ -493,14 +587,42 @@ class RAGEngine:
         # Pre-truncate context to stay within LLM context budget
         safe_context = _truncate_at_sentence(context, self.config.context_truncation)
 
+        # Checkpoint (d): Before calling LLM - the main generation boundary
+        if cancellation_event is not None and cancellation_event.is_set():
+            logger.info("Query cancelled by user")
+            return QueryResult(
+                question=question,
+                answer="[Cancelled]",
+                sources=[],
+                context_length=0,
+                inference_time=time.time() - start_time,
+                chunks_retrieved=0,
+            )
+
         # Use answer_question instead of generate for proper RAG handling
-        answer = self.llm.answer_question(
-            question=question,
-            context=safe_context,
-            sources=sources,
-            config=InferenceConfig(max_tokens=self.config.max_tokens, temperature=self.config.temperature),
-            conversation_history=conversation_history,
-        )
+        try:
+            answer = self.llm.answer_question(
+                question=question,
+                context=safe_context,
+                sources=sources,
+                config=InferenceConfig(max_tokens=self.config.max_tokens, temperature=self.config.temperature),
+                conversation_history=conversation_history,
+                stream_callback=stream_callback,
+                cancellation_event=cancellation_event,
+            )
+        except Exception as e:
+            if isinstance(e, QueryCancelled):
+                logger.info("Query cancelled during LLM generation")
+                return QueryResult(
+                    question=question,
+                    answer="[Cancelled]",
+                    sources=[],
+                    context_length=0,
+                    inference_time=time.time() - start_time,
+                    chunks_retrieved=chunks_retrieved,
+                )
+            raise
+
 
         # Post-process: if LLM says it can't find information but we retrieved chunks, provide helpful fallback
         fallback_phrases = [

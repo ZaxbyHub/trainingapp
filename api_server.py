@@ -8,6 +8,7 @@ import json
 import re
 import socket
 import logging
+import asyncio
 import unicodedata
 from typing import Optional, Set, Tuple, List
 from pathlib import Path
@@ -433,7 +434,7 @@ async def ask_question(
         raise HTTPException(status_code=503, detail="No LLM backend available")
 
     try:
-        result = engine.query(request.question, n_results=request.n_results)
+        result = await asyncio.to_thread(engine.query, request.question, n_results=request.n_results)
         return QuestionResponse(
             question=result.question,
             answer=result.answer,
@@ -457,7 +458,7 @@ async def search_documents(
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
     try:
-        results = engine.search_documents(request.query, n_results=request.n_results)
+        results = await asyncio.to_thread(engine.search_documents, request.query, n_results=request.n_results)
         return [
             SearchResult(text=doc, source=meta.get("source", "Unknown"), similarity=sim)
             for doc, meta, sim in results
@@ -482,7 +483,7 @@ async def ingest_directory(
         raise HTTPException(status_code=400, detail="Invalid directory path")
 
     try:
-        stats = engine.ingest_directory(validated_dir)
+        stats = await asyncio.to_thread(engine.ingest_directory, validated_dir)
         return IngestResponse(
             success=stats["success"],
             documents=stats.get("documents", 0),
@@ -512,7 +513,6 @@ async def ingest_file(
     file_size = 0
     file_content = await file.read()
     file_size = len(file_content)
-    await file.seek(0)  # Reset file pointer for later processing
 
     if file_size > MAX_FILE_SIZE:
         raise HTTPException(
@@ -536,8 +536,7 @@ async def ingest_file(
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            content = await file.read()
-            tmp.write(content)
+            tmp.write(file_content)
             tmp_path = tmp.name
 
         # Use sanitized display name as source

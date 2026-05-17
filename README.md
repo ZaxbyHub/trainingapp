@@ -50,9 +50,6 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - **Operation Cancellation**: Cancel long-running operations (ingestion, querying, engine init) via Cancel button or Escape key
 
 ### Interactive Source Pills (Phase 4)
-- **Clickable Source Badges**: Document sources in chat messages are now interactive pills with document icons
-- **Inline Snippet Preview**: Click a source pill to expand an inline card showing the relevant text snippet from the document
-- **Horizontal Layout**: Multiple sources displayed in a wrap-enabled horizontal row
 
 ### Settings Tooltips (Phase 4)
 - **CTkTooltip Class**: Non-blocking hover tooltips with 500ms delay for all settings fields
@@ -64,6 +61,18 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - **Debug Mode**: Toggle debug-level logging for troubleshooting
 - **Log File Persistence**: Customizable log file path with automatic persistence
 - **Auto-Reconfiguration**: RAG settings (chunk size, n_results, etc.) trigger engine reinitialization when changed
+
+### Performance & Thread Safety (Phase 5)
+- **Thread-Safe RAG Engine**: Full serialization via `asyncio.to_thread()` wrapping for blocking endpoints
+- **ChromaDB Locking**: `RLock` for vector store operations preventing concurrent access corruption
+- **BM25 Index Threadsafety**: Incremental add operations protected by RLock for safe concurrent document ingestion
+- **Lazy LLM Initialization**: On-demand LLM loading reduces memory footprint for CLI/API modes
+- **Cancellation Propagation**: `cancellation_event` passed through query processing for responsive long-operation termination
+- **Memory Budget Checks**: Pre-ingestion memory validation prevents OOM errors on large document sets
+- **QueryTransformer Singleton**: Shared transformer instance across requests with thread-safe initialization
+- **Cross-Encoder threadsafety**: `__new__` pattern ensures single instance with RLock for concurrent reranking
+- **Neighborhood Expansion**: Increased k from 3 to 5 chunks for better context coverage in streaming mode
+- **Embedding Batch Normalization**: Consistent batch sizes for predictable memory usage during ingestion
 
 ### Chat Improvements (Phase 7)
 - **Thinking Indicator**: Animated "Thinking..." with dots while LLM generates responses
@@ -611,6 +620,6 @@ MIT License - See LICENSE file for details.
 - [CustomTkinter](https://customtkinter.tomschimansky.com/) - Modern GUI toolkit
 
 ---
-**Version**: 1.1.0
-**Last Updated**: 2026-03-01
+**Version**: 2.1.0
+**Last Updated**: 2026-05-17
 **Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)

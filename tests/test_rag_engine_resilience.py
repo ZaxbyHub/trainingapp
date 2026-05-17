@@ -4,6 +4,7 @@ Resilience tests for rag_engine.py — _log_init_banner, _save_config, reranker,
 import pytest
 import json
 import logging
+import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch, mock_open
 
@@ -122,6 +123,8 @@ class TestRerankerErrorHandling:
         engine.llm = mock_llm
         engine.reranker = None  # Will be lazily init'd
         engine.gguf_path = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
 
         # CrossEncoderReranker is imported dynamically inside query() from reranking module
         with caplog.at_level(logging.WARNING, logger="rag_engine"):
@@ -155,6 +158,8 @@ class TestRerankerErrorHandling:
         engine.llm = mock_llm
         engine.reranker = None
         engine.gguf_path = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
 
         with patch("reranking.CrossEncoderReranker", side_effect=RuntimeError("reranker error")):
             result = engine.query("what is this?")
@@ -189,6 +194,8 @@ class TestRerankerErrorHandling:
         engine.llm = mock_llm
         engine.reranker = None
         engine.gguf_path = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
 
         with patch("reranking.CrossEncoderReranker", return_value=mock_reranker):
             result = engine.query("test question")
@@ -220,6 +227,8 @@ class TestQueryTransformerGating:
         engine.llm = mock_llm
         engine.reranker = None
         engine.gguf_path = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
 
         with patch("query_transformer.QueryTransformer") as mock_qt:
             result = engine.query("test question")
@@ -243,6 +252,8 @@ class TestQueryTransformerGating:
         engine.llm = None  # No LLM — should skip transformation
         engine.reranker = None
         engine.gguf_path = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
 
         with pytest.raises(RuntimeError, match="LLM not initialized"):
             engine.query("test question")
@@ -271,6 +282,9 @@ class TestQueryTransformerGating:
         engine.llm = mock_llm
         engine.reranker = None
         engine.gguf_path = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
+        engine._init_lock = threading.Lock()
 
         with caplog.at_level(logging.WARNING, logger="rag_engine"):
             with patch("query_transformer.QueryTransformer", return_value=mock_qt_instance):
@@ -305,6 +319,9 @@ class TestQueryTransformerGating:
         engine.llm = mock_llm
         engine.reranker = None
         engine.gguf_path = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
+        engine._init_lock = threading.Lock()
 
         with patch("query_transformer.QueryTransformer", return_value=mock_qt_instance):
             engine.query("original question")
