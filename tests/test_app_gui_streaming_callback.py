@@ -389,10 +389,9 @@ class TestStreamCallbackWiringBug:
     stream_callback to self.llm.answer_question() inside query().
     """
 
-    def test_rag_engine_query_rejects_stream_callback(self):
+    def test_rag_engine_query_accepts_stream_callback(self):
         """
-        rag_engine.query() does NOT have a stream_callback parameter.
-        Calling it with stream_callback= will raise TypeError.
+        rag_engine.query() has a stream_callback parameter wired correctly.
         """
         try:
             import rag_engine
@@ -402,16 +401,14 @@ class TestStreamCallbackWiringBug:
         sig = inspect.signature(rag_engine.RAGEngine.query)
         params = list(sig.parameters.keys())
 
-        assert "stream_callback" not in params, (
-            f"BUG: rag_engine.query() unexpectedly has stream_callback parameter. "
+        assert "stream_callback" in params, (
+            f"BUG: rag_engine.query() is missing stream_callback parameter. "
             f"Current params: {params}"
         )
 
-    def test_app_gui_ask_question_passes_stream_callback_to_query(self):
+    def test_rag_engine_query_passes_stream_callback_to_llm(self):
         """
         app_gui._ask_question() passes stream_callback=on_token to query().
-
-        This will raise TypeError because rag_engine.query() doesn't accept it.
         """
         try:
             import app_gui
@@ -422,17 +419,12 @@ class TestStreamCallbackWiringBug:
 
         # Verify that stream_callback IS passed to query
         assert "stream_callback=on_token" in source, (
-            "app_gui._ask_question() must pass stream_callback=on_token to query(). "
-            "This is the intended behavior, but it causes TypeError because "
-            "rag_engine.query() doesn't accept stream_callback."
+            "app_gui._ask_question() must pass stream_callback=on_token to query()."
         )
 
-    def test_rag_engine_query_does_not_pass_stream_callback_to_answer_question(self):
+    def test_rag_engine_query_passes_stream_callback_to_answer_question(self):
         """
-        Even if stream_callback were accepted by query(), the current implementation
-        does NOT pass stream_callback to self.llm.answer_question().
-
-        This is a SECONDARY BUG: the streaming chain is broken even further up.
+        rag_engine.query() passes stream_callback to self.llm.answer_question().
         """
         try:
             import rag_engine
@@ -448,9 +440,9 @@ class TestStreamCallbackWiringBug:
             for i, line in enumerate(lines):
                 if "answer_question" in line and "self.llm" in line:
                     # Get surrounding 3 lines
-                    call_chunk = "\n".join(lines[max(0,i-1):i+3])
-                    assert "stream_callback" not in call_chunk, (
-                        f"BUG: answer_question call includes stream_callback:\n{call_chunk}"
+                    call_chunk = "\n".join(lines[max(0,i-1):i+8])
+                    assert "stream_callback" in call_chunk, (
+                        f"BUG: answer_question call missing stream_callback:\n{call_chunk}"
                     )
                     break
 

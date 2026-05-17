@@ -91,7 +91,6 @@ def mock_rag_engine(mock_chromadb, mock_embedding_model, tmp_path):
 class TestVectorStoreConcurrentReads:
     """Test 10 threads reading simultaneously, no deadlocks."""
 
-    @pytest.mark.skip(reason="Exposes source concurrency bug in vector_store.py:582 add_chunks batch_embeddings race — fix source first")
     def test_vector_store_concurrent_reads(self, mock_chromadb, mock_embedding_model, tmp_path):
         """10 threads reading simultaneously should complete without deadlock."""
         from vector_store import VectorStore

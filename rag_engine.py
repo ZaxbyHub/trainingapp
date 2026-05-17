@@ -179,6 +179,7 @@ class RAGEngine:
 
         # Lazy-init QueryTransformer for query transformation
         self._query_transformer: Optional[Any] = None
+        self._query_transformer_failed = False
         self._init_lock = threading.Lock()
 
         self._save_config()
@@ -202,7 +203,7 @@ class RAGEngine:
 
     def _ensure_query_transformer(self):
         """Lazily initialize QueryTransformer once."""
-        if self._query_transformer is None and self.config.query_transformation_enabled and self.llm:
+        if self._query_transformer is None and not self._query_transformer_failed and self.config.query_transformation_enabled and self.llm:
             with self._init_lock:
                 if self._query_transformer is None:  # Double-check
                     try:
@@ -210,7 +211,7 @@ class RAGEngine:
                         self._query_transformer = QueryTransformer(self.llm)
                     except Exception as e:
                         logger.warning("QueryTransformer init failed: %s", e)
-                        self._query_transformer = None  # Mark as failed to avoid retry
+                        self._query_transformer_failed = True  # Mark as failed to avoid retry
 
     def _save_config(self):
         """Save configuration to database directory."""

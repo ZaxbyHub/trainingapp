@@ -639,7 +639,7 @@ class VectorStore:
                         self.bm25_index = BM25Index()
                     self.bm25_index.add_documents(added_chunks, rebuild_index=rebuild_index)
 
-                self._save_metadata()
+        self._save_metadata()
 
         return added
 
