@@ -729,6 +729,8 @@ class DocumentQAApp(CTk):
         self._clear_confirm_pending = False    # True while "Confirm?" is showing
         self._empty_state_visible = False
         self._empty_state_frame = None
+        self._streaming_message_ref: Optional[CTkLabel] = None  # Reference to streaming message content label
+        self._streaming_message_frame: Optional[CTkFrame] = None  # Reference to streaming message frame
 
         # Chat area
         self.chat_frame = CTkScrollableFrame(self)
@@ -1114,6 +1116,15 @@ class DocumentQAApp(CTk):
         for widget in self.chat_frame.winfo_children():
             widget.destroy()
 
+        # FR-011, SC-008: Clean up expanded pills state
+        if hasattr(self, "_expanded_pills"):
+            self._expanded_pills.clear()
+
+        # FR-011, SC-008: Clean up orphaned snippet frame attributes
+        keys_to_delete = [k for k in self.__dict__ if k.startswith("_snippet_frame_")]
+        for k in keys_to_delete:
+            del self.__dict__[k]
+
     def _confirm_clear_chat(self):
         """Inline two-click confirm pattern for clearing chat — FR-704a.
 
@@ -1209,9 +1220,19 @@ class DocumentQAApp(CTk):
                     elif msg[0] == "cancel_button_hide":
                         if self.winfo_exists() and hasattr(self, "cancel_button"):
                             self.cancel_button.pack_forget()
+                    elif msg[0] == "assistant_token":
+                        # Handle streaming token — append to pending assistant message
+                        if self.winfo_exists():
+                            self._handle_streaming_token(msg[1])
                     elif msg[0] == "message":
                         if self.winfo_exists():
-                            self._add_message(*msg[1:])
+                            # Handle cancelled queries - display "Cancelled" instead of empty bubble
+                            role = msg[1]
+                            content = msg[2]
+                            if role == "assistant" and content == "[Cancelled]":
+                                self._add_message(role, "Cancelled", *msg[3:])
+                            else:
+                                self._add_message(*msg[1:])
                     elif msg[0] == "doc_count":
                         if self.winfo_exists() and hasattr(self, "doc_count_label"):
                             self.doc_count_label.configure(text=f"Documents: {msg[1]}")
@@ -1230,6 +1251,26 @@ class DocumentQAApp(CTk):
                     elif msg[0] == "hide_typing":
                         if self.winfo_exists():
                             self._hide_typing_indicator()
+                    elif msg[0] == "stream_end":
+                        # Streaming completed — destroy frame on main thread
+                        if self._streaming_message_frame is not None:
+                            try:
+                                if self._streaming_message_frame.winfo_exists():
+                                    self._streaming_message_frame.destroy()
+                            except Exception:
+                                pass
+                        self._streaming_message_ref = None
+                        self._streaming_message_frame = None
+                    elif msg[0] == "stream_destroy":
+                        # Destroy streaming frame on main thread (from cancellation path)
+                        if self._streaming_message_frame is not None:
+                            try:
+                                if self._streaming_message_frame.winfo_exists():
+                                    self._streaming_message_frame.destroy()
+                            except Exception:
+                                pass
+                        self._streaming_message_ref = None
+                        self._streaming_message_frame = None
                     elif msg[0] == "model_label":
                         if self.winfo_exists() and hasattr(self, "model_label"):
                             self.model_label.configure(text=msg[1])
@@ -1396,6 +1437,62 @@ class DocumentQAApp(CTk):
             del self._typing_label
         if hasattr(self, "_typing_frame"):
             del self._typing_frame
+
+    def _handle_streaming_token(self, token: str):
+        """Handle a streaming token from the LLM.
+        
+        Creates a new assistant message on first token, then appends subsequent
+        tokens to the message content label. All UI updates happen on the main
+        thread via this method being called from the message processor.
+        
+        Args:
+            token: The token text to append to the current message.
+        """
+        # Guard: discard tokens after cancellation
+        if self._operation_cancelled.is_set():
+            return
+        
+        if self._streaming_message_ref is None:
+            # First token — create the assistant message structure
+            self._streaming_message_frame = CTkFrame(self.chat_frame)
+            self._streaming_message_frame.pack(fill="x", pady=Spacing.SM, padx=Spacing.SM)
+
+            bg_color = ColorTokens.bubble_assistant()
+            self._streaming_message_frame.configure(fg_color=bg_color)
+
+            # Role header row with timestamp
+            header_label = CTkLabel(
+                self._streaming_message_frame,
+                text="Assistant  ·  " + datetime.now().strftime("%H:%M"),
+                font=TypeScale.small(),
+                text_color=ColorTokens.text_muted(),
+            )
+            header_label.pack(fill="x", padx=Spacing.LG, pady=(Spacing.MD, 0))
+
+            # Content label (starts empty)
+            text_label = CTkLabel(
+                self._streaming_message_frame,
+                text=token,
+                wraplength=self._get_wraplength(),
+                justify="left",
+                anchor="w",
+                text_color=ColorTokens.text_on_bubble("assistant"),
+            )
+            text_label.pack(fill="x", padx=Spacing.LG, pady=Spacing.LG)
+
+            self._streaming_message_ref = text_label
+
+            # Scroll to bottom
+            if hasattr(self.chat_frame, "_parent_canvas"):
+                self.chat_frame._parent_canvas.yview_moveto(1.0)
+        else:
+            # Subsequent token — append to existing message
+            current_text = self._streaming_message_ref.cget("text")
+            self._streaming_message_ref.configure(text=current_text + token)
+
+            # Scroll to bottom
+            if hasattr(self.chat_frame, "_parent_canvas"):
+                self.chat_frame._parent_canvas.yview_moveto(1.0)
 
     def _on_close(self):
         """Handle window close — FR-707: confirm before closing during active operations."""
@@ -1598,29 +1695,44 @@ class DocumentQAApp(CTk):
         self.message_queue.put(("cancel_button_show",))
         self._show_typing_indicator()
 
+        # Streaming callback — puts tokens into the message queue for main-thread handling
+        def on_token(token: str):
+            if not self._operation_cancelled.is_set():
+                self.message_queue.put(("assistant_token", token))
+
         def query():
             try:
+                # Pass stream_callback and cancellation_event to engine.query
                 result = self.engine.query(
-                    question, conversation_history=self.conversation_history
+                    question,
+                    conversation_history=self.conversation_history,
+                    stream_callback=on_token,
+                    cancellation_event=self._operation_cancelled
                 )
 
                 # Check for cancellation after query
                 if self._operation_cancelled.is_set():
                     self._operation_cancelled.clear()
                     self._is_operation_active = False
+                    # Queue stream_destroy to run on main thread (tkinter thread-safety)
+                    self.message_queue.put(("stream_destroy",))
                     self.message_queue.put(("cancel_button_hide",))
                     self.message_queue.put(("hide_typing",))
                     self.message_queue.put(("enable_input", True))
                     return
-                self.conversation_history.append({"role": "user", "content": question})
-                self.conversation_history.append(
-                    {"role": "assistant", "content": result.answer}
-                )
-                self.conversation_history = self.conversation_history[-20:]
 
-                self.message_queue.put(
-                    ("message", "assistant", result.answer, result.sources, datetime.now().strftime("%H:%M"))
-                )
+                # If streaming was used, send stream_end to finalize on main thread
+                if self._streaming_message_ref is not None:
+                    self.message_queue.put(("stream_end",))
+
+                # FR-002.3: Only append to conversation_history on successful (non-cancelled, non-empty) query result
+                if result.answer and result.answer != "[Cancelled]":
+                    self.conversation_history.append({"role": "user", "content": question})
+                    self.conversation_history.append(
+                        {"role": "assistant", "content": result.answer}
+                    )
+                    self.conversation_history = self.conversation_history[-20:]
+
                 self.message_queue.put(
                     ("status", f"Ready ({result.inference_time:.1f}s)")
                 )
@@ -1631,6 +1743,8 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("hide_typing",))
 
             except Exception as e:
+                # Queue stream_end to run on main thread (tkinter thread-safety)
+                self.message_queue.put(("stream_end",))
                 self.message_queue.put(("status", f"Error: {e}"))
                 self.message_queue.put(("message", "system", _classify_error(e, "query"), None, datetime.now().strftime("%H:%M")))
                 self.message_queue.put(("enable_input", True))

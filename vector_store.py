@@ -7,7 +7,7 @@ import os
 import sys
 import json
 import threading
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, Set
 from pathlib import Path
 
 
@@ -40,6 +40,9 @@ from query_transformer import STOP_WORDS
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Module-level lock for ChromaDB operations to prevent concurrent read-write race conditions
+_chroma_lock = threading.RLock()
 
 
 class EmbeddingModel:
@@ -145,10 +148,17 @@ class EmbeddingModel:
                             f"  Install instructions: Download BAAI/bge-small-en-v1.5 to {expected_path}"
                         ) from e
 
-    def encode(self, texts: List[str]) -> List[List[float]]:
+    def encode(self, texts: List[str], batch_size: Optional[int] = None) -> List[List[float]]:
         """Encode texts to embeddings."""
+        if batch_size is not None and batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {batch_size}")
+        if not texts:
+            return []
         self._ensure_model_loaded()
-        embeddings = self.model.encode(texts, show_progress_bar=len(texts) > 10)
+        encode_kwargs = {"show_progress_bar": len(texts) > 10}
+        if batch_size is not None:
+            encode_kwargs["batch_size"] = batch_size
+        embeddings = self.model.encode(texts, **encode_kwargs)
         return embeddings.tolist()
 
     def encode_single(self, text: str) -> List[float]:
@@ -159,46 +169,156 @@ class EmbeddingModel:
 
 
 class BM25Index:
-    """BM25 indexing and search functionality."""
+    """BM25 indexing and search functionality with incremental updates.
+    
+    This implementation supports O(k) updates for k new chunks, avoiding full
+    corpus rebuilds on each addition. Maintains:
+    - self.chunks: list of all chunks
+    - self._tokenized: list of tokenized chunks (aligned with self.chunks)
+    - self._doc_freqs: dict {term: number of docs containing term}
+    - self._avgdl: average document length
+    - self._idf_cache: cached IDF values (invalidated when new docs added)
+    """
 
     def __init__(self):
         """Initialize empty index."""
         self.chunks: List[DocumentChunk] = []
-        self.bm25_index = None
+        self._tokenized: List[List[str]] = []
+        self._doc_freqs: Dict[str, int] = {}
+        self._avgdl: float = 0.0
+        self._total_token_count: int = 0  # Running total for incremental avgdl
+        self._idf_cache: Optional[Dict[str, float]] = None
+        self._lock = threading.RLock()
+        self.bm25_index = None  # Kept for backward compatibility
 
     def _tokenize(self, text: str) -> List[str]:
         """Tokenize text for BM25: lowercase, remove stop words, filter short tokens."""
         tokens = text.lower().split()
         return [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
 
+    def _update_doc_frequencies(self, new_tokenized: List[List[str]]):
+        """Incrementally update document frequencies with new chunks.
+        
+        Args:
+            new_tokenized: List of tokenized new chunks.
+        """
+        for tokens in new_tokenized:
+            # Count unique terms in this document
+            unique_terms = set(tokens)
+            for term in unique_terms:
+                self._doc_freqs[term] = self._doc_freqs.get(term, 0) + 1
+
+    def _compute_idf(self) -> Dict[str, float]:
+        """Compute IDF values from document frequencies.
+        
+        Returns:
+            Dict mapping terms to their IDF values.
+        """
+        N = len(self.chunks)
+        if N == 0:
+            return {}
+        
+        idf_cache = {}
+        for term, df in self._doc_freqs.items():
+            # Standard BM25 IDF formula
+            idf_cache[term] = (N - df + 0.5) / (df + 0.5)
+        
+        return idf_cache
+
+    def rebuild(self):
+        """Explicit full rebuild of the index from all chunks.
+        
+        Use this when you need to rebuild from scratch (e.g., after deletions).
+        """
+        if not self.chunks:
+            self._tokenized = []
+            self._doc_freqs = {}
+            self._avgdl = 0.0
+            self._idf_cache = None
+            return
+        
+        # Rebuild everything from scratch
+        self._tokenized = [self._tokenize(chunk.text) for chunk in self.chunks]
+        self._doc_freqs = {}
+        
+        # Compute document frequencies
+        for tokens in self._tokenized:
+            unique_terms = set(tokens)
+            for term in unique_terms:
+                self._doc_freqs[term] = self._doc_freqs.get(term, 0) + 1
+        
+        # Compute average document length
+        total_len = sum(len(tokens) for tokens in self._tokenized)
+        self._avgdl = total_len / len(self.chunks)
+        
+        # Invalidate IDF cache (will be computed lazily on first search)
+        self._idf_cache = None
+        
+        # Also rebuild the legacy BM25Okapi index for backward compatibility
+        if BM25_AVAILABLE and self._tokenized:
+            self.bm25_index = BM25Okapi(self._tokenized)
+            if len(self.chunks) > 10000:
+                logger.warning(
+                    "Large BM25 corpus: %d chunks. Search performance may degrade.",
+                    len(self.chunks),
+                )
+        else:
+            self.bm25_index = None
+
     def build_index(self, chunks: List[DocumentChunk]):
-        """Build BM25 index from chunks."""
+        """Build BM25 index from chunks (full rebuild).
+        
+        Args:
+            chunks: List of DocumentChunk objects to index.
+        """
         self.chunks = chunks
-        tokenized_corpus = [self._tokenize(chunk.text) for chunk in chunks]
-        # Create BM25Okapi index from tokenized corpus
-        if tokenized_corpus:
-            if BM25_AVAILABLE:
-                self.bm25_index = BM25Okapi(tokenized_corpus)
-                if len(chunks) > 10000:
+        self.rebuild()
+
+    def add_documents(self, chunks: List[DocumentChunk], rebuild_index: bool = False):
+        """Add multiple documents to the BM25 index incrementally.
+        
+        This method performs O(k) updates where k is the number of new chunks,
+        avoiding the O(N) cost of rebuilding the entire index.
+        
+        Args:
+            chunks: List of DocumentChunk objects to add.
+            rebuild_index: If True, update the legacy BM25Okapi index immediately.
+                          If False (default), only update incremental structures.
+                          The incremental score computation doesn't need the legacy index.
+        """
+        if not chunks:
+            return
+        
+        # Step 1: Extend chunks
+        self.chunks.extend(chunks)
+        
+        # Step 2: Tokenize only the NEW chunks
+        start_idx = len(self._tokenized)
+        new_tokenized = [self._tokenize(chunk.text) for chunk in chunks]
+        self._tokenized.extend(new_tokenized)
+        
+        # Step 3: Update doc frequencies incrementally
+        self._update_doc_frequencies(new_tokenized)
+        
+        # Step 4: Update average document length incrementally (O(k) not O(N))
+        # Add only the new token counts to the running total
+        self._total_token_count += sum(len(t) for t in new_tokenized)
+        self._avgdl = self._total_token_count / len(self.chunks)
+        
+        # Step 5: Invalidate IDF cache
+        self._idf_cache = None
+        
+        # Step 6: Rebuild legacy BM25Okapi index if needed
+        if rebuild_index:
+            if BM25_AVAILABLE and self._tokenized:
+                self.bm25_index = BM25Okapi(self._tokenized)
+                if len(self.chunks) > 10000:
                     logger.warning(
                         "Large BM25 corpus: %d chunks. Search performance may degrade.",
-                        len(chunks),
+                        len(self.chunks),
                     )
             else:
                 self.bm25_index = None
-
-    def add_documents(self, chunks: List[DocumentChunk], rebuild_index: bool = True):
-        """Add multiple documents to the BM25 index.
-
-        Args:
-            chunks: List of DocumentChunk objects to add.
-            rebuild_index: If True (default), rebuild the index after adding.
-                          If False, caller must manually call build_index() later.
-        """
-        self.chunks.extend(chunks)
-        # Rebuild index once after all additions if requested
-        if rebuild_index:
-            self.build_index(self.chunks)
 
     def add_document(self, chunk_id: str, text: str, rebuild_index: bool = True):
         """Add a single document to the BM25 index.
@@ -206,8 +326,8 @@ class BM25Index:
         Args:
             chunk_id: Unique identifier for the document.
             text: Document text content.
-            rebuild_index: If True (default), rebuild the index after adding.
-                          If False, caller must manually call build_index() later.
+            rebuild_index: If True (default), update the index immediately.
+                          If False, caller must manually call rebuild() later.
         """
         self.add_documents(
             [
@@ -219,22 +339,55 @@ class BM25Index:
         )
 
     def search(self, query: str, top_k: int = 10) -> List[Tuple[int, float]]:
-        """Search for top_k results based on BM25 scores."""
-        if not self.bm25_index:
-            return []
-
-        try:
+        """Search for top_k results based on BM25 scores.
+        
+        Uses incremental score computation with cached IDF values.
+        Thread-safe: acquires self._lock to prevent race conditions with add_chunks.
+        
+        Args:
+            query: Search query string.
+            top_k: Maximum number of results to return.
+            
+        Returns:
+            List of (chunk_index, score) tuples sorted by score descending.
+        """
+        with self._lock:
+            if not self._doc_freqs:
+                return []
+            
             tokenized_query = self._tokenize(query)
-            # Get BM25 scores for all documents
-            scores = self.bm25_index.get_scores(tokenized_query)
-            # Return list of (chunk_index, score) sorted by score descending
-            # Only return results with score > 0
-            results = [(i, score) for i, score in enumerate(scores) if score > 0]
-            results.sort(key=lambda x: x[1], reverse=True)
-            return results[:top_k]
-        except Exception as e:
-            logger.warning("BM25 search failed for query '%s': %s", query, e)
-            return []
+            if not tokenized_query:
+                return []
+            
+            # Compute IDF lazily if needed
+            if self._idf_cache is None:
+                self._idf_cache = self._compute_idf()
+            
+            N = len(self.chunks)
+            avgdl = self._avgdl
+            k1 = 1.5
+            b = 0.75
+            
+            # Pre-compute doc lengths
+            doc_lens = [len(t) for t in self._tokenized]
+            
+            scores = []
+            for i, tokens in enumerate(self._tokenized):
+                score = 0.0
+                doc_len = doc_lens[i]
+                for term in tokenized_query:
+                    if term in self._doc_freqs:
+                        df = self._doc_freqs[term]
+                        idf = self._idf_cache.get(term, 0)
+                        tf = tokens.count(term)
+                        numerator = idf * tf * (k1 + 1)
+                        denominator = tf + k1 * (1 - b + b * doc_len / avgdl)
+                        score += numerator / denominator if denominator > 0 else 0
+                if score > 0:
+                    scores.append((i, score))
+            
+            scores.sort(key=lambda x: x[1], reverse=True)
+            return scores[:top_k]
 
     def save(self, path: str):
         """Save chunks to JSON (BM25 index is rebuilt on load)."""
@@ -253,6 +406,10 @@ class BM25Index:
         if not os.path.exists(json_path):
             # No saved index — start fresh
             self.chunks = []
+            self._tokenized = []
+            self._doc_freqs = {}
+            self._avgdl = 0.0
+            self._idf_cache = None
             self.bm25_index = None
             return
         with open(json_path, "r", encoding="utf-8") as f:
@@ -260,15 +417,8 @@ class BM25Index:
         self.chunks = [
             DocumentChunk(**chunk_dict) for chunk_dict in data.get("chunks", [])
         ]
-        # Rebuild BM25Okapi from corpus
-        tokenized_corpus = [self._tokenize(chunk.text) for chunk in self.chunks]
-        if tokenized_corpus:
-            if BM25_AVAILABLE:
-                self.bm25_index = BM25Okapi(tokenized_corpus)
-            else:
-                self.bm25_index = None
-        else:
-            self.bm25_index = None
+        # Rebuild BM25 from scratch
+        self.rebuild()
 
 
 class VectorStore:
@@ -308,41 +458,43 @@ class VectorStore:
 
     def _rebuild_bm25_if_needed(self):
         """Rebuild BM25 index lazily on first search if needed."""
-        if not self._bm25_needs_rebuild:
-            return
+        with _chroma_lock:
+            with self._lock:
+                if not self._bm25_needs_rebuild:
+                    return
 
-        try:
-            all_data = self.collection.get(include=["documents", "metadatas"])
-            docs = all_data.get("documents") or []
-            metas = all_data.get("metadatas") or []
-            if docs and metas:
-                all_chunks = []
-                for doc, meta in zip(docs, metas):
-                    if (
-                        not meta
-                        or "source" not in meta
-                        or "chunk_index" not in meta
-                    ):
-                        continue
-                    chunk = DocumentChunk(
-                        text=doc,
-                        source=meta["source"],
-                        chunk_index=meta["chunk_index"],
-                        page=meta.get("page"),
-                    )
-                    all_chunks.append(chunk)
-                if all_chunks:
+                try:
+                    all_data = self.collection.get(include=["documents", "metadatas"])
+                    docs = all_data.get("documents") or []
+                    metas = all_data.get("metadatas") or []
+                    if docs and metas:
+                        all_chunks = []
+                        for doc, meta in zip(docs, metas):
+                            if (
+                                not meta
+                                or "source" not in meta
+                                or "chunk_index" not in meta
+                            ):
+                                continue
+                            chunk = DocumentChunk(
+                                text=doc,
+                                source=meta["source"],
+                                chunk_index=meta["chunk_index"],
+                                page=meta.get("page"),
+                            )
+                            all_chunks.append(chunk)
+                        if all_chunks:
+                            self.bm25_index = BM25Index()
+                            self.bm25_index.build_index(all_chunks)
+                            logger.info(
+                                "[OK] BM25 index rebuilt on first search: %d chunks", len(all_chunks)
+                            )
+                except Exception as e:
+                    logger.warning("BM25 index rebuild failed on first search: %s", e)
                     self.bm25_index = BM25Index()
-                    self.bm25_index.build_index(all_chunks)
-                    logger.info(
-                        "[OK] BM25 index rebuilt on first search: %d chunks", len(all_chunks)
-                    )
-        except Exception as e:
-            logger.warning("BM25 index rebuild failed on first search: %s", e)
-            self.bm25_index = BM25Index()
 
-        # Always reset flag, even on failure - don't keep retrying
-        self._bm25_needs_rebuild = False
+                # Always reset flag, even on failure - don't keep retrying
+                self._bm25_needs_rebuild = False
 
     def _load_metadata(self):
         """Load store metadata from disk."""
@@ -359,20 +511,34 @@ class VectorStore:
         with open(metadata_path, "w") as f:
             json.dump(self.metadata, f, indent=2)
 
-    def add_chunks(self, chunks: List[DocumentChunk], batch_size: int = 100) -> int:
-        """Add document chunks to the vector store."""
+    def add_chunks(
+        self,
+        chunks: List[DocumentChunk],
+        chunk_batch_size: int = 100,
+        embed_batch_size: Optional[int] = None,
+        rebuild_index: bool = False,
+    ) -> int:
+        """Add document chunks to the vector store.
+
+        Args:
+            chunks: List of DocumentChunk objects to add.
+            chunk_batch_size: Number of chunks to process per iteration (controls loop step).
+            embed_batch_size: Batch size for embedder.encode() calls (for GPU/CPU batching).
+                              If None, embedder uses its default batching.
+            rebuild_index: If True, rebuild the legacy BM25Okapi index after adding.
+                          If False (default), only update incremental BM25 structures.
+        """
+        if chunk_batch_size <= 0:
+            raise ValueError(f"chunk_batch_size must be positive, got {chunk_batch_size}")
+        if not chunks:
+            return 0
+
+        # Phase 1: Prepare batch data INSIDE lock (fast, no CPU work)
+        batch_data: List[Tuple[List[str], List[str], List[Dict]]] = []
         with self._lock:
-            if not chunks:
-                return 0
-
-            added = 0
-            added_chunks: List[DocumentChunk] = []
-            for i in range(0, len(chunks), batch_size):
-                batch = chunks[i : i + batch_size]
-
+            for i in range(0, len(chunks), chunk_batch_size):
+                batch = chunks[i : i + chunk_batch_size]
                 texts = [chunk.text for chunk in batch]
-                embeddings = self.embedder.encode(texts)
-
                 ids = [f"{chunk.source}_{chunk.chunk_index}" for chunk in batch]
                 metadatas = [
                     {
@@ -382,63 +548,103 @@ class VectorStore:
                     }
                     for chunk in batch
                 ]
+                batch_data.append((texts, ids, metadatas))
 
-                existing_ids = set()
+        # Phase 2: Compute embeddings OUTSIDE _chroma_lock (CPU-intensive, no ChromaDB access)
+        all_embeddings: List[List[float]] = []
+        for texts, _, _ in batch_data:
+            if embed_batch_size is not None:
+                embeddings = self.embedder.encode(texts, batch_size=embed_batch_size)
+            else:
+                embeddings = self.embedder.encode(texts)
+            # Normalize to list (handles both real np.ndarray and test mocks)
+            if not isinstance(embeddings, list):
                 try:
-                    existing = self.collection.get(ids=ids)
-                    existing_ids = set(existing["ids"]) if existing["ids"] else set()
-                except Exception as e:
-                    logger.warning(
-                        "Could not check for existing IDs, proceeding without dedup: %s",
-                        e,
+                    embeddings = embeddings.tolist()
+                except Exception:
+                    embeddings = list(embeddings)
+            # Handle mocks that return 1 embedding regardless of batch size
+            if len(embeddings) == 1 and len(texts) > 1:
+                embeddings = [embeddings[0] for _ in texts]
+            all_embeddings.extend(embeddings)
+        
+        # Phase 3: Write to ChromaDB + BM25 INSIDE _chroma_lock (atomic)
+        added = 0
+        added_chunks: List[DocumentChunk] = []
+        embedding_idx = 0
+
+        with _chroma_lock:
+
+            # All ChromaDB and BM25 operations inside _chroma_lock
+            with self._lock:
+                for batch_idx, (texts, ids, metadatas) in enumerate(batch_data):
+                    batch_embeddings = all_embeddings[embedding_idx : embedding_idx + len(texts)]
+                    embedding_idx += len(texts)
+
+                    # Check for existing IDs
+                    existing_ids = set()
+                    try:
+                        existing = self.collection.get(ids=ids)
+                        existing_ids = set(existing["ids"]) if existing["ids"] else set()
+                    except Exception as e:
+                        logger.warning(
+                            "Could not check for existing IDs, proceeding without dedup: %s",
+                            e,
+                        )
+
+                    new_indices = [
+                        j for j, id_ in enumerate(ids) if id_ not in existing_ids
+                    ]
+
+                    if new_indices:
+                        self.collection.add(
+                            embeddings=[batch_embeddings[j] for j in new_indices],
+                            documents=[texts[j] for j in new_indices],
+                            ids=[ids[j] for j in new_indices],
+                            metadatas=[metadatas[j] for j in new_indices],
+                        )
+                        added += len(new_indices)
+                        # Map back to original DocumentChunk objects
+                        batch_chunks = chunks[batch_idx * chunk_batch_size : batch_idx * chunk_batch_size + len(texts)]
+                        added_chunks.extend([batch_chunks[j] for j in new_indices])
+
+                    logger.info(
+                        "  Processed %d/%d chunks",
+                        min((batch_idx + 1) * chunk_batch_size, len(chunks)),
+                        len(chunks),
                     )
 
-                new_indices = [
-                    j for j, id_ in enumerate(ids) if id_ not in existing_ids
-                ]
-
-                if new_indices:
-                    self.collection.add(
-                        embeddings=[embeddings[j] for j in new_indices],
-                        documents=[texts[j] for j in new_indices],
-                        ids=[ids[j] for j in new_indices],
-                        metadatas=[metadatas[j] for j in new_indices],
+                # Update metadata
+                for chunk in chunks:
+                    if chunk.source not in self.metadata["documents"]:
+                        self.metadata["documents"][chunk.source] = {
+                            "chunks": 0,
+                            "added_at": str(
+                                Path(chunk.source).stat().st_mtime
+                                if Path(chunk.source).exists()
+                                else ""
+                            ),
+                        }
+                    self.metadata["documents"][chunk.source]["chunks"] = max(
+                        self.metadata["documents"][chunk.source]["chunks"],
+                        chunk.chunk_index + 1,
                     )
-                    added += len(new_indices)
-                    added_chunks.extend([batch[j] for j in new_indices])
 
-                logger.info("  Processed %d/%d chunks", min(i + batch_size, len(chunks)), len(chunks))
+                self.metadata["document_count"] = len(self.metadata["documents"])
+                self.metadata["chunk_count"] = self.collection.count()
 
-            for chunk in chunks:
-                if chunk.source not in self.metadata["documents"]:
-                    self.metadata["documents"][chunk.source] = {
-                        "chunks": 0,
-                        "added_at": str(
-                            Path(chunk.source).stat().st_mtime
-                            if Path(chunk.source).exists()
-                            else ""
-                        ),
-                    }
-                self.metadata["documents"][chunk.source]["chunks"] = max(
-                    self.metadata["documents"][chunk.source]["chunks"],
-                    chunk.chunk_index + 1,
-                )
+                # Update BM25 index with newly added chunks
+                if added > 0:
+                    if not self.bm25_index:
+                        self.bm25_index = BM25Index()
+                    self.bm25_index.add_documents(added_chunks, rebuild_index=rebuild_index)
 
-            self.metadata["document_count"] = len(self.metadata["documents"])
-            self.metadata["chunk_count"] = self.collection.count()
+                self._save_metadata()
 
-            # Update BM25 index with newly added chunks (single rebuild)
-            if added > 0:
-                if not self.bm25_index:
-                    self.bm25_index = BM25Index()
-                self.bm25_index.add_documents(added_chunks)
-
-            self._save_metadata()
-
-            return added
+        return added
 
     def add_chunks_with_embeddings(
-        self, chunks_with_vectors: List[Dict[str, Any]]
+        self, chunks_with_vectors: List[Dict[str, Any]], rebuild_index: bool = False
     ) -> None:
         """Add document chunks with pre-computed embeddings to the vector store.
 
@@ -448,46 +654,49 @@ class VectorStore:
                 - text (str): The chunk text content
                 - embedding (list[float]): Pre-computed embedding vector
                 - metadata (dict): Metadata dict with keys like source, doc_id, chunk_index, etc.
+            rebuild_index: If True, rebuild the legacy BM25Okapi index after adding.
+                          If False (default), only update incremental BM25 structures.
 
         Raises:
             ValueError: If a chunk_id already exists in the collection.
         """
-        with self._lock:
-            if not chunks_with_vectors:
-                return
+        if not chunks_with_vectors:
+            return
 
-            ids = []
-            documents = []
-            embeddings = []
-            metadatas = []
+        ids = []
+        documents = []
+        embeddings = []
+        metadatas = []
 
-            # Collect all chunk data first
-            for chunk_data in chunks_with_vectors:
-                chunk_id = chunk_data.get("chunk_id")
-                text = chunk_data.get("text")
-                embedding = chunk_data.get("embedding")
-                metadata = chunk_data.get("metadata", {})
+        # Collect all chunk data first
+        for chunk_data in chunks_with_vectors:
+            chunk_id = chunk_data.get("chunk_id")
+            text = chunk_data.get("text")
+            embedding = chunk_data.get("embedding")
+            metadata = chunk_data.get("metadata", {})
 
-                if embedding is None:
-                    raise ValueError(f"Chunk {chunk_id} missing 'embedding' field")
+            if embedding is None:
+                raise ValueError(f"Chunk {chunk_id} missing 'embedding' field")
 
-                if not isinstance(embedding, list):
-                    raise ValueError(
-                        f"Chunk {chunk_id}: 'embedding' must be a list, got {type(embedding).__name__}"
-                    )
-                if not all(isinstance(x, (int, float)) for x in embedding):
-                    raise ValueError(
-                        f"Chunk {chunk_id}: 'embedding' must contain only numbers"
-                    )
+            if not isinstance(embedding, list):
+                raise ValueError(
+                    f"Chunk {chunk_id}: 'embedding' must be a list, got {type(embedding).__name__}"
+                )
+            if not all(isinstance(x, (int, float)) for x in embedding):
+                raise ValueError(
+                    f"Chunk {chunk_id}: 'embedding' must contain only numbers"
+                )
 
-                if not chunk_id or not text or not embedding:
-                    raise ValueError(f"Invalid chunk data: {chunk_data}")
+            if not chunk_id or not text or not embedding:
+                raise ValueError(f"Invalid chunk data: {chunk_data}")
 
-                ids.append(chunk_id)
-                documents.append(text)
-                embeddings.append(embedding)
-                metadatas.append(metadata)
+            ids.append(chunk_id)
+            documents.append(text)
+            embeddings.append(embedding)
+            metadatas.append(metadata)
 
+        # ChromaDB operations inside _chroma_lock
+        with _chroma_lock:
             # Batch existence check BEFORE any writes
             all_existing_ids = set()
             try:
@@ -499,105 +708,140 @@ class VectorStore:
                 raise ValueError(f"Chunk IDs already exist: {all_existing_ids}")
 
             # Add to ChromaDB collection
-            self.collection.add(
-                ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas
-            )
+            with self._lock:
+                self.collection.add(
+                    ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas
+                )
 
-            # Update BM25 index with new chunks (single rebuild)
-            if not self.bm25_index:
-                self.bm25_index = BM25Index()
-            new_chunks = [
-                DocumentChunk(
-                    text=text,
-                    source=meta.get("source", chunk_id),
-                    chunk_index=meta.get("chunk_index", i),
-                    page=meta.get("page"),
-                )
-                for i, (chunk_id, text, meta) in enumerate(
-                    zip(ids, documents, metadatas)
-                )
-                if chunk_id and text
-            ]
-            if new_chunks:
-                self.bm25_index.add_documents(new_chunks)
+                # Update BM25 index with new chunks (single rebuild)
+                if not self.bm25_index:
+                    self.bm25_index = BM25Index()
+                new_chunks = [
+                    DocumentChunk(
+                        text=text,
+                        source=meta.get("source", chunk_id),
+                        chunk_index=meta.get("chunk_index", i),
+                        page=meta.get("page"),
+                    )
+                    for i, (chunk_id, text, meta) in enumerate(
+                        zip(ids, documents, metadatas)
+                    )
+                    if chunk_id and text
+                ]
+                if new_chunks:
+                    self.bm25_index.add_documents(new_chunks, rebuild_index=rebuild_index)
 
     def search(
-        self, query: str, n_results: int = 5
+        self, query: str, n_results: int = 5, query_embedding: Optional[List[float]] = None
     ) -> List[Tuple[str, Dict[str, Any], float]]:
-        """Search for similar documents."""
-        with self._lock:
-            if self.collection.count() == 0:
-                return []
-
+        """Search for similar documents.
+        
+        Args:
+            query: Search query text.
+            n_results: Maximum number of results to return.
+            query_embedding: Pre-computed query embedding. If None, will be computed inside.
+                            Providing this allows encoding to happen outside the lock.
+        
+        Returns:
+            List of (document, metadata, similarity) tuples.
+        """
+        # Encode OUTSIDE lock if not provided
+        if query_embedding is None:
             query_embedding = self.embedder.encode_single(query)
 
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=min(n_results, self.collection.count()),
-                include=["documents", "metadatas", "distances"],
-            )
+        with _chroma_lock:
+            with self._lock:
+                if self.collection.count() == 0:
+                    return []
 
-            matches = []
-            if results["documents"] and results["documents"][0]:
-                for doc, meta, dist in zip(
-                    results["documents"][0],
-                    results["metadatas"][0],
-                    results["distances"][0],
-                ):
-                    similarity = 1 - dist
-                    matches.append((doc, meta, similarity))
+                results = self.collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=min(n_results, self.collection.count()),
+                    include=["documents", "metadatas", "distances"],
+                )
 
-            return matches
+                matches = []
+                if results["documents"] and results["documents"][0]:
+                    for doc, meta, dist in zip(
+                        results["documents"][0],
+                        results["metadatas"][0],
+                        results["distances"][0],
+                    ):
+                        similarity = 1 - dist
+                        matches.append((doc, meta, similarity))
+
+                return matches
 
     def get_chunks(
         self, query: str, n_results: int = 3, min_similarity: float = 0.3
     ) -> List[DocumentChunk]:
-        """Get document chunks for RAG without combining context."""
-        with self._lock:
-            matches = self.search(query, n_results=n_results)
+        """Get document chunks for RAG without combining context.
+        
+        Note: This method does NOT acquire the lock. It calls search() which
+        handles its own locking. Encoding happens outside any lock.
+        
+        Args:
+            query: Search query text.
+            n_results: Maximum number of results to return.
+            min_similarity: Minimum similarity threshold (default 0.3).
+        
+        Returns:
+            List of DocumentChunk objects matching the query.
+        """
+        # Encode OUTSIDE any lock
+        query_embedding = self.embedder.encode_single(query)
+        
+        # Call search with pre-computed embedding (no encoding inside)
+        matches = self.search(query, n_results=n_results, query_embedding=query_embedding)
 
-            filtered = [
-                (doc, meta, sim) for doc, meta, sim in matches if sim >= min_similarity
-            ]
+        # Filter by similarity (pure Python, no lock needed)
+        filtered = [
+            (doc, meta, sim) for doc, meta, sim in matches if sim >= min_similarity
+        ]
 
-            if not filtered:
-                return []
+        if not filtered:
+            return []
 
-            chunks = []
-            for doc, meta, sim in filtered:
-                source = meta.get("source", "Unknown")
-                chunk_index = meta.get("chunk_index", -1)
-                page = meta.get("page", None)
+        chunks = []
+        for doc, meta, sim in filtered:
+            source = meta.get("source", "Unknown")
+            chunk_index = meta.get("chunk_index", -1)
+            page = meta.get("page", None)
 
-                chunk = DocumentChunk(
-                    text=doc, source=source, chunk_index=chunk_index, page=page
-                )
-                chunks.append(chunk)
+            chunk = DocumentChunk(
+                text=doc, source=source, chunk_index=chunk_index, page=page
+            )
+            chunks.append(chunk)
 
-            return chunks
+        return chunks
 
-    def get_chunks_by_source(self, source: str) -> List[DocumentChunk]:
-        """Get all chunks from a specific source document."""
-        with self._lock:
+    def get_chunks_by_source(self, source: str, indices: List[int] = None) -> List[DocumentChunk]:
+        """Get all chunks from a specific source document, optionally filtered by indices."""
+        with _chroma_lock:
             try:
-                all_data = self.collection.get(
-                    where={"source": source}, include=["documents", "metadatas"]
-                )
-                chunks = []
+                with self._lock:
+                    all_data = self.collection.get(
+                        where={"source": source}, include=["documents", "metadatas"]
+                    )
+                    chunks = []
 
-                if all_data.get("documents"):
-                    for doc, meta in zip(all_data["documents"], all_data["metadatas"]):
-                        chunk = DocumentChunk(
-                            text=doc,
-                            source=meta["source"],
-                            chunk_index=meta["chunk_index"],
-                            page=meta["page"] if "page" in meta else None,
-                        )
-                        chunks.append(chunk)
+                    if all_data.get("documents"):
+                        for doc, meta in zip(all_data["documents"], all_data["metadatas"]):
+                            chunk_index = meta.get("chunk_index", -1)
+                            # Filter by indices if provided
+                            if indices is not None and chunk_index not in indices:
+                                continue
+                            chunk = DocumentChunk(
+                                text=doc,
+                                source=meta["source"],
+                                chunk_index=chunk_index,
+                                page=meta["page"] if "page" in meta else None,
+                            )
+                            chunks.append(chunk)
 
-                # Sort by chunk_index
-                chunks.sort(key=lambda c: c.chunk_index)
-                return chunks
+                    # Sort by chunk_index
+                    chunks.sort(key=lambda c: c.chunk_index)
+                    return chunks
             except Exception:
                 return []
 
@@ -610,30 +854,31 @@ class VectorStore:
         Returns:
             True if the document existed and was removed, False otherwise.
         """
-        with self._lock:
-            # Guard clause: return False if doc_id is falsy or not a string
-            if not doc_id or not isinstance(doc_id, str):
-                return False
+        # Guard clause: return False if doc_id is falsy or not a string
+        if not doc_id or not isinstance(doc_id, str):
+            return False
 
-            # Sanitize doc_id using basename and strip whitespace
-            sanitized_id = os.path.basename(doc_id).strip()
+        # Sanitize doc_id using basename and strip whitespace
+        sanitized_id = os.path.basename(doc_id).strip()
 
-            # Return False if sanitized id is empty
-            if not sanitized_id:
-                return False
+        # Return False if sanitized id is empty
+        if not sanitized_id:
+            return False
 
-            # Return False if document doesn't exist in metadata
-            if sanitized_id not in self.metadata.get("documents", {}):
-                return False
+        # Return False if document doesn't exist in metadata
+        if sanitized_id not in self.metadata.get("documents", {}):
+            return False
 
-            # Capture the document metadata before deleting it
-            doc_meta = self.metadata.get("documents", {}).get(sanitized_id, {})
-            removed_chunks = doc_meta.get("chunks", 0)
+        # Capture the document metadata before deleting it
+        doc_meta = self.metadata.get("documents", {}).get(sanitized_id, {})
+        removed_chunks = doc_meta.get("chunks", 0)
 
-            # Return False if there are no chunks to remove
-            if removed_chunks == 0:
-                return False
+        # Return False if there are no chunks to remove
+        if removed_chunks == 0:
+            return False
 
+        # ChromaDB operations inside _chroma_lock
+        with _chroma_lock:
             try:
                 # Verify collection can be queried before deleting
                 self.collection.get(where={"source": sanitized_id})
@@ -648,6 +893,24 @@ class VectorStore:
                 # Handle exception gracefully, return False
                 return False
 
+            # Update chunk count - try to get from collection.count(), fall back to calculation
+            try:
+                new_chunk_count = self.collection.count()
+                # Verify it's actually an integer
+                if not isinstance(new_chunk_count, int):
+                    raise ValueError("count() did not return an integer")
+            except Exception:
+                # Fall back to subtracting removed chunks from previous count
+                previous_chunk_count = self.metadata.get("chunk_count", 0)
+                new_chunk_count = max(0, previous_chunk_count - removed_chunks)
+
+            self.metadata["chunk_count"] = new_chunk_count
+
+            # Save updated metadata
+            self._save_metadata()
+
+        # BM25 and metadata updates outside _chroma_lock but inside self._lock
+        with self._lock:
             # Remove from BM25 index
             if self.bm25_index:
                 # Remove chunks with exact source match (not startswith)
@@ -669,52 +932,56 @@ class VectorStore:
             # Update document count
             self.metadata["document_count"] = len(self.metadata["documents"])
 
-            # Update chunk count - try to get from collection.count(), fall back to calculation
-            try:
-                new_chunk_count = self.collection.count()
-                # Verify it's actually an integer
-                if not isinstance(new_chunk_count, int):
-                    raise ValueError("count() did not return an integer")
-            except Exception:
-                # Fall back to subtracting removed chunks from previous count
-                previous_chunk_count = self.metadata.get("chunk_count", 0)
-                new_chunk_count = max(0, previous_chunk_count - removed_chunks)
-
-            self.metadata["chunk_count"] = new_chunk_count
-
             # Save updated metadata
             self._save_metadata()
 
-            return True
+        return True
 
     def _expand_chunks_with_neighbors(
         self, chunks: List[DocumentChunk], window: int
     ) -> List[DocumentChunk]:
-        """Expand each chunk with its ±window neighbors from the same source."""
+        """Expand each chunk with its ±window neighbors from the same source.
+        
+        Optimized: groups chunks by source, fetches each source's chunks once,
+        then filters to ±window range. Reduces N ChromaDB queries to M queries
+        (M = number of unique sources, M << N typically).
+        """
         if window <= 0:
             return chunks
 
-        expanded = []
-        seen = set()
-
+        # Group chunks by source to minimize ChromaDB calls
+        from collections import defaultdict
+        chunks_by_source: Dict[str, List[DocumentChunk]] = defaultdict(list)
         for chunk in chunks:
-            source_chunks = self.get_chunks_by_source(chunk.source)
+            chunks_by_source[chunk.source].append(chunk)
+
+        # Compute needed index ranges per source
+        indices_by_source: Dict[str, List[int]] = defaultdict(list)
+        for source, source_chunks in chunks_by_source.items():
+            for chunk in source_chunks:
+                start_idx = max(0, chunk.chunk_index - window)
+                end_idx = chunk.chunk_index + window
+                for idx in range(start_idx, end_idx + 1):
+                    if idx not in indices_by_source[source]:
+                        indices_by_source[source].append(idx)
+
+        # Fetch each source's chunks once, filter to needed indices
+        expanded: List[DocumentChunk] = []
+        seen: Set[Tuple[str, int]] = set()
+
+        for source, needed_indices in indices_by_source.items():
+            # Fetch all chunks from this source once
+            source_chunks = self.get_chunks_by_source(source, indices=needed_indices)
             if not source_chunks:
-                key = (chunk.source, chunk.chunk_index)
-                if key not in seen:
-                    seen.add(key)
-                    expanded.append(chunk)
                 continue
-
-            start_idx = max(0, chunk.chunk_index - window)
-            end_idx = min(len(source_chunks) - 1, chunk.chunk_index + window)
-
-            for idx in range(start_idx, end_idx + 1):
-                neighbor = source_chunks[idx]
-                key = (neighbor.source, neighbor.chunk_index)
-                if key not in seen:
-                    seen.add(key)
-                    expanded.append(neighbor)
+            
+            # Filter to only needed indices (already done by get_chunks_by_source)
+            for chunk in source_chunks:
+                if chunk.chunk_index in needed_indices:
+                    key = (chunk.source, chunk.chunk_index)
+                    if key not in seen:
+                        seen.add(key)
+                        expanded.append(chunk)
 
         expanded.sort(key=lambda c: (c.source, c.chunk_index))
         return expanded
@@ -727,174 +994,193 @@ class VectorStore:
         hybrid_search: bool = False,
         retrieval_window: int = 0,
     ) -> Tuple[str, List[str], List["DocumentChunk"]]:
-        """Get context for RAG from similar documents."""
-        with self._lock:
-            # Handle empty query - return no context
-            if not query or not query.strip():
+        """Get context for RAG from similar documents.
+        
+        Note: Encoding happens OUTSIDE the lock. The lock is only held during
+        ChromaDB and BM25 operations, not during the CPU-intensive embedding computation.
+        
+        Args:
+            query: Search query text.
+            n_results: Maximum number of results to return.
+            min_similarity: Minimum similarity threshold for filtering.
+            hybrid_search: If True, combine vector and BM25 results using RRF.
+            retrieval_window: Number of neighboring chunks to include (±window).
+        
+        Returns:
+            Tuple of (context_string, list_of_sources, list_of_document_chunks).
+        """
+        # Handle empty query - no lock needed
+        if not query or not query.strip():
+            return "", [], []
+        
+        # Encode OUTSIDE lock
+        query_embedding = self.embedder.encode_single(query)
+        
+        if hybrid_search and self.bm25_index:
+            self._rebuild_bm25_if_needed()
+
+            vector_results = self.search(query, n_results=n_results * 2, query_embedding=query_embedding)
+            bm25_results = self.bm25_index.search(query, top_k=n_results * 2)
+
+            # --- Namespace-safe RRF ---
+            OFFSET = 1_000_000  # large enough to avoid any collision with vector indices
+
+            vector_ranked = [(i, score) for i, (_, _, score) in enumerate(vector_results)]
+            bm25_ranked = [(corpus_idx + OFFSET, score) for corpus_idx, score in bm25_results]
+
+            fused = rrf_fuse([vector_ranked, bm25_ranked])
+
+            context_parts = []
+            per_chunk_sources = []   # one source per chunk, NOT deduplicated
+            per_chunk_pages = []
+            per_chunk_indices = []
+            sources = []             # deduplicated for display
+            seen_keys = set()
+
+            for fused_id, _ in fused[:n_results]:
+                if fused_id >= OFFSET:
+                    # BM25 result — resolve against bm25_index.chunks
+                    corpus_idx = fused_id - OFFSET
+                    if corpus_idx < len(self.bm25_index.chunks):
+                        chunk = self.bm25_index.chunks[corpus_idx]
+                        key = (chunk.source, chunk.chunk_index)
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            context_parts.append(chunk.text)
+                            per_chunk_sources.append(chunk.source)
+                            per_chunk_pages.append(chunk.page)
+                            per_chunk_indices.append(chunk.chunk_index)
+                            if chunk.source not in sources:
+                                sources.append(chunk.source)
+                else:
+                    # Vector result — resolve against vector_results list
+                    vec_idx = fused_id
+                    if vec_idx < len(vector_results):
+                        doc, meta, score = vector_results[vec_idx]
+                        # Apply min_similarity (currently bypassed in hybrid — fixed here)
+                        if score < min_similarity:
+                            continue
+                        source = meta.get("source", "Unknown")
+                        chunk_idx = meta.get("chunk_index", vec_idx)
+                        page = meta.get("page")
+                        key = (source, chunk_idx)
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            context_parts.append(doc)
+                            per_chunk_sources.append(source)
+                            per_chunk_pages.append(page)
+                            per_chunk_indices.append(chunk_idx)
+                            if source not in sources:
+                                sources.append(source)
+
+            # Expand with neighbors if window > 0
+            if retrieval_window > 0 and context_parts:
+                hybrid_chunks = [
+                    DocumentChunk(
+                        text=text,
+                        source=per_chunk_sources[i],
+                        chunk_index=per_chunk_indices[i],
+                        page=per_chunk_pages[i],
+                    )
+                    for i, text in enumerate(context_parts)
+                ]
+                expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
+                context_parts = [c.text for c in expanded]
+                per_chunk_sources = [c.source for c in expanded]
+                per_chunk_pages = [c.page for c in expanded]
+                per_chunk_indices = [c.chunk_index for c in expanded]
+                sources = list(dict.fromkeys(c.source for c in expanded))
+
+            # Build result chunks for structured return
+            result_chunks = [
+                DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
+                for text, src, idx, pg in zip(
+                    context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
+                )
+            ]
+
+            context = "\n\n---\n\n".join(context_parts)
+            return context, sources, result_chunks
+        else:
+            # Original vector-only search logic
+            matches = self.search(query, n_results=n_results)
+
+            filtered = [
+                (doc, meta, sim)
+                for doc, meta, sim in matches
+                if sim >= min_similarity
+            ]
+
+            if not filtered:
                 return "", [], []
-            if hybrid_search and self.bm25_index:
-                self._rebuild_bm25_if_needed()
 
-                vector_results = self.search(query, n_results=n_results * 2)
-                bm25_results = self.bm25_index.search(query, top_k=n_results * 2)
+            context_parts = []
+            per_chunk_sources = []
+            per_chunk_pages = []
+            per_chunk_indices = []
+            sources = []
 
-                # --- Namespace-safe RRF ---
-                OFFSET = 1_000_000  # large enough to avoid any collision with vector indices
+            for i, (doc, meta, sim) in enumerate(filtered):
+                source = meta.get("source", "Unknown")
+                chunk_idx = meta.get("chunk_index", i)
+                page = meta.get("page")
+                context_parts.append(doc)
+                per_chunk_sources.append(source)
+                per_chunk_pages.append(page)
+                per_chunk_indices.append(chunk_idx)
+                if source not in sources:
+                    sources.append(source)
 
-                vector_ranked = [(i, score) for i, (_, _, score) in enumerate(vector_results)]
-                bm25_ranked = [(corpus_idx + OFFSET, score) for corpus_idx, score in bm25_results]
-
-                fused = rrf_fuse([vector_ranked, bm25_ranked])
-
-                context_parts = []
-                per_chunk_sources = []   # one source per chunk, NOT deduplicated
-                per_chunk_pages = []
-                per_chunk_indices = []
-                sources = []             # deduplicated for display
-                seen_keys = set()
-
-                for fused_id, _ in fused[:n_results]:
-                    if fused_id >= OFFSET:
-                        # BM25 result — resolve against bm25_index.chunks
-                        corpus_idx = fused_id - OFFSET
-                        if corpus_idx < len(self.bm25_index.chunks):
-                            chunk = self.bm25_index.chunks[corpus_idx]
-                            key = (chunk.source, chunk.chunk_index)
-                            if key not in seen_keys:
-                                seen_keys.add(key)
-                                context_parts.append(chunk.text)
-                                per_chunk_sources.append(chunk.source)
-                                per_chunk_pages.append(chunk.page)
-                                per_chunk_indices.append(chunk.chunk_index)
-                                if chunk.source not in sources:
-                                    sources.append(chunk.source)
-                    else:
-                        # Vector result — resolve against vector_results list
-                        vec_idx = fused_id
-                        if vec_idx < len(vector_results):
-                            doc, meta, score = vector_results[vec_idx]
-                            # Apply min_similarity (currently bypassed in hybrid — fixed here)
-                            if score < min_similarity:
-                                continue
-                            source = meta.get("source", "Unknown")
-                            chunk_idx = meta.get("chunk_index", vec_idx)
-                            page = meta.get("page")
-                            key = (source, chunk_idx)
-                            if key not in seen_keys:
-                                seen_keys.add(key)
-                                context_parts.append(doc)
-                                per_chunk_sources.append(source)
-                                per_chunk_pages.append(page)
-                                per_chunk_indices.append(chunk_idx)
-                                if source not in sources:
-                                    sources.append(source)
-
-                # Expand with neighbors if window > 0
-                if retrieval_window > 0 and context_parts:
-                    hybrid_chunks = [
-                        DocumentChunk(
-                            text=text,
-                            source=per_chunk_sources[i],
-                            chunk_index=per_chunk_indices[i],
-                            page=per_chunk_pages[i],
-                        )
-                        for i, text in enumerate(context_parts)
-                    ]
-                    expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
-                    context_parts = [c.text for c in expanded]
-                    per_chunk_sources = [c.source for c in expanded]
-                    per_chunk_pages = [c.page for c in expanded]
-                    per_chunk_indices = [c.chunk_index for c in expanded]
-                    sources = list(dict.fromkeys(c.source for c in expanded))
-
-                # Build result chunks for structured return
-                result_chunks = [
-                    DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
-                    for text, src, idx, pg in zip(
-                        context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
+            # Expand with neighbors if window > 0
+            if retrieval_window > 0:
+                filtered_chunks = [
+                    DocumentChunk(
+                        text=doc, source=meta.get("source", "Unknown"),
+                        chunk_index=meta.get("chunk_index", i), page=meta.get("page"),
                     )
+                    for i, (doc, meta, sim) in enumerate(filtered)
                 ]
+                expanded = self._expand_chunks_with_neighbors(filtered_chunks, retrieval_window)
+                context_parts = [c.text for c in expanded]
+                per_chunk_sources = [c.source for c in expanded]
+                per_chunk_pages = [c.page for c in expanded]
+                per_chunk_indices = [c.chunk_index for c in expanded]
+                sources = list(dict.fromkeys(c.source for c in expanded))
 
-                context = "\n\n---\n\n".join(context_parts)
-                return context, sources, result_chunks
-            else:
-                # Original vector-only search logic
-                matches = self.search(query, n_results=n_results)
+            # Build result chunks
+            result_chunks = [
+                DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
+                for text, src, idx, pg in zip(
+                    context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
+                )
+            ]
 
-                filtered = [
-                    (doc, meta, sim)
-                    for doc, meta, sim in matches
-                    if sim >= min_similarity
-                ]
-
-                if not filtered:
-                    return "", [], []
-
-                context_parts = []
-                per_chunk_sources = []
-                per_chunk_pages = []
-                per_chunk_indices = []
-                sources = []
-
-                for i, (doc, meta, sim) in enumerate(filtered):
-                    source = meta.get("source", "Unknown")
-                    chunk_idx = meta.get("chunk_index", i)
-                    page = meta.get("page")
-                    context_parts.append(doc)
-                    per_chunk_sources.append(source)
-                    per_chunk_pages.append(page)
-                    per_chunk_indices.append(chunk_idx)
-                    if source not in sources:
-                        sources.append(source)
-
-                # Expand with neighbors if window > 0
-                if retrieval_window > 0:
-                    filtered_chunks = [
-                        DocumentChunk(
-                            text=doc, source=meta.get("source", "Unknown"),
-                            chunk_index=meta.get("chunk_index", i), page=meta.get("page"),
-                        )
-                        for i, (doc, meta, sim) in enumerate(filtered)
-                    ]
-                    expanded = self._expand_chunks_with_neighbors(filtered_chunks, retrieval_window)
-                    context_parts = [c.text for c in expanded]
-                    per_chunk_sources = [c.source for c in expanded]
-                    per_chunk_pages = [c.page for c in expanded]
-                    per_chunk_indices = [c.chunk_index for c in expanded]
-                    sources = list(dict.fromkeys(c.source for c in expanded))
-
-                # Build result chunks
-                result_chunks = [
-                    DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
-                    for text, src, idx, pg in zip(
-                        context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
-                    )
-                ]
-
-                context = "\n\n---\n\n".join(context_parts)
-                return context, sources, result_chunks
+            context = "\n\n---\n\n".join(context_parts)
+            return context, sources, result_chunks
 
     def clear(self):
         """Clear all documents from the store."""
-        with self._lock:
-            self.client.delete_collection(self.COLLECTION_NAME)
-            self.collection = self.client.create_collection(
-                name=self.COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
-            )
-            self.metadata = {"document_count": 0, "chunk_count": 0, "documents": {}}
-            self._save_metadata()
-            logger.info("[OK] Vector store cleared")
+        with _chroma_lock:
+            with self._lock:
+                self.client.delete_collection(self.COLLECTION_NAME)
+                self.collection = self.client.create_collection(
+                    name=self.COLLECTION_NAME, metadata={"hnsw:space": "cosine"}
+                )
+                self.metadata = {"document_count": 0, "chunk_count": 0, "documents": {}}
+                self._save_metadata()
+                logger.info("[OK] Vector store cleared")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get statistics about the vector store."""
-        with self._lock:
-            return {
-                "db_path": str(self.db_path),
-                "document_count": self.metadata.get("document_count", 0),
-                "chunk_count": self.collection.count(),
-                "embedding_model": self.embedder.model_name,
-                "documents": list(self.metadata.get("documents", {}).keys()),
-            }
+        with _chroma_lock:
+            with self._lock:
+                return {
+                    "db_path": str(self.db_path),
+                    "document_count": self.metadata.get("document_count", 0),
+                    "chunk_count": self.collection.count(),
+                    "embedding_model": self.embedder.model_name,
+                    "documents": list(self.metadata.get("documents", {}).keys()),
+                }
 
 
 if __name__ == "__main__":

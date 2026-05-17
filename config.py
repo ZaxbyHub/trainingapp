@@ -5,6 +5,8 @@ Provides centralized configuration management with validation,
 type coercion, and environment variable support.
 """
 
+import threading
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -119,13 +121,18 @@ class RAGSettings(BaseSettings):
 
 # Global settings instance (lazy to avoid crash-on-load with invalid env vars)
 _settings: RAGSettings | None = None
+_settings_lock = threading.RLock()
 
 
 def get_settings() -> RAGSettings:
-    """Lazily get or create the global settings instance."""
+    """Lazily get or create the global settings instance with thread-safe initialization.
+    
+    Uses RLock for reentrancy safety - single thread can acquire lock multiple times.
+    """
     global _settings
-    if _settings is None:
-        _settings = RAGSettings()
+    with _settings_lock:
+        if _settings is None:
+            _settings = RAGSettings()
     return _settings
 
 
@@ -143,10 +150,14 @@ class _SettingsProxy:
             )
 
     def __setattr__(self, name, value):
-        return setattr(get_settings(), name, value)
+        # Private attrs (starting with '_') are set on the proxy itself
+        if name.startswith('_'):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(get_settings(), name, value)
 
     def __repr__(self):
         return repr(get_settings())
 
 
-settings: RAGSettings = _SettingsProxy()  # type: ignore[assignment]
+settings: RAGSettings | _SettingsProxy = _SettingsProxy()

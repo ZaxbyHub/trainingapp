@@ -7,7 +7,9 @@ import os
 import re
 import json
 import logging
-from typing import Optional, Dict, Any, List
+import psutil
+import threading
+from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -148,8 +150,26 @@ class GGUFBackend(BaseLLM):
         if self.is_gemma4:
             logger.info("[OK] Gemma 4 model detected — thinking mode suppressed via stop token")
 
-    def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:
-        """Generate response using GGUF model."""
+    def generate(
+        self,
+        prompt: str,
+        config: Optional[InferenceConfig] = None,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        cancellation_event: Optional[threading.Event] = None,
+    ) -> str:
+        """Generate response using GGUF model.
+
+        Args:
+            prompt: The input prompt.
+            config: Inference configuration.
+            stream_callback: Optional callback function that receives each token chunk.
+                If provided, enables streaming mode where tokens are delivered incrementally.
+                The callback is invoked with each token chunk as it is generated.
+
+        Returns:
+            The complete generated text. If stream_callback is provided, returns
+            the full text after all tokens have been streamed.
+        """
         try:
             # Prompt length validation
             if len(prompt) > MAX_PROMPT_LENGTH:
@@ -162,22 +182,51 @@ class GGUFBackend(BaseLLM):
 
             stop = ["<|think|>"] if self.is_gemma4 else None
 
-            # Call the llama model with the provided parameters
-            result = self.llama(
-                prompt,
-                max_tokens=config.max_tokens,
-                temperature=config.temperature,
-                top_p=config.top_p,
-                repeat_penalty=1.1,
-                stop=stop,
-            )
+            if stream_callback is not None:
+                # Streaming mode: iterate over generator and call callback for each token
+                full_text = []
+                for chunk in self.llama(
+                    prompt,
+                    max_tokens=config.max_tokens,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    repeat_penalty=1.1,
+                    stop=stop,
+                    stream=True,
+                ):
+                    # Check for cancellation at the top of the loop
+                    if cancellation_event is not None and cancellation_event.is_set():
+                        raise Exception("cancelled")
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    text = choices[0].get("text", "")
+                    # Strip think tags from token chunks as they are yielded
+                    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+                    if text:
+                        full_text.append(text)
+                        stream_callback(text)
+                return "".join(full_text)
+            else:
+                # Non-streaming mode: original behavior
+                result = self.llama(
+                    prompt,
+                    max_tokens=config.max_tokens,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    repeat_penalty=1.1,
+                    stop=stop,
+                )
 
-            # Return the generated text - llama-cpp-python returns a dict with 'choices' key
-            choices = result.get("choices") or []
-            if not choices:
-                raise RuntimeError("GGUF backend returned no choices")
-            return choices[0].get("text", "")
+                # Return the generated text - llama-cpp-python returns a dict with 'choices' key
+                choices = result.get("choices") or []
+                if not choices:
+                    raise RuntimeError("GGUF backend returned no choices")
+                return choices[0].get("text", "")
         except Exception as e:
+            # Preserve cancellation exceptions without wrapping
+            if "cancelled" in str(e).lower():
+                raise
             sanitized = _sanitize_error(str(e))
             raise RuntimeError(f"GGUF backend failed: {sanitized}")
 
@@ -186,11 +235,25 @@ class GGUFBackend(BaseLLM):
         system_prompt: str,
         user_prompt: str,
         config: Optional[InferenceConfig] = None,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        cancellation_event: Optional[threading.Event] = None,
     ) -> str:
         """Generate response using chat completion API (applies model chat template.
 
         For Qwen3 models, prepends /no_think to the system prompt to suppress
         thinking mode, preventing token overhead.
+
+        Args:
+            system_prompt: The system prompt.
+            user_prompt: The user prompt.
+            config: Inference configuration.
+            stream_callback: Optional callback function that receives each token chunk.
+                If provided, enables streaming mode where tokens are delivered incrementally.
+                The callback is invoked with each token delta as it is generated.
+
+        Returns:
+            The complete generated text. If stream_callback is provided, returns
+            the full text after all tokens have been streamed.
         """
         try:
             # Prompt length validation
@@ -214,24 +277,57 @@ class GGUFBackend(BaseLLM):
 
             stop = ["<|think|>"] if self.is_gemma4 else None
 
-            response = self.llama.create_chat_completion(
-                messages=messages,
-                max_tokens=config.max_tokens,
-                temperature=config.temperature,
-                top_p=config.top_p,
-                repeat_penalty=1.1,
-                stop=stop,
-            )
+            if stream_callback is not None:
+                # Streaming mode: iterate over generator and call callback for each delta
+                full_text = []
+                for chunk in self.llama.create_chat_completion(
+                    messages=messages,
+                    max_tokens=config.max_tokens,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    repeat_penalty=1.1,
+                    stop=stop,
+                    stream=True,
+                ):
+                    # Check for cancellation at the top of the loop
+                    if cancellation_event is not None and cancellation_event.is_set():
+                        raise Exception("cancelled")
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    text = delta.get("content", "")
+                    # Skip empty deltas (first delta may be empty)
+                    if not text:
+                        continue
+                    # Strip think tags from token chunks as they are yielded
+                    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+                    if text:
+                        full_text.append(text)
+                        stream_callback(text)
+                return "".join(full_text)
+            else:
+                # Non-streaming mode: original behavior
+                response = self.llama.create_chat_completion(
+                    messages=messages,
+                    max_tokens=config.max_tokens,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    repeat_penalty=1.1,
+                    stop=stop,
+                )
 
-            choices = response.get("choices") or []
-            if not choices:
-                raise RuntimeError("GGUF chat backend returned no choices")
-            message = choices[0].get("message") or {}
-            raw = message.get("content", "") or ""
-            # Strip think-tag blocks that Qwen3 may emit despite /no_think
-            cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-            return cleaned
+                choices = response.get("choices") or []
+                if not choices:
+                    raise RuntimeError("GGUF chat backend returned no choices")
+                message = choices[0].get("message") or {}
+                raw = message.get("content", "") or ""
+                # Strip think-tag blocks that Qwen3 may emit despite /no_think
+                cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
         except Exception as e:
+            # Preserve cancellation exceptions without wrapping
+            if "cancelled" in str(e).lower():
+                raise
             sanitized = _sanitize_error(str(e))
             raise RuntimeError(f"GGUF backend failed: {sanitized}")
 
@@ -296,6 +392,15 @@ class SmartLLM:
         self.prompt_builder = RAGPromptBuilder()
 
         if gguf_path and Path(gguf_path).exists():
+            # Memory budget check: verify sufficient RAM before attempting load
+            available = psutil.virtual_memory().available
+            total = psutil.virtual_memory().total
+            if available < total * 0.75:
+                raise RuntimeError(
+                    f"Insufficient RAM to load GGUF model. "
+                    f"Available: {available / (1024**3):.1f}GB, "
+                    f"Required: ~{total * 0.75 / (1024**3):.1f}GB (75% of {total / (1024**3):.1f}GB total)"
+                )
             try:
                 self.backend = GGUFBackend(
                     gguf_path=gguf_path,
@@ -327,6 +432,8 @@ class SmartLLM:
         sources: list,
         config: Optional[InferenceConfig] = None,
         conversation_history: Optional[list] = None,
+        stream_callback: Optional[Callable[[str], None]] = None,
+        cancellation_event: Optional[threading.Event] = None,
     ) -> str:
         """Answer a question using RAG context.
 
@@ -341,7 +448,14 @@ class SmartLLM:
             conversation_history: Optional list of prior turns as
                 [{"role": "user"/"assistant", "content": "..."}].
                 Last 2 turns are prepended to the prompt to support follow-up queries.
+            stream_callback: Optional callback function that receives each token chunk.
+                If provided, enables streaming mode where tokens are delivered incrementally.
+            cancellation_event: Optional threading.Event that signals cancellation.
         """
+        # Check for cancellation before doing any work
+        if cancellation_event is not None and cancellation_event.is_set():
+            raise Exception("cancelled")
+
         history_prefix = ""
         if conversation_history:
             history_parts = []
@@ -378,11 +492,16 @@ class SmartLLM:
                 system_prompt=RAGPromptBuilder.SYSTEM_PROMPT,
                 user_prompt=user_prompt,
                 config=config,
+                stream_callback=stream_callback,
+                cancellation_event=cancellation_event,
             )
-        except Exception:
+        except Exception as e:
+            # Preserve cancellation exceptions without falling back to generate()
+            if "cancelled" in str(e).lower():
+                raise
             # Fall back to generate() — no history_prefix since it was already in chat_complete
             prompt = self.prompt_builder.build_prompt(question, context, sources)
-            return self.backend.generate(prompt, config)
+            return self.backend.generate(prompt, config, stream_callback=stream_callback, cancellation_event=cancellation_event)
 
     def get_info(self) -> Dict[str, Any]:
         """Get backend information."""

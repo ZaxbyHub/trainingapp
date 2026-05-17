@@ -1,36 +1,65 @@
 """
 CrossEncoder Reranking Module
 Implements a reranker using sentence-transformers CrossEncoder model.
+Uses a module-level singleton so all callers share one model instance.
 """
 
+import threading
 from typing import List, Tuple
-from dataclasses import dataclass
 
 # Import DocumentChunk from document_processor
 from document_processor import DocumentChunk
 
 
+# Module-level singleton — one shared instance for all callers
+_shared_instance = None
+_shared_lock = threading.Lock()
+_shared_model_name = None
+
+
 class CrossEncoderReranker:
-    """CrossEncoder based reranker for document chunks."""
-    
+    """CrossEncoder based reranker. All instantiations return the shared singleton.
+
+    Thread-safe: model loading is protected by a lock; predict() calls are
+    thread-safe (sentence-transformers releases the GIL during computation).
+    """
+
+    _instance_lock = threading.Lock()  # Protects _load_model for this instance
+
+    def __new__(cls, model_name: str = "cross-encoder/ms-marco-TinyBERT-L-2"):
+        """Return the shared singleton — all callers get the same instance."""
+        global _shared_instance, _shared_model_name
+        if _shared_instance is None:
+            with _shared_lock:
+                if _shared_instance is None:
+                    _shared_instance = super().__new__(cls)
+                    _shared_instance.model = None  # Always initialize before __init__ runs
+                    _shared_model_name = model_name
+        elif model_name != _shared_model_name:
+            # Different model_name requested — warn but still return shared instance
+            import warnings
+            warnings.warn(
+                f"CrossEncoderReranker(model_name={model_name!r}) ignored: "
+                f"singleton already initialized with {_shared_model_name!r}"
+            )
+        return _shared_instance
+
     def __init__(self, model_name: str = "cross-encoder/ms-marco-TinyBERT-L-2"):
-        """
-        Initialize the CrossEncoderReranker.
-        
-        Args:
-            model_name (str): Name of the CrossEncoder model to use
-        """
+        # __new__ enforces singleton. Always set model_name (harmless re-assign).
+        # model is already set to None by __new__ on first construction.
         self.model_name = model_name
-        self.model = None
     
     def _load_model(self):
         """
-        Lazy loading of the CrossEncoder model.
+        Lazy loading of the CrossEncoder model with thread safety.
+        Uses double-check locking pattern to avoid lock overhead on repeated calls.
         """
         if self.model is None:
-            print(f"Loading CrossEncoder model: {self.model_name}")
-            from sentence_transformers import CrossEncoder
-            self.model = CrossEncoder(self.model_name)
+            with self._instance_lock:
+                if self.model is None:  # Double-check inside lock
+                    print(f"Loading CrossEncoder model: {self.model_name}")
+                    from sentence_transformers import CrossEncoder
+                    self.model = CrossEncoder(self.model_name, local_files_only=True)
     
     def rerank(self, query: str, chunks: List[DocumentChunk], top_k: int = 5) -> List[Tuple[DocumentChunk, float]]:
         """
