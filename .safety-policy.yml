@@ -7,7 +7,7 @@ security:
   ignore-unpinned-requirements: false
   ignore-vulnerabilities:
     # Range-based false positives - min version constraints ensure safe installs
-    - id: 65293
+    65293:
       reason: "fastapi python-multipart>=0.0.7 advisory - pinned via python-multipart>=0.0.18"
-    - id: 64930
+    64930:
       reason: "fastapi python-multipart upgrade - pinned via python-multipart>=0.0.18"
