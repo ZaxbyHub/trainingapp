@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- **Thread-safe RAG engine**: Lazy LLM initialization with cancellation support, asyncio.to_thread wrapping for all LLM calls, and thread-safe query transformer singleton with retry suppression via _query_transformer_failed sentinel (Phase 5)
+- **BM25 incremental updates**: Batch-only incremental ChromaDB updates on document changes instead of full rebuilds
+- **Hybrid search with RRF**: Combined BM25 and vector search using Reciprocal Rank Fusion for improved retrieval quality
+- **BM25 tokenizer normalization**: Normalized tokenization for consistent BM25 scoring across document and query processing
+- **Vector store neighbor expansion**: Configurable neighbor expansion (default k=5) to capture near-duplicate relevant chunks
+- **Embedding normalization**: Unit-normalized embeddings for consistent cosine similarity scores
+- **Gemma 4 support**: Added Gemma 4 E2B model detection for <|think|> stop token suppression
+
 - **Dynamic text wrapping**: Chat messages automatically reflow based on window width — resize the window and text wraps accordingly (Task 3.1)
 - **Empty state guide**: Friendly placeholder with document icon, heading, descriptive text, and sample question buttons shown when no documents are loaded (Task 3.2)
 - **Operation cancellation**: Cancel button and Escape key support for interrupting long-running operations including engine initialization, document ingestion, and question querying (Task 3.3)
@@ -27,6 +35,11 @@
 - **Button border width**: All buttons created via `_make_button()` now consistently use `border_width=1` (standardized from Task 5.1)
 
 ### Fixed
+- **Non-streaming chat_complete return**: Fixed missing `return cleaned` in GGUFBackend.chat_complete() non-streaming branch that caused LLM responses to be discarded
+- **QueryTransformer race condition**: Added `_query_transformer_failed` check inside `_init_lock` double-check to prevent retry storms after failure
+- **Duplicate reranking block**: Removed accidental duplicate `if reranked is not None` block from merge artifact in RAGEngine.query()
+- **QueryCancelled exception**: Introduced dedicated `QueryCancelled` exception class replacing fragile `"cancelled" in str(e)` string matching
+- **Security CI false positives**: Created `.safety-policy.yml` and tightened dependency minimum versions to resolve safety scan range-based false positives
 - **Text overflow**: Long chat messages no longer overflow the chat area due to dynamic wraplength calculation
 - **Empty chat confusion**: Users now see clear guidance and sample questions when no documents are loaded
 

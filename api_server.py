@@ -319,7 +319,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Document Q&A API",
     description="RAG-based document question answering API",
-    version="1.1.0",
+    version="2.2.0",
     lifespan=lifespan,
 )
 

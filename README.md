@@ -620,6 +620,6 @@ MIT License - See LICENSE file for details.
 - [CustomTkinter](https://customtkinter.tomschimansky.com/) - Modern GUI toolkit
 
 ---
-**Version**: 2.1.0
+**Version**: 2.2.0
 **Last Updated**: 2026-05-17
 **Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)

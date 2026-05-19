@@ -646,7 +646,7 @@ class DocumentQAApp(CTk):
     """Main application window with Windows 11-style navigation rail."""
 
     APP_NAME = "Document Q&A Assistant"
-    VERSION = "2.0.0"
+    VERSION = "2.2.0"
     SETTINGS_FILE = "app_settings.json"
 
     def __init__(self):
