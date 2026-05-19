@@ -2394,10 +2394,6 @@ class DocumentQAApp(CTk):
             messagebox.showerror("Error", "Engine not initialized")
             return
 
-        if not self.engine.llm:
-            messagebox.showerror("Error", "No LLM backend available. Check Settings.")
-            return
-
         self.question_entry.delete("1.0", "end")
         self._add_message("user", question, timestamp=datetime.now().strftime("%H:%M"))
 
@@ -2415,6 +2411,15 @@ class DocumentQAApp(CTk):
 
         def query():
             try:
+                # Initialize LLM in background thread to avoid freezing GUI
+                self.engine._ensure_llm()
+                if not self.engine.llm:
+                    # Queue error to run on main thread
+                    self.message_queue.put(("message", "system", "No LLM backend available. Check Settings.", None, datetime.now().strftime("%H:%M")))
+                    self.message_queue.put(("enable_input", True))
+                    self.message_queue.put(("hide_typing",))
+                    return
+
                 # Pass stream_callback and cancellation_event to engine.query
                 result = self.engine.query(
                     question,

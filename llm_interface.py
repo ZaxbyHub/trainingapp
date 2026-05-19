@@ -399,13 +399,16 @@ class SmartLLM:
 
         if gguf_path and Path(gguf_path).exists():
             # Memory budget check: verify sufficient RAM before attempting load
+            # GGUF/llama.cpp models need ~2x file size (weights + KV cache); use 4x safety factor for large context windows
+            file_size = Path(gguf_path).stat().st_size
+            required = int(file_size * 4)
             available = psutil.virtual_memory().available
-            total = psutil.virtual_memory().total
-            if available < total * 0.75:
+            if available < required:
                 raise RuntimeError(
-                    f"Insufficient RAM to load GGUF model. "
-                    f"Available: {available / (1024**3):.1f}GB, "
-                    f"Required: ~{total * 0.75 / (1024**3):.1f}GB (75% of {total / (1024**3):.1f}GB total)"
+                    f"Insufficient RAM to load GGUF model: need ~{required / (1024**3):.1f}GB "
+                    f"({required / file_size:.1f}x model file size for weights, KV cache, and overhead), "
+                    f"but only {available / (1024**3):.1f}GB available. "
+                    f"Close other applications or use a smaller model."
                 )
             try:
                 self.backend = GGUFBackend(
