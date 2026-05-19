@@ -1027,6 +1027,141 @@ def test_query_transformer_uses_inference_config():
 
 
 # ─────────────────────────────────────────────
+# L. GUI FREEZE FIX — _ensure_llm() IN BACKGROUND THREAD
+# ─────────────────────────────────────────────
+
+def test_ask_question_ensure_llm_called_inside_query_thread():
+    """
+    REGRESSION TEST: _ensure_llm() must be called INSIDE the query() function,
+    not on the main UI thread before threading.Thread() is created.
+
+    Bug: Calling _ensure_llm() on the main UI thread caused GUI freeze because
+    llama-cpp model loading blocks the event loop. The fix moves the call inside
+    the background thread.
+    """
+    from app_gui import DocumentQAApp
+    import inspect
+
+    source = inspect.getsource(DocumentQAApp._ask_question)
+
+    # Locate the query() nested function definition
+    lines = source.split('\n')
+    query_def_line = -1
+    query_end_line = len(lines)
+    for i, line in enumerate(lines):
+        if re.match(r'\s*def query\(', line):
+            query_def_line = i
+        # The threading.Thread call marks the end of the query() function body
+        if 'threading.Thread(target=query' in line and query_def_line >= 0:
+            query_end_line = i
+            break
+
+    assert query_def_line >= 0, (
+        "_ask_question() must contain a nested def query() function"
+    )
+
+    # Extract the query() function body (everything from def query() to before threading.Thread)
+    query_body = '\n'.join(lines[query_def_line:query_end_line])
+
+    # _ensure_llm() MUST be called inside query() body
+    assert 'self.engine._ensure_llm()' in query_body, (
+        "_ensure_llm() must be called INSIDE the query() function body "
+        "(not on main UI thread) to prevent GUI freeze during llama-cpp loading"
+    )
+
+    # _ensure_llm() must NOT appear between the start of _ask_question and the query def
+    # (i.e., not on the main thread)
+    before_query = '\n'.join(lines[:query_def_line])
+    # Check that _ensure_llm is NOT called before the query def (would block main thread)
+    matches_before = re.findall(r'self\.engine\._ensure_llm\(\)', before_query)
+    assert len(matches_before) == 0, (
+        f"_ensure_llm() was called {len(matches_before)} time(s) on the main UI thread "
+        "(before the query() function definition). This causes GUI freeze. "
+        "Move it inside the query() function."
+    )
+
+
+def test_ask_question_no_llm_uses_message_queue_thread_safe():
+    """
+    When engine.llm is None after _ensure_llm(), the error is reported via
+    message_queue.put() (thread-safe) rather than messagebox.showerror (not thread-safe).
+
+    Bug: messagebox.showerror() called from a background thread can crash or hang on
+    Windows. The fix uses message_queue.put() so the main thread displays the error.
+    """
+    from app_gui import DocumentQAApp
+    import inspect
+
+    source = inspect.getsource(DocumentQAApp._ask_question)
+
+    # Locate the query() nested function body
+    lines = source.split('\n')
+    query_def_line = -1
+    query_end_line = len(lines)
+    for i, line in enumerate(lines):
+        if re.match(r'\s*def query\(', line):
+            query_def_line = i
+        if 'threading.Thread(target=query' in line and query_def_line >= 0:
+            query_end_line = i
+            break
+
+    query_body = '\n'.join(lines[query_def_line:query_end_line])
+
+    # After checking `if not self.engine.llm:`, error must use message_queue.put()
+    assert 'message_queue.put' in query_body, (
+        "Error handling for llm=None must use message_queue.put() for thread-safety"
+    )
+
+    # The specific "No LLM" error message must be in a message_queue.put call
+    assert re.search(
+        r'message_queue\.put\([^)]*"No LLM[^"]*"',
+        query_body
+    ), (
+        "The 'No LLM backend available' error must be sent via message_queue.put(), "
+        "not messagebox.showerror() (which is not thread-safe on Windows)"
+    )
+
+
+def test_ask_question_ensure_llm_before_query_check():
+    """
+    _ensure_llm() must be called BEFORE the `if not self.engine.llm:` check
+    inside the query() function, so the LLM is initialized before checking availability.
+    """
+    from app_gui import DocumentQAApp
+    import inspect
+
+    source = inspect.getsource(DocumentQAApp._ask_question)
+
+    lines = source.split('\n')
+    query_def_line = -1
+    query_end_line = len(lines)
+    for i, line in enumerate(lines):
+        if re.match(r'\s*def query\(', line):
+            query_def_line = i
+        if 'threading.Thread(target=query' in line and query_def_line >= 0:
+            query_end_line = i
+            break
+
+    query_body = '\n'.join(lines[query_def_line:query_end_line])
+    query_lines = query_body.split('\n')
+
+    ensure_llm_idx = -1
+    llm_check_idx = -1
+    for i, line in enumerate(query_lines):
+        if 'self.engine._ensure_llm()' in line:
+            ensure_llm_idx = i
+        if 'if not self.engine.llm:' in line:
+            llm_check_idx = i
+
+    assert ensure_llm_idx >= 0, "_ensure_llm() must be called inside query()"
+    assert llm_check_idx >= 0, "if not self.engine.llm: check must be inside query()"
+    assert ensure_llm_idx < llm_check_idx, (
+        f"_ensure_llm() (line {ensure_llm_idx}) must be called BEFORE "
+        f"if not self.engine.llm: check (line {llm_check_idx}) inside query()"
+    )
+
+
+# ─────────────────────────────────────────────
 # SUMMARY TEST: Count total tests
 # ─────────────────────────────────────────────
 
