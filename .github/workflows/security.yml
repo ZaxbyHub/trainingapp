@@ -21,7 +21,7 @@ jobs:
       
       - name: Install security tools
         run: |
-          pip install bandit safety
+          pip install bandit "safety>=2.4,<3.0"
       
       - name: Run Bandit
         run: |
@@ -31,7 +31,7 @@ jobs:
       
       - name: Run Safety
         run: |
-          safety scan -r requirements.txt --policy-file .safety-policy.yml
+          safety check -r requirements.txt --policy-file .safety-policy.yml
       
       - name: Upload security report
         uses: actions/upload-artifact@v4
