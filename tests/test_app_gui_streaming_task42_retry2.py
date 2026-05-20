@@ -213,8 +213,8 @@ class TestStreamEndProcessedByMainThread:
 
     def test_stream_end_clears_both_refs(self):
         """
-        When 'stream_end' is processed, BOTH _streaming_message_ref and
-        _streaming_message_frame must be set to None.
+        When 'stream_end' is processed, _finalize_streaming_message must be called
+        with destroy_frame=True, which destroys the frame and clears both refs.
         """
         try:
             import app_gui
@@ -230,14 +230,9 @@ class TestStreamEndProcessedByMainThread:
 
         chunk = source[stream_end_idx:stream_end_idx+600]
 
-        assert "_streaming_message_ref" in chunk, (
-            "'stream_end' handler must clear _streaming_message_ref"
-        )
-        assert "_streaming_message_frame" in chunk, (
-            "'stream_end' handler must clear _streaming_message_frame"
-        )
-        assert "= None" in chunk, (
-            "'stream_end' handler must set refs to None"
+        assert "_finalize_streaming_message" in chunk, (
+            "'stream_end' handler must call _finalize_streaming_message to "
+            "persist the message and destroy the frame"
         )
 
     def test_stream_end_uses_none_assignment(self):
@@ -363,10 +358,10 @@ class TestStreamDestroyProcessedByMainThread:
             "_start_message_processor must handle 'stream_destroy' message type"
         )
 
-    def test_stream_destroy_calls_destroy(self):
+    def test_stream_destroy_calls_finalize(self):
         """
-        When 'stream_destroy' is processed, .destroy() must be called on the frame.
-        This is the main-thread operation that cleans up the partial streaming frame.
+        The stream_destroy handler must call _finalize_streaming_message with
+        destroy_frame=True, which calls .destroy() on the frame internally.
         """
         try:
             import app_gui
@@ -382,14 +377,15 @@ class TestStreamDestroyProcessedByMainThread:
 
         chunk = source[stream_destroy_idx:stream_destroy_idx+600]
 
-        assert ".destroy()" in chunk, (
-            "'stream_destroy' handler must call .destroy() on the frame"
+        assert "_finalize_streaming_message" in chunk, (
+            "'stream_destroy' handler must call _finalize_streaming_message "
+            "which internally calls .destroy() on the frame"
         )
 
     def test_stream_destroy_clears_refs(self):
         """
-        When 'stream_destroy' is processed, both refs must be set to None
-        after destroying the frame.
+        When 'stream_destroy' is processed, _finalize_streaming_message must be called
+        with destroy_frame=True, which sets both refs to None internally.
         """
         try:
             import app_gui
@@ -405,12 +401,10 @@ class TestStreamDestroyProcessedByMainThread:
 
         chunk = source[stream_destroy_idx:stream_destroy_idx+600]
 
-        # Should clear refs after destroy
-        assert "_streaming_message_ref = None" in chunk, (
-            "'stream_destroy' handler must set _streaming_message_ref = None"
-        )
-        assert "_streaming_message_frame = None" in chunk, (
-            "'stream_destroy' handler must set _streaming_message_frame = None"
+        # _finalize_streaming_message with destroy_frame=True clears both refs
+        assert "_finalize_streaming_message" in chunk, (
+            "'stream_destroy' handler must call _finalize_streaming_message "
+            "which sets refs to None internally"
         )
 
     def test_stream_destroy_checks_frame_exists(self):

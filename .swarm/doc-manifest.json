@@ -1,188 +1,237 @@
 {
   "schema_version": 1,
-  "scanned_at": "2026-04-15T01:02:18.074Z",
+  "scanned_at": "2026-05-20T00:28:58.294Z",
   "files": [
     {
-      "path": ".github\\agents\\ai_slop_reviewer.md",
+      "path": ".github/agents/ai_slop_reviewer.md",
       "title": "ai_slop_reviewer.md",
       "summary": "--- name: ai_slop_reviewer description: Expert code auditor that detects AI-generated code quality defects, hallucinated patterns, and structural anti-patterns across any codebase. --- You are a se...",
       "lines": 294,
-      "mtime": 1774657995250.6997
+      "mtime": 1776287370446.4
     },
     {
-      "path": ".github\\agents\\slop-remediator.md",
+      "path": ".github/agents/slop-remediator.md",
       "title": "Slop Remediator",
       "summary": "--- name: slop-remediator description: Reads persisted AI slop review reports from .github/reports/, triages findings by severity, and drives each one to a verified fix with tests and a PR-ready su...",
       "lines": 293,
-      "mtime": 1774657995250.6997
+      "mtime": 1776287370446.4
     },
     {
-      "path": ".github\\reports\\ai-slop-report-2026-03-12.md",
+      "path": ".github/reports/ai-slop-report-2026-03-12.md",
       "title": "AI Slop Review Report",
       "summary": "**Repository:** trainingapp (zaxbysauce/trainingapp) **Review Date:** 2026-03-12 **Reviewer:** ai_slop_reviewer **Report File:** .github/reports/ai-slop-report-2026-03-12.md **Overall Risk Level:**...",
       "lines": 602,
-      "mtime": 1774657995251.6997
+      "mtime": 1776287370447.4004
     },
     {
-      "path": ".github\\workflows\\build.yml",
+      "path": ".github/workflows/build.yml",
       "title": "build.yml",
       "summary": "name: Build and Release on: push: tags: - 'v*' workflow_dispatch: jobs: build-windows: runs-on: windows-latest steps: - uses: actions/checkout@v4 - name: Set up Python uses: actions/setup-python@v5...",
       "lines": 65,
-      "mtime": 1775764046126.1772
+      "mtime": 1776287370447.4004
     },
     {
-      "path": ".github\\workflows\\nightly.yml",
+      "path": ".github/workflows/nightly.yml",
       "title": "nightly.yml",
       "summary": "name: Nightly Build on: schedule: - cron: '0 2 * * *' workflow_dispatch: jobs: nightly: runs-on: windows-latest steps: - uses: actions/checkout@v4 - name: Set up Python uses: actions/setup-python@v...",
       "lines": 48,
-      "mtime": 1774788589719.366
+      "mtime": 1776287370447.4004
     },
     {
-      "path": ".github\\workflows\\README.md",
+      "path": ".github/workflows/README.md",
       "title": "CI/CD Pipeline Documentation",
       "summary": "This project uses GitHub Actions for continuous integration and deployment. All workflows are defined in `.github/workflows/`. **Triggers:** - Push to tags starting with 'v' (e.g., v1.2.3) - Manual...",
       "lines": 145,
-      "mtime": 1774788666523.177
+      "mtime": 1776287370447.4004
     },
     {
-      "path": ".github\\workflows\\release.yml",
+      "path": ".github/workflows/release.yml",
       "title": "release.yml",
       "summary": "name: Create Release on: workflow_dispatch: inputs: version: description: 'Version (e.g., 1.2.3)' required: true type: string version_type: description: 'Version type' required: true default: 'patc...",
       "lines": 62,
-      "mtime": 1775763998724.9827
+      "mtime": 1776287370447.4004
     },
     {
-      "path": ".github\\workflows\\security.yml",
+      "path": ".github/workflows/security.yml",
       "title": "security.yml",
       "summary": "name: Security Scan on: push: branches: [ main, master ] pull_request: branches: [ main, master ] schedule: - cron: '0 0 * * 0' jobs: security: runs-on: ubuntu-latest steps: - uses: actions/checkou...",
-      "lines": 42,
-      "mtime": 1775736603615.2527
+      "lines": 43,
+      "mtime": 1779236936161.7617
     },
     {
-      "path": ".github\\workflows\\test.yml",
+      "path": ".github/workflows/test.yml",
       "title": "test.yml",
       "summary": "name: Tests on: push: branches: [ main, master ] pull_request: branches: [ main, master ] jobs: test: runs-on: windows-latest strategy: matrix: python-version: ['3.10', '3.11', '3.12'] steps: - use...",
       "lines": 46,
-      "mtime": 1775756189092.0085
+      "mtime": 1776993199561.6128
     },
     {
-      "path": ".pytest_cache\\README.md",
+      "path": ".pytest_cache/README.md",
       "title": "pytest cache directory #",
       "summary": "This directory contains data from the pytest's cache plugin, which provides the `--lf` and `--ff` options, as well as the `cache` fixture. **Do not** commit this to version control. See [the docs](...",
       "lines": 9,
-      "mtime": 1772229173033.7185
+      "mtime": 1776289195167.1555
     },
     {
       "path": "ARCHITECTURE.md",
       "title": "Architecture Guide",
       "summary": "Technical architecture overview of the Document Q&A Assistant, including system design, component interactions, and algorithmic details. 1. [System Overview](#system-overview) 2. [Component Archite...",
       "lines": 588,
-      "mtime": 1776207580902.6855
+      "mtime": 1776287370635.4426
+    },
+    {
+      "path": "build_installer/app/.pytest_cache/README.md",
+      "title": "pytest cache directory #",
+      "summary": "This directory contains data from the pytest's cache plugin, which provides the `--lf` and `--ff` options, as well as the `cache` fixture. **Do not** commit this to version control. See [the docs](...",
+      "lines": 9,
+      "mtime": 1776289195167.1555
     },
     {
       "path": "CHANGELOG.md",
       "title": "Changelog",
-      "summary": "- **Model upgrade**: Replaced phi3-mini-int4 with Gemma 4 E2B (Q5_K_M GGUF, 3.13 GB) - **Single backend**: Removed OpenVINO, Ollama, and OpenAI-compatible API backends; GGUF (llama-cpp-python) is n...",
-      "lines": 290,
-      "mtime": 1776214929484.1887
+      "summary": "- **Thread-safe RAG engine**: Lazy LLM initialization with cancellation support, asyncio.to_thread wrapping for all LLM calls, and thread-safe query transformer singleton with retry suppression via...",
+      "lines": 339,
+      "mtime": 1779201045408.0183
     },
     {
       "path": "CLAUDE.md",
       "title": "CLAUDE.md",
       "summary": "<!-- QUACK_AGENT_HEADER_START - DO NOT EDIT MANUALLY --> Your name is **Agent Jack**, and you're the **Project Manager**. **Communication Style:** technical **Notes:** You evaluate tasks critically...",
       "lines": 33,
-      "mtime": 1776002832150.3386
+      "mtime": 1776287370635.4426
     },
     {
-      "path": "docs\\audit_model_gguf_paths.md",
+      "path": "docs/audit_model_gguf_paths.md",
       "title": "Model Path vs GGUF Path Usage Audit",
       "summary": "**Audit Date:** 2026-03-11 **Scope:** All Python files using `model_path` or `gguf_path` parameters **Auditor:** Phase 15.3 Task --- | Category | Status | |----------|--------| | Overall Status | *...",
       "lines": 380,
-      "mtime": 1773261164516.2334
+      "mtime": 1776287370649.9363
     },
     {
-      "path": "docs\\bug_ledger.md",
+      "path": "docs/bug_ledger.md",
       "title": "Bug Ledger - Document Q&A Application",
       "summary": "**Generated:** 2026-03-11 **Status:** Baseline Analysis Complete **Total Confirmed Defects:** 6 --- This document provides a comprehensive ledger of 6 confirmed defects identified during baseline t...",
       "lines": 1023,
-      "mtime": 1773256128949.1836
+      "mtime": 1776287370650.9363
     },
     {
-      "path": "docs\\build_verification_checklist.md",
+      "path": "docs/build_verification_checklist.md",
       "title": "Build Verification Checklist - Task 19.3",
       "summary": "**Date:** 2026-03-11 **Build Command:** `build_exe.bat` (which runs `pyinstaller AFOMIS.spec --clean --noconfirm`) - [ ] Python 3.10+ installed - [ ] Virtual environment activated (if used) - [ ] A...",
       "lines": 92,
-      "mtime": 1773272546365.9395
+      "mtime": 1776287370650.9363
     },
     {
-      "path": "docs\\documentation_audit.md",
+      "path": "docs/documentation_audit.md",
       "title": "Documentation Audit Report",
       "summary": "**Date:** 2026-03-11 **Auditor:** Architect **Scope:** README.md, API documentation, usage guides | # | Issue | Severity | Location | Recommendation | |---|-------|----------|----------|-----------...",
       "lines": 62,
-      "mtime": 1773271307116.0525
+      "mtime": 1776287370650.9363
     },
     {
-      "path": "docs\\final_bug_ledger.md",
+      "path": "docs/final_bug_ledger.md",
       "title": "Final Bug Ledger - AFOMIS End-to-End Restoration",
       "summary": "**Project:** AFOMIS End-to-End Functionality Restoration **Completion Date:** 2026-03-11 **Total Defects:** 6 **Status:** All Fixed ✅ --- All 6 confirmed defects from the restoration project have b...",
       "lines": 230,
-      "mtime": 1773275728171.3865
+      "mtime": 1776287370651.9358
     },
     {
-      "path": "docs\\packaging_audit.md",
+      "path": "docs/packaging_audit.md",
       "title": "Packaging Audit Report",
       "summary": "**Date:** 2026-03-11 **Auditor:** Architect **Scope:** AFOMIS.spec, build scripts, repository layout | # | Component | Status | Notes | |---|-----------|--------|-------| | 1 | Entry point (ui/app....",
       "lines": 69,
-      "mtime": 1773272013388.2488
+      "mtime": 1776287370651.9358
     },
     {
-      "path": "docs\\postmortem_analysis.md",
+      "path": "docs/postmortem_analysis.md",
       "title": "Postmortem Analysis - AFOMIS End-to-End Restoration",
       "summary": "**Project:** AFOMIS Help and Support - End-to-End Functionality Restoration **Date:** 2026-03-11 **Duration:** 7 Phases (14-20) **Defects Resolved:** 6 --- This postmortem analyzes why 6 critical i...",
       "lines": 238,
-      "mtime": 1773276090707.92
+      "mtime": 1776287370651.9358
     },
     {
-      "path": "docs\\regression_summary_phase15.md",
+      "path": "docs/regression_summary_phase15.md",
       "title": "Phase 15 Regression Test Summary",
       "summary": "**Test Run Date:** 2026-03-11 **Test Scope:** All 6 confirmed defects (DEFECT-001 through DEFECT-006) | Metric | Count | Status | |--------|-------|--------| | Total Tests | 49 | - | | Passed | 4 |...",
       "lines": 185,
-      "mtime": 1773263235765.6145
+      "mtime": 1776287370651.9358
     },
     {
-      "path": "docs\\security_hardening_guide.md",
+      "path": "docs/releases/v0.1.0.md",
+      "title": "Release v0.1.0 — RAG Hardening Pass",
+      "summary": "- `engine_factory.create_engine_from_settings()` now accepts both canonical keys (`chunk_overlap`, `min_similarity`, `context_truncation`, `db_path`) and the old `rag_`-prefixed forms via a local `...",
+      "lines": 101,
+      "mtime": 1779200994161.8054
+    },
+    {
+      "path": "docs/releases/v0.2.0.md",
+      "title": "Release v0.2.0 — UI/UX Modernization (Windows 11 Fluent Design)",
+      "summary": "- Replaced single-pane layout with a Windows 11 Fluent Design navigation rail (Chat, Documents, Settings, Help pages). - Navigation switching via rail buttons or keyboard shortcuts (`Ctrl+,` → Sett...",
+      "lines": 86,
+      "mtime": 1779200994161.8054
+    },
+    {
+      "path": "docs/releases/v2.2.0.md",
+      "title": "v2.2.0 — RAG & Chat Interface Performance Optimization",
+      "summary": "- Module-level `_chroma_lock` (RLock) in `vector_store.py` serializing all ChromaDB collection operations (add, query, get, delete, count) - Thread-safe `Settings` singleton with double-check locki...",
+      "lines": 34,
+      "mtime": 1779034231897.8318
+    },
+    {
+      "path": "docs/releases/v2.2.1.md",
+      "title": "v2.2.1 — GUI Freeze Fix & Memory Check Improvement",
+      "summary": "- **GUI freeze on first query**: Moved `_ensure_llm()` from main UI thread into background query thread in `app_gui.py`. Previously, llama-cpp model loading blocked the tkinter event loop synchrono...",
+      "lines": 23,
+      "mtime": 1779236936178.4478
+    },
+    {
+      "path": "docs/security_hardening_guide.md",
       "title": "Security Hardening Guide for Production",
       "summary": "This guide provides comprehensive security documentation for deploying the Document Q&A Assistant in production environments. --- Before deploying to production, complete the following security che...",
       "lines": 507,
-      "mtime": 1776028923254.4187
+      "mtime": 1776287370652.9353
     },
     {
-      "path": "docs\\smoke_test_plan.md",
+      "path": "docs/smoke_test_plan.md",
       "title": "Packaged Application Smoke Test Plan - Task 19.4",
       "summary": "**Objective:** Verify packaged GUI application launches and functions correctly **Test Environment:** - Windows 10/11 - Packaged app: `dist/AFOMIS/AFOMIS.exe` - Prerequisites: GGUF model in models/...",
       "lines": 123,
-      "mtime": 1773272805609.597
+      "mtime": 1776287370652.9353
     },
     {
-      "path": "docs\\UX_FIX_PLAN.md",
+      "path": "docs/UX_FIX_PLAN.md",
       "title": "UX Fix Plan — All Blocking Issues",
       "summary": "| # | Issue | File | Severity | |---|-------|------|----------| | A1 | `POST /auth/token` uses untyped `dict` — Swagger can't show expected shape `{\"api_key\": \"...\"}` | api_server.py | Blocking | |...",
       "lines": 309,
-      "mtime": 1776032715378.2861
+      "mtime": 1776287370649.9363
+    },
+    {
+      "path": "models/bge-small-en-v1.5/README.md",
+      "title": "README.md",
+      "summary": "--- tags: - sentence-transformers - feature-extraction - sentence-similarity - transformers - mteb model-index: - name: bge-small-en-v1.5 results: - task: type: Classification dataset: type: mteb/a...",
+      "lines": 3075,
+      "mtime": 1777029295086.0413
     },
     {
       "path": "README.md",
       "title": "Document Q&A Assistant",
       "summary": "A fully offline RAG-based document question answering system optimized for Windows PCs. Features semantic search, hybrid retrieval, and CPU-based LLM inference with GGUF models. - **Offline-First D...",
-      "lines": 592,
-      "mtime": 1776207764864.5127
+      "lines": 626,
+      "mtime": 1779201046006.8047
     },
     {
-      "path": "tests\\regression\\.pytest_cache\\README.md",
+      "path": "specs/README.md",
+      "title": "Specs",
+      "summary": "This is a directory for test plans.",
+      "lines": 4,
+      "mtime": 1777128436245.4048
+    },
+    {
+      "path": "tests/regression/.pytest_cache/README.md",
       "title": "pytest cache directory #",
       "summary": "This directory contains data from the pytest's cache plugin, which provides the `--lf` and `--ff` options, as well as the `cache` fixture. **Do not** commit this to version control. See [the docs](...",
       "lines": 9,
-      "mtime": 1773275283131.1033
+      "mtime": 1776287370669.9348
     }
   ]
 }

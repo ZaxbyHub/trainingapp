@@ -1,14 +1,16 @@
 {
   "taskId": "1.1",
   "required_gates": [
+    "critic",
     "docs",
+    "explorer",
     "reviewer",
     "test_engineer"
   ],
   "gates": {
     "reviewer": {
-      "sessionId": "ses_27241b075ffeEGsqkn5tI8ga0Q",
-      "timestamp": "2026-04-14T20:48:26.520Z",
+      "sessionId": "ses_1bd2536f3ffe4cAx0Aetp3mOjP",
+      "timestamp": "2026-05-20T01:02:19.996Z",
       "agent": "reviewer"
     },
     "test_engineer": {
@@ -20,6 +22,16 @@
       "sessionId": "ses_27241b075ffeEGsqkn5tI8ga0Q",
       "timestamp": "2026-04-14T20:51:35.441Z",
       "agent": "docs"
+    },
+    "explorer": {
+      "sessionId": "ses_1bd2536f3ffe4cAx0Aetp3mOjP",
+      "timestamp": "2026-05-20T00:59:10.472Z",
+      "agent": "explorer"
+    },
+    "critic": {
+      "sessionId": "ses_1bd2536f3ffe4cAx0Aetp3mOjP",
+      "timestamp": "2026-05-20T01:22:04.058Z",
+      "agent": "critic"
     }
   }
 }

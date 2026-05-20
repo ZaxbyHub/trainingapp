@@ -109,6 +109,10 @@ TOOLTIP_MAX_WIDTH: int = 280
 
 TOOLTIP_PAD_PX = (Spacing.SM, Spacing.MD, Spacing.SM, Spacing.MD)
 
+# DD-006: Chat history bounds to prevent memory/performance degradation
+CHAT_HISTORY_MAX_MESSAGES: int = 50
+CHAT_HISTORY_PRUNE_COUNT: int = 10
+
 SETTINGS_FIELD_HINTS: dict[str, str] = {
     "chunk_size": "Number of tokens per document chunk",
     "n_results": "How many retrieved chunks to include in context",
@@ -678,6 +682,7 @@ class DocumentQAApp(CTk):
         # Bind chat_frame resize — deferred to avoid winfo_width() == 1 during first render
         self.after(50, self._bind_chat_resize)
 
+        self._message_processor_shutdown = False
         self._start_message_processor()
         self.after(100, self._initialize_engine)
 
@@ -858,6 +863,7 @@ class DocumentQAApp(CTk):
         self._empty_state_frame = None
         self._streaming_message_ref: Optional[CTkLabel] = None  # Reference to streaming message content label
         self._streaming_message_frame: Optional[CTkFrame] = None  # Reference to streaming message frame
+        self._streaming_finalized: bool = False  # Guard: prevents tokens arriving after finalization from being processed
 
         # Start surface (shown when no messages; sibling of chat_frame, NOT inside it)
         self._chat_area_frame = CTkFrame(self.chat_page, fg_color="transparent")
@@ -1694,6 +1700,12 @@ class DocumentQAApp(CTk):
 
         self.chat_frame._parent_canvas.yview_moveto(1.0)
 
+        # DD-006: Prune oldest messages if chat history exceeds limit
+        children = self.chat_frame.winfo_children()
+        if len(children) > CHAT_HISTORY_MAX_MESSAGES:
+            for widget in children[:-CHAT_HISTORY_MAX_MESSAGES]:
+                widget.destroy()
+
     def _create_retrieved_chunks_expander(self, parent: CTkFrame, chunks: list):
         """Create an expander for retrieved chunks."""
         # Simple expander implementation
@@ -1829,10 +1841,17 @@ class DocumentQAApp(CTk):
         for k in keys_to_delete:
             del self.__dict__[k]
 
+        # DD-002: Reset streaming state refs to prevent dangling widget access
+        self._streaming_message_ref = None
+        self._streaming_message_frame = None
+        self._streaming_finalized = False
+
     def _confirm_clear_chat(self):
         """Inline two-click confirm pattern for clearing chat."""
         if self._clear_confirm_pending:
             self._revert_clear_button()
+            # DD-002: Reset streaming guard before clearing to handle stream-in-progress case
+            self._streaming_finalized = False
             self._do_clear_chat()
             return
 
@@ -1908,8 +1927,13 @@ class DocumentQAApp(CTk):
 
         def process():
             try:
-                while True:
+                while not self._message_processor_shutdown:
+                    # DD-004: Validate message tuple structure before processing
                     msg = self.message_queue.get_nowait()
+                    if not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str):
+                        # Log and skip malformed messages to prevent crashes
+                        logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+                        continue
                     if msg[0] == "status":
                         if self.winfo_exists() and hasattr(self, "status_label"):
                             self.status_label.configure(text=msg[1])
@@ -1968,25 +1992,9 @@ class DocumentQAApp(CTk):
                         if self.winfo_exists():
                             self._hide_typing_indicator()
                     elif msg[0] == "stream_end":
-                        # Streaming completed — destroy frame on main thread
-                        if self._streaming_message_frame is not None:
-                            try:
-                                if self._streaming_message_frame.winfo_exists():
-                                    self._streaming_message_frame.destroy()
-                            except Exception:
-                                pass
-                        self._streaming_message_ref = None
-                        self._streaming_message_frame = None
+                        self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
                     elif msg[0] == "stream_destroy":
-                        # Destroy streaming frame on main thread (from cancellation path)
-                        if self._streaming_message_frame is not None:
-                            try:
-                                if self._streaming_message_frame.winfo_exists():
-                                    self._streaming_message_frame.destroy()
-                            except Exception:
-                                pass
-                        self._streaming_message_ref = None
-                        self._streaming_message_frame = None
+                        self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
                     elif msg[0] == "model_label":
                         if self.winfo_exists() and hasattr(self, "model_label"):
                             self.model_label.configure(text=msg[1])
@@ -1996,6 +2004,33 @@ class DocumentQAApp(CTk):
                 self.after(100, process)
 
         self.after(100, process)
+
+    def _get_streaming_text(self) -> str:
+        """Extract accumulated text from the streaming message widget."""
+        if self._streaming_message_ref is not None:
+            try:
+                return self._streaming_message_ref.cget("text")
+            except Exception as e:
+                logging.getLogger("app_gui").debug(f"Failed to get streaming text: {e}")
+        return ""
+
+    def _finalize_streaming_message(self, accumulated_text: str, destroy_frame: bool = True) -> None:
+        """Finalize and persist a streaming assistant message, then optionally destroy the frame."""
+        if not accumulated_text:
+            return
+        try:
+            self._add_message("assistant", accumulated_text, sources=None, timestamp=datetime.now().strftime("%H:%M"))
+        except Exception as e:
+            logging.getLogger("app_gui").error(f"Failed to add message to chat: {e}")
+        if destroy_frame and self._streaming_message_frame is not None:
+            try:
+                if self._streaming_message_frame.winfo_exists():
+                    self._streaming_message_frame.destroy()
+            except Exception as e:
+                logging.getLogger("app_gui").debug(f"Failed to destroy streaming frame: {e}")
+            self._streaming_message_ref = None
+            self._streaming_message_frame = None
+        self._streaming_finalized = True
 
     def _initialize_engine(self):
         """Initialize the RAG engine in a background thread."""
@@ -2167,8 +2202,10 @@ class DocumentQAApp(CTk):
         Args:
             token: The token text to append to the current message.
         """
-        # Guard: discard tokens after cancellation
+        # Guard: discard tokens after cancellation or after finalization
         if self._operation_cancelled.is_set():
+            return
+        if self._streaming_finalized:
             return
         
         if self._streaming_message_ref is None:
@@ -2223,6 +2260,7 @@ class DocumentQAApp(CTk):
                 return
         self._cancel_clear_confirm()
         self._hide_typing_indicator()
+        self._message_processor_shutdown = True
         self.destroy()
 
     def _open_settings(self):
@@ -2401,6 +2439,7 @@ class DocumentQAApp(CTk):
         self.question_entry.configure(state="disabled")
         self._is_operation_active = True
         self._operation_cancelled.clear()
+        self._streaming_finalized = False
         self.message_queue.put(("cancel_button_show",))
         self._show_typing_indicator()
 
@@ -2461,8 +2500,8 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("hide_typing",))
 
             except Exception as e:
-                # Queue stream_end to run on main thread (tkinter thread-safety)
-                self.message_queue.put(("stream_end",))
+                # Queue stream_destroy to run on main thread — preserves partial content via _add_message
+                self.message_queue.put(("stream_destroy",))
                 self.message_queue.put(("status", f"Error: {e}"))
                 self.message_queue.put(("message", "system", _classify_error(e, "query"), None, datetime.now().strftime("%H:%M")))
                 self.message_queue.put(("enable_input", True))
