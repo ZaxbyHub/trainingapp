@@ -141,8 +141,8 @@ class TestStreamEndHandling:
 
     def test_stream_end_clears_both_refs(self):
         """
-        When 'stream_end' is processed, BOTH _streaming_message_ref and
-        _streaming_message_frame must be set to None.
+        When 'stream_end' is processed, _finalize_streaming_message must be called
+        with destroy_frame=True, which destroys the frame and clears both refs.
         """
         try:
             import app_gui
@@ -158,14 +158,9 @@ class TestStreamEndHandling:
 
         chunk = source[stream_end_idx:stream_end_idx+300]
 
-        assert "_streaming_message_ref" in chunk, (
-            "'stream_end' handler must clear _streaming_message_ref"
-        )
-        assert "_streaming_message_frame" in chunk, (
-            "'stream_end' handler must clear _streaming_message_frame"
-        )
-        assert "= None" in chunk, (
-            "'stream_end' handler must set refs to None"
+        assert "_finalize_streaming_message" in chunk, (
+            "'stream_end' handler must call _finalize_streaming_message to "
+            "persist the message and destroy the frame"
         )
 
     def test_stream_end_uses_none_assignment(self):
