@@ -4,6 +4,15 @@
 
 ### Added
 - **Thread-safe RAG engine**: Lazy LLM initialization with cancellation support, asyncio.to_thread wrapping for all LLM calls, and thread-safe query transformer singleton with retry suppression via _query_transformer_failed sentinel (Phase 5)
+
+- **Streaming message persistence**: stream_end handler now calls `_add_message` before destroying frame; `_streaming_finalized` guard prevents double-finalization; `_finalize_streaming_message()` helper extracted (Task 1.1)
+- **Chat history bounded to 50 messages**: Oldest messages pruned when limit exceeded; configurable via `CHAT_HISTORY_MAX_MESSAGES` and `CHAT_HISTORY_PRUNE_COUNT` constants (Task 3.1)
+- **Message queue validation**: Malformed messages logged and skipped before processing; prevents crashes from invalid queue entries (Task 4.1)
+- **Exception logging**: Previously silent except blocks now log via `logging.getLogger("app_gui")` for debugging (Task 4.2)
+- **Shutdown flag**: `_message_processor_shutdown` flag stops message processor loop on window close for clean shutdown (Task 5.1)
+
+### Changed
+- **Clear chat resets streaming refs**: `_streaming_message_ref`, `_streaming_message_frame`, and `_streaming_finalized` all reset in `_do_clear_chat` and `_confirm_clear_chat` (Task 2.1)
 - **BM25 incremental updates**: Batch-only incremental ChromaDB updates on document changes instead of full rebuilds
 - **Hybrid search with RRF**: Combined BM25 and vector search using Reciprocal Rank Fusion for improved retrieval quality
 - **BM25 tokenizer normalization**: Normalized tokenization for consistent BM25 scoring across document and query processing
