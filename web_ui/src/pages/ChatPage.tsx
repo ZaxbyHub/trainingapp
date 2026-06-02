@@ -139,7 +139,7 @@ function ChatPageInner() {
 
       (async () => {
         try {
-          for await (const event of orchestrator.query(text)) {
+          for await (const event of orchestrator.query(text, { signal: abortController.signal })) {
             if (abortController.signal.aborted) return;
             if (tokenStreamManagerRef.current !== streamManager) return;
 

@@ -251,7 +251,7 @@ export class RAGOrchestrator {
     // Stage 7 & 8: Generate answer with streaming
     try {
       if (streamTokens) {
-        for await (const token of this.llmService.generate(contextMessages, { maxTokens, temperature })) {
+        for await (const token of this.llmService.generate(contextMessages, { maxTokens, temperature, signal })) {
           if (signal?.aborted) {
             throw new DOMException('The operation was aborted.', 'AbortError');
           }
@@ -259,7 +259,7 @@ export class RAGOrchestrator {
           yield { type: 'token', data: token };
         }
       } else {
-        fullAnswer = await this.llmService.generateComplete(contextMessages, { maxTokens, temperature });
+        fullAnswer = await this.llmService.generateComplete(contextMessages, { maxTokens, temperature, signal });
         yield { type: 'token', data: fullAnswer };
       }
     } catch (err) {

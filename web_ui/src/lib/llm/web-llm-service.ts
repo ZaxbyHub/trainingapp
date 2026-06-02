@@ -214,13 +214,13 @@ export class WebLLMService {
    */
   async *generate(
     messages: LLMMessage[],
-    options?: LLMGenerateOptions
+    options?: LLMGenerateOptions & { signal?: AbortSignal }
   ): AsyncGenerator<string> {
     if (!this._engine || !this._ready) {
       throw new Error('WebLLMService not initialized. Call initialize() first.');
     }
 
-    const abortController = new AbortController();
+    const signal = options?.signal ?? new AbortController().signal;
 
     try {
       const completion = await this._engine.chat.completions.create({
@@ -229,7 +229,7 @@ export class WebLLMService {
         max_tokens: options?.maxTokens,
         temperature: options?.temperature,
         top_p: options?.topP,
-        signal: abortController.signal,
+        signal,
       });
 
       for await (const chunk of completion) {
@@ -256,7 +256,7 @@ export class WebLLMService {
    */
   async generateComplete(
     messages: LLMMessage[],
-    options?: LLMGenerateOptions
+    options?: LLMGenerateOptions & { signal?: AbortSignal }
   ): Promise<string> {
     if (!this._engine || !this._ready) {
       throw new Error('WebLLMService not initialized. Call initialize() first.');
@@ -268,6 +268,7 @@ export class WebLLMService {
       max_tokens: options?.maxTokens,
       temperature: options?.temperature,
       top_p: options?.topP,
+      signal: options?.signal,
     });
 
     // Non-streaming: collect the single complete response

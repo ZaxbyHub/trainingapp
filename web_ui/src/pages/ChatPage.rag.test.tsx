@@ -157,7 +157,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     });
 
     // Verify RAGOrchestrator.query was called with user text
-    expect(mockOrchestratorInstance.query).toHaveBeenCalledWith(userText);
+    expect(mockOrchestratorInstance.query).toHaveBeenCalledWith(userText, expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   // ========================================================================
