@@ -453,6 +453,43 @@ describe('WebGPUWatchdog', () => {
       expect.any(Error)
     );
   });
+
+  // -------------------------------------------------------------------------
+  // dispose() — resource cleanup (FR-004)
+  // -------------------------------------------------------------------------
+
+  test('dispose() removes listeners and nulls fields', () => {
+    const device = createMockGPUDevice();
+    const watchdog = new WebGPUWatchdog();
+    const callback = vi.fn();
+
+    watchdog.start(device, callback);
+    expect(watchdog.isMonitoring()).toBe(true);
+
+    watchdog.dispose();
+
+    expect(watchdog.isMonitoring()).toBe(false);
+    expect(device.removeEventListener).toHaveBeenCalledWith('lost', expect.any(Function));
+  });
+
+  test('dispose() is safe to call on uninstantiated watchdog', () => {
+    const watchdog = new WebGPUWatchdog();
+    expect(() => watchdog.dispose()).not.toThrow();
+    expect(watchdog.isMonitoring()).toBe(false);
+  });
+
+  test('dispose() called twice does not throw', () => {
+    const device = createMockGPUDevice();
+    const watchdog = new WebGPUWatchdog();
+
+    watchdog.start(device, vi.fn());
+
+    expect(() => {
+      watchdog.dispose();
+      watchdog.dispose();
+    }).not.toThrow();
+    expect(watchdog.isMonitoring()).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

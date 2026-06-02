@@ -9,6 +9,39 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ExtractionResult, ExtractedPage, ExtractionError } from '../../types/document';
 
+// Mock pdfjs-dist BEFORE importing pdf-extractor so that configure/terminate tests
+// and any future real calls don't require full PDF.js worker in jsdom.
+vi.mock('pdfjs-dist', () => {
+  (globalThis as any).__pdfWorkerSetCount = 0;
+  (globalThis as any).__pdfWorkerSrc = '';
+  return {
+    GlobalWorkerOptions: {
+      get workerSrc() {
+        return (globalThis as any).__pdfWorkerSrc || '';
+      },
+      set workerSrc(v: string) {
+        (globalThis as any).__pdfWorkerSrc = v;
+        (globalThis as any).__pdfWorkerSetCount = ((globalThis as any).__pdfWorkerSetCount || 0) + 1;
+      },
+    },
+    getDocument: vi.fn().mockImplementation(() => ({
+      promise: Promise.resolve({
+        numPages: 1,
+        getPage: vi.fn().mockResolvedValue({
+          getTextContent: vi.fn().mockResolvedValue({
+            items: [{ str: 'mock page text' }],
+          }),
+          cleanup: vi.fn(),
+        }),
+        destroy: vi.fn(),
+      }),
+    })),
+  };
+});
+
+// Import functions under test AFTER the mock
+import { extractPdfText, terminatePdfWorker } from './pdf-extractor';
+
 // Since vitest is not installed, we import for type checking only
 // The actual test execution will be skipped
 
@@ -253,6 +286,63 @@ describe('PDF Text Extraction', () => {
       expect(fullText).toContain('Chapter 1');
       expect(fullText).toContain('Chapter 2');
       expect(fullText).toContain('Chapter 3');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // PDF.js worker singleton (FR-006)
+  // Tests for configurePdfWorker (internal) idempotence and terminatePdfWorker reset.
+  // -------------------------------------------------------------------------
+
+  describe('PDF worker singleton', () => {
+    beforeEach(() => {
+      // Reset counters for each test
+      (globalThis as any).__pdfWorkerSetCount = 0;
+      (globalThis as any).__pdfWorkerSrc = '';
+      vi.clearAllMocks();
+      // Force reset of private _workerConfigured flag in pdf-extractor module
+      // so each test starts with unconfigured worker (idempotence + terminate tests require it)
+      terminatePdfWorker();
+    });
+
+    test('configurePdfWorker is idempotent — calling twice does not duplicate', async () => {
+      const mockFile = {
+        name: 'test.pdf',
+        type: 'application/pdf',
+        size: 10,
+        arrayBuffer: async () => new ArrayBuffer(10),
+      } as unknown as File;
+
+      // First extract configures
+      await extractPdfText(mockFile);
+      const firstCount = (globalThis as any).__pdfWorkerSetCount;
+
+      // Second extract should be no-op for configure
+      await extractPdfText(mockFile);
+      const secondCount = (globalThis as any).__pdfWorkerSetCount;
+
+      expect(firstCount).toBe(1);
+      expect(secondCount).toBe(1); // no additional set
+    });
+
+    test('terminatePdfWorker resets configuration so next extract re-initializes', async () => {
+      const mockFile = {
+        name: 'test.pdf',
+        type: 'application/pdf',
+        size: 10,
+        arrayBuffer: async () => new ArrayBuffer(10),
+      } as unknown as File;
+
+      await extractPdfText(mockFile);
+      const afterFirst = (globalThis as any).__pdfWorkerSetCount;
+
+      terminatePdfWorker();
+
+      await extractPdfText(mockFile);
+      const afterReset = (globalThis as any).__pdfWorkerSetCount;
+
+      expect(afterFirst).toBe(1);
+      expect(afterReset).toBe(2); // re-set after terminate
     });
   });
 });

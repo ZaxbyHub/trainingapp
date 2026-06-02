@@ -189,4 +189,122 @@ describe('KeywordIndex', () => {
       expect(expectedId).toBe('doc123:5');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // User isolation via sessionStorage prefix (FR-007)
+  // DB_NAME is private; we observe it via the indexedDB.open mock calls.
+  // -------------------------------------------------------------------------
+
+  describe('user isolation (DB_NAME prefix)', () => {
+    // Helper that returns a mock open() implementation which fully completes loadFromIDB
+    // (fires both outer onsuccess and inner getRequest.onsuccess) so initialize() resolves quickly.
+    function makeCompletingOpenMock() {
+      return vi.fn().mockImplementation((name: string) => {
+        const getReq: any = { onsuccess: null, onerror: null, result: null };
+        const tx: any = {
+          objectStore: vi.fn(() => ({
+            get: vi.fn(() => getReq),
+            put: vi.fn(() => ({ onsuccess: null, onerror: null })),
+          })),
+          oncomplete: null,
+          onerror: null,
+        };
+        const db: any = {
+          objectStoreNames: { contains: vi.fn().mockReturnValue(true) },
+          close: vi.fn(),
+          transaction: vi.fn(() => tx),
+        };
+        const req: any = {
+          onsuccess: null,
+          onerror: null,
+          onupgradeneeded: null,
+          result: db,
+        };
+        Promise.resolve().then(() => {
+          if (req.onsuccess) req.onsuccess({ target: { result: db } });
+          Promise.resolve().then(() => {
+            if (getReq.onsuccess) getReq.onsuccess({ target: { result: getReq.result } });
+          });
+        });
+        return req;
+      });
+    }
+
+    it('DB_NAME is prefixed with user identifier', async () => {
+      const openMock = (globalThis as any).indexedDB.open as ReturnType<typeof vi.fn>;
+      openMock.mockClear();
+      openMock.mockImplementation(makeCompletingOpenMock());
+
+      const index = KeywordIndex.getInstance();
+      try {
+        await index.initialize();
+      } catch {
+        // ignore; open call was recorded
+      }
+
+      const calledName = openMock.mock.calls[0]?.[0] as string | undefined;
+      expect(calledName).toBeDefined();
+      expect(calledName).toMatch(/^[a-z0-9-]{3,}-doc-qa-keywords$/);
+      index.dispose();
+    });
+
+    it('Same session produces same prefix on reload', async () => {
+      sessionStorage.clear();
+      sessionStorage.setItem('doc-qa-user-id', 'same-sess-00112233');
+
+      vi.resetModules();
+      const { KeywordIndex: K } = await import('./keyword-index');
+
+      const openMock = (globalThis as any).indexedDB.open as ReturnType<typeof vi.fn>;
+      openMock.mockClear();
+      openMock.mockImplementation(makeCompletingOpenMock());
+
+      const i1 = K.getInstance();
+      try { await i1.initialize(); } catch {}
+      const n1 = openMock.mock.calls[0]?.[0];
+      i1.dispose();
+
+      // same session, same module after first reset: prefix must be identical
+      const i2 = K.getInstance();
+      openMock.mockClear();
+      try { await i2.initialize(); } catch {}
+      const n2 = openMock.mock.calls[0]?.[0];
+      i2.dispose();
+
+      expect(n1).toBe(n2);
+      expect(n1).toMatch(/-doc-qa-keywords$/);
+    });
+
+    it('Different sessionStorage values produce different DB_NAMEs', async () => {
+      sessionStorage.clear();
+      sessionStorage.setItem('doc-qa-user-id', 'user-aaaa-11111111');
+      vi.resetModules();
+
+      const { KeywordIndex: KA } = await import('./keyword-index');
+      const openMock = (globalThis as any).indexedDB.open as ReturnType<typeof vi.fn>;
+      openMock.mockClear();
+      openMock.mockImplementation(makeCompletingOpenMock());
+
+      const ia = KA.getInstance();
+      try { await ia.initialize(); } catch {}
+      const na = openMock.mock.calls[0]?.[0];
+      ia.dispose();
+
+      sessionStorage.setItem('doc-qa-user-id', 'user-bbbb-22222222');
+      vi.resetModules();
+
+      const { KeywordIndex: KB } = await import('./keyword-index');
+      openMock.mockClear();
+      openMock.mockImplementation(makeCompletingOpenMock());
+
+      const ib = KB.getInstance();
+      try { await ib.initialize(); } catch {}
+      const nb = openMock.mock.calls[0]?.[0];
+      ib.dispose();
+
+      expect(na).not.toBe(nb);
+      expect(na).toMatch(/-doc-qa-keywords$/);
+      expect(nb).toMatch(/-doc-qa-keywords$/);
+    });
+  });
 });

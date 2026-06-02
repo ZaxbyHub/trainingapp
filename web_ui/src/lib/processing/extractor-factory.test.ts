@@ -9,6 +9,47 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ExtractionResult, ExtractionError } from '../../types/document';
 
+// Mock leaf extractors BEFORE importing extractor-factory (so validation tests can call extractDocument
+// without triggering real PDF/DOCX parsing which requires browser-compatible binaries in jsdom).
+vi.mock('./pdf-extractor', () => ({
+  extractPdfText: vi.fn().mockResolvedValue({
+    fullText: 'mocked pdf text',
+    pages: [],
+    metadata: { fileName: 'test.pdf', pageCount: 1, fileSize: 0, extractedAt: 0 },
+  }),
+}));
+vi.mock('./docx-extractor', () => ({
+  extractDocxText: vi.fn().mockResolvedValue({
+    fullText: 'mocked docx text',
+    pages: [],
+    metadata: { fileName: 'test.docx', pageCount: 1, fileSize: 0, extractedAt: 0 },
+  }),
+}));
+vi.mock('./xlsx-extractor', () => ({
+  extractXlsxText: vi.fn().mockResolvedValue({
+    fullText: 'mocked xlsx text',
+    pages: [],
+    metadata: { fileName: 'test.xlsx', pageCount: 1, fileSize: 0, extractedAt: 0 },
+  }),
+}));
+vi.mock('./txt-extractor', () => ({
+  extractTxtText: vi.fn().mockResolvedValue({
+    fullText: 'mocked txt text',
+    pages: [],
+    metadata: { fileName: 'test.txt', pageCount: 1, fileSize: 0, extractedAt: 0 },
+  }),
+}));
+vi.mock('./pptx-extractor', () => ({
+  extractPptxText: vi.fn().mockResolvedValue({
+    fullText: 'mocked pptx text',
+    pages: [],
+    metadata: { fileName: 'test.pptx', pageCount: 1, fileSize: 0, extractedAt: 0 },
+  }),
+}));
+
+// Import the function under test AFTER mocks
+import { extractDocument } from './extractor-factory';
+
 // Since vitest is not installed, we import for type checking only
 // The actual test execution will be skipped
 
@@ -251,6 +292,52 @@ describe('Extractor Factory', () => {
       expect(extractorMap['.txt']).toBe('extractTxtText');
       expect(extractorMap['.md']).toBe('extractTxtText');
       expect(extractorMap['.txt']).toBe(extractorMap['.md']);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // MIME type validation (FR-005)
+  // These exercise the validateFileType logic inside extractDocument.
+  // -------------------------------------------------------------------------
+
+  describe('MIME validation', () => {
+    test('rejects .pdf file with image/png MIME', async () => {
+      const mockFile = new File(['PDF content'], 'test.pdf', { type: 'image/png' });
+      await expect(extractDocument(mockFile)).rejects.toMatchObject({
+        fileName: 'test.pdf',
+        error: expect.stringContaining('File type mismatch'),
+        stage: 'pdf',
+      });
+    });
+
+    test('accepts .docx with correct Office MIME', async () => {
+      const mockFile = new File(['DOCX content'], 'test.docx', {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      });
+      // Should not throw; returns result from mocked extractor
+      const result = await extractDocument(mockFile);
+      expect(result.fullText).toBe('mocked docx text');
+    });
+
+    test('accepts .txt with empty file.type', async () => {
+      const mockFile = new File(['TXT content'], 'test.txt', { type: '' });
+      const result = await extractDocument(mockFile);
+      expect(result.fullText).toBe('mocked txt text');
+    });
+
+    test('accepts .docx with application/zip MIME (DOCX is a zip container)', async () => {
+      const mockFile = new File(['DOCX content'], 'test.docx', { type: 'application/zip' });
+      const result = await extractDocument(mockFile);
+      expect(result.fullText).toBe('mocked docx text');
+    });
+
+    test('rejects .xlsx with image/png MIME', async () => {
+      const mockFile = new File(['XLSX content'], 'test.xlsx', { type: 'image/png' });
+      await expect(extractDocument(mockFile)).rejects.toMatchObject({
+        fileName: 'test.xlsx',
+        error: expect.stringContaining('File type mismatch'),
+        stage: 'xlsx',
+      });
     });
   });
 });
