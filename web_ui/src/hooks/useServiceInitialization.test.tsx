@@ -3,11 +3,10 @@
  */
 
 import React from 'react';
-import { describe, it, expect, vi, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, cleanup, act } from '@testing-library/react';
-import { useServiceInitialization } from './useServiceInitialization';
 
-// Mock the service modules
+// Mock the service modules (hoisted, apply on dynamic import after resetModules)
 vi.mock('../lib/embeddings/embedding-service', () => ({
   getEmbeddingService: vi.fn(),
 }));
@@ -24,10 +23,19 @@ vi.mock('../lib/llm/model-readiness', () => ({
   ModelReadinessGate: vi.fn(),
 }));
 
-import { getEmbeddingService } from '../lib/embeddings/embedding-service';
-import { getVectorIndex } from '../lib/search/vector-index';
-import { getKeywordIndex } from '../lib/search/keyword-index';
-import { ModelReadinessGate } from '../lib/llm/model-readiness';
+// Mock WebLLMService (used in hook cleanup) to avoid real module side-effects in tests
+vi.mock('../lib/llm/web-llm-service', () => ({
+  WebLLMService: {
+    getInstance: vi.fn(() => ({
+      dispose: vi.fn(),
+    })),
+  },
+}));
+
+// NOTE: We use dynamic imports + vi.resetModules() inside beforeEach to obtain fresh
+// module-level state (embeddingServiceReady, readinessGateChecked, etc.) for each test.
+// This ensures lazy-init flags do not leak between tests. The vi.mock() factories above
+// are applied automatically when the modules are (re)imported.
 
 describe('useServiceInitialization', () => {
   let mockVectorIndex: { initialize: ReturnType<typeof vi.fn>; isReady: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> };
@@ -36,8 +44,38 @@ describe('useServiceInitialization', () => {
   let mockSetModelReady: ReturnType<typeof vi.fn>;
   let mockSetModelLoadingProgress: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
+  // Dynamically imported after resetModules to get fresh lazy-init module state each test
+  let useServiceInitialization: any;
+  let ensureEmbeddingServiceReady: any;
+  let ensureReadinessGateChecked: any;
+  let getEmbeddingService: any;
+  let getVectorIndex: any;
+  let getKeywordIndex: any;
+  let ModelReadinessGate: any;
+
+  beforeEach(async () => {
     vi.clearAllMocks();
+    // Reset modules so that module-level lazy flags (embeddingServiceReady etc) start fresh.
+    // This is required because ensure*() set persistent module state; static import would leak.
+    vi.resetModules();
+
+    // Re-import the hook module (and its deps) AFTER reset so we get clean state + mocked implementations
+    const hookModule = await import('./useServiceInitialization');
+    useServiceInitialization = hookModule.useServiceInitialization;
+    ensureEmbeddingServiceReady = hookModule.ensureEmbeddingServiceReady;
+    ensureReadinessGateChecked = hookModule.ensureReadinessGateChecked;
+
+    const embeddingModule = await import('../lib/embeddings/embedding-service');
+    getEmbeddingService = embeddingModule.getEmbeddingService;
+
+    const vectorModule = await import('../lib/search/vector-index');
+    getVectorIndex = vectorModule.getVectorIndex;
+
+    const keywordModule = await import('../lib/search/keyword-index');
+    getKeywordIndex = keywordModule.getKeywordIndex;
+
+    const readinessModule = await import('../lib/llm/model-readiness');
+    ModelReadinessGate = readinessModule.ModelReadinessGate;
 
     // Create mock services
     mockVectorIndex = {
@@ -61,7 +99,7 @@ describe('useServiceInitialization', () => {
     mockSetModelReady = vi.fn();
     mockSetModelLoadingProgress = vi.fn();
 
-    // Setup mock returns
+    // Setup mock returns (using freshly imported mocked getters)
     vi.mocked(getVectorIndex).mockReturnValue(mockVectorIndex as any);
     vi.mocked(getKeywordIndex).mockReturnValue(mockKeywordIndex as any);
     vi.mocked(getEmbeddingService).mockReturnValue(mockEmbeddingService as any);
@@ -84,15 +122,7 @@ describe('useServiceInitialization', () => {
 
   describe('Successful initialization flow', () => {
     it('reports isInitialized=true when all services initialize successfully', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
-        checkReadiness: vi.fn().mockResolvedValue({
-          ready: true,
-          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
-          failures: [],
-          recommendations: [],
-        }),
-      } as any));
-
+      // Readiness mock not needed on boot (readiness is lazy via ensureReadinessGateChecked)
       function TestComponent() {
         const { isInitialized, currentStep } = useServiceInitialization({
           setModelReady: mockSetModelReady,
@@ -113,7 +143,7 @@ describe('useServiceInitialization', () => {
       });
     });
 
-    it('sets modelReady=true when model is cached', async () => {
+    it('sets modelReady=true when model is cached (via lazy ensureReadinessGateChecked, not on boot)', async () => {
       vi.mocked(ModelReadinessGate).mockImplementation(() => ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
@@ -133,6 +163,11 @@ describe('useServiceInitialization', () => {
 
       render(<TestComponent />);
 
+      // Boot no longer calls readiness or sets modelReady. Trigger explicitly.
+      await act(async () => {
+        await ensureReadinessGateChecked();
+      });
+
       await waitFor(() => {
         expect(mockSetModelReady).toHaveBeenCalledWith(true);
       });
@@ -141,15 +176,7 @@ describe('useServiceInitialization', () => {
 
   describe('Service initialization steps', () => {
     it('sets correct currentStep at each initialization stage', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
-        checkReadiness: vi.fn().mockResolvedValue({
-          ready: true,
-          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
-          failures: [],
-          recommendations: [],
-        }),
-      } as any));
-
+      // No readiness mock: boot only initializes lightweight search services (vector+keyword)
       const steps: string[] = [];
 
       function TestComponent() {
@@ -168,20 +195,12 @@ describe('useServiceInitialization', () => {
         steps.push(stepEl.textContent || '');
       }, { timeout: 3000 });
 
-      // Final step should be 'Checking model readiness...' or initialization completed
+      // Final step should be 'Ready' (embedding/readiness steps are now lazy via ensure*)
       expect(screen.getByTestId('step').textContent).toBeTruthy();
     });
 
-    it('calls setModelLoadingProgress with correct values (10, 30, 70, 100)', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
-        checkReadiness: vi.fn().mockResolvedValue({
-          ready: true,
-          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
-          failures: [],
-          recommendations: [],
-        }),
-      } as any));
-
+    it('calls setModelLoadingProgress with correct values (10, 100) on boot; 30/70 deferred to ensure* calls', async () => {
+      // Boot progress: 10 (start search) -> 100 (ready). Embedding 70% and any 30% now happen only on first query via ensureEmbeddingServiceReady.
       function TestComponent() {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
@@ -197,32 +216,20 @@ describe('useServiceInitialization', () => {
       });
 
       await waitFor(() => {
-        expect(mockSetModelLoadingProgress).toHaveBeenCalledWith(30);
-      });
-
-      await waitFor(() => {
-        expect(mockSetModelLoadingProgress).toHaveBeenCalledWith(70);
-      });
-
-      await waitFor(() => {
         expect(mockSetModelLoadingProgress).toHaveBeenCalledWith(100);
       });
+
+      // No embedding step on boot anymore
+      expect(mockSetModelLoadingProgress).not.toHaveBeenCalledWith(30);
+      expect(mockSetModelLoadingProgress).not.toHaveBeenCalledWith(70);
     });
   });
 
   describe('Embedding service failure', () => {
-    it('continues initialization and reports error when embedding service fails', async () => {
+    it('continues initialization and reports error when embedding service fails (triggered via ensureEmbeddingServiceReady)', async () => {
       mockEmbeddingService.initialize.mockRejectedValue(new Error('Embedding service failed'));
 
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
-        checkReadiness: vi.fn().mockResolvedValue({
-          ready: true,
-          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
-          failures: [],
-          recommendations: [],
-        }),
-      } as any));
-
+      // Readiness not involved for this test
       function TestComponent() {
         const { isInitialized, initError } = useServiceInitialization({
           setModelReady: mockSetModelReady,
@@ -242,6 +249,12 @@ describe('useServiceInitialization', () => {
         expect(screen.getByTestId('initialized').textContent).toBe('true');
       });
 
+      // Embedding no longer inits on boot; must explicitly call the lazy export (as done by rag-orchestrator on first query)
+      await act(async () => {
+        const ready = await ensureEmbeddingServiceReady();
+        expect(ready).toBe(false);
+      });
+
       await waitFor(() => {
         expect(screen.getByTestId('error').textContent).toContain('Embedding');
       });
@@ -249,7 +262,7 @@ describe('useServiceInitialization', () => {
   });
 
   describe('Model readiness check', () => {
-    it('sets modelReady=false when model is not cached', async () => {
+    it('sets modelReady=false when model is not cached (via lazy ensureReadinessGateChecked, not on boot)', async () => {
       vi.mocked(ModelReadinessGate).mockImplementation(() => ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
@@ -269,12 +282,17 @@ describe('useServiceInitialization', () => {
 
       render(<TestComponent />);
 
+      // Readiness gate no longer checked on boot
+      await act(async () => {
+        await ensureReadinessGateChecked();
+      });
+
       await waitFor(() => {
         expect(mockSetModelReady).toHaveBeenCalledWith(false);
       });
     });
 
-    it('stores webgpuAvailable in servicesReady based on navigator.gpu', async () => {
+    it('stores webgpuAvailable in servicesReady based on navigator.gpu (via lazy ensureReadinessGateChecked)', async () => {
       vi.mocked(ModelReadinessGate).mockImplementation(() => ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
@@ -294,6 +312,11 @@ describe('useServiceInitialization', () => {
 
       render(<TestComponent />);
 
+      // webgpuAvailable is populated by ensureReadinessGateChecked (not on boot)
+      await act(async () => {
+        await ensureReadinessGateChecked();
+      });
+
       await waitFor(() => {
         expect(screen.getByTestId('webgpu').textContent).toBe('true');
       });
@@ -302,15 +325,7 @@ describe('useServiceInitialization', () => {
 
   describe('Cleanup on unmount', () => {
     it('calls dispose() on all services during cleanup', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
-        checkReadiness: vi.fn().mockResolvedValue({
-          ready: true,
-          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
-          failures: [],
-          recommendations: [],
-        }),
-      } as any));
-
+      // No readiness mock needed (cleanup disposes services unconditionally via get* + try/catch, even if not initialized via ensure)
       function TestComponent() {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
@@ -321,9 +336,9 @@ describe('useServiceInitialization', () => {
 
       const { unmount } = render(<TestComponent />);
 
-      // Wait for initialization to complete
+      // Wait for boot initialization to complete (search services only; modelReady no longer set on boot)
       await waitFor(() => {
-        expect(mockSetModelReady).toHaveBeenCalled();
+        expect(mockVectorIndex.initialize).toHaveBeenCalled();
       });
 
       unmount();
@@ -339,15 +354,7 @@ describe('useServiceInitialization', () => {
       mockKeywordIndex.dispose = undefined as any;
       mockEmbeddingService.dispose = undefined as any;
 
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
-        checkReadiness: vi.fn().mockResolvedValue({
-          ready: true,
-          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
-          failures: [],
-          recommendations: [],
-        }),
-      } as any));
-
+      // No readiness mock needed
       function TestComponent() {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
@@ -359,7 +366,7 @@ describe('useServiceInitialization', () => {
       const { unmount } = render(<TestComponent />);
 
       await waitFor(() => {
-        expect(mockSetModelReady).toHaveBeenCalled();
+        expect(mockVectorIndex.initialize).toHaveBeenCalled();
       });
 
       expect(() => unmount()).not.toThrow();
@@ -368,15 +375,7 @@ describe('useServiceInitialization', () => {
 
   describe('Double initialization prevention', () => {
     it('prevents double initialization via initializationStartedRef', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
-        checkReadiness: vi.fn().mockResolvedValue({
-          ready: true,
-          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
-          failures: [],
-          recommendations: [],
-        }),
-      } as any));
-
+      // Readiness not exercised on boot
       function TestComponent() {
         const { isInitialized } = useServiceInitialization({
           setModelReady: mockSetModelReady,
@@ -394,22 +393,14 @@ describe('useServiceInitialization', () => {
         expect(screen.getByTestId('initialized').textContent).toBe('true');
       });
 
-      // vectorIndex.initialize should only be called once despite rerender
+      // vectorIndex.initialize should only be called once despite rerender (boot behavior unchanged)
       expect(mockVectorIndex.initialize).toHaveBeenCalledTimes(1);
     });
   });
 
   describe('LoadingOverlay step text', () => {
     it('displays current step text that updates through initialization', async () => {
-      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
-        checkReadiness: vi.fn().mockResolvedValue({
-          ready: true,
-          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
-          failures: [],
-          recommendations: [],
-        }),
-      } as any));
-
+      // No readiness on boot
       function TestComponent() {
         const { currentStep } = useServiceInitialization({
           setModelReady: mockSetModelReady,
@@ -420,7 +411,7 @@ describe('useServiceInitialization', () => {
 
       render(<TestComponent />);
 
-      // Step updates through initialization stages - verify it changes
+      // Step updates through initialization stages (now only search services on boot) - verify it changes
       await waitFor(() => {
         const step = screen.getByTestId('step').textContent;
         expect(step).toBeTruthy();
@@ -430,7 +421,7 @@ describe('useServiceInitialization', () => {
   });
 
   describe('Services ready state', () => {
-    it('updates servicesReady when services initialize', async () => {
+    it('updates servicesReady when services initialize (search on boot; embeddings + modelCached are lazy)', async () => {
       vi.mocked(ModelReadinessGate).mockImplementation(() => ({
         checkReadiness: vi.fn().mockResolvedValue({
           ready: true,
@@ -457,12 +448,129 @@ describe('useServiceInitialization', () => {
 
       render(<TestComponent />);
 
+      // After boot: vector/keyword ready (lightweight), but embeddings and modelCached remain false until ensure* called
       await waitFor(() => {
         expect(screen.getByTestId('vector').textContent).toBe('true');
         expect(screen.getByTestId('keyword').textContent).toBe('true');
+        expect(screen.getByTestId('embeddings').textContent).toBe('false');
+        expect(screen.getByTestId('model').textContent).toBe('false');
+      });
+
+      // Trigger lazy inits (as real app does on first RAG query)
+      await act(async () => {
+        await ensureEmbeddingServiceReady();
+        await ensureReadinessGateChecked();
+      });
+
+      await waitFor(() => {
         expect(screen.getByTestId('embeddings').textContent).toBe('true');
         expect(screen.getByTestId('model').textContent).toBe('true');
       });
+    });
+  });
+
+  describe('Lazy initialization exports', () => {
+    it('ensureEmbeddingServiceReady() initializes embedding on first call and updates hook servicesReady.embeddings via event', async () => {
+      function TestComponent() {
+        const { servicesReady } = useServiceInitialization({
+          setModelReady: mockSetModelReady,
+          setModelLoadingProgress: mockSetModelLoadingProgress,
+        });
+        return <span data-testid="embeddings">{String(servicesReady.embeddings)}</span>;
+      }
+
+      render(<TestComponent />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('embeddings').textContent).toBe('false');
+      });
+
+      await act(async () => {
+        const result = await ensureEmbeddingServiceReady();
+        expect(result).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('embeddings').textContent).toBe('true');
+      });
+
+      // Second call is idempotent (module flag short-circuits, no re-init)
+      await act(async () => {
+        const result2 = await ensureEmbeddingServiceReady();
+        expect(result2).toBe(true);
+      });
+      expect(mockEmbeddingService.initialize).toHaveBeenCalledTimes(1);
+    });
+
+    it('ensureReadinessGateChecked() initializes readiness on first call, updates servicesReady + calls setModelReady via event', async () => {
+      vi.mocked(ModelReadinessGate).mockImplementation(() => ({
+        checkReadiness: vi.fn().mockResolvedValue({
+          ready: true,
+          checks: { webgpu: true, memory: { sufficient: true }, modelCached: true },
+          failures: [],
+          recommendations: [],
+        }),
+      } as any));
+
+      function TestComponent() {
+        const { servicesReady } = useServiceInitialization({
+          setModelReady: mockSetModelReady,
+          setModelLoadingProgress: mockSetModelLoadingProgress,
+        });
+        return (
+          <div>
+            <span data-testid="model">{String(servicesReady.modelCached)}</span>
+            <span data-testid="webgpu">{String(servicesReady.webgpuAvailable)}</span>
+          </div>
+        );
+      }
+
+      render(<TestComponent />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model').textContent).toBe('false');
+      });
+
+      await act(async () => {
+        const result = await ensureReadinessGateChecked();
+        expect(result).not.toBeNull();
+        expect(result?.checks.modelCached).toBe(true);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByTestId('model').textContent).toBe('true');
+        expect(screen.getByTestId('webgpu').textContent).toBe('true');
+        expect(mockSetModelReady).toHaveBeenCalledWith(true);
+      });
+
+      // Idempotent: constructor + checkReadiness called only once
+      await act(async () => {
+        await ensureReadinessGateChecked();
+      });
+      const mockGate = vi.mocked(ModelReadinessGate);
+      expect(mockGate).toHaveBeenCalledTimes(1);
+      const instance = mockGate.mock.results[0]?.value;
+      expect(instance?.checkReadiness).toHaveBeenCalledTimes(1);
+    });
+
+    it('hook servicesReady.embeddings is false until ensureEmbeddingServiceReady() is called (never inits on boot)', async () => {
+      function TestComponent() {
+        const { servicesReady } = useServiceInitialization({
+          setModelReady: mockSetModelReady,
+          setModelLoadingProgress: mockSetModelLoadingProgress,
+        });
+        return <span data-testid="embeddings">{String(servicesReady.embeddings)}</span>;
+      }
+
+      render(<TestComponent />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('embeddings').textContent).toBe('false');
+      });
+
+      // Do not call ensure; remains false even after boot + time passes (lazy)
+      await new Promise((r) => setTimeout(r, 50));
+      expect(screen.getByTestId('embeddings').textContent).toBe('false');
     });
   });
 });
