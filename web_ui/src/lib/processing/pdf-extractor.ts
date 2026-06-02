@@ -8,7 +8,16 @@ import type { ExtractionResult, ExtractedPage, ExtractionError } from '../../typ
 
 // Configure pdfjs-dist worker using Vite-compatible local import
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
+// Lazy-initialized worker configuration.
+// The pdf.js worker is shared across all getDocument() calls via
+// GlobalWorkerOptions.workerSrc. We set this once and idempotently.
+let _workerConfigured = false;
+function configurePdfWorker(): void {
+  if (_workerConfigured) return;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+  _workerConfigured = true;
+}
 
 /**
  * Extract text content from a PDF file.
@@ -20,6 +29,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
  */
 export async function extractPdfText(file: File): Promise<ExtractionResult> {
   const fileName = file.name;
+  configurePdfWorker(); // idempotent — safe to call on every extraction
 
   try {
     // Read file as ArrayBuffer
@@ -122,4 +132,21 @@ export async function extractPdfText(file: File): Promise<ExtractionResult> {
   } finally {
     try { pdf.destroy(); } catch {}
   }
+}
+
+/**
+ * Terminate the shared PDF.js worker. Call this on app shutdown or
+ * when the processing service is disposed. The next extractPdfText()
+ * call will lazily re-initialize the worker.
+ *
+ * Note: PDF.js does not expose a public API to terminate the worker
+ * created by GlobalWorkerOptions. This function logs a warning to
+ * document the expected behavior — workers are reclaimed by the
+ * browser when the page unloads.
+ */
+export function terminatePdfWorker(): void {
+  _workerConfigured = false;
+  // PDF.js workers created via GlobalWorkerOptions cannot be explicitly
+  // terminated; they are reclaimed by the browser on page unload.
+  console.info('[pdf-extractor] Worker configuration reset. Next extraction will re-initialize.');
 }
