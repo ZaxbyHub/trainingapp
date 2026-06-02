@@ -2,7 +2,7 @@
  * DocumentList component displays uploaded documents with status and actions.
  */
 
-import React, { useCallback } from 'react';
+import React, { useCallback, useState, useRef, useLayoutEffect } from 'react';
 import type { DocumentEntry } from '../types/document';
 
 interface DocumentListProps {
@@ -59,6 +59,9 @@ function getStatusLabel(status: DocumentEntry['status']): string {
   }
 }
 
+const ITEM_HEIGHT = 60;
+const BUFFER = 5;
+
 const DocumentItem = React.memo<{
   doc: DocumentEntry;
   onDelete: (docId: string) => void;
@@ -81,6 +84,8 @@ const DocumentItem = React.memo<{
         backgroundColor: 'var(--color-bubble-assistant)',
         opacity: isDeleting ? 0.5 : 1,
         transition: 'opacity 0.2s ease',
+        height: '60px',
+        boxSizing: 'border-box',
       }}
     >
       {/* File icon */}
@@ -269,6 +274,68 @@ DocumentItem.displayName = 'DocumentItem';
 
 export const DocumentList: React.FC<DocumentListProps> = React.memo(
   ({ documents, onDelete, deletingId }) => {
+    const [scrollTop, setScrollTop] = useState(0);
+    const [containerHeight, setContainerHeight] = useState(300);
+    const listRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLElement | null>(null);
+
+    useLayoutEffect(() => {
+      if (documents.length === 0) {
+        return;
+      }
+
+      const listEl = listRef.current;
+      if (!listEl) {
+        return;
+      }
+
+      // Find nearest ancestor that is the scroll container (the one providing the viewport)
+      // This preserves original layout for small lists (list box sizes to content)
+      // while enabling virtualization when list grows taller than viewport.
+      let scroller: HTMLElement | null = listEl.parentElement;
+      while (scroller) {
+        const style = window.getComputedStyle(scroller);
+        const overflowY = style.overflowY;
+        const overflow = style.overflow;
+        if (overflowY === 'auto' || overflowY === 'scroll' || overflow === 'auto' || overflow === 'scroll') {
+          break;
+        }
+        scroller = scroller.parentElement;
+      }
+      if (!scroller) {
+        console.warn('DocumentList: No scrollable ancestor found. Virtualization disabled. Wrap DocumentList in a container with overflow:auto or overflow:scroll.');
+        scroller = listEl;
+      }
+      scrollContainerRef.current = scroller;
+
+      const handleScroll = () => {
+        setScrollTop(scroller!.scrollTop);
+        setContainerHeight(scroller!.clientHeight);
+      };
+
+      // Initialize with current scroll position and viewport height
+      setScrollTop(scroller.scrollTop);
+      setContainerHeight(scroller.clientHeight || 300);
+
+      scroller.addEventListener('scroll', handleScroll, { passive: true });
+
+      const handleResize = () => {
+        const current = scrollContainerRef.current;
+        if (current) {
+          setContainerHeight(current.clientHeight);
+        }
+      };
+      window.addEventListener('resize', handleResize);
+
+      return () => {
+        const current = scrollContainerRef.current;
+        if (current) {
+          current.removeEventListener('scroll', handleScroll);
+        }
+        window.removeEventListener('resize', handleResize);
+      };
+    }, [documents.length]);
+
     if (documents.length === 0) {
       return (
         <div
@@ -308,8 +375,18 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       );
     }
 
+    const totalItems = documents.length;
+    const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER);
+    const endIndex = Math.min(
+      totalItems,
+      Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + BUFFER
+    );
+    const visibleDocuments = documents.slice(startIndex, endIndex);
+    const totalHeight = totalItems * ITEM_HEIGHT;
+
     return (
       <div
+        ref={listRef}
         role="list"
         aria-label="Uploaded documents"
         style={{
@@ -318,14 +395,30 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
           overflow: 'hidden',
         }}
       >
-        {documents.map((doc) => (
-          <DocumentItem
-            key={doc.id}
-            doc={doc}
-            onDelete={onDelete}
-            isDeleting={deletingId === doc.id}
-          />
-        ))}
+        {/* Placeholder div maintains the full scroll height for the scrollbar */}
+        <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
+          {visibleDocuments.map((doc, i) => {
+            const index = startIndex + i;
+            return (
+              <div
+                key={doc.id}
+                style={{
+                  position: 'absolute',
+                  top: `${index * ITEM_HEIGHT}px`,
+                  left: 0,
+                  right: 0,
+                  height: `${ITEM_HEIGHT}px`,
+                }}
+              >
+                <DocumentItem
+                  doc={doc}
+                  onDelete={onDelete}
+                  isDeleting={deletingId === doc.id}
+                />
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   }
