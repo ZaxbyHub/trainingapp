@@ -30,6 +30,7 @@ export class SSEStreamConsumer {
   private body: object;
   private token?: string;
   private controller: AbortController | null = null;
+  private _starting: boolean = false;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private onTokenCallbacks: TokenCallback[] = [];
   private onDoneCallbacks: DoneCallback[] = [];
@@ -77,48 +78,52 @@ export class SSEStreamConsumer {
    * Start the SSE stream connection.
    * Uses fetch with ReadableStream to handle POST-based SSE.
    */
-  start(): void {
-    if (this.controller) {
-      void this.stop();
-    }
+  async start(): Promise<void> {
+    if (this._starting) return;
+    this._starting = true;
 
-    this.controller = new AbortController();
+    try {
+      if (this.controller) {
+        await this.stop();
+      }
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
+      this.controller = new AbortController();
 
-    if (this.token) {
-      headers['Authorization'] = `Bearer ${this.token}`;
-    }
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
 
-    fetch(this.url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(this.body),
-      signal: this.controller.signal,
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new ApiError(response.status, `HTTP error: ${response.status}`);
-        }
+      if (this.token) {
+        headers['Authorization'] = `Bearer ${this.token}`;
+      }
 
-        if (!response.body) {
-          throw new ApiError(500, 'Response body is null');
-        }
-
-        this.reader = response.body.getReader();
-        this.readStream();
-      })
-      .catch((error) => {
-        if (error instanceof ApiError) {
-          this.emitError(error.detail);
-        } else if ((error as Error).name === 'AbortError') {
-          // Stream was cancelled, not an error
-        } else {
-          this.emitError((error as Error).message || 'Network error');
-        }
+      const response = await fetch(this.url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(this.body),
+        signal: this.controller.signal,
       });
+      if (!response.ok) {
+        throw new ApiError(response.status, `HTTP error: ${response.status}`);
+      }
+
+      if (!response.body) {
+        throw new ApiError(500, 'Response body is null');
+      }
+
+      this.reader = response.body.getReader();
+      this.readStream();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        this.emitError(error.detail);
+      } else if ((error as Error).name === 'AbortError') {
+        // Stream was cancelled, not an error
+      } else {
+        this.emitError((error as Error).message || 'Network error');
+      }
+    } finally {
+      this._starting = false;
+    }
   }
 
   /**
