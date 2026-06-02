@@ -1,0 +1,16 @@
+@import "./tokens.css";
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  background-color: var(--color-bubble-assistant);
+  color: var(--color-text-on-bubble-assistant);
+  font-family: var(--font-family);
+  font-size: var(--font-size-body);
+}

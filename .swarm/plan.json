@@ -1,157 +1,491 @@
 {
   "schema_version": "1.0.0",
-  "title": "Chat System Bug Fixes",
+  "title": "HTML5 Web Version — Browser-Side Inference + API Hybrid Architecture",
   "swarm": "modelrelay",
   "current_phase": 1,
   "phases": [
     {
       "id": 1,
-      "name": "Checkpoint + Fix streaming message persistence (DD-001)",
-      "status": "pending",
+      "name": "Project Scaffold and Theme Foundation",
+      "status": "complete",
       "tasks": [
-        {
-          "id": "0.1",
-          "phase": 1,
-          "status": "pending",
-          "size": "small",
-          "description": "Create git checkpoint before Phase 1. Use checkpoint tool to save named snapshot 'pre-chat-fixes'. This provides rollback if the streaming hot path changes introduce regressions.",
-          "depends": [],
-          "acceptance": "checkpoint save returns success. No files modified yet.",
-          "files_touched": []
-        },
         {
           "id": "1.1",
           "phase": 1,
-          "status": "pending",
+          "status": "completed",
           "size": "medium",
-          "description": "Fix stream_end to call _add_message before destroying streaming frame. When the LLM completes, read the accumulated text from _streaming_message_ref, call _add_message('assistant', text, sources=None, timestamp=timestamp) to create a permanent bubble, THEN destroy the streaming frame. Add _streaming_finalized: bool flag initialized False in _create_chat_page. Set it True in stream_end handler after calling _add_message. Check it at the start of _handle_streaming_token to guard against double-finalization. In the exception path, use stream_destroy (not stream_end) so _add_message is called before cleanup. Key changes: (1) stream_end handler: read ref text → _add_message → set _streaming_finalized=True → destroy frame. (2) exception path: put stream_destroy not stream_end. (3) _handle_streaming_token: early return if _streaming_finalized is True.",
+          "description": "Initialize Vite + React + TypeScript project in web_ui/ directory with production build configuration, dev server proxy to FastAPI backend, and project structure (src/pages, src/components, src/lib, src/styles, src/types)",
+          "depends": [],
+          "files_touched": []
+        },
+        {
+          "id": "1.2",
+          "phase": 1,
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement the design token system by translating the existing theme.py ColorTokens, TypeScale, and Spacing classes into CSS custom properties and a typed theme context (React context provider with dark/light mode toggle via prefers-color-scheme)",
           "depends": [
-            "0.1"
+            "1.1"
           ],
-          "acceptance": "Submit a question. Complete assistant answer remains permanently visible after streaming ends. Cancel mid-stream: partial answer appears as permanent bubble. Exception during streaming: partial content preserved. _streaming_finalized prevents double _add_message calls if stream_end is processed twice.",
+          "files_touched": []
+        },
+        {
+          "id": "1.3",
+          "phase": 1,
+          "status": "completed",
+          "size": "medium",
+          "description": "Build the application shell with navigation rail (Chat, Documents, Settings pages), responsive layout, global keyboard shortcut handler (Ctrl+Enter, Ctrl+L, Ctrl+,), and toast notification system",
+          "depends": [
+            "1.2"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "1.4",
+          "phase": 1,
+          "status": "completed",
+          "size": "small",
+          "description": "Address Phase 1 council concerns: add vitest + @testing-library/react to devDependencies, fix NavigationRail hover effect (replace imperative DOM mutation with CSS approach), add input/textarea focus guard to keyboard shortcuts, fix 100vh to 100dvh in AppLayout, add aria-hidden to decorative SVGs",
+          "depends": [
+            "1.3"
+          ],
           "files_touched": []
         }
       ]
     },
     {
       "id": 2,
-      "name": "Reset streaming refs on clear (DD-002)",
-      "status": "pending",
+      "name": "API Foundation and Browser ML Feasibility Spike",
+      "status": "complete",
       "tasks": [
         {
           "id": "2.1",
           "phase": 2,
-          "status": "pending",
+          "status": "completed",
+          "size": "medium",
+          "description": "Add SSE streaming endpoint to the FastAPI backend that wires the existing stream_callback from LLM interface through to Server-Sent Events, along with batch file upload endpoint accepting multiple files per request and settings persistence endpoints (GET/PUT /settings)",
+          "depends": [],
+          "files_touched": []
+        },
+        {
+          "id": "2.2",
+          "phase": 2,
+          "status": "completed",
+          "size": "medium",
+          "description": "Build the TypeScript API client layer with typed request/response interfaces for all FastAPI endpoints, SSE streaming consumer using EventSource, authentication interceptor using existing JWT system, and connection error handling with offline detection",
+          "depends": [],
+          "files_touched": []
+        },
+        {
+          "id": "2.3",
+          "phase": 2,
+          "status": "completed",
           "size": "small",
-          "description": "Add self._streaming_finalized = False to _do_clear_chat. After destroying all chat_frame children and clearing _expanded_pills and _snippet_frame_* attrs, also set self._streaming_message_ref = None, self._streaming_message_frame = None, and self._streaming_finalized = False. This ensures subsequent queries start from clean streaming state even if Clear was clicked mid-stream.",
+          "description": "Add tests for the new FastAPI endpoints (SSE streaming, batch upload, settings CRUD) covering success cases, error cases (invalid files, auth failures), and streaming interruption scenarios",
           "depends": [
-            "1.1"
+            "2.1"
           ],
-          "acceptance": "Click Clear during active streaming, then submit a new question. New streaming message appears without errors. _streaming_message_ref and _streaming_message_frame are both None after clear.",
+          "files_touched": []
+        },
+        {
+          "id": "2.4",
+          "phase": 2,
+          "status": "completed",
+          "size": "medium",
+          "description": "Browser ML feasibility spike: create a standalone test page that loads Transformers.js (bge-small-en-v1.5), EdgeVec (HNSW vector search), and FlexSearch (BM25 keyword search), validates each works on target hardware (12th-gen i5 / 16GB RAM), measures memory usage and query latency",
+          "depends": [],
           "files_touched": []
         }
       ]
     },
     {
       "id": 3,
-      "name": "Bound chat history UI growth (DD-006)",
-      "status": "pending",
+      "name": "Chat Page and Inference Mode Architecture",
+      "status": "complete",
       "tasks": [
         {
           "id": "3.1",
           "phase": 3,
-          "status": "pending",
-          "size": "small",
-          "description": "Add automatic pruning of old messages in _add_message. Before packing a new message frame, count widgets in chat_frame.winfo_children(). If count exceeds MAX_CHAT_WIDGETS (set to 50, approximately 25 user+assistant message pairs — bounding UI memory to ~5MB for typical messages), destroy the oldest 10 widgets before adding the new one. This prevents unbounded memory growth in long sessions while keeping recent conversation visible.",
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement the chat message list component with user/assistant bubble styling, markdown rendering for assistant responses, message input with send button, and AbortController-based generation cancellation",
           "depends": [
-            "1.1"
+            "1.3",
+            "2.2"
           ],
-          "acceptance": "Submit 60+ questions. Chat frame never contains more than 50 message widgets. Memory stable over extended use. Pruning is invisible to user — only oldest messages are removed.",
+          "files_touched": []
+        },
+        {
+          "id": "3.2",
+          "phase": 3,
+          "status": "completed",
+          "size": "medium",
+          "description": "Add source citation pills to chat responses with expandable snippet view, copy-to-clipboard for individual messages and source passages, two-click confirm for clear chat history (React state + setTimeout), and empty state guidance",
+          "depends": [
+            "3.1"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "3.3",
+          "phase": 3,
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement the inference mode architecture: React context for mode state (browser-local vs API), mode toggle in chat header, runtime switching without session loss, model readiness gate that blocks chat until model is loaded in browser mode, and server connectivity check for API mode",
+          "depends": [
+            "3.1"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "3.4",
+          "phase": 3,
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement the streaming token display layer: SSE token consumer that feeds tokens to chat message state, WebLLM token consumer wired to same message state, typing indicator CSS animation, and batched DOM updates to prevent jank during rapid token arrival",
+          "depends": [
+            "3.1"
+          ],
           "files_touched": []
         }
       ]
     },
     {
       "id": 4,
-      "name": "Message processor safety (DD-004, DD-010)",
-      "status": "pending",
+      "name": "Document Processing Pipeline",
+      "status": "complete",
       "tasks": [
         {
           "id": "4.1",
           "phase": 4,
-          "status": "pending",
-          "size": "small",
-          "description": "Add schema validation to message processor. For each msg type branch, validate len(msg) before accessing msg[1], msg[2]. If validation fails, log a warning and continue: logger.warning('Malformed queue message: %r', msg). This prevents IndexError crashes from malformed tuples without crashing the processor.",
-          "depends": [
-            "1.1"
-          ],
-          "acceptance": "Inject malformed queue tuple — message processor logs warning and continues processing. No crash, no IndexError.",
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement PDF text extraction using pdfjs-dist: load PDF from File API, extract text content per page, track page numbers for chunk-to-page mapping, handle encrypted and malformed PDFs gracefully",
+          "depends": [],
           "files_touched": []
         },
         {
           "id": "4.2",
           "phase": 4,
-          "status": "pending",
-          "size": "small",
-          "description": "Replace bare 'except Exception: pass' in stream_end handler (app_gui.py ~line 1976) and stream_destroy handler (~line 1986) with 'except Exception as e: logger.warning(\"stream handler error: %s\", e)'. This preserves error visibility for debugging while maintaining the defensive shutdown-race pattern.",
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement DOCX extraction via mammoth.js (paragraphs + tables), XLSX extraction via SheetJS (sheet/row structure), and TXT/MD extraction with multiple encoding fallback",
           "depends": [
-            "1.1"
+            "4.1"
           ],
-          "acceptance": "When a stream handler catches an exception, warning is logged with the exception message. No silent exception swallowing. Existing tests pass.",
+          "files_touched": []
+        },
+        {
+          "id": "4.3",
+          "phase": 4,
+          "status": "completed",
+          "size": "small",
+          "description": "Implement PPTX text-only extraction via jszip + XML parsing: open PPTX as ZIP, parse slide XML files, extract text content preserving slide order",
+          "depends": [
+            "4.2"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "4.4",
+          "phase": 4,
+          "status": "completed",
+          "size": "medium",
+          "description": "Port the semantic chunking algorithm from document_processor.py to TypeScript: paragraph/sentence boundary detection, configurable overlap, abbreviation protection, page mapping for PDFs, and document ID generation (SHA256)",
+          "depends": [
+            "4.2"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "4.5",
+          "phase": 4,
+          "status": "completed",
+          "size": "medium",
+          "description": "Build the Documents page UI with drag-and-drop upload zone, file picker input, multi-file progress tracking, per-file status indicators, document list with delete capability, and IndexedDB persistence",
+          "depends": [
+            "4.4"
+          ],
           "files_touched": []
         }
       ]
     },
     {
       "id": 5,
-      "name": "Add message processor shutdown flag (DD-007)",
-      "status": "pending",
+      "name": "In-Browser Embeddings and Vector Search",
+      "status": "complete",
       "tasks": [
         {
           "id": "5.1",
           "phase": 5,
-          "status": "pending",
-          "size": "small",
-          "description": "Add self._message_processor_running: bool = True in _create_chat_page. In _start_message_processor loop, check this flag on each iteration and break if False. Set to False in _on_close before calling destroy(). This ensures the loop exits cleanly when the window is closing, preventing callbacks on destroyed widgets.",
+          "status": "completed",
+          "size": "medium",
+          "description": "Integrate Transformers.js for embedding generation using bge-small-en-v1.5 ONNX model: model loading with OPFS/IndexedDB caching, single and batch encode methods, memory-efficient processing",
+          "depends": [],
+          "files_touched": []
+        },
+        {
+          "id": "5.2",
+          "phase": 5,
+          "status": "completed",
+          "size": "large",
+          "description": "Implement HNSW vector index using EdgeVec (Rust/WASM): index creation with configurable parameters, add/remove vectors, k-NN queries, index serialization to IndexedDB",
           "depends": [
-            "1.1"
+            "5.1"
           ],
-          "acceptance": "Start a long query, close the application mid-operation. No TclError or uncaught exception in console. Message processor loop exits cleanly.",
+          "files_touched": []
+        },
+        {
+          "id": "5.3",
+          "phase": 5,
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement BM25 keyword search using FlexSearch: index creation with stop-word filtering, incremental document addition, query with relevance scoring",
+          "depends": [
+            "5.1"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "5.4",
+          "phase": 5,
+          "status": "completed",
+          "size": "small",
+          "description": "Port Reciprocal Rank Fusion from utils.py to TypeScript: merge ranked results from HNSW and BM25 with configurable k parameter",
+          "depends": [
+            "5.2",
+            "5.3"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "5.5",
+          "phase": 5,
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement optional cross-encoder reranking via Transformers.js MiniLM-L-6 model with conditional activation based on document set size and memory",
+          "depends": [
+            "5.4"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "5.6",
+          "phase": 5,
+          "status": "completed",
+          "size": "medium",
+          "description": "Add memory-aware model selection logic: detect available device memory, select appropriate model based on budget, surface memory-pressure indicator",
+          "depends": [],
           "files_touched": []
         }
       ]
     },
     {
       "id": 6,
-      "name": "Run full test suite and verify fixes",
-      "status": "pending",
+      "name": "Browser-Side LLM Inference (WebLLM)",
+      "status": "complete",
       "tasks": [
         {
           "id": "6.1",
           "phase": 6,
-          "status": "pending",
+          "status": "completed",
           "size": "medium",
-          "description": "Run pytest tests/ -v with a focus on streaming-related tests. Run: pytest tests/test_app_gui_streaming_callback.py tests/test_app_gui_streaming_task42_retry2.py tests/test_app_gui_streaming_retry.py tests/test_app_gui_chat_widget_memory_cleanup.py tests/test_llm_interface_streaming.py -v. Additionally run full suite: pytest tests/ -v. All tests must pass with zero failures and zero errors.",
+          "description": "Integrate @mlc-ai/web-llm for browser-side LLM inference: model loading with OPFS caching, GPU adapter detection with WASM fallback, basic prompt/completion API",
           "depends": [
-            "1.1",
-            "2.1",
-            "3.1",
-            "4.1",
-            "4.2",
-            "5.1"
+            "3.3"
           ],
-          "acceptance": "pytest exit code 0. Zero failures, zero errors. All streaming-related tests pass. All other tests pass.",
+          "files_touched": []
+        },
+        {
+          "id": "6.2",
+          "phase": 6,
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement model download management: progress tracking, resumable downloads, OPFS cache write, storage quota error handling, model selection UI",
+          "depends": [
+            "6.1"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "6.3",
+          "phase": 6,
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement model readiness gate: block all RAG functionality until models loaded, show loading state, handle storage quota errors",
+          "depends": [
+            "5.1",
+            "6.2"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "6.4",
+          "phase": 6,
+          "status": "completed",
+          "size": "large",
+          "description": "Build complete browser-local RAG orchestrator: query preprocessing, embedding, hybrid search, optional reranking, context assembly, LLM prompt construction, streaming generation",
+          "depends": [
+            "5.5",
+            "6.3"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "6.5",
+          "phase": 6,
+          "status": "completed",
+          "size": "medium",
+          "description": "Implement WebGPU context loss detection and recovery: contextlost events, auto model reload, recovery prompt, tab visibility handling",
+          "depends": [
+            "6.1"
+          ],
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "Settings, Cross-Browser Compatibility, and Polish",
+      "status": "complete",
+      "tasks": [
+        {
+          "id": "7.1",
+          "phase": 7,
+          "status": "completed",
+          "size": "medium",
+          "description": "Build the Settings page with inference mode configuration, server endpoint URL, model selection, theme toggle, and preferences persisted to IndexedDB",
+          "depends": [
+            "1.3",
+            "6.3"
+          ],
+          "files_touched": []
+        },
+        {
+          "id": "7.2",
+          "phase": 7,
+          "status": "completed",
+          "size": "medium",
+          "description": "Add cross-browser compatibility: Chrome/Edge full support, Firefox degradation, Safari WebGPU detection with fallback guidance",
+          "depends": [],
+          "files_touched": []
+        },
+        {
+          "id": "7.3",
+          "phase": 7,
+          "status": "completed",
+          "size": "medium",
+          "description": "Production polish: loading skeletons, empty states, error boundaries, responsive layout, accessibility basics, and SC-011/SC-006 verification",
+          "depends": [
+            "7.1",
+            "7.2"
+          ],
+          "files_touched": []
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "End-to-End Integration Wiring",
+      "status": "complete",
+      "tasks": [
+        {
+          "id": "8.1",
+          "phase": 8,
+          "status": "completed",
+          "size": "medium",
+          "description": "Create service initialization infrastructure: a React hook or component that initializes EmbeddingService, VectorIndex, and KeywordIndex on app startup with a loading screen, runs early WebGPU availability check, wires model readiness state via InferenceModeContext.setModelReady() when model is cached, handles initialization errors gracefully, and adds service dispose() cleanup on app unmount",
+          "depends": [],
+          "acceptance": "App shows loading screen while services initialize; EmbeddingService, VectorIndex, KeywordIndex are all initialized before any page renders; model readiness state is correctly set in InferenceModeContext; WebGPU check runs at startup; services dispose on unmount",
+          "files_touched": []
+        },
+        {
+          "id": "8.2",
+          "phase": 8,
+          "status": "completed",
+          "size": "medium",
+          "description": "Wire DocumentsPage to search indexes: after TextChunker creates chunks, compute embeddings via EmbeddingService.encodeBatch(), call vectorIndex.addBatch() with embedded vectors and docId mapping, call keywordIndex.addDocuments() with text chunks, show indexing progress in UI, save indexes after operations. On document deletion, call vectorIndex.removeByDocId() and keywordIndex.removeByDocId() to clean up search indexes",
+          "depends": [
+            "8.1"
+          ],
+          "acceptance": "Uploaded documents are fully indexed in both VectorIndex and KeywordIndex; embedding progress is shown during indexing; deleted documents are removed from all indexes; indexes are persisted to IndexedDB after changes; docId is set on all chunks",
+          "files_touched": []
+        },
+        {
+          "id": "8.3",
+          "phase": 8,
+          "status": "completed",
+          "size": "large",
+          "description": "Wire ChatPage to RAGOrchestrator for browser-local inference mode: import RAGOrchestrator, replace MOCK_STREAMING_RESPONSE and mockProducer with RAGOrchestrator.query() AsyncGenerator iteration, feed token events to TokenStreamManager.pushToken(), wire complete event with sources to TokenStreamManager.complete(), wire error events to TokenStreamManager.error(), handle no-document/no-results case with user-friendly message, connect cancellation, remove all mock data (MOCK_STREAMING_RESPONSE, mockTimerRef, mockProducer)",
+          "depends": [
+            "8.1"
+          ],
+          "acceptance": "ChatPage uses real RAG pipeline via RAGOrchestrator in browser-local mode; tokens stream in real-time; sources are displayed from real search results; no MOCK_STREAMING_RESPONSE or mock code remains; cancellation works; empty state handled when no documents indexed",
+          "files_touched": []
+        },
+        {
+          "id": "8.4",
+          "phase": 8,
+          "status": "completed",
+          "size": "medium",
+          "description": "Wire ChatPage to API server mode: when inference mode is 'api', use TokenStreamManager.startSSEStream() to connect to the backend /ask endpoint via SSE, wire serverUrl from InferenceModeContext into the API request, handle connection errors and server unreachable states, pass auth token if available",
+          "depends": [
+            "8.3"
+          ],
+          "acceptance": "ChatPage uses SSE streaming to backend in API mode; server URL from context is used for API calls; connection errors display user-friendly messages; auth token is passed if available; mode switching works without page refresh",
+          "files_touched": []
+        },
+        {
+          "id": "8.5",
+          "phase": 8,
+          "status": "completed",
+          "size": "small",
+          "description": "Remove TokenStreamManager.startWebLLMStream() stub: delete the unimplemented startWebLLMStream method that always errors, since ChatPage now iterates RAGOrchestrator.query() directly and the orchestrator handles WebLLM internally",
+          "depends": [
+            "8.3"
+          ],
+          "acceptance": "startWebLLMStream method is removed; no dead stub code remains; TokenStreamManager only has startSSEStream for server mode",
+          "files_touched": []
+        },
+        {
+          "id": "8.6",
+          "phase": 8,
+          "status": "completed",
+          "size": "medium",
+          "description": "Production cleanup: remove MlSpikePage.tsx diagnostic page, fix StreamingIndicator.tsx dotStyle function (move outside component), wire useKeyboardShortcuts onSendMessage and onClearChat callbacks, clean up lib/index.ts barrel exports, add service dispose() calls on app unmount for singleton cleanup",
+          "depends": [
+            "8.2",
+            "8.4",
+            "8.5"
+          ],
+          "acceptance": "No diagnostic/test pages remain; no dead exports; keyboard shortcuts send message and clear chat; all singleton services disposed on unmount; dotStyle is a stable function reference",
+          "files_touched": [
+            "web_ui/src/pages/ChatPage.tsx",
+            "web_ui/src/lib/index.ts",
+            "web_ui/src/App.tsx"
+          ]
+        },
+        {
+          "id": "8.7",
+          "phase": 8,
+          "status": "completed",
+          "size": "small",
+          "description": "End-to-end build and integration verification: run production build (vite build), fix any TypeScript compilation errors, run full test suite, run placeholder scan to confirm zero remaining TODO/FIXME/HACK markers in production code, verify no dead imports or unused exports remain",
+          "depends": [
+            "8.6"
+          ],
+          "acceptance": "Production build succeeds with zero errors; test suite passes (allowing known mock-related failures); zero TODO/FIXME/HACK in production source; no unused imports; no dead exports; application is 100% wired end-to-end",
           "files_touched": []
         }
       ]
     }
   ],
   "migration_status": "native",
-  "specMtime": "2026-05-20T01:07:16.130Z",
-  "specHash": "1b0a8927d7d23a2b631361f2e07763cf0ea3cec3cdf4899bd53da1818d811c92",
+  "specMtime": "2026-05-26T23:32:06.211Z",
+  "specHash": "90754e1cbc572dc09e55fed2b9a9d0c0a2cd88cf68ba1e56250217fa77220cdd",
   "execution_profile": {
     "parallelization_enabled": true,
-    "max_concurrent_tasks": 2,
+    "max_concurrent_tasks": 3,
     "council_parallel": false,
     "locked": true
   }

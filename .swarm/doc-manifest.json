@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "scanned_at": "2026-05-20T00:28:58.294Z",
+  "scanned_at": "2026-05-28T15:38:15.405Z",
   "files": [
     {
       "path": ".github/agents/ai_slop_reviewer.md",
@@ -89,9 +89,9 @@
     {
       "path": "CHANGELOG.md",
       "title": "Changelog",
-      "summary": "- **Thread-safe RAG engine**: Lazy LLM initialization with cancellation support, asyncio.to_thread wrapping for all LLM calls, and thread-safe query transformer singleton with retry suppression via...",
-      "lines": 339,
-      "mtime": 1779201045408.0183
+      "summary": "- **End-to-end integration wiring (Phase 8)**: Connected `ChatPage.tsx` to `RAGOrchestrator` for browser-local mode and SSE streaming (`SSEStreamConsumer`) for API mode - **DocumentsPage search wir...",
+      "lines": 467,
+      "mtime": 1779982676564.713
     },
     {
       "path": "CLAUDE.md",
@@ -215,9 +215,9 @@
     {
       "path": "README.md",
       "title": "Document Q&A Assistant",
-      "summary": "A fully offline RAG-based document question answering system optimized for Windows PCs. Features semantic search, hybrid retrieval, and CPU-based LLM inference with GGUF models. - **Offline-First D...",
-      "lines": 626,
-      "mtime": 1779201046006.8047
+      "summary": "A fully offline RAG-based document question answering system optimized for Windows PCs. Features semantic search, hybrid retrieval, and CPU-based LLM inference with GGUF models. - **Application She...",
+      "lines": 991,
+      "mtime": 1779982694416.4595
     },
     {
       "path": "specs/README.md",
@@ -232,6 +232,13 @@
       "summary": "This directory contains data from the pytest's cache plugin, which provides the `--lf` and `--ff` options, as well as the `cache` fixture. **Do not** commit this to version control. See [the docs](...",
       "lines": 9,
       "mtime": 1776287370669.9348
+    },
+    {
+      "path": "web_ui/package/README.md",
+      "title": "EdgeVec",
+      "summary": "[![CI](https://github.com/matte1782/edgevec/actions/workflows/ci.yml/badge.svg)](https://github.com/matte1782/edgevec/actions/workflows/ci.yml) [![Crates.io](https://img.shields.io/crates/v/edgevec...",
+      "lines": 316,
+      "mtime": 499162500000
     }
   ]
 }

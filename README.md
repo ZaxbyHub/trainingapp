@@ -4,6 +4,13 @@ A fully offline RAG-based document question answering system optimized for Windo
 
 ## 🚀 Features
 
+### HTML5 Web UI (Phase 1 — Complete)
+- **Application Shell**: Navigation rail with Chat, Documents, Settings pages and responsive flexbox layout
+- **Theme System**: Dark/light mode toggle with system preference detection and localStorage persistence
+- **Toast Notifications**: Non-blocking toast system with success/error/info variants and entrance animations
+- **Keyboard Shortcuts**: Ctrl+Enter (send), Ctrl+L (clear chat), Ctrl+, (open settings) with input/textarea focus guard
+- **Testing Framework**: vitest configured with @testing-library/react and jsdom environment
+
 ### Core Capabilities
 - **Offline-First Design**: No internet required after initial setup
 - **Multi-format Support**: PDF, DOCX, PPTX, TXT, MD documents
@@ -44,17 +51,59 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 
 ## 🆕 New Features (Version 2.0.0)
 
-### Layout and Responsive Behavior (Phase 3)
-- **Dynamic Text Wrapping**: Chat messages automatically wrap based on window width — text reflows as you resize the window
-- **Empty State Guide**: Friendly placeholder shown when no documents are loaded, with sample questions and quick-start button
-- **Operation Cancellation**: Cancel long-running operations (ingestion, querying, engine init) via Cancel button or Escape key
+### Chat UI (Phase 3)
+- **Streaming Chat Interface**: Full-featured chat page (`ChatPage.tsx`) with real-time token streaming display using RAF-batched updates via `TokenStreamManager`
+- **Role-Based Message Bubbles**: Distinct styling for user, assistant, and system messages with relative timestamps ("2m ago", "just now")
+- **Inline Markdown Renderer**: Zero-dependency markdown parser supporting bold, italic, inline code, fenced code blocks, ordered/unordered lists, and links with URL validation (rejects javascript: and data: URLs)
+- **Source Citation Pills**: Expandable/collapsible source pills with filename truncation, full path reveal on click, and one-click copy-to-clipboard
+- **Inference Mode Toggle**: Status indicator (green/yellow/red) for browser-local vs API mode with server connectivity check against `/auth/status` endpoint
+- **Streaming Cursor Animation**: Blinking cursor (`@keyframes blink`) appended to assistant messages during streaming for visual feedback
+- **Copy Message**: Hover-to-reveal copy button on user and assistant bubbles with 1.5s "Copied!" feedback
+- **Streaming Indicator**: Bouncing dots animation (setInterval-based, 3 dots cycling at 200ms) shown below messages during generation
+- **Operation Cancellation**: Cancel button stops `TokenStreamManager`, clears pending mock timers, and marks streaming messages complete
+
+### Inference Mode Architecture (Phase 3)
+- **Dual-Mode Context**: `InferenceModeContext` (`InferenceModeContext.tsx`) manages `browser-local` vs `api` mode via React context
+- **localStorage Persistence**: Mode preference and server URL stored under `inference-mode` key; survives page refresh
+- **Server Connectivity Check**: `checkServerConnectivity()` pings `/auth/status` with 5s timeout, handles abort for rapid toggles, updates `isServerConnected` and `modeError` state
+- **Model Loading Progress**: `modelLoadingProgress` (0–100) displayed in blocking overlay when browser-local model is initializing
+- **API Mode Warning**: "Server not connected" warning shown in header when API mode is active but server is unreachable
 
 ### Interactive Source Pills (Phase 4)
+- **Expandable Citations**: Click to expand source pills showing full filename, page number, and content preview
+- **One-Click Copy**: Copy button on each pill copies citation text to clipboard
+- **Hover Preview**: Hover shows truncated source preview with tooltip for full content
+- **Phase Attribution**: Pills labeled with "Phase 3" or "Phase 4" indicating extraction source
 
 ### Settings Tooltips (Phase 4)
 - **CTkTooltip Class**: Non-blocking hover tooltips with 500ms delay for all settings fields
 - **Contextual Help**: Each RAG configuration field has descriptive hint text explaining its purpose
 - **Dark Theme Tooltips**: Tooltips use dark background (#3a3a4e) with white text for consistent visibility
+
+### Document Upload & Processing (Phase 4)
+- **Browser-Side Extraction**: All document processing happens locally in the browser with no server uploads
+- **Multi-Format Support**: PDF, DOCX, XLSX, PPTX, TXT, and MD files via dedicated extractors
+- **Extractor Factory**: `ExtractorFactory` selects the appropriate extractor based on MIME type
+- **Semantic Chunking**: Faithful Python port with paragraph/sentence boundary awareness, configurable overlap, page mapping, and SHA256 content IDs
+- **IndexedDB Storage**: Documents, chunks, and metadata persisted locally via `document-store.ts`
+- **Documents Page**: Full-featured `/documents` page with drag-and-drop upload, file processing pipeline, and document list with status tracking
+- **DropZone Component**: Drag-and-drop or click-to-browse file input with visual feedback and progress indication
+- **DocumentList Component**: Paginated document list showing name, type, size, status, and date with delete functionality
+
+#### Supported Formats
+| Format | Extractor | Library |
+|--------|-----------|---------|
+| PDF | `pdf-extractor.ts` | pdfjs-dist |
+| DOCX | `docx-extractor.ts` | mammoth |
+| XLSX | `xlsx-extractor.ts` | xlsx |
+| PPTX | `pptx-extractor.ts` | jszip + xml parsing |
+| TXT/MD | `txt-extractor.ts` | Native text processing |
+
+#### Dependencies Added
+- `pdfjs-dist` ^4.4.168
+- `mammoth` ^1.8.0
+- `xlsx` ^0.18.5
+- `jszip` ^3.10.1
 
 ### Settings (Phase 6)
 - **Real-time UI Updates**: Font size slider now applies to all widgets immediately when saved
@@ -74,12 +123,51 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - **Neighborhood Expansion**: Increased k from 3 to 5 chunks for better context coverage in streaming mode
 - **Embedding Batch Normalization**: Consistent batch sizes for predictable memory usage during ingestion
 
+### Web UI Search Infrastructure (Phase 5)
+- **Transformers.js Embeddings**: Browser-side embedding generation using `bge-small-en-v1.5` ONNX model with OPFS caching for offline use
+- **HNSW Vector Index**: `EdgeVec` Rust/WASM-based HNSW index with native IndexedDB persistence for semantic search
+- **FlexSearch Keyword Index**: Full-text keyword search with resolution-based scoring for BM25-style matching
+- **Reciprocal Rank Fusion**: Ported RRF algorithm for hybrid retrieval combining semantic and keyword results
+- **Cross-Encoder Reranking**: `ms-marco-MiniLM-L-6-v2` reranker with memory-aware conditional activation (skipped on low-memory devices)
+- **Memory-Aware Model Selection**: Device memory detection with tier-based configuration (low/medium/high memory tiers)
+
+### Browser LLM Inference (Phase 6)
+- **WebLLM Service**: Browser-side LLM inference using `@mlc-ai/web-llm` with `CreateMLCEngine` API for SmolLM3-3B-Q4_K_M (~1.9GB), OPFS caching, and streaming token generation
+- **Model Download Manager**: Progress tracking with speed/ETA calculation, cancellation support, and storage quota error handling
+- **ModelDownloadProgress UI**: Accessible progress bar with ARIA attributes, download speed, ETA countdown, and cancel button
+- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to server API mode when requirements aren't met
+- **RAG Orchestrator**: Full retrieval pipeline connecting embedding→vector search→keyword search→RRF fusion→reranking→LLM generation; emits typed `RAGEvent` stream for UI progress
+- **WebGPU Watchdog**: Context loss detection via `GPUDevice.lost` promise/event monitoring; `createRecoveryHandler` automatically re-initializes the service after loss
+
 ### Chat Improvements (Phase 7)
 - **Thinking Indicator**: Animated "Thinking..." with dots while LLM generates responses
 - **Smart Regeneration**: "Regenerate" button replaces the last assistant message instead of creating duplicates
 - **Feedback System**: Working thumbs up/down buttons that persist to database
 - **Conversation Context Menu**: Right-click options to delete or rename conversations
 - **Time Display**: Relative timestamps in sidebar (e.g., "2 min ago", "Yesterday")
+
+### Settings Page & Cross-Browser Support (Phase 7)
+- **Dedicated Settings Page** (`SettingsPage.tsx`): Full-featured settings UI with 6 sections:
+  - **Inference Mode**: Toggle between browser-local (WebGPU) and API server modes with real-time state sync
+  - **Server Configuration**: Server URL input with connection test button and status indicators
+  - **Model Selection**: Dropdown for AI model choice with cache status, download progress, and cancel support
+  - **Appearance**: Theme selector (light/dark/system) with immediate UI application
+  - **Storage**: Memory budget display, memory pressure status, and two-click cache clear with confirmation
+  - **About**: Version info and app description
+- **IndexedDB Persistence**: User preferences (theme, preferredModel, serverUrl) stored in IndexedDB with automatic load/save
+- **InferenceModeProvider at Root**: Provider moved to `App.tsx` root level for shared state across all pages (Chat, Documents, Settings)
+- **Cross-Browser Compatibility** (`browser-compat.ts`): Detection for Chrome/Edge 113+ (full WebGPU), Firefox (degraded/experimental), Safari (degraded/partial); provides compatibility guidance with upgrade recommendations
+- **Reusable UI Components**:
+  - `ErrorBoundary.tsx`: Class-based error boundary catching render errors with retry functionality
+  - `LoadingSkeleton.tsx`: Shimmer-animated skeleton placeholders (text, card, avatar, button variants)
+  - `EmptyState.tsx`: Contextual empty states (no-documents, no-results, no-chat-history, generic) with optional action buttons
+
+### End-to-End Integration (Phase 8)
+- **Dual-Mode Streaming**: `ChatPage` now connects to `RAGOrchestrator` for browser-local inference (WebGPU) and `SSEStreamConsumer` for API server streaming, with seamless mode switching
+- **DocumentsPage Search Wiring**: Document search now uses the full search pipeline (vector-index + keyword-index + RRF fusion)
+- **Service Initialization Hook** (`useServiceInitialization.ts`): Sequential service initialization with proper cleanup on unmount; manages embedding service, vector index, and keyword index lifecycle
+- **Loading Overlay**: Service initialization state surfaced via blocking overlay in `App.tsx` during startup
+- **Production Build Fixes**: edgevec WASM snippet stub plugin for Vite; pdfjs worker initialization fix for production
 
 ### Keyboard Shortcuts & UX (Phase 2)
 - **Enter Key Submission**: Press Enter to submit questions (no need to click "Ask" button)
@@ -505,12 +593,18 @@ print(f"BM25 index: {'Ready' if engine.vector_store.bm25_index else 'Not built'}
 |----------|--------|-------------|
 | `/` | GET | Health check |
 | `/stats` | GET | Engine statistics |
-| `/ask` | POST | Ask a question |
+| `/ask` | POST | Ask a question (non-streaming) |
+| `/ask/stream` | POST | Ask a question with SSE streaming |
 | `/search` | POST | Search documents |
 | `/ingest` | POST | Ingest directory |
-| `/ingest/file` | POST | Upload and ingest file |
+| `/ingest/file` | POST | Upload and ingest single file |
+| `/ingest/batch` | POST | Batch upload and ingest (up to 20 files) |
 | `/documents` | GET | List documents |
 | `/documents` | DELETE | Clear all documents |
+| `/settings` | GET | Get current RAG settings |
+| `/settings` | PUT | Update RAG settings |
+| `/auth/status` | GET | Authentication status |
+| `/auth/token` | POST | Obtain JWT token |
 
 ### Example: Ask a Question
 
@@ -534,6 +628,76 @@ result = response.json()
 print(f"Answer: {result['answer']}")
 print(f"Sources: {result['sources']}")
 print(f"Inference time: {result['inference_time']:.2f}s")
+```
+
+### Example: SSE Streaming
+
+```python
+import requests
+
+# Ask with streaming response
+with requests.post(
+    "http://localhost:8080/ask/stream",
+    json={"question": "What are the main findings?", "n_results": 3},
+    headers={"Authorization": "Bearer <token>"},
+    stream=True
+) as response:
+    for line in response.iter_lines():
+        if line.startswith("data: "):
+            data = json.loads(line[6:])
+            if "token" in data:
+                print(data["token"], end="", flush=True)
+            elif data.get("done"):
+                print(f"\n\nSources: {data['sources']}")
+                print(f"Inference time: {data['inference_time']:.2f}s")
+```
+
+### Example: Batch File Upload
+
+```python
+import requests
+
+# Upload multiple files at once (up to 20)
+files = [
+    ("files", ("report1.pdf", open("report1.pdf", "rb"), "application/pdf")),
+    ("files", ("report2.docx", open("report2.docx", "rb"), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")),
+    ("files", ("notes.txt", open("notes.txt", "rb"), "text/plain")),
+]
+
+response = requests.post(
+    "http://localhost:8080/ingest/batch",
+    files=files,
+    headers={"Authorization": "Bearer <token>"}
+)
+
+result = response.json()
+print(f"Total: {result['total_files']}, Succeeded: {result['successful']}, Failed: {result['failed']}")
+for r in result["results"]:
+    status = "✓" if r["success"] else "✗"
+    print(f"  {status} {r['filename']}: {r.get('error', r.get('chunks_added', 0))} chunks")
+```
+
+### Example: Settings CRUD
+
+```python
+import requests
+
+# Get current settings
+response = requests.get(
+    "http://localhost:8080/settings",
+    headers={"Authorization": "Bearer <token>"}
+)
+settings = response.json()
+print(f"Chunk size: {settings['chunk_size']}, Overlap: {settings['chunk_overlap']}")
+
+# Update settings (partial update supported)
+response = requests.put(
+    "http://localhost:8080/settings",
+    json={"rag_temperature": 0.7, "rag_chunk_size": 768},
+    headers={"Authorization": "Bearer <token>"}
+)
+updated = response.json()
+print(f"New temperature: {updated['temperature']}, chunk size: {updated['chunk_size']}")
 ```
 
 ## 📦 Building Standalone Executable
@@ -571,6 +735,145 @@ iscc build_installer/setup.iss
 
 This creates an offline installer with all dependencies and models included.
 
+## 🌐 HTML5 Web UI (Phase 1)
+
+A new browser-based interface is being developed alongside the existing desktop GUI.
+
+### Tech Stack
+- **Vite 6** + **React 18** + **TypeScript 5**
+- Pure CSS design token system (no Tailwind)
+- vitest + @testing-library/react for testing
+
+### Design Token System
+Translates Python theme.py (ColorTokens, TypeScale, Spacing) to CSS custom properties:
+
+| Token Category | Examples |
+|---------------|----------|
+| Colors | `--color-primary`, `--color-bubble-user`, `--color-text-muted` |
+| Typography | `--font-family`, `--font-size-h1` (20px) through `--font-size-small` (10px) |
+| Spacing | `--spacing-xs` (2px) through `--spacing-section` (32px) on 4px grid |
+
+Dark mode overrides via `[data-theme="dark"]` attribute on `<html>`.
+
+### Running the Web UI
+```powershell
+cd web_ui
+npm install
+npm run dev      # Development server
+npm run build    # Production build
+npm run typecheck # TypeScript validation
+npm test         # Run tests with vitest
+```
+
+### TypeScript API Client
+
+The web UI includes a typed API client (`src/lib/api/`) for all backend endpoints:
+
+| File | Description |
+|------|-------------|
+| `client.ts` | `ApiClient` class with methods for all endpoints |
+| `streaming.ts` | `SSEStreamConsumer` for POST-based SSE streaming |
+| `auth.ts` | Token storage with Safari private mode fallback |
+| `types.ts` | TypeScript interfaces matching FastAPI models |
+| `index.ts` | Barrel export and default client instance |
+
+### Document Processing (Phase 4)
+
+The web UI includes browser-side document processing with no server uploads:
+
+```typescript
+import { ExtractorFactory } from './lib/processing/extractor-factory';
+import { TextChunker } from './lib/processing/text-chunker';
+import { DocumentStore } from './lib/storage/document-store';
+
+// Extract text from uploaded file
+const extractor = ExtractorFactory.getExtractor(file);
+const extraction = await extractor.extract(file);
+
+// Chunk with semantic boundaries
+const chunker = new TextChunker({ chunkSize: 512, overlap: 50 });
+const chunks = chunker.chunk(extraction.text, extraction.metadata);
+
+// Store in IndexedDB
+const store = new DocumentStore();
+await store.saveDocument({
+  id: crypto.randomUUID(),
+  name: file.name,
+  type: file.type,
+  size: file.size,
+  chunks,
+  createdAt: new Date()
+});
+
+// List all documents
+const docs = await store.loadDocuments();
+console.log(`Loaded ${docs.length} documents`);
+```
+
+### Chat Infrastructure
+
+| File | Description |
+|------|-------------|
+| `src/types/chat.ts` | Shared `ChatMessage`, `MessageRole`, and `ChatState` types |
+| `src/lib/streaming/TokenStreamManager.ts` | RAF-batched token delivery, unified callbacks for SSE/WebLLM, cancellation support |
+| `src/lib/inference/InferenceModeContext.tsx` | React context for `browser-local`/`api` mode with localStorage persistence |
+
+**Usage:**
+```typescript
+import { apiClient, SSEStreamConsumer, login } from './lib/api';
+
+// Ask a question
+const answer = await apiClient.ask("What are the main findings?");
+
+// Stream tokens with SSE
+const stream = new SSEStreamConsumer('/ask/stream', { question: "Tell me more" });
+stream.onToken(token => appendToAnswer(token));
+stream.onDone(data => showSources(data.sources));
+stream.start();
+
+// Batch upload
+const batch = await apiClient.uploadBatch([file1, file2, file3]);
+console.log(`Uploaded ${batch.successful}/${batch.total_files} files`);
+
+// Settings
+const settings = await apiClient.getSettings();
+await apiClient.updateSettings({ rag_temperature: 0.8 });
+```
+
+### Browser ML Spike
+
+The ML spike page (`/ml-spike`) validates Transformers.js, EdgeVec, and FlexSearch on target hardware. Access via the web UI navigation or directly at `/ml-spike`.
+
+**Test Categories:**
+- **Transformers.js**: Hugging Face transformers running in browser (feature-extraction pipeline)
+- **EdgeVec**: HNSW-based vector similarity search (edgevec npm package)
+- **FlexSearch**: Full-text search indexing (flexsearch npm package)
+
+Results show pass/fail/skip status, duration, and memory delta for each library.
+
+### Web UI Search Architecture (Phase 5)
+
+The web UI implements a complete browser-side search pipeline:
+
+```
+Query → Embeddings (Transformers.js) → HNSW (EdgeVec) → RRF Fusion → Reranker (optional)
+         ↓
+Keyword Index (FlexSearch) ──────────────────────────────→
+```
+
+| Component | File | Description |
+|-----------|------|-------------|
+| Embedding Service | `src/lib/embeddings/embedding-service.ts` | Transformers.js pipeline with bge-small-en-v1.5 ONNX model, OPFS caching |
+| Memory-Aware Selection | `src/lib/embeddings/memory-aware.ts` | Device memory detection, tier-based model configuration |
+| Vector Index | `src/lib/search/vector-index.ts` | EdgeVec HNSW index with IndexedDB persistence |
+| Keyword Index | `src/lib/search/keyword-index.ts` | FlexSearch with resolution-based scoring |
+| RRF Fusion | `src/lib/search/rrf-fusion.ts` | Reciprocal Rank Fusion for hybrid results |
+| Reranker | `src/lib/search/reranker.ts` | Cross-encoder reranker (ms-marco-MiniLM-L-6-v2) |
+| Types | `src/types/embedding.ts` | `EmbeddingDocument`, `EmbeddingResult` interfaces |
+| Types | `src/types/search.ts` | `SearchResult`, `HybridSearchResult` interfaces |
+
+**Dependencies added**: `@huggingface/transformers` ^3.0.0, `edgevec` ^0.6.0, `flexsearch` ^0.8.0
+
 ## 📋 Project Structure
 
 ```
@@ -589,6 +892,68 @@ doc_qa_app/
 ├── build.py                # PyInstaller build script
 ├── scripts/
 │   └── build_installer.py  # Inno Setup preparation
+├── web_ui/                 # HTML5 Web UI (Phase 3+)
+│   ├── src/
+│   │   ├── pages/
+│   │   │   ├── ChatPage.tsx          # Chat UI page (Phase 3)
+│   │   │   ├── DocumentsPage.tsx    # Document upload & management (Phase 4)
+│   │   │   └── SettingsPage.tsx     # Settings page with 6 sections (Phase 7)
+│   │   ├── components/
+│   │   │   ├── ChatMessageBubble.tsx # Role-based message bubbles (Phase 3)
+│   │   │   ├── ChatMessageList.tsx   # Scrollable message container (Phase 3)
+│   │   │   ├── ChatInput.tsx         # Input with send/cancel (Phase 3)
+│   │   │   ├── MarkdownRenderer.tsx  # Zero-dependency markdown (Phase 3)
+│   │   │   ├── SourceCitation.tsx    # Expandable citation pills (Phase 3)
+│   │   │   ├── InferenceModeToggle.tsx # Mode status toggle (Phase 3)
+│   │   │   ├── StreamingIndicator.tsx  # Bouncing dots animation (Phase 3)
+│   │   │   ├── DropZone.tsx          # Drag-and-drop file upload (Phase 4)
+│   │   │   ├── DocumentList.tsx      # Document list with status (Phase 4)
+│   │   │   ├── ModelDownloadProgress.tsx # Download progress UI (Phase 6)
+│   │   │   ├── ErrorBoundary.tsx     # Error boundary with retry (Phase 7)
+│   │   │   ├── LoadingSkeleton.tsx   # Skeleton loading placeholders (Phase 7)
+│   │   │   └── EmptyState.tsx        # Empty state messages (Phase 7)
+│   │   ├── lib/
+│   │   │   ├── streaming/
+│   │   │   │   └── TokenStreamManager.ts # RAF-batched token delivery (Phase 3)
+│   │   │   ├── inference/
+│   │   │   │   └── InferenceModeContext.tsx # Browser-local/API mode context (Phase 3)
+│   │   │   ├── browser/
+│   │   │   │   └── browser-compat.ts    # Cross-browser WebGPU detection (Phase 7)
+│   │   │   ├── embeddings/
+│   │   │   │   ├── embedding-service.ts # Transformers.js embedding (Phase 5)
+│   │   │   │   └── memory-aware.ts      # Memory-aware model selection (Phase 5)
+│   │   │   ├── llm/
+│   │   │   │   ├── web-llm-service.ts  # WebLLM browser inference (Phase 6)
+│   │   │   │   ├── model-download.ts   # Download manager with ETA (Phase 6)
+│   │   │   │   ├── model-readiness.ts  # WebGPU/memory readiness gate (Phase 6)
+│   │   │   │   └── webgpu-watchdog.ts  # Context loss recovery (Phase 6)
+│   │   │   ├── rag/
+│   │   │   │   └── rag-orchestrator.ts # RAG pipeline orchestrator (Phase 6)
+│   │   │   ├── search/
+│   │   │   │   ├── vector-index.ts     # EdgeVec HNSW index (Phase 5)
+│   │   │   │   ├── keyword-index.ts    # FlexSearch keyword index (Phase 5)
+│   │   │   │   ├── rrf-fusion.ts       # Reciprocal Rank Fusion (Phase 5)
+│   │   │   │   └── reranker.ts         # Cross-encoder reranker (Phase 5)
+│   │   │   ├── processing/
+│   │   │   │   ├── pdf-extractor.ts     # PDF text extraction (Phase 4)
+│   │   │   │   ├── docx-extractor.ts    # DOCX text extraction (Phase 4)
+│   │   │   │   ├── xlsx-extractor.ts    # XLSX text extraction (Phase 4)
+│   │   │   │   ├── pptx-extractor.ts   # PPTX text extraction (Phase 4)
+│   │   │   │   ├── txt-extractor.ts     # TXT/MD text extraction (Phase 4)
+│   │   │   │   ├── extractor-factory.ts # MIME-type based extractor selection (Phase 4)
+│   │   │   │   └── text-chunker.ts      # Semantic chunking with overlap (Phase 4)
+│   │   │   └── storage/
+│   │   │       └── document-store.ts   # IndexedDB document storage (Phase 4)
+│   │   ├── types/
+│   │   │   ├── chat.ts               # Shared chat types (Phase 3)
+│   │   │   ├── document.ts           # Document types (Phase 4)
+│   │   │   ├── embedding.ts          # Embedding types (Phase 5)
+│   │   │   ├── search.ts             # Search result types (Phase 5)
+│   │   │   └── llm.ts                # LLM types, WebGPU-only inference mode (Phase 6)
+│   │   └── styles/
+│   │       └── tokens.css           # Design tokens + @keyframes blink (Phase 3)
+│   ├── package.json
+│   └── ...
 └── README.md               # This file
 ```
 
@@ -620,6 +985,6 @@ MIT License - See LICENSE file for details.
 - [CustomTkinter](https://customtkinter.tomschimansky.com/) - Modern GUI toolkit
 
 ---
-**Version**: 2.2.0
-**Last Updated**: 2026-05-17
+**Version**: 2.2.1
+**Last Updated**: 2026-05-28 (Phase 8)
 **Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)

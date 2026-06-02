@@ -3,8 +3,9 @@
     {
       "type": "drift-verification",
       "verdict": "approved",
-      "summary": "Phase 6 completed: All 5 tasks verified and aligned. Task 6.1 updated docstring branding, Task 6.2 fixed OpenVINO references to GGUF, Task 6.3 updated Inno Setup placeholders with explicit CHANGE_ME pattern and TODO comments, Task 6.4 added measurement conditions to performance claims, Task 6.5 made context_truncation configurable via RAG_CONTEXT_TRUNCATION environment variable.",
-      "timestamp": "2026-04-09T16:55:36.529Z"
+      "summary": "Phase 6 implementation is intentionally aligned. WASM fallback removed because web-llm v0.2.83 has no WASM compute backend — only WebGPU. This was discovered during implementation and confirmed by reviewer. Cancel/download is documented as best-effort since CreateMLCEngine doesn't support aborting init. Tab visibility is a minor omission from watchdog — not blocking for FR-015 compliance. All other drift items are cosmetic documentation gaps, not functional issues.",
+      "timestamp": "2026-05-28T02:08:25.001Z",
+      "requirementCoverage": "{\"phase\": 6, \"totalRequirements\": 8, \"covered\": 8, \"gaps\": [\"WASM fallback intentionally removed (no such backend in web-llm v0.2.83)\"]}"
     }
   ]
 }
