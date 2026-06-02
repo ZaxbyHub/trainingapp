@@ -9,6 +9,30 @@ import type { SearchResult, VectorIndexConfig, VectorSearchOptions } from '../..
 import initWasm, { EdgeVec, EdgeVecConfig } from 'edgevec';
 
 /**
+ * Generate a stable, user-scoped prefix for IndexedDB names.
+ * Uses sessionStorage UUID if available, else falls back to origin-derived
+ * hash. Result is stable across page reloads in the same browser session.
+ */
+function getUserPrefix(): string {
+  const KEY = 'doc-qa-user-id';
+  if (typeof sessionStorage !== 'undefined') {
+    let id = sessionStorage.getItem(KEY);
+    if (!id) {
+      id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      try { sessionStorage.setItem(KEY, id); } catch { /* private mode */ }
+    }
+    return id.slice(0, 8); // short prefix
+  }
+  return 'anon';
+}
+
+const USER_PREFIX = getUserPrefix();
+const DB_NAME = `${USER_PREFIX}-doc-qa-indexes`;
+const INDEX_NAME = `${USER_PREFIX}-doc-qa-index`;
+
+/**
  * Default configuration for the vector index.
  */
 const DEFAULT_CONFIG: VectorIndexConfig = {
@@ -305,7 +329,7 @@ export class VectorIndex {
 
     try {
       // Use EdgeVec's native save with custom index name
-      await this.index!.save('doc-qa-index');
+      await this.index!.save(INDEX_NAME);
 
       // Persist idMapping alongside the EdgeVec index (FIX #2)
       await this.saveMapping();
@@ -324,7 +348,7 @@ export class VectorIndex {
    */
   private async saveMapping(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open('doc-qa-indexes', 1);
+      const request = indexedDB.open(DB_NAME, 1);
       request.onerror = () => reject(new Error('Failed to open IndexedDB for mapping save'));
 
       request.onupgradeneeded = () => {
@@ -363,7 +387,7 @@ export class VectorIndex {
    */
   private async loadMapping(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open('doc-qa-indexes', 1);
+      const request = indexedDB.open(DB_NAME, 1);
 
       request.onerror = () => {
         // IndexedDB might not exist yet, which is fine
@@ -428,7 +452,7 @@ export class VectorIndex {
 
     try {
       // Use EdgeVec's native static load method (FIX #1)
-      loadedIndex = await EdgeVec.load('doc-qa-index');
+      loadedIndex = await EdgeVec.load(INDEX_NAME);
 
       if (!loadedIndex) {
         console.info('[VectorIndex] No saved index found in IndexedDB');
