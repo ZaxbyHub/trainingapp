@@ -423,6 +423,7 @@ function SettingsPageInner(): React.ReactElement {
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [connectionResult, setConnectionResult] = useState<'success' | 'error' | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMountedRef = useRef(true);
 
   // Settings loaded flag
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -450,6 +451,12 @@ function SettingsPageInner(): React.ReactElement {
         clearTimeout(connectionTimeoutRef.current);
       }
     };
+  }, []);
+
+  // isMountedRef to guard async state updates after unmount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
   }, []);
 
   // Sync serverUrl from context to local state
@@ -552,6 +559,7 @@ function SettingsPageInner(): React.ReactElement {
       clearTimeout(connectionTimeoutRef.current);
     }
     connectionTimeoutRef.current = setTimeout(() => {
+      if (!isMountedRef.current) return;
       setIsTestingConnection(false);
       setConnectionResult('error');
     }, 5000);
@@ -562,7 +570,7 @@ function SettingsPageInner(): React.ReactElement {
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
     }
-
+    if (!isMountedRef.current) return;
     setIsTestingConnection(false);
     setConnectionResult(connected ? 'success' : 'error');
   }, [checkServerConnectivity, localServerUrl, setServerUrl]);
@@ -579,6 +587,7 @@ function SettingsPageInner(): React.ReactElement {
 
     try {
       await downloadManagerRef.current.downloadModel(preferredModel, (progress) => {
+        if (!isMountedRef.current) return;
         setDownloadProgress(progress);
         if (progress.status === 'complete') {
           setModelCached(true);
@@ -588,6 +597,7 @@ function SettingsPageInner(): React.ReactElement {
         }
       });
     } catch (err: unknown) {
+      if (!isMountedRef.current) return;
       const message = err instanceof Error ? err.message : String(err);
       if (
         message.includes('quota') ||
