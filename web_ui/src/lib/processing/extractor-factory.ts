@@ -31,9 +31,25 @@ const EXTRACTOR_MAP: Record<string, (file: File) => Promise<ExtractionResult>> =
 };
 
 /**
+ * MIME types compatible with each extension. Used by validateFileType()
+ * to detect mismatches between the file's declared type and its extension.
+ * A file with no MIME type (empty string) or application/octet-stream
+ * is treated as "unknown" and accepted based on extension heuristic.
+ */
+const MIME_COMPATIBILITY: Record<string, readonly string[]> = {
+  '.pdf': ['application/pdf'],
+  '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip'],
+  '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'application/zip'],
+  '.txt': ['text/plain', 'text/markdown', 'application/octet-stream'],
+  '.md':  ['text/plain', 'text/markdown', 'text/x-markdown', 'application/octet-stream'],
+  '.pptx': ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.ms-powerpoint', 'application/zip'],
+};
+
+/**
  * Supported extensions for documentation.
  */
 export const SUPPORTED_EXTENSIONS = Object.keys(EXTRACTOR_MAP);
+
 
 /**
  * Extract text from a document file.
@@ -54,6 +70,15 @@ export async function extractDocument(file: File): Promise<ExtractionResult> {
       fileName: file.name,
       error: `Unsupported file type: no extension found`,
       stage: 'txt' as const,
+    } satisfies ExtractionError;
+  }
+
+  const validationError = validateFileType(file, extension);
+  if (validationError) {
+    throw {
+      fileName: file.name,
+      error: validationError,
+      stage: getStageForExtension(extension),
     } satisfies ExtractionError;
   }
 
@@ -85,6 +110,30 @@ function findExtension(fileName: string): string | null {
   }
 
   return fileName.substring(lastDotIndex);
+}
+
+/**
+ * Validate that a file's MIME type is compatible with its extension.
+ * Returns null if the file is valid, or a reason string if mismatched.
+ *
+ * Rules:
+ * - Empty file.type or 'application/octet-stream' → accept (unknown type)
+ * - MIME type not in compatibility list → reject (mismatch)
+ * - Extension not in MIME_COMPATIBILITY → accept (no compatibility data)
+ */
+function validateFileType(file: File, extension: string): string | null {
+  const mime = file.type?.toLowerCase() ?? '';
+  if (!mime || mime === 'application/octet-stream') {
+    return null; // unknown type, accept based on extension
+  }
+  const compatible = MIME_COMPATIBILITY[extension];
+  if (!compatible) {
+    return null; // no compatibility data, accept
+  }
+  if (!compatible.includes(mime)) {
+    return `File type mismatch: extension "${extension}" is not compatible with MIME type "${mime}"`;
+  }
+  return null;
 }
 
 /**
