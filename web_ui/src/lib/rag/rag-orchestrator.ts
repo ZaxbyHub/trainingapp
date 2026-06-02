@@ -44,6 +44,8 @@ export interface RAGQueryOptions {
   maxTokens?: number;
   /** Sampling temperature (higher = more creative) */
   temperature?: number;
+  /** AbortSignal for cancelling the in-progress query */
+  signal?: AbortSignal;
 }
 
 /**
@@ -109,6 +111,11 @@ export class RAGOrchestrator {
     const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     const maxTokens = options.maxTokens;
     const temperature = options.temperature;
+    const signal = options.signal;
+
+    if (signal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
 
     let fusedResults: SearchResult[] = [];
     let rerankedResults: SearchResult[] = [];
@@ -245,6 +252,9 @@ export class RAGOrchestrator {
     try {
       if (streamTokens) {
         for await (const token of this.llmService.generate(contextMessages, { maxTokens, temperature })) {
+          if (signal?.aborted) {
+            throw new DOMException('The operation was aborted.', 'AbortError');
+          }
           fullAnswer += token;
           yield { type: 'token', data: token };
         }
