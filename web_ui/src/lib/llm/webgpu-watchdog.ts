@@ -46,8 +46,10 @@ export interface ContextLossInfo {
  *     // Trigger recovery
  *   });
  *
- *   // Later, when done:
- *   watchdog.stop();
+ *   // Later, when done (React useEffect cleanup example):
+ *   watchdog.dispose();
+ *
+ * Always pair start() with dispose() in a useEffect cleanup function.
  */
 export class WebGPUWatchdog {
   private _device: GPUDevice | null = null;
@@ -113,6 +115,8 @@ export class WebGPUWatchdog {
    *
    * After stop(), the watchdog is inert. Create a new instance to monitor
    * a freshly created device.
+   *
+   * Note: prefer dispose() for new code — it's an alias with documentation emphasizing the resource-management contract.
    */
   stop(): void {
     if (!this._monitoring) {
@@ -127,6 +131,23 @@ export class WebGPUWatchdog {
     this._lostEventHandler = null;
 
     console.info('[WebGPUWatchdog] Stopped monitoring');
+  }
+
+  /**
+   * Releases all watchdog resources. Equivalent to stop(), but use this
+   * name when wiring into React useEffect cleanup, IDisposable patterns,
+   * or any other resource-management idiom.
+   *
+   * After dispose(), the watchdog is inert. The GPUDevice listener is
+   * removed, the lost-promise closure is released, and all internal
+   * references are nulled.
+   *
+   * IMPORTANT: Callers MUST invoke dispose() when finished with the
+   * watchdog (e.g., in a useEffect cleanup function). Failure to do so
+   * will leak the GPU device's 'lost' event listener.
+   */
+  dispose(): void {
+    this.stop();
   }
 
   /**
