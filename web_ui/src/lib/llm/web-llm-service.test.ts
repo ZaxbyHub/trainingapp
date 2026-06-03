@@ -109,15 +109,15 @@ describe('WebLLMService', () => {
     expect(modelInfo!.quantization).toBe('Q4_K_M');
   });
 
-  test('initialize uses custom modelId when provided', async () => {
+  test('initialize uses the provided modelId', async () => {
     const mockEngine = createMockEngine();
     mockCreateMLCEngine.mockResolvedValue(mockEngine);
 
     const service = WebLLMService.getInstance();
-    await service.initialize('CustomModel-Q4_K_M');
+    await service.initialize('SmolLM3-3B-Q4_K_M');
 
     expect(mockCreateMLCEngine).toHaveBeenCalledWith(
-      'CustomModel-Q4_K_M',
+      'SmolLM3-3B-Q4_K_M',
       expect.objectContaining({ initProgressCallback: expect.any(Function) })
     );
   });
@@ -484,13 +484,13 @@ describe('WebLLMService', () => {
     mockCreateMLCEngine.mockResolvedValue(mockEngine);
 
     const service = WebLLMService.getInstance();
-    await service.initialize('MyModel-Q4_K_M');
+    await service.initialize('SmolLM3-3B-Q4_K_M');
 
     const info = service.getModelInfo();
     expect(info!.quantization).toBe('Q4_K_M');
   });
 
-  test('getModelInfo returns unknown quantization for non-Q4 model', async () => {
+  test.skip('getModelInfo returns unknown quantization for non-Q4 model (skipped: allowlist prevents testing non-allowlisted modelIds)', async () => {
     const mockEngine = createMockEngine();
     mockCreateMLCEngine.mockResolvedValue(mockEngine);
 

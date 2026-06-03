@@ -54,6 +54,11 @@ let CreateMLCEngine: CreateMLCEngineFn | null = null;
 
 const DEFAULT_MODEL_ID = 'SmolLM3-3B-Q4_K_M';
 
+const ALLOWED_MODEL_IDS: readonly string[] = [
+  'SmolLM3-3B-Q4_K_M',
+  // add more as they are validated
+];
+
 /**
  * Singleton service for web-llm operations.
  */
@@ -85,7 +90,7 @@ export class WebLLMService {
         console.info('[WebLLM] WebGPU not available (navigator.gpu missing)');
         return false;
       }
-      const adapter = await navigator.gpu.requestAdapter();
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
       if (!adapter) {
         console.info('[WebLLM] WebGPU requestAdapter returned null — WebGPU unavailable');
         return false;
@@ -127,6 +132,10 @@ export class WebLLMService {
     modelId: string = DEFAULT_MODEL_ID,
     onProgress?: InitProgressCallback
   ): Promise<void> {
+    if (!ALLOWED_MODEL_IDS.includes(modelId)) {
+      throw new Error(`Unknown modelId: "${modelId}". Allowed: ${ALLOWED_MODEL_IDS.join(', ')}`);
+    }
+
     if (this._ready) {
       console.warn('[WebLLM] Already initialized');
       return;
