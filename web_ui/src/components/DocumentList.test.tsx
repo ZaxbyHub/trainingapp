@@ -302,4 +302,29 @@ describe('DocumentList', () => {
       expect(screen.getByRole('list')).toHaveAttribute('aria-label', 'Uploaded documents');
     });
   });
+
+  describe('Virtualization (FR-003)', () => {
+    it('virtualizes when more items than viewport can show', () => {
+      const mockOnDelete = vi.fn();
+      const documents = Array.from({ length: 100 }, (_, i) =>
+        createDocument({ id: `doc-${i}`, fileName: `doc${i}.pdf` })
+      );
+
+      const { container } = render(
+        <div style={{ height: '300px', overflow: 'auto' }}>
+          <DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />
+        </div>
+      );
+
+      // Virtualization (custom: ITEM_HEIGHT=60, BUFFER=5) only renders visible slice + buffer
+      // into the DOM even for 100 items. The wrapper div provides the overflow:auto ancestor
+      // that the component's useLayoutEffect detects for viewport sizing.
+      const renderedPositionedItems = container.querySelectorAll('div[style*="position: absolute"]');
+      expect(renderedPositionedItems.length).toBeLessThan(50);
+
+      // Only the visible documents' filenames should be present in the DOM
+      const renderedDocNames = screen.queryAllByText(/doc\d+\.pdf/);
+      expect(renderedDocNames.length).toBeLessThan(50);
+    });
+  });
 });

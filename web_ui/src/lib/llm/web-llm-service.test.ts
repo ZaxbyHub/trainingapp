@@ -122,6 +122,25 @@ describe('WebLLMService', () => {
     );
   });
 
+  test('initialize throws when modelId is not in allowlist', async () => {
+    const service = WebLLMService.getInstance();
+    await expect(service.initialize('Unknown-Model')).rejects.toThrow(
+      'Unknown modelId'
+    );
+    expect(service.isReady()).toBe(false);
+  });
+
+  test('initialize accepts SmolLM3-3B-Q4_K_M', async () => {
+    const mockEngine = createMockEngine();
+    mockCreateMLCEngine.mockResolvedValue(mockEngine);
+
+    const service = WebLLMService.getInstance();
+    await service.initialize('SmolLM3-3B-Q4_K_M');
+
+    expect(service.isReady()).toBe(true);
+    expect(mockCreateMLCEngine).toHaveBeenCalled();
+  });
+
   // -------------------------------------------------------------------------
   // initialize fails fast when WebGPU unavailable
   // -------------------------------------------------------------------------

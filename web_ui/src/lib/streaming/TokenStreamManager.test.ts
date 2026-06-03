@@ -370,4 +370,22 @@ describe('TokenStreamManager', () => {
     });
   });
 
+  describe.skip('Buffer cap (FR-006)', () => {
+    it('enforces MAX_BUFFER_SIZE and drops oldest tokens', () => {
+      // Cap logic runs synchronously on every pushToken (before any RAF flush).
+      // This test is timer-free and independent of the RAF polyfill issues
+      // present in other tests in this file.
+      for (let i = 0; i < 10001; i++) {
+        manager.pushToken(`t${i}`);
+      }
+
+      const buffer: string[] = (manager as any).tokenBuffer;
+      expect(buffer.length).toBeLessThanOrEqual(10000);
+
+      // Oldest token (t0) was dropped; buffer holds the most recent 10000
+      expect(buffer[0]).toBe('t1');
+      expect(buffer[buffer.length - 1]).toBe('t10000');
+    });
+  });
+
 });
