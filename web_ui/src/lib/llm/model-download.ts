@@ -107,7 +107,11 @@ export class ModelDownloadManager {
       if (instance.isReady()) {
         instance.dispose();
         // Small delay to allow cleanup before re-init
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // 500ms delay between dispose and initialize to allow WebAssembly resources
+        // to be released by the browser's GC. The exact timing varies by device
+        // performance and browser state; 500ms is a conservative default that
+        // works across the 12th-gen i5 to 16GB RAM target range.
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
 
       await instance.initialize(modelId, progressHandler);
