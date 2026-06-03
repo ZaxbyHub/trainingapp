@@ -331,39 +331,35 @@ describe('ChatPage RAG Pipeline Integration', () => {
   });
 
   // ========================================================================
-  // TEST 8: Multiple rapid sends (second message while first streaming)
-  // NOTE: This test is skipped due to complexity with fake timers and async generators
+  // TEST 8: Multiple rapid sends are handled correctly (concurrent send guard)
+  // Verifies: second rapid handleSend is ignored (not duplicated), no race on abortControllerRef
+  // Uses double-submit inside single act() so DOM updates from first don't affect second's getByRole
   // ========================================================================
-  test.skip('Multiple rapid sends are handled correctly', async () => {
+  test('Multiple rapid sends are handled correctly', async () => {
     const userText1 = 'First question';
     const userText2 = 'Second question';
-    let callCount = 0;
-
-    // Track how many times query is called
-    async function* mockEvents1(): AsyncGenerator<RAGEvent> {
-      yield { type: 'token', data: 'Answer 1' };
-      yield { type: 'complete', data: { answer: 'Answer 1', sources: [], chunks: [] } };
-    }
-
-    async function* mockEvents2(): AsyncGenerator<RAGEvent> {
-      yield { type: 'token', data: 'Answer 2' };
-      yield { type: 'complete', data: { answer: 'Answer 2', sources: [], chunks: [] } };
-    }
-
-    vi.mocked(mockOrchestratorInstance.query).mockImplementation(() => {
-      callCount++;
-      return callCount === 1 ? mockEvents1() : mockEvents2();
-    });
+    const events: RAGEvent[] = [
+      { type: 'token', data: 'Answer 1' },
+      { type: 'complete', data: { answer: 'Answer 1', sources: [], chunks: [] } },
+    ];
+    vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
     render(<ChatPage />);
 
-    // Send first message
-    const textarea1 = screen.getByRole('textbox');
-    fireEvent.change(textarea1, { target: { value: userText1 } });
-    const sendButton1 = screen.getByRole('button', { name: /send message/i });
-    fireEvent.click(sendButton1);
+    const textarea = screen.getByRole('textbox');
+    const sendButton = screen.getByRole('button', { name: /send message/i });
 
-    // Advance timers to let first message complete
+    // First send (normal)
+    fireEvent.change(textarea, { target: { value: userText1 } });
+    fireEvent.click(sendButton);
+
+    // Rapid second send attempt: immediately change value and click the *captured* sendButton again.
+    // This simulates queued rapid clicks before React commit phase fully swaps button to Stop.
+    // The second will reach handleSend (or not), but guard if (tokenStreamManagerRef.current) return; must prevent dupe.
+    fireEvent.change(textarea, { target: { value: userText2 } });
+    fireEvent.click(sendButton);
+
+    // Advance timers (and flush microtasks) to let the first (only) async generator consume events
     await act(async () => {
       for (let i = 0; i < 20; i++) {
         vi.advanceTimersByTime(100);
@@ -371,23 +367,21 @@ describe('ChatPage RAG Pipeline Integration', () => {
       }
     });
 
-    // Now send second message - after first completed, UI should be ready
-    const textarea2 = screen.getByRole('textbox');
-    fireEvent.change(textarea2, { target: { value: userText2 } });
-    const sendButton2 = screen.getByRole('button', { name: /send message/i });
-    fireEvent.click(sendButton2);
+    // Verify: only first send processed (second ignored, not duplicated)
+    expect(mockOrchestratorInstance.query).toHaveBeenCalledTimes(1);
+    expect(mockOrchestratorInstance.query).toHaveBeenCalledWith(
+      userText1,
+      expect.objectContaining({ signal: expect.any(AbortSignal) })
+    );
 
-    await act(async () => {
-      for (let i = 0; i < 20; i++) {
-        vi.advanceTimersByTime(100);
-        await Promise.resolve();
-      }
-    });
+    // Verify only first user's message appears as a sent message.
+    // (The rapid change2 may leave text2 in the input textarea, but no second message was added to chat.)
+    expect(screen.getByText(userText1)).toBeInTheDocument();
+    // Each message (user + assistant) renders a "Copy message" button; 2 means only the first send produced messages
+    expect(screen.getAllByRole('button', { name: /copy message/i })).toHaveLength(2);
 
-    // Verify query was called twice
-    expect(mockOrchestratorInstance.query).toHaveBeenCalledTimes(2);
-    expect(mockOrchestratorInstance.query).toHaveBeenNthCalledWith(1, userText1);
-    expect(mockOrchestratorInstance.query).toHaveBeenNthCalledWith(2, userText2);
+    // Verify no race condition: only one RAGOrchestrator created (hence only one abortControllerRef set inside the send path)
+    expect(vi.mocked(ragModule.RAGOrchestrator)).toHaveBeenCalledTimes(1);
   });
 
   // ========================================================================
