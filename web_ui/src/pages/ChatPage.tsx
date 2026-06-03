@@ -26,6 +26,7 @@ export function ChatPage() {
 }
 
 function ChatPageInner() {
+  const MAX_MESSAGES = 200;
   const { mode, isModelReady, isServerConnected, modelLoadingProgress, serverUrl } = useInferenceMode();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -76,6 +77,20 @@ function ChatPageInner() {
     };
 
     setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    setMessages((prev) => {
+      if (prev.length > MAX_MESSAGES) {
+        const pruned = prev.slice(prev.length - MAX_MESSAGES);
+        // Prepend a system indicator about hidden messages
+        const indicator: ChatMessage = {
+          id: 'hidden-messages-indicator',
+          role: 'system',
+          content: `Earlier messages have been hidden (max ${MAX_MESSAGES} shown).`,
+          timestamp: Date.now(),
+        };
+        return [indicator, ...pruned];
+      }
+      return prev;
+    });
     setIsLoading(true);
 
     // Create TokenStreamManager for this request
