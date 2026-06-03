@@ -133,6 +133,10 @@ export class RAGOrchestrator {
     // Stage 1: Embed the query
     yield { type: 'retrieving', data: { query: question } };
 
+    if (signal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
+
     let queryEmbedding: EmbeddingVector;
     try {
       const embeddingResult = await this.embeddingService.encodeWithMetadata(question);
