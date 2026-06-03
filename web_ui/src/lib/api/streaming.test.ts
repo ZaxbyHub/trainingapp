@@ -36,11 +36,11 @@ describe('SSEStreamConsumer', () => {
     return c as unknown as TestableConsumer;
   }
 
-  // Helper to flush microtasks for async start() processing
+  // Helper to flush microtasks for async start() processing.
+  // Single deterministic microtask yield using queueMicrotask (replaces brittle
+  // setTimeout(0) loop which had no guarantee of draining under CI load).
   async function flushMicrotasks(times = 2): Promise<void> {
-    for (let i = 0; i < times; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
+    await new Promise((resolve) => queueMicrotask(resolve));
   }
 
   describe('Constructor', () => {
