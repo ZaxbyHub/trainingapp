@@ -175,24 +175,29 @@ describe('RAGOrchestrator', () => {
       }
     });
 
-    // Execute with rerank: false to avoid the buggy RerankerService.query() call
-    // Also use streamTokens: false to avoid multiple token events in this test
+    // Mock reranker to return the fused results (exercises the rerank path for full pipeline coverage;
+    // default mock returns [] which would cause complete.chunks.length===0 and break length/source asserts)
+    mockRerankerService.rerank.mockResolvedValue(fusedResults);
+
+    // Use streamTokens: false to have a single 'token' event with the full answer (instead of per-token yields)
     mockWebLLMService.generateComplete.mockResolvedValue(finalAnswer);
 
     const orchestrator = new RAGOrchestrator();
     const events: Array<{ type: string; data?: unknown }> = [];
 
-    for await (const event of orchestrator.query(question, { rerank: false, streamTokens: false })) {
+    for await (const event of orchestrator.query(question, { rerank: true, streamTokens: false })) {
       events.push(event);
     }
 
-    // Assert event sequence (without reranking events): retrieving, retrieved, generating, token, complete
-    expect(events).toHaveLength(5);
+    // Assert event sequence (full pipeline with reranking): retrieving, retrieved, reranking, reranked, generating, token, complete
+    expect(events).toHaveLength(7);
     expect(events[0].type).toBe('retrieving');
     expect(events[1].type).toBe('retrieved');
-    expect(events[2].type).toBe('generating');
-    expect(events[3].type).toBe('token');
-    expect(events[4].type).toBe('complete');
+    expect(events[2].type).toBe('reranking');
+    expect(events[3].type).toBe('reranked');
+    expect(events[4].type).toBe('generating');
+    expect(events[5].type).toBe('token');
+    expect(events[6].type).toBe('complete');
 
     // Verify 'retrieving' data
     expect(events[0]).toEqual({ type: 'retrieving', data: { query: question } });
@@ -204,17 +209,17 @@ describe('RAGOrchestrator', () => {
     expect(retrievedData.data.fusedResults).toEqual(fusedResults);
 
     // Verify 'generating' data
-    expect(events[2]).toEqual({
+    expect(events[4]).toEqual({
       type: 'generating',
       data: { contextLength: expect.any(Number), sourceCount: expect.any(Number) },
     });
 
     // Verify token event
-    const tokenData = events[3] as { type: 'token'; data: string };
+    const tokenData = events[5] as { type: 'token'; data: string };
     expect(tokenData.data).toBe(finalAnswer);
 
     // Verify 'complete' data
-    const completeData = events[4] as { type: 'complete'; data: { answer: string; sources: string[]; chunks: SearchResult[] } };
+    const completeData = events[6] as { type: 'complete'; data: { answer: string; sources: string[]; chunks: SearchResult[] } };
     expect(completeData.data.answer).toBe(finalAnswer);
     expect(completeData.data.sources).toContain('doc-1');
     expect(completeData.data.chunks).toHaveLength(5);
