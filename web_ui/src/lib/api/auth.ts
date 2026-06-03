@@ -8,38 +8,38 @@ import { ApiError, type TokenResponse, type AuthStatusResponse } from './types';
 const TOKEN_KEY = 'doc_qa_access_token';
 
 /**
- * Store the access token in localStorage.
+ * Store the access token in sessionStorage.
  * Wrapped in try/catch for Safari private mode compatibility.
  */
 export function storeToken(token: string): void {
   try {
-    localStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(TOKEN_KEY, token);
   } catch {
-    // localStorage unavailable (e.g., Safari private mode)
+    // sessionStorage unavailable (e.g., Safari private mode)
   }
 }
 
 /**
- * Retrieve the stored access token from localStorage.
+ * Retrieve the stored access token from sessionStorage.
  * @returns The token string or null if not found/unavailable
  */
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    return sessionStorage.getItem(TOKEN_KEY);
   } catch {
-    // localStorage unavailable
+    // sessionStorage unavailable
     return null;
   }
 }
 
 /**
- * Clear the stored access token from localStorage.
+ * Clear the stored access token from sessionStorage.
  */
 export function clearToken(): void {
   try {
-    localStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_KEY);
   } catch {
-    // localStorage unavailable
+    // sessionStorage unavailable
   }
 }
 
