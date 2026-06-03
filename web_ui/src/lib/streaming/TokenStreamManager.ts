@@ -17,6 +17,8 @@ type ErrorCallback = (error: string) => void;
  * to prevent jank when tokens arrive faster than React can render.
  */
 export class TokenStreamManager {
+  private static readonly MAX_BUFFER_SIZE = 10000;
+
   private tokenBuffer: string[];
   private flushTimer: number | null;
   private tokenCallback: TokenCallback | null;
@@ -70,6 +72,12 @@ export class TokenStreamManager {
 
     if (this.flushTimer === null) {
       this.scheduleFlush();
+    }
+
+    if (this.tokenBuffer.length > TokenStreamManager.MAX_BUFFER_SIZE) {
+      const dropped = this.tokenBuffer.length - TokenStreamManager.MAX_BUFFER_SIZE;
+      this.tokenBuffer.splice(0, dropped);
+      console.warn(`[TokenStreamManager] Buffer overflow: dropped ${dropped} oldest tokens (max ${TokenStreamManager.MAX_BUFFER_SIZE})`);
     }
   }
 
