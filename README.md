@@ -966,7 +966,7 @@ doc_qa_app/
 
 ## 📄 License
 
-MIT License - See web_ui/package/LICENSE for details.
+MIT License - See LICENSE for details.
 
 ## 🤝 Contributing
 

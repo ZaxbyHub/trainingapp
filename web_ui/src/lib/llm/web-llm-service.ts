@@ -95,6 +95,23 @@ export class WebLLMService {
         console.info('[WebLLM] WebGPU requestAdapter returned null — WebGPU unavailable');
         return false;
       }
+
+      // Reject software-renderer adapters (SwiftShader, llvmpipe) that work
+      // but provide unusably slow performance for ML inference (FR-005)
+      try {
+        const adapterInfo = await adapter.requestAdapterInfo();
+        const vendor = (adapterInfo.vendor || '').toLowerCase();
+        const architecture = (adapterInfo.architecture || '').toLowerCase();
+        if (vendor.includes('mesa') || architecture.includes('llvmpipe') || architecture.includes('swiftshader')) {
+          console.warn('[WebLLM] Rejected software-renderer adapter:', { vendor, architecture });
+          return false;
+        }
+      } catch {
+        // adapter.requestAdapterInfo() may not be available in all browsers;
+        // if we can't check, proceed with the adapter (best-effort)
+        console.info('[WebLLM] adapter.requestAdapterInfo() unavailable, proceeding best-effort');
+      }
+
       console.info('[WebLLM] WebGPU adapter detected');
       return true;
     } catch (err) {

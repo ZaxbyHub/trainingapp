@@ -27,6 +27,7 @@ import { getKeywordIndex, type KeywordIndex } from '../search/keyword-index';
 import { rrfFuse } from '../search/rrf-fusion';
 import { getRerankerService, type RerankerService } from '../search/reranker';
 import { WebLLMService } from '../llm/web-llm-service';
+import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization';
 
 /**
  * Options for RAG query execution.
@@ -112,6 +113,12 @@ export class RAGOrchestrator {
     const maxTokens = options.maxTokens;
     const temperature = options.temperature;
     const signal = options.signal;
+
+    // Ensure lazy services are initialized before the pipeline runs (FR-002)
+    await Promise.all([
+      ensureEmbeddingServiceReady(),
+      ensureReadinessGateChecked(),
+    ]);
 
     if (signal?.aborted) {
       throw new DOMException('The operation was aborted.', 'AbortError');
