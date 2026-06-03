@@ -966,7 +966,7 @@ doc_qa_app/
 
 ## 📄 License
 
-MIT License - See LICENSE file for details.
+MIT License - See web_ui/package/LICENSE for details.
 
 ## 🤝 Contributing
 
@@ -983,8 +983,16 @@ MIT License - See LICENSE file for details.
 - [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) - GGUF inference
 - [PyMuPDF](https://pymupdf.readthedocs.io/) - PDF processing
 - [CustomTkinter](https://customtkinter.tomschimansky.com/) - Modern GUI toolkit
+- [pdfjs-dist](https://mozilla.github.io/pdf.js/) - PDF processing (Apache-2.0)
+- [@huggingface/transformers](https://github.com/huggingface/transformers.js) - In-browser ML models (Apache-2.0)
+- [@mlc-ai/web-llm](https://github.com/mlc-ai/web-llm) - In-browser LLM inference (Apache-2.0)
+- [edgevec](https://github.com/matte1782/edgevec) - In-browser vector database (MIT OR Apache-2.0)
+- [flexsearch](https://github.com/nextapps-de/flexsearch/) - Full-text search (Apache-2.0)
+- [mammoth](https://github.com/mwilliamson/mammoth.js) - DOCX processing (BSD-2-Clause)
+- [xlsx](https://sheetjs.com/) - XLSX processing (Apache-2.0)
+- [jszip](https://github.com/Stuk/jszip) - ZIP handling (MIT OR GPL-3.0-or-later)
 
 ---
-**Version**: 2.2.1
-**Last Updated**: 2026-05-28 (Phase 8)
+**Version**: 2.2.3
+**Last Updated**: 2026-06-02 (Phase 10)
 **Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)
