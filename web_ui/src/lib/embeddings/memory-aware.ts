@@ -33,13 +33,21 @@ export function getDeviceMemory(): number {
 /**
  * Estimates available memory budget after accounting for browser overhead
  * Browser overhead varies by browser family
+ *
+ * Note: navigator.deviceMemory caps at 8GB for privacy in Chrome.
+ * When raw value >= 8, we waive overhead subtraction because actual
+ * RAM on such systems is far higher (typically 16GB+).
  */
 export function getMemoryBudget(): MemoryBudget {
-  const totalMB = getDeviceMemory() * 1024;
+  const rawGD = getDeviceMemory();
+  const totalMB = rawGD * 1024;
 
   const userAgent = navigator.userAgent;
   const isFirefox = /Firefox/i.test(userAgent);
-  const browserOverheadMB = isFirefox ? 2560 : 2048;
+  // navigator.deviceMemory caps at 8GB for privacy. Waive overhead when
+  // at the cap — the actual RAM on such systems is far higher.
+  const isHighCapacity = rawGD >= 8;
+  const browserOverheadMB = isHighCapacity ? 0 : (isFirefox ? 2560 : 2048);
 
   const availableMB = Math.max(0, totalMB - browserOverheadMB);
 

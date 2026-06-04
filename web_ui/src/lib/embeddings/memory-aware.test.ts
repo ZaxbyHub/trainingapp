@@ -54,8 +54,8 @@ describe('memory-aware', () => {
       const budget = getMemoryBudget();
 
       expect(budget.totalMB).toBe(8192);
-      expect(budget.browserOverheadMB).toBe(2048);
-      expect(budget.availableMB).toBe(6144);
+      expect(budget.browserOverheadMB).toBe(0);
+      expect(budget.availableMB).toBe(8192);
     });
 
     test('calculates availableMB correctly for Firefox with 8GB device', () => {
@@ -65,8 +65,8 @@ describe('memory-aware', () => {
       const budget = getMemoryBudget();
 
       expect(budget.totalMB).toBe(8192);
-      expect(budget.browserOverheadMB).toBe(2560);
-      expect(budget.availableMB).toBe(5632);
+      expect(budget.browserOverheadMB).toBe(0);
+      expect(budget.availableMB).toBe(8192);
     });
 
     test('calculates availableMB correctly for Safari with 4GB device', () => {
@@ -156,30 +156,21 @@ describe('memory-aware', () => {
     });
 
     test('returns "normal" when availableMB >= 8192', () => {
-      // Chrome 8GB: availableMB = 8192 - 2048 = 6144... wait, that's not >= 8192
-      // Let me recalculate: 8GB device = 8192MB total, Chrome overhead 2048, available 6144
-      // But HIGH tier check is on memoryMB parameter to selectModelTier, not on getMemoryBudget
-      // For getMemoryPressureStatus, it checks availableMB from getMemoryBudget
-      // With 8GB device in Chrome: availableMB = 6144, which is < 8192, so it returns 'moderate'
-      // But the function says: if (availableMB >= 8192) return 'normal'
-      // Let me trace through: getMemoryBudget() returns availableMB = 8192 - 2048 = 6144 for 8GB Chrome
-      // 6144 >= 8192 is FALSE, so check next: 6144 >= 4096 is TRUE, so return 'moderate'
-      // So for getMemoryPressureStatus to return 'normal', we need availableMB >= 8192
-      // That means totalMB - overhead >= 8192
-      // For Chrome: overhead = 2048, so totalMB >= 10240 (10GB)
-      // For Firefox: overhead = 2560, so totalMB >= 10752 (10.5GB)
+      // With new privacy-cap waiver (isHighCapacity when rawGD >=8): overhead=0 for 8GB+ reported
+      // So 16GB device: totalMB=16384, overhead=0, availableMB=16384 >=8192 -> 'normal'
+      // (Previously without waiver, 16GB Chrome would have been 16384-2048=14336)
 
       mockNavigator.deviceMemory = 16; // 16GB device
-      mockNavigator.userAgent = 'Chrome/120.0.0.0'; // overhead 2048
-      // availableMB = 16384 - 2048 = 14336 >= 8192 -> 'normal'
+      mockNavigator.userAgent = 'Chrome/120.0.0.0'; // >=8 -> overhead waived =0
+      // availableMB = 16384 - 0 = 16384 >= 8192 -> 'normal'
 
       expect(getMemoryPressureStatus()).toBe('normal');
     });
 
     test('returns "moderate" when availableMB >= 4096 and < 8192', () => {
-      // 8GB device, Chrome: availableMB = 8192 - 2048 = 6144
-      // 6144 >= 4096 is TRUE, 6144 >= 8192 is FALSE -> 'moderate'
-      mockNavigator.deviceMemory = 8;
+      // 7GB device, Chrome: total=7168, overhead=2048 (since 7<8, no waiver), available=5120
+      // 5120 >= 4096 is TRUE, 5120 >= 8192 is FALSE -> 'moderate'
+      mockNavigator.deviceMemory = 7;
       mockNavigator.userAgent = 'Chrome/120.0.0.0';
 
       expect(getMemoryPressureStatus()).toBe('moderate');
@@ -210,13 +201,13 @@ describe('memory-aware', () => {
     test('produces readable text for "moderate" status', () => {
       const budget: MemoryBudget = {
         totalMB: 8192,
-        availableMB: 6144,
-        browserOverheadMB: 2048,
+        availableMB: 8192,
+        browserOverheadMB: 0,
       };
 
       const result = formatMemoryIndicator('moderate', budget);
 
-      expect(result).toBe('Memory: 6.0GB available — Reduced mode (reranking disabled)');
+      expect(result).toBe('Memory: 8.0GB available — Reduced mode (reranking disabled)');
     });
 
     test('produces readable text for "critical" status', () => {
@@ -245,7 +236,7 @@ describe('memory-aware', () => {
   });
 
   describe('integration scenarios', () => {
-    test('8GB Chrome device uses MEDIUM tier correctly', () => {
+    test('8GB Chrome device uses HIGH tier correctly', () => {
       mockNavigator.deviceMemory = 8;
       mockNavigator.userAgent = 'Chrome/120.0.0.0';
 
@@ -253,13 +244,13 @@ describe('memory-aware', () => {
       const status = getMemoryPressureStatus();
       const config = selectModelTier(budget.availableMB);
 
-      // 8GB Chrome: availableMB = 6144
-      expect(budget.availableMB).toBe(6144);
-      // 6144 >= 4096 -> moderate
-      expect(status).toBe('moderate');
-      // 6144 >= 4096 -> MEDIUM tier
-      expect(config.rerankingEnabled).toBe(false);
-      expect(config.maxChunkCount).toBe(5000);
+      // 8GB Chrome: availableMB = 8192 (overhead waived since >=8)
+      expect(budget.availableMB).toBe(8192);
+      // 8192 >= 8192 -> normal
+      expect(status).toBe('normal');
+      // 8192 >= 8192 -> HIGH tier
+      expect(config.rerankingEnabled).toBe(true);
+      expect(config.maxChunkCount).toBe(10000);
     });
 
     test('16GB Chrome device uses HIGH tier correctly', () => {
@@ -270,11 +261,11 @@ describe('memory-aware', () => {
       const status = getMemoryPressureStatus();
       const config = selectModelTier(budget.availableMB);
 
-      // 16GB Chrome: availableMB = 16384 - 2048 = 14336
-      expect(budget.availableMB).toBe(14336);
-      // 14336 >= 8192 -> normal
+      // 16GB Chrome: availableMB = 16384 - 0 = 16384 (overhead waived)
+      expect(budget.availableMB).toBe(16384);
+      // 16384 >= 8192 -> normal
       expect(status).toBe('normal');
-      // 14336 >= 8192 -> HIGH tier
+      // 16384 >= 8192 -> HIGH tier
       expect(config.rerankingEnabled).toBe(true);
       expect(config.maxChunkCount).toBe(10000);
     });
