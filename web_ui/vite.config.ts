@@ -8,15 +8,16 @@ import path from 'path';
  * during Rollup production builds.
  */
 function edgevecSnippetPlugin(): Plugin {
+  const VIRTUAL_SNIPPET_ID = '\0edgevec-snippet';
   return {
     name: 'edgevec-snippet-stub',
     resolveId(source, importer) {
       if (source.startsWith('./snippets/') && importer?.includes('edgevec')) {
-        return source;
+        return VIRTUAL_SNIPPET_ID;
       }
     },
     load(id) {
-      if (id.startsWith('./snippets/') && id.includes('edgevec')) {
+      if (id === VIRTUAL_SNIPPET_ID) {
         return `
 export class IndexedDbBackend {
   static async read(dbName) {
