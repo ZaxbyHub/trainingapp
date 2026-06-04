@@ -30,10 +30,10 @@ interface WebLLMProgressPayload {
 
 /**
  * Default model sizes in bytes for ETA calculation when model is not cached.
- * These are approximate sizes for the Q4_K_M quantization variants.
+ * These are approximate sizes for the Llama-3.2-3B quantization variants.
  */
 const MODEL_SIZE_ESTIMATES: Record<string, number> = {
-  'SmolLM3-3B-Q4_K_M': 2_000_000_000, // ~1.9 GB
+  'Llama-3.2-3B-Instruct-q4f16_1-MLC': 2_000_000_000, // ~1.9 GB
 };
 
 /**

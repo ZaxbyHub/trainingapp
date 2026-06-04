@@ -266,7 +266,7 @@ describe('SettingsPage', () => {
 
     const modelSelect = screen.getByLabelText(/ai model/i) as HTMLSelectElement;
 
-    expect(modelSelect.value).toBe('SmolLM3-3B-Q4_K_M');
+    expect(modelSelect.value).toBe('Llama-3.2-3B-Instruct-q4f16_1-MLC');
   });
 
   test('Theme toggle changes theme', async () => {

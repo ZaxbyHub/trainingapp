@@ -1,7 +1,7 @@
 /**
  * WebLLM Service — browser-side LLM inference with WebGPU.
  *
- * Supports SmolLM3-3B-Q4_K_M (~1.9GB) and uses OPFS for model artifact caching.
+ * Supports Llama-3.2-3B-Instruct-q4f16_1-MLC (~1.9GB) and uses OPFS for model artifact caching.
  * WebGPU is the only supported backend; if unavailable, the service fails fast
  * with guidance to use server API mode (per FR-015).
  */
@@ -28,6 +28,7 @@ type CreateMLCEngineFn = (
   modelId: string,
   options?: {
     initProgressCallback?: InitProgressCallback;
+    appConfig?: unknown;
   }
 ) => Promise<unknown>;
 
@@ -51,12 +52,14 @@ interface MLCEngine {
 }
 
 let CreateMLCEngine: CreateMLCEngineFn | null = null;
+let prebuiltMLCAppConfig: unknown = null;
 
-const DEFAULT_MODEL_ID = 'SmolLM3-3B-Q4_K_M';
+const DEFAULT_MODEL_ID = 'Llama-3.2-3B-Instruct-q4f16_1-MLC';
 
 const ALLOWED_MODEL_IDS: readonly string[] = [
-  'SmolLM3-3B-Q4_K_M',
-  // add more as they are validated
+  'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+  'Llama-3.2-1B-Instruct-q4f16_1-MLC',
+  'Hermes-3-Llama-3.2-3B-q4f16_1-MLC',
 ];
 
 /**
@@ -128,6 +131,7 @@ export class WebLLMService {
     const mod = await import('@mlc-ai/web-llm');
     // CreateMLCEngine is the documented factory in v0.2.83+ (API verified and in production use)
     CreateMLCEngine = (mod as unknown as { CreateMLCEngine: CreateMLCEngineFn }).CreateMLCEngine;
+    prebuiltMLCAppConfig = (mod as unknown as { prebuiltAppConfig: unknown }).prebuiltAppConfig;
     if (!CreateMLCEngine) {
       throw new Error(
         '@mlc-ai/web-llm does not export CreateMLCEngine. ' +
@@ -139,7 +143,7 @@ export class WebLLMService {
   /**
    * Initialize the service and load the model.
    *
-   * @param modelId  Model identifier string. Defaults to SmolLM3-3B-Q4_K_M.
+   * @param modelId  Model identifier string. Defaults to Llama-3.2-3B-Instruct-q4f16_1-MLC.
    *                 The web-llm model ID must match a model published on
    *                 https://mlc.ai/web-llm/#model-list so the CDN can locate weights.
    * @param onProgress Optional progress callback forwarded to CreateMLCEngine's
@@ -186,6 +190,7 @@ export class WebLLMService {
           const pct = (progress.progress * 100).toFixed(1);
           console.info(`[WebLLM] Loading: ${pct}% — ${progress.text}`);
         }),
+        appConfig: prebuiltMLCAppConfig ?? undefined,
       })) as MLCEngine;
 
       // 4. Extract model info
@@ -195,7 +200,7 @@ export class WebLLMService {
       const cached = !wasDownloading;
       this._modelInfo = {
         modelId,
-        quantization: modelId.includes('Q4') ? 'Q4_K_M' : 'unknown',
+        quantization: modelId.toLowerCase().includes('q4') ? 'Q4_K_M' : 'unknown',
         sizeBytes: 0, // web-llm doesn't expose artifact size directly
         cached,
       };

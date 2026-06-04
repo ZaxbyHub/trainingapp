@@ -60,10 +60,10 @@ export interface ReadinessResult {
 
 /**
  * Default model requirements.
- * SmolLM3-3B-Q4_K_M: ~1.9 GB model weights + ~100 MB working memory ≈ 2 GB total.
+ * Llama-3.2-3B-Instruct-q4f16_1-MLC: ~1.9 GB model weights + ~300 MB working memory ≈ 2.3 GB total.
  */
 const MODEL_REQUIRED_BYTES: Record<string, number> = {
-  'SmolLM3-3B-Q4_K_M': 2_000_000_000, // 2 GB
+  'Llama-3.2-3B-Instruct-q4f16_1-MLC': 2_300_000_000,
 };
 
 /**
@@ -116,7 +116,7 @@ async function isModelCachedInOPFS(modelId: string): Promise<boolean> {
  *
  * Usage:
  *   const gate = new ModelReadinessGate();
- *   const result = await gate.checkReadiness('SmolLM3-3B-Q4_K_M');
+ *   const result = await gate.checkReadiness('Llama-3.2-3B-Instruct-q4f16_1-MLC');
  *   if (!result.ready) {
  *     // Show failures + recommendations to user
  *   }
@@ -159,11 +159,11 @@ export class ModelReadinessGate {
    * browser overhead via getMemoryBudget().
    *
    * @param modelId The model identifier to check memory requirements for.
-   *                Defaults to SmolLM3-3B-Q4_K_M if not provided.
+   *                Defaults to Llama-3.2-3B-Instruct-q4f16_1-MLC if not provided.
    * @param requiredBytes Optional override for the required memory threshold.
    *                      Defaults to model-specific requirement from getRequiredBytes().
    */
-  checkMemory(modelId: string = 'SmolLM3-3B-Q4_K_M', requiredBytes?: number): MemoryCheck {
+  checkMemory(modelId: string = 'Llama-3.2-3B-Instruct-q4f16_1-MLC', requiredBytes?: number): MemoryCheck {
     const { availableMB } = getMemoryBudget();
     const availableBytes = Math.floor(availableMB * 1024 * 1024);
     const required = requiredBytes ?? getRequiredBytes(modelId);

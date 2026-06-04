@@ -61,7 +61,7 @@ async function openSettingsDatabase(): Promise<IDBDatabase> {
 async function loadSettings(): Promise<UserPreferences> {
   const defaults: UserPreferences = {
     theme: 'system',
-    preferredModel: 'SmolLM3-3B-Q4_K_M',
+    preferredModel: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
     serverUrl: '',
   };
 
@@ -132,8 +132,8 @@ interface ModelOption {
 
 const AVAILABLE_MODELS: ModelOption[] = [
   {
-    id: 'SmolLM3-3B-Q4_K_M',
-    label: 'SmolLM3-3B-Q4_K_M',
+    id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+    label: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
     description: 'Fast, efficient model optimized for local inference',
     sizeEstimate: '~1.9 GB',
   },
@@ -397,7 +397,7 @@ function SettingsPageInner(): React.ReactElement {
   const { theme, toggleTheme } = useTheme();
 
   // Settings state
-  const [preferredModel, setPreferredModel] = useState<string>('SmolLM3-3B-Q4_K_M');
+  const [preferredModel, setPreferredModel] = useState<string>('Llama-3.2-3B-Instruct-q4f16_1-MLC');
   const [localServerUrl, setLocalServerUrl] = useState<string>(serverUrl);
   const [themePreference, setThemePreference] = useState<'light' | 'dark' | 'system'>('system');
 

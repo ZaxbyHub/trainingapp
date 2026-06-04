@@ -14,6 +14,7 @@ const mockCreateMLCEngine = vi.fn();
 
 vi.mock('@mlc-ai/web-llm', () => ({
   CreateMLCEngine: mockCreateMLCEngine,
+  prebuiltAppConfig: { model_list: [] },
 }));
 
 // -------------------------------------------------------------------------
@@ -101,11 +102,11 @@ describe('WebLLMService', () => {
     mockCreateMLCEngine.mockResolvedValue(mockEngine);
 
     const service = WebLLMService.getInstance();
-    await service.initialize('SmolLM3-3B-Q4_K_M');
+    await service.initialize('Llama-3.2-3B-Instruct-q4f16_1-MLC');
 
     const modelInfo = service.getModelInfo();
     expect(modelInfo).not.toBeNull();
-    expect(modelInfo!.modelId).toBe('SmolLM3-3B-Q4_K_M');
+    expect(modelInfo!.modelId).toBe('Llama-3.2-3B-Instruct-q4f16_1-MLC');
     expect(modelInfo!.quantization).toBe('Q4_K_M');
   });
 
@@ -114,10 +115,10 @@ describe('WebLLMService', () => {
     mockCreateMLCEngine.mockResolvedValue(mockEngine);
 
     const service = WebLLMService.getInstance();
-    await service.initialize('SmolLM3-3B-Q4_K_M');
+    await service.initialize('Llama-3.2-3B-Instruct-q4f16_1-MLC');
 
     expect(mockCreateMLCEngine).toHaveBeenCalledWith(
-      'SmolLM3-3B-Q4_K_M',
+      'Llama-3.2-3B-Instruct-q4f16_1-MLC',
       expect.objectContaining({ initProgressCallback: expect.any(Function) })
     );
   });
@@ -130,12 +131,12 @@ describe('WebLLMService', () => {
     expect(service.isReady()).toBe(false);
   });
 
-  test('initialize accepts SmolLM3-3B-Q4_K_M', async () => {
+  test('initialize accepts Llama-3.2-3B-Instruct-q4f16_1-MLC', async () => {
     const mockEngine = createMockEngine();
     mockCreateMLCEngine.mockResolvedValue(mockEngine);
 
     const service = WebLLMService.getInstance();
-    await service.initialize('SmolLM3-3B-Q4_K_M');
+    await service.initialize('Llama-3.2-3B-Instruct-q4f16_1-MLC');
 
     expect(service.isReady()).toBe(true);
     expect(mockCreateMLCEngine).toHaveBeenCalled();
@@ -503,7 +504,7 @@ describe('WebLLMService', () => {
     mockCreateMLCEngine.mockResolvedValue(mockEngine);
 
     const service = WebLLMService.getInstance();
-    await service.initialize('SmolLM3-3B-Q4_K_M');
+    await service.initialize('Llama-3.2-3B-Instruct-q4f16_1-MLC');
 
     const info = service.getModelInfo();
     expect(info!.quantization).toBe('Q4_K_M');
