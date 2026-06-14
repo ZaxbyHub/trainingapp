@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SSEStreamConsumer } from './streaming';
+import { ApiError } from './types';
 
 describe('SSEStreamConsumer', () => {
   let consumer: SSEStreamConsumer;
@@ -45,7 +46,7 @@ describe('SSEStreamConsumer', () => {
 
   describe('Constructor', () => {
     it('stores url, body, and token', () => {
-      const url = 'http://localhost:8000/ask/stream';
+      const url = '/api/chat';
       const body = { question: 'What is RAG?' };
       const token = 'abc123';
 
@@ -58,10 +59,125 @@ describe('SSEStreamConsumer', () => {
     });
 
     it('works without token', () => {
-      consumer = new SSEStreamConsumer('http://ex.com/api', { question: 'hi' });
+      consumer = new SSEStreamConsumer('/ask/stream', { question: 'hi' });
       const testable = asTestable(consumer);
 
       expect(testable.token).toBeUndefined();
+    });
+
+    it('rejects javascript: scheme', () => {
+      expect(() => new SSEStreamConsumer('javascript:alert(1)', {})).toThrow(
+        ApiError
+      );
+      expect(() => new SSEStreamConsumer('javascript:alert(1)', {})).toThrow(
+        'scheme "javascript:" is not allowed'
+      );
+    });
+
+    it('rejects data: scheme', () => {
+      expect(() => new SSEStreamConsumer('data:text/html,test', {})).toThrow(
+        ApiError
+      );
+    });
+
+    it('rejects file: scheme', () => {
+      expect(() => new SSEStreamConsumer('file:///etc/passwd', {})).toThrow(
+        ApiError
+      );
+    });
+
+    it('rejects localhost', () => {
+      expect(() => new SSEStreamConsumer('http://localhost:8000/ask', {})).toThrow(
+        ApiError
+      );
+      expect(() => new SSEStreamConsumer('http://localhost/ask', {})).toThrow(
+        ApiError
+      );
+    });
+
+    it('rejects 127.0.0.1', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://127.0.0.1:8000/ask', {})
+      ).toThrow(ApiError);
+    });
+
+    it('rejects ::1 (IPv6 loopback)', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://[::1]:8000/ask', {})
+      ).toThrow(ApiError);
+    });
+
+    it('rejects IPv6 link-local fe80::/10', () => {
+      expect(() => new SSEStreamConsumer('http://[fe80::1]/api', {})).toThrow(ApiError);
+      expect(() => new SSEStreamConsumer('http://[fe80::2]/api', {})).toThrow(ApiError);
+    });
+
+    it('rejects 169.254.169.254 (cloud metadata)', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://169.254.169.254/latest', {})
+      ).toThrow(ApiError);
+    });
+
+    it('rejects 10.x.x.x private range', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://10.0.0.1/internal', {})
+      ).toThrow(ApiError);
+    });
+
+    it('rejects 172.16-31.x.x private range', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://172.16.0.1/internal', {})
+      ).toThrow(ApiError);
+      expect(() =>
+        new SSEStreamConsumer('http://172.31.255.255/internal', {})
+      ).toThrow(ApiError);
+    });
+
+    it('rejects 192.168.x.x private range', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://192.168.1.1/internal', {})
+      ).toThrow(ApiError);
+    });
+
+    it('rejects *.local hostnames', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://api.local/ask', {})
+      ).toThrow(ApiError);
+      expect(() =>
+        new SSEStreamConsumer('http://myapp.local/ask', {})
+      ).toThrow(ApiError);
+    });
+
+    it('rejects 0.0.0.0', () => {
+      expect(() => new SSEStreamConsumer('http://0.0.0.0/ask', {})).toThrow(
+        ApiError
+      );
+    });
+
+    it('allows relative same-origin paths', () => {
+      expect(() => new SSEStreamConsumer('/api/chat', {})).not.toThrow();
+      expect(() => new SSEStreamConsumer('/ask/stream', {})).not.toThrow();
+      expect(() => new SSEStreamConsumer('/v1/stream', {})).not.toThrow();
+    });
+
+    it('allows absolute http:// and https:// URLs', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://example.com/api/chat', {})
+      ).not.toThrow();
+      expect(() =>
+        new SSEStreamConsumer('https://api.example.com/stream', {})
+      ).not.toThrow();
+    });
+
+    it('throws ApiError(400) for invalid URL', () => {
+      expect(() => new SSEStreamConsumer('invalid://url', {})).toThrow(ApiError);
+
+      try {
+        new SSEStreamConsumer('invalid://url', {});
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        expect((error as ApiError).status).toBe(400);
+      }
     });
   });
 
@@ -105,7 +221,7 @@ describe('SSEStreamConsumer', () => {
   });
 
   describe('start()', () => {
-    const testUrl = 'http://localhost:8000/ask/stream';
+    const testUrl = 'http://example.com:8000/ask/stream';
     const testBody = { question: 'Explain quantum computing' };
     const testToken = 'test-bearer-token';
 
@@ -146,7 +262,7 @@ describe('SSEStreamConsumer', () => {
 
     it('includes JSON stringified body', async () => {
       const body = { question: 'test question', n_results: 5 };
-      consumer = new SSEStreamConsumer('u', body);
+      consumer = new SSEStreamConsumer('http://example.com/ask', body);
       const stream = new ReadableStream({
         start(controller) {
           controller.close();
@@ -371,7 +487,7 @@ describe('SSEStreamConsumer', () => {
       });
       mockFetch.mockResolvedValue({ ok: true, body: pureEventStream } as unknown as Response);
 
-      const freshConsumer = new SSEStreamConsumer('u', {});
+      const freshConsumer = new SSEStreamConsumer('http://example.com', {});
       const tcb = vi.fn();
       const ecb = vi.fn();
       freshConsumer.onToken(tcb);

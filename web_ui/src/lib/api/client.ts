@@ -24,6 +24,37 @@ import { getToken } from './auth';
 const DEFAULT_BASE_URL = '';
 
 /**
+ * Validate and normalize a directory path for ingestion.
+ * Allows only relative same-origin paths; rejects absolute paths and traversal.
+ */
+export function sanitizeDirectoryPath(directory: string): string {
+  if (typeof directory !== 'string' || directory.trim() === '') {
+    throw new ApiError(400, 'Invalid directory path');
+  }
+
+  let normalized = directory.replace(/\\/g, '/');
+
+  // Reject absolute paths: Unix-style or Windows drive-style
+  if (normalized.startsWith('/')) {
+    throw new ApiError(400, 'Invalid directory path');
+  }
+
+  if (/^[a-zA-Z]:\//.test(normalized)) {
+    throw new ApiError(400, 'Invalid directory path');
+  }
+
+  // Reject traversal sequences in any segment
+  const segments = normalized.split('/');
+  for (const segment of segments) {
+    if (segment === '..') {
+      throw new ApiError(400, 'Invalid directory path');
+    }
+  }
+
+  return normalized;
+}
+
+/**
  * Check if the browser is online.
  */
 function isOnline(): boolean {
@@ -187,11 +218,13 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
+    const sanitized = sanitizeDirectoryPath(directory);
+
     const token = this.getEffectiveToken();
     const response = await fetch(`${this.baseUrl}/ingest`, {
       method: 'POST',
       headers: createHeaders(token),
-      body: JSON.stringify({ directory }),
+      body: JSON.stringify({ directory: sanitized }),
     });
 
     if (!response.ok) {

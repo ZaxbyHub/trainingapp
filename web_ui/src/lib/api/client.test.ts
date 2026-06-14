@@ -11,7 +11,7 @@ vi.mock('./auth', () => ({
   getToken: vi.fn(),
 }));
 
-import { ApiClient } from './client';
+import { ApiClient, sanitizeDirectoryPath } from './client';
 import { ApiError } from './types';
 import { getToken } from './auth';
 
@@ -226,12 +226,57 @@ describe('ApiClient', () => {
       mockFetch.mockResolvedValue(createSuccessResponse({ success: true, documents: 5, chunks_added: 42 }));
 
       const client = new ApiClient('https://api.test');
-      await client.ingestDirectory('/data/docs');
+      await client.ingestDirectory('docs/data');
 
       const opts = getLastCallOptions();
       expect(opts.method).toBe('POST');
       expect(opts.headers?.['Content-Type']).toBe('application/json');
-      expect(opts.body).toBe(JSON.stringify({ directory: '/data/docs' }));
+      expect(opts.body).toBe(JSON.stringify({ directory: 'docs/data' }));
+    });
+
+    it('rejects invalid directory path and does not send request', async () => {
+      mockFetch.mockResolvedValue(createSuccessResponse({}));
+      const client = new ApiClient();
+
+      const err = await client.ingestDirectory('/etc/passwd').catch((e) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(400);
+      expect(err.detail).toBe('Invalid directory path');
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('sanitizeDirectoryPath', () => {
+    it('passes valid relative path: documents', () => {
+      expect(() => sanitizeDirectoryPath('documents')).not.toThrow();
+    });
+
+    it('passes valid nested path: docs/invoices', () => {
+      expect(() => sanitizeDirectoryPath('docs/invoices')).not.toThrow();
+    });
+
+    it('rejects absolute path: /etc/passwd', () => {
+      expect(() => sanitizeDirectoryPath('/etc/passwd')).toThrow(ApiError);
+    });
+
+    it('rejects Windows absolute: C:\\Windows\\System32', () => {
+      expect(() => sanitizeDirectoryPath('C:\\Windows\\System32')).toThrow(ApiError);
+    });
+
+    it('rejects traversal: ../../etc', () => {
+      expect(() => sanitizeDirectoryPath('../../etc')).toThrow(ApiError);
+    });
+
+    it('rejects mixed traversal: docs/../../etc', () => {
+      expect(() => sanitizeDirectoryPath('docs/../../etc')).toThrow(ApiError);
+    });
+
+    it('rejects empty string', () => {
+      expect(() => sanitizeDirectoryPath('')).toThrow(ApiError);
+    });
+
+    it('rejects null', () => {
+      expect(() => sanitizeDirectoryPath(null as unknown as string)).toThrow(ApiError);
     });
   });
 

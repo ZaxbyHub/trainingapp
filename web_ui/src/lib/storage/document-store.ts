@@ -5,7 +5,28 @@
 
 import type { DocumentEntry } from '../../types/document';
 
-const DB_NAME = 'doc-qa-documents';
+/**
+ * Generate a stable, user-scoped prefix for IndexedDB names.
+ * Uses sessionStorage UUID if available, else falls back to origin-derived
+ * hash. Result is stable across page reloads in the same browser session.
+ */
+export function getUserPrefix(): string {
+  const KEY = 'doc-qa-user-id';
+  if (typeof sessionStorage !== 'undefined') {
+    let id = sessionStorage.getItem(KEY);
+    if (!id) {
+      id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      try { sessionStorage.setItem(KEY, id); } catch { /* private mode */ }
+    }
+    return id.slice(0, 8); // short prefix
+  }
+  return 'anon';
+}
+
+const USER_PREFIX = getUserPrefix();
+export const DB_NAME = `${USER_PREFIX}-doc-qa-documents`;
 const DB_VERSION = 1;
 const STORE_NAME = 'documents';
 

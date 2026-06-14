@@ -842,7 +842,7 @@ await apiClient.updateSettings({ rag_temperature: 0.8 });
 
 ### Browser ML Spike
 
-The ML spike page (`/ml-spike`) validates Transformers.js, EdgeVec, and FlexSearch on target hardware. Access via the web UI navigation or directly at `/ml-spike`.
+The ML spike page validates Transformers.js, EdgeVec, and FlexSearch on target hardware.
 
 **Test Categories:**
 - **Transformers.js**: Hugging Face transformers running in browser (feature-extraction pipeline)
@@ -993,6 +993,6 @@ MIT License - See LICENSE for details.
 - [jszip](https://github.com/Stuk/jszip) - ZIP handling (MIT OR GPL-3.0-or-later)
 
 ---
-**Version**: 2.2.3
-**Last Updated**: 2026-06-02 (Phase 10)
+**Version**: 2.2.2
+**Last Updated**: 2026-06-02 (Phase 9)
 **Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)

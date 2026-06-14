@@ -7,6 +7,89 @@ import type { StreamDoneEvent } from './types';
 import { ApiError } from './types';
 
 /**
+ * Validates a stream URL.
+ * - Allows relative same-origin paths (e.g. /api/chat, /ask/stream)
+ * - Allows absolute http:// and https:// URLs
+ * - Blocks javascript:, data:, file: schemes
+ * - Blocks localhost, 127.0.0.1, ::1, 169.254.169.254, 10.x.x.x,
+ *   172.16-31.x.x, 192.168.x.x, *.local, 0.0.0.0
+ * @throws ApiError with status 400 if the URL is invalid
+ */
+function validateStreamUrl(url: string): void {
+  if (!url || url.trim() === '') {
+    throw new ApiError(400, 'Invalid URL: URL must not be empty');
+  }
+
+  const trimmed = url.trim();
+
+  // Allow relative same-origin paths (inherently same-origin)
+  if (trimmed.startsWith('/')) {
+    return;
+  }
+
+  // Must be an absolute URL to validate further
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new ApiError(
+      400,
+      'Invalid URL: must be a relative path or an absolute http/https URL'
+    );
+  }
+
+  // Block dangerous schemes
+  const blockedSchemes = ['javascript:', 'data:', 'file:'];
+  const scheme = parsed.protocol.toLowerCase();
+  if (blockedSchemes.includes(scheme)) {
+    throw new ApiError(400, `Invalid URL: scheme "${scheme}" is not allowed`);
+  }
+
+  // Only allow http and https for absolute URLs
+  if (scheme !== 'http:' && scheme !== 'https:') {
+    throw new ApiError(400, `Invalid URL: scheme "${scheme}" is not allowed`);
+  }
+
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+
+  // Block loopback and localhost variants
+  if (
+    hostname === 'localhost' ||
+    hostname === '::1' ||
+    hostname === '0.0.0.0' ||
+    hostname === '127.0.0.1'
+  ) {
+    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
+  }
+
+  // Block IPv6 link-local addresses (fe80::/10)
+  if (/^fe80:/i.test(hostname)) {
+    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
+  }
+
+  // Block link-local metadata address
+  if (hostname === '169.254.169.254') {
+    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
+  }
+
+  // Block private IP ranges
+  if (/^10\./.test(hostname)) {
+    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
+  }
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname)) {
+    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
+  }
+  if (/^192\.168\./.test(hostname)) {
+    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
+  }
+
+  // Block *.local TLD
+  if (hostname.endsWith('.local')) {
+    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
+  }
+}
+
+/**
  * Callback type for receiving token events
  */
 type TokenCallback = (token: string) => void;
@@ -44,6 +127,7 @@ export class SSEStreamConsumer {
    * @param token - Optional authorization token
    */
   constructor(url: string, body: object, token?: string) {
+    validateStreamUrl(url);
     this.url = url;
     this.body = body;
     this.token = token;
