@@ -567,8 +567,6 @@ class VectorStore:
             for i in range(0, len(chunks), chunk_batch_size):
                 batch = chunks[i : i + chunk_batch_size]
                 texts = [chunk.text for chunk in batch]
-                embeddings = self.embedder.encode(texts)
-
                 ids = [
                     f"{getattr(chunk, 'doc_id', None) or chunk.source}_{chunk.chunk_index}"
                     for chunk in batch
@@ -1079,7 +1077,7 @@ class VectorStore:
                         expanded.append(chunk)
 
         expanded.sort(key=lambda c: (c.source, c.chunk_index))
-        return expanded if expanded else chunks
+        return expanded
 
     def get_context(
         self,
@@ -1180,6 +1178,8 @@ class VectorStore:
                     for i, text in enumerate(context_parts)
                 ]
                 expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
+                if not expanded:
+                    expanded = hybrid_chunks
                 context_parts = [c.text for c in expanded]
                 per_chunk_sources = [c.source for c in expanded]
                 per_chunk_pages = [c.page for c in expanded]
@@ -1244,6 +1244,8 @@ class VectorStore:
                     for i, (doc, meta, sim) in enumerate(filtered)
                 ]
                 expanded = self._expand_chunks_with_neighbors(filtered_chunks, retrieval_window)
+                if not expanded:
+                    expanded = filtered_chunks
                 context_parts = [c.text for c in expanded]
                 per_chunk_sources = [c.source for c in expanded]
                 per_chunk_pages = [c.page for c in expanded]
