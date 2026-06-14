@@ -780,11 +780,11 @@ def test_query_transformer_gating():
     from rag_engine import RAGEngine
     import inspect
 
-    source = inspect.getsource(RAGEngine.query)
+    # Check the gating logic in _ensure_query_transformer, where the config flag is evaluated
+    source = inspect.getsource(RAGEngine._ensure_query_transformer)
 
-    # Must check query_transformation_enabled before using QueryTransformer
     assert 'query_transformation_enabled' in source, (
-        "RAGEngine.query must check query_transformation_enabled"
+        "RAGEngine._ensure_query_transformer must check query_transformation_enabled"
     )
 
 

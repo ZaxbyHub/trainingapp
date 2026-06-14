@@ -60,11 +60,11 @@ class TestBM25RebuildIndexParameter:
             assert index.chunks == sample_chunks
 
     def test_add_documents_default_rebuilds(self, sample_chunks):
-        """add_documents() defaults to rebuild_index=True for backward compatibility."""
+        """add_documents() rebuilds index when rebuild_index=True."""
         index = BM25Index()
 
         with patch.object(index, "build_index", wraps=index.build_index) as mock_build:
-            index.add_documents(sample_chunks)
+            index.add_documents(sample_chunks, rebuild_index=True)
 
             mock_build.assert_called_once()
             assert index.chunks == sample_chunks

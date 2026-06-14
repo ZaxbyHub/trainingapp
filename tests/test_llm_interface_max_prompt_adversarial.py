@@ -374,7 +374,7 @@ class TestAnswerQuestionOversized:
         def force_fallback(*args, **kwargs):
             raise RuntimeError("force fallback")
 
-        def fallback_generate(prompt, config=None):
+        def fallback_generate(prompt, config=None, **kwargs):
             # generate() is called with the built prompt containing long_context
             if len(prompt) > MAX_PROMPT_LENGTH:
                 raise ValueError(
@@ -399,7 +399,7 @@ class TestAnswerQuestionOversized:
         def force_fallback(*args, **kwargs):
             raise RuntimeError("force fallback")
 
-        def fallback_generate(prompt, config=None):
+        def fallback_generate(prompt, config=None, **kwargs):
             if len(prompt) > MAX_PROMPT_LENGTH:
                 raise ValueError(
                     f"Prompt exceeds maximum length of {MAX_PROMPT_LENGTH} characters. "

@@ -278,38 +278,51 @@ class BM25Index:
 
     def add_documents(self, chunks: List[DocumentChunk], rebuild_index: bool = False):
         """Add multiple documents to the BM25 index incrementally.
-        
+
         This method performs O(k) updates where k is the number of new chunks,
         avoiding the O(N) cost of rebuilding the entire index.
-        
+
         Args:
             chunks: List of DocumentChunk objects to add.
             rebuild_index: If True, update the legacy BM25Okapi index immediately.
                           If False (default), only update incremental structures.
                           The incremental score computation doesn't need the legacy index.
         """
+        if rebuild_index:
+            # Full rebuild path: extend chunks, then rebuild via build_index()
+            if chunks:
+                self.chunks.extend(chunks)
+                new_tokenized = [self._tokenize(chunk.text) for chunk in chunks]
+                self._tokenized.extend(new_tokenized)
+                self._update_doc_frequencies(new_tokenized)
+                self._total_token_count += sum(len(t) for t in new_tokenized)
+                self._avgdl = self._total_token_count / len(self.chunks)
+                self._idf_cache = None
+            self.build_index(self.chunks)
+            return
+
         if not chunks:
             return
-        
+
         # Step 1: Extend chunks
         self.chunks.extend(chunks)
-        
+
         # Step 2: Tokenize only the NEW chunks
         start_idx = len(self._tokenized)
         new_tokenized = [self._tokenize(chunk.text) for chunk in chunks]
         self._tokenized.extend(new_tokenized)
-        
+
         # Step 3: Update doc frequencies incrementally
         self._update_doc_frequencies(new_tokenized)
-        
+
         # Step 4: Update average document length incrementally (O(k) not O(N))
         # Add only the new token counts to the running total
         self._total_token_count += sum(len(t) for t in new_tokenized)
         self._avgdl = self._total_token_count / len(self.chunks)
-        
+
         # Step 5: Invalidate IDF cache
         self._idf_cache = None
-        
+
         # Step 6: Rebuild legacy BM25Okapi index if needed
         if rebuild_index:
             if BM25_AVAILABLE and self._tokenized:
@@ -1066,7 +1079,7 @@ class VectorStore:
                         expanded.append(chunk)
 
         expanded.sort(key=lambda c: (c.source, c.chunk_index))
-        return expanded
+        return expanded if expanded else chunks
 
     def get_context(
         self,
