@@ -194,10 +194,6 @@ class RAGEngine:
         self._query_transformer_failed = False
         self._init_lock = threading.Lock()
 
-        # Initialize LLM eagerly so SmartLLM is called at least once during __init__
-        # (tests verify this wiring). _init_llm gracefully handles missing models.
-        self._init_llm(gguf_path)
-
         self._save_config()
         self._log_init_banner("RAG Engine Ready")
 
