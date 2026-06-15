@@ -44,7 +44,7 @@ class TestQueryTransformerLazySingleton:
                 # _query_transformer should be None at init (lazy)
                 assert engine._query_transformer is None
                 # _init_lock should be a threading.Lock
-                assert isinstance(engine._init_lock, threading.Lock)
+                assert isinstance(engine._init_lock, type(threading.Lock()))
 
     def test_query_transformer_created_once_on_first_query(self, tmp_path):
         """Criterion 1: QueryTransformer instance created only once on first query call."""
@@ -181,7 +181,7 @@ class TestQueryTransformerThreadSafety:
 
                 # _init_lock should exist and be a threading.Lock
                 assert hasattr(engine, "_init_lock")
-                assert isinstance(engine._init_lock, threading.Lock)
+                assert isinstance(engine._init_lock, type(threading.Lock()))
 
     def test_concurrent_queries_50_threads_no_double_init(self, tmp_path):
         """Criterion 3: 50 concurrent threads don't cause double-init of QueryTransformer."""

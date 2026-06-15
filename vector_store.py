@@ -27,6 +27,15 @@ try:
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
 
+# Check if sentence-transformers version supports local_files_only kwarg
+# (added in sentence-transformers >= 2.2.0)
+try:
+    import sentence_transformers as _st
+    _st_version = tuple(int(x) for x in _st.__version__.split(".")[:2])
+    _ST_SUPPORTS_LOCAL_FILES_ONLY = _st_version >= (2, 2)
+except Exception:
+    _ST_SUPPORTS_LOCAL_FILES_ONLY = False
+
 try:
     from rank_bm25 import BM25Okapi
 
@@ -58,7 +67,11 @@ class EmbeddingModel:
             )
 
         self.model_name = model_name or self.DEFAULT_MODEL
-        self._model_args = {"local_files_only": True}
+        # local_files_only kwarg was added in sentence-transformers >= 2.2.0
+        if _ST_SUPPORTS_LOCAL_FILES_ONLY:
+            self._model_args = {"local_files_only": True}
+        else:
+            self._model_args = {}
         self.model = None
 
         local_model_path = Path("./models/bge-small-en-v1.5/")
@@ -647,25 +660,6 @@ class VectorStore:
                         len(chunks),
                     )
 
-                # Update metadata
-                for chunk in chunks:
-                    if chunk.source not in self.metadata["documents"]:
-                        self.metadata["documents"][chunk.source] = {
-                            "chunks": 0,
-                            "added_at": str(
-                                Path(chunk.source).stat().st_mtime
-                                if Path(chunk.source).exists()
-                                else ""
-                            ),
-                        }
-                    self.metadata["documents"][chunk.source]["chunks"] = max(
-                        self.metadata["documents"][chunk.source]["chunks"],
-                        chunk.chunk_index + 1,
-                    )
-
-                self.metadata["document_count"] = len(self.metadata["documents"])
-                self.metadata["chunk_count"] = self.collection.count()
-
                 # Update BM25 index with newly added chunks
                 if added > 0:
                     if not self.bm25_index:
@@ -691,6 +685,9 @@ class VectorStore:
                         self.metadata["documents"][meta_key]["chunks"],
                         chunk.chunk_index + 1,
                     )
+
+                self.metadata["document_count"] = len(self.metadata["documents"])
+                self.metadata["chunk_count"] = self.collection.count()
 
         self._save_metadata()
 
@@ -1109,94 +1106,98 @@ class VectorStore:
         # Encode OUTSIDE lock
         query_embedding = self.embedder.encode_single(query)
         
-        if hybrid_search and self.bm25_index:
+        if hybrid_search:
             self._rebuild_bm25_if_needed()
+            if self.bm25_index is None:
+                # BM25 rebuild failed or not available — fall back to vector-only
+                hybrid_search = False
+            else:
+                vector_results = self.search(query, n_results=n_results * 2, query_embedding=query_embedding)
+                bm25_results = self.bm25_index.search(query, top_k=n_results * 2)
 
-            vector_results = self.search(query, n_results=n_results * 2, query_embedding=query_embedding)
-            bm25_results = self.bm25_index.search(query, top_k=n_results * 2)
+                # --- Namespace-safe RRF ---
+                OFFSET = 1_000_000  # large enough to avoid any collision with vector indices
 
-            # --- Namespace-safe RRF ---
-            OFFSET = 1_000_000  # large enough to avoid any collision with vector indices
+                vector_ranked = [(i, score) for i, (_, _, score) in enumerate(vector_results)]
+                bm25_ranked = [(corpus_idx + OFFSET, score) for corpus_idx, score in bm25_results]
 
-            vector_ranked = [(i, score) for i, (_, _, score) in enumerate(vector_results)]
-            bm25_ranked = [(corpus_idx + OFFSET, score) for corpus_idx, score in bm25_results]
+                fused = rrf_fuse([vector_ranked, bm25_ranked])
 
-            fused = rrf_fuse([vector_ranked, bm25_ranked])
+                context_parts = []
+                per_chunk_sources = []   # one source per chunk, NOT deduplicated
+                per_chunk_pages = []
+                per_chunk_indices = []
+                sources = []             # deduplicated for display
+                seen_keys = set()
 
-            context_parts = []
-            per_chunk_sources = []   # one source per chunk, NOT deduplicated
-            per_chunk_pages = []
-            per_chunk_indices = []
-            sources = []             # deduplicated for display
-            seen_keys = set()
+                for fused_id, _ in fused[:n_results]:
+                    if fused_id >= OFFSET:
+                        # BM25 result — resolve against bm25_index.chunks
+                        corpus_idx = fused_id - OFFSET
+                        if corpus_idx < len(self.bm25_index.chunks):
+                            chunk = self.bm25_index.chunks[corpus_idx]
+                            key = (chunk.source, chunk.chunk_index)
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                context_parts.append(chunk.text)
+                                per_chunk_sources.append(chunk.source)
+                                per_chunk_pages.append(chunk.page)
+                                per_chunk_indices.append(chunk.chunk_index)
+                                if chunk.source not in sources:
+                                    sources.append(chunk.source)
+                    else:
+                        # Vector result — resolve against vector_results list
+                        vec_idx = fused_id
+                        if vec_idx < len(vector_results):
+                            doc, meta, score = vector_results[vec_idx]
+                            # Apply min_similarity (currently bypassed in hybrid — fixed here)
+                            if score < min_similarity:
+                                continue
+                            source = meta.get("source", "Unknown")
+                            chunk_idx = meta.get("chunk_index", vec_idx)
+                            page = meta.get("page")
+                            key = (source, chunk_idx)
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                context_parts.append(doc)
+                                per_chunk_sources.append(source)
+                                per_chunk_pages.append(page)
+                                per_chunk_indices.append(chunk_idx)
+                                if source not in sources:
+                                    sources.append(source)
 
-            for fused_id, _ in fused[:n_results]:
-                if fused_id >= OFFSET:
-                    # BM25 result — resolve against bm25_index.chunks
-                    corpus_idx = fused_id - OFFSET
-                    if corpus_idx < len(self.bm25_index.chunks):
-                        chunk = self.bm25_index.chunks[corpus_idx]
-                        key = (chunk.source, chunk.chunk_index)
-                        if key not in seen_keys:
-                            seen_keys.add(key)
-                            context_parts.append(chunk.text)
-                            per_chunk_sources.append(chunk.source)
-                            per_chunk_pages.append(chunk.page)
-                            per_chunk_indices.append(chunk.chunk_index)
-                            if chunk.source not in sources:
-                                sources.append(chunk.source)
-                else:
-                    # Vector result — resolve against vector_results list
-                    vec_idx = fused_id
-                    if vec_idx < len(vector_results):
-                        doc, meta, score = vector_results[vec_idx]
-                        # Apply min_similarity (currently bypassed in hybrid — fixed here)
-                        if score < min_similarity:
-                            continue
-                        source = meta.get("source", "Unknown")
-                        chunk_idx = meta.get("chunk_index", vec_idx)
-                        page = meta.get("page")
-                        key = (source, chunk_idx)
-                        if key not in seen_keys:
-                            seen_keys.add(key)
-                            context_parts.append(doc)
-                            per_chunk_sources.append(source)
-                            per_chunk_pages.append(page)
-                            per_chunk_indices.append(chunk_idx)
-                            if source not in sources:
-                                sources.append(source)
+                # Expand with neighbors if window > 0
+                if retrieval_window > 0 and context_parts:
+                    hybrid_chunks = [
+                        DocumentChunk(
+                            text=text,
+                            source=per_chunk_sources[i],
+                            chunk_index=per_chunk_indices[i],
+                            page=per_chunk_pages[i],
+                        )
+                        for i, text in enumerate(context_parts)
+                    ]
+                    expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
+                    if not expanded:
+                        expanded = hybrid_chunks
+                    context_parts = [c.text for c in expanded]
+                    per_chunk_sources = [c.source for c in expanded]
+                    per_chunk_pages = [c.page for c in expanded]
+                    per_chunk_indices = [c.chunk_index for c in expanded]
+                    sources = list(dict.fromkeys(c.source for c in expanded))
 
-            # Expand with neighbors if window > 0
-            if retrieval_window > 0 and context_parts:
-                hybrid_chunks = [
-                    DocumentChunk(
-                        text=text,
-                        source=per_chunk_sources[i],
-                        chunk_index=per_chunk_indices[i],
-                        page=per_chunk_pages[i],
+                # Build result chunks for structured return
+                result_chunks = [
+                    DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
+                    for text, src, idx, pg in zip(
+                        context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
                     )
-                    for i, text in enumerate(context_parts)
                 ]
-                expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
-                if not expanded:
-                    expanded = hybrid_chunks
-                context_parts = [c.text for c in expanded]
-                per_chunk_sources = [c.source for c in expanded]
-                per_chunk_pages = [c.page for c in expanded]
-                per_chunk_indices = [c.chunk_index for c in expanded]
-                sources = list(dict.fromkeys(c.source for c in expanded))
 
-            # Build result chunks for structured return
-            result_chunks = [
-                DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
-                for text, src, idx, pg in zip(
-                    context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
-                )
-            ]
+                context = "\n\n---\n\n".join(context_parts)
+                return context, sources, result_chunks
 
-            context = "\n\n---\n\n".join(context_parts)
-            return context, sources, result_chunks
-        else:
+        if not hybrid_search:
             # Original vector-only search logic
             matches = self.search(query, n_results=n_results)
 

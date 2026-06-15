@@ -225,7 +225,7 @@ class TestCancelButtonWiring:
     def test_cancel_button_command_is_cancel_operation(self):
         """Cancel button command must be _cancel_operation."""
         import app_gui
-        source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+        source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
 
         assert "command=self._cancel_operation" in source, (
             "cancel_button command must be self._cancel_operation"

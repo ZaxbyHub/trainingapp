@@ -234,7 +234,7 @@ class TestCancelButtonSetsOperationCancelled:
     def test_cancel_button_command_is_cancel_operation(self):
         """Verify cancel_button command is set to _cancel_operation."""
         import app_gui
-        source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+        source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
 
         # The cancel_button should have command=self._cancel_operation
         assert "command=self._cancel_operation" in source, \

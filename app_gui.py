@@ -793,6 +793,9 @@ class DocumentQAApp(CTk):
         self.content_frame = CTkFrame(main_container)
         self.content_frame.pack(side="right", fill="both", expand=True, padx=Spacing.LG, pady=Spacing.LG)
 
+        # Initialize cancellation event before page creation (pages may reference it)
+        self._operation_cancelled = threading.Event()
+
         # Create pages
         self._create_chat_page()
         self._create_documents_page()
@@ -844,7 +847,7 @@ class DocumentQAApp(CTk):
 
         # Cancel button
         self.cancel_button = _make_button(
-            self.chat_page, "Cancel", self._cancel_operation,
+            self.chat_page, "Cancel", command=self._cancel_operation,
             width=60, height=24,
             font=TypeScale.small(),
             fg_color=ColorTokens.danger(),
@@ -856,7 +859,7 @@ class DocumentQAApp(CTk):
         # Typing animation state
         self._typing_animation_id = None
         self._is_operation_active = False
-        self._operation_cancelled = threading.Event()
+        # _operation_cancelled is initialized in _create_widgets
         self._clear_confirm_timer = None
         self._clear_confirm_pending = False
         self._empty_state_visible = False
@@ -1994,7 +1997,11 @@ class DocumentQAApp(CTk):
                     elif msg[0] == "stream_end":
                         self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
                     elif msg[0] == "stream_destroy":
-                        self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
+                        # Main thread destroys the streaming frame (thread-safe)
+                        if self._streaming_message_frame is not None and self._streaming_message_frame.winfo_exists():
+                            self._streaming_message_frame.destroy()
+                        self._streaming_message_ref = None
+                        self._streaming_message_frame = None
                     elif msg[0] == "model_label":
                         if self.winfo_exists() and hasattr(self, "model_label"):
                             self.model_label.configure(text=msg[1])
@@ -2475,6 +2482,8 @@ class DocumentQAApp(CTk):
                     self.message_queue.put(("cancel_button_hide",))
                     self.message_queue.put(("hide_typing",))
                     self.message_queue.put(("enable_input", True))
+                    self._streaming_message_ref = None
+                    self._streaming_message_frame = None
                     return
 
                 # If streaming was used, send stream_end to finalize on main thread

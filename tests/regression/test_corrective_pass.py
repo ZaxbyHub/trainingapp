@@ -374,7 +374,8 @@ class TestC2RetrievedChunksFinalContext:
         engine.vector_store = mock_vs
         engine.llm = mock_llm
         engine.reranker = None
-        engine.query_transformer = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
         engine.conversation_history = []
 
         result = engine.query("What is chunk 1?")
@@ -413,7 +414,8 @@ class TestC2RetrievedChunksFinalContext:
         engine.vector_store = mock_vs
         engine.llm = mock_llm
         engine.reranker = None
-        engine.query_transformer = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
         engine.conversation_history = []
 
         result = engine.query("What does the document cover?")
@@ -445,7 +447,8 @@ class TestC2RetrievedChunksFinalContext:
         engine.vector_store = mock_vs
         engine.llm = mock_llm
         engine.reranker = None
-        engine.query_transformer = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
         engine.conversation_history = []
 
         result = engine.query("anything?")
@@ -777,7 +780,8 @@ class TestC2EdgeCases:
         engine.vector_store = mock_vs
         engine.llm = mock_llm
         engine.reranker = mock_reranker
-        engine.query_transformer = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
         engine.conversation_history = []
 
         result = engine.query("What is in the document?")
@@ -839,7 +843,8 @@ class TestC2EdgeCases:
         engine.vector_store = mock_vs
         engine.llm = mock_llm
         engine.reranker = mock_reranker  # reranker exists but rerank() will raise
-        engine.query_transformer = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
         engine.conversation_history = []
 
         result = engine.query("What does this document cover?")
@@ -869,7 +874,8 @@ class TestC2EdgeCases:
         engine.vector_store = mock_vs
         engine.llm = mock_llm
         engine.reranker = None
-        engine.query_transformer = None
+        engine._query_transformer = None
+        engine._query_transformer_failed = False
         engine.conversation_history = []
 
         result = engine.query("What is this about?")
