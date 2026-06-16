@@ -110,6 +110,23 @@ class EmbeddingModel:
 
     def _ensure_model_loaded(self):
         """Lazy-load the SentenceTransformer model if not already loaded."""
+        if self.model is not None:
+            return
+
+        # Helper: try loading with _model_args; if TypeError (e.g. older
+        # sentence-transformers doesn't support local_files_only), retry without kwargs
+        def _try_load(name: str) -> None:
+            try:
+                self.model = SentenceTransformer(name, **self._model_args)
+            except TypeError as e:
+                if self._model_args and "local_files_only" in str(e):
+                    logger.warning(
+                        "sentence-transformers does not support local_files_only; "
+                        "loading without it (may attempt network download)"
+                    )
+                    self.model = SentenceTransformer(name)
+                else:
+                    raise
         if self.model is None:
             local_model_path = Path("./models/bge-small-en-v1.5/")
 
@@ -120,7 +137,7 @@ class EmbeddingModel:
                     # Bundle has model files - use them
                     self.model_name = str(bundle_path)
                     logger.info("Loading embedding model from bundle: %s", self.model_name)
-                    self.model = SentenceTransformer(self.model_name, **self._model_args)
+                    _try_load(self.model_name)
                     logger.info("[OK] Embedding model loaded")
                 else:
                     # No bundled model - try local fallback
@@ -129,7 +146,7 @@ class EmbeddingModel:
                         # Use local fallback with local_files_only to prevent download
                         self.model_name = str(local_model_path)
                         logger.info("Loading embedding model from local fallback: %s", self.model_name)
-                        self.model = SentenceTransformer(self.model_name, **self._model_args)
+                        _try_load(self.model_name)
                         logger.info("[OK] Embedding model loaded")
                     else:
                         # Model not found anywhere - raise clear error
@@ -144,13 +161,13 @@ class EmbeddingModel:
                 if local_model_path.exists() and any(local_model_path.iterdir()):
                     # Use local model with local_files_only to prevent download
                     logger.info("Loading embedding model from local path: %s", self.model_name)
-                    self.model = SentenceTransformer(self.model_name, **self._model_args)
+                    _try_load(self.model_name)
                     logger.info("[OK] Embedding model loaded")
                 else:
                     # Try HuggingFace cache with local_files_only=True to prevent download
                     logger.info("Loading embedding model: %s (cache-only)", self.model_name)
                     try:
-                        self.model = SentenceTransformer(self.model_name, **self._model_args)
+                        _try_load(self.model_name)
                         logger.info("[OK] Embedding model loaded")
                     except OSError as e:
                         # Model not in cache - raise helpful error
