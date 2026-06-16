@@ -269,7 +269,11 @@ class BM25Index:
             return
         
         # Rebuild everything from scratch
-        self._tokenized = [self._tokenize(chunk.text) for chunk in self.chunks]
+        # Handle both DocumentChunk objects and raw strings (for backward compat)
+        self._tokenized = [
+            self._tokenize(chunk.text if hasattr(chunk, 'text') else str(chunk))
+            for chunk in self.chunks
+        ]
         self._doc_freqs = {}
         
         # Compute document frequencies
