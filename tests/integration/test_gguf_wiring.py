@@ -97,6 +97,8 @@ to the actual llama-cpp-python library for model loading.
                 
                 # Create engine with GGUF path
                 engine = RAGEngine(gguf_path=test_path)
+                # Trigger lazy LLM initialization
+                engine._init_llm(engine.gguf_path)
                 
                 # Verify SmartLLM was called
                 assert mock_smart_llm.called
@@ -117,6 +119,8 @@ to the actual llama-cpp-python library for model loading.
             
             # Create engine without gguf_path
             engine = RAGEngine()
+            # Trigger lazy LLM initialization
+            engine._init_llm(engine.gguf_path)
             
             # Verify default is None
             assert engine.gguf_path is None

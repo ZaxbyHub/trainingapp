@@ -1997,11 +1997,7 @@ class DocumentQAApp(CTk):
                     elif msg[0] == "stream_end":
                         self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
                     elif msg[0] == "stream_destroy":
-                        # Main thread destroys the streaming frame (thread-safe)
-                        if self._streaming_message_frame is not None and self._streaming_message_frame.winfo_exists():
-                            self._streaming_message_frame.destroy()
-                        self._streaming_message_ref = None
-                        self._streaming_message_frame = None
+                        self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
                     elif msg[0] == "model_label":
                         if self.winfo_exists() and hasattr(self, "model_label"):
                             self.model_label.configure(text=msg[1])
