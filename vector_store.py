@@ -861,6 +861,10 @@ class VectorStore:
         Returns:
             List of DocumentChunk objects matching the query.
         """
+        # Handle empty query — return empty list without loading the model
+        if not query or not query.strip():
+            return []
+
         # Encode OUTSIDE any lock
         query_embedding = self.embedder.encode_single(query)
         
