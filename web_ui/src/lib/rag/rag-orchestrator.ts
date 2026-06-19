@@ -115,6 +115,10 @@ export class RAGOrchestrator {
     const signal = options.signal;
 
     // Ensure lazy services are initialized before the pipeline runs (FR-002)
+    if (signal?.aborted) {
+      throw new DOMException('The operation was aborted.', 'AbortError');
+    }
+
     await Promise.all([
       ensureEmbeddingServiceReady(),
       ensureReadinessGateChecked(),

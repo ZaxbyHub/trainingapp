@@ -57,7 +57,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
         copyFeedbackTimerRef.current = null;
       }, 1500);
     } catch {
-      // Clipboard API not available (e.g., Safari private mode)
+      console.warn('[ChatMessageBubble] Clipboard write failed');
     }
   }, [message.content]);
 

@@ -5,7 +5,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { ChatMessageBubble } from '../ChatMessageBubble';
+import { ChatMessageBubble } from './ChatMessageBubble';
 import type { ChatMessage } from '../../types/chat';
 
 // Mock clipboard API
@@ -318,7 +318,7 @@ describe('ChatMessageBubble', () => {
   });
 
   describe('Timer Cleanup', () => {
-    it('clears copy feedback timer on unmount', () => {
+    it('clears copy feedback timer on unmount', async () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
 
       const message: ChatMessage = {
@@ -335,7 +335,7 @@ describe('ChatMessageBubble', () => {
 
       // Trigger copy to start timer
       vi.useFakeTimers();
-      waitFor(() => {
+      await waitFor(() => {
         const copyButton = screen.getByRole('button', { name: /copy message/i });
         fireEvent.click(copyButton);
       });

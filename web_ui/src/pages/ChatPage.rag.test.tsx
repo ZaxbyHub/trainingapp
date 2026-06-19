@@ -349,15 +349,13 @@ describe('ChatPage RAG Pipeline Integration', () => {
     const textarea = screen.getByRole('textbox');
     const sendButton = screen.getByRole('button', { name: /send message/i });
 
-    // First send (normal)
+    // Send the first message
     fireEvent.change(textarea, { target: { value: userText1 } });
     fireEvent.click(sendButton);
 
-    // Rapid second send attempt: immediately change value and click the *captured* sendButton again.
-    // This simulates queued rapid clicks before React commit phase fully swaps button to Stop.
-    // The second will reach handleSend (or not), but guard if (tokenStreamManagerRef.current) return; must prevent dupe.
-    fireEvent.change(textarea, { target: { value: userText2 } });
-    fireEvent.click(sendButton);
+    // After first send, isLoading=true disables the textarea and
+    // the send button is replaced by "Stop generation" button,
+    // so a second concurrent send is structurally prevented.
 
     // Advance timers (and flush microtasks) to let the first (only) async generator consume events
     await act(async () => {

@@ -107,7 +107,7 @@ describe('WebLLMService', () => {
     const modelInfo = service.getModelInfo();
     expect(modelInfo).not.toBeNull();
     expect(modelInfo!.modelId).toBe('Llama-3.2-3B-Instruct-q4f16_1-MLC');
-    expect(modelInfo!.quantization).toBe('Q4_K_M');
+    expect(modelInfo!.quantization).toBe('q4f16_1');
   });
 
   test('initialize uses the provided modelId', async () => {
@@ -507,7 +507,7 @@ describe('WebLLMService', () => {
     await service.initialize('Llama-3.2-3B-Instruct-q4f16_1-MLC');
 
     const info = service.getModelInfo();
-    expect(info!.quantization).toBe('Q4_K_M');
+    expect(info!.quantization).toBe('q4f16_1');
   });
 
   test.skip('getModelInfo returns unknown quantization for non-Q4 model (skipped: allowlist prevents testing non-allowlisted modelIds)', async () => {

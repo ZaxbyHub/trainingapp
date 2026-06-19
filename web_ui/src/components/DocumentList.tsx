@@ -84,7 +84,7 @@ const DocumentItem = React.memo<{
         backgroundColor: 'var(--color-bubble-assistant)',
         opacity: isDeleting ? 0.5 : 1,
         transition: 'opacity 0.2s ease',
-        height: '60px',
+        height: `${ITEM_HEIGHT}px`,
         boxSizing: 'border-box',
       }}
     >

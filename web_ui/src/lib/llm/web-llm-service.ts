@@ -200,7 +200,7 @@ export class WebLLMService {
       const cached = !wasDownloading;
       this._modelInfo = {
         modelId,
-        quantization: modelId.toLowerCase().includes('q4') ? 'Q4_K_M' : 'unknown',
+        quantization: modelId.toLowerCase().includes('q4') ? 'q4f16_1' : 'unknown',
         sizeBytes: 0, // web-llm doesn't expose artifact size directly
         cached,
       };
@@ -272,7 +272,7 @@ export class WebLLMService {
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') {
         console.info('[WebLLM] Generation interrupted');
-        return;
+        throw err;
       }
       throw err;
     }

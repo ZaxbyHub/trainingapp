@@ -177,6 +177,9 @@ function ChatPageInner() {
             }
           }
         } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            return; // User cancelled — no error message needed
+          }
           const message = error instanceof Error ? error.message : 'RAG pipeline failed';
           streamManager.error(message);
         }

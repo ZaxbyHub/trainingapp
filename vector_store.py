@@ -307,7 +307,6 @@ class BM25Index:
             chunks: List of DocumentChunk objects to index.
         """
         self.chunks = chunks
-        self.chunks = chunks
         self.rebuild()
 
     def add_documents(self, chunks: List[DocumentChunk], rebuild_index: bool = False):
