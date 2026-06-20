@@ -1,0 +1,68 @@
+/* Design tokens — light/dark adaptive CSS custom properties */
+
+:root {
+  /* Color tokens — light mode defaults */
+  --color-primary: #1a73e8;
+  --color-primary-hover: #1557b0;
+  --color-secondary: #8a8a8a;
+  --color-secondary-hover: #6b6b6b;
+  --color-danger: #d32f2f;
+  --color-danger-hover: #b71c1c;
+  --color-text-on-primary: #ffffff;
+  --color-text-on-secondary: #333333;
+  --color-text-on-bubble-user: #1a1a2e;
+  --color-text-on-bubble-assistant: #1a1a2e;
+  --color-text-on-bubble-system: #555555;
+  --color-bubble-user: #d0e3f5;
+  --color-bubble-assistant: #f0f0f5;
+  --color-bubble-system: #e8e8ec;
+  --color-source-pill-bg: #dde4ed;
+  --color-text-muted: #64748b;
+
+  /* Type scale — font family + sizes */
+  --font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-size-display: 24px;
+  --font-size-h1: 20px;
+  --font-size-h2: 16px;
+  --font-size-h3: 14px;
+  --font-size-body: 13px;
+  --font-size-caption: 11px;
+  --font-size-small: 10px;
+
+  /* Spacing — 4px base grid */
+  --spacing-xs: 2px;
+  --spacing-sm: 4px;
+  --spacing-md: 8px;
+  --spacing-lg: 12px;
+  --spacing-xl: 16px;
+  --spacing-xxl: 20px;
+  --spacing-xxxl: 24px;
+  --spacing-section: 32px;
+
+  /* Compound spacing presets */
+  --spacing-input-pad: 16px 0 0 0;
+  --spacing-card-pad: 12px;
+  --spacing-section-pad: 0 12px;
+  --spacing-frame-pad: 20px;
+  --spacing-bar-pad: 8px 12px;
+}
+
+[data-theme="dark"] {
+  /* Color tokens — dark mode overrides */
+  --color-secondary: #444444;
+  --color-secondary-hover: #555555;
+  --color-text-on-secondary: #ffffff;
+  --color-text-on-bubble-user: #ffffff;
+  --color-text-on-bubble-assistant: #e0e0e0;
+  --color-text-on-bubble-system: #cccccc;
+  --color-bubble-user: #2b5278;
+  --color-bubble-assistant: #1a1a2e;
+  --color-bubble-system: #2d2d2d;
+  --color-source-pill-bg: #3a3a4e;
+  --color-text-muted: #94a3b8;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}

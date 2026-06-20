@@ -38,6 +38,8 @@ class TestGGUFPathWiring:
 
             # This should not raise any exception
             engine = RAGEngine(gguf_path="/path/to/model.gguf")
+            # Trigger lazy LLM initialization (RAGEngine uses lazy loading)
+            engine._init_llm(engine.gguf_path)
 
             # Verify that SmartLLM was called with gguf_path - check LAST call
             # This is more robust when tests run in suite and previous tests may
@@ -101,6 +103,8 @@ class TestGGUFPathWiring:
 
             # Create engine with gguf_path
             engine = RAGEngine(gguf_path="/test/path/model.gguf")
+            # Trigger lazy LLM initialization (RAGEngine uses lazy loading)
+            engine._init_llm(engine.gguf_path)
 
             # Verify that SmartLLM was called with gguf_path - check LAST call
             assert mock_smart_llm.call_count >= 1, "SmartLLM should be called at least once"
@@ -117,6 +121,8 @@ class TestGGUFPathWiring:
 
             # Create engine without gguf_path (should default to None)
             engine = RAGEngine()
+            # Trigger lazy LLM initialization (RAGEngine uses lazy loading)
+            engine._init_llm(engine.gguf_path)
 
             # Verify that SmartLLM was called with gguf_path=None - check LAST call
             assert mock_smart_llm.call_count >= 1, "SmartLLM should be called at least once"
@@ -136,6 +142,8 @@ class TestGGUFPathWiring:
 
             # Create engine with explicit None gguf_path
             engine = RAGEngine(gguf_path=None)
+            # Trigger lazy LLM initialization (RAGEngine uses lazy loading)
+            engine._init_llm(engine.gguf_path)
 
             # Verify that SmartLLM was called with gguf_path=None - check LAST call
             assert mock_smart_llm.call_count >= 1, "SmartLLM should be called at least once"

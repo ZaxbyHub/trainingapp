@@ -3,8 +3,8 @@
     {
       "type": "drift-verification",
       "verdict": "approved",
-      "summary": "Phase 3 drift verification: APPROVED. All 5 tasks verified as ALIGNED. One minor engineering judgment: FR-708 specifies 44px button height but implementation uses 36px (documented as meeting WCAG 2.5.5 with default CTkButton padding). All other changes match spec exactly.",
-      "timestamp": "2026-04-14T21:47:18.614Z"
+      "summary": "All 4 Phase 3 tasks aligned with spec: 3.1 chat UI matches FR-007, 3.2 source citations match FR-010, 3.3 inference mode matches FR-002/FR-006, 3.4 streaming tokens match FR-007/FR-016. No drift detected. Mock streaming placeholder noted for Phase 6 replacement.",
+      "timestamp": "2026-05-27T16:42:57.069Z"
     }
   ]
 }

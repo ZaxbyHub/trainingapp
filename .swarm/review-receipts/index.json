@@ -312,6 +312,142 @@
       "scope_hash": "8a1762c4b1e9f10dd361425761ec8c431cf74b9b393975a1c9cd9e39b8413ac5",
       "agent": "curator",
       "filename": "2026-04-14-d6253aa9-b738-479f-b373-ab85aa035ef8.json"
+    },
+    {
+      "id": "d2fafd01-7355-4abc-8eb2-f150294edb4a",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-26T23:34:12.840Z",
+      "scope_hash": "ad415f25757a0c87217b8cbbc783c1598637547986e8d0290230018f7204d2b9",
+      "agent": "curator",
+      "filename": "2026-05-26-d2fafd01-7355-4abc-8eb2-f150294edb4a.json"
+    },
+    {
+      "id": "1187cd64-93cf-4d29-b889-942d38bb3d09",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T00:32:34.154Z",
+      "scope_hash": "cb2a96934ad1f36c4fe2ed8f1f4ceaab5ca6ac1c3f19bfd652f34aa0ec5b9d9c",
+      "agent": "curator",
+      "filename": "2026-05-27-1187cd64-93cf-4d29-b889-942d38bb3d09.json"
+    },
+    {
+      "id": "d1172239-417f-4fe5-9bcc-6aedf1423faf",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T01:18:08.841Z",
+      "scope_hash": "fd62ad572bcccc9c4570692d37f6dc7fad4fcf23530d8814a11f5d89a9ce64ff",
+      "agent": "curator",
+      "filename": "2026-05-27-d1172239-417f-4fe5-9bcc-6aedf1423faf.json"
+    },
+    {
+      "id": "1fd99136-61a7-4baa-840a-1dd9caf050c3",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T01:20:20.425Z",
+      "scope_hash": "fd62ad572bcccc9c4570692d37f6dc7fad4fcf23530d8814a11f5d89a9ce64ff",
+      "agent": "curator",
+      "filename": "2026-05-27-1fd99136-61a7-4baa-840a-1dd9caf050c3.json"
+    },
+    {
+      "id": "1cd0ff80-f64c-43b2-bddf-fc3bb8e8d9d1",
+      "verdict": "rejected",
+      "reviewed_at": "2026-05-27T03:05:20.261Z",
+      "scope_hash": "ea36e313d59a5756c54029d3b1d490e8dddd0b2426e760db9fad3b5c87025b4e",
+      "agent": "curator",
+      "filename": "2026-05-27-1cd0ff80-f64c-43b2-bddf-fc3bb8e8d9d1.json"
+    },
+    {
+      "id": "cedc1e75-0180-43c1-962e-5eec75952cd6",
+      "verdict": "rejected",
+      "reviewed_at": "2026-05-27T03:07:59.472Z",
+      "scope_hash": "ea36e313d59a5756c54029d3b1d490e8dddd0b2426e760db9fad3b5c87025b4e",
+      "agent": "curator",
+      "filename": "2026-05-27-cedc1e75-0180-43c1-962e-5eec75952cd6.json"
+    },
+    {
+      "id": "b461cfbc-f22f-4ff6-98b6-1cc3fc4a7e7e",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T11:21:33.757Z",
+      "scope_hash": "14114843c5bcdad496cd5ad73ec958e98fa3069f498c90ce8e4af301d489762a",
+      "agent": "curator",
+      "filename": "2026-05-27-b461cfbc-f22f-4ff6-98b6-1cc3fc4a7e7e.json"
+    },
+    {
+      "id": "68b956cb-8462-405d-bd43-aa297e018b14",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T16:54:12.918Z",
+      "scope_hash": "d1f2e2c183026065ba758dc79d71622fd803241ce4a5dad6f1033046ac41bd8d",
+      "agent": "curator",
+      "filename": "2026-05-27-68b956cb-8462-405d-bd43-aa297e018b14.json"
+    },
+    {
+      "id": "92e770b0-c402-409e-a388-e760750f5591",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T16:56:39.427Z",
+      "scope_hash": "d1f2e2c183026065ba758dc79d71622fd803241ce4a5dad6f1033046ac41bd8d",
+      "agent": "curator",
+      "filename": "2026-05-27-92e770b0-c402-409e-a388-e760750f5591.json"
+    },
+    {
+      "id": "ef1624bd-7522-4660-9e1b-63b8ab486cb6",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T18:49:53.787Z",
+      "scope_hash": "8a1762c4b1e9f10dd361425761ec8c431cf74b9b393975a1c9cd9e39b8413ac5",
+      "agent": "curator",
+      "filename": "2026-05-27-ef1624bd-7522-4660-9e1b-63b8ab486cb6.json"
+    },
+    {
+      "id": "f1509694-ef0f-4f33-91f0-dc663e72db4a",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T21:12:51.646Z",
+      "scope_hash": "6acbe81f751391c8b9bf7dda5b9e4da71b8bcb03d115d08acd26f5d9c1ca5165",
+      "agent": "curator",
+      "filename": "2026-05-27-f1509694-ef0f-4f33-91f0-dc663e72db4a.json"
+    },
+    {
+      "id": "72509341-75ef-47aa-904a-2ee69800e5cd",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-27T23:24:05.544Z",
+      "scope_hash": "9a4eb9703f9d72c300f08bce9bea8a0a31de7f1991111bff11cf4bd12c7901df",
+      "agent": "curator",
+      "filename": "2026-05-27-72509341-75ef-47aa-904a-2ee69800e5cd.json"
+    },
+    {
+      "id": "215b7a9d-0473-4a1b-8f2e-cdb1827b226e",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-28T02:26:08.198Z",
+      "scope_hash": "719b26626b3d8321bca38883098ca3589b70f7b80f9c87f6b87715b9ef1beb19",
+      "agent": "curator",
+      "filename": "2026-05-28-215b7a9d-0473-4a1b-8f2e-cdb1827b226e.json"
+    },
+    {
+      "id": "1364ef28-2b3e-4a43-8546-89527260928c",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-28T02:28:36.390Z",
+      "scope_hash": "719b26626b3d8321bca38883098ca3589b70f7b80f9c87f6b87715b9ef1beb19",
+      "agent": "curator",
+      "filename": "2026-05-28-1364ef28-2b3e-4a43-8546-89527260928c.json"
+    },
+    {
+      "id": "64d63f33-6ff4-4600-b164-19c801c8991f",
+      "verdict": "approved",
+      "reviewed_at": "2026-05-28T14:30:15.347Z",
+      "scope_hash": "efccef1e7e6fe66307d79b296528272fa7a2f395e1218e318a4d37dc5542ac9e",
+      "agent": "curator",
+      "filename": "2026-05-28-64d63f33-6ff4-4600-b164-19c801c8991f.json"
+    },
+    {
+      "id": "3ca7a787-8a31-470d-ad70-9694eacfe848",
+      "verdict": "rejected",
+      "reviewed_at": "2026-05-28T15:37:19.450Z",
+      "scope_hash": "1b730b83fed07e9528810e754e912712a461f973d8c156ff462a776b293deaa3",
+      "agent": "curator",
+      "filename": "2026-05-28-3ca7a787-8a31-470d-ad70-9694eacfe848.json"
+    },
+    {
+      "id": "eae1bf41-85e0-4f22-a91a-a2401ec570d2",
+      "verdict": "rejected",
+      "reviewed_at": "2026-05-28T15:38:28.823Z",
+      "scope_hash": "1b730b83fed07e9528810e754e912712a461f973d8c156ff462a776b293deaa3",
+      "agent": "curator",
+      "filename": "2026-05-28-eae1bf41-85e0-4f22-a91a-a2401ec570d2.json"
     }
   ]
 }

@@ -25,9 +25,17 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
 from rag_engine import RAGEngine, RAGConfig
+from llm_interface import QueryCancelled
 from security import validate_url, validate_device, DEFAULT_ALLOWED_PORTS
 from auth import authenticate, require_auth, get_auth_status, API_KEY, create_access_token
-from config import settings
+from config import settings, get_settings
+
+# SSE streaming support (pip install sse-starlette)
+try:
+    from sse_starlette.sse import EventSourceResponse
+    HAS_SSE = True
+except ImportError:
+    HAS_SSE = False
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -244,6 +252,58 @@ class IngestResponse(BaseModel):
     documents: int = 0
     chunks_added: int = 0
     message: Optional[str] = None
+
+
+class BatchFileResult(BaseModel):
+    """Result for a single file in batch ingestion."""
+
+    filename: str
+    success: bool
+    chunks_added: int = 0
+    error: Optional[str] = None
+
+
+class BatchIngestResponse(BaseModel):
+    """Response model for batch ingestion."""
+
+    total_files: int
+    successful: int
+    failed: int
+    results: List[BatchFileResult]
+
+
+class SettingsResponse(BaseModel):
+    """Response model for settings."""
+
+    chunk_size: int
+    chunk_overlap: int
+    n_results: int
+    min_similarity: float
+    temperature: float
+    max_tokens: int
+    hybrid_search: bool
+    reranking_enabled: bool
+    context_truncation: int
+    retrieval_window: int
+    initial_retrieval_top_k: int
+    rerank_top_k: int
+
+
+class SettingsUpdateRequest(BaseModel):
+    """Request model for updating settings."""
+
+    rag_chunk_size: Optional[int] = Field(default=None, ge=128, le=8192)
+    rag_chunk_overlap: Optional[int] = Field(default=None, ge=0)
+    rag_n_results: Optional[int] = Field(default=None, ge=1, le=10)
+    rag_min_similarity: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    rag_temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    rag_max_tokens: Optional[int] = Field(default=None, ge=256, le=4096)
+    rag_hybrid_search: Optional[bool] = None
+    rag_reranking_enabled: Optional[bool] = None
+    rag_context_truncation: Optional[int] = Field(default=None, ge=1)
+    rag_retrieval_window: Optional[int] = Field(default=None, ge=0)
+    rag_initial_retrieval_top_k: Optional[int] = Field(default=None, ge=1, le=50)
+    rag_rerank_top_k: Optional[int] = Field(default=None, ge=1, le=20)
 
 
 class StatsResponse(BaseModel):
@@ -582,6 +642,271 @@ async def list_documents(auth: dict = Security(require_auth())):
 
     docs = engine.get_all_documents()
     return DocumentsResponse(documents=docs, total=len(docs))
+
+
+if HAS_SSE:
+    @app.post("/ask/stream")
+    async def ask_question_stream(
+        request: QuestionRequest, auth: dict = Security(require_auth())
+    ):
+        """Ask a question with SSE streaming response."""
+        if not engine:
+            raise HTTPException(status_code=503, detail="Engine not initialized")
+
+        if not engine.llm:
+            raise HTTPException(status_code=503, detail="No LLM backend available")
+
+        async def event_generator():
+            queue = asyncio.Queue()
+            sources = []
+            context_length = 0
+            inference_time = 0.0
+            loop = asyncio.get_event_loop()
+
+            def stream_callback(token: str):
+                # Called from background thread — put token into async queue
+                loop.call_soon_threadsafe(queue.put_nowait, {"token": token})
+
+            # Run query in thread, callback will feed queue
+            query_future = asyncio.to_thread(
+                engine.query,
+                request.question,
+                n_results=request.n_results,
+                stream_callback=stream_callback,
+            )
+
+            try:
+                while True:
+                    try:
+                        msg = await asyncio.wait_for(queue.get(), timeout=0.1)
+                        yield {"event": "message", "data": json.dumps(msg)}
+                    except asyncio.TimeoutError:
+                        if query_future.done():
+                            break
+                        continue
+
+                # Drain remaining queue items
+                while not queue.empty():
+                    msg = queue.get_nowait()
+                    yield {"event": "message", "data": json.dumps(msg)}
+
+                result = query_future.result()  # Raises if query failed
+                sources = result.sources
+                context_length = result.context_length
+                inference_time = result.inference_time
+
+                yield {
+                    "event": "message",
+                    "data": json.dumps({
+                        "done": True,
+                        "sources": sources,
+                        "context_length": context_length,
+                        "inference_time": inference_time,
+                    }),
+                }
+            except QueryCancelled:
+                yield {
+                    "event": "message",
+                    "data": json.dumps({
+                        "done": True,
+                        "cancelled": True,
+                        "sources": sources,
+                    }),
+                }
+            except Exception as e:
+                logger.error("Error in ask_question_stream: %s", e)
+                yield {
+                    "event": "error",
+                    "data": json.dumps({"error": "An error occurred processing your question"}),
+                }
+
+        return EventSourceResponse(event_generator())
+
+
+@app.post("/ingest/batch", response_model=BatchIngestResponse)
+async def ingest_batch(
+    files: List[UploadFile] = File(...), auth: dict = Security(require_auth())
+):
+    """Ingest multiple files in a single request (max 20 files)."""
+    if not engine:
+        raise HTTPException(status_code=503, detail="Engine not initialized")
+
+    MAX_BATCH_FILES = 20
+    MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+    if len(files) > MAX_BATCH_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files. Maximum is {MAX_BATCH_FILES} per request.",
+        )
+
+    results = []
+    successful = 0
+    failed = 0
+
+    import tempfile
+
+    for file in files:
+        if not file.filename:
+            results.append(BatchFileResult(
+                filename="unknown",
+                success=False,
+                error="Filename is required",
+            ))
+            failed += 1
+            continue
+
+        # Check file size
+        file_content = await file.read()
+        file_size = len(file_content)
+
+        if file_size > MAX_FILE_SIZE:
+            results.append(BatchFileResult(
+                filename=file.filename,
+                success=False,
+                error=f"File too large. Maximum size is 50MB.",
+            ))
+            failed += 1
+            continue
+
+        # Sanitize filename
+        try:
+            safe_filename, display_name = sanitize_filename(file.filename)
+        except ValueError as e:
+            results.append(BatchFileResult(
+                filename=file.filename,
+                success=False,
+                error="Invalid filename",
+            ))
+            failed += 1
+            continue
+
+        ext = Path(safe_filename).suffix.lower()
+        if ext not in {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md", ".xlsx"}:
+            results.append(BatchFileResult(
+                filename=file.filename,
+                success=False,
+                error=f"Unsupported file type: {ext}",
+            ))
+            failed += 1
+            continue
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                tmp.write(file_content)
+                tmp_path = tmp.name
+
+            stats = engine.ingest_file(tmp_path, source_name=display_name)
+
+            if stats["success"]:
+                successful += 1
+                results.append(BatchFileResult(
+                    filename=file.filename,
+                    success=True,
+                    chunks_added=stats.get("chunks_added", 0),
+                ))
+            else:
+                failed += 1
+                results.append(BatchFileResult(
+                    filename=file.filename,
+                    success=False,
+                    error=stats.get("message", "Unknown error"),
+                ))
+        except Exception as e:
+            logger.error("Error in ingest_batch for file %s: %s", file.filename, e)
+            failed += 1
+            results.append(BatchFileResult(
+                filename=file.filename,
+                success=False,
+                error="An error occurred ingesting the file",
+            ))
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    return BatchIngestResponse(
+        total_files=len(files),
+        successful=successful,
+        failed=failed,
+        results=results,
+    )
+
+
+@app.get("/settings", response_model=SettingsResponse)
+async def get_settings_endpoint(auth: dict = Security(require_auth())):
+    """Get current RAG settings (excludes sensitive values)."""
+    s = get_settings()
+    return SettingsResponse(
+        chunk_size=s.rag_chunk_size,
+        chunk_overlap=s.rag_chunk_overlap,
+        n_results=s.rag_n_results,
+        min_similarity=s.rag_min_similarity,
+        temperature=s.rag_temperature,
+        max_tokens=s.rag_max_tokens,
+        hybrid_search=s.rag_hybrid_search,
+        reranking_enabled=s.rag_reranking_enabled,
+        context_truncation=s.rag_context_truncation,
+        retrieval_window=s.rag_retrieval_window,
+        initial_retrieval_top_k=s.rag_initial_retrieval_top_k,
+        rerank_top_k=s.rag_rerank_top_k,
+    )
+
+
+@app.put("/settings", response_model=SettingsResponse)
+async def update_settings(
+    request: SettingsUpdateRequest, auth: dict = Security(require_auth())
+):
+    """Update RAG settings."""
+    s = get_settings()
+
+    # Update only provided fields
+    if request.rag_chunk_size is not None:
+        s.rag_chunk_size = request.rag_chunk_size
+    if request.rag_chunk_overlap is not None:
+        s.rag_chunk_overlap = request.rag_chunk_overlap
+    if request.rag_n_results is not None:
+        s.rag_n_results = request.rag_n_results
+    if request.rag_min_similarity is not None:
+        s.rag_min_similarity = request.rag_min_similarity
+    if request.rag_temperature is not None:
+        s.rag_temperature = request.rag_temperature
+    if request.rag_max_tokens is not None:
+        s.rag_max_tokens = request.rag_max_tokens
+    if request.rag_hybrid_search is not None:
+        s.rag_hybrid_search = request.rag_hybrid_search
+    if request.rag_reranking_enabled is not None:
+        s.rag_reranking_enabled = request.rag_reranking_enabled
+    if request.rag_context_truncation is not None:
+        s.rag_context_truncation = request.rag_context_truncation
+    if request.rag_retrieval_window is not None:
+        s.rag_retrieval_window = request.rag_retrieval_window
+    if request.rag_initial_retrieval_top_k is not None:
+        s.rag_initial_retrieval_top_k = request.rag_initial_retrieval_top_k
+    if request.rag_rerank_top_k is not None:
+        s.rag_rerank_top_k = request.rag_rerank_top_k
+
+    # Cross-field validation
+    if s.rag_chunk_overlap >= s.rag_chunk_size:
+        raise HTTPException(
+            status_code=400,
+            detail="rag_chunk_overlap must be less than rag_chunk_size",
+        )
+
+    return SettingsResponse(
+        chunk_size=s.rag_chunk_size,
+        chunk_overlap=s.rag_chunk_overlap,
+        n_results=s.rag_n_results,
+        min_similarity=s.rag_min_similarity,
+        temperature=s.rag_temperature,
+        max_tokens=s.rag_max_tokens,
+        hybrid_search=s.rag_hybrid_search,
+        reranking_enabled=s.rag_reranking_enabled,
+        context_truncation=s.rag_context_truncation,
+        retrieval_window=s.rag_retrieval_window,
+        initial_retrieval_top_k=s.rag_initial_retrieval_top_k,
+        rerank_top_k=s.rag_rerank_top_k,
+    )
 
 
 def main():

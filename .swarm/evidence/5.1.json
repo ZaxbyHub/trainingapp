@@ -5,15 +5,15 @@
     "test_engineer"
   ],
   "gates": {
-    "test_engineer": {
-      "sessionId": "ses_28ffb32eeffejgusHAe3TmbALD",
-      "timestamp": "2026-04-09T14:56:14.225Z",
-      "agent": "test_engineer"
-    },
     "reviewer": {
-      "sessionId": "ses_28ffb32eeffejgusHAe3TmbALD",
-      "timestamp": "2026-04-09T14:57:54.681Z",
+      "sessionId": "ses_199805fcbffe6IXnVDgBLZrlMv",
+      "timestamp": "2026-05-27T19:48:27.813Z",
       "agent": "reviewer"
+    },
+    "test_engineer": {
+      "sessionId": "ses_199805fcbffe6IXnVDgBLZrlMv",
+      "timestamp": "2026-05-27T19:54:29.371Z",
+      "agent": "test_engineer"
     }
   }
 }

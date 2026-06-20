@@ -288,11 +288,12 @@ class TestValidationLogsWarning:
     """Verify that each malformed message type triggers a logger.warning call."""
 
     def test_string_message_logs_warning(self, caplog):
-        def should_skip(msg):
-            return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
-        msg = "status:ready"
-        if should_skip(msg):
-            logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+        with caplog.at_level(logging.WARNING, logger="app_gui"):
+            def should_skip(msg):
+                return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+            msg = "status:ready"
+            if should_skip(msg):
+                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
 
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.WARNING
@@ -300,11 +301,12 @@ class TestValidationLogsWarning:
         assert "str" in caplog.records[0].message
 
     def test_int_message_logs_warning(self, caplog):
-        def should_skip(msg):
-            return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
-        msg = 42
-        if should_skip(msg):
-            logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+        with caplog.at_level(logging.WARNING, logger="app_gui"):
+            def should_skip(msg):
+                return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+            msg = 42
+            if should_skip(msg):
+                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
 
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.WARNING
@@ -312,11 +314,12 @@ class TestValidationLogsWarning:
         assert "int" in caplog.records[0].message
 
     def test_empty_tuple_logs_warning(self, caplog):
-        def should_skip(msg):
-            return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
-        msg = ()
-        if should_skip(msg):
-            logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+        with caplog.at_level(logging.WARNING, logger="app_gui"):
+            def should_skip(msg):
+                return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+            msg = ()
+            if should_skip(msg):
+                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
 
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.WARNING
@@ -324,11 +327,12 @@ class TestValidationLogsWarning:
         assert "tuple" in caplog.records[0].message
 
     def test_tuple_with_int_first_element_logs_warning(self, caplog):
-        def should_skip(msg):
-            return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
-        msg = (42, "payload")
-        if should_skip(msg):
-            logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+        with caplog.at_level(logging.WARNING, logger="app_gui"):
+            def should_skip(msg):
+                return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+            msg = (42, "payload")
+            if should_skip(msg):
+                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
 
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.WARNING

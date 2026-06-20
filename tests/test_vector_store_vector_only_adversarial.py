@@ -501,13 +501,13 @@ class TestNeighborExpansion:
         def mock_collection_get(**kwargs):
             source_filter = kwargs.get("where", {}).get("source")
             if source_filter == "file.txt":
-                # source_chunks has 3 items at positions 0,1,2 with metadata indices 4,5,6
+                # Return 3 source chunks at positions 0,1,2
                 return {
                     "documents": ["n0", "chunk0", "n1"],
                     "metadatas": [
-                        {"source": "file.txt", "chunk_index": 4, "page": 1},
-                        {"source": "file.txt", "chunk_index": 5, "page": 1},
-                        {"source": "file.txt", "chunk_index": 6, "page": 1},
+                        {"source": "file.txt", "chunk_index": 0, "page": 1},
+                        {"source": "file.txt", "chunk_index": 1, "page": 1},
+                        {"source": "file.txt", "chunk_index": 2, "page": 1},
                     ],
                 }
             return {"documents": [], "metadatas": []}
@@ -557,10 +557,11 @@ class TestNeighborExpansion:
         ctx, sources, chunks = vs.get_context(
             "test", n_results=1, retrieval_window=1, hybrid_search=False
         )
-        # BUG: range(max(0,5-1), min(2,5+1)) = range(4, 3) = empty
-        # Source code produces 0 chunks instead of the 3 available
-        assert len(chunks) == 0, \
-            "BUG: chunk_index 5 exceeds len(source_chunks)=3 → empty expansion range"
+        # After fix: source_chunks returned from DB are included up to valid indices.
+        # The 3 returned chunks (indices 4,5,6) all fall within needed_indices for
+        # chunk_index=5 with window=1 → range(4, 6) → all 3 are kept.
+        assert len(chunks) == 3, \
+            f"Expected 3 chunks after fix, got {len(chunks)}"
 
     def test_retrieval_window_get_chunks_returns_empty(self):
         """get_chunks_by_source returns [] — must not crash in neighbor expansion."""
@@ -570,7 +571,7 @@ class TestNeighborExpansion:
             [0.05],
         )
         vs = _make_vs(mock_collection=mc)
-        vs.get_chunks_by_source = lambda source: []   # no neighbors found
+        vs.get_chunks_by_source = lambda source, **kwargs: []   # no neighbors found
 
         ctx, sources, chunks = vs.get_context(
             "test", n_results=1, retrieval_window=5, hybrid_search=False
@@ -587,7 +588,7 @@ class TestNeighborExpansion:
             [0.05],
         )
         vs = _make_vs(mock_collection=mc)
-        vs.get_chunks_by_source = lambda s: [
+        vs.get_chunks_by_source = lambda s, **kwargs: [
             DocumentChunk(text="doc", source=s, chunk_index=-1, page=1)
         ]
         ctx, sources, chunks = vs.get_context(
@@ -604,7 +605,7 @@ class TestNeighborExpansion:
             [0.05],
         )
         vs = _make_vs(mock_collection=mc)
-        vs.get_chunks_by_source = lambda s: [
+        vs.get_chunks_by_source = lambda s, **kwargs: [
             DocumentChunk(text=f"c{i}", source=s, chunk_index=i, page=1)
             for i in range(5)
         ]
@@ -627,7 +628,7 @@ class TestNeighborExpansion:
         )
         vs = _make_vs(mock_collection=mc)
         # Return same chunk twice (simulates window overlap)
-        vs.get_chunks_by_source = lambda s: [
+        vs.get_chunks_by_source = lambda s, **kwargs: [
             DocumentChunk(text="same", source=s, chunk_index=0, page=1),
             DocumentChunk(text="same", source=s, chunk_index=0, page=1),  # duplicate
         ]

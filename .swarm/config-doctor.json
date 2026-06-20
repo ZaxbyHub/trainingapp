@@ -1,12 +1,12 @@
 {
-  "timestamp": 1776195223351,
+  "timestamp": 1779978591553,
   "summary": {
-    "info": 10,
+    "info": 5,
     "warn": 0,
     "error": 1
   },
   "hasAutoFixableIssues": false,
-  "configSource": "C:\\Users\\zaxby\\.config\\opencode\\opencode-swarm.json",
+  "configSource": "E:\\OpenCode\\doc_qa_app\\.opencode\\opencode-swarm.json",
   "findings": [
     {
       "id": "unknown-swarm-agent",
@@ -14,15 +14,6 @@
       "description": "Agent \"explore\" in swarm \"mega\" may not be recognized.",
       "severity": "info",
       "path": "swarms.mega.agents.explore",
-      "autoFixable": false,
-      "proposedFix": null
-    },
-    {
-      "id": "unknown-swarm-agent",
-      "title": "Unknown agent in swarm",
-      "description": "Agent \"test_engineer\" in swarm \"mega\" may not be recognized.",
-      "severity": "info",
-      "path": "swarms.mega.agents.test_engineer",
       "autoFixable": false,
       "proposedFix": null
     },
@@ -38,27 +29,9 @@
     {
       "id": "unknown-swarm-agent",
       "title": "Unknown agent in swarm",
-      "description": "Agent \"test_engineer\" in swarm \"paid\" may not be recognized.",
-      "severity": "info",
-      "path": "swarms.paid.agents.test_engineer",
-      "autoFixable": false,
-      "proposedFix": null
-    },
-    {
-      "id": "unknown-swarm-agent",
-      "title": "Unknown agent in swarm",
       "description": "Agent \"explore\" in swarm \"lowtier\" may not be recognized.",
       "severity": "info",
       "path": "swarms.lowtier.agents.explore",
-      "autoFixable": false,
-      "proposedFix": null
-    },
-    {
-      "id": "unknown-swarm-agent",
-      "title": "Unknown agent in swarm",
-      "description": "Agent \"test_engineer\" in swarm \"lowtier\" may not be recognized.",
-      "severity": "info",
-      "path": "swarms.lowtier.agents.test_engineer",
       "autoFixable": false,
       "proposedFix": null
     },
@@ -74,27 +47,9 @@
     {
       "id": "unknown-swarm-agent",
       "title": "Unknown agent in swarm",
-      "description": "Agent \"test_engineer\" in swarm \"modelrelay\" may not be recognized.",
-      "severity": "info",
-      "path": "swarms.modelrelay.agents.test_engineer",
-      "autoFixable": false,
-      "proposedFix": null
-    },
-    {
-      "id": "unknown-swarm-agent",
-      "title": "Unknown agent in swarm",
       "description": "Agent \"explore\" in swarm \"local\" may not be recognized.",
       "severity": "info",
       "path": "swarms.local.agents.explore",
-      "autoFixable": false,
-      "proposedFix": null
-    },
-    {
-      "id": "unknown-swarm-agent",
-      "title": "Unknown agent in swarm",
-      "description": "Agent \"test_engineer\" in swarm \"local\" may not be recognized.",
-      "severity": "info",
-      "path": "swarms.local.agents.test_engineer",
       "autoFixable": false,
       "proposedFix": null
     },

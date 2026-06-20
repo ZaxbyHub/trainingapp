@@ -117,15 +117,16 @@ class TestMainThreadDestroysWidgets:
         """
         import app_gui
         source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
+        finalize_source = inspect.getsource(app_gui.DocumentQAApp._finalize_streaming_message)
 
         # Must handle stream_destroy message
         assert 'msg[0] == "stream_destroy"' in source or '"stream_destroy"' in source, (
             "Message processor must handle 'stream_destroy' message"
         )
 
-        # Must call .destroy() on the widget
-        assert '.destroy()' in source, (
-            "Main thread must call .destroy() on _streaming_message_frame"
+        # Must call .destroy() on the widget (via _finalize_streaming_message)
+        assert '.destroy()' in finalize_source, (
+            "Main thread must call .destroy() on _streaming_message_frame (via _finalize_streaming_message)"
         )
 
     def test_stream_destroy_checks_winfo_exists_before_destroy(self):
@@ -134,33 +135,13 @@ class TestMainThreadDestroysWidgets:
         calling destroy on an already-destroyed widget.
         """
         import app_gui
-        source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
+        # .destroy() and winfo_exists() are in _finalize_streaming_message (called by handler)
+        import app_gui
+        finalize_source = inspect.getsource(app_gui.DocumentQAApp._finalize_streaming_message)
+        has_destroy = '.destroy()' in finalize_source
+        has_winfo_check = 'winfo_exists()' in finalize_source
 
-        # Dedent for parsing
-        source_dedented = textwrap.dedent(source)
-        lines = source_dedented.split('\n')
-
-        # Find the stream_destroy handler
-        in_stream_destroy = False
-        has_destroy = False
-        has_winfo_check = False
-
-        for i, line in enumerate(lines):
-            if 'stream_destroy' in line and 'msg[0]' in line:
-                in_stream_destroy = True
-                # Don't break on this line - it's the start of the handler
-                continue
-            if in_stream_destroy:
-                if '.destroy()' in line:
-                    has_destroy = True
-                if 'winfo_exists()' in line:
-                    has_winfo_check = True
-                # Exit when we hit another msg[0] handler (after the body)
-                # The handler body is typically 5-10 lines
-                if 'elif msg[0]' in line and i > 75:  # stream_destroy handler ends around line 78
-                    break
-
-        assert has_destroy, "stream_destroy handler must call .destroy()"
+        assert has_destroy, "_finalize_streaming_message must call .destroy()"
         assert has_winfo_check, (
             "Must check winfo_exists() before .destroy() to handle race conditions"
         )
@@ -184,12 +165,13 @@ class TestStreamingRefsClearedAfterDestroy:
         import app_gui
         source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
 
-        # After .destroy(), refs should be set to None
-        # This is handled in the message processor, not in _ask_question worker
-        assert '_streaming_message_ref = None' in source, (
+        # After .destroy(), refs should be set to None (in _finalize_streaming_message)
+        import app_gui
+        finalize_source = inspect.getsource(app_gui.DocumentQAApp._finalize_streaming_message)
+        assert '_streaming_message_ref = None' in finalize_source, (
             "_streaming_message_ref must be set to None after destroy"
         )
-        assert '_streaming_message_frame = None' in source, (
+        assert '_streaming_message_frame = None' in finalize_source, (
             "_streaming_message_frame must be set to None after destroy"
         )
 
@@ -203,11 +185,12 @@ class TestStreamingRefsClearedAfterDestroy:
         """
         import app_gui
         ask_source = inspect.getsource(app_gui.DocumentQAApp._ask_question)
-        processor_source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
+        # Refs are cleared in _finalize_streaming_message (called by message processor)
+        finalize_source = inspect.getsource(app_gui.DocumentQAApp._finalize_streaming_message)
 
-        # Refs are cleared in message processor (correct)
-        assert '_streaming_message_ref = None' in processor_source, (
-            "_streaming_message_ref = None must be in message processor"
+        # Refs are cleared in finalize (correct)
+        assert '_streaming_message_ref = None' in finalize_source, (
+            "_streaming_message_ref = None must be in _finalize_streaming_message"
         )
 
         # Note: _ask_question should NOT clear refs directly before queuing
@@ -225,7 +208,7 @@ class TestCancelButtonWiring:
     def test_cancel_button_command_is_cancel_operation(self):
         """Cancel button command must be _cancel_operation."""
         import app_gui
-        source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
+        source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
 
         assert "command=self._cancel_operation" in source, (
             "cancel_button command must be self._cancel_operation"
@@ -344,13 +327,14 @@ class TestCancellationThreadSafetyIntegration:
             "Worker must queue stream_destroy message (not call .destroy() directly)"
         )
 
-        # Step 4: Message processor handles stream_destroy
+        # Step 4: Message processor handles stream_destroy (via _finalize_streaming_message)
         processor_source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
+        finalize_source = inspect.getsource(app_gui.DocumentQAApp._finalize_streaming_message)
         assert 'msg[0] == "stream_destroy"' in processor_source, (
             "Message processor must handle stream_destroy message"
         )
-        assert ".destroy()" in processor_source, (
-            "Main thread must call .destroy() in stream_destroy handler"
+        assert ".destroy()" in finalize_source, (
+            "_finalize_streaming_message must call .destroy()"
         )
 
     def test_no_direct_widget_destruction_from_worker(self):

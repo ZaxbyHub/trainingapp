@@ -43,8 +43,6 @@ class TestQueryTransformerLazySingleton:
 
                 # _query_transformer should be None at init (lazy)
                 assert engine._query_transformer is None
-                # _inference_config should also be None at init
-                assert engine._inference_config is None
 
     def test_query_transformer_created_once_on_first_query(self, tmp_path):
         """Test 1: QueryTransformer instance created only once on first query call."""
@@ -60,11 +58,9 @@ class TestQueryTransformerLazySingleton:
                     with patch("query_transformer.QueryTransformer") as mock_qt_cls:
                         # Setup mocks
                         mock_vector_store_instance = MagicMock()
-                        mock_vector_store_instance.get_context.return_value = (
-                            "context text",
-                            ["source.txt"],
-                            [],
-                        )
+                        from vector_store import DocumentChunk
+                        fake_chunks = [DocumentChunk(text="context text", source="source.txt", chunk_index=0, page=1)]
+                        mock_vector_store_instance.get_context.return_value = ("context text", ["source.txt"], fake_chunks)
                         mock_vector_store_instance.get_stats.return_value = {
                             "document_count": 1,
                             "chunk_count": 1,
@@ -77,7 +73,6 @@ class TestQueryTransformerLazySingleton:
 
                         mock_llm_instance = MagicMock()
                         mock_llm_instance.answer_question.return_value = "Test answer"
-                        mock_llm_instance.generate.return_value = "transformed query"
                         mock_llm_cls.return_value = mock_llm_instance
 
                         mock_qt_cls.return_value = mock_transformer_instance
@@ -111,11 +106,9 @@ class TestQueryTransformerLazySingleton:
                     with patch("query_transformer.QueryTransformer") as mock_qt_cls:
                         # Setup mocks
                         mock_vector_store_instance = MagicMock()
-                        mock_vector_store_instance.get_context.return_value = (
-                            "context text",
-                            ["source.txt"],
-                            [],
-                        )
+                        from vector_store import DocumentChunk
+                        fake_chunks = [DocumentChunk(text="context text", source="source.txt", chunk_index=0, page=1)]
+                        mock_vector_store_instance.get_context.return_value = ("context text", ["source.txt"], fake_chunks)
                         mock_vector_store_instance.get_stats.return_value = {
                             "document_count": 1,
                             "chunk_count": 1,
@@ -143,14 +136,14 @@ class TestQueryTransformerLazySingleton:
                             gguf_path="/fake/path/model.gguf"
                         )
 
-                        # Before query - InferenceConfig not created
-                        assert engine._inference_config is None
-
-                        # Call query
+                        # Before query - InferenceConfig not cached as instance attribute
+                        # InferenceConfig is constructed inline in query(), not stored on self
+                        # Call query to verify it completes without error
                         engine.query("What is this about?")
 
-                        # After query - InferenceConfig should be created (in _ensure_query_transformer)
-                        assert engine._inference_config is not None
+                        # After query - verify QueryTransformer singleton works
+                        assert engine._query_transformer is not None
+                        mock_qt_cls.assert_called_once()
 
     def test_query_transformer_stays_none_when_disabled(self, tmp_path):
         """Test 3: If query_transformation_enabled=False, _query_transformer stays None."""
@@ -221,15 +214,14 @@ class TestQueryTransformerRapidConsecutive:
                 with patch("rag_engine.SmartLLM") as mock_llm_cls:
                     with patch("query_transformer.QueryTransformer", side_effect=counting_init) as mock_qt_cls:
                         mock_vector_store_instance = MagicMock()
-                        mock_vector_store_instance.get_context.return_value = (
-                            "context",
-                            ["src.txt"],
-                            [],
-                        )
+                        # Patch chunk model locally to avoid circular import
+                        from vector_store import DocumentChunk
+                        fake_chunks = [DocumentChunk(text="context text", source="source.txt", chunk_index=0, page=1)]
+                        mock_vector_store_instance.get_context.return_value = ("context text", ["source.txt"], fake_chunks)
                         mock_vector_store_instance.get_stats.return_value = {
                             "document_count": 1,
                             "chunk_count": 1,
-                            "documents": ["src.txt"],
+                            "documents": ["source.txt"],
                         }
                         mock_vector_store.return_value = mock_vector_store_instance
 
@@ -271,11 +263,9 @@ class TestQueryTransformerGracefulDegradation:
                 with patch("rag_engine.SmartLLM") as mock_llm_cls:
                     with patch("query_transformer.QueryTransformer", side_effect=Exception("QT init failed")) as mock_qt_cls:
                         mock_vector_store_instance = MagicMock()
-                        mock_vector_store_instance.get_context.return_value = (
-                            "context text",
-                            ["source.txt"],
-                            [],
-                        )
+                        from vector_store import DocumentChunk
+                        fake_chunks = [DocumentChunk(text="context text", source="source.txt", chunk_index=0, page=1)]
+                        mock_vector_store_instance.get_context.return_value = ("context text", ["source.txt"], fake_chunks)
                         mock_vector_store_instance.get_stats.return_value = {
                             "document_count": 1,
                             "chunk_count": 1,
@@ -316,11 +306,9 @@ class TestQueryTransformerGracefulDegradation:
                 with patch("rag_engine.SmartLLM") as mock_llm_cls:
                     with patch("query_transformer.QueryTransformer", side_effect=RuntimeError("QT failed")):
                         mock_vector_store_instance = MagicMock()
-                        mock_vector_store_instance.get_context.return_value = (
-                            "context text",
-                            ["source.txt"],
-                            [],
-                        )
+                        from vector_store import DocumentChunk
+                        fake_chunks = [DocumentChunk(text="context text", source="source.txt", chunk_index=0, page=1)]
+                        mock_vector_store_instance.get_context.return_value = ("context text", ["source.txt"], fake_chunks)
                         mock_vector_store_instance.get_stats.return_value = {
                             "document_count": 1,
                             "chunk_count": 1,

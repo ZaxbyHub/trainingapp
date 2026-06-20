@@ -3,6 +3,125 @@
 ## [Unreleased]
 
 ### Added
+
+- **End-to-end integration wiring (Phase 8)**: Connected `ChatPage.tsx` to `RAGOrchestrator` for browser-local mode and SSE streaming (`SSEStreamConsumer`) for API mode
+- **DocumentsPage search wiring (Phase 8)**: Connected `DocumentsPage.tsx` to search indexes (vector-index, keyword-index) for document retrieval
+- **Service initialization infrastructure (Phase 8)**: New `useServiceInitialization.ts` hook with sequential service init, cleanup on unmount, and loading overlay in `App.tsx`
+- **edgevec WASM production fix (Phase 8)**: Added Vite plugin stub for edgevec WASM snippet in production builds
+
+### Fixed
+
+- **EdgeVec API contract (Phase 8)**: Fixed `search()` method signature in `vector-index.ts` to return `Promise<SearchResult[]>` instead of incorrect type
+- **pdfjs import paths (Phase 8)**: Fixed `GlobalWorkerOptions.workerSrc` initialization in `pdf-extractor.ts` for production build compatibility
+- **PasswordException handling (Phase 8)**: Added `PasswordException` catch in `pdf-extractor.ts` with user-friendly error and PDF password removal guidance
+- **SSE abort controller (Phase 8)**: Fixed `AbortController` not being called on error in `SSEStreamConsumer` during API mode streaming
+- **WebLLMService disposal (Phase 8)**: Added proper `_engine = null` disposal in `WebLLMService.terminate()` to prevent memory leaks
+- **TokenStreamManager dead code (Phase 8)**: Removed unused stub code from `TokenStreamManager.ts`
+- **Unused variable cleanup (Phase 8)**: Fixed unused `prefetchStatus` variable in `SettingsPage.tsx`
+
+### Changed
+
+- **Dual-mode streaming architecture (Phase 8)**: `ChatPage` now routes to `RAGOrchestrator` (browser-local) or `SSEStreamConsumer` (API) based on inference mode
+
+### Added
+
+- **Settings page (Phase 7)**: Full-featured settings UI with 6 sections:
+  - `SettingsPage.tsx`: Inference mode toggle (browser-local/API), server configuration with connection test, model selection with cache status and download progress, appearance/theme selector (light/dark/system), storage management with memory budget/pressure display and two-click cache clear, and about section with version info
+  - IndexedDB persistence via `openSettingsDatabase()` / `loadSettings()` / `saveSettings()` for theme, preferredModel, and serverUrl preferences
+  - Connection test button with 5s timeout, success/error status badges, and real-time serverUrl sync
+
+- **InferenceModeProvider at root (Phase 7)**: Moved `InferenceModeProvider` from `ChatPage.tsx` to `App.tsx` root level, enabling shared inference mode state across Chat, Documents, and Settings pages
+
+- **Cross-browser compatibility detection (Phase 7)**: `browser-compat.ts` provides:
+  - `detectBrowser()`: User-agent parsing for Chrome, Edge, Firefox, Safari
+  - `checkFeatures()`: WebGPU, OPFS, IndexedDB, SharedArrayBuffer, WASM, Worker detection
+  - `getCompatMessage()`: Compatibility guidance with level (full/degraded/unsupported) and upgrade recommendations
+  - `detectBrowserInfo()`: Combined browser and feature detection with support determination
+  - Chrome/Edge 113+ = full support; Firefox = degraded (experimental WebGPU); Safari = degraded (partial WebGPU)
+
+- **Reusable UI components (Phase 7)**:
+  - `ErrorBoundary.tsx`: Class-based error boundary with `getDerivedStateFromError`, componentDidCatch logging, retry functionality, and accessible fallback UI with danger icon
+  - `LoadingSkeleton.tsx`: Shimmer-animated skeleton placeholders with variants (text, card, avatar, button), configurable width/height/count, ARIA status attributes
+  - `EmptyState.tsx`: Contextual empty state display with 4 variants (no-documents, no-results, no-chat-history, generic), inline SVG icons, and optional action button
+
+- **Browser-side LLM inference via WebLLM (Phase 6)**: Complete WebGPU-based LLM inference in the browser using `@mlc-ai/web-llm`:
+  - `web-llm-service.ts`: Singleton service using CreateMLCEngine API for SmolLM3-3B-Q4_K_M (~1.9GB) with streaming support, progress callbacks, and OPFS caching; WebGPU-only backend with fast-fail to server API mode
+  - `model-download.ts`: Model download manager with progress tracking, speed/ETA calculation, cancellation support, and storage quota error handling
+  - `ModelDownloadProgress.tsx`: Accessible progress bar component with ARIA attributes, speed display, ETA countdown, error banner for quota exceeded, and cancel button
+  - `model-readiness.ts`: Pre-flight readiness gate with WebGPU availability check, memory sufficiency check (2GB minimum for SmolLM3-3B-Q4_K_M), and OPFS cache status check; returns detailed failures and recommendations
+  - `rag-orchestrator.ts`: Full RAG pipeline orchestrator connecting embedding→vector search→keyword search→RRF fusion→optional reranking→LLM generation; yields typed RAGEvent stream for UI progress tracking
+  - `webgpu-watchdog.ts`: WebGPU context loss detection and recovery watchdog monitoring GPUDevice.lost promise and event; includes createRecoveryHandler for automatic service re-initialization after context loss
+  - `llm.ts`: Simplified `LLMInferenceMode` type now exclusively `'webgpu'` (WASM backend removed — web-llm has no WASM support)
+  - Dependencies: `@mlc-ai/web-llm` ^0.2.83
+
+- **Web UI search infrastructure (Phase 5)**: Complete browser-side search pipeline with hybrid retrieval:
+  - `embedding-service.ts`: Transformers.js embedding service using `bge-small-en-v1.5` ONNX model with OPFS caching
+  - `memory-aware.ts`: Memory-aware model selection with device memory detection and tier-based configuration (low/medium/high memory tiers)
+  - `vector-index.ts`: HNSW vector index using EdgeVec (Rust/WASM) with native IndexedDB persistence
+  - `keyword-index.ts`: FlexSearch keyword index with resolution-based scoring for BM25-style matching
+  - `rrf-fusion.ts`: Reciprocal Rank Fusion algorithm for hybrid semantic + keyword retrieval
+  - `reranker.ts`: Cross-encoder reranker using `ms-marco-MiniLM-L-6-v2` with memory-aware conditional activation
+  - `embedding.ts`: TypeScript types for `EmbeddingDocument`, `EmbeddingResult`
+  - `search.ts`: TypeScript types for `SearchResult`, `HybridSearchResult`
+  - Dependencies: `@huggingface/transformers` ^3.0.0, `edgevec` ^0.6.0, `flexsearch` ^0.8.0
+  - Vite config: Added `optimizeDeps` for WASM modules, COOP/COEP headers for SharedArrayBuffer
+
+- **Browser-side document extraction (Phase 4)**: Full document processing pipeline in the browser with no server uploads:
+  - `pdf-extractor.ts`: PDF text extraction using pdfjs-dist ^4.4.168
+  - `docx-extractor.ts`: DOCX text extraction using mammoth ^1.8.0
+  - `xlsx-extractor.ts`: XLSX text extraction using xlsx ^0.18.5
+  - `pptx-extractor.ts`: PPTX text extraction using jszip ^3.10.1 for ZIP/xml parsing
+  - `txt-extractor.ts`: TXT/MD text extraction via native text processing
+  - `extractor-factory.ts`: MIME-type based extractor selection
+  - `text-chunker.ts`: Semantic chunking with paragraph/sentence boundary awareness, configurable overlap, page mapping, and SHA256 content IDs (faithful Python port)
+
+- **IndexedDB document storage (Phase 4)**: Browser-local persistence via `document-store.ts`:
+  - `loadDocuments()`: Retrieve all stored documents with metadata
+  - `saveDocument()`: Store document with extracted chunks
+  - `deleteDocument()`: Remove document by ID
+  - `DocumentChunk` interface with SHA256 IDs for deduplication
+
+- **Documents page (Phase 4)**: Full-featured `/documents` page in web UI:
+  - `DocumentsPage.tsx`: Main documents management page
+  - `DropZone.tsx`: Drag-and-drop file upload with visual feedback and progress indication
+  - `DocumentList.tsx`: Paginated document list with name, type, size, status, and date display
+  - Complete file processing pipeline from upload to IndexedDB storage
+
+- **SSE streaming endpoint** (`POST /ask/stream`): Real-time token streaming using `sse-starlette` with `asyncio.Queue` for thread-safe token delivery; callback-based architecture feeds tokens from background thread to async queue
+
+- **Batch file upload** (`POST /ingest/batch`): Upload up to 20 files per request with per-file error isolation; each file validated individually (size, extension, filename sanitization) and processed sequentially with detailed per-file results
+
+- **Settings persistence endpoints** (`GET/PUT /settings`): Full CRUD for RAG configuration including chunk_size, chunk_overlap, n_results, min_similarity, temperature, max_tokens, hybrid_search, reranking_enabled, context_truncation, retrieval_window, initial_retrieval_top_k, rerank_top_k; cross-field validation ensures `chunk_overlap < chunk_size`
+
+- **TypeScript API client** (`web_ui/src/lib/api/`): Typed interfaces matching FastAPI request/response shapes (snake_case), `ApiClient` class with methods for all endpoints, `SSEStreamConsumer` for POST-based SSE using fetch+ReadableStream, auth interceptor with localStorage token storage and Safari private mode fallback
+
+- **Browser ML feasibility spike** (`/ml-spike`): Diagnostic page validating Transformers.js (feature-extraction pipeline), EdgeVec (HNSW vector search), and FlexSearch (full-text indexing) on target hardware; shows pass/fail/skip status, duration, and memory delta per library
+
+- **21 backend tests** (`test_api_endpoints.py`): Comprehensive unit tests for SSE streaming, batch upload, and settings endpoints with mock engine and auth bypass fixture
+
+- **HTML5 Web UI (Phase 1)**: New `web_ui/` directory with Vite 6 + React 18 + TypeScript 5 project scaffold
+  - Design token system translating Python theme.py (ColorTokens, TypeScale, Spacing) to CSS custom properties
+  - React ThemeProvider with dark/light mode toggle, system preference detection, localStorage persistence
+  - Application shell: navigation rail (Chat/Documents/Settings pages), responsive flexbox layout
+  - Toast notification system with success/error/info variants and entrance/exit animations
+  - Keyboard shortcuts hook (Ctrl+Enter, Ctrl+L, Ctrl+,) with input/textarea focus guard
+  - vitest + @testing-library/react testing framework configured
+
+- **Chat UI (Phase 3)**: Complete streaming chat interface with new components:
+  - `ChatPage.tsx`: Primary chat page with `TokenStreamManager`-powered streaming, message state management, send/cancel/clear operations
+  - `ChatMessageBubble.tsx`: Role-based bubbles (user/assistant/system) with relative timestamps, hover-to-copy, markdown rendering, source citations, and streaming cursor
+  - `ChatMessageList.tsx`: Scrollable message container with auto-scroll on new messages
+  - `ChatInput.tsx`: Multi-line input with Ctrl+Enter send, Escape cancel, disabled state during loading
+  - `MarkdownRenderer.tsx`: Zero-dependency inline markdown parser (bold, italic, code, lists, links with URL validation); fenced code blocks rendered as `<pre>`
+  - `SourceCitation.tsx`: Expandable citation pills with filename truncation, full-path reveal on click, copy-to-clipboard
+  - `InferenceModeToggle.tsx`: Status dot (green/yellow/red) and mode button for browser-local vs API mode
+  - `StreamingIndicator.tsx`: Bouncing dots animation (3 dots cycling at 200ms intervals)
+  - `TokenStreamManager.ts`: RAF-batched token delivery with unified callbacks for SSE/WebLLM, cancellation support, memory-safe cleanup
+  - `InferenceModeContext.tsx`: Dual-mode React context with localStorage persistence (`inference-mode` key) and server connectivity checking against `/auth/status`
+  - `chat.ts`: Shared `ChatMessage`, `MessageRole`, `ChatState` TypeScript types
+  - `@keyframes blink` in `tokens.css`: Streaming cursor animation (step-end, 1s period)
+  - Model loading overlay: Blocking modal with progress bar when browser-local model is initializing
+
 - **Thread-safe RAG engine**: Lazy LLM initialization with cancellation support, asyncio.to_thread wrapping for all LLM calls, and thread-safe query transformer singleton with retry suppression via _query_transformer_failed sentinel (Phase 5)
 
 - **Streaming message persistence**: stream_end handler now calls `_add_message` before destroying frame; `_streaming_finalized` guard prevents double-finalization; `_finalize_streaming_message()` helper extracted (Task 1.1)

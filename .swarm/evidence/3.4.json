@@ -1,19 +1,43 @@
 {
   "taskId": "3.4",
   "required_gates": [
+    "critic",
+    "docs",
+    "explorer",
     "reviewer",
+    "sme",
     "test_engineer"
   ],
   "gates": {
+    "reviewer": {
+      "sessionId": "ses_199805fcbffe6IXnVDgBLZrlMv",
+      "timestamp": "2026-05-27T16:48:24.625Z",
+      "agent": "reviewer"
+    },
     "test_engineer": {
-      "sessionId": "ses_276b927aeffe1Jx8ulxDYSUpY4",
-      "timestamp": "2026-04-14T21:21:55.014Z",
+      "sessionId": "ses_199805fcbffe6IXnVDgBLZrlMv",
+      "timestamp": "2026-05-27T16:52:04.034Z",
       "agent": "test_engineer"
     },
-    "reviewer": {
-      "sessionId": "ses_276b927aeffe1Jx8ulxDYSUpY4",
-      "timestamp": "2026-04-14T21:16:50.061Z",
-      "agent": "reviewer"
+    "critic": {
+      "sessionId": "ses_199805fcbffe6IXnVDgBLZrlMv",
+      "timestamp": "2026-05-27T16:43:16.470Z",
+      "agent": "critic"
+    },
+    "sme": {
+      "sessionId": "ses_199805fcbffe6IXnVDgBLZrlMv",
+      "timestamp": "2026-05-27T16:49:13.799Z",
+      "agent": "sme"
+    },
+    "explorer": {
+      "sessionId": "ses_199805fcbffe6IXnVDgBLZrlMv",
+      "timestamp": "2026-05-27T16:53:22.117Z",
+      "agent": "explorer"
+    },
+    "docs": {
+      "sessionId": "ses_199805fcbffe6IXnVDgBLZrlMv",
+      "timestamp": "2026-05-27T16:56:30.871Z",
+      "agent": "docs"
     }
   }
 }
