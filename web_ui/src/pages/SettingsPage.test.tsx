@@ -105,12 +105,16 @@ describe('SettingsPage', () => {
     // Setup default mock returns
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
       isServerConnected: false,
       isModelReady: false,
       modelLoadingProgress: 0,
       modeError: null,
       serverUrl: '',
       setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
       setServerUrl: vi.fn(),
       checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
       setModelReady: vi.fn(),
@@ -147,6 +151,46 @@ describe('SettingsPage', () => {
     // Don't restoreAllMocks - it clears mock implementations
   });
 
+  test('renders the browser-engine selector and hardware-capability panel (Phase 3)', async () => {
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Browser Engine')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Hardware Capability')).toBeInTheDocument();
+    // Both engine options present and the persisted choice (wllama) is selected.
+    const wllamaRadio = screen.getByRole('radio', { name: /wllama \(cpu/i });
+    const webllmRadio = screen.getByRole('radio', { name: /webllm \(webgpu/i });
+    expect(wllamaRadio).toBeChecked();
+    expect(webllmRadio).not.toBeChecked();
+  });
+
+  test('selecting WebLLM calls setBrowserEngine', async () => {
+    const setBrowserEngine = vi.fn();
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isServerConnected: false,
+      isModelReady: false,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine,
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    });
+
+    render(<SettingsPage />);
+    const webllmRadio = await screen.findByRole('radio', { name: /webllm \(webgpu/i });
+    fireEvent.click(webllmRadio);
+    expect(setBrowserEngine).toHaveBeenCalledWith('webllm');
+  });
+
   test('Renders all 6 sections', async () => {
     render(<SettingsPage />);
 
@@ -164,12 +208,16 @@ describe('SettingsPage', () => {
     const setMode = vi.fn();
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
       isServerConnected: false,
       isModelReady: false,
       modelLoadingProgress: 0,
       modeError: null,
       serverUrl: '',
       setMode,
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
       setServerUrl: vi.fn(),
       checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
       setModelReady: vi.fn(),
@@ -197,12 +245,16 @@ describe('SettingsPage', () => {
     const setServerUrl = vi.fn();
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'api',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
       isServerConnected: false,
       isModelReady: false,
       modelLoadingProgress: 0,
       modeError: null,
       serverUrl: '',
       setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
       setServerUrl,
       checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
       setModelReady: vi.fn(),
@@ -229,12 +281,16 @@ describe('SettingsPage', () => {
 
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'api',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
       isServerConnected: false,
       isModelReady: false,
       modelLoadingProgress: 0,
       modeError: null,
       serverUrl: 'http://localhost:8080',
       setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
       setServerUrl: vi.fn(),
       checkServerConnectivity,
       setModelReady: vi.fn(),
@@ -388,12 +444,16 @@ describe('SettingsPage', () => {
 
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'api',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
       isServerConnected: false,
       isModelReady: false,
       modelLoadingProgress: 0,
       modeError: null,
       serverUrl: 'http://localhost:8080',
       setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
       setServerUrl: vi.fn(),
       checkServerConnectivity,
       setModelReady: vi.fn(),

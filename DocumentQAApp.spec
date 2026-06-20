@@ -1,7 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_all
 
 datas = [('models', 'bundled_models')]
+# Bundle the self-contained HTML5 web archive if built (web_ui/dist).
+if os.path.isdir(os.path.join('web_ui', 'dist')):
+    datas += [(os.path.join('web_ui', 'dist'), 'web_ui_dist')]
 binaries = []
 hiddenimports = ['transformers', 'transformers.agents', 'transformers.agents.prompts']
 tmp_ret = collect_all('customtkinter')

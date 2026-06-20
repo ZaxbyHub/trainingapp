@@ -120,7 +120,7 @@ describe('RerankerService', () => {
 
       expect(pipeline).toHaveBeenCalledWith(
         'text-classification',
-        'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        'reranker/ms-marco-MiniLM-L-6-v2', // local offline path (was 'cross-encoder/ms-marco-MiniLM-L-6-v2')
         expect.objectContaining({
           dtype: 'fp32',
           device: 'wasm',
@@ -212,7 +212,7 @@ describe('RerankerService', () => {
     test('uses text-classification pipeline type', () => {
       expect(pipelineMock).toHaveBeenCalledWith(
         'text-classification',
-        'cross-encoder/ms-marco-MiniLM-L-6-v2',
+        'reranker/ms-marco-MiniLM-L-6-v2', // local offline path (was 'cross-encoder/ms-marco-MiniLM-L-6-v2')
         expect.any(Object)
       );
     });

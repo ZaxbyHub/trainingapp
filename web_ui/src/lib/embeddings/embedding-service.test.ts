@@ -17,11 +17,14 @@ vi.mock('@huggingface/transformers', () => {
     pipeline: vi.fn(() => Promise.resolve(mockPipelineCallable)),
     env: {
       allowLocalModels: false,
+      allowRemoteModels: true,
+      localModelPath: '',
       useBrowserCache: true,
       allowBrowserBlobStorage: true,
       backends: {
         onnx: {
           wasm: {
+            wasmPaths: '',
             numThreads: navigator.hardwareConcurrency
               ? Math.min(navigator.hardwareConcurrency, 4)
               : 2,
@@ -105,6 +108,23 @@ describe('EmbeddingService', () => {
       });
     });
   };
+
+  describe('offline configuration (Phase 1)', () => {
+    it('configures Transformers.js for local-only, no remote downloads', async () => {
+      // Constructing the singleton runs configureEnv().
+      EmbeddingService.getInstance();
+      const { env } = await import('@huggingface/transformers');
+
+      // The core offline guarantee: never fetch from a CDN/HF at runtime.
+      expect(env.allowRemoteModels).toBe(false);
+      expect(env.allowLocalModels).toBe(true);
+      // Models resolved from the locally packaged base (/models); the embedding
+      // pipeline path is `embeddings/bge-small-en-v1.5` relative to this.
+      expect(env.localModelPath).toBe('/models');
+      // ORT WASM served locally, not from jsdelivr.
+      expect(env.backends.onnx.wasm?.wasmPaths).toBe('/models/ort/');
+    });
+  });
 
   describe('singleton pattern', () => {
     it('getInstance returns the same instance', () => {

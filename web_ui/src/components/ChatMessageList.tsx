@@ -10,11 +10,13 @@ import { ChatMessageBubble } from './ChatMessageBubble';
 interface ChatMessageListProps {
   messages: ChatMessage[];
   isStreaming: boolean;
+  /** When provided, the last assistant message shows a Regenerate action. */
+  onRegenerate?: () => void;
 }
 
 const SCROLL_THRESHOLD = 100;
 
-export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({ messages, isStreaming }) => {
+export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({ messages, isStreaming, onRegenerate }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
 
@@ -86,8 +88,19 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({ mes
           </p>
         </div>
       ) : (
-        messages.map((message) => (
-          <ChatMessageBubble key={message.id} message={message} />
+        messages.map((message, idx) => (
+          <ChatMessageBubble
+            key={message.id}
+            message={message}
+            onRegenerate={
+              onRegenerate &&
+              message.role === 'assistant' &&
+              idx === messages.length - 1 &&
+              !message.isStreaming
+                ? onRegenerate
+                : undefined
+            }
+          />
         ))
       )}
     </div>

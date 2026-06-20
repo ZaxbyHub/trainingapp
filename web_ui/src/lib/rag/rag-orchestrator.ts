@@ -18,7 +18,7 @@
  */
 
 import type { SearchResult } from '../../types/search';
-import type { LLMMessage } from '../../types/llm';
+import type { LLMMessage, LLMService } from '../../types/llm';
 import type { EmbeddingVector } from '../../types/embedding';
 
 import { getEmbeddingService, type EmbeddingService } from '../embeddings/embedding-service';
@@ -32,6 +32,12 @@ import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../h
 /**
  * Options for RAG query execution.
  */
+/** A raw image to pass to a multimodal LLM (ArrayBuffer bytes + mime type). */
+export interface RAGImageInput {
+  data: ArrayBuffer;
+  mimeType?: string;
+}
+
 export interface RAGQueryOptions {
   /** Number of top results to retrieve from each index (default: 10) */
   topK?: number;
@@ -45,6 +51,10 @@ export interface RAGQueryOptions {
   maxTokens?: number;
   /** Sampling temperature (higher = more creative) */
   temperature?: number;
+  /** Nucleus sampling probability threshold */
+  topP?: number;
+  /** Images to include with the question (multimodal engines only). */
+  images?: RAGImageInput[];
   /** AbortSignal for cancelling the in-progress query */
   signal?: AbortSignal;
 }
@@ -81,18 +91,20 @@ export class RAGOrchestrator {
   private vectorIndex: VectorIndex;
   private keywordIndex: KeywordIndex;
   private rerankerService: RerankerService;
-  private llmService: WebLLMService;
+  private llmService: LLMService;
 
   /**
    * Create a new RAGOrchestrator with service references.
-   * All services are obtained as singletons via their get* functions.
+   * Retrieval services are singletons; the LLM engine can be injected so callers
+   * (e.g. ChatPage) can select wllama vs WebLLM. Defaults to WebLLM when omitted
+   * for backward compatibility with direct construction.
    */
-  constructor() {
+  constructor(opts?: { llmService?: LLMService }) {
     this.embeddingService = getEmbeddingService();
     this.vectorIndex = getVectorIndex();
     this.keywordIndex = getKeywordIndex();
     this.rerankerService = getRerankerService();
-    this.llmService = WebLLMService.getInstance();
+    this.llmService = opts?.llmService ?? WebLLMService.getInstance();
   }
 
   /**
@@ -112,6 +124,7 @@ export class RAGOrchestrator {
     const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     const maxTokens = options.maxTokens;
     const temperature = options.temperature;
+    const topP = options.topP;
     const signal = options.signal;
 
     // Ensure lazy services are initialized before the pipeline runs (FR-002)
@@ -256,7 +269,7 @@ export class RAGOrchestrator {
 
     // Stage 6: Build context from chunks
     const contextText = this.buildContext(question, contextChunks);
-    const contextMessages = this.buildMessages(systemPrompt, question, contextText);
+    const contextMessages = this.buildMessages(systemPrompt, question, contextText, options.images);
 
     yield {
       type: 'generating',
@@ -266,7 +279,7 @@ export class RAGOrchestrator {
     // Stage 7 & 8: Generate answer with streaming
     try {
       if (streamTokens) {
-        for await (const token of this.llmService.generate(contextMessages, { maxTokens, temperature, signal })) {
+        for await (const token of this.llmService.generate(contextMessages, { maxTokens, temperature, topP, signal })) {
           if (signal?.aborted) {
             throw new DOMException('The operation was aborted.', 'AbortError');
           }
@@ -274,7 +287,7 @@ export class RAGOrchestrator {
           yield { type: 'token', data: token };
         }
       } else {
-        fullAnswer = await this.llmService.generateComplete(contextMessages, { maxTokens, temperature, signal });
+        fullAnswer = await this.llmService.generateComplete(contextMessages, { maxTokens, temperature, topP, signal });
         yield { type: 'token', data: fullAnswer };
       }
     } catch (err) {
@@ -328,13 +341,27 @@ export class RAGOrchestrator {
   /**
    * Build message array for LLM generation with system prompt and context.
    */
-  private buildMessages(systemPrompt: string, question: string, context: string): LLMMessage[] {
+  private buildMessages(
+    systemPrompt: string,
+    question: string,
+    context: string,
+    images?: RAGImageInput[]
+  ): LLMMessage[] {
+    const userText = `Context:\n${context}\n\nQuestion: ${question}`;
+
+    // Text-only: keep the simple string content. With attached images, build a
+    // multimodal content array (text first, then image parts) for the VLM.
+    const userContent: LLMMessage['content'] =
+      images && images.length > 0
+        ? [
+            { type: 'text', text: userText },
+            ...images.map((img) => ({ type: 'image' as const, data: img.data })),
+          ]
+        : userText;
+
     return [
       { role: 'system', content: systemPrompt },
-      {
-        role: 'user',
-        content: `Context:\n${context}\n\nQuestion: ${question}`,
-      },
+      { role: 'user', content: userContent },
     ];
   }
 

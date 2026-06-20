@@ -1,0 +1,8 @@
+# Packaged model WEIGHTS are large binaries and are assembled at packaging time
+# (see ../../scripts/prepare-models.mjs and PACKAGING.md). They must never be
+# committed — same policy as the desktop app's GGUF files.
+*
+# ...but keep this folder and its documentation in git so the layout is discoverable.
+!.gitignore
+!README.md
+!manifest.json

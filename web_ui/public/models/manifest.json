@@ -1,0 +1,39 @@
+{
+  "version": "1",
+  "description": "Declares the model assets that must be packaged into public/models/ for fully-offline operation. Weight binaries are assembled at packaging time (see PACKAGING.md); this file is the committed source of truth for what 'ready' means. Paths are relative to public/models/.",
+  "models": [
+    {
+      "id": "bge-small-en-v1.5",
+      "kind": "embedding",
+      "engine": "transformers.js",
+      "required": [
+        "embeddings/bge-small-en-v1.5/config.json",
+        "embeddings/bge-small-en-v1.5/tokenizer.json",
+        "embeddings/bge-small-en-v1.5/tokenizer_config.json",
+        "embeddings/bge-small-en-v1.5/onnx/model.onnx"
+      ]
+    },
+    {
+      "id": "onnxruntime-web",
+      "kind": "runtime",
+      "engine": "onnxruntime-web",
+      "required": [
+        "ort/ort-wasm-simd-threaded.jsep.wasm",
+        "ort/ort-wasm-simd-threaded.jsep.mjs"
+      ]
+    },
+    {
+      "id": "ms-marco-MiniLM-L-6-v2",
+      "kind": "reranker",
+      "engine": "transformers.js",
+      "optional": true,
+      "required": [],
+      "files": [
+        "reranker/ms-marco-MiniLM-L-6-v2/config.json",
+        "reranker/ms-marco-MiniLM-L-6-v2/tokenizer.json",
+        "reranker/ms-marco-MiniLM-L-6-v2/tokenizer_config.json",
+        "reranker/ms-marco-MiniLM-L-6-v2/onnx/model.onnx"
+      ]
+    }
+  ]
+}

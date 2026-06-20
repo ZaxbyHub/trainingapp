@@ -14,6 +14,8 @@
 
 import { getMemoryBudget } from '../embeddings/memory-aware';
 import { WebLLMService } from './web-llm-service';
+import { LLM_GGUF_URL, LLM_MMPROJ_URL } from '../models/model-manifest';
+import type { BrowserEngine } from '../../types/llm';
 
 /**
  * Memory tier classification based on available RAM.
@@ -85,26 +87,37 @@ function getMemoryTier(availableMB: number): MemoryTier {
 }
 
 /**
- * Checks whether a model artifact is present in OPFS.
+ * Engine-aware "is the model available for use" check.
  *
- * Uses WebLLMService.getModelInfo().cached to determine cache status.
- * If the service hasn't been initialized yet, defaults to false (model not cached).
+ * The two engines have different notions of availability:
+ *   - webllm: the model must be DOWNLOADED into OPFS (WebLLMService cache). Until
+ *     then the user must trigger a download.
+ *   - wllama: there is no separate download step — the GGUF is packaged and loads
+ *     lazily on first use. "Available" therefore means the packaged GGUF is present
+ *     in the build (same-origin), probed without downloading it.
  *
- * @returns true if the model's cache directory exists in OPFS.
+ * @returns true if the model is available for the given engine.
  */
-async function isModelCachedInOPFS(modelId: string): Promise<boolean> {
+async function isModelAvailable(modelId: string, engine: BrowserEngine): Promise<boolean> {
+  if (engine === 'wllama') {
+    try {
+      // wllama loads the packaged GGUF + mmproj projector lazily; "available"
+      // requires BOTH present. The mmproj must be checked too, otherwise the
+      // multimodal (image) path is gated ready while the projector is missing.
+      const [gguf, mmproj] = await Promise.all([
+        fetch(LLM_GGUF_URL, { method: 'HEAD' }),
+        fetch(LLM_MMPROJ_URL, { method: 'HEAD' }),
+      ]);
+      return gguf.ok && mmproj.ok;
+    } catch {
+      return false;
+    }
+  }
+  // webllm: present in OPFS via WebLLMService cache.
   try {
-    const service = WebLLMService.getInstance();
-    const info = service.getModelInfo();
-    // If service not initialized, default to not cached
-    if (!info) {
-      return false;
-    }
-    // WebLLMService is a singleton that tracks only one model at a time.
-    // Verify the cached model matches the requested model.
-    if (info.modelId !== modelId) {
-      return false;
-    }
+    const info = WebLLMService.getInstance().getModelInfo();
+    if (!info) return false;
+    if (info.modelId !== modelId) return false;
     return info.cached;
   } catch {
     return false;
@@ -184,36 +197,52 @@ export class ModelReadinessGate {
    * Returns false if the model is not cached and must be downloaded first.
    *
    * @param modelId The model identifier to check.
+   * @param engine  Which engine's availability semantics to use (default 'webllm').
    */
-  async checkModelCached(modelId: string): Promise<boolean> {
-    return isModelCachedInOPFS(modelId);
+  async checkModelCached(modelId: string, engine: BrowserEngine = 'webllm'): Promise<boolean> {
+    return isModelAvailable(modelId, engine);
   }
 
   /**
-   * Runs all three pre-flight checks and returns a combined ReadinessResult.
+   * Runs the pre-flight checks and returns a combined ReadinessResult.
    *
-   * Hard failures (any of):
-   *   - WebGPU unavailable
+   * Engine-aware: WebGPU is a HARD requirement only for the WebLLM engine. The
+   * wllama engine runs on CPU/WASM, so for `engine === 'wllama'` a missing WebGPU
+   * is NOT a failure (it is reported in checks but does not block readiness).
+   *
+   * Hard failures:
+   *   - WebGPU unavailable        (only when engine === 'webllm')
    *   - Insufficient memory
-   *
-   * Soft warnings (any of):
-   *   - Model not cached (download will be triggered — not a hard failure)
+   * Soft warnings:
+   *   - Model not cached (download/availability — not a hard failure)
    *
    * @param modelId The model to check readiness for.
+   * @param engine  Which browser engine the check is for (default 'webllm' to
+   *                preserve existing callers' behavior).
    */
-  async checkReadiness(modelId: string): Promise<ReadinessResult> {
+  async checkReadiness(
+    modelId: string,
+    engine: BrowserEngine = 'webllm'
+  ): Promise<ReadinessResult> {
     const webgpu = await this.checkWebGPU();
     const memory = this.checkMemory(modelId);
-    const modelCached = await this.checkModelCached(modelId);
+    const modelCached = await this.checkModelCached(modelId, engine);
 
     const failures: string[] = [];
     const recommendations: string[] = [];
 
-    // Hard failure: WebGPU required
-    if (!webgpu) {
+    const webgpuRequired = engine === 'webllm';
+
+    // Hard failure: WebGPU required — only for the WebLLM (WebGPU) engine.
+    if (webgpuRequired && !webgpu) {
       failures.push('WebGPU is not available in this browser.');
       recommendations.push(
-        'Switch to server API mode for LLM inference — browser-mode WebGPU is required.'
+        'Switch to the wllama engine (runs on CPU, no WebGPU) or use server API mode.'
+      );
+    } else if (!webgpuRequired && !webgpu) {
+      // Informational only for wllama — it does not need WebGPU.
+      recommendations.push(
+        'WebGPU is unavailable, but the wllama engine runs on the CPU and does not require it.'
       );
     }
 
@@ -238,7 +267,7 @@ export class ModelReadinessGate {
       );
     }
 
-    const ready = webgpu && memory.sufficient;
+    const ready = (!webgpuRequired || webgpu) && memory.sufficient;
 
     return {
       ready,

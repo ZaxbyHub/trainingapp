@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prepare-models": "node scripts/prepare-models.mjs",
     "build": "tsc -b && vite build",
+    "build:offline": "npm run prepare-models && npm run build && npm run validate-build",
+    "validate-build": "node scripts/validate-build.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -13,6 +16,8 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.0.0",
+    "@wllama/wllama": "^3.5.1",
+    "@wllama/wllama-compat": "^3.5.1",
     "edgevec": "^0.6.0",
     "flexsearch": "^0.8.0",
     "jszip": "^3.10.1",

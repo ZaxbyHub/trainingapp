@@ -3,7 +3,7 @@
  * Displays messages, renders markdown, and supports streaming responses.
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, type CSSProperties } from 'react';
 import type { ChatMessage } from '../types/chat';
 import { ChatMessageList } from '../components/ChatMessageList';
 import { ChatInput } from '../components/ChatInput';
@@ -12,6 +12,12 @@ import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
+import { getLLMService } from '../lib/llm/llm-factory';
+import { ensureReadinessGateChecked } from '../lib/llm/readiness-gate';
+import type { AttachedImage } from '../lib/processing/image-input';
+import { presetOptions } from '../lib/rag/rag-presets';
+import { downloadConversation } from '../lib/export/conversation-export';
+import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 
 function generateId(): string {
@@ -25,19 +31,45 @@ export function ChatPage() {
   return <ChatPageInner />;
 }
 
+const exportButtonStyle: CSSProperties = {
+  backgroundColor: 'transparent',
+  color: 'var(--color-text-muted)',
+  border: '1px solid var(--color-text-muted)',
+  borderRadius: '4px',
+  padding: 'var(--spacing-xs) var(--spacing-sm)',
+  fontSize: 'var(--font-size-caption)',
+  fontFamily: 'var(--font-family)',
+  cursor: 'pointer',
+  transition: 'all 0.15s ease',
+};
+
 function ChatPageInner() {
   const MAX_MESSAGES = 200;
-  const { mode, isModelReady, isServerConnected, modelLoadingProgress, serverUrl } = useInferenceMode();
+  const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl } = useInferenceMode();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Last sent turn (text + raw image bytes) so Regenerate can re-run it.
+  const lastTurnRef = useRef<{ text: string; images?: AttachedImage[] } | null>(null);
 
   const isBrowserMode = mode === 'browser-local';
   const isModelBlocked = isBrowserMode && !isModelReady;
   const isInputDisabled = isLoading || isModelBlocked;
+  // Image upload is supported by the multimodal wllama engine in browser-local mode.
+  const canAttachImages = isBrowserMode && browserEngine === 'wllama' && isModelReady;
+
+  // Evaluate model readiness for the selected engine when entering browser-local
+  // mode or switching engines. This drives `isModelReady` (and the input gate)
+  // engine-awarely — e.g. wllama unblocks on no-WebGPU hardware once its packaged
+  // model is present, without waiting for a (blocked) first query.
+  useEffect(() => {
+    if (mode === 'browser-local') {
+      void ensureReadinessGateChecked(browserEngine);
+    }
+  }, [mode, browserEngine]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -56,43 +88,14 @@ function ChatPageInner() {
     };
   }, []);
 
-  const handleSend = useCallback((text: string) => {
-    // Prevent overlapping streams
-    if (tokenStreamManagerRef.current) return;
-
-    const userMessage: ChatMessage = {
-      id: generateId(),
-      role: 'user',
-      content: text,
-      timestamp: Date.now(),
-    };
-
-    const assistantMessageId = generateId();
-    const assistantMessage: ChatMessage = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      isStreaming: true,
-    };
-
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
-    setMessages((prev) => {
-      if (prev.length > MAX_MESSAGES) {
-        const pruned = prev.slice(prev.length - MAX_MESSAGES);
-        // Prepend a system indicator about hidden messages
-        const indicator: ChatMessage = {
-          id: 'hidden-messages-indicator',
-          role: 'system',
-          content: `Earlier messages have been hidden (max ${MAX_MESSAGES} shown).`,
-          timestamp: Date.now(),
-        };
-        return [indicator, ...pruned];
-      }
-      return prev;
-    });
-    setIsLoading(true);
-
+  // Run a query for an existing assistant placeholder message. Shared by send +
+  // regenerate. `images` carry the raw bytes (not stored on ChatMessage), so
+  // regenerate captures them via lastTurnRef.
+  const runGeneration = useCallback((
+    text: string,
+    images: AttachedImage[] | undefined,
+    assistantMessageId: string
+  ) => {
     // Create TokenStreamManager for this request
     const streamManager = new TokenStreamManager();
     tokenStreamManagerRef.current = streamManager;
@@ -147,14 +150,18 @@ function ChatPageInner() {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
-      const orchestrator = new RAGOrchestrator();
+      const orchestrator = new RAGOrchestrator({ llmService: getLLMService(browserEngine) });
       let fullAnswer = '';
       const startTime = Date.now();
       let sources: string[] = [];
 
       (async () => {
         try {
-          for await (const event of orchestrator.query(text, { signal: abortController.signal })) {
+          for await (const event of orchestrator.query(text, {
+            ...presetOptions(ragPreset),
+            signal: abortController.signal,
+            images: images?.map((img) => ({ data: img.data, mimeType: img.mimeType })),
+          })) {
             if (abortController.signal.aborted) return;
             if (tokenStreamManagerRef.current !== streamManager) return;
 
@@ -185,7 +192,74 @@ function ChatPageInner() {
         }
       })();
     }
-  }, [mode, serverUrl]);
+  }, [mode, serverUrl, browserEngine, ragPreset]);
+
+  const handleSend = useCallback((text: string, attachedImages?: AttachedImage[]) => {
+    // Prevent overlapping streams
+    if (tokenStreamManagerRef.current) return;
+
+    // Capture the turn so Regenerate can re-run it (images carry raw bytes).
+    lastTurnRef.current = { text, images: attachedImages };
+
+    const userMessage: ChatMessage = {
+      id: generateId(),
+      role: 'user',
+      content: text,
+      timestamp: Date.now(),
+      images: attachedImages?.map((img) => ({
+        id: img.id,
+        dataUrl: img.dataUrl,
+        mimeType: img.mimeType,
+        fileName: img.fileName,
+      })),
+    };
+
+    const assistantMessageId = generateId();
+    const assistantMessage: ChatMessage = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      isStreaming: true,
+    };
+
+    setMessages((prev) => {
+      const appended = [...prev, userMessage, assistantMessage];
+      if (appended.length > MAX_MESSAGES) {
+        const pruned = appended.slice(appended.length - MAX_MESSAGES);
+        const indicator: ChatMessage = {
+          id: 'hidden-messages-indicator',
+          role: 'system',
+          content: `Earlier messages have been hidden (max ${MAX_MESSAGES} shown).`,
+          timestamp: Date.now(),
+        };
+        return [indicator, ...pruned];
+      }
+      return appended;
+    });
+    setIsLoading(true);
+    runGeneration(text, attachedImages, assistantMessageId);
+  }, [runGeneration]);
+
+  // Re-run the most recent user turn, replacing the last assistant response.
+  const handleRegenerate = useCallback(() => {
+    if (tokenStreamManagerRef.current) return; // a stream is in flight
+    const last = lastTurnRef.current;
+    if (!last) return;
+
+    const assistantMessageId = generateId();
+    setMessages((prev) =>
+      messagesForRegenerate(prev, {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+      })
+    );
+    setIsLoading(true);
+    runGeneration(last.text, last.images, assistantMessageId);
+  }, [runGeneration]);
 
   const handleCancel = useCallback(() => {
     // Cancel via TokenStreamManager
@@ -221,6 +295,7 @@ function ChatPageInner() {
         clearTimeoutRef.current = null;
       }
       setMessages([]);
+      lastTurnRef.current = null; // no turn to regenerate after clearing
       setClearConfirmState('idle');
     }
   }, [clearConfirmState]);
@@ -282,23 +357,34 @@ function ChatPageInner() {
             </span>
           )}
           {messages.length > 0 && (
-            <button
-              type="button"
-              onClick={handleClearClick}
-              style={{
-                backgroundColor: clearConfirmState === 'confirming' ? '#dc3545' : 'transparent',
-                color: clearConfirmState === 'confirming' ? '#fff' : 'var(--color-text-muted)',
-                border: clearConfirmState === 'confirming' ? 'none' : '1px solid var(--color-text-muted)',
-                borderRadius: '4px',
-                padding: 'var(--spacing-xs) var(--spacing-sm)',
-                fontSize: 'var(--font-size-caption)',
-                fontFamily: 'var(--font-family)',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-              }}
-            >
-              {clearConfirmState === 'confirming' ? 'Confirm Clear?' : 'Clear Chat'}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => downloadConversation(messages, 'markdown')}
+                title="Export conversation as Markdown"
+                aria-label="Export conversation as Markdown"
+                style={exportButtonStyle}
+              >
+                Export
+              </button>
+              <button
+                type="button"
+                onClick={handleClearClick}
+                style={{
+                  backgroundColor: clearConfirmState === 'confirming' ? '#dc3545' : 'transparent',
+                  color: clearConfirmState === 'confirming' ? '#fff' : 'var(--color-text-muted)',
+                  border: clearConfirmState === 'confirming' ? 'none' : '1px solid var(--color-text-muted)',
+                  borderRadius: '4px',
+                  padding: 'var(--spacing-xs) var(--spacing-sm)',
+                  fontSize: 'var(--font-size-caption)',
+                  fontFamily: 'var(--font-family)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                {clearConfirmState === 'confirming' ? 'Confirm Clear?' : 'Clear Chat'}
+              </button>
+            </>
           )}
           <InferenceModeToggle />
         </div>
@@ -375,7 +461,11 @@ function ChatPageInner() {
       )}
 
       {/* Message List */}
-      <ChatMessageList messages={messages} isStreaming={isLoading} />
+      <ChatMessageList
+        messages={messages}
+        isStreaming={isLoading}
+        onRegenerate={!isLoading && lastTurnRef.current ? handleRegenerate : undefined}
+      />
 
       {/* Streaming Indicator */}
       <div
@@ -388,7 +478,13 @@ function ChatPageInner() {
       </div>
 
       {/* Input */}
-      <ChatInput onSend={handleSend} isLoading={isLoading} onCancel={handleCancel} disabled={isInputDisabled} />
+      <ChatInput
+        onSend={handleSend}
+        isLoading={isLoading}
+        onCancel={handleCancel}
+        disabled={isInputDisabled}
+        imageUploadEnabled={canAttachImages}
+      />
     </div>
   );
 }

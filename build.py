@@ -65,7 +65,15 @@ gguf_model_path = r"{model_path}"
 if os.path.exists(gguf_model_path):
     datas += [(gguf_model_path, 'models')]
 '''
-    
+
+    spec_content += '''
+# Bundle the self-contained HTML5 web archive (web_ui/dist) if it has been built
+# (`cd web_ui && npm run build:offline`). The FastAPI server serves it from
+# sys._MEIPASS/web_ui_dist at runtime (see api_server._resolve_web_archive_dir).
+if os.path.isdir(os.path.join('web_ui', 'dist')):
+    datas += [(os.path.join('web_ui', 'dist'), 'web_ui_dist')]
+'''
+
     spec_content += '''
 a = Analysis(
     ['app_gui.py'],

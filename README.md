@@ -2,7 +2,26 @@
 
 A fully offline RAG-based document question answering system optimized for Windows PCs. Features semantic search, hybrid retrieval, and CPU-based LLM inference with GGUF models.
 
-## 🚀 Features
+Two first-class delivery options share the same offline RAG capabilities:
+1. **Desktop app** — Python + PyInstaller + llama.cpp/GGUF (CustomTkinter GUI / FastAPI).
+2. **HTML5 web app** (`web_ui/`) — a fully self-contained, STIG-scannable archive that
+   runs entirely in the browser with **no runtime downloads**.
+
+## 🌐 Offline HTML5 Web App (overhauled)
+
+The browser app is a complete, offline RAG client. See `PACKAGING.md` for the build/bundle steps.
+
+- **Fully offline, packaged models** — embeddings (bge-small ONNX), ONNX Runtime WASM, and the
+  browser LLM are served same-origin from `public/models/`; nothing is fetched from a CDN or the
+  HuggingFace Hub at runtime. A readiness gate reports "models ready vs missing".
+- **Two user-selectable browser engines** — **wllama** (llama.cpp WASM, CPU/SIMD, **no WebGPU**,
+  the default and most robust on i5/Iris Xe) and **WebLLM** (WebGPU, faster when available). A
+  hardware-capability panel detects WebGPU/threads/memory and recommends an engine.
+- **Multimodal** — attach a screenshot in chat and ask about it (wllama + LFM2-VL mmproj), offline.
+- **Chat UX** — streaming with interactive source citations, regenerate, conversation export
+  (Markdown/JSON), and Fast/Balanced/Quality RAG presets.
+- **Self-contained archive** — `npm run build:offline` produces a validated `web_ui/dist/` the
+  desktop FastAPI server (or any root static host) serves with the COOP/COEP headers wllama needs.
 
 ### HTML5 Web UI (Phase 1 — Complete)
 - **Application Shell**: Navigation rail with Chat, Documents, Settings pages and responsive flexbox layout

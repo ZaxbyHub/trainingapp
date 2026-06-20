@@ -307,6 +307,18 @@ describe('ModelReadinessGate', () => {
       expect(result.recommendations.some(r => r.includes('server API mode'))).toBe(true);
     });
 
+    test('wllama engine: WebGPU unavailable is NOT a hard failure', async () => {
+      mockGpu = undefined; // No WebGPU — but wllama runs on CPU.
+
+      const result = await gate.checkReadiness('SmolLM3-3B-Q4_K_M', 'wllama');
+
+      // Memory is sufficient (14336MB), so wllama should be ready without WebGPU.
+      expect(result.ready).toBe(true);
+      expect(result.checks.webgpu).toBe(false);
+      expect(result.failures).not.toContain('WebGPU is not available in this browser.');
+      expect(result.recommendations.some(r => r.includes('does not require it'))).toBe(true);
+    });
+
     test('returns ready=false when memory insufficient', async () => {
       getMemoryBudget.mockReturnValue({
         totalMB: 4096,
