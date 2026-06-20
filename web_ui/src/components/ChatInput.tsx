@@ -78,9 +78,13 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
       if (!fileList || fileList.length === 0) return;
       setAttachError(null);
       const incoming = Array.from(fileList);
+      // Track count locally so the overflow error fires correctly during multi-select.
+      // The closure images.length is accurate at callback-creation time (correct start
+      // value), but setImages is async and won't update it mid-loop.
+      let runningCount = images.length;
 
       for (const file of incoming) {
-        if (images.length >= maxImages) {
+        if (runningCount >= maxImages) {
           setAttachError(`You can attach at most ${maxImages} images.`);
           break;
         }
@@ -92,6 +96,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
         try {
           const prepared = await prepareImage(file);
           setImages((prev) => (prev.length < maxImages ? [...prev, prepared] : prev));
+          runningCount++;
         } catch {
           setAttachError(`Could not read "${file.name}".`);
         }

@@ -1,9 +1,11 @@
 # PACKAGING — Offline model bundling for the HTML5 web app
 
-The web app must run **fully offline**: every model file is packaged into the
-build and served same-origin. Nothing is fetched from a CDN or the HuggingFace
-Hub at runtime. This is what makes the build a self-contained, air-gapped /
-STIG-scannable archive.
+The web app is designed for **fully offline** operation: every model file is
+packaged into the build and served same-origin. **By default** (wllama engine),
+nothing is fetched from a CDN or the HuggingFace Hub at runtime. The optional
+WebLLM fast-path fetches weights from mlc.ai when selected — it is not part of
+the air-gapped / STIG-scannable archive configuration. All references to
+"offline" in this document refer to the default wllama path.
 
 Model **weight binaries are not committed to git** (they are large, mirroring the
 desktop app's GGUF policy). They are assembled into `web_ui/public/models/` at

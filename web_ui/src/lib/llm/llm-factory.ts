@@ -22,6 +22,23 @@ export function getLLMService(engine: BrowserEngine = DEFAULT_BROWSER_ENGINE): L
   return engine === 'webllm' ? WebLLMService.getInstance() : WllamaService.getInstance();
 }
 
+/** Dispose the singleton for the given engine if it has been initialized. */
+export function disposeBrowserEngine(engine: BrowserEngine): void {
+  try {
+    if (engine === 'wllama') {
+      // WllamaService.dispose() nulls its singleton; only dispose if it exists
+      if (WllamaService.hasInstance()) {
+        WllamaService.getInstance().dispose();
+      }
+    } else {
+      // WebLLMService keeps its singleton alive after dispose (just resets state)
+      WebLLMService.getInstance().dispose();
+    }
+  } catch {
+    // Service may not be initialized, ignore
+  }
+}
+
 /**
  * Read the user's persisted browser-engine preference (written by
  * InferenceModeContext). Falls back to the default for non-React callers (e.g.

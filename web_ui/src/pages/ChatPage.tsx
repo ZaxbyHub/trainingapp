@@ -12,7 +12,7 @@ import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
-import { getLLMService } from '../lib/llm/llm-factory';
+import { getLLMService, disposeBrowserEngine } from '../lib/llm/llm-factory';
 import { ensureReadinessGateChecked } from '../lib/llm/readiness-gate';
 import type { AttachedImage } from '../lib/processing/image-input';
 import { presetOptions } from '../lib/rag/rag-presets';
@@ -69,6 +69,17 @@ function ChatPageInner() {
     if (mode === 'browser-local') {
       void ensureReadinessGateChecked(browserEngine);
     }
+  }, [mode, browserEngine]);
+
+  // Dispose the old engine heap when the user switches engines.
+  // Effect cleanup closes over the current (old) engine value, so it runs
+  // with the previous engine on each change and on unmount.
+  useEffect(() => {
+    return () => {
+      if (mode === 'browser-local') {
+        disposeBrowserEngine(browserEngine);
+      }
+    };
   }, [mode, browserEngine]);
 
   // Cleanup on unmount

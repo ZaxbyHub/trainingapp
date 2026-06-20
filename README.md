@@ -1012,6 +1012,6 @@ MIT License - See LICENSE for details.
 - [jszip](https://github.com/Stuk/jszip) - ZIP handling (MIT OR GPL-3.0-or-later)
 
 ---
-**Version**: 2.2.2
-**Last Updated**: 2026-06-02 (Phase 9)
+**Version**: 2.3.0
+**Last Updated**: 2026-06-20 (Phase 9 → v2.3.0 web overhaul)
 **Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)

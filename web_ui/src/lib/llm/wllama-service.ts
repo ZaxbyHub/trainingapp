@@ -66,6 +66,7 @@ async function isPresent(url: string): Promise<boolean> {
 
 export class WllamaService implements LLMService {
   private static instance: WllamaService | null = null;
+  private static teardownPromise: Promise<void> | null = null;
 
   private wllama: Wllama | null = null;
   private ready = false;
@@ -82,6 +83,8 @@ export class WllamaService implements LLMService {
     return WllamaService.instance;
   }
 
+  static hasInstance(): boolean { return WllamaService.instance !== null; }
+
   private constructor() {}
 
   async initialize(
@@ -90,6 +93,7 @@ export class WllamaService implements LLMService {
   ): Promise<void> {
     if (this.ready) return;
     if (this.initPromise !== null) return this.initPromise;
+    if (WllamaService.teardownPromise) { await WllamaService.teardownPromise; }
     this.initPromise = this.doInitialize(modelId, onProgress);
     return this.initPromise;
   }
@@ -288,8 +292,7 @@ export class WllamaService implements LLMService {
     this.disposed = true;
     this.activeAbort?.abort();
     this.activeAbort = null;
-    // exit() is async; fire-and-forget is acceptable for teardown.
-    void this.safeExit();
+    WllamaService.teardownPromise = this.safeExit().finally(() => { WllamaService.teardownPromise = null; });
     this.ready = false;
     this.initPromise = null;
     this.modelInfo = null;
