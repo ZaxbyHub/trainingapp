@@ -2,18 +2,22 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { getEmbeddingService } from '../lib/embeddings/embedding-service';
 import { getVectorIndex } from '../lib/search/vector-index';
 import { getKeywordIndex } from '../lib/search/keyword-index';
-import { ModelReadinessGate, type ReadinessResult } from '../lib/llm/model-readiness';
+import { type ModelReadinessGate, type ReadinessResult } from '../lib/llm/model-readiness';
 import { WebLLMService } from '../lib/llm/web-llm-service';
+import {
+  ensureReadinessGateChecked,
+  getReadinessSnapshot,
+  getReadinessGateInstance,
+  applyReadinessFromEvent,
+} from '../lib/llm/readiness-gate';
+
+// The readiness trigger lives in a light module (no heavy search/edgevec imports)
+// so light consumers can import it; re-export it for existing callers.
+export { ensureReadinessGateChecked };
 
 // Module-level mutable state for lazy initialization support.
-// Allows external callers to trigger heavy service init on first use (e.g. first RAG query)
-// and allows hook instances to observe readiness changes via events + initial snapshot.
 let embeddingServiceReady = false;
 let embeddingServiceInitPromise: Promise<boolean> | null = null;
-let readinessGateInitPromise: Promise<ReadinessResult | null> | null = null;
-let lastReadinessResult: ReadinessResult | null = null;
-let webgpuAvailableCached = false;
-const readinessGateInstance: { current: ModelReadinessGate | null } = { current: null };
 
 export interface ServiceInitializationState {
   isInitialized: boolean;
@@ -85,67 +89,6 @@ export async function ensureEmbeddingServiceReady(): Promise<boolean> {
   return embeddingServiceInitPromise;
 }
 
-/**
- * Ensures the model readiness gate has been checked (WebGPU + cache for LLM).
- * Safe to call multiple times; caches result.
- * Call before first LLM inference that requires browser mode.
- * Dispatches 'readiness-gate-checked' so hooks can update servicesReady + call setModelReady.
- */
-export async function ensureReadinessGateChecked(): Promise<ReadinessResult | null> {
-  if (lastReadinessResult) {
-    return lastReadinessResult;
-  }
-
-  if (readinessGateInitPromise) {
-    return readinessGateInitPromise;
-  }
-
-  readinessGateInitPromise = (async () => {
-    try {
-      const hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
-      webgpuAvailableCached = hasWebGPU;
-
-      readinessGateInstance.current = new ModelReadinessGate();
-      const readinessResult = await readinessGateInstance.current.checkReadiness('SmolLM3-3B-Q4_K_M');
-
-      lastReadinessResult = readinessResult;
-
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('readiness-gate-checked', {
-            detail: { result: readinessResult, hasWebGPU },
-          })
-        );
-      }
-
-      return readinessResult;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to check model readiness';
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('readiness-gate-error', {
-            detail: { message },
-          })
-        );
-      }
-      // Notify with fallback so listeners can still update webgpu/modelCached=false
-      const hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(
-          new CustomEvent('readiness-gate-checked', {
-            detail: { result: { checks: { modelCached: false } }, hasWebGPU },
-          })
-        );
-      }
-      return null;
-    } finally {
-      readinessGateInitPromise = null;
-    }
-  })();
-
-  return readinessGateInitPromise;
-}
-
 export const useServiceInitialization: UseServiceInitialization = ({
   setModelReady,
   setModelLoadingProgress,
@@ -157,8 +100,8 @@ export const useServiceInitialization: UseServiceInitialization = ({
     embeddings: embeddingServiceReady,
     vectorIndex: false,
     keywordIndex: false,
-    modelCached: lastReadinessResult?.checks.modelCached ?? false,
-    webgpuAvailable: webgpuAvailableCached,
+    modelCached: getReadinessSnapshot().modelCached,
+    webgpuAvailable: getReadinessSnapshot().webgpuAvailable,
   });
 
   const isMountedRef = useRef(true);
@@ -192,7 +135,7 @@ export const useServiceInitialization: UseServiceInitialization = ({
         keywordIndex: true,
       }));
 
-      readinessGateRef.current = readinessGateInstance.current;
+      readinessGateRef.current = getReadinessGateInstance();
 
       if (isMountedRef.current) {
         setCurrentStep('Ready');
@@ -214,7 +157,7 @@ export const useServiceInitialization: UseServiceInitialization = ({
     isMountedRef.current = true;
 
     // Sync from module in case ensure*() was invoked by other code prior to this mount
-    readinessGateRef.current = readinessGateInstance.current;
+    readinessGateRef.current = getReadinessGateInstance();
 
     // Register listeners for lazy init notifications. When ensureEmbeddingServiceReady()
     // or ensureReadinessGateChecked() are called (from rag-orchestrator etc on first query),
@@ -237,16 +180,18 @@ export const useServiceInitialization: UseServiceInitialization = ({
 
     const handleReadinessChecked = (event: Event) => {
       if (!isMountedRef.current) return;
-      const custom = event as CustomEvent<{ result?: ReadinessResult; hasWebGPU?: boolean }>;
+      const custom = event as CustomEvent<{
+        result?: ReadinessResult;
+        hasWebGPU?: boolean;
+        modelReady?: boolean;
+      }>;
       const detail = custom.detail || {};
       const readinessResult = detail.result;
-      const hasWebGPU = detail.hasWebGPU ?? webgpuAvailableCached;
+      const hasWebGPU = detail.hasWebGPU ?? getReadinessSnapshot().webgpuAvailable;
 
-      if (readinessResult) {
-        lastReadinessResult = readinessResult;
-      }
-      webgpuAvailableCached = hasWebGPU;
-      readinessGateRef.current = readinessGateInstance.current;
+      // Keep the shared readiness cache in sync with observed events.
+      applyReadinessFromEvent(readinessResult, hasWebGPU);
+      readinessGateRef.current = getReadinessGateInstance();
 
       setServicesReady(prev => ({
         ...prev,
@@ -254,8 +199,10 @@ export const useServiceInitialization: UseServiceInitialization = ({
         modelCached: readinessResult?.checks?.modelCached ?? false,
       }));
 
+      // Prefer the engine-aware "usable now" flag computed by the gate; fall back
+      // to modelCached for older/error events that don't carry it.
       if (typeof setModelReady === 'function') {
-        setModelReady(readinessResult?.checks?.modelCached ?? false);
+        setModelReady(detail.modelReady ?? readinessResult?.checks?.modelCached ?? false);
       }
     };
 
@@ -317,7 +264,6 @@ export const useServiceInitialization: UseServiceInitialization = ({
       if (readinessGateRef.current && typeof readinessGateRef.current.dispose === 'function') {
         readinessGateRef.current.dispose();
         readinessGateRef.current = null;
-        readinessGateInstance.current = null;
       }
     };
   }, [initializeServices, setModelReady]);

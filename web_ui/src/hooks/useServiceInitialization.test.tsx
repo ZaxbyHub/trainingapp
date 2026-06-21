@@ -172,6 +172,36 @@ describe('useServiceInitialization', () => {
         expect(mockSetModelReady).toHaveBeenCalledWith(true);
       });
     });
+
+    it('wllama engine: modelReady=true with NO WebGPU when hardware is ready and model is packaged', async () => {
+      // The core Phase-3 fix: a wllama user on a no-WebGPU device must not be blocked.
+      const checkReadiness = vi.fn().mockResolvedValue({
+        ready: true, // engine-aware: wllama ready despite webgpu:false
+        checks: { webgpu: false, memory: { sufficient: true }, modelCached: true },
+        failures: [],
+        recommendations: [],
+      });
+      vi.mocked(ModelReadinessGate).mockImplementation(() => ({ checkReadiness } as any));
+
+      function TestComponent() {
+        useServiceInitialization({
+          setModelReady: mockSetModelReady,
+          setModelLoadingProgress: mockSetModelLoadingProgress,
+        });
+        return <div>Test</div>;
+      }
+      render(<TestComponent />);
+
+      await act(async () => {
+        await ensureReadinessGateChecked('wllama');
+      });
+
+      // checkReadiness must be invoked with the engine so WebGPU isn't hard-required.
+      expect(checkReadiness).toHaveBeenCalledWith(expect.any(String), 'wllama');
+      await waitFor(() => {
+        expect(mockSetModelReady).toHaveBeenCalledWith(true);
+      });
+    });
   });
 
   describe('Service initialization steps', () => {

@@ -4,11 +4,25 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import type { BrowserEngine } from '../../types/llm';
+import type { RAGPreset } from '../rag/rag-presets';
+import { DEFAULT_RAG_PRESET } from '../rag/rag-presets';
 
 export type InferenceMode = 'browser-local' | 'api';
 
+/** Default browser engine — wllama (robust without WebGPU; multimodal-capable). */
+const DEFAULT_BROWSER_ENGINE: BrowserEngine = 'wllama';
+
+function isRagPreset(v: unknown): v is RAGPreset {
+  return v === 'fast' || v === 'balanced' || v === 'quality';
+}
+
 interface InferenceModeState {
   mode: InferenceMode;
+  /** Which engine browser-local mode uses (wllama | webllm). */
+  browserEngine: BrowserEngine;
+  /** RAG quality/speed preset applied to queries. */
+  ragPreset: RAGPreset;
   isModelReady: boolean;
   isServerConnected: boolean;
   modelLoadingProgress: number;
@@ -18,6 +32,8 @@ interface InferenceModeState {
 
 interface InferenceModeContextValue extends InferenceModeState {
   setMode: (mode: InferenceMode) => void;
+  setBrowserEngine: (engine: BrowserEngine) => void;
+  setRagPreset: (preset: RAGPreset) => void;
   setServerUrl: (url: string) => void;
   checkServerConnectivity: () => Promise<boolean>;
   setModelReady: (ready: boolean) => void;
@@ -29,10 +45,14 @@ const STORAGE_KEY = 'inference-mode';
 interface StoredInferenceMode {
   mode: InferenceMode;
   serverUrl: string;
+  browserEngine?: BrowserEngine;
+  ragPreset?: RAGPreset;
 }
 
 const defaultState: InferenceModeState = {
   mode: 'browser-local',
+  browserEngine: DEFAULT_BROWSER_ENGINE,
+  ragPreset: DEFAULT_RAG_PRESET,
   isModelReady: false,
   isServerConnected: false,
   modelLoadingProgress: 0,
@@ -51,6 +71,11 @@ function loadStoredState(): InferenceModeState {
         ...defaultState,
         mode: parsed.mode || 'browser-local',
         serverUrl: parsed.serverUrl || defaultState.serverUrl,
+        browserEngine:
+          parsed.browserEngine === 'webllm' || parsed.browserEngine === 'wllama'
+            ? parsed.browserEngine
+            : defaultState.browserEngine,
+        ragPreset: isRagPreset(parsed.ragPreset) ? parsed.ragPreset : defaultState.ragPreset,
       };
     }
   } catch {
@@ -59,9 +84,14 @@ function loadStoredState(): InferenceModeState {
   return defaultState;
 }
 
-function persistState(mode: InferenceMode, serverUrl: string): void {
+function persistState(
+  mode: InferenceMode,
+  serverUrl: string,
+  browserEngine: BrowserEngine,
+  ragPreset: RAGPreset
+): void {
   try {
-    const toStore: StoredInferenceMode = { mode, serverUrl };
+    const toStore: StoredInferenceMode = { mode, serverUrl, browserEngine, ragPreset };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
   } catch {
     // localStorage not available or quota exceeded
@@ -90,7 +120,23 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
   const setMode = useCallback((mode: InferenceMode) => {
     setState((prev) => {
       const next = { ...prev, mode, modeError: null };
-      persistState(mode, prev.serverUrl);
+      persistState(mode, prev.serverUrl, prev.browserEngine, prev.ragPreset);
+      return next;
+    });
+  }, []);
+
+  const setBrowserEngine = useCallback((browserEngine: BrowserEngine) => {
+    setState((prev) => {
+      const next = { ...prev, browserEngine, isModelReady: false, modelLoadingProgress: 0 };
+      persistState(prev.mode, prev.serverUrl, browserEngine, prev.ragPreset);
+      return next;
+    });
+  }, []);
+
+  const setRagPreset = useCallback((ragPreset: RAGPreset) => {
+    setState((prev) => {
+      const next = { ...prev, ragPreset };
+      persistState(prev.mode, prev.serverUrl, prev.browserEngine, ragPreset);
       return next;
     });
   }, []);
@@ -98,7 +144,7 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
   const setServerUrl = useCallback((serverUrl: string) => {
     setState((prev) => {
       const next = { ...prev, serverUrl };
-      persistState(prev.mode, serverUrl);
+      persistState(prev.mode, serverUrl, prev.browserEngine, prev.ragPreset);
       return next;
     });
   }, []);
@@ -183,6 +229,8 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
   const value: InferenceModeContextValue = {
     ...state,
     setMode,
+    setBrowserEngine,
+    setRagPreset,
     setServerUrl,
     checkServerConnectivity,
     setModelReady,

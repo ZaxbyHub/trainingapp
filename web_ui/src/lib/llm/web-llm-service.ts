@@ -11,7 +11,9 @@ import type {
   LLMGenerateOptions,
   LLMModelInfo,
   LLMInferenceMode,
+  LLMService,
 } from '@/types/llm';
+import { messageContentToText } from '@/types/llm';
 
 // Dynamic import to avoid loading the WebGPU machinery until needed.
 // The API surface we're using:
@@ -65,7 +67,7 @@ const ALLOWED_MODEL_IDS: readonly string[] = [
 /**
  * Singleton service for web-llm operations.
  */
-export class WebLLMService {
+export class WebLLMService implements LLMService {
   private static _instance: WebLLMService | null = null;
   private _engine: MLCEngine | null = null;
   private _modelInfo: LLMModelInfo | null = null;
@@ -255,7 +257,7 @@ export class WebLLMService {
 
     try {
       const completion = await this._engine.chat.completions.create({
-        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        messages: messages.map((m) => ({ role: m.role, content: messageContentToText(m.content) })),
         stream: true,
         max_tokens: options?.maxTokens,
         temperature: options?.temperature,
@@ -294,7 +296,7 @@ export class WebLLMService {
     }
 
     const completion = await this._engine.chat.completions.create({
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: messages.map((m) => ({ role: m.role, content: messageContentToText(m.content) })),
       stream: false,
       max_tokens: options?.maxTokens,
       temperature: options?.temperature,

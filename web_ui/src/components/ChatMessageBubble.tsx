@@ -30,9 +30,11 @@ function formatRelativeTime(timestamp: number): string {
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
+  /** When set, renders a Regenerate action (last assistant message only). */
+  onRegenerate?: () => void;
 }
 
-export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({ message }) => {
+export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({ message, onRegenerate }) => {
   const [showCopy, setShowCopy] = useState(false);
   const [showCopiedFeedback, setShowCopiedFeedback] = useState(false);
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -143,6 +145,31 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
           <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-family)' }}>
             {message.content}
           </div>
+          {message.images && message.images.length > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 'var(--spacing-sm)',
+                marginTop: 'var(--spacing-sm)',
+              }}
+            >
+              {message.images.map((img) => (
+                <img
+                  key={img.id}
+                  src={img.dataUrl}
+                  alt={img.fileName || 'attached image'}
+                  style={{
+                    maxWidth: 160,
+                    maxHeight: 160,
+                    borderRadius: '6px',
+                    objectFit: 'cover',
+                    display: 'block',
+                  }}
+                />
+              ))}
+            </div>
+          )}
           <div style={{ ...timeStyle, textAlign: 'right' }}>{formatRelativeTime(message.timestamp)}</div>
         </div>
       </div>
@@ -208,6 +235,26 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
         </div>
         <div style={{ ...timeStyle, textAlign: 'left' }}>{formatRelativeTime(message.timestamp)}</div>
         {message.sources && message.sources.length > 0 && <SourceCitation sources={message.sources} />}
+        {onRegenerate && (
+          <button
+            type="button"
+            onClick={onRegenerate}
+            aria-label="Regenerate response"
+            style={{
+              marginTop: 'var(--spacing-sm)',
+              background: 'transparent',
+              border: '1px solid var(--color-text-muted)',
+              borderRadius: '4px',
+              padding: 'var(--spacing-xs) var(--spacing-sm)',
+              fontSize: 'var(--font-size-caption)',
+              fontFamily: 'var(--font-family)',
+              color: 'var(--color-text-muted)',
+              cursor: 'pointer',
+            }}
+          >
+            ↻ Regenerate
+          </button>
+        )}
       </div>
     </div>
   );

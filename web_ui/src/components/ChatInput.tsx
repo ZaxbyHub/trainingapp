@@ -4,20 +4,39 @@
  */
 
 import React, { useRef, useCallback, useState, useEffect } from 'react';
+import {
+  prepareImage,
+  validateImageFile,
+  type AttachedImage,
+} from '../lib/processing/image-input';
 
 interface ChatInputProps {
-  onSend: (message: string) => void;
+  onSend: (message: string, images?: AttachedImage[]) => void;
   isLoading: boolean;
   onCancel: () => void;
   disabled?: boolean;
+  /** Show the image-attach control (only for multimodal engines, e.g. wllama). */
+  imageUploadEnabled?: boolean;
+  /** Max images attachable to a single message. */
+  maxImages?: number;
 }
 
 const MAX_HEIGHT = 150;
 const MIN_HEIGHT = 40;
 
-export const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSend, isLoading, onCancel, disabled = false }) => {
+export const ChatInput: React.FC<ChatInputProps> = React.memo(({
+  onSend,
+  isLoading,
+  onCancel,
+  disabled = false,
+  imageUploadEnabled = false,
+  maxImages = 3,
+}) => {
   const [value, setValue] = useState('');
+  const [images, setImages] = useState<AttachedImage[]>([]);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const adjustHeight = useCallback(() => {
     const textarea = textareaRef.current;
@@ -37,14 +56,60 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSend, isLoadi
     const trimmed = value.trim();
     if (!trimmed || isLoading) return;
 
-    onSend(trimmed);
+    // Only pass the 2nd arg when images are attached, to preserve the simple
+    // onSend(text) call shape for the common (text-only) path.
+    if (images.length > 0) {
+      onSend(trimmed, images);
+    } else {
+      onSend(trimmed);
+    }
     setValue('');
+    setImages([]);
+    setAttachError(null);
 
     // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [value, isLoading, onSend]);
+  }, [value, isLoading, onSend, images]);
+
+  const handleFilesSelected = useCallback(
+    async (fileList: FileList | null) => {
+      if (!fileList || fileList.length === 0) return;
+      setAttachError(null);
+      const incoming = Array.from(fileList);
+      // Track count locally so the overflow error fires correctly during multi-select.
+      // The closure images.length is accurate at callback-creation time (correct start
+      // value), but setImages is async and won't update it mid-loop.
+      let runningCount = images.length;
+
+      for (const file of incoming) {
+        if (runningCount >= maxImages) {
+          setAttachError(`You can attach at most ${maxImages} images.`);
+          break;
+        }
+        const check = validateImageFile(file);
+        if (!check.valid) {
+          setAttachError(check.error ?? 'Invalid image.');
+          continue;
+        }
+        try {
+          const prepared = await prepareImage(file);
+          setImages((prev) => (prev.length < maxImages ? [...prev, prepared] : prev));
+          runningCount++;
+        } catch {
+          setAttachError(`Could not read "${file.name}".`);
+        }
+      }
+      // Allow re-selecting the same file.
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    },
+    [images.length, maxImages]
+  );
+
+  const removeImage = useCallback((id: string) => {
+    setImages((prev) => prev.filter((img) => img.id !== id));
+  }, []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -73,6 +138,61 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSend, isLoadi
         backgroundColor: 'var(--color-bubble-assistant)',
       }}
     >
+      {/* Attached-image previews */}
+      {images.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 'var(--spacing-sm)',
+            maxWidth: '800px',
+            margin: '0 auto var(--spacing-sm)',
+          }}
+        >
+          {images.map((img) => (
+            <div key={img.id} style={{ position: 'relative' }}>
+              <img
+                src={img.dataUrl}
+                alt={img.fileName}
+                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', display: 'block' }}
+              />
+              <button
+                type="button"
+                onClick={() => removeImage(img.id)}
+                aria-label={`Remove ${img.fileName}`}
+                style={{
+                  position: 'absolute', top: -6, right: -6, width: 18, height: 18,
+                  borderRadius: '50%', border: 'none', cursor: 'pointer', lineHeight: 1,
+                  background: 'var(--color-danger)', color: 'var(--color-text-on-primary)', fontSize: 12,
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {attachError && (
+        <div
+          role="alert"
+          style={{
+            maxWidth: '800px', margin: '0 auto var(--spacing-sm)',
+            color: 'var(--color-danger)', fontSize: 'var(--font-size-caption)',
+          }}
+        >
+          {attachError}
+        </div>
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        multiple
+        onChange={(e) => void handleFilesSelected(e.target.files)}
+        style={{ display: 'none' }}
+        aria-hidden="true"
+        tabIndex={-1}
+      />
       <div
         style={{
           display: 'flex',
@@ -82,6 +202,25 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({ onSend, isLoadi
           margin: '0 auto',
         }}
       >
+        {imageUploadEnabled && (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isLoading || disabled || images.length >= maxImages}
+            title="Attach image"
+            aria-label="Attach image"
+            style={{
+              height: MIN_HEIGHT, width: MIN_HEIGHT, flexShrink: 0,
+              backgroundColor: 'var(--color-bubble-user)',
+              color: 'var(--color-text-on-bubble-user)',
+              border: '1px solid var(--color-bubble-system)', borderRadius: '8px',
+              cursor: isLoading || disabled || images.length >= maxImages ? 'not-allowed' : 'pointer',
+              fontSize: 'var(--font-size-body)',
+            }}
+          >
+            📎
+          </button>
+        )}
         <div style={{ position: 'relative', flex: 1 }}>
           <textarea
             ref={textareaRef}

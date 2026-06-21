@@ -4,6 +4,7 @@ FastAPI-based REST API for the RAG system.
 """
 
 import os
+import sys
 import json
 import re
 import socket
@@ -392,6 +393,22 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def cross_origin_isolation(request: Request, call_next):
+    """Send COOP/COEP so the served HTML5 archive can use SharedArrayBuffer
+    (required for wllama's multi-threaded WASM inference).
+
+    Only emitted when this server is actually serving the offline web archive
+    (`_web_archive_dir` resolved at startup). Pure API-only deployments don't
+    need cross-origin isolation, and emitting COOP/COEP there would needlessly
+    affect external API consumers and iframe embedders."""
+    response = await call_next(request)
+    if _web_archive_dir is not None:
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    return response
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Return user-friendly validation error messages."""
@@ -426,7 +443,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.get("/")
 async def root():
-    """Health check endpoint."""
+    """Serve the web archive's index at the root when bundled; otherwise return
+    a JSON health payload. (`_web_archive_dir` is assigned at module load, below.)"""
+    if _web_archive_dir is not None:
+        from fastapi.responses import FileResponse
+
+        return FileResponse(str(_web_archive_dir / "index.html"))
     return {
         "service": "Document Q&A API",
         "version": "1.1.2",
@@ -907,6 +929,40 @@ async def update_settings(
         initial_retrieval_top_k=s.rag_initial_retrieval_top_k,
         rerank_top_k=s.rag_rerank_top_k,
     )
+
+
+def _resolve_web_archive_dir() -> Optional[Path]:
+    """Locate the packaged HTML5 web archive (web_ui/dist), if present.
+
+    Resolution order: WEB_UI_DIST env var → PyInstaller bundle (sys._MEIPASS) →
+    repo-local web_ui/dist. Returns None if no built archive is available.
+    """
+    candidates = []
+    env_dir = os.environ.get("WEB_UI_DIST")
+    if env_dir:
+        candidates.append(Path(env_dir))
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "web_ui_dist")
+    candidates.append(Path(__file__).resolve().parent / "web_ui" / "dist")
+
+    for c in candidates:
+        if c and (c / "index.html").is_file():
+            return c
+    return None
+
+
+# Serve the self-contained HTML5 archive (with its packaged models) at the root,
+# AFTER all API routes so /ask, /auth, etc. take precedence. The COOP/COEP
+# middleware above applies to these responses too, enabling wllama's WASM threads.
+_web_archive_dir = _resolve_web_archive_dir()
+if _web_archive_dir is not None:
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(_web_archive_dir), html=True), name="web")
+    logger.info("Serving HTML5 web archive from %s", _web_archive_dir)
+else:
+    logger.info("No web_ui/dist archive found; serving API only.")
 
 
 def main():

@@ -8,6 +8,9 @@ import { useInferenceMode } from '../lib/inference';
 import { useTheme } from '../lib/theme';
 import { ModelDownloadManager, type DownloadProgress } from '../lib/llm/model-download';
 import { ModelReadinessGate } from '../lib/llm/model-readiness';
+import { detectEngineCapability, type EngineCapability } from '../lib/llm/engine-capability';
+import { checkPackagedModels, type PackagedModelsReport } from '../lib/models/model-manifest';
+import { RAG_PRESET_LABELS } from '../lib/rag/rag-presets';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
 
@@ -387,6 +390,10 @@ const aboutSectionStyle: React.CSSProperties = {
 function SettingsPageInner(): React.ReactElement {
   const {
     mode,
+    browserEngine,
+    setBrowserEngine,
+    ragPreset,
+    setRagPreset,
     isServerConnected,
     serverUrl,
     setMode,
@@ -424,6 +431,10 @@ function SettingsPageInner(): React.ReactElement {
   const [connectionResult, setConnectionResult] = useState<'success' | 'error' | null>(null);
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
+
+  // Hardware capability + packaged-model readiness (Phase 3)
+  const [capability, setCapability] = useState<EngineCapability | null>(null);
+  const [packagesReady, setPackagesReady] = useState<PackagedModelsReport | null>(null);
 
   // Settings loaded flag
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -472,6 +483,20 @@ function SettingsPageInner(): React.ReactElement {
       setModelCached(cached);
     });
   }, [preferredModel, readinessGate, settingsLoaded]);
+
+  // Detect hardware capability + packaged-model readiness once on mount.
+  useEffect(() => {
+    let cancelled = false;
+    detectEngineCapability().then((cap) => {
+      if (!cancelled) setCapability(cap);
+    });
+    checkPackagedModels().then((report) => {
+      if (!cancelled) setPackagesReady(report);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Update memory pressure periodically
   useEffect(() => {
@@ -720,7 +745,7 @@ function SettingsPageInner(): React.ReactElement {
                   <div>
                     <span style={radioLabelStyle}>Browser-local</span>
                     <p id="browser-local-desc" style={descriptionStyle}>
-                      Run AI model directly in your browser using WebGPU (requires ~2GB storage)
+                      Run the AI model directly in your browser (CPU via wllama, or WebGPU via WebLLM — choose below)
                     </p>
                   </div>
                 </div>
@@ -910,6 +935,135 @@ function SettingsPageInner(): React.ReactElement {
         </section>
 
         {/* ================================================================== */}
+        {/* 3b. Browser Engine (browser-local only) */}
+        {/* ================================================================== */}
+        <section style={sectionStyle} aria-labelledby="browser-engine-heading">
+          <h2 id="browser-engine-heading" style={sectionTitleStyle}>
+            Browser Engine
+          </h2>
+          <div style={fieldGroupStyle}>
+            <p style={descriptionStyle}>
+              Which engine runs local inference in browser-local mode.
+              {capability && (
+                <>
+                  {' '}Recommended for this device:{' '}
+                  <strong>{capability.recommendedEngine === 'wllama' ? 'wllama' : 'WebLLM'}</strong>.
+                </>
+              )}
+            </p>
+            <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
+              <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select browser engine</legend>
+              <div style={radioGroupStyle}>
+                {([
+                  {
+                    id: 'wllama' as const,
+                    label: 'wllama (CPU / no GPU)',
+                    desc: 'Robust without WebGPU and supports image input (multimodal). Recommended for most hardware.',
+                  },
+                  {
+                    id: 'webllm' as const,
+                    label: 'WebLLM (WebGPU)',
+                    desc: 'Fastest when WebGPU is available; text only. Requires a GPU-capable browser.',
+                  },
+                ]).map((opt) => (
+                  <div
+                    key={opt.id}
+                    style={browserEngine === opt.id ? radioOptionSelectedStyle : radioOptionStyle}
+                    onClick={() => setBrowserEngine(opt.id)}
+                    role="radio"
+                    aria-checked={browserEngine === opt.id}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setBrowserEngine(opt.id);
+                      }
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="browser-engine"
+                      value={opt.id}
+                      checked={browserEngine === opt.id}
+                      onChange={() => setBrowserEngine(opt.id)}
+                      // Stop the native input click from bubbling to the row's
+                      // onClick, which would call setBrowserEngine a second time.
+                      onClick={(e) => e.stopPropagation()}
+                      style={radioInputStyle}
+                      aria-describedby={`${opt.id}-desc`}
+                    />
+                    <div>
+                      <span style={radioLabelStyle}>{opt.label}</span>
+                      <p id={`${opt.id}-desc`} style={descriptionStyle}>{opt.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </fieldset>
+            {capability && browserEngine === 'webllm' && !capability.webgpu && (
+              <p style={{ ...descriptionStyle, color: '#dc2626' }}>
+                WebGPU was not detected — WebLLM will not run on this device. Switch to wllama or use server mode.
+              </p>
+            )}
+          </div>
+        </section>
+
+        {/* ================================================================== */}
+        {/* 3c. Response Quality (RAG preset) */}
+        {/* ================================================================== */}
+        <section style={sectionStyle} aria-labelledby="rag-preset-heading">
+          <h2 id="rag-preset-heading" style={sectionTitleStyle}>
+            Response Quality
+          </h2>
+          <div style={fieldGroupStyle}>
+            <p style={descriptionStyle}>
+              Trade speed for answer quality. Applies to browser-local mode; in API
+              mode the server controls retrieval settings.
+            </p>
+            <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
+              <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select response quality preset</legend>
+              <div style={radioGroupStyle}>
+                {(['fast', 'balanced', 'quality'] as const).map((preset) => (
+                  <div
+                    key={preset}
+                    style={ragPreset === preset ? radioOptionSelectedStyle : radioOptionStyle}
+                    onClick={() => setRagPreset(preset)}
+                    role="radio"
+                    aria-checked={ragPreset === preset}
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setRagPreset(preset);
+                      }
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="rag-preset"
+                      value={preset}
+                      checked={ragPreset === preset}
+                      onChange={() => setRagPreset(preset)}
+                      // Stop the native input click from bubbling to the row's
+                      // onClick, which would call setRagPreset a second time.
+                      onClick={(e) => e.stopPropagation()}
+                      style={radioInputStyle}
+                      aria-describedby={`rag-${preset}-desc`}
+                    />
+                    <div>
+                      <span style={radioLabelStyle}>{RAG_PRESET_LABELS[preset].label}</span>
+                      <p id={`rag-${preset}-desc`} style={descriptionStyle}>
+                        {RAG_PRESET_LABELS[preset].description}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </fieldset>
+          </div>
+        </section>
+
+        {/* ================================================================== */}
         {/* 4. Appearance */}
         {/* ================================================================== */}
         <section style={sectionStyle} aria-labelledby="appearance-heading">
@@ -966,6 +1120,29 @@ function SettingsPageInner(): React.ReactElement {
           <h2 id="storage-heading" style={sectionTitleStyle}>
             Storage
           </h2>
+          {packagesReady && (
+            <div
+              style={{
+                ...storageInfoStyle,
+                borderLeft: `4px solid ${packagesReady.allReady ? '#16a34a' : '#dc2626'}`,
+                marginBottom: 'var(--spacing-md)',
+              }}
+            >
+              <div style={storageRowStyle}>
+                <span style={storageLabelStyle}>Packaged Models</span>
+                <span style={{ fontWeight: 500, color: packagesReady.allReady ? '#16a34a' : '#dc2626' }}>
+                  <span aria-hidden="true">{packagesReady.allReady ? '✓ ' : '✗ '}</span>
+                  {packagesReady.allReady ? 'Ready' : 'Missing'}
+                </span>
+              </div>
+              {!packagesReady.allReady && (
+                <p style={descriptionStyle}>
+                  {packagesReady.missing.length} required model file(s) not found in this build.
+                  See the packaging guide (PACKAGING.md) to bundle models for offline use.
+                </p>
+              )}
+            </div>
+          )}
           <div style={storageInfoStyle}>
             <div style={storageRowStyle}>
               <span style={storageLabelStyle}>Available Memory</span>
@@ -1016,6 +1193,66 @@ function SettingsPageInner(): React.ReactElement {
                 : 'Clear cached models and stored documents from browser storage.'}
             </span>
           </div>
+        </section>
+
+        {/* ================================================================== */}
+        {/* 5b. Hardware Capability (diagnostic) */}
+        {/* ================================================================== */}
+        <section style={sectionStyle} aria-labelledby="hardware-heading">
+          <h2 id="hardware-heading" style={sectionTitleStyle}>
+            Hardware Capability
+          </h2>
+          {capability ? (
+            <div style={storageInfoStyle}>
+              <div style={storageRowStyle}>
+                <span style={storageLabelStyle}>Suitability</span>
+                <span
+                  style={{
+                    fontWeight: 500,
+                    color:
+                      capability.tier === 'green'
+                        ? '#16a34a'
+                        : capability.tier === 'yellow'
+                          ? '#ca8a04'
+                          : '#dc2626',
+                  }}
+                >
+                  {capability.tier === 'green'
+                    ? 'Good'
+                    : capability.tier === 'yellow'
+                      ? 'Limited'
+                      : 'Use server mode'}
+                </span>
+              </div>
+              <div style={storageRowStyle}>
+                <span style={storageLabelStyle}>WebGPU</span>
+                <span style={{ fontWeight: 500, color: capability.webgpu ? '#16a34a' : '#dc2626' }}>
+                  {capability.webgpu ? 'Available' : 'Not available'}
+                </span>
+              </div>
+              <div style={storageRowStyle}>
+                <span style={storageLabelStyle}>Multi-threading</span>
+                <span style={{ fontWeight: 500, color: capability.crossOriginIsolated ? '#16a34a' : '#ca8a04' }}>
+                  {capability.crossOriginIsolated ? 'Enabled' : 'Single-threaded'}
+                </span>
+              </div>
+              <div style={storageRowStyle}>
+                <span style={storageLabelStyle}>Memory Tier</span>
+                <span style={{ fontWeight: 500 }}>{capability.memoryTier}</span>
+              </div>
+              <div style={storageRowStyle}>
+                <span style={storageLabelStyle}>Recommended Engine</span>
+                <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>
+                  {capability.recommendedEngine === 'wllama' ? 'wllama' : 'WebLLM'}
+                </span>
+              </div>
+              {capability.reasons.length > 0 && (
+                <p style={descriptionStyle}>{capability.reasons.join(' ')}</p>
+              )}
+            </div>
+          ) : (
+            <p style={descriptionStyle}>Detecting hardware capability…</p>
+          )}
         </section>
 
         {/* ================================================================== */}

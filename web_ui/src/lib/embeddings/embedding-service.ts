@@ -1,19 +1,31 @@
 /**
  * Embedding service using Transformers.js with ONNX runtime.
- * Provides browser-local embedding generation with OPFS/IndexedDB caching.
- * Uses BAAI/bge-small-en-v1.5 model (384-dim, ~130MB).
+ *
+ * OFFLINE-FIRST (Phase 1): the model is loaded exclusively from locally packaged
+ * assets under `web_ui/public/models/embeddings/` — never from the HuggingFace CDN.
+ * This is required for the fully self-contained, air-gapped / STIG-scannable archive.
+ * See PACKAGING.md and scripts/prepare-models.mjs for how the weights are bundled.
+ *
+ * Uses BAAI/bge-small-en-v1.5 model (384-dim, ~130MB), loaded from
+ * `${EMBEDDING_MODELS_BASE}/bge-small-en-v1.5/`.
  */
 
-import { pipeline, env, type Pipeline } from '@huggingface/transformers';
+import { pipeline, type Pipeline } from '@huggingface/transformers';
 import type {
   EmbeddingVector,
   EmbeddingResult,
   EmbeddingModelInfo,
   EmbeddingProgressCallback,
 } from '../../types/embedding';
+import { EMBEDDING_MODEL_PATH } from '../models/model-manifest';
+import { configureOfflineEnv } from '../models/offline-env';
 
-// Model configuration
+// Model configuration.
+// `MODEL_NAME` keeps the canonical id for display/telemetry; `MODEL_PATH` is the
+// path resolved against `env.localModelPath` (= /models), i.e.
+// `embeddings/bge-small-en-v1.5`.
 const MODEL_NAME = 'BAAI/bge-small-en-v1.5';
+const MODEL_PATH = EMBEDDING_MODEL_PATH;
 const EMBEDDING_DIMENSIONS = 384;
 
 /**
@@ -52,20 +64,14 @@ export class EmbeddingService {
   }
 
   /**
-   * Configure Transformers.js environment for optimal browser usage.
+   * Configure Transformers.js for OFFLINE, locally-packaged usage.
+   *
+   * Delegates to the shared `configureOfflineEnv()` so every Transformers.js
+   * consumer writes identical settings to the shared global `env` — see
+   * offline-env.ts for why this must be centralized.
    */
   private configureEnv(): void {
-    // Use browser cache for model files (OPFS with IndexedDB fallback)
-    env.allowLocalModels = false;
-    env.useBrowserCache = true;
-
-    // Enable persistent caching via OPFS/IndexedDB
-    env.allowBrowserBlobStorage = true;
-
-    // Enable ONNX runtime with adaptive thread count
-    env.backends.onnx.wasm.numThreads = navigator.hardwareConcurrency
-      ? Math.min(navigator.hardwareConcurrency, 4)
-      : 2;
+    configureOfflineEnv();
   }
 
   /**
@@ -99,7 +105,7 @@ export class EmbeddingService {
       // Using 'feature-extraction' task for embeddings
       this.featureExtractor = await pipeline(
         'feature-extraction',
-        MODEL_NAME,
+        MODEL_PATH,
         {
           // ONNX runtime configuration
           dtype: 'fp32',

@@ -4,11 +4,13 @@
  * Uses cross-encoder/ms-marco-MiniLM-L-6-v2 model for relevance scoring.
  */
 
-import { pipeline, env, type Pipeline } from '@huggingface/transformers';
+import { pipeline, type Pipeline } from '@huggingface/transformers';
 import type { SearchResult } from '../../types/search';
+import { RERANKER_MODEL_PATH } from '../models/model-manifest';
+import { configureOfflineEnv } from '../models/offline-env';
 
-// Cross-encoder model for passage reranking
-const RERANKER_MODEL_NAME = 'cross-encoder/ms-marco-MiniLM-L-6-v2';
+// Cross-encoder reranker is loaded OFFLINE from the locally packaged path
+// (RERANKER_MODEL_PATH -> /models/reranker/ms-marco-MiniLM-L-6-v2).
 
 // Memory and size thresholds for activation
 const MAX_CHUNK_COUNT = 500;
@@ -48,21 +50,15 @@ export class RerankerService {
   }
 
   /**
-   * Configure Transformers.js environment for optimal browser usage.
-   * Shares configuration with EmbeddingService since they use the same runtime.
+   * Configure Transformers.js for OFFLINE usage.
+   *
+   * MUST delegate to the shared `configureOfflineEnv()` — the previous version
+   * set `allowLocalModels=false` and left `allowRemoteModels` unset, which
+   * clobbered the shared global `env` and re-enabled CDN/HuggingFace downloads
+   * for every Transformers.js consumer. See offline-env.ts.
    */
   private configureEnv(): void {
-    // Use browser cache for model files (OPFS with IndexedDB fallback)
-    env.allowLocalModels = false;
-    env.useBrowserCache = true;
-
-    // Enable persistent caching via OPFS/IndexedDB
-    env.allowBrowserBlobStorage = true;
-
-    // Enable ONNX runtime with adaptive thread count
-    env.backends.onnx.wasm.numThreads = navigator.hardwareConcurrency
-      ? Math.min(navigator.hardwareConcurrency, 4)
-      : 2;
+    configureOfflineEnv();
   }
 
   /**
@@ -114,7 +110,7 @@ export class RerankerService {
       // Create text-classification pipeline for cross-encoder
       this.crossEncoder = await pipeline(
         RERANKER_TASK,
-        RERANKER_MODEL_NAME,
+        RERANKER_MODEL_PATH,
         {
           // ONNX runtime configuration
           dtype: 'fp32',

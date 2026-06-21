@@ -57,6 +57,11 @@ export default IndexedDbBackend;
 }
 
 export default defineConfig({
+  // Relative base so the built bundle's own asset URLs (JS/CSS) work when the
+  // self-contained archive is served from any path. Model assets under /models
+  // are loaded same-origin and the archive is served at the origin root (the
+  // bundled FastAPI server, or a static host) — see PACKAGING.md.
+  base: './',
   plugins: [react(), edgevecSnippetPlugin()],
   resolve: {
     alias: {
@@ -82,9 +87,20 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
+  // Same cross-origin isolation for `vite preview`, so the packaged build can be
+  // validated with the SharedArrayBuffer/threads it needs for WASM inference.
+  preview: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
   build: {
     outDir: 'dist',
     sourcemap: true,
+    // Never inline model/wasm assets into JS — they live in public/models/ and
+    // must remain discrete, same-origin files for the offline archive.
+    assetsInlineLimit: 0,
     rollupOptions: {
       output: {
         sourcemapPathTransform: (relativeSourcePath) => {

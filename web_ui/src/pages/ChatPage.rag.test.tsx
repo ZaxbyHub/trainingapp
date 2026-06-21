@@ -119,9 +119,20 @@ describe('ChatPage RAG Pipeline Integration', () => {
     // Setup useInferenceMode mock
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
       isModelReady: true,
       isServerConnected: true,
       modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
     });
   });
 

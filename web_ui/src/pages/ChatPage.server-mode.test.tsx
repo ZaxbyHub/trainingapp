@@ -51,10 +51,20 @@ vi.mock('../lib/rag/rag-orchestrator', () => ({
 function createUseInferenceModeMock(mode: 'api' | 'browser-local', serverUrl: string) {
   return {
     mode,
+    browserEngine: 'wllama' as const,
+    ragPreset: 'balanced' as const,
     serverUrl,
     isModelReady: mode === 'browser-local',
     isServerConnected: true,
     modelLoadingProgress: 0,
+    modeError: null,
+    setMode: vi.fn(),
+    setBrowserEngine: vi.fn(),
+    setRagPreset: vi.fn(),
+    setServerUrl: vi.fn(),
+    checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+    setModelReady: vi.fn(),
+    setModelLoadingProgress: vi.fn(),
   };
 }
 
@@ -200,11 +210,9 @@ describe('ChatPage API Mode (Task 8.4)', () => {
 
     it('uses relative path /ask/stream when serverUrl is undefined', async () => {
       vi.mocked(useInferenceMode).mockReturnValue({
-        mode: 'api',
-        serverUrl: undefined as unknown as string,
+        ...createUseInferenceModeMock('api', undefined as unknown as string),
         isModelReady: false,
         isServerConnected: true,
-        modelLoadingProgress: 0,
       });
       mockStartSSEStream.mockReturnValue({
         onToken: vi.fn(),
