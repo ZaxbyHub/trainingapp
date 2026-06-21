@@ -109,12 +109,20 @@ export async function ensureReadinessGateChecked(
           new CustomEvent('readiness-gate-error', { detail: { message } })
         );
       }
-      // Notify with fallback so listeners can still update webgpu/modelCached=false.
+      // Notify with a fallback that matches the success-path event contract:
+      // include `engine` and `modelReady` (the fields the success path emits and
+      // the hook reads) so listeners don't get `undefined` for them on error.
+      // `result` stays a partial — consumers optional-chain into result.checks.
       const hasWebGPU = typeof navigator !== 'undefined' && !!navigator.gpu;
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('readiness-gate-checked', {
-            detail: { result: { checks: { modelCached: false } }, hasWebGPU },
+            detail: {
+              result: { checks: { modelCached: false } },
+              hasWebGPU,
+              engine,
+              modelReady: false,
+            },
           })
         );
       }

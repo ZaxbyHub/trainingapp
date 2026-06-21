@@ -238,9 +238,9 @@ function prepareOnnxRuntimeWasm() {
 
   if (copied === 0) {
     warn(
-      'no ONNX Runtime .wasm files found in node_modules. Run `npm install` first, ' +
-        'or copy ort-wasm-simd-threaded.wasm into public/models/ort/ manually. ' +
-        'The app will not embed offline without it.'
+      'no ONNX Runtime JSEP .wasm files found in node_modules. Run `npm install` first, ' +
+        'or copy ort-wasm-simd-threaded.jsep.wasm (and ort-wasm-simd-threaded.jsep.mjs) ' +
+        'into public/models/ort/ manually. The app will not embed offline without them.'
     );
   } else {
     log(`onnxruntime wasm (${copied} files) -> ${destDir}`);

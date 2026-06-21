@@ -986,6 +986,9 @@ function SettingsPageInner(): React.ReactElement {
                       value={opt.id}
                       checked={browserEngine === opt.id}
                       onChange={() => setBrowserEngine(opt.id)}
+                      // Stop the native input click from bubbling to the row's
+                      // onClick, which would call setBrowserEngine a second time.
+                      onClick={(e) => e.stopPropagation()}
                       style={radioInputStyle}
                       aria-describedby={`${opt.id}-desc`}
                     />
@@ -1041,6 +1044,9 @@ function SettingsPageInner(): React.ReactElement {
                       value={preset}
                       checked={ragPreset === preset}
                       onChange={() => setRagPreset(preset)}
+                      // Stop the native input click from bubbling to the row's
+                      // onClick, which would call setRagPreset a second time.
+                      onClick={(e) => e.stopPropagation()}
                       style={radioInputStyle}
                       aria-describedby={`rag-${preset}-desc`}
                     />

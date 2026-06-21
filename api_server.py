@@ -396,10 +396,16 @@ app.add_middleware(
 @app.middleware("http")
 async def cross_origin_isolation(request: Request, call_next):
     """Send COOP/COEP so the served HTML5 archive can use SharedArrayBuffer
-    (required for wllama's multi-threaded WASM inference)."""
+    (required for wllama's multi-threaded WASM inference).
+
+    Only emitted when this server is actually serving the offline web archive
+    (`_web_archive_dir` resolved at startup). Pure API-only deployments don't
+    need cross-origin isolation, and emitting COOP/COEP there would needlessly
+    affect external API consumers and iframe embedders."""
     response = await call_next(request)
-    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
-    response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+    if _web_archive_dir is not None:
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
     return response
 
 

@@ -42,9 +42,10 @@ export function configureOfflineEnv(): void {
     // jsdelivr CDN — otherwise the app is not truly offline.
     wasm.wasmPaths = ONNX_RUNTIME_WASM_BASE;
 
-    // Adaptive thread count for the WASM backend.
-    wasm.numThreads = navigator.hardwareConcurrency
-      ? Math.min(navigator.hardwareConcurrency, 4)
-      : 2;
+    // Adaptive thread count for the WASM backend. Guard `navigator` so this
+    // module can be imported in non-browser contexts (SSR, node-env tests).
+    const cores =
+      typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
+    wasm.numThreads = cores ? Math.min(cores, 4) : 2;
   }
 }

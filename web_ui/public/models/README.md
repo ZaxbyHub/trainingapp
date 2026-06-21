@@ -32,11 +32,10 @@ public/models/
 │       └── wllama.js
 └── llm/                              # GGUF browser-LLM weights for wllama (optional)
     └── lfm2-vl-1.6b/
-        ├── model.gguf               # LFM2-VL-1.6B Q4 (~1 GB; split if a larger quant)
+        ├── model.gguf               # LFM2-VL-1.6B Q4 (~1 GB) — single-file variant
+        │                            #   OR, for a larger quant, split with llama-gguf-split:
+        │                            #   model-00001-of-000NN.gguf (<2 GB per file)
         └── mmproj.gguf              # multimodal vision projector (enables image input)
-    └── lfm2-vl-1.6b/
-        ├── model-00001-of-000NN.gguf # split with llama-gguf-split (<2 GB per file)
-        └── mmproj.gguf               # multimodal vision projector
 ```
 
 ## How files get here
