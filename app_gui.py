@@ -1956,12 +1956,15 @@ class DocumentQAApp(CTk):
                         if self.winfo_exists():
                             self._hide_progress()
                     elif msg[0] == "progress_clear_delayed":
+                        # Clears the progress indicator after a short delay so the user briefly sees the final state. Runs on the main thread via the message queue — safe to call Tk/widget APIs from worker threads.
                         if self.winfo_exists():
                             self.after(3000, lambda: self._hide_progress())
                     elif msg[0] == "cancel_button_show":
+                        # Shows the cancel button (packs it) so the user can interrupt an in-progress operation. Runs on the main thread via the message queue — safe to call Tk/widget APIs from worker threads.
                         if self.winfo_exists() and hasattr(self, "cancel_button"):
                             self.cancel_button.pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.SM))
                     elif msg[0] == "cancel_button_hide":
+                        # Hides the cancel button (pack_forget) once the operation completes or is no longer cancellable. Runs on the main thread via the message queue — safe to call Tk/widget APIs from worker threads.
                         if self.winfo_exists() and hasattr(self, "cancel_button"):
                             self.cancel_button.pack_forget()
                     elif msg[0] == "assistant_token":
@@ -1992,6 +1995,7 @@ class DocumentQAApp(CTk):
                             if hasattr(self, "question_entry"):
                                 self.question_entry.configure(state="normal")
                     elif msg[0] == "hide_typing":
+                        # Hides the typing-indicator animation when a response finishes or is cancelled. Runs on the main thread via the message queue — safe to call Tk/widget APIs from worker threads.
                         if self.winfo_exists():
                             self._hide_typing_indicator()
                     elif msg[0] == "stream_end":
@@ -1999,6 +2003,7 @@ class DocumentQAApp(CTk):
                     elif msg[0] == "stream_destroy":
                         self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
                     elif msg[0] == "model_label":
+                        # Updates the model status label text (e.g. loaded model name/size). Runs on the main thread via the message queue — safe to call Tk/widget APIs from worker threads.
                         if self.winfo_exists() and hasattr(self, "model_label"):
                             self.model_label.configure(text=msg[1])
             except queue.Empty:
