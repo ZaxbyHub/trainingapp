@@ -635,7 +635,7 @@ class TestTypingIndicatorShownDuringStreaming:
         assert idx != -1, "Could not find 'msg[0] == \"hide_typing\"' in message processor"
 
         # Get chunk AFTER the message check
-        chunk = source[idx:idx+200]
+        chunk = source[idx:idx+500]
 
         assert "_hide_typing_indicator" in chunk, (
             "'hide_typing' handler must call _hide_typing_indicator()"

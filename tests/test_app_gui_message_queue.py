@@ -12,7 +12,7 @@ logic.
 import pytest
 import queue
 import inspect
-import tkinter as tk
+import sys
 
 
 def _import_app_gui():
@@ -22,6 +22,38 @@ def _import_app_gui():
         return app_gui
     except ImportError:
         pytest.skip("customtkinter not installed — cannot test GUI widget behavior")
+
+
+_real_tkinter_cache = None
+
+
+def _force_real_tkinter():
+    """Return real tkinter, temporarily clearing any leaked mock from sys.modules.
+
+    Other test modules (e.g. test_corrective_pass.py) install a MagicMock for
+    tkinter at collection time for headless CI. That mock leaks into this
+    module's import, making tk.Tk()/tk.Button() return mocks. We clear the
+    mock, import real tkinter (cached after first import to avoid re-executing
+    module code on every test), and return it along with saved state for
+    restoration after the test.
+    """
+    global _real_tkinter_cache
+    saved = {}
+    for key in list(sys.modules):
+        if key == "tkinter" or key.startswith("tkinter."):
+            saved[key] = sys.modules.pop(key)
+    if _real_tkinter_cache is not None:
+        sys.modules["tkinter"] = _real_tkinter_cache
+        return _real_tkinter_cache, saved
+    import tkinter as _tk
+    _real_tkinter_cache = _tk
+    return _tk, saved
+
+
+def _restore_tkinter(saved):
+    """Restore sys.modules tkinter entries saved by _force_real_tkinter."""
+    for key, val in saved.items():
+        sys.modules[key] = val
 
 
 class TestCancelButtonShowHideRouting:
@@ -37,55 +69,58 @@ class TestCancelButtonShowHideRouting:
         can operate on as `self`, plus a real Tk root for widget geometry.
         """
         app_gui = _import_app_gui()
-
-        # Real withdrawn Tk root — provides the widget geometry system
-        root = tk.Tk()
-        root.withdraw()
-
-        # SimpleNamespace or minimal class as the test double
-        class Double:
-            pass
-
-        double = Double()
-
-        # Required attributes that _start_message_processor reads/writes
-        double.message_queue = queue.Queue()
-        double._message_processor_shutdown = False
-
-        # winfo_exists must exist and return True so the handler runs
-        def winfo_exists():
-            return True
-        double.winfo_exists = winfo_exists
-
-        # `after` — capture the `process` closure the first time it's called,
-        # otherwise no-op (we drive it manually, not via the Tk event loop)
-        double._captured_after_callback = None
-
-        def after(delay, callback):
-            if double._captured_after_callback is None:
-                double._captured_after_callback = callback
-            # On subsequent calls (re-schedule), also capture
-            # (each call to process() re-schedules itself)
-
-        double.after = after
-
-        # Real tk.Button so pack()/pack_forget()/winfo_manager() work for assertions
-        double.cancel_button = tk.Button(root)
-
-        # Spacing — the handler uses Spacing.LG and Spacing.SM from theme.py
-        # Import Spacing from app_gui module level
-        from theme import Spacing
-        double.Spacing = Spacing
-
-        yield double, root
-
-        # Cleanup
-        double._message_processor_shutdown = True
+        tk, _saved = _force_real_tkinter()
         try:
-            root.destroy()
-        except Exception:
-            # Already destroyed or not connected
-            pass
+            # Real withdrawn Tk root — provides the widget geometry system
+            root = tk.Tk()
+            root.withdraw()
+
+            # SimpleNamespace or minimal class as the test double
+            class Double:
+                pass
+
+            double = Double()
+
+            # Required attributes that _start_message_processor reads/writes
+            double.message_queue = queue.Queue()
+            double._message_processor_shutdown = False
+
+            # winfo_exists must exist and return True so the handler runs
+            def winfo_exists():
+                return True
+            double.winfo_exists = winfo_exists
+
+            # `after` — capture the `process` closure the first time it's called,
+            # otherwise no-op (we drive it manually, not via the Tk event loop)
+            double._captured_after_callback = None
+
+            def after(delay, callback):
+                if double._captured_after_callback is None:
+                    double._captured_after_callback = callback
+                # On subsequent calls (re-schedule), also capture
+                # (each call to process() re-schedules itself)
+
+            double.after = after
+
+            # Real tk.Button so pack()/pack_forget()/winfo_manager() work for assertions
+            double.cancel_button = tk.Button(root)
+
+            # Spacing — the handler uses Spacing.LG and Spacing.SM from theme.py
+            # Import Spacing from app_gui module level
+            from theme import Spacing
+            double.Spacing = Spacing
+
+            yield double, root
+
+            # Cleanup
+            double._message_processor_shutdown = True
+            try:
+                root.destroy()
+            except Exception:
+                # Already destroyed or not connected
+                pass
+        finally:
+            _restore_tkinter(_saved)
 
     def test_cancel_button_show_then_hide(self, tk_root_and_double):
         """
