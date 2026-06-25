@@ -5,7 +5,7 @@
 ### Added
 
 - **Message-queue handler documentation (Issue #8, Phase 1)**: Added inline explanatory comments to 5 message-queue handler closures inside `DocumentQAApp._start_message_processor` (`progress_clear_delayed`, `cancel_button_show`, `cancel_button_hide`, `hide_typing`, `model_label`) clarifying their routing purpose and Tk main-thread safety; no behavior or API change
-- **Cancel-button routing test (Issue #8, Phase 1)**: Added `tests/test_app_gui_message_queue.py` — 226 lines, 6 tests covering the `cancel_button` show/hide message-routing path through the real `_start_message_processor` dispatch
+- **Cancel-button routing test (Issue #8, Phase 1)**: Added `tests/test_app_gui_message_queue.py` — 261 lines, 6 tests covering the `cancel_button` show/hide message-routing path through the real `_start_message_processor` dispatch
 
 - **End-to-end integration wiring (Phase 8)**: Connected `ChatPage.tsx` to `RAGOrchestrator` for browser-local mode and SSE streaming (`SSEStreamConsumer`) for API mode
 - **DocumentsPage search wiring (Phase 8)**: Connected `DocumentsPage.tsx` to search indexes (vector-index, keyword-index) for document retrieval

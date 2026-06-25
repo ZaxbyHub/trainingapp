@@ -438,7 +438,7 @@ class TestTypingIndicatorStreaming:
         if stream_end_idx == -1:
             stream_end_idx = source.find("'stream_end'")
 
-        chunk = source[stream_end_idx:stream_end_idx+200]
+        chunk = source[stream_end_idx:stream_end_idx+500]
 
         # stream_end should NOT call _hide_typing_indicator
         # It only clears the refs
