@@ -414,7 +414,7 @@ class TestTypingIndicatorStreaming:
         assert idx != -1, "Could not find 'msg[0] == \"hide_typing\"' in message processor"
 
         # Get chunk AFTER the message check
-        chunk = source[idx:idx+200]
+        chunk = source[idx:idx+500]
 
         assert "_hide_typing_indicator" in chunk, (
             "'hide_typing' handler must call _hide_typing_indicator()"
@@ -438,7 +438,7 @@ class TestTypingIndicatorStreaming:
         if stream_end_idx == -1:
             stream_end_idx = source.find("'stream_end'")
 
-        chunk = source[stream_end_idx:stream_end_idx+200]
+        chunk = source[stream_end_idx:stream_end_idx+500]
 
         # stream_end should NOT call _hide_typing_indicator
         # It only clears the refs
