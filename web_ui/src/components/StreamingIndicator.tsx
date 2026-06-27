@@ -1,6 +1,6 @@
 /**
  * StreamingIndicator - Animated typing indicator for streaming responses.
- * Displays three bouncing dots with staggered animation.
+ * Displays "Generating" text with a blinking cursor, or static "Generating..." for reduced motion.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -10,52 +10,67 @@ interface StreamingIndicatorProps {
 }
 
 /**
- * Animated streaming indicator with three bouncing dots.
- * Uses setInterval-based opacity animation for reliable cross-browser behavior.
+ * Animated streaming indicator with blinking cursor.
+ * Shows "Generating" + blinking cursor when motion is allowed.
+ * Shows "Generating..." static text when reduced motion is preferred.
  */
 export function StreamingIndicator({ isVisible }: StreamingIndicatorProps): React.ReactElement | null {
-  const [dotIndex, setDotIndex] = useState(0);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
   useEffect(() => {
-    if (!isVisible) return;
+    const mediaQuery =
+      typeof window !== 'undefined' && window.matchMedia
+        ? window.matchMedia('(prefers-reduced-motion: reduce)')
+        : null;
+    if (mediaQuery) {
+      setPrefersReducedMotion(mediaQuery.matches);
+    }
 
-    const interval = setInterval(() => {
-      setDotIndex((prev) => (prev + 1) % 3);
-    }, 200);
-
-    return () => {
-      clearInterval(interval);
+    const handler = (event: MediaQueryListEvent) => {
+      setPrefersReducedMotion(event.matches);
     };
-  }, [isVisible]);
+
+    if (mediaQuery) {
+      mediaQuery.addEventListener('change', handler);
+      return () => {
+        mediaQuery.removeEventListener('change', handler);
+      };
+    }
+    return undefined;
+  }, []);
 
   if (!isVisible) {
     return null;
   }
 
-  const dotStyle = (index: number): React.CSSProperties => {
-    return {
-      display: 'inline-block',
-      width: '6px',
-      height: '6px',
-      borderRadius: '50%',
-      backgroundColor: 'var(--color-text-muted)',
-      margin: '0 2px',
-      opacity: dotIndex === index ? 1 : 0.3,
-      transition: 'opacity 0.1s ease-in-out',
-    };
+  const containerStyle: React.CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '4px 0',
+  };
+
+  const textStyle: React.CSSProperties = {
+    fontFamily: 'var(--font-family)',
+    fontSize: 'var(--font-size-caption)',
+    color: 'var(--color-text-muted)',
+    fontWeight: 500,
+  };
+
+  const cursorStyle: React.CSSProperties = {
+    animation: 'blink 1s step-end infinite',
+    color: 'var(--color-text-muted)',
+    marginLeft: '2px',
   };
 
   return (
-    <div
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        padding: '4px 0',
-      }}
-    >
-      <span style={dotStyle(0)} />
-      <span style={dotStyle(1)} />
-      <span style={dotStyle(2)} />
+    <div style={containerStyle} data-testid="streaming-indicator" role="status" aria-live="polite">
+      {prefersReducedMotion ? (
+        <span style={textStyle}>Generating...</span>
+      ) : (
+        <span style={textStyle}>
+          Generating<span style={cursorStyle}>▋</span>
+        </span>
+      )}
     </div>
   );
 }

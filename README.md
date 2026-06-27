@@ -26,9 +26,19 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 ### HTML5 Web UI (Phase 1 — Complete)
 - **Application Shell**: Navigation rail with Chat, Documents, Settings pages and responsive flexbox layout
 - **Theme System**: Dark/light mode toggle with system preference detection and localStorage persistence
+- **Design Token Foundation (Phase 1)**: Comprehensive CSS custom property system on 8px grid with Inter font, status color tokens (info/warning/success), and radius tokens (sm/md/lg)
 - **Toast Notifications**: Non-blocking toast system with success/error/info variants and entrance animations
 - **Keyboard Shortcuts**: Ctrl+Enter (send), Ctrl+L (clear chat), Ctrl+, (open settings) with input/textarea focus guard
 - **Testing Framework**: vitest configured with @testing-library/react and jsdom environment
+
+### Chat Experience (Phase 2)
+- **Centered Transcript Layout**: Message list now centered with 768px max-width for comfortable reading
+- **Rich Empty State**: Hero heading "How can I help with your documents?" with 3 clickable suggested prompt cards
+- **Suggested Prompts**: Click any prompt card to immediately send that question to the chat
+- **Assistant Message Styling**: Full-width prose layout (no bubble background/radius) for improved readability
+- **User Message Styling**: 75% width bubbles aligned right, maintaining visual distinction
+- **Action Row Copy Button**: Copy button relocated below message content in a dedicated action row
+- **Composer Redesign**: Raised card input with 20px radius (`--radius-lg`), enhanced focus feedback (border color + shadow), elevation shadow, and 12px radius buttons (`--radius-md`)
 
 ### Core Capabilities
 - **Offline-First Design**: No internet required after initial setup
@@ -87,6 +97,16 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - **Server Connectivity Check**: `checkServerConnectivity()` pings `/auth/status` with 5s timeout, handles abort for rapid toggles, updates `isServerConnected` and `modeError` state
 - **Model Loading Progress**: `modelLoadingProgress` (0–100) displayed in blocking overlay when browser-local model is initializing
 - **API Mode Warning**: "Server not connected" warning shown in header when API mode is active but server is unreachable
+
+### Conversation Persistence and Navigation (Phase 3)
+- **Dexie.js Integration**: IndexedDB-based conversation persistence via `DocQADatabase` class (`db/index.ts`) and CRUD operations (`db/conversations.ts`) with pagination support
+- **Sidebar Navigation**: Responsive 260px sidebar (`Sidebar.tsx`) with collapsible state, showing conversation history
+- **Conversation Context Menu**: Right-click to delete or rename conversations (`SidebarConversationItem.tsx`)
+- **Controlled ChatPage**: Refactored with `messages`, `onMessagesChange`, and `onSaveConversation` props for explicit state management
+- **App Wiring**: `useConversations` hook connects AppLayout and ChatPage for automatic conversation loading and saving
+- **Simplified Header**: Compact padding, right-aligned controls, removed title text
+- **Elevation Tokens**: New shadow hierarchy (`--shadow-sm/md/lg`) and surface colors (`--color-bg/surface/raised`) for consistent depth
+- **Relative Timestamps**: `relativeTime.ts` utility formats conversation timestamps as "2m ago", "Yesterday", etc.
 
 ### Interactive Source Pills (Phase 4)
 - **Expandable Citations**: Click to expand source pills showing full filename, page number, and content preview
@@ -197,6 +217,26 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - **Inline Typing Indicator**: "Thinking..." indicator appears in chat area while processing (replaces status bar overwrite)
 - **Clear Chat Confirmation**: Clear button requires a second click within 3 seconds to prevent accidental deletion
 - **Settings Switch Labels**: CTkSwitch widgets now display descriptive text labels ("Enable Hybrid Search", "Enable Reranking")
+
+### Web UI Component Inventory
+| Component | File | Description |
+|-----------|------|-------------|
+| `ChatPage.tsx` | `src/pages/` | Primary chat page with streaming, message state, send/cancel/clear |
+| `ChatMessageList.tsx` | `src/components/` | Centered transcript (768px max-width), rich empty state with suggested prompts (Phase 2) |
+| `ChatMessageBubble.tsx` | `src/components/` | Role-based messages: assistant full-width prose, user 75% bubbles, action-row copy (Phase 2) |
+| `ChatInput.tsx` | `src/components/` | Raised card composer with focus feedback, elevation shadow, 20px radius (Phase 2) |
+| `MarkdownRenderer.tsx` | `src/components/` | Zero-dependency inline markdown parser |
+| `SourceCitation.tsx` | `src/components/` | Expandable citation pills with copy-to-clipboard |
+| `InferenceModeToggle.tsx` | `src/components/` | Status dot (green/yellow/red) for browser-local vs API mode |
+| `StreamingIndicator.tsx` | `src/components/` | Bouncing dots animation during generation |
+| `DropZone.tsx` | `src/components/` | Drag-and-drop file upload with progress indication |
+| `DocumentList.tsx` | `src/components/` | Paginated document list with status tracking |
+| `ModelDownloadProgress.tsx` | `src/components/` | Accessible progress bar for model download |
+| `ErrorBoundary.tsx` | `src/components/` | Error boundary with retry functionality |
+| `LoadingSkeleton.tsx` | `src/components/` | Shimmer-animated skeleton placeholders |
+| `EmptyState.tsx` | `src/components/` | Contextual empty states with optional action buttons |
+| `Sidebar.tsx` | `src/components/` | Responsive 260px sidebar with conversation history (Phase 3) |
+| `SidebarConversationItem.tsx` | `src/components/` | Conversation list item with context menu (Phase 3) |
 
 ## 📦 Installation
 
@@ -763,14 +803,18 @@ A new browser-based interface is being developed alongside the existing desktop 
 - Pure CSS design token system (no Tailwind)
 - vitest + @testing-library/react for testing
 
-### Design Token System
+### Design Token System (Phase 1 — Updated)
 Translates Python theme.py (ColorTokens, TypeScale, Spacing) to CSS custom properties:
 
 | Token Category | Examples |
 |---------------|----------|
-| Colors | `--color-primary`, `--color-bubble-user`, `--color-text-muted` |
-| Typography | `--font-family`, `--font-size-h1` (20px) through `--font-size-small` (10px) |
-| Spacing | `--spacing-xs` (2px) through `--spacing-section` (32px) on 4px grid |
+| Colors | `--color-primary`, `--color-info`, `--color-warning`, `--color-success`, `--color-bubble-user`, `--color-text-muted`, `--color-text-primary` |
+| Typography | `--font-family` (Inter first), `--font-size-display` (32px), `--font-size-h1` (24px), `--font-size-h2` (20px), `--font-size-h3` (17px), `--font-size-body` (15px), `--font-size-caption` (13px), `--font-size-small` (11px) |
+| Line Height | `--line-height-body` (1.6), `--line-height-heading` (1.3), `--line-height-tight` (1.2) |
+| Spacing | `--spacing-xs` (4px) through `--spacing-xxxl` (64px) on 8px grid |
+| Radius | `--radius-sm` (6px), `--radius-md` (12px), `--radius-lg` (20px) |
+
+**Font**: Inter (self-hosted via @fontsource/inter, weights 400/500/600/700)
 
 Dark mode overrides via `[data-theme="dark"]` attribute on `<html>`.
 
@@ -930,7 +974,19 @@ doc_qa_app/
 │   │   │   ├── ModelDownloadProgress.tsx # Download progress UI (Phase 6)
 │   │   │   ├── ErrorBoundary.tsx     # Error boundary with retry (Phase 7)
 │   │   │   ├── LoadingSkeleton.tsx   # Skeleton loading placeholders (Phase 7)
-│   │   │   └── EmptyState.tsx        # Empty state messages (Phase 7)
+│   │   │   ├── EmptyState.tsx        # Empty state messages (Phase 7)
+│   │   │   ├── Sidebar.tsx           # Responsive 260px sidebar (Phase 3)
+│   │   │   └── SidebarConversationItem.tsx # Context menu conversations (Phase 3)
+│   │   ├── db/
+│   │   │   ├── index.ts              # DocQADatabase class (Phase 3)
+│   │   │   └── conversations.ts       # Conversation CRUD + pagination (Phase 3)
+│   │   ├── hooks/
+│   │   │   ├── useSidebarState.ts    # Sidebar collapsed state (Phase 3)
+│   │   │   └── useConversations.ts   # Conversation list management (Phase 3)
+│   │   ├── layouts/
+│   │   │   └── AppLayout.tsx        # Layout with sidebar + header (Phase 3)
+│   │   ├── utils/
+│   │   │   └── relativeTime.ts       # Relative timestamp formatting (Phase 3)
 │   │   ├── lib/
 │   │   │   ├── streaming/
 │   │   │   │   └── TokenStreamManager.ts # RAF-batched token delivery (Phase 3)

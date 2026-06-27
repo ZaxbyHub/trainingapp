@@ -4,6 +4,23 @@
 
 ### Added
 
+- **Chat Experience redesign (Phase 2)**: Complete overhaul of chat UI for improved usability:
+  - `ChatMessageList.tsx`: Centered transcript layout (768px max-width) with rich empty state featuring hero heading "How can I help with your documents?" and 3 clickable suggested prompt cards
+  - `ChatMessageBubble.tsx`: Assistant messages now render as full-width prose (no bubble background/radius); user messages remain 75% width bubbles; copy button moved to action row below content
+  - `ChatInput.tsx`: Composer redesigned as raised card with 20px radius (`--radius-lg`), focus feedback (border color change + shadow intensification), elevation shadow, and 12px radius buttons (`--radius-md`)
+  - `ChatPage.tsx`: `onSuggestedPrompt` handler wired to `handleSend` for immediate prompt card activation
+
+### Changed
+
+- **Design token foundation (Phase 1)**: Comprehensive design system overhaul establishing the UI/UX baseline:
+  - **Color system**: Added 5 new semantic tokens (`--color-info`, `--color-warning`, `--color-success`, `--color-primary-rgb`, `--color-text-primary`) with dark mode overrides; fixed DD-C01 critical bug where LoadingOverlay used undefined tokens
+  - **Typography**: Migrated to Inter font (self-hosted via @fontsource/inter, weights 400/500/600/700); updated type scale to 6-level hierarchy (display=32px, h1=24px, h2=20px, h3=17px, body=15px, caption=13px, small=11px); added line-height tokens (`--line-height-body: 1.6`, `--line-height-heading: 1.3`, `--line-height-tight: 1.2`)
+  - **Spacing**: Migrated from 4px grid to 8px grid (4, 8, 16, 24, 32, 48, 64px); compound spacing presets re-aligned to 8px grid
+  - **Radius**: New token system (`--radius-sm: 6px`, `--radius-md: 12px`, `--radius-lg: 20px`)
+  - Dependencies: Added `@fontsource/inter@^5.2.8`
+
+### Added
+
 - **End-to-end integration wiring (Phase 8)**: Connected `ChatPage.tsx` to `RAGOrchestrator` for browser-local mode and SSE streaming (`SSEStreamConsumer`) for API mode
 - **DocumentsPage search wiring (Phase 8)**: Connected `DocumentsPage.tsx` to search indexes (vector-index, keyword-index) for document retrieval
 - **Service initialization infrastructure (Phase 8)**: New `useServiceInitialization.ts` hook with sequential service init, cleanup on unmount, and loading overlay in `App.tsx`

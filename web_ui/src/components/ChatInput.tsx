@@ -35,6 +35,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   const [value, setValue] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -136,6 +137,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
         padding: 'var(--spacing-md)',
         borderTop: '1px solid var(--color-bubble-system)',
         backgroundColor: 'var(--color-bubble-assistant)',
+        boxShadow: 'var(--shadow-md)',
       }}
     >
       {/* Attached-image previews */}
@@ -154,7 +156,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               <img
                 src={img.dataUrl}
                 alt={img.fileName}
-                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: '6px', display: 'block' }}
+                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 'var(--radius-sm)', display: 'block' }}
               />
               <button
                 type="button"
@@ -213,7 +215,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               height: MIN_HEIGHT, width: MIN_HEIGHT, flexShrink: 0,
               backgroundColor: 'var(--color-bubble-user)',
               color: 'var(--color-text-on-bubble-user)',
-              border: '1px solid var(--color-bubble-system)', borderRadius: '8px',
+              border: '1px solid var(--color-bubble-system)', borderRadius: 'var(--radius-md)',
               cursor: isLoading || disabled || images.length >= maxImages ? 'not-allowed' : 'pointer',
               fontSize: 'var(--font-size-body)',
             }}
@@ -227,6 +229,8 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
             placeholder="Ask a question..."
             disabled={isLoading || disabled}
             rows={1}
@@ -238,8 +242,11 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               paddingRight: value ? 'var(--spacing-xxl)' : 'var(--spacing-md)',
               fontSize: 'var(--font-size-body)',
               fontFamily: 'var(--font-family)',
-              border: '1px solid var(--color-bubble-system)',
-              borderRadius: '8px',
+              border: `1px solid ${isFocused ? 'var(--color-primary)' : 'var(--color-bubble-system)'}`,
+              borderRadius: 'var(--radius-lg)',
+        boxShadow: isFocused
+          ? 'var(--shadow-md)'
+          : 'var(--shadow-sm)',
               resize: 'none',
               overflowY: 'hidden',
               lineHeight: 1.4,
@@ -284,7 +291,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               backgroundColor: 'var(--color-danger)',
               color: 'var(--color-text-on-primary)',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: 'var(--radius-md)',
               cursor: 'pointer',
               fontWeight: 500,
             }}
@@ -305,7 +312,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               backgroundColor: value.trim() ? 'var(--color-primary)' : 'var(--color-secondary)',
               color: 'var(--color-text-on-primary)',
               border: 'none',
-              borderRadius: '8px',
+              borderRadius: 'var(--radius-md)',
               cursor: value.trim() ? 'pointer' : 'not-allowed',
               fontWeight: 500,
               opacity: value.trim() ? 1 : 0.6,

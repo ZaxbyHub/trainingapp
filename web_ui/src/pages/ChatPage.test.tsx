@@ -54,19 +54,34 @@ describe('ChatPage', () => {
 
   describe('Initial Rendering', () => {
     it('renders empty state with placeholder message', () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       expect(screen.getByText('Ask a question about your documents')).toBeInTheDocument();
     });
 
     it('renders header with title', () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       expect(screen.getByText('Document Q&A')).toBeInTheDocument();
     });
 
     it('does not show Clear Chat button when no messages', () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       expect(screen.queryByText(/clear chat/i)).not.toBeInTheDocument();
     });
@@ -74,7 +89,12 @@ describe('ChatPage', () => {
 
   describe('Message Sending', () => {
     it('sends message and creates user/assistant pair', async () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -86,7 +106,12 @@ describe('ChatPage', () => {
     });
 
     it('shows streaming indicator while loading', async () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -98,7 +123,12 @@ describe('ChatPage', () => {
     });
 
     it('shows Cancel button while streaming', async () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -111,7 +141,12 @@ describe('ChatPage', () => {
 
     it('streams tokens progressively', async () => {
       vi.useRealTimers();
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -132,7 +167,12 @@ describe('ChatPage', () => {
   describe('Streaming Cancellation', () => {
     it('cancel stops streaming and marks messages as complete', async () => {
       vi.useRealTimers();
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -161,7 +201,12 @@ describe('ChatPage', () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
       
       vi.useRealTimers();
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -186,7 +231,12 @@ describe('ChatPage', () => {
     it('clears all timers on unmount', () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
 
-      const { unmount } = render(<ChatPage />);
+      const { unmount } = render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Trigger some state that creates timers
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -203,7 +253,12 @@ describe('ChatPage', () => {
     it('clears confirm clear timer on unmount', () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
 
-      const { unmount } = render(<ChatPage />);
+      const { unmount } = render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Send a message first to make Clear Chat button appear
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -228,7 +283,12 @@ describe('ChatPage', () => {
   describe('Clear Chat Functionality', () => {
     it('shows Clear Chat button when messages exist', async () => {
       vi.useRealTimers();
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -246,7 +306,12 @@ describe('ChatPage', () => {
 
     it('first click shows confirm state', async () => {
       vi.useRealTimers();
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Send and complete message
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -266,7 +331,12 @@ describe('ChatPage', () => {
 
     it('second click clears messages', async () => {
       vi.useRealTimers();
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Send and complete message
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -294,7 +364,12 @@ describe('ChatPage', () => {
 
     it('confirm timer auto-resets after 3 seconds', async () => {
       vi.useRealTimers();
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Send and complete message
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -322,7 +397,12 @@ describe('ChatPage', () => {
 
   describe('Input Behavior', () => {
     it('Enter key sends message', async () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Test message' } });
@@ -334,7 +414,12 @@ describe('ChatPage', () => {
     });
 
     it('Shift+Enter creates newline without sending', async () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Line1\nLine2' } });
@@ -356,7 +441,12 @@ describe('ChatPage', () => {
         }),
       }));
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       expect(textarea).toBeDisabled();
@@ -368,7 +458,12 @@ describe('ChatPage', () => {
       const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
       vi.useRealTimers();
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -384,7 +479,12 @@ describe('ChatPage', () => {
       const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
       vi.useRealTimers();
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Send and complete message
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -407,7 +507,12 @@ describe('ChatPage', () => {
       vi.spyOn(global, 'setTimeout');
       vi.useRealTimers();
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Send and complete message
       const textarea = screen.getByPlaceholderText('Ask a question...');

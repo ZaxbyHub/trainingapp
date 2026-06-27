@@ -137,7 +137,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'What is AI?' } });
@@ -166,7 +171,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -194,7 +204,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Test question' } });
@@ -221,7 +236,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Test question' } });
@@ -249,7 +269,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'What is machine learning?' } });
@@ -272,7 +297,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'What is "artificial intelligence"? & how does it work?' } });
@@ -300,7 +330,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Test' } });
@@ -328,7 +363,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -361,7 +401,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hi' } });
@@ -398,7 +443,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -421,7 +471,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Test question' } });
@@ -460,7 +515,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -498,7 +558,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -532,7 +597,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         yield { type: 'complete', data: { answer: 'Hello', sources: [], chunks: [] } };
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Test question' } });
@@ -554,7 +624,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         yield { type: 'complete', data: { answer: 'Hello', sources: [], chunks: [] } };
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Test' } });
@@ -582,7 +657,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -611,7 +691,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -645,7 +730,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
 
@@ -676,7 +766,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'What is AI?' } });
@@ -699,7 +794,12 @@ describe('ChatPage API Mode (Task 8.4)', () => {
         stop: vi.fn().mockResolvedValue(undefined),
       });
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Test' } });

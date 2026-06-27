@@ -159,7 +159,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     // Wait for the async handler to start
@@ -185,7 +190,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     // Advance timers to let the async generator consume events
@@ -215,7 +225,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -245,7 +260,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -270,7 +290,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
     // Check initial state - no messages
     expect(screen.queryAllByText(userText)).toHaveLength(0);
@@ -294,7 +319,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -322,7 +352,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     }
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(infiniteEvents());
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -355,7 +390,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
     const textarea = screen.getByRole('textbox');
     const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -404,7 +444,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -437,7 +482,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     }
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(errorEvents());
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
