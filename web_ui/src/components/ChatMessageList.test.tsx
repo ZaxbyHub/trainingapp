@@ -5,7 +5,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { ChatMessageList } from '../ChatMessageList';
+import '@testing-library/jest-dom';
+import { ChatMessageList } from './ChatMessageList';
 import type { ChatMessage } from '../../types/chat';
 
 describe('ChatMessageList', () => {
@@ -22,13 +23,13 @@ describe('ChatMessageList', () => {
     it('renders empty state message when no messages', () => {
       render(<ChatMessageList messages={[]} isStreaming={false} />);
 
-      expect(screen.getByText('Ask a question about your documents')).toBeInTheDocument();
+      expect(screen.getByText('How can I help with your documents?')).toBeInTheDocument();
     });
 
     it('renders empty state centered', () => {
-      const { container } = render(<ChatMessageList messages={[]} isStreaming={false} />);
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
 
-      const emptyState = container.querySelector('[style*="justifyContent: center"]');
+      const emptyState = screen.getByRole('region', { name: /How can I help/i });
       expect(emptyState).toBeInTheDocument();
     });
 
@@ -37,6 +38,40 @@ describe('ChatMessageList', () => {
 
       const messageList = container.querySelector('[style*="padding: var(--spacing-xxl)"]');
       expect(messageList).toBeInTheDocument();
+    });
+  });
+
+  describe('Suggested Prompts', () => {
+    it('renders 3 suggested prompt buttons', () => {
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
+
+      const buttons = screen.getAllByRole('button');
+      expect(buttons).toHaveLength(3);
+      expect(screen.getByText('Summarize my documents')).toBeInTheDocument();
+      expect(screen.getByText('What are the key topics?')).toBeInTheDocument();
+      expect(screen.getByText('Find specific information')).toBeInTheDocument();
+    });
+
+    it('calls onSuggestedPrompt when a prompt card is clicked', () => {
+      const mockHandler = vi.fn();
+      render(<ChatMessageList messages={[]} isStreaming={false} onSuggestedPrompt={mockHandler} />);
+
+      fireEvent.click(screen.getByText('Summarize my documents'));
+      expect(mockHandler).toHaveBeenCalledWith('Summarize my documents');
+    });
+
+    it('does not crash when onSuggestedPrompt is undefined', () => {
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
+
+      expect(() => fireEvent.click(screen.getByText('Summarize my documents'))).not.toThrow();
+    });
+
+    it('renders prompt buttons with accessible aria-labels', () => {
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
+
+      expect(screen.getByLabelText('Suggested prompt: Summarize my documents')).toBeInTheDocument();
+      expect(screen.getByLabelText('Suggested prompt: What are the key topics?')).toBeInTheDocument();
+      expect(screen.getByLabelText('Suggested prompt: Find specific information')).toBeInTheDocument();
     });
   });
 
@@ -70,10 +105,13 @@ describe('ChatMessageList', () => {
         { id: 'msg-3', role: 'user', content: 'Message 3', timestamp: 3000 },
       ];
 
-      const { container } = render(<ChatMessageList messages={messages} isStreaming={false} />);
+      render(<ChatMessageList messages={messages} isStreaming={false} />);
 
-      const messageElements = container.querySelectorAll('[style*="marginBottom: var(--spacing-sm)"]');
-      expect(messageElements).toHaveLength(3);
+      const messageContents = screen.getAllByText(/Message \d/);
+      expect(messageContents).toHaveLength(3);
+      expect(screen.getByText('Message 1')).toBeInTheDocument();
+      expect(screen.getByText('Message 2')).toBeInTheDocument();
+      expect(screen.getByText('Message 3')).toBeInTheDocument();
     });
 
     it('uses correct padding when messages exist', () => {
@@ -100,9 +138,9 @@ describe('ChatMessageList', () => {
       Object.defineProperty(Element.prototype, 'scrollHeight', { value: 1000, configurable: true });
       Object.defineProperty(Element.prototype, 'clientHeight', { value: 500, configurable: true });
 
-      const { container } = render(<ChatMessageList messages={messages} isStreaming={true} />);
+      render(<ChatMessageList messages={messages} isStreaming={true} />);
 
-      const scrollContainer = container.querySelector('[style*="overflowY: auto"]');
+      const scrollContainer = screen.getByRole('log');
       expect(scrollContainer).toBeInTheDocument();
     });
 
@@ -111,9 +149,9 @@ describe('ChatMessageList', () => {
         { id: 'msg-1', role: 'user', content: 'Test', timestamp: Date.now() },
       ];
 
-      const { container } = render(<ChatMessageList messages={messages} isStreaming={false} />);
+      render(<ChatMessageList messages={messages} isStreaming={false} />);
 
-      const scrollContainer = container.querySelector('[style*="overflowY: auto"]');
+      const scrollContainer = screen.getByRole('log');
       expect(scrollContainer).toBeInTheDocument();
     });
   });
@@ -124,9 +162,9 @@ describe('ChatMessageList', () => {
         { id: 'msg-1', role: 'user', content: 'First', timestamp: Date.now() },
       ];
 
-      const { container, rerender } = render(<ChatMessageList messages={messages1} isStreaming={false} />);
+      const { rerender } = render(<ChatMessageList messages={messages1} isStreaming={false} />);
 
-      expect(container.querySelector('[style*="overflowY: auto"]')).toBeInTheDocument();
+      expect(screen.getByRole('log')).toBeInTheDocument();
 
       const messages2: ChatMessage[] = [
         ...messages1,
@@ -143,9 +181,9 @@ describe('ChatMessageList', () => {
         { id: 'msg-1', role: 'user', content: 'Test', timestamp: Date.now() },
       ];
 
-      const { container } = render(<ChatMessageList messages={messages} isStreaming={false} />);
+      render(<ChatMessageList messages={messages} isStreaming={false} />);
 
-      const scrollContainer = container.querySelector('[style*="overflowY: auto"]');
+      const scrollContainer = screen.getByRole('log');
       expect(scrollContainer).toBeInTheDocument();
     });
   });

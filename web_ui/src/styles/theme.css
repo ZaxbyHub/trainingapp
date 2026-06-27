@@ -8,6 +8,19 @@
   color-scheme: light dark;
 }
 
+[data-theme="dark"] {
+  --color-info: #38bdf8;
+  --color-warning: #facc15;
+  --color-success: #4ade80;
+  --color-text-primary: #e0e0e0;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --color-bg: #1a1a2e;
+  --color-surface: #252539;
+  --color-raised: #2a2a3e;
+}
+
 body {
   background-color: var(--color-bubble-assistant);
   color: var(--color-text-on-bubble-assistant);

@@ -135,7 +135,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
 
   describe('useKeyboardShortcuts wiring', () => {
     it('is called with onClearChat callback', () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       expect(keyboardShortcutsModule.useKeyboardShortcuts).toHaveBeenCalledTimes(1);
       const lastCall = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0];
@@ -144,7 +149,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
     });
 
     it('is called with onOpenSettings callback (no-op)', () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       expect(keyboardShortcutsModule.useKeyboardShortcuts).toHaveBeenCalledTimes(1);
       const lastCall = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0];
@@ -153,7 +163,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
     });
 
     it('onOpenSettings is a no-op function', () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const lastCall = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0];
       // Should not throw when called
@@ -161,7 +176,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
     });
 
     it('is called with onSendMessage undefined (not wired in ChatPage)', () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const lastCall = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0];
       expect(lastCall.onSendMessage).toBeUndefined();
@@ -181,7 +201,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
       ];
       vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Send a message
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -210,7 +235,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
       ];
       vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -242,7 +272,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
     it('clear button shows only when messages exist', async () => {
       vi.useRealTimers();
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Should not show Clear Chat button initially
       expect(screen.queryByText('Clear Chat')).not.toBeInTheDocument();
@@ -258,7 +293,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
       ];
       vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
       fireEvent.change(textarea, { target: { value: 'Hello' } });
@@ -290,7 +330,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
       // This test verifies that the onClearChat callback is the same function
       // that the clear button uses, so pressing Ctrl+L would trigger the same behavior
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Get the onClearChat callback passed to useKeyboardShortcuts
       const onClearChat = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0].onClearChat;
@@ -300,7 +345,12 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
     });
 
     it('onOpenSettings is a function that does nothing', () => {
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       const onOpenSettings = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0].onOpenSettings;
 

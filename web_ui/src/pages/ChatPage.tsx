@@ -27,15 +27,22 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-export function ChatPage() {
-  return <ChatPageInner />;
+export interface ChatPageProps {
+  messages: ChatMessage[];
+  onMessagesChange: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  onSaveConversation: (messages: ChatMessage[], mode: 'server' | 'wllama', modelUsed: string) => void;
+  onNewChat: () => void;
+}
+
+export function ChatPage(props: ChatPageProps) {
+  return <ChatPageInner {...props} />;
 }
 
 const exportButtonStyle: CSSProperties = {
   backgroundColor: 'transparent',
   color: 'var(--color-text-muted)',
   border: '1px solid var(--color-text-muted)',
-  borderRadius: '4px',
+  borderRadius: 'var(--radius-sm)',
   padding: 'var(--spacing-xs) var(--spacing-sm)',
   fontSize: 'var(--font-size-caption)',
   fontFamily: 'var(--font-family)',
@@ -43,10 +50,11 @@ const exportButtonStyle: CSSProperties = {
   transition: 'all 0.15s ease',
 };
 
-function ChatPageInner() {
+function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, onNewChat }: ChatPageProps) {
   const MAX_MESSAGES = 200;
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl } = useInferenceMode();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messages = messagesProp;
+  const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
   const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
@@ -124,13 +132,16 @@ function ChatPageInner() {
 
     // Wire done callback - finalize message with sources
     streamManager.onDone((data) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
+      setMessages((prev) => {
+        const updated = prev.map((msg) =>
           msg.id === assistantMessageId
             ? { ...msg, isStreaming: false, sources: data.sources }
             : msg
-        )
-      );
+        );
+        // Save to Dexie after stream completes
+        onSaveConversation(updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
+        return updated;
+      });
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
@@ -203,7 +214,7 @@ function ChatPageInner() {
         }
       })();
     }
-  }, [mode, serverUrl, browserEngine, ragPreset]);
+  }, [mode, serverUrl, browserEngine, ragPreset, onSaveConversation]);
 
   const handleSend = useCallback((text: string, attachedImages?: AttachedImage[]) => {
     // Prevent overlapping streams
@@ -306,6 +317,7 @@ function ChatPageInner() {
         clearTimeoutRef.current = null;
       }
       setMessages([]);
+      onNewChat();
       lastTurnRef.current = null; // no turn to regenerate after clearing
       setClearConfirmState('idle');
     }
@@ -325,34 +337,25 @@ function ChatPageInner() {
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        backgroundColor: 'var(--color-bubble-assistant)',
+        backgroundColor: 'var(--color-bg)',
         position: 'relative',
       }}
     >
       {/* Header */}
       <header
+        aria-label="Chat controls"
         style={{
-          padding: 'var(--spacing-md) var(--spacing-lg)',
+          padding: 'var(--spacing-sm) var(--spacing-md)',
           borderBottom: '1px solid var(--color-bubble-system)',
-          backgroundColor: 'var(--color-bubble-assistant)',
+          backgroundColor: 'var(--color-surface)',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-end',
           position: 'relative',
           zIndex: 101,
+          boxShadow: 'var(--shadow-sm)',
         }}
       >
-        <h1
-          style={{
-            fontSize: 'var(--font-size-h2)',
-            fontFamily: 'var(--font-family)',
-            fontWeight: 600,
-            color: 'var(--color-text-on-bubble-assistant)',
-            margin: 0,
-          }}
-        >
-          Document Q&A
-        </h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
           {/* API mode warning */}
           {mode === 'api' && !isServerConnected && (
@@ -360,7 +363,7 @@ function ChatPageInner() {
               title="Server not connected. Check your server URL in Settings."
               style={{
                 fontSize: 'var(--font-size-caption)',
-                color: '#eab308',
+                color: 'var(--color-warning)',
                 fontFamily: 'var(--font-family)',
               }}
             >
@@ -382,10 +385,10 @@ function ChatPageInner() {
                 type="button"
                 onClick={handleClearClick}
                 style={{
-                  backgroundColor: clearConfirmState === 'confirming' ? '#dc3545' : 'transparent',
-                  color: clearConfirmState === 'confirming' ? '#fff' : 'var(--color-text-muted)',
+                  backgroundColor: clearConfirmState === 'confirming' ? 'var(--color-danger)' : 'transparent',
+                  color: clearConfirmState === 'confirming' ? 'var(--color-text-on-primary)' : 'var(--color-text-muted)',
                   border: clearConfirmState === 'confirming' ? 'none' : '1px solid var(--color-text-muted)',
-                  borderRadius: '4px',
+                  borderRadius: 'var(--radius-sm)',
                   padding: 'var(--spacing-xs) var(--spacing-sm)',
                   fontSize: 'var(--font-size-caption)',
                   fontFamily: 'var(--font-family)',
@@ -420,7 +423,7 @@ function ChatPageInner() {
         >
           <div
             style={{
-              backgroundColor: 'var(--color-bubble-assistant)',
+backgroundColor: 'var(--color-surface)',
               padding: 'var(--spacing-xl)',
               borderRadius: '8px',
               textAlign: 'center',
@@ -443,7 +446,7 @@ function ChatPageInner() {
                   width: '100%',
                   height: '8px',
                   backgroundColor: 'var(--color-bubble-system)',
-                  borderRadius: '4px',
+  borderRadius: 'var(--radius-sm)',
                   overflow: 'hidden',
                 }}
               >
@@ -476,6 +479,7 @@ function ChatPageInner() {
         messages={messages}
         isStreaming={isLoading}
         onRegenerate={!isLoading && lastTurnRef.current ? handleRegenerate : undefined}
+        onSuggestedPrompt={(prompt) => handleSend(prompt)}
       />
 
       {/* Streaming Indicator */}

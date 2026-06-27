@@ -61,231 +61,259 @@ const mockPdfJs = {
 describe('PDF Text Extraction', () => {
   describe('extractPdfText', () => {
     test('returns ExtractionResult with fullText, pages, and metadata', async () => {
-      // Arrange
-      const mockFile = new File(['PDF content'], 'test.pdf', { type: 'application/pdf' });
-      const mockPdf = {
-        numPages: 1,
-        getPage: vi.fn().mockResolvedValue({
-          getTextContent: vi.fn().mockResolvedValue({
-            items: [{ str: 'Hello World' }],
-          }),
-        }),
-        destroy: vi.fn(),
-      };
+      const mockFile = {
+        name: 'test.pdf',
+        type: 'application/pdf',
+        size: 12,
+        arrayBuffer: async () => new ArrayBuffer(12),
+      } as unknown as File;
 
-      // Act - would call extractPdfText(mockFile)
-      // Assert structure of expected result
-      const expectedResult: ExtractionResult = {
-        fullText: 'Hello World',
-        pages: [{ pageNumber: 1, text: 'Hello World' }],
-        metadata: {
-          fileName: 'test.pdf',
-          pageCount: 1,
-          fileSize: mockFile.size,
-          extractedAt: expect.any(Number),
-        },
-      };
-
-      expect(expectedResult.metadata.fileName).toBe('test.pdf');
-      expect(expectedResult.pages).toHaveLength(1);
-      expect(expectedResult.fullText).toBe('Hello World');
+      const result = await extractPdfText(mockFile);
+      expect(result.fullText).toBe('mock page text');
+      expect(result.pages).toHaveLength(1);
+      expect(result.metadata.fileName).toBe('test.pdf');
     });
 
     test('handles encrypted PDFs with password error', async () => {
-      // Arrange
-      const mockFile = new File([''], 'encrypted.pdf', { type: 'application/pdf' });
+      const { getDocument } = await import('pdfjs-dist');
+      const passwordError = new Error('Password supplied for encrypted PDF');
+      vi.mocked(getDocument).mockImplementationOnce(() => ({
+        promise: Promise.reject(passwordError),
+      }) as any);
 
-      // pdfjs-dist throws error with 'password' or 'encrypted' in message for protected PDFs
-      const encryptedError = new Error('Password supplied for encrypted PDF');
-      const mockLoadingTask = {
-        promise: Promise.reject(encryptedError),
-      };
+      const mockFile = {
+        name: 'encrypted.pdf',
+        type: 'application/pdf',
+        size: 0,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      } as unknown as File;
 
-      // Act & Assert
-      // Would call: await extractPdfText(mockFile)
-      // Should throw: ExtractionError { fileName: 'encrypted.pdf', error: 'PDF is encrypted...', stage: 'pdf' }
-
-      const expectedError: ExtractionError = {
+      await expect(extractPdfText(mockFile)).rejects.toMatchObject({
         fileName: 'encrypted.pdf',
-        error: 'PDF is encrypted and requires a password to extract text',
+        error: expect.stringContaining('encrypted'),
         stage: 'pdf',
-      };
-
-      expect(expectedError.error).toContain('encrypted');
+      });
     });
 
     test('handles malformed PDFs with parse error', async () => {
-      // Arrange
-      const mockFile = new File(['NOT A PDF'], 'malformed.pdf', { type: 'application/pdf' });
-
       const parseError = new Error('Invalid PDF structure');
-      const mockLoadingTask = {
+
+      const { getDocument } = await import('pdfjs-dist');
+      vi.mocked(getDocument).mockImplementationOnce(() => ({
         promise: Promise.reject(parseError),
-      };
+      }) as any);
 
-      // Act & Assert
-      // Would call: await extractPdfText(mockFile)
-      // Should throw: ExtractionError { fileName: 'malformed.pdf', error: 'Failed to parse PDF: ...', stage: 'pdf' }
+      const mockFile = {
+        name: 'malformed.pdf',
+        type: 'application/pdf',
+        size: 10,
+        arrayBuffer: async () => new ArrayBuffer(10),
+      } as unknown as File;
 
-      const expectedError: ExtractionError = {
+      await expect(extractPdfText(mockFile)).rejects.toMatchObject({
         fileName: 'malformed.pdf',
         error: expect.stringContaining('Failed to parse PDF'),
         stage: 'pdf',
-      };
-
-      expect(expectedError.error).toMatch(/Failed to parse PDF/);
+      });
     });
 
     test('skips pages with no extractable text', async () => {
-      // Arrange - PDF where page 2 has no text content
-      const mockFile = new File([''], 'mixed.pdf', { type: 'application/pdf' });
+      const { getDocument } = await import('pdfjs-dist');
 
-      const mockPageWithText = {
-        getTextContent: vi.fn().mockResolvedValue({
-          items: [{ str: 'Page 1 content' }],
+      let pageNum = 0;
+      vi.mocked(getDocument).mockImplementationOnce(() => ({
+        promise: Promise.resolve({
+          numPages: 2,
+          getPage: vi.fn().mockImplementation(() => {
+            pageNum++;
+            if (pageNum === 1) {
+              return Promise.resolve({
+                getTextContent: vi.fn().mockResolvedValue({
+                  items: [{ str: 'Page 1 content' }],
+                }),
+                cleanup: vi.fn(),
+              });
+            } else {
+              return Promise.resolve({
+                getTextContent: vi.fn().mockResolvedValue({
+                  items: [],
+                }),
+                cleanup: vi.fn(),
+              });
+            }
+          }),
+          destroy: vi.fn(),
         }),
-      };
+      }) as any);
 
-      const mockPageEmpty = {
-        getTextContent: vi.fn().mockResolvedValue({
-          items: [], // Empty page - no text
-        }),
-      };
+      const mockFile = {
+        name: 'mixed.pdf',
+        type: 'application/pdf',
+        size: 10,
+        arrayBuffer: async () => new ArrayBuffer(10),
+      } as unknown as File;
 
-      // Act & Assert
-      // Pages with empty text should not be included in the pages array
-      // extractPdfText should only return pages where text.trim().length > 0
-
-      const emptyPageResult = {
-        pageNumber: 2,
-        text: '',
-      };
-
-      // This page should be skipped
-      expect(emptyPageResult.text.trim().length).toBe(0);
-      // Therefore it should NOT be pushed to pages array
+      const result = await extractPdfText(mockFile);
+      expect(result.pages).toHaveLength(1);
+      expect(result.pages[0].pageNumber).toBe(1);
+      expect(result.fullText).toBe('Page 1 content');
     });
 
     test('metadata includes fileName, pageCount, fileSize, extractedAt', async () => {
-      // Arrange
-      const mockFile = new File(['content'], 'document.pdf', { type: 'application/pdf' });
-      const fileSize = mockFile.size;
       const beforeExtraction = Date.now();
 
-      // Act & Assert
-      // The metadata object must contain all four required fields
+      const mockFile = {
+        name: 'document.pdf',
+        type: 'application/pdf',
+        size: 7,
+        arrayBuffer: async () => new ArrayBuffer(7),
+      } as unknown as File;
 
-      const metadata = {
-        fileName: 'document.pdf',
-        pageCount: 3,
-        fileSize: fileSize,
-        extractedAt: beforeExtraction,
-      };
+      const result = await extractPdfText(mockFile);
 
-      expect(metadata).toHaveProperty('fileName');
-      expect(metadata).toHaveProperty('pageCount');
-      expect(metadata).toHaveProperty('fileSize');
-      expect(metadata).toHaveProperty('extractedAt');
+      expect(result.metadata).toHaveProperty('fileName');
+      expect(result.metadata).toHaveProperty('pageCount');
+      expect(result.metadata).toHaveProperty('fileSize');
+      expect(result.metadata).toHaveProperty('extractedAt');
 
-      expect(typeof metadata.fileName).toBe('string');
-      expect(typeof metadata.pageCount).toBe('number');
-      expect(typeof metadata.fileSize).toBe('number');
-      expect(typeof metadata.extractedAt).toBe('number');
+      expect(typeof result.metadata.fileName).toBe('string');
+      expect(typeof result.metadata.pageCount).toBe('number');
+      expect(typeof result.metadata.fileSize).toBe('number');
+      expect(typeof result.metadata.extractedAt).toBe('number');
 
-      expect(metadata.extractedAt).toBeGreaterThanOrEqual(beforeExtraction);
+      expect(result.metadata.extractedAt).toBeGreaterThanOrEqual(beforeExtraction);
     });
 
-    test('pdfjs-dist worker is configured', () => {
-      // Verify that GlobalWorkerOptions.workerSrc is set to CDN URL
-      const workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+    test('pdfjs-dist worker is configured', async () => {
+      const mockFile = {
+        name: 'test.pdf',
+        type: 'application/pdf',
+        size: 7,
+        arrayBuffer: async () => new ArrayBuffer(7),
+      } as unknown as File;
 
-      // This is the configuration line in pdf-extractor.ts:
-      // pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+      // Call extractPdfText first (which configures the worker)
+      await extractPdfText(mockFile);
 
-      expect(workerSrc).toContain('pdf.js');
-      expect(workerSrc).toContain('pdf.worker.min.mjs');
-      expect(workerSrc).toMatch(/^https:\/\//);
+      // Then verify workerSrc was set
+      const { GlobalWorkerOptions } = await import('pdfjs-dist');
+      expect(GlobalWorkerOptions.workerSrc).toContain('pdf.worker');
+      expect(GlobalWorkerOptions.workerSrc).toContain('pdf.worker.min.mjs');
     });
 
     test('fullText is constructed from pages joined by double newlines', async () => {
-      // Arrange
-      const pages: ExtractedPage[] = [
-        { pageNumber: 1, text: 'First page content' },
-        { pageNumber: 2, text: 'Second page content' },
-        { pageNumber: 3, text: 'Third page content' },
-      ];
+      const { getDocument } = await import('pdfjs-dist');
 
-      // Act
-      const fullText = pages.map((p) => p.text).join('\n\n');
+      let pageNum = 0;
+      vi.mocked(getDocument).mockImplementationOnce(() => ({
+        promise: Promise.resolve({
+          numPages: 3,
+          getPage: vi.fn().mockImplementation(() => {
+            pageNum++;
+            return Promise.resolve({
+              getTextContent: vi.fn().mockResolvedValue({
+                items: [{ str: `Page ${pageNum} content` }],
+              }),
+              cleanup: vi.fn(),
+            });
+          }),
+          destroy: vi.fn(),
+        }),
+      }) as any);
 
-      // Assert
-      expect(fullText).toBe('First page content\n\nSecond page content\n\nThird page content');
+      const mockFile = {
+        name: 'multi.pdf',
+        type: 'application/pdf',
+        size: 15,
+        arrayBuffer: async () => new ArrayBuffer(15),
+      } as unknown as File;
+
+      const result = await extractPdfText(mockFile);
+      expect(result.fullText).toBe('Page 1 content\n\nPage 2 content\n\nPage 3 content');
     });
 
     test('handles empty PDF with no text content across all pages', async () => {
-      // Arrange
-      const mockFile = new File([''], 'empty.pdf', { type: 'application/pdf' });
+      const { getDocument } = await import('pdfjs-dist');
 
-      // All pages return empty text items
-      const mockEmptyPage = {
-        getTextContent: vi.fn().mockResolvedValue({
-          items: [],
+      vi.mocked(getDocument).mockImplementationOnce(() => ({
+        promise: Promise.resolve({
+          numPages: 2,
+          getPage: vi.fn().mockResolvedValue({
+            getTextContent: vi.fn().mockResolvedValue({ items: [] }),
+            cleanup: vi.fn(),
+          }),
+          destroy: vi.fn(),
         }),
-      };
+      }) as any);
 
-      // Act & Assert
-      // When all pages have no text, pages array should be empty
-      // and fullText should be empty string
+      const mockFile = {
+        name: 'empty.pdf',
+        type: 'application/pdf',
+        size: 0,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      } as unknown as File;
 
-      const pages: ExtractedPage[] = [];
-      const fullText = pages.map((p) => p.text).join('\n\n');
-
-      expect(pages).toHaveLength(0);
-      expect(fullText).toBe('');
+      const result = await extractPdfText(mockFile);
+      expect(result.pages).toHaveLength(0);
+      expect(result.fullText).toBe('');
     });
 
     test('throws ExtractionError with correct structure for unknown errors', async () => {
-      // Arrange
-      const mockFile = new File([''], 'unknown.pdf', { type: 'application/pdf' });
-
-      // Simulate unexpected error
-      const unexpectedError = new Error('Network error');
+      // Mock file whose arrayBuffer() throws — triggers outer catch (line 119)
+      // which wraps the error as "Unexpected error during PDF extraction: ..."
+      const mockFile = {
+        name: 'unknown.pdf',
+        type: 'application/pdf',
+        size: 0,
+        arrayBuffer: async () => { throw new Error('Network error'); },
+      } as unknown as File;
 
       // Act & Assert
-      // Unknown errors should be wrapped in ExtractionError format
-      const wrappedError: ExtractionError = {
+      await expect(extractPdfText(mockFile)).rejects.toMatchObject({
         fileName: 'unknown.pdf',
-        error: `Unexpected error during PDF extraction: ${unexpectedError.message}`,
+        error: expect.stringContaining('Unexpected error'),
         stage: 'pdf',
-      };
-
-      expect(wrappedError.fileName).toBe('unknown.pdf');
-      expect(wrappedError.error).toContain('Unexpected error');
-      expect(wrappedError.stage).toBe('pdf');
+      });
     });
 
     test('extracts text from multiple pages correctly', async () => {
-      // Arrange
-      const mockFile = new File([''], 'multi.pdf', { type: 'application/pdf' });
+      const { getDocument } = await import('pdfjs-dist');
 
-      const mockPages = [
-        { pageNumber: 1, text: 'Chapter 1 Introduction' },
-        { pageNumber: 2, text: 'Chapter 2 Background' },
-        { pageNumber: 3, text: 'Chapter 3 Methods' },
-      ];
+      vi.mocked(getDocument).mockImplementationOnce(() => ({
+        promise: Promise.resolve({
+          numPages: 3,
+          getPage: vi.fn()
+            .mockResolvedValueOnce({
+              getTextContent: vi.fn().mockResolvedValue({ items: [{ str: 'Chapter 1 Introduction' }] }),
+              cleanup: vi.fn(),
+            })
+            .mockResolvedValueOnce({
+              getTextContent: vi.fn().mockResolvedValue({ items: [{ str: 'Chapter 2 Background' }] }),
+              cleanup: vi.fn(),
+            })
+            .mockResolvedValueOnce({
+              getTextContent: vi.fn().mockResolvedValue({ items: [{ str: 'Chapter 3 Methods' }] }),
+              cleanup: vi.fn(),
+            }),
+          destroy: vi.fn(),
+        }),
+      }) as any);
 
-      // Act
-      const fullText = mockPages.map((p) => p.text).join('\n\n');
-      const pageCount = mockPages.length;
+      const mockFile = {
+        name: 'multi.pdf',
+        type: 'application/pdf',
+        size: 15,
+        arrayBuffer: async () => new ArrayBuffer(15),
+      } as unknown as File;
 
-      // Assert
-      expect(pageCount).toBe(3);
-      expect(mockPages[0].pageNumber).toBe(1);
-      expect(mockPages[1].pageNumber).toBe(2);
-      expect(mockPages[2].pageNumber).toBe(3);
-      expect(fullText).toContain('Chapter 1');
-      expect(fullText).toContain('Chapter 2');
-      expect(fullText).toContain('Chapter 3');
+      const result = await extractPdfText(mockFile);
+      expect(result.pages).toHaveLength(3);
+      expect(result.pages[0].pageNumber).toBe(1);
+      expect(result.pages[1].pageNumber).toBe(2);
+      expect(result.pages[2].pageNumber).toBe(3);
+      expect(result.fullText).toContain('Chapter 1');
+      expect(result.fullText).toContain('Chapter 2');
+      expect(result.fullText).toContain('Chapter 3');
     });
   });
 
