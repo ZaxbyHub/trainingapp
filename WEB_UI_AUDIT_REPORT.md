@@ -2,7 +2,7 @@
 
 **Scope:** `web_ui/` — the offline HTML5 SPA (React 18 + Vite + TypeScript; transformers.js embeddings, edgevec WASM HNSW + FlexSearch hybrid retrieval, RRF fusion, optional cross-encoder reranker, wllama/WebLLM browser LLM engines, legacy server-API mode).
 **Goal assessed against:** a first-class, fully offline (air-gap-capable) RAG application answering tier-0 (how-to / navigation / troubleshooting) questions for EHR users.
-**Method:** multi-agent dimension audit (UI/visual auditor completed with 21 findings) + line-by-line manual trace of the chat, settings, storage, retrieval, and packaging paths. Every finding below cites the exact source location. User complaints audited: (a) "UI is messed up", (b) "chat sometimes doesn't work", (c) "settings page is almost entirely useless".
+**Method:** 8-dimension multi-agent audit (UI/visual, chat reliability, settings, documents/indexing, offline packaging, EHR safety/security, accessibility, live build+runtime probe) producing 174 raw findings → 140 after dedupe → **86 defects adversarially verified by fresh skeptic agents (68 CONFIRMED, 16 ADJUSTED, 2 unverified, 0 REFUTED)**, plus line-by-line manual traces of the chat, settings, storage, retrieval, and packaging paths. Every finding cites the exact source location. User complaints audited: (a) "UI is messed up", (b) "chat sometimes doesn't work", (c) "settings page is almost entirely useless". See the Adversarial Verification Appendix at the end for methodology and per-verdict detail.
 
 ---
 
@@ -14,9 +14,11 @@ The app's architecture is genuinely sound — the offline-hardening of transform
 2. **The knowledge base evaporates every browser session.** All three IndexedDB stores are namespaced by a random `sessionStorage` UUID, so a restart or even a second tab starts from an empty corpus while orphaned data accumulates on disk. (P0-3)
 3. **Answers are not grounded even when everything else works.** Vector-retrieved chunks lose their text before reaching the LLM and are replaced by literal placeholder strings — disqualifying for clinical-adjacent QA. (P0-2)
 
-The settings page is "useless" because its controls are largely dead ends: a one-option model dropdown that feeds nothing, WebLLM-semantics cache status shown to wllama users, a Clear Cache button that deletes a database name that doesn't exist, duplicate conflicting theme stores, and a crash-on-download progress component with no error boundary anywhere in the tree.
+The settings page is "useless" because its controls are largely dead ends: a one-option model dropdown that feeds nothing, WebLLM-semantics cache status shown to wllama users, a Clear Cache button that deletes a database name that doesn't exist (verified: near-total no-op, upgraded to critical), duplicate conflicting theme stores, and a WebLLM engine that can never report "ready" because the readiness gate checks a model ID the app never downloads.
 
-Below: 5 critical, 9 high, 15 medium, 12 low/info findings, then the enhancement roadmap.
+The live build probe added a fourth cluster the static audit couldn't see: **the checked-in `web_ui/` does not currently compile** (`pdf` referenced out of scope in `pdf-extractor.ts`'s `finally` block, plus type errors in `xlsx-extractor.ts`), **no usable model weights exist anywhere in the repo** (the embedding ONNX at `models/bge-small-en-v1.5/onnx/model.onnx` is a 134-byte Git-LFS pointer stub, so `prepare-models` cannot succeed from this checkout), **every runtime model-presence probe is defeated by SPA fallback** (vite dev/preview return HTTP 200 + index.html for missing model files, so the readiness gate and PACKAGING.md's validation procedure report "ready" on empty builds), and the test suite is rotted (default `vitest run` crashes with heap OOM; with a large forks pool, 21 files / 76 tests fail, largely from a missing jest-dom setup file).
+
+Below: the original curated findings (P0–P3), then the verified additions from the adversarial fan-out, then the enhancement roadmap.
 
 ---
 
@@ -25,8 +27,8 @@ Below: 5 critical, 9 high, 15 medium, 12 low/info findings, then the enhancement
 | Complaint | Root causes (finding #) |
 |---|---|
 | "Chat sometimes doesn't work" | P0-1 (LLM never initialized — always fails in browser mode), P0-3 (corpus gone next session → "No relevant context"), P0-5 (docs uploaded before first chat are never embedded), P1-6 (engine disposed + conversation wiped on any page switch), P1-9 (permanent "wait for download" overlay that can never resolve offline), P2-24 (readiness race on engine switch) |
-| "UI is messed up" | P1-11 (no CSS reset → double scrollbars + gutter), P1-12 (undefined color tokens → invisible progress bars/status colors), P0-4 (hooks crash → blank white app), P2-18..23 (forced autoscroll, invisible assistant bubbles, double "Copied!", theme flash, scrollbar/theme desync, broken drag highlight) |
-| "Settings page is almost entirely useless" | P1-13 (dead controls cluster), P1-10 (green "Models Ready" while chat LLM missing), P0-4 (download crash), P2-28 (one-shot "periodic" memory display), theme double-fire + dual stores |
+| "UI is messed up" | P1-11 (no CSS reset → double scrollbars + gutter), P1-12 (undefined color tokens → invisible progress bars/status colors), P0-4 (no ErrorBoundary → any render error blanks the app), P2-18..23 (forced autoscroll — verified as a WCAG scroll trap, invisible assistant bubbles, double "Copied!", theme flash, scrollbar/theme desync, broken drag highlight), V-13 (fresh-boot edgevec ERR_CORRUPTION console error) |
+| "Settings page is almost entirely useless" | P1-13 (dead controls cluster), P1-10 (green "Models Ready" while chat LLM missing), V-4 (WebLLM can never become "ready"), V-3 (Clear Cache is a no-op — critical), P2-28 (one-shot "periodic" memory display), theme double-fire + dual stores |
 
 ---
 
@@ -49,10 +51,10 @@ Below: 5 critical, 9 high, 15 medium, 12 low/info findings, then the enhancement
 - **Impact:** Every new browser session — and every additional tab — sees an **empty corpus**: documents, keyword text, and vectors are unreachable under the new prefix (data remains on disk, orphaned, unbounded growth). The Documents page looks wiped; chat answers "No relevant context found." Settings' Clear Cache (`SettingsPage.tsx:662`) deletes `doc-qa-documents` — an **unprefixed name that never exists** — so it cannot even clean up. The intent (shared-workstation user isolation, per FR-007 tests) is legitimate, but a tab-lifetime UUID is not a user identity.
 - **Fix:** Replace the sessionStorage UUID with a stable profile identity: a named local profile (localStorage + explicit profile switcher), or the authenticated username when server auth is present. Add a migration that adopts the newest orphaned DB set on first run, and a storage-manager that enumerates and deletes stale prefixes. Point Clear Cache at the real (prefixed) names, including the edgevec-db store.
 
-### P0-4. Hooks-order crash in ModelDownloadProgress + no mounted ErrorBoundary = blank app
-- **Where:** `web_ui/src/components/ModelDownloadProgress.tsx:86-88` (early `return null` before `React.useState` at `:161`), mounted by `SettingsPage.tsx:904-910`; `web_ui/src/App.tsx:118-128` (ErrorBoundary exists in `components/ErrorBoundary.tsx` but is imported nowhere)
-- **Impact:** Click "Download Model": the component mounts with `progress=null` (zero hooks rendered), the first progress event re-renders it with one hook → React error #310 → with no error boundary the **entire app unmounts to a white page**. Also fires on the transition back to idle.
-- **Fix:** Move the `useState` above the early return; mount `ErrorBoundary` around `AppContent` and around each page in `renderPage()`; enable `eslint-plugin-react-hooks` in CI (would also have caught `NavigationRail.tsx:62`'s hook-in-map).
+### P0-4. No mounted ErrorBoundary: any render error blanks the whole app *(hooks-crash claim corrected by adversarial review)*
+- **Where:** `web_ui/src/App.tsx:118-128` (ErrorBoundary exists in `components/ErrorBoundary.tsx` with full fallback UI + retry, but is imported nowhere; `main.tsx` renders `<App />` bare); `web_ui/src/components/ModelDownloadProgress.tsx:86-88` (early `return null` before `React.useState` at `:161`)
+- **Impact (verified):** With React 18 `createRoot` and no boundary anywhere in the tree, any uncaught render error unmounts the entire application to a permanently blank page with no message and no recovery — for non-technical EHR users this is a total loss of the tool. **Correction from adversarial verification:** the originally claimed "React error #310 crash on every model download" was wrong — React does not throw when a component whose previous render executed zero hooks later renders hooks, so `ModelDownloadProgress` does not currently crash. It remains a genuine Rules-of-Hooks violation (severity: low, latent) that blocks enabling `eslint-plugin-react-hooks` and can start crashing under refactoring.
+- **Fix:** Mount `ErrorBoundary` around `AppContent` and around each page in `renderPage()` (HIGH); move the `useState` above the early return and enable `eslint-plugin-react-hooks` in CI (LOW; would also catch `NavigationRail.tsx:62`'s hook-in-map).
 
 ### P0-5. Documents uploaded before the first chat query are never vector-indexed
 - **Where:** `web_ui/src/pages/DocumentsPage.tsx:110` (`if (embeddingService.isReady() && vectorIndex.isReady())` silently skips), `web_ui/src/hooks/useServiceInitialization.ts:117-119` (embedding model deferred to first query)
@@ -154,6 +156,56 @@ Below: 5 critical, 9 high, 15 medium, 12 low/info findings, then the enhancement
 
 ---
 
+## Verified additions from the adversarial fan-out (V-findings)
+
+Findings below were produced by the 8-dimension fan-out and survived independent skeptic verification (verdicts noted). They extend the P-findings above; cross-references given where they elevate an existing item.
+
+### Critical
+
+**V-1. The checked-in `web_ui/` does not compile.** `npx tsc`/`vite build` fail: `pdf` is referenced out of scope in `web_ui/src/lib/processing/pdf-extractor.ts`'s `finally` block, plus type errors in `xlsx-extractor.ts`. Empirical (build probe ran the commands). Any "phases 1–4 done" status is unshippable until this is fixed and a CI build gate exists.
+
+**V-2. No usable model weights exist anywhere in the repo.** `models/bge-small-en-v1.5/onnx/model.onnx` is a 134-byte Git-LFS pointer stub; reranker and LLM weights are absent. `prepare-models` cannot succeed from this checkout, so no offline archive built from it can ever have working embeddings or chat. Empirical. Fix: restore real weights via `git lfs pull`/artifact storage and make `prepare-models` fail loudly in CI.
+
+**V-3. Settings "Clear Cache" is a near-total no-op** *(elevates part of P1-13; verified critical)*. It deletes IndexedDB `doc-qa-documents` — a name that never exists (real stores are `${USER_PREFIX}-…`) — and an OPFS directory (`webllm`) that is not where model cache lives. Users on shared EHR workstations believe they wiped documents/PHI; nothing was deleted. `SettingsPage.tsx:662-675`.
+
+**V-4. The WebLLM engine can never report "ready"** *(adjusted critical→high but listed here for visibility; extends P1-13)*. The readiness gate checks hardcoded model ID `SmolLM3-3B-Q4_K_M` (`readiness-gate.ts:23-25`) which the app never downloads (Settings downloads the MLC Llama ID); `checkModelCached` for webllm reflects only in-session memory; the cached readiness result never re-dispatches. Net: `isModelReady` is unreachable for webllm — the engine option is dead on arrival even after a successful 1.9 GB download.
+
+**V-5. SPA fallback defeats every model-presence probe** *(adjusted critical→high)*. All presence checks treat `res.ok` as file-present, and vite dev **and** preview serve `index.html` with HTTP 200 for missing model paths — so the readiness gate, the Settings packaged-models panel, and PACKAGING.md §4's validation procedure all report "ready" on an empty build. Reproduced independently. Fix: verify content-type/first-bytes (GGUF magic, ONNX header) or ship a manifest with sizes/hashes and compare `Content-Length`.
+
+### High (all CONFIRMED)
+
+- **V-6.** Server-mode chat with a LAN/private server URL **throws synchronously and permanently wedges the send pipeline** (`streaming.ts`; the thrown error escapes before callbacks are wired, `tokenStreamManagerRef` stays set, every later send is silently ignored).
+- **V-7.** Source **filename and page number are discarded at indexing time** (`DocumentsPage.tsx` sets `chunk.docId` only) — real citations are impossible; pills show opaque random IDs (extends P2-18).
+- **V-8.** **Deleting a document while it is still processing leaves permanent orphan chunks** in both indexes (delete runs before indexing finishes; no generation check).
+- **V-9.** **Debounced document-metadata save is cancelled on page unmount** (`DocumentsPage.tsx:42-62` cleanup clears the pending timeout without flushing) — navigate away within 500 ms of a change and the document list desyncs from the indexes.
+- **V-10.** **Auth is dead code**: `login()` has no caller, no login UI exists, and the chat stream passes `token=undefined` explicitly — server mode runs unauthenticated against an API server that implements auth (`ChatPage.tsx:158`, `lib/api/auth.ts`).
+- **V-11.** **Zero-chunk retrieval still invokes the LLM** with the literal string "No relevant context found." as context — the model answers tier-0 questions from its own weights with no source (hard abstention missing; extends P2-17).
+- **V-12.** **RAG hard-fails at the embedding stage** instead of degrading to keyword-only retrieval: `ensureEmbeddingServiceReady()`'s boolean is discarded (`rag-orchestrator.ts:135-138`), then `encodeWithMetadata` throws — one bad ONNX init means zero answers even though FlexSearch is healthy.
+- **V-13.** **Test suite rot (empirical):** default `vitest run` crashes with heap OOM; with a 12 GB forks pool, 21 files / 76 tests fail — root cause includes `vitest.config.ts:10 setupFiles: []` (jest-dom matchers never registered → `Invalid Chai property: toBeInTheDocument`). The green-looking suite is not runnable as checked in.
+- **V-14.** **Memory gate false-blocks wllama chat on Firefox/Safari and low-`deviceMemory` machines** (extends P2-28; CONFIRMED high): `navigator.deviceMemory` is unsupported on Firefox/Safari → conservative fallback + 2 GB requirement for a ~1 GB model → permanent "Model not loaded" overlay on exactly the hardware wllama exists to serve.
+- **V-15.** **Widespread WCAG 1.4.3 text-contrast failures in both themes** (computed ratios below 4.5:1 across tokens; worst case 1.6:1) — `tokens.css` needs a contrast-validated palette pass.
+- **V-16.** **No `aria-live` region anywhere in chat** — streaming answers, completion, and inline errors are invisible to screen readers (plus `StreamingIndicator` is purely decorative with no text alternative).
+- **V-17.** **Settings custom radios nest a native `<input type=radio>` inside a `role="radio"` div** — duplicated, contradictory radio semantics for AT across all four radio groups.
+- **V-18.** `validate-build` and `public/models/manifest.json` **omit the wllama runtime, compat runtime, and LLM GGUF** — the packaging validator passes on archives that cannot chat (extends P1-10/P3-40).
+
+### Medium / low (CONFIRMED unless noted)
+
+- Recoverable RAG error events (rerank/vector/keyword) **abort the whole answer** in ChatPage instead of degrading (`ChatPage.tsx` error switch treats every `error` event as terminal).
+- StrictMode double-mount races init vs dispose in `useServiceInitialization` and can leave a stale "embedding ready" module flag.
+- WebGPU context-loss watchdog is dead code (never instantiated) — GPU loss mid-session has no recovery or user-visible error; WebLLM software-GPU rejection relies on the **removed** `adapter.requestAdapterInfo()` API.
+- `VectorIndex.save` is non-atomic (EdgeVec snapshot vs idMapping) and `search()` fabricates `docId:'unknown'/chunkIndex:0` results after partial loads.
+- Duplicate uploads are not detected — re-uploading a file doubles its chunks in both indexes; CJK/no-whitespace documents collapse into a single mega-chunk (ASCII-centric chunker).
+- `deleteDocument` races the debounced clear-and-rewrite-all save and can resurrect deleted documents.
+- "System" theme option rewrites an explicit preference via `toggleTheme()`; three competing persistence stores exist for the same settings (IDB `doc-qa-settings`, localStorage `inference-mode`, localStorage `theme-preference`).
+- `SettingsPage.test.tsx` asserts behavior the component doesn't have (persist-on-change vs blur) — 3 tests fail as checked in.
+- A11y cluster: toast accessible name is "Dismiss notification" instead of the message (focusable div, fixed 5 s auto-dismiss); copy button is hover-only (keyboard focus invisible, touch unreachable) yet remains in tab order; citation pill nests `<button>` in `role="button"` with no `aria-expanded`/Escape; model-block overlay is not a dialog (no role/focus trap; header intentionally z-indexed above the scrim stays clickable); focus drops to `<body>` on send (textarea disabled mid-stream); Ctrl+Enter is wired to nothing and Ctrl+L is shadowed inside inputs; `DocumentList` uses `role="list"` without `listitem` children and an unlabeled progress bar.
+- Context prompt is malformed: `"Context:"` header duplicated (buildContext emits it and `buildMessages` wraps it again) and `buildContext` ignores its `question` parameter (low).
+- `splitSentences` lowercases protected abbreviations ("Dr. Smith" → "dr. Smith") and fails to protect `e.g.`/`i.e.`; TextChunker `chunkOverlap:1` causes an unbounded loop (`slice(-0)` re-adds the whole chunk — ADJUSTED to medium: default config is safe); PDF page attribution is unreliable (ADJUSTED to medium: chunk 0 matches, later chunks fall back to page 1).
+- edgevec 0.6.0 ships without its `snippets/` directory and the hand-written vite stub mismatches the real storage contract — **fresh boots reject with ERR_CORRUPTION** (reproduced against the real WASM; ADJUSTED to medium; also explains startup console noise).
+- SSE stream ending without a `done` event leaves the spinner stuck (ADJUSTED to medium — Stop recovers); Settings "Test Connection" stale-closure (ADJUSTED to low — blur commits first in real flows); background-tab token drop (ADJUSTED to info); UTF-16 mojibake (ADJUSTED to info — BOM sniffing handles the common case); XLSX row renumbering after filtering (info); `encodeBatch` missing tensor-shape validation (low); MIME/extension validation rejects legitimate files while drag-drop bypasses the accept filter (low); WebLLM `initialize` has no in-flight guard (low); model-block overlay shows a misleading "100%" from boot-time search init (low); stored API mode never re-checks connectivity on boot → persistent false "Server not connected" (low).
+
+---
+
 ## What is genuinely good (keep and build on)
 
 - `configureOfflineEnv()` (`offline-env.ts`) correctly forces transformers.js fully local (no Hub, local ORT WASM) with a well-documented shared-global guard.
@@ -168,7 +220,8 @@ Below: 5 critical, 9 high, 15 medium, 12 low/info findings, then the enhancement
 
 ## Roadmap to first-class offline EHR tier-0 RAG
 
-### Phase A — Make it work (the P0s, ~days)
+### Phase A — Make it work (the P0s + build-blockers, ~days)
+0. Restore compilability and honest tooling first: fix the `pdf-extractor`/`xlsx-extractor` compile errors (V-1), pull real model weights + make `prepare-models`/CI fail loudly on LFS stubs (V-2), content-verify model presence probes instead of trusting SPA-fallback 200s (V-5), and repair the vitest setup so the suite runs (V-13).
 1. Wire `llmService.initialize()` into the chat path with progress → existing overlay (P0-1).
 2. Stable storage identity + migration + orphan cleanup + honest Clear Data (P0-3).
 3. Hydrate chunk text into context; assert non-empty (P0-2).
@@ -194,7 +247,21 @@ Below: 5 critical, 9 high, 15 medium, 12 low/info findings, then the enhancement
 
 ---
 
-## Verification status
+## Adversarial Verification Appendix
 
-- The 21 UI-dimension findings were produced by a dedicated auditor agent; P0-1/2/3/5, P1-6/7/9/10/13/14, P2-15..18/24/26/28 were manually traced end-to-end through source by the report author (file:line cited on every claim).
-- Residual gaps to close when infrastructure allows: a live build/test/runtime probe (`npm ci && tsc && vitest && vite build` + Playwright smoke) and a dedicated WCAG contrast computation pass. The multi-agent adversarial verification workflow (per qa-sweep) is queued to re-run these plus independent refutation passes; its transcript will be appended when complete.
+**Methodology.** 8 parallel dimension auditors (UI/visual, chat reliability, settings, documents/indexing, offline packaging, EHR safety/security, accessibility, live build+runtime probe with Playwright) produced **174 raw findings**, deduplicated to **140** (86 defects + 54 improvements/enhancements). Every defect was then handed to a **fresh adversarial skeptic agent** instructed to assume the finding was wrong and refute it from source (critical/high findings got two independent lenses: line-by-line data-flow proof and reproduce-the-failure). 135 agents ran in total (~688k tokens, 230 tool calls).
+
+**Verdicts on the 86 verified defects:**
+
+| Verdict | Count | Meaning |
+|---|---|---|
+| CONFIRMED | 68 | Defect real exactly as described, re-proven at cited file:line |
+| ADJUSTED | 16 | Defect real; severity or mechanism corrected (all corrections folded into this report) |
+| UNVERIFIED | 2 | Verifier died on account limits (settings radio-label collision; favicon-404/console-noise — the latter's mechanism was independently confirmed by the edgevec verifier) |
+| REFUTED | 0 | — |
+
+**Material corrections applied:** P0-4's "hooks crash blanks the app on download" was disproven (React does not throw in that direction; the missing ErrorBoundary remains HIGH, the hooks violation is LOW-latent). P2-19 autoscroll was elevated to HIGH (verified WCAG scroll trap). P2-25 toast dead-code and P1-13's Clear Cache no-op were verified and elevated (Clear Cache → CRITICAL, V-3). P2-26's edgevec stub risk was verified as a concrete fresh-boot ERR_CORRUPTION failure with a corrected mechanism (→ medium). Chunker/PDF/UTF-16/Test-Connection items were downgraded per verifier evidence (see V-findings list).
+
+**Known residuals:** (1) The completeness-critic stage and 3 tail verifiers failed on account session/spend limits — their two findings are marked UNVERIFIED above rather than silently dropped, and complaint-coverage mapping was done manually (see complaint → root-cause table; all three user complaints are explained by CONFIRMED findings). (2) The 8 seeded RAG-pipeline findings from the pre-audit were not re-injected on the final resume (args serialization); however, the fan-out independently rediscovered and CONFIRMED the critical grounding/text-loss defect and the abstention gap, and the remaining seeded items (CLS pooling, query prefix, token budgeting, WebLLM CDN, RRF/BM25 doc drift) were manually traced against source and the model's own packaged config by the report author.
+
+**Empirical stages:** the build-health findings (V-1, V-2, V-13, parts of V-5) come from actually running `npm ci`, `tsc`, `vitest`, `vite build/preview` and probing the served app — they are execution results, not code reading.
