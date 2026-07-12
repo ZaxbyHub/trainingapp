@@ -3,3 +3,6 @@ dist/
 .env
 .env.*
 *.local
+
+# TypeScript incremental build cache (regenerated on every tsc -b)
+*.tsbuildinfo

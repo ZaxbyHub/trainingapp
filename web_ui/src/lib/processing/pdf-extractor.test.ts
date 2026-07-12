@@ -2,8 +2,7 @@
  * PDF Extractor Tests
  * Tests for web_ui/src/lib/processing/pdf-extractor.ts
  *
- * Framework: vitest
- * Status: SKIP - vitest not installed (no node_modules)
+ * Framework: vitest (mocks pdfjs-dist so no real PDF.js worker is required).
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';

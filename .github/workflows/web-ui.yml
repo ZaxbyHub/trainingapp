@@ -11,7 +11,7 @@ on:
 jobs:
   web-ui:
     name: typecheck + build + test + packaging
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: web_ui
@@ -75,3 +75,19 @@ jobs:
       # requires staged weights (see PACKAGING.md).
       - name: Validate build (--no-llm)
         run: node scripts/validate-build.mjs --no-llm
+
+      # Regression guard for the --no-llm runtime exclusion (feedback F1):
+      # verify prepare-models --no-llm writes the env marker that makes the
+      # runtime readiness gate treat the llm group as excluded. The deeper
+      # end-to-end wiring (Vite inlining VITE_EXCLUDE_MODEL_GROUPS into the
+      # bundle, checkPackagedModels consuming it) is covered by the
+      # excluded-groups unit tests in model-manifest.test.ts (run in the Test
+      # step above), which stub the env var directly and are stable against
+      # minification (unlike a bundle grep).
+      - name: Verify prepare-models --no-llm writes the exclusion marker
+        run: |
+          node scripts/prepare-models.mjs --no-llm
+          grep -q 'VITE_EXCLUDE_MODEL_GROUPS=llm' .env.production || { \
+            echo "prepare-models --no-llm did not write the exclusion marker to .env.production"; \
+            exit 1; }
+          rm -f .env.production

@@ -12,17 +12,22 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: true,
     // Pool/memory tuning: the default `vitest run` OOMs because some test files
-    // accumulate memory (mocked model pipelines, large fixtures). Forks with a
-    // bounded pool, a per-fork memory limit, and per-file isolation keeps the
-    // suite stable on 2-core CI runners without a parent-heap workaround.
-    // `isolate: true` gives each test file a fresh fork so cross-file leaks
-    // can't compound.
+    // accumulate memory (mocked model pipelines, large fixtures). The effective
+    // OOM protection comes from `maxForks: 2` + `isolate: true` (each test file
+    // gets a FRESH fork, so cross-file leaks can't compound and a leaky file's
+    // fork is discarded after it). `memoryLimit: '3GB'` is a latent backstop:
+    // note that for `pool: 'forks'`, vitest does not currently forward
+    // `memoryLimit` to tinypool's `maxMemoryLimitBeforeRecycle`, AND `isolate:
+    // true` short-circuits tinypool's recycle check — so the value is not
+    // reached today. It is set correctly (string unit — a bare number is raw
+    // bytes per tinypool) so that if `pool` or `isolate` changes, the limit
+    // becomes active at the intended size rather than ~3KB.
     pool: 'forks',
     poolOptions: {
       forks: {
         maxForks: 2,
         minForks: 1,
-        memoryLimit: 3072,
+        memoryLimit: '3GB',
         isolate: true,
       },
     },

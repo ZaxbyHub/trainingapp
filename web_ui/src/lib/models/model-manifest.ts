@@ -133,6 +133,15 @@ export interface PackagedModelFile {
 }
 
 /**
+ * Packaging group a model belongs to. Mirrors the `group` field in
+ * `public/models/manifest.json` and drives both `validate-build.mjs` (which
+ * group to enforce / skip) and the runtime readiness gate (which groups the
+ * operator intentionally excluded for this build — see
+ * {@link EXCLUDED_MODEL_GROUPS}).
+ */
+export type PackagedModelGroup = 'core' | 'optional' | 'llm';
+
+/**
  * Declarative description of one packaged model and the files it needs.
  */
 export interface PackagedModel {
@@ -141,6 +150,8 @@ export interface PackagedModel {
   /** Human-readable name for the UI. */
   label: string;
   kind: PackagedModelKind;
+  /** Packaging group — drives validation + runtime exclusion (see {@link EXCLUDED_MODEL_GROUPS}). */
+  group: PackagedModelGroup;
   files: PackagedModelFile[];
 }
 
@@ -174,15 +185,36 @@ import packagedManifestSource from '../../../public/models/manifest.json';
 const packagedManifest = packagedManifestSource as Manifest;
 
 /**
+ * Packaging groups the operator intentionally EXCLUDED from this build, so the
+ * runtime readiness gate does not report them as missing. Set at build time via
+ * the `VITE_EXCLUDE_MODEL_GROUPS` env var (a comma-separated list of group
+ * names from `manifest.json`). For example, an embeddings-only / server-mode
+ * archive built with `validate-build --no-llm` sets `VITE_EXCLUDE_MODEL_GROUPS=llm`
+ * so `checkPackagedModels()` does not flag the (deliberately absent) browser-LLM
+ * runtime + weights as missing — which would otherwise leave the UI permanently
+ * showing "models not ready" on a valid, intentional configuration.
+ *
+ * `prepare-models --no-llm` writes this value into the build env automatically.
+ */
+export const EXCLUDED_MODEL_GROUPS: ReadonlySet<PackagedModelGroup> = new Set(
+  ((import.meta.env.VITE_EXCLUDE_MODEL_GROUPS as string | undefined) ?? '')
+    .split(',')
+    .map((g) => g.trim().toLowerCase())
+    .filter((g): g is PackagedModelGroup => g === 'core' || g === 'optional' || g === 'llm')
+);
+
+/**
  * The full packaged-model set, derived from `public/models/manifest.json` (the
  * single source of truth) with each relative path prefixed by the deploy-aware
  * absolute {@link MODELS_BASE}. Group tags (`core` / `optional` / `llm`) drive
- * packaging validation (see scripts/validate-build.mjs `--no-llm`).
+ * packaging validation (see scripts/validate-build.mjs `--no-llm`) and the
+ * runtime exclusion set ({@link EXCLUDED_MODEL_GROUPS}).
  */
 export const PACKAGED_MODELS: PackagedModel[] = packagedManifest.models.map((m) => ({
   id: m.id,
   label: m.label,
   kind: m.kind,
+  group: m.group,
   files: m.files.map((f) => ({
     path: `${MODELS_BASE}/${f.path}`.replace(/\/+/g, '/'),
     required: f.required,
@@ -201,14 +233,28 @@ export interface ModelReadiness {
   id: string;
   label: string;
   kind: PackagedModelKind;
-  /** True when every REQUIRED file for the model is present. */
+  group: PackagedModelGroup;
+  /**
+   * True when the model is ready to use: either every REQUIRED file is present,
+   * OR the model's group was intentionally excluded for this build
+   * ({@link EXCLUDED_MODEL_GROUPS}, e.g. the `llm` group on a `--no-llm` build).
+   */
   ready: boolean;
+  /**
+   * True when the model's group was intentionally excluded from this build, so
+   * `ready: true` reflects "not applicable" rather than "files present." The UI
+   * can use this to show the model as absent-but-expected instead of missing.
+   */
+  excluded: boolean;
   files: FilePresence[];
 }
 
 /** Aggregate readiness across all packaged models. */
 export interface PackagedModelsReport {
-  /** True when every model's required files are present. */
+  /**
+   * True when every model is ready: either its required files are present, OR
+   * its group was intentionally excluded for this build ({@link EXCLUDED_MODEL_GROUPS}).
+   */
   allReady: boolean;
   models: ModelReadiness[];
   /** Required files that are missing, for a concise "what to fix" message. */
@@ -244,31 +290,53 @@ async function probe(path: string, fetcher: HeadFetcher): Promise<boolean> {
  * This does NOT load any weights — it only checks presence so the UI can render
  * a "ready vs missing" gate. Safe to call on startup.
  *
- * @param fetcher Optional fetch override (used in tests).
- * @param models  Optional model set override (used in tests / future phases).
+ * Models whose `group` is in {@link EXCLUDED_MODEL_GROUPS} (e.g. the `llm`
+ * group on a `--no-llm` embeddings-only build) are reported `ready: true` with
+ * `excluded: true` and their files are NOT probed or counted as missing — so a
+ * valid, intentional configuration is not flagged as broken.
+ *
+ * @param fetcher       Optional fetch override (used in tests).
+ * @param models        Optional model set override (used in tests / future phases).
+ * @param excludedGroups Optional override of the excluded-group set (used in tests).
  */
 export async function checkPackagedModels(
   fetcher: HeadFetcher = async (p) => {
     const res = await fetch(p, { method: 'HEAD' });
     return { ok: res.ok, contentType: res.headers.get('content-type') };
   },
-  models: PackagedModel[] = PACKAGED_MODELS
+  models: PackagedModel[] = PACKAGED_MODELS,
+  excludedGroups: ReadonlySet<PackagedModelGroup> = EXCLUDED_MODEL_GROUPS
 ): Promise<PackagedModelsReport> {
   const results: ModelReadiness[] = await Promise.all(
     models.map(async (model) => {
-      const files: FilePresence[] = await Promise.all(
-        model.files.map(async (f) => ({
-          path: f.path,
-          required: f.required,
-          present: await probe(f.path, fetcher),
-        }))
-      );
-      const ready = files.filter((f) => f.required).every((f) => f.present);
-      return { id: model.id, label: model.label, kind: model.kind, ready, files };
+      const isExcluded = excludedGroups.has(model.group);
+      // An excluded model's files are intentionally absent; don't probe them
+      // (avoids both wasted requests and false "missing" entries).
+      const files: FilePresence[] = isExcluded
+        ? model.files.map((f) => ({ path: f.path, required: f.required, present: false }))
+        : await Promise.all(
+            model.files.map(async (f) => ({
+              path: f.path,
+              required: f.required,
+              present: await probe(f.path, fetcher),
+            }))
+          );
+      // Excluded models are "ready" (not applicable), not missing.
+      const ready = isExcluded || files.filter((f) => f.required).every((f) => f.present);
+      return {
+        id: model.id,
+        label: model.label,
+        kind: model.kind,
+        group: model.group,
+        ready,
+        excluded: isExcluded,
+        files,
+      };
     })
   );
 
   const missing = results
+    .filter((m) => !m.excluded)
     .flatMap((m) => m.files)
     .filter((f) => f.required && !f.present)
     .map((f) => f.path);

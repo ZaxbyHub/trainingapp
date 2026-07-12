@@ -18,7 +18,7 @@
  * Exit code is non-zero if a required source asset cannot be found.
  */
 
-import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isLfsPointer } from './lib/lfs-detect.mjs';
@@ -27,6 +27,12 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_UI = resolve(__dirname, '..');
 const REPO_ROOT = resolve(WEB_UI, '..');
 const PUBLIC_MODELS = join(WEB_UI, 'public', 'models');
+
+// `--no-llm`: build an embeddings-only / server-mode archive. Stages only the
+// `core` + `optional` model groups and writes a Vite env marker so the runtime
+// readiness gate (checkPackagedModels) does not flag the deliberately-absent
+// browser-LLM runtime + weights as missing.
+const NO_LLM = process.argv.slice(2).includes('--no-llm');
 
 let hadError = false;
 
@@ -265,12 +271,38 @@ function prepareOnnxRuntimeWasm() {
 }
 
 // ---------------------------------------------------------------------------
-log('assembling offline model assets...');
+log(`assembling offline model assets${NO_LLM ? ' (--no-llm: embeddings-only / server mode)' : ''}...`);
 prepareEmbeddingModel();
 prepareRerankerModel();
-prepareWllamaRuntime();
-prepareBrowserLLM();
+if (!NO_LLM) {
+  prepareWllamaRuntime();
+  prepareBrowserLLM();
+} else {
+  log('--no-llm: skipping browser-LLM runtime (wllama WASM/compat) + LFM2-VL weights.');
+}
 prepareOnnxRuntimeWasm();
+
+// When --no-llm is set, record the excluded group so the runtime readiness gate
+// (checkPackagedModels) treats the llm group as "not applicable" rather than
+// "missing". Vite loads `.env.production` for `vite build`, so writing here makes
+// the value reach `import.meta.env.VITE_EXCLUDE_MODEL_GROUPS` at build time.
+const ENV_FILE = join(WEB_UI, '.env.production');
+const MARKER = 'VITE_EXCLUDE_MODEL_GROUPS=';
+const desiredLine = NO_LLM ? `${MARKER}llm` : '';
+let envLines = [];
+if (existsSync(ENV_FILE)) {
+  envLines = readFileSync(ENV_FILE, 'utf8').split(/\r?\n/).filter((l) => !l.startsWith(MARKER) && l.trim() !== '');
+}
+if (desiredLine) {
+  envLines.push(desiredLine);
+}
+// Only touch the file when content actually changes (avoid rewriting on every run).
+const newEnvContent = envLines.join('\n').replace(/\n+$/, '\n');
+const oldEnvContent = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : '';
+if (newEnvContent !== oldEnvContent) {
+  writeFileSync(ENV_FILE, newEnvContent || '');
+  if (NO_LLM) log('wrote VITE_EXCLUDE_MODEL_GROUPS=llm to .env.production');
+}
 
 if (hadError) {
   fail('one or more REQUIRED assets are missing. Build is NOT offline-ready.');
