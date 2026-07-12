@@ -214,7 +214,7 @@ export class ModelDownloadManager {
    * @returns Updated partial progress fields.
    */
   /* package */ _computeProgressFromPayload(
-    modelId: string,
+    _modelId: string,
     payload: WebLLMProgressPayload,
     totalBytes: number
   ): Omit<DownloadProgress, 'modelId'> {

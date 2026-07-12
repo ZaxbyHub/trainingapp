@@ -3,7 +3,9 @@
  * Exports all API types, client classes, and auth functions.
  */
 
-export { ApiClient } from './client';
+import { ApiClient } from './client';
+
+export { ApiClient };
 export { SSEStreamConsumer } from './streaming';
 export { login, getAuthStatus, getToken, clearToken, storeToken } from './auth';
 

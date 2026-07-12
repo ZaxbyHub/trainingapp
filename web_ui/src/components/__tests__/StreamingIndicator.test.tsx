@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { describe, it, expect, beforeEach, afterEach, vi, act } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { StreamingIndicator } from '../StreamingIndicator';
 

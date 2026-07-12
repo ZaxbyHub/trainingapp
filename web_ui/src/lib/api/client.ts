@@ -109,7 +109,7 @@ export class ApiClient {
    * Get the effective token (provided token or stored token).
    */
   private getEffectiveToken(): string | undefined {
-    return this.token || getToken();
+    return this.token ?? getToken() ?? undefined;
   }
 
   /**

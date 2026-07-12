@@ -105,7 +105,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
 
     // Re-setup the mock implementation to return our fresh instance
     vi.mocked(streamingModule.TokenStreamManager).mockImplementation(function () {
-      return mockStreamManagerInstance;
+      return mockStreamManagerInstance as unknown as streamingModule.TokenStreamManager;
     });
 
     vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -114,7 +114,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     mockOrchestratorInstance = {
       query: vi.fn(),
     };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(() => mockOrchestratorInstance);
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(() => mockOrchestratorInstance as unknown as ragModule.RAGOrchestrator);
 
     // Setup useInferenceMode mock
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({

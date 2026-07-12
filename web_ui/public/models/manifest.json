@@ -1,38 +1,60 @@
 {
-  "version": "1",
-  "description": "Declares the model assets that must be packaged into public/models/ for fully-offline operation. Weight binaries are assembled at packaging time (see PACKAGING.md); this file is the committed source of truth for what 'ready' means. Paths are relative to public/models/.",
+  "version": "2",
+  "description": "Single source of truth for the packaged model/runtime assets required for fully-offline operation. Paths are RELATIVE to public/models/ (i.e. to the served /models dir). At runtime, src/lib/models/model-manifest.ts imports this file and prefixes each path with the deploy-aware absolute MODELS_BASE. Weight binaries are assembled at packaging time (see PACKAGING.md); validate-build.mjs reads this same file to gate the produced dist/.",
   "models": [
     {
       "id": "bge-small-en-v1.5",
+      "label": "BAAI/bge-small-en-v1.5 (embeddings)",
       "kind": "embedding",
-      "engine": "transformers.js",
-      "required": [
-        "embeddings/bge-small-en-v1.5/config.json",
-        "embeddings/bge-small-en-v1.5/tokenizer.json",
-        "embeddings/bge-small-en-v1.5/tokenizer_config.json",
-        "embeddings/bge-small-en-v1.5/onnx/model.onnx"
+      "group": "core",
+      "files": [
+        { "path": "embeddings/bge-small-en-v1.5/onnx/model.onnx", "required": true },
+        { "path": "embeddings/bge-small-en-v1.5/tokenizer.json", "required": true },
+        { "path": "embeddings/bge-small-en-v1.5/config.json", "required": true },
+        { "path": "embeddings/bge-small-en-v1.5/tokenizer_config.json", "required": true }
       ]
     },
     {
       "id": "onnxruntime-web",
+      "label": "ONNX Runtime (WASM)",
       "kind": "runtime",
-      "engine": "onnxruntime-web",
-      "required": [
-        "ort/ort-wasm-simd-threaded.jsep.wasm",
-        "ort/ort-wasm-simd-threaded.jsep.mjs"
+      "group": "core",
+      "files": [
+        { "path": "ort/ort-wasm-simd-threaded.jsep.wasm", "required": true },
+        { "path": "ort/ort-wasm-simd-threaded.jsep.mjs", "required": true }
       ]
     },
     {
       "id": "ms-marco-MiniLM-L-6-v2",
+      "label": "cross-encoder/ms-marco-MiniLM-L-6-v2 (reranker, optional)",
       "kind": "reranker",
-      "engine": "transformers.js",
-      "optional": true,
-      "required": [],
+      "group": "optional",
       "files": [
-        "reranker/ms-marco-MiniLM-L-6-v2/config.json",
-        "reranker/ms-marco-MiniLM-L-6-v2/tokenizer.json",
-        "reranker/ms-marco-MiniLM-L-6-v2/tokenizer_config.json",
-        "reranker/ms-marco-MiniLM-L-6-v2/onnx/model.onnx"
+        { "path": "reranker/ms-marco-MiniLM-L-6-v2/onnx/model.onnx", "required": false },
+        { "path": "reranker/ms-marco-MiniLM-L-6-v2/tokenizer.json", "required": false },
+        { "path": "reranker/ms-marco-MiniLM-L-6-v2/config.json", "required": false },
+        { "path": "reranker/ms-marco-MiniLM-L-6-v2/tokenizer_config.json", "required": false }
+      ]
+    },
+    {
+      "id": "wllama-runtime",
+      "label": "wllama WASM runtime (modern + offline compat)",
+      "kind": "runtime",
+      "group": "llm",
+      "files": [
+        { "path": "wllama/wasm/wllama.wasm", "required": true },
+        { "path": "wllama/compat/wllama.wasm", "required": true },
+        { "path": "wllama/compat/wllama.js", "required": true }
+      ]
+    },
+    {
+      "id": "lfm2-vl-1.6b",
+      "label": "LiquidAI LFM2-VL-1.6B (browser LLM, multimodal)",
+      "kind": "llm",
+      "group": "llm",
+      "files": [
+        { "path": "llm/lfm2-vl-1.6b/model.gguf", "required": true },
+        { "path": "llm/lfm2-vl-1.6b/mmproj.gguf", "required": true }
       ]
     }
   ]

@@ -56,7 +56,7 @@ export default IndexedDbBackend;
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   // Relative base so the built bundle's own asset URLs (JS/CSS) work when the
   // self-contained archive is served from any path. Model assets under /models
   // are loaded same-origin and the archive is served at the origin root (the
@@ -97,16 +97,14 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Dev (`vite` / `vite dev`) keeps sourcemaps for a good debugging experience.
+    // Production (`vite build`) drops them: the offline archive is a STIG-
+    // scannable artifact, and shipping `.map` files bloats it and exposes source.
+    // Pass `-p sourcemap` or set `build.sourcemap` explicitly to override for a
+    // debug build.
+    sourcemap: command === 'serve',
     // Never inline model/wasm assets into JS — they live in public/models/ and
     // must remain discrete, same-origin files for the offline archive.
     assetsInlineLimit: 0,
-    rollupOptions: {
-      output: {
-        sourcemapPathTransform: (relativeSourcePath) => {
-          return relativeSourcePath;
-        },
-      },
-    },
   },
-});
+}));

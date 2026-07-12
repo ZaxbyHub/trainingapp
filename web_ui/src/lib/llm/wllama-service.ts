@@ -32,6 +32,7 @@ import {
   LLM_MMPROJ_URL,
   LLM_MODEL_DIR,
 } from '../models/model-manifest';
+import { probeAsset } from '../models/probe';
 
 /** Context window. LFM2-VL handles long context; 4096 is a safe default for RAM. */
 const DEFAULT_N_CTX = 4096;
@@ -55,13 +56,13 @@ function toWllamaMessages(
   return messages as unknown as Parameters<Wllama['createChatCompletion']>[0]['messages'];
 }
 
-/** HEAD-probe a same-origin asset without downloading it. */
-async function isPresent(url: string): Promise<boolean> {
-  try {
-    return (await fetch(url, { method: 'HEAD' })).ok;
-  } catch {
-    return false;
-  }
+/**
+ * HEAD-probe a same-origin asset without downloading it, hardened against the
+ * SPA-fallback false positive (Vite dev/preview serve index.html with HTTP 200
+ * for any unmatched path). See `src/lib/models/probe.ts`.
+ */
+function isPresent(url: string): Promise<boolean> {
+  return probeAsset(url);
 }
 
 export class WllamaService implements LLMService {

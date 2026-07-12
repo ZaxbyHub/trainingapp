@@ -78,7 +78,7 @@ function createIDBRequest() {
 global.indexedDB = {
   open: vi.fn((_name: string, _version: number) => {
     const req = createIDBRequest();
-    (req as Record<string, unknown>).result = mockDB;
+    (req as unknown as Record<string, unknown>).result = mockDB;
     // Simulate successful open
     setTimeout(() => {
       const onsuccess = (req as unknown as Record<string, (e: Event) => void>).onsuccess;

@@ -21,6 +21,7 @@
 import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isLfsPointer } from './lib/lfs-detect.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WEB_UI = resolve(__dirname, '..');
@@ -92,6 +93,14 @@ function prepareEmbeddingModel() {
     );
     return;
   }
+  if (isLfsPointer(onnx)) {
+    fail(
+      `embedding ONNX weights are a Git-LFS pointer stub (not the real file): ${onnx}. ` +
+        'Run `git lfs pull` (or copy the model from a machine that has the real weights) ' +
+        'before packaging. See PACKAGING.md.'
+    );
+    return;
+  }
 
   copyTree(srcDir, destDir);
   log(`embeddings -> ${destDir}`);
@@ -121,6 +130,10 @@ function prepareRerankerModel() {
   const onnx = join(srcDir, 'onnx', 'model.onnx');
   if (!existsSync(onnx) || statSync(onnx).size < 1024) {
     warn(`reranker ONNX missing or an LFS stub at ${onnx}; skipping (optional).`);
+    return;
+  }
+  if (isLfsPointer(onnx)) {
+    warn(`reranker ONNX is a Git-LFS pointer stub at ${onnx}; skipping (optional). Run \`git lfs pull\`.`);
     return;
   }
 
@@ -199,12 +212,16 @@ function prepareBrowserLLM() {
   const mmproj = join(srcDir, 'mmproj.gguf');
   let staged = 0;
   for (const [src, name] of [[gguf, 'model.gguf'], [mmproj, 'mmproj.gguf']]) {
-    if (existsSync(src) && statSync(src).size > 1024) {
-      copyInto(src, join(destDir, name));
-      staged++;
-    } else {
+    if (!existsSync(src) || statSync(src).size <= 1024) {
       warn(`browser LLM file missing or stub: ${src} (skipped).`);
+      continue;
     }
+    if (isLfsPointer(src)) {
+      warn(`browser LLM file is a Git-LFS pointer stub: ${src} (skipped). Run \`git lfs pull\`.`);
+      continue;
+    }
+    copyInto(src, join(destDir, name));
+    staged++;
   }
   if (staged === 2) log(`browser LLM (LFM2-VL) -> ${destDir}`);
 }

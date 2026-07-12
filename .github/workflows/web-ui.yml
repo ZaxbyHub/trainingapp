@@ -1,0 +1,68 @@
+name: Web UI (build, weights, packaging)
+
+# Gates issue #20 acceptance criteria for web_ui/: typecheck, build, test, and
+# packaging validation on every push/PR. The Python desktop suite is covered by
+# test.yml; this workflow owns the JS/TS side that previously had NO CI.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  web-ui:
+    name: typecheck + build + test + packaging
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: web_ui
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Restore the Git-LFS-tracked embedding ONNX so prepare-models succeeds
+          # with real weights in CI. (Reranker/LLM weights are operator-acquired
+          # and absent; validate-build runs with --no-llm for that reason.)
+          lfs: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: web_ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Acceptance #1: `npx tsc --noEmit` (app source) exits 0.
+      - name: Typecheck (app source)
+        run: npx tsc --noEmit
+
+      # Defense-in-depth: also type-check the test tree so test-only type drift
+      # is caught early. Both configs are green as of this PR; sibling PRs must
+      # keep them green.
+      - name: Typecheck (tests)
+        run: npx tsc --noEmit -p tsconfig.test.json
+
+      # Acceptance #2: `npm run build` succeeds and produces dist/.
+      - name: Build
+        run: npm run build
+
+      # Acceptance #3: `npx vitest run` completes without OOM and without
+      # jest-dom matcher errors. Pre-existing unrelated failures are quarantined
+      # via vitest.config.ts `exclude` (each named with its owning sibling PR).
+      # The pool/memory tuning in vitest.config.ts prevents the worker OOM.
+      - name: Test
+        run: npm test
+
+      # Acceptance #4: prepare-models succeeds with real weights present (LFS
+      # pulled above) and fails loudly on LFS stubs (covered by the unit test).
+      - name: Prepare models (real weights via LFS)
+        run: npm run prepare-models
+
+      # Packaging validation with --no-llm: the browser-LLM runtime + LFM2-VL
+      # weights are operator-acquired (multi-GB, not in this repo), so CI
+      # enforces the embeddings + ORT + wllama-WASM core only. Full validation
+      # requires staged weights (see PACKAGING.md).
+      - name: Validate build (--no-llm)
+        run: node scripts/validate-build.mjs --no-llm

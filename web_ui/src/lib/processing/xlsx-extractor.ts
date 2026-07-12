@@ -41,16 +41,18 @@ export async function extractXlsxText(file: File): Promise<ExtractionResult> {
         continue;
       }
 
-      // Convert sheet to JSON to inspect contents
-      const sheetData = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+      // Convert sheet to JSON to inspect contents. With `header: 1`, SheetJS
+      // returns an array-of-arrays (each row is a cell array), NOT an array of
+      // records — so the element type is `unknown[]`.
+      const sheetData = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
         header: 1,
         defval: '',
         blankrows: false,
       });
 
       // Filter out completely empty rows
-      const nonEmptyRows = sheetData.filter((row) =>
-        row.some((cell) => cell !== null && cell !== undefined && cell !== '')
+      const nonEmptyRows = sheetData.filter((row: unknown[]) =>
+        row.some((cell: unknown) => cell !== null && cell !== undefined && cell !== '')
       );
 
       if (nonEmptyRows.length === 0) {
@@ -71,7 +73,7 @@ export async function extractXlsxText(file: File): Promise<ExtractionResult> {
 
         // Convert row cells to text
         const rowText = row
-          .map((cell) => {
+          .map((cell: unknown) => {
             if (cell === null || cell === undefined) {
               return '';
             }
@@ -84,7 +86,7 @@ export async function extractXlsxText(file: File): Promise<ExtractionResult> {
             }
             return String(cell);
           })
-          .filter((cellText) => cellText.length > 0)
+          .filter((cellText: string) => cellText.length > 0)
           .join('\t');
 
         if (rowText.length > 0) {

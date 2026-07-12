@@ -5,8 +5,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
-import { InferenceModeToggle } from '../InferenceModeToggle';
-import { InferenceModeProvider } from '../../lib/inference/InferenceModeContext';
+import { InferenceModeToggle } from './InferenceModeToggle';
+import { InferenceModeProvider } from '../lib/inference/InferenceModeContext';
 
 // Wrapper component to provide context
 function renderWithContext(ui: React.ReactElement) {

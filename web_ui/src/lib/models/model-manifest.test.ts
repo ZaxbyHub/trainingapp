@@ -12,7 +12,10 @@ import {
 } from './model-manifest';
 
 describe('model-manifest paths', () => {
-  it('uses same-origin absolute paths under /models', () => {
+  it('uses same-origin absolute paths under /models (deploy-aware base)', () => {
+    // Under jsdom, document.baseURI resolves to the origin root, so the
+    // deploy-aware MODELS_BASE computes to '/models' (identical to the old
+    // hardcoded value at origin root, correct under subpaths in real deploys).
     expect(EMBEDDING_MODELS_BASE).toBe('/models/embeddings');
     expect(ONNX_RUNTIME_WASM_BASE).toBe('/models/ort/');
   });
@@ -80,5 +83,34 @@ describe('checkPackagedModels', () => {
     // Both required files should be reported missing.
     expect(report.missing).toContain('/models/embeddings/m1/model.onnx');
     expect(report.missing).toContain('/models/ort/ort.wasm');
+  });
+
+  it('regression: SPA fallback (HTTP 200 + text/html) is NOT treated as present', async () => {
+    // Issue #20 finding #3: Vite dev/preview serve index.html with HTTP 200 for
+    // any unmatched path. A naive res.ok check would report allReady:true against
+    // a build serving ZERO model files. The hardened probe must reject HTML.
+    const fetcher: HeadFetcher = vi.fn(async () => ({
+      ok: true,
+      contentType: 'text/html; charset=utf-8',
+    }));
+    const report = await checkPackagedModels(fetcher, sampleModels);
+
+    expect(report.allReady).toBe(false);
+    expect(report.models.every((m) => m.ready)).toBe(false);
+    // Every required file should be reported missing despite the 200 responses.
+    expect(report.missing).toContain('/models/embeddings/m1/model.onnx');
+    expect(report.missing).toContain('/models/ort/ort.wasm');
+  });
+
+  it('regression: real model files (200 + non-HTML content type) ARE present', async () => {
+    // Positive control: the hardened probe must not over-reject real files.
+    const fetcher: HeadFetcher = vi.fn(async () => ({
+      ok: true,
+      contentType: 'application/octet-stream',
+    }));
+    const report = await checkPackagedModels(fetcher, sampleModels);
+
+    expect(report.allReady).toBe(true);
+    expect(report.missing).toEqual([]);
   });
 });

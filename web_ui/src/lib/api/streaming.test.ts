@@ -23,8 +23,11 @@ describe('SSEStreamConsumer', () => {
     vi.unstubAllGlobals();
   });
 
-  // Helper to access private members for constructor verification only
-  interface TestableConsumer extends SSEStreamConsumer {
+  // Helper to access private members for constructor verification only.
+  // Declared as a standalone interface (not `extends SSEStreamConsumer`) so
+  // the private-field redeclarations do not trip TS2430; the `asTestable`
+  // cast bridges the gap at runtime.
+  interface TestableConsumer {
     url: string;
     body: object;
     token?: string;
@@ -41,7 +44,7 @@ describe('SSEStreamConsumer', () => {
   // Single deterministic microtask yield using queueMicrotask (replaces brittle
   // setTimeout(0) loop which had no guarantee of draining under CI load).
   async function flushMicrotasks(times = 2): Promise<void> {
-    await new Promise((resolve) => queueMicrotask(resolve));
+    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
   }
 
   describe('Constructor', () => {

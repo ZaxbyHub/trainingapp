@@ -386,7 +386,7 @@ export class VectorIndex {
    * Load idMapping from IndexedDB.
    */
   private async loadMapping(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       const request = indexedDB.open(DB_NAME, 1);
 
       request.onerror = () => {

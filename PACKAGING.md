@@ -55,16 +55,30 @@ npm run build:offline      # = prepare-models && tsc/vite build && validate-buil
 ```
 
 `build:offline` runs three steps:
-1. `prepare-models` — stage all model assets into `public/models/`.
-2. `vite build` — emit `web_ui/dist/` with a **relative base** (`base: './'`), so
-   the bundle's own asset URLs work from any path.
+1. `prepare-models` — stage all model assets into `public/models/`. This script
+   **fails loudly (non-zero exit)** if a required weight file is a Git-LFS
+   pointer stub (detected via the `version https://git-lfs.github.com/spec/v1`
+   header) rather than the real binary — so a build that forgot `git lfs pull`
+   cannot silently copy garbage into the archive. Run `git lfs pull` first to
+   restore the embedding ONNX.
+2. `vite build` — emit `web_ui/dist/`. The bundle uses a **relative base**
+   (`base: './'`) for its own asset URLs, and model paths are resolved to an
+   **absolute, deploy-aware** prefix (derived from `import.meta.env.BASE_URL`
+   against `document.baseURI` in `model-manifest.ts`) so model fetches work
+   whether the archive is served at the origin root OR a subpath
+   (e.g. `https://host/training/`). Production builds drop sourcemaps
+   (`sourcemap: command === 'serve'`); pass a dev override if you need them.
 3. `validate-build` (`scripts/validate-build.mjs`) — **fails the build** if
    `dist/index.html`/`dist/models/` are missing or if any file required by
-   `public/models/manifest.json` is absent from `dist/models/`. (It does not grep
-   bundled JS for CDN hostnames — vendored ML libs embed default-CDN constants
-   that survive minification but are never called at runtime; the offline
-   guarantee is enforced by `offline-env.ts` and verified by the no-network
-   preview test in §4.)
+   `public/models/manifest.json` is absent from `dist/models/`. The manifest is
+   the **single source of truth** shared with `src/lib/models/model-manifest.ts`
+   (imported at runtime), so the TS readiness gate and the build validator
+   cannot drift. Pass `--no-llm` to skip the browser-LLM runtime + LFM2-VL
+   weights group (for an embeddings-only / server-mode archive where the
+   multi-GB LLM weights are deliberately absent). (It does not grep bundled JS
+   for CDN hostnames — vendored ML libs embed default-CDN constants that survive
+   minification but are never called at runtime; the offline guarantee is
+   enforced by `offline-env.ts` and verified by the no-network preview test in §4.)
 
 Output is `web_ui/dist/`, a static directory containing the app **and** its
 models. Serve it from any static host that sets cross-origin isolation headers:
@@ -75,10 +89,11 @@ Cross-Origin-Embedder-Policy: require-corp
 ```
 
 `vite preview` sets these for local validation, and the bundled FastAPI server
-sets them for every response (see §6). Model assets are loaded from `/models/...`
-(same-origin), so the archive must be served at the **origin root** (which the
-FastAPI server and a static host both do); `file://` cannot provide the
-cross-origin isolation that threaded WASM requires.
+sets them for every response (see §6). Model assets are loaded from a
+same-origin path under the deploy root (`/models/...` at the origin root,
+`/training/models/...` under a subpath), so the archive works served from any
+path; `file://` cannot provide the cross-origin isolation that threaded WASM
+requires.
 
 > **Host requirement:** threaded WASM inference needs `SharedArrayBuffer`, which
 > requires the **cross-origin isolation** headers above. A static host that does
@@ -95,8 +110,12 @@ cross-origin isolation that threaded WASM requires.
    `jsdelivr`, `mlc.ai`, or any third-party host.
 
 The runtime gate behind this is `src/lib/models/model-manifest.ts`
-(`checkPackagedModels()`), which HEAD-probes each required file and drives the
-"ready vs missing — see PACKAGING.md" UI state.
+(`checkPackagedModels()`), which probes each required file via the hardened
+`src/lib/models/probe.ts` helper and drives the "ready vs missing — see
+PACKAGING.md" UI state. The probe treats a HEAD response as "present" only when
+it is OK **and not** `Content-Type: text/html` — because Vite dev/preview (and
+SPA static hosts) serve `index.html` with HTTP 200 for any unmatched path, which
+would otherwise make a build with zero model files falsely report "ready".
 
 ---
 

@@ -284,7 +284,7 @@ describe('InferenceModeContext', () => {
         </InferenceModeProvider>
       );
 
-      let result = false;
+      let result: boolean | void = false;
       await act(async () => {
         result = await screen.getByText('Check').click();
       });

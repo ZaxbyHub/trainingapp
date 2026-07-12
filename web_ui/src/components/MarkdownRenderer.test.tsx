@@ -5,7 +5,7 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { MarkdownRenderer } from '../MarkdownRenderer';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 describe('MarkdownRenderer', () => {
   describe('Text Rendering', () => {

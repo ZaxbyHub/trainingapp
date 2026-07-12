@@ -261,8 +261,14 @@ export const useServiceInitialization: UseServiceInitialization = ({
         // Service may not be initialized, ignore
       }
 
-      if (readinessGateRef.current && typeof readinessGateRef.current.dispose === 'function') {
-        readinessGateRef.current.dispose();
+      if (readinessGateRef.current) {
+        // dispose() is not yet on ModelReadinessGate; this guarded call is a
+        // no-op until the LLM-init cleanup lands in sibling PR #21 (chat engine).
+        // @ts-expect-error: dispose() not on ModelReadinessGate — owned by PR #21.
+        if (typeof readinessGateRef.current.dispose === 'function') {
+          // @ts-expect-error: see above — dispose() not on ModelReadinessGate yet.
+          readinessGateRef.current.dispose();
+        }
         readinessGateRef.current = null;
       }
     };

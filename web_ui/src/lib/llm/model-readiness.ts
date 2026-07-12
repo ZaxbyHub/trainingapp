@@ -15,6 +15,7 @@
 import { getMemoryBudget } from '../embeddings/memory-aware';
 import { WebLLMService } from './web-llm-service';
 import { LLM_GGUF_URL, LLM_MMPROJ_URL } from '../models/model-manifest';
+import { probeAsset } from '../models/probe';
 import type { BrowserEngine } from '../../types/llm';
 
 /**
@@ -100,18 +101,16 @@ function getMemoryTier(availableMB: number): MemoryTier {
  */
 async function isModelAvailable(modelId: string, engine: BrowserEngine): Promise<boolean> {
   if (engine === 'wllama') {
-    try {
-      // wllama loads the packaged GGUF + mmproj projector lazily; "available"
-      // requires BOTH present. The mmproj must be checked too, otherwise the
-      // multimodal (image) path is gated ready while the projector is missing.
-      const [gguf, mmproj] = await Promise.all([
-        fetch(LLM_GGUF_URL, { method: 'HEAD' }),
-        fetch(LLM_MMPROJ_URL, { method: 'HEAD' }),
-      ]);
-      return gguf.ok && mmproj.ok;
-    } catch {
-      return false;
-    }
+    // wllama loads the packaged GGUF + mmproj projector lazily; "available"
+    // requires BOTH present. The mmproj must be checked too, otherwise the
+    // multimodal (image) path is gated ready while the projector is missing.
+    // `probeAsset` rejects the SPA-fallback HTML 200 (see src/lib/models/probe.ts);
+    // a bare `fetch(...).ok` would falsely report present under vite dev/preview.
+    const [gguf, mmproj] = await Promise.all([
+      probeAsset(LLM_GGUF_URL),
+      probeAsset(LLM_MMPROJ_URL),
+    ]);
+    return gguf && mmproj;
   }
   // webllm: present in OPFS via WebLLMService cache.
   try {

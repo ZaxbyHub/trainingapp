@@ -9,8 +9,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 const mockDispose = vi.fn();
 
 // mockPipelineCallable is the resolved value of pipeline()
-// It's a callable that when called performs feature extraction
-const mockPipelineCallable = vi.fn();
+// It's a callable that when called performs feature extraction.
+// `dispose` is attached ad-hoc to satisfy EmbeddingService's pipeline contract.
+const mockPipelineCallable = vi.fn() as ReturnType<typeof vi.fn> & {
+  dispose: ReturnType<typeof vi.fn>;
+};
 
 vi.mock('@huggingface/transformers', () => {
   return {

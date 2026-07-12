@@ -16,13 +16,13 @@ import {
 // Mock global navigator
 const originalNavigator = globalThis.navigator;
 
-function createMockNavigator(overrides: Record<string, unknown> = {}) {
+function createMockNavigator(overrides: Record<string, unknown> = {}): Navigator {
   return {
     userAgent: '',
     gpu: undefined,
     storage: undefined,
     ...overrides,
-  };
+  } as unknown as Navigator;
 }
 
 beforeEach(() => {
@@ -166,7 +166,7 @@ describe('checkFeatures', () => {
   test('returns all feature flags as object with indexedDB property', async () => {
     // Mock WebAssembly
     const originalWebAssembly = globalThis.WebAssembly;
-    globalThis.WebAssembly = { validate: () => true } as WebAssembly;
+    globalThis.WebAssembly = { validate: () => true } as unknown as typeof WebAssembly;
 
     const result = await checkFeatures();
 
@@ -191,7 +191,7 @@ describe('checkFeatures', () => {
       gpu: {
         requestAdapter: vi.fn().mockResolvedValue(mockAdapter),
       },
-    } as unknown as Navigator);
+    });
 
     const result = await checkFeatures();
     expect(result.webgpu).toBe('full');
@@ -202,7 +202,7 @@ describe('checkFeatures', () => {
       gpu: {
         requestAdapter: vi.fn().mockResolvedValue(null),
       },
-    } as unknown as Navigator);
+    });
 
     const result = await checkFeatures();
     expect(result.webgpu).toBe('partial');
@@ -213,7 +213,7 @@ describe('checkFeatures', () => {
       gpu: {
         requestAdapter: vi.fn().mockRejectedValue(new Error('GPU error')),
       },
-    } as unknown as Navigator);
+    });
 
     const result = await checkFeatures();
     expect(result.webgpu).toBe('partial');
@@ -224,7 +224,7 @@ describe('checkFeatures', () => {
       storage: {
         getDirectory: vi.fn(),
       },
-    } as unknown as Navigator);
+    });
 
     const result = await checkFeatures();
     expect(result.opfs).toBe(true);
@@ -281,7 +281,7 @@ describe('checkFeatures', () => {
 
   test('wasm is true when global WebAssembly exists', async () => {
     const originalWebAssembly = globalThis.WebAssembly;
-    globalThis.WebAssembly = { validate: () => true } as WebAssembly;
+    globalThis.WebAssembly = { validate: () => true } as unknown as typeof WebAssembly;
 
     const result = await checkFeatures();
 
@@ -550,7 +550,7 @@ describe('detectBrowserInfo', () => {
       storage: {
         getDirectory: vi.fn(),
       },
-    } as unknown as Navigator);
+    });
 
     const result = await detectBrowserInfo();
 
@@ -565,7 +565,7 @@ describe('detectBrowserInfo', () => {
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36',
       gpu: undefined,
       storage: undefined,
-    } as unknown as Navigator);
+    });
 
     const result = await detectBrowserInfo();
 
@@ -583,7 +583,7 @@ describe('detectBrowserInfo', () => {
       storage: {
         getDirectory: vi.fn(),
       },
-    } as unknown as Navigator);
+    });
 
     const result = await detectBrowserInfo();
 
@@ -597,7 +597,7 @@ describe('detectBrowserInfo', () => {
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
       gpu: undefined,
       storage: undefined,
-    } as unknown as Navigator);
+    });
 
     const result = await detectBrowserInfo();
 
@@ -615,7 +615,7 @@ describe('detectBrowserInfo', () => {
         requestAdapter: vi.fn().mockResolvedValue(null),
       },
       storage: undefined,
-    } as unknown as Navigator);
+    });
 
     const result = await detectBrowserInfo();
 
@@ -629,7 +629,7 @@ describe('detectBrowserInfo', () => {
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 SomeBrowser/1.0',
       gpu: undefined,
       storage: undefined,
-    } as unknown as Navigator);
+    });
 
     const result = await detectBrowserInfo();
 
@@ -647,7 +647,7 @@ describe('detectBrowserInfo', () => {
       storage: {
         getDirectory: vi.fn(),
       },
-    } as unknown as Navigator);
+    });
 
     const result = await detectBrowserInfo();
 

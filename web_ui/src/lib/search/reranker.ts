@@ -4,7 +4,7 @@
  * Uses cross-encoder/ms-marco-MiniLM-L-6-v2 model for relevance scoring.
  */
 
-import { pipeline, type Pipeline } from '@huggingface/transformers';
+import { pipeline, type TextClassificationPipeline } from '@huggingface/transformers';
 import type { SearchResult } from '../../types/search';
 import { RERANKER_MODEL_PATH } from '../models/model-manifest';
 import { configureOfflineEnv } from '../models/offline-env';
@@ -27,7 +27,7 @@ const RERANKER_TASK = 'text-classification';
 export class RerankerService {
   private static instance: RerankerService | null = null;
 
-  private crossEncoder: Pipeline | null = null;
+  private crossEncoder: TextClassificationPipeline | null = null;
   private ready: boolean = false;
   private initPromise: Promise<void> | null = null;
   private disposed: boolean = false;
@@ -107,8 +107,15 @@ export class RerankerService {
    */
   private async doInitialize(): Promise<void> {
     try {
-      // Create text-classification pipeline for cross-encoder
-      this.crossEncoder = await pipeline(
+      // Create text-classification pipeline. `pipeline()` is heavily overloaded
+      // (TS2590); narrow the factory to the single signature we use (see
+      // embedding-service.ts for the same approach).
+      const createClassifier = pipeline as unknown as (
+        task: 'text-classification',
+        modelId: string,
+        options: { dtype: string; device: string }
+      ) => Promise<TextClassificationPipeline>;
+      this.crossEncoder = await createClassifier(
         RERANKER_TASK,
         RERANKER_MODEL_PATH,
         {
@@ -192,8 +199,10 @@ export class RerankerService {
         resultMap.push(result);
       }
 
-      // Batch inference: call pipeline once with all pairs
-      const scoreResults = await this.crossEncoder!(pairs) as Array<{ label: string; score: number }>;
+      // Batch inference: call pipeline once with all pairs. Cross-encoder
+      // text-classification accepts pair arrays at runtime; the typed callback
+      // signature only models string|string[], so cast through unknown.
+      const scoreResults = (await (this.crossEncoder as unknown as (input: unknown) => Promise<Array<{ label: string; score: number }>>)(pairs)) as Array<{ label: string; score: number }>;
 
       // Map scores back to results
       const scoredResults: Array<{ result: SearchResult; crossScore: number }> = scoreResults.map((scoreResult, i) => ({

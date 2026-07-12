@@ -20,7 +20,7 @@ function createMockGPUDevice(overrides: {
   lostPromise?: Promise<MockGPUDeviceLostInfo>;
   alreadyLost?: boolean;
   lostEventHandler?: (event: Event) => void;
-} = {}) {
+} = {}): GPUDevice {
   const {
     lostPromise = Promise.reject(new Error('lost promise never resolved in test')),
     alreadyLost = false,
@@ -36,7 +36,7 @@ function createMockGPUDevice(overrides: {
       }
     }),
     removeEventListener: vi.fn(),
-  };
+  } as unknown as GPUDevice;
 }
 
 // ---------------------------------------------------------------------------
@@ -378,7 +378,7 @@ describe('WebGPUWatchdog', () => {
   });
 
   test('Edge case: double context loss is guarded (only first fires)', async () => {
-    let resolveLost: (info: { message: string }) => null = () => null;
+    let resolveLost: (info: { message: string }) => void = () => {};
     const lostPromise = new Promise<{ message: string }>((resolve) => {
       resolveLost = resolve;
     });

@@ -28,7 +28,7 @@ const mockNvgpu = {
 };
 
 // Store original gpu before any tests run
-const originalGpu = (global.navigator as Record<string, unknown>).gpu;
+const originalGpu = (global.navigator as unknown as Record<string, unknown>).gpu;
 
 Object.defineProperty(global, 'navigator', {
   value: { gpu: mockNvgpu },
@@ -148,7 +148,7 @@ describe('WebLLMService', () => {
   test('initialize throws when WebGPU is not available (navigator.gpu missing)', async () => {
     // Remove gpu temporarily
     const originalDescriptor = Object.getOwnPropertyDescriptor(global.navigator, 'gpu');
-    delete (global.navigator as Record<string, unknown>).gpu;
+    delete (global.navigator as unknown as Record<string, unknown>).gpu;
 
     try {
       const service = WebLLMService.getInstance();

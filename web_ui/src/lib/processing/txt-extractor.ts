@@ -83,11 +83,13 @@ async function tryReadAsEncoding(file: File, encoding: string): Promise<string> 
     reader.onload = () => {
       if (typeof reader.result === 'string') {
         resolve(reader.result);
-      } else {
+      } else if (reader.result instanceof ArrayBuffer) {
         // If result is ArrayBuffer, decode manually
         const decoder = new TextDecoder(encoding);
         const text = decoder.decode(reader.result);
         resolve(text);
+      } else {
+        reject(new Error('Failed to read text file: unexpected result type'));
       }
     };
 

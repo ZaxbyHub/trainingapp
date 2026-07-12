@@ -594,7 +594,7 @@ describe('RAGOrchestrator', () => {
 
     for await (const event of orchestrator.query(question, { streamTokens: false, rerank: false })) {
       if (event.type === 'complete') {
-        completeEvent = event as typeof completeEvent;
+        completeEvent = event as { type: 'complete'; data: { answer: string; sources: string[]; chunks: SearchResult[] } };
       }
     }
 

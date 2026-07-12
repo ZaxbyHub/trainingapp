@@ -15,12 +15,44 @@
  *   "models missing — see packaging guide" state instead of a cryptic load failure.
  */
 
+import { probeAsset } from './probe';
+
 /**
- * Base public path (same-origin) under which all packaged models live.
- * This is also the value of Transformers.js `env.localModelPath`, so every
- * model is addressed by a path RELATIVE to it (e.g. `embeddings/bge-small-en-v1.5`).
+ * Resolve the deploy-relative base (`import.meta.env.BASE_URL`, `'./'` by
+ * default per `vite.config.ts`) into an ABSOLUTE same-origin pathname prefix.
+ *
+ * Why absolute, not relative: Transformers.js sets `env.localModelPath` to this
+ * value and `fetch`es against it, and wllama's GGUF/mmproj URLs are derived from
+ * it. A relative value like `./models` would resolve against the CURRENT client
+ * route (e.g. under `/app/chat/` it would fetch `/app/chat/models/...` — wrong).
+ * Resolving against `document.baseURI` yields the HTML document's deploy root, so
+ * `/training/` deployments produce `/training/models` while origin-root stays
+ * `/models` — identical to the old hardcoded behavior at root, correct everywhere
+ * else. `document.baseURI` is stable across client-side routing.
  */
-export const MODELS_BASE = '/models';
+function resolveAbsoluteBase(): string {
+  const baseUrl = import.meta.env.BASE_URL;
+  try {
+    // `document.baseURI` is the document's URL (the HTML location), unaffected by
+    // client-side route changes. `new URL(baseUrl, document.baseURI).pathname`
+    // normalizes './' → '/' at origin root, './' → '/training/' under a subpath.
+    const resolved = new URL(baseUrl, document.baseURI).pathname;
+    // Ensure exactly one leading slash, no trailing slash, so `${MODELS_BASE}/x`
+    // joins cleanly.
+    return `/${resolved.replace(/^\/+|\/+$/g, '')}`;
+  } catch {
+    // `document` is undefined in non-browser contexts (e.g. tests that import
+    // this module without a jsdom env). Fall back to the historical absolute path.
+    return '/';
+  }
+}
+
+/**
+ * Absolute same-origin base under which all packaged models live. Also the value
+ * of Transformers.js `env.localModelPath`, so every model is addressed by a path
+ * RELATIVE to it (e.g. `embeddings/bge-small-en-v1.5`).
+ */
+export const MODELS_BASE = `${resolveAbsoluteBase()}/models`.replace(/\/+/g, '/');
 
 /** Absolute base for embedding model files (used by the readiness gate). */
 export const EMBEDDING_MODELS_BASE = `${MODELS_BASE}/embeddings`;
@@ -113,73 +145,49 @@ export interface PackagedModel {
 }
 
 /**
- * The set of models required for Phase 1 (offline embeddings + ORT runtime).
- * Phase 2 adds the LFM2-VL GGUF + mmproj entries here.
+ * Shape of `public/models/manifest.json` — the single source of truth for what
+ * must be packaged. Paths there are RELATIVE to the models dir; we prefix them
+ * with the deploy-aware absolute {@link MODELS_BASE} when building
+ * {@link PACKAGED_MODELS}. The same JSON is read by `scripts/validate-build.mjs`
+ * to gate the produced dist/, so the TS and the build validator cannot drift.
  */
-export const PACKAGED_MODELS: PackagedModel[] = [
-  {
-    id: EMBEDDING_MODEL_DIR,
-    label: 'BAAI/bge-small-en-v1.5 (embeddings)',
-    kind: 'embedding',
-    files: [
-      { path: `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/onnx/model.onnx`, required: true },
-      { path: `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/tokenizer.json`, required: true },
-      { path: `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/config.json`, required: true },
-      { path: `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/tokenizer_config.json`, required: true },
-    ],
-  },
-  {
-    id: 'onnxruntime-web',
-    label: 'ONNX Runtime (WASM)',
-    kind: 'runtime',
-    files: [
-      // Transformers.js v3 fetches the JSEP threaded-SIMD build and its ESM loader.
-      { path: `${ONNX_RUNTIME_WASM_BASE}${ONNX_RUNTIME_WASM_FILE}`, required: true },
-      { path: `${ONNX_RUNTIME_WASM_BASE}${ONNX_RUNTIME_LOADER_FILE}`, required: true },
-    ],
-  },
-  {
-    // Reranking is OPTIONAL: if these files are absent the app still runs and
-    // simply skips cross-encoder reranking (see RerankerService graceful
-    // degradation). Marked non-required so a build without it is still "ready".
-    id: RERANKER_MODEL_DIR,
-    label: 'cross-encoder/ms-marco-MiniLM-L-6-v2 (reranker, optional)',
-    kind: 'reranker',
-    files: [
-      { path: `${RERANKER_MODELS_BASE}/${RERANKER_MODEL_DIR}/onnx/model.onnx`, required: false },
-      { path: `${RERANKER_MODELS_BASE}/${RERANKER_MODEL_DIR}/tokenizer.json`, required: false },
-      { path: `${RERANKER_MODELS_BASE}/${RERANKER_MODEL_DIR}/config.json`, required: false },
-      { path: `${RERANKER_MODELS_BASE}/${RERANKER_MODEL_DIR}/tokenizer_config.json`, required: false },
-    ],
-  },
-  {
-    // wllama's WASM runtime + offline compat build. Needed for the browser
-    // 'wllama' engine, not for server/WebLLM — non-required at the aggregate
-    // level. Both the modern and compat wasm are packaged because the browser
-    // picks one at runtime based on JSPI/Memory64 support.
-    id: 'wllama-runtime',
-    label: 'wllama WASM runtime',
-    kind: 'runtime',
-    files: [
-      { path: WLLAMA_WASM_FILE, required: false },
-      { path: WLLAMA_COMPAT_WASM_URL, required: false },
-      { path: WLLAMA_COMPAT_WORKER_URL, required: false },
-    ],
-  },
-  {
-    // Browser LLM weights: LFM2-VL-1.6B (vision-language) for wllama. Engine- and
-    // mode-specific (only needed for browser 'wllama' mode), hence non-required at
-    // the aggregate level. WllamaService.initialize() HEAD-probes these before
-    // loading and fails fast with a clear message if absent.
-    id: LLM_MODEL_DIR,
-    label: 'LiquidAI LFM2-VL-1.6B (browser LLM, multimodal)',
-    kind: 'llm',
-    files: [
-      { path: LLM_GGUF_URL, required: false },
-      { path: LLM_MMPROJ_URL, required: false },
-    ],
-  },
-];
+interface ManifestFile {
+  path: string;
+  required: boolean;
+}
+interface ManifestModel {
+  id: string;
+  label: string;
+  kind: PackagedModelKind;
+  group: 'core' | 'optional' | 'llm';
+  files: ManifestFile[];
+}
+interface Manifest {
+  version: string;
+  models: ManifestModel[];
+}
+
+// Imported at build/runtime via Vite's native JSON support (resolveJsonModule).
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore -- JSON modules are resolved by Vite; the resolved shape is typed as Manifest below.
+import packagedManifestSource from '../../../public/models/manifest.json';
+const packagedManifest = packagedManifestSource as Manifest;
+
+/**
+ * The full packaged-model set, derived from `public/models/manifest.json` (the
+ * single source of truth) with each relative path prefixed by the deploy-aware
+ * absolute {@link MODELS_BASE}. Group tags (`core` / `optional` / `llm`) drive
+ * packaging validation (see scripts/validate-build.mjs `--no-llm`).
+ */
+export const PACKAGED_MODELS: PackagedModel[] = packagedManifest.models.map((m) => ({
+  id: m.id,
+  label: m.label,
+  kind: m.kind,
+  files: m.files.map((f) => ({
+    path: `${MODELS_BASE}/${f.path}`.replace(/\/+/g, '/'),
+    required: f.required,
+  })),
+}));
 
 /** Presence result for a single packaged file. */
 export interface FilePresence {
@@ -209,24 +217,25 @@ export interface PackagedModelsReport {
 
 /**
  * A minimal fetcher signature so this is testable without a real network.
- * Defaults to the global `fetch`.
+ * Defaults to the global `fetch`. Carries an optional `contentType` so the
+ * probe can reject SPA-fallback HTML responses (see {@link probeAsset}).
  */
-export type HeadFetcher = (path: string) => Promise<{ ok: boolean }>;
+export type HeadFetcher = (path: string) => Promise<{
+  ok: boolean;
+  contentType?: string | null;
+}>;
 
 /**
  * Probe whether a packaged file exists, same-origin, without downloading it.
  *
- * We use a `HEAD` request (range-limited fallback not needed for static hosts).
- * A network error or non-2xx response counts as "not present" — for an offline
- * static archive a missing file reliably 404s.
+ * Delegates to {@link probeAsset}, which treats HTTP 200 + `Content-Type:
+ * text/html` as "not present" — that is the SPA-fallback signature (Vite
+ * dev/preview serve `index.html` with HTTP 200 for any unmatched path). A
+ * network error or non-2xx response also counts as "not present". Real model
+ * files (`.onnx`, `.wasm`, `.gguf`, `.json`) are never served as HTML.
  */
 async function probe(path: string, fetcher: HeadFetcher): Promise<boolean> {
-  try {
-    const res = await fetcher(path);
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return probeAsset(path, fetcher);
 }
 
 /**
@@ -239,7 +248,10 @@ async function probe(path: string, fetcher: HeadFetcher): Promise<boolean> {
  * @param models  Optional model set override (used in tests / future phases).
  */
 export async function checkPackagedModels(
-  fetcher: HeadFetcher = (p) => fetch(p, { method: 'HEAD' }),
+  fetcher: HeadFetcher = async (p) => {
+    const res = await fetch(p, { method: 'HEAD' });
+    return { ok: res.ok, contentType: res.headers.get('content-type') };
+  },
   models: PackagedModel[] = PACKAGED_MODELS
 ): Promise<PackagedModelsReport> {
   const results: ModelReadiness[] = await Promise.all(

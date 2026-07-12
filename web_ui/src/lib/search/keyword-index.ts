@@ -106,12 +106,14 @@ export class KeywordIndex {
   private async doInitialize(): Promise<void> {
     try {
       // Create FlexSearch Index with resolution-based ranking
-      // Using tokenize: "full" for better phrase matching
+      // Using tokenize: "full" for better phrase matching. `worker: false` is a
+      // valid runtime option (keeps the index serializable for IndexedDB) but is
+      // not in the v0.8 IndexOptions type — cast to preserve behavior.
       this.index = new Index({
         tokenize: 'full',
-        worker: false, // Disable worker for simpler IndexedDB serialization
+        worker: false,
         resolution: 9,
-      });
+      } as ConstructorParameters<typeof Index>[0]);
 
       // Try to load persisted index from IndexedDB
       const loaded = await this.load();
@@ -212,8 +214,11 @@ export class KeywordIndex {
     const limit = options?.limit ?? 10;
 
     try {
-      // Search FlexSearch index - returns array of document IDs
-      const results = this.index!.search(query, { limit, suggest: true });
+      // Search FlexSearch index - returns array of document IDs. With the
+      // non-worker Index config above, search() returns synchronously; cast the
+      // union return (which also includes Promise/Resolver under worker mode)
+      // to the synchronous array shape actually produced here.
+      const results = this.index!.search(query, { limit, suggest: true }) as Array<string | number>;
 
       return results.map((id: string | number, rank: number) => {
         const meta = this.idMapping.get(String(id));

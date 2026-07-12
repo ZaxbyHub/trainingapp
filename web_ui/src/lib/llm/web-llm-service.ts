@@ -104,7 +104,13 @@ export class WebLLMService implements LLMService {
       // Reject software-renderer adapters (SwiftShader, llvmpipe) that work
       // but provide unusably slow performance for ML inference (FR-005)
       try {
-        const adapterInfo = await adapter.requestAdapterInfo();
+        // `requestAdapterInfo()` was removed from strict @webgpu/types but is
+        // still present in shipping browsers (and the try/catch below already
+        // guards browsers that lack it). Cast to preserve the existing runtime
+        // behavior without changing the call.
+        const adapterInfo = await (adapter as GPUAdapter & {
+          requestAdapterInfo(): Promise<{ vendor?: string; architecture?: string }>;
+        }).requestAdapterInfo();
         const vendor = (adapterInfo.vendor || '').toLowerCase();
         const architecture = (adapterInfo.architecture || '').toLowerCase();
         if (vendor.includes('mesa') || architecture.includes('llvmpipe') || architecture.includes('swiftshader')) {
@@ -183,7 +189,7 @@ export class WebLLMService implements LLMService {
     // 3. Create engine with progress reporting
     let wasDownloading = false;
     try {
-      this._engine = (await CreateMLCEngine(modelId, {
+      this._engine = (await CreateMLCEngine!(modelId, {
         initProgressCallback: onProgress ?? ((progress: { progress: number; timeElapsed: number; text: string }) => {
           // Track if model is being downloaded (progress < 1 means downloading, not cached)
           if (progress.progress < 1.0) {
