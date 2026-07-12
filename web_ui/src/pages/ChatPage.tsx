@@ -63,6 +63,13 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // Last sent turn (text + raw image bytes) so Regenerate can re-run it.
   const lastTurnRef = useRef<{ text: string; images?: AttachedImage[] } | null>(null);
 
+  // Mirror of the current messages so async callbacks (onDone/onError) can read
+  // the latest array without placing side effects inside a state updater.
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
   const isBrowserMode = mode === 'browser-local';
   const isModelBlocked = isBrowserMode && !isModelReady;
   const isInputDisabled = isLoading || isModelBlocked;
@@ -119,44 +126,50 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     const streamManager = new TokenStreamManager();
     tokenStreamManagerRef.current = streamManager;
 
-    // Wire token callback - append tokens to assistant message
+    // Wire token callback - append tokens to assistant message.
+    // Compute the next array from messagesRef (the always-current mirror),
+    // commit it to the ref synchronously, and set state with the value form
+    // (no updater function) so React never double-invokes a side-effect.
     streamManager.onToken((token) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, content: msg.content + token, timestamp: Date.now() }
-            : msg
-        )
+      const next = messagesRef.current.map((msg) =>
+        msg.id === assistantMessageId
+          ? { ...msg, content: msg.content + token, timestamp: Date.now() }
+          : msg
       );
+      messagesRef.current = next;
+      setMessages(next);
     });
 
-    // Wire done callback - finalize message with sources
+    // Wire done callback - finalize message with sources.
+    // TokenStreamManager.complete() flushes the token buffer (firing onToken)
+    // and then invokes onDone synchronously in the same call stack, so
+    // messagesRef.current already reflects every streamed token here.
     streamManager.onDone((data) => {
-      setMessages((prev) => {
-        const updated = prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, isStreaming: false, sources: data.sources }
-            : msg
-        );
-        // Save to Dexie after stream completes
-        onSaveConversation(updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
-        return updated;
-      });
+      const updated = messagesRef.current.map((msg) =>
+        msg.id === assistantMessageId
+          ? { ...msg, isStreaming: false, sources: data.sources }
+          : msg
+      );
+      messagesRef.current = updated;
+      setMessages(updated);
+      // Save to Dexie after stream completes
+      onSaveConversation(updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
       }
     });
 
-    // Wire error callback
+    // Wire error callback. Like onDone, onError fires synchronously after
+    // flushBuffer() inside TokenStreamManager.error(), so read from the ref.
     streamManager.onError((errorMessage) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, content: msg.content + `\n[Error: ${errorMessage}]`, isStreaming: false }
-            : msg
-        )
+      const updated = messagesRef.current.map((msg) =>
+        msg.id === assistantMessageId
+          ? { ...msg, content: msg.content + `\n[Error: ${errorMessage}]`, isStreaming: false }
+          : msg
       );
+      messagesRef.current = updated;
+      setMessages(updated);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
@@ -245,20 +258,20 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       isStreaming: true,
     };
 
-    setMessages((prev) => {
-      const appended = [...prev, userMessage, assistantMessage];
-      if (appended.length > MAX_MESSAGES) {
-        const pruned = appended.slice(appended.length - MAX_MESSAGES);
-        const indicator: ChatMessage = {
-          id: 'hidden-messages-indicator',
-          role: 'system',
-          content: `Earlier messages have been hidden (max ${MAX_MESSAGES} shown).`,
-          timestamp: Date.now(),
-        };
-        return [indicator, ...pruned];
-      }
-      return appended;
-    });
+    const appended = [...messagesRef.current, userMessage, assistantMessage];
+    if (appended.length > MAX_MESSAGES) {
+      const pruned = appended.slice(appended.length - MAX_MESSAGES);
+      const indicator: ChatMessage = {
+        id: 'hidden-messages-indicator',
+        role: 'system',
+        content: `Earlier messages have been hidden (max ${MAX_MESSAGES} shown).`,
+        timestamp: Date.now(),
+      };
+      messagesRef.current = [indicator, ...pruned];
+    } else {
+      messagesRef.current = appended;
+    }
+    setMessages(messagesRef.current);
     setIsLoading(true);
     runGeneration(text, attachedImages, assistantMessageId);
   }, [runGeneration]);
@@ -270,38 +283,61 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     if (!last) return;
 
     const assistantMessageId = generateId();
-    setMessages((prev) =>
-      messagesForRegenerate(prev, {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        isStreaming: true,
-      })
-    );
+    const regenerated = messagesForRegenerate(messagesRef.current, {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      isStreaming: true,
+    });
+    messagesRef.current = regenerated;
+    setMessages(regenerated);
     setIsLoading(true);
     runGeneration(last.text, last.images, assistantMessageId);
   }, [runGeneration]);
 
-  const handleCancel = useCallback(() => {
-    // Cancel via TokenStreamManager
+  // Cancel any in-flight stream and release its resources. Shared by the
+  // explicit Cancel button, Clear Chat, and the external New Chat path
+  // (sidebar) which clears messages without going through ChatPage.
+  const cancelActiveStream = useCallback(() => {
     if (tokenStreamManagerRef.current) {
       tokenStreamManagerRef.current.cancel();
       tokenStreamManagerRef.current = null;
     }
-
-    // Also abort any pending AbortController
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-
-    // Mark any streaming messages as complete
-    setMessages((prev) =>
-      prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
-    );
     setIsLoading(false);
   }, []);
+
+  const handleCancel = useCallback(() => {
+    cancelActiveStream();
+
+    // Mark any streaming messages as complete
+    const finalized = messagesRef.current.map((msg) =>
+      msg.isStreaming ? { ...msg, isStreaming: false } : msg
+    );
+    messagesRef.current = finalized;
+    setMessages(finalized);
+  }, [cancelActiveStream]);
+
+  // If messages are cleared while a stream is in flight (e.g. the sidebar
+  // "New Chat" button calls newChat() in App, which empties currentMessages
+  // without going through ChatPage), cancel the orphaned stream so its
+  // callbacks don't fire against the cleared state and resources are released.
+  // Only react to a non-empty → empty transition so this never cancels a
+  // stream that was started while the view was already empty (e.g. the render
+  // window between handleSend setting the stream ref and the messages prop
+  // updating).
+  const prevMessagesLengthRef = useRef(messages.length);
+  useEffect(() => {
+    const prev = prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+    if (prev > 0 && messages.length === 0 && tokenStreamManagerRef.current) {
+      cancelActiveStream();
+    }
+  }, [messages.length, cancelActiveStream]);
 
   const handleClearClick = useCallback(() => {
     if (clearConfirmState === 'idle') {
@@ -316,12 +352,16 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         clearTimeout(clearTimeoutRef.current);
         clearTimeoutRef.current = null;
       }
+      // Cancel any in-flight stream so its callbacks don't fire against the
+      // cleared state and resources are released immediately.
+      cancelActiveStream();
       setMessages([]);
+      messagesRef.current = [];
       onNewChat();
       lastTurnRef.current = null; // no turn to regenerate after clearing
       setClearConfirmState('idle');
     }
-  }, [clearConfirmState]);
+  }, [clearConfirmState, cancelActiveStream, onNewChat]);
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
@@ -384,6 +424,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
               <button
                 type="button"
                 onClick={handleClearClick}
+                disabled={isLoading}
+                title={isLoading ? 'Cancel the active response before clearing' : 'Clear chat'}
                 style={{
                   backgroundColor: clearConfirmState === 'confirming' ? 'var(--color-danger)' : 'transparent',
                   color: clearConfirmState === 'confirming' ? 'var(--color-text-on-primary)' : 'var(--color-text-muted)',
@@ -392,7 +434,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                   padding: 'var(--spacing-xs) var(--spacing-sm)',
                   fontSize: 'var(--font-size-caption)',
                   fontFamily: 'var(--font-family)',
-                  cursor: 'pointer',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  opacity: isLoading ? 0.6 : 1,
                   transition: 'all 0.15s ease',
                 }}
               >
