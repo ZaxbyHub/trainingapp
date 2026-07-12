@@ -57,8 +57,17 @@ jobs:
 
       # Acceptance #4: prepare-models succeeds with real weights present (LFS
       # pulled above) and fails loudly on LFS stubs (covered by the unit test).
+      # Runs AFTER build/test so a missing-weights failure here doesn't block
+      # the typecheck/build/test gates. The packaging validation below re-runs
+      # build with the staged models so dist/models/ is populated.
       - name: Prepare models (real weights via LFS)
         run: npm run prepare-models
+
+      # Rebuild so dist/models/ contains the staged model assets, then validate.
+      # (The earlier Build step ran before prepare-models, so its dist/ has no
+      # models — packaging validation needs them present.)
+      - name: Rebuild with staged models
+        run: npm run build
 
       # Packaging validation with --no-llm: the browser-LLM runtime + LFM2-VL
       # weights are operator-acquired (multi-GB, not in this repo), so CI
