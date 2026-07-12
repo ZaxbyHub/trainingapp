@@ -159,7 +159,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     // Wait for the async handler to start
@@ -185,7 +190,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     // Advance timers to let the async generator consume events
@@ -215,7 +225,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -245,7 +260,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -270,7 +290,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
     // Check initial state - no messages
     expect(screen.queryAllByText(userText)).toHaveLength(0);
@@ -294,7 +319,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -322,7 +352,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     }
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(infiniteEvents());
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -355,7 +390,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
     const textarea = screen.getByRole('textbox');
     const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -404,7 +444,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -437,7 +482,12 @@ describe('ChatPage RAG Pipeline Integration', () => {
     }
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(errorEvents());
 
-    render(<ChatPage />);
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
     submitMessage(userText);
 
     await act(async () => {
@@ -449,5 +499,166 @@ describe('ChatPage RAG Pipeline Integration', () => {
 
     // Verify error was called on stream manager with the correct message
     expect(mockStreamManagerInstance.error).toHaveBeenCalledWith(pipelineErrorMessage);
+  });
+
+  // ========================================================================
+  // TEST 10: Save-on-stream-done integration (PRR-006) + stale-ref guard.
+  // Verifies the headline wiring (onDone → onSaveConversation) AND that the
+  // finalized array includes every streamed token. This guards the PRR-002
+  // fix: onDone fires synchronously after flushBuffer() inside complete(),
+  // so the saved array must reflect tokens flushed in the same call stack.
+  // A regression that reads a stale messagesRef would save an empty/partial
+  // assistant content and FAIL the content assertion below.
+  // ========================================================================
+  test('onDone invokes onSaveConversation with finalized messages including streamed tokens', async () => {
+    const userText = 'Persist me';
+    const events: RAGEvent[] = [
+      { type: 'complete', data: { answer: 'Saved.', sources: ['doc-x'], chunks: [] } },
+    ];
+    vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
+
+    const onSaveConversation = vi.fn();
+    const onNewChat = vi.fn();
+
+    // Stateful wrapper so onMessagesChange propagates back into the messages
+    // prop (keeps ChatPage's messagesRef in sync with submitted messages).
+    function Harness() {
+      const [messages, setMessages] = React.useState<import('../types/chat').ChatMessage[]>([]);
+      return (
+        <ChatPage
+          messages={messages}
+          onMessagesChange={setMessages}
+          onSaveConversation={onSaveConversation}
+          onNewChat={onNewChat}
+        />
+      );
+    }
+    render(<Harness />);
+    submitMessage(userText);
+
+    // Let the submit + complete microtasks flush so the user+assistant pair is
+    // committed and the stream callbacks are registered on the mock manager.
+    await act(async () => {
+      for (let i = 0; i < 20; i++) {
+        vi.advanceTimersByTime(100);
+        await Promise.resolve();
+      }
+    });
+
+    // Capture the registered onToken + onDone handlers.
+    expect(mockStreamManagerInstance.onToken).toHaveBeenCalledTimes(1);
+    expect(mockStreamManagerInstance.onDone).toHaveBeenCalledTimes(1);
+    const onTokenHandler = mockStreamManagerInstance.onToken.mock.calls[0][0];
+    const onDoneHandler = mockStreamManagerInstance.onDone.mock.calls[0][0];
+
+    // Simulate the real TokenStreamManager.complete() ordering: flush tokens
+    // (onToken), then fire onDone synchronously in the same call stack.
+    const streamedAnswer = 'Hello world';
+    await act(async () => {
+      onTokenHandler(streamedAnswer);
+      onDoneHandler({ sources: ['doc-x'], contextLength: streamedAnswer.length, inferenceTime: 5 });
+    });
+
+    // Persistence path was invoked exactly once with the finalized messages.
+    expect(onSaveConversation).toHaveBeenCalledTimes(1);
+    const [savedMessages, savedMode, savedModelUsed] = onSaveConversation.mock.calls[0];
+    expect(savedMessages.length).toBe(2); // user + assistant
+    const assistant = savedMessages.find((m: { role: string }) => m.role === 'assistant');
+    expect(assistant.isStreaming).toBe(false);
+    expect(assistant.sources).toEqual(['doc-x']);
+    // The streamed token MUST be present in the saved content — this is the
+    // assertion that catches a stale-messagesRef regression.
+    expect(assistant.content).toBe(streamedAnswer);
+    // browser-local + wllama engine maps to mode 'wllama' with the engine name.
+    expect(savedMode).toBe('wllama');
+    expect(savedModelUsed).toBe('wllama');
+  });
+
+  // ========================================================================
+  // TEST 11: Stream cancellation (PRR-003) — the shared cancelActiveStream
+  // path that Clear Chat and the external New Chat path both rely on. The
+  // Stop button is the reachable entry point during streaming (Clear is
+  // disabled while loading), so it exercises the same extracted helper.
+  // ========================================================================
+  test('Cancel during streaming cancels the active stream manager', async () => {
+    const userText = 'To be cleared';
+    const events: RAGEvent[] = [
+      { type: 'token', data: 'partial' },
+      { type: 'complete', data: { answer: 'partial', sources: [], chunks: [] } },
+    ];
+    vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
+
+    render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
+    submitMessage(userText);
+
+    await act(async () => {
+      vi.advanceTimersByTime(10);
+    });
+
+    // The Clear button is disabled while a stream is active; cancel first.
+    const cancelButton = screen.getByRole('button', { name: /cancel|stop/i });
+    await act(async () => {
+      fireEvent.click(cancelButton);
+    });
+    expect(mockStreamManagerInstance.cancel).toHaveBeenCalled();
+  });
+
+  // ========================================================================
+  // TEST 12: Cancel-on-empty effect (PRR-003+004 core scenario).
+  // The sidebar "New Chat" path calls newChat() in App, which empties
+  // currentMessages (the messages prop) WITHOUT going through ChatPage. The
+  // cancel-on-empty effect must detect that non-empty → empty transition
+  // while a stream is in flight and cancel the orphaned stream manager.
+  // ========================================================================
+  test('External clear (messages prop non-empty → empty) cancels the active stream', async () => {
+    const userText = 'Stream then externally cleared';
+    const events: RAGEvent[] = [
+      { type: 'token', data: 'partial answer' },
+    ];
+    vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
+
+    const onSaveConversation = vi.fn();
+
+    // Harness that lets the test flip messages to [] to simulate the sidebar
+    // New Chat path (App calls newChat → setCurrentMessages([])).
+    let externalClear: () => void = () => {};
+    function Harness() {
+      const [messages, setMessages] = React.useState<import('../types/chat').ChatMessage[]>([]);
+      externalClear = () => setMessages([]);
+      return (
+        <ChatPage
+          messages={messages}
+          onMessagesChange={setMessages}
+          onSaveConversation={onSaveConversation}
+          onNewChat={() => {}}
+        />
+      );
+    }
+    render(<Harness />);
+    submitMessage(userText);
+
+    // Let the user+assistant pair propagate (non-empty) and the stream start.
+    await act(async () => {
+      for (let i = 0; i < 20; i++) {
+        vi.advanceTimersByTime(100);
+        await Promise.resolve();
+      }
+    });
+
+    // A stream is in flight and messages is non-empty.
+    expect(mockStreamManagerInstance.cancel).not.toHaveBeenCalled();
+
+    // Simulate the sidebar New Chat: the parent empties the messages prop.
+    await act(async () => {
+      externalClear();
+    });
+
+    // The cancel-on-empty effect fires and cancels the orphaned stream.
+    expect(mockStreamManagerInstance.cancel).toHaveBeenCalled();
   });
 });

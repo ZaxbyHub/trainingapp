@@ -8,6 +8,11 @@ import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useServiceInitialization } from './hooks/useServiceInitialization';
+import { useConversations } from './hooks/useConversations';
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/inter/700.css';
 import './styles/theme.css';
 
 function LoadingOverlay({
@@ -26,10 +31,10 @@ function LoadingOverlay({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: 'var(--color-background, #0f0f0f)',
-        color: 'var(--color-text-primary, #ffffff)',
-        fontFamily: 'var(--font-sans, system-ui, sans-serif)',
-        gap: 'var(--spacing-4, 16px)',
+        backgroundColor: 'var(--color-bubble-assistant)',
+        color: 'var(--color-text-primary)',
+        fontFamily: 'var(--font-family)',
+        gap: 'var(--spacing-xl)',
         zIndex: 9999,
       }}
     >
@@ -37,16 +42,16 @@ function LoadingOverlay({
         style={{
           width: '48px',
           height: '48px',
-          border: '3px solid var(--color-border, #333)',
-          borderTopColor: 'var(--color-accent, #6366f1)',
+          border: '3px solid var(--color-bubble-system)',
+          borderTopColor: 'var(--color-primary)',
           borderRadius: '50%',
           animation: 'spin 1s linear infinite',
         }}
       />
       <span
         style={{
-          fontSize: 'var(--font-size-base, 14px)',
-          color: 'var(--color-text-secondary, #a1a1aa)',
+          fontSize: 'var(--font-size-body)',
+          color: 'var(--color-text-muted)',
         }}
       >
         {currentStep}
@@ -54,13 +59,13 @@ function LoadingOverlay({
       {initError && (
         <div
           style={{
-            marginTop: 'var(--spacing-4, 16px)',
-            padding: 'var(--spacing-3, 12px) var(--spacing-4, 16px)',
-            backgroundColor: 'var(--color-error-bg, rgba(239, 68, 68, 0.1))',
-            border: '1px solid var(--color-error, #ef4444)',
-            borderRadius: 'var(--spacing-2, 8px)',
-            color: 'var(--color-error, #ef4444)',
-            fontSize: 'var(--font-size-sm, 12px)',
+            marginTop: 'var(--spacing-xl)',
+            padding: 'var(--spacing-lg) var(--spacing-xl)',
+            backgroundColor: 'rgba(211, 47, 47, 0.1)',
+            border: '1px solid var(--color-danger)',
+            borderRadius: 'var(--radius-sm)',
+            color: 'var(--color-danger)',
+            fontSize: 'var(--font-size-caption)',
             maxWidth: '400px',
             textAlign: 'center',
           }}
@@ -75,6 +80,22 @@ function LoadingOverlay({
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('chat');
   const { setModelReady, setModelLoadingProgress } = useInferenceMode();
+
+  const {
+    conversations,
+    currentConversationId,
+    currentMessages,
+    setCurrentMessages,
+    selectConversation,
+    newChat,
+    saveMessages,
+    removeConversation,
+    renameConversation,
+    hasMore,
+    loadMore,
+    persistenceError,
+    clearPersistenceError,
+  } = useConversations();
 
   const { isInitialized, initError, currentStep } = useServiceInitialization({
     setModelReady,
@@ -98,18 +119,60 @@ function AppContent() {
   const renderPage = () => {
     switch (currentPage) {
       case 'chat':
-        return <ChatPage />;
+        return (
+          <ChatPage
+            messages={currentMessages}
+            onMessagesChange={setCurrentMessages}
+            onSaveConversation={saveMessages}
+            onNewChat={newChat}
+          />
+        );
       case 'documents':
         return <DocumentsPage />;
       case 'settings':
         return <SettingsPage />;
       default:
-        return <ChatPage />;
+        return (
+          <ChatPage
+            messages={currentMessages}
+            onMessagesChange={setCurrentMessages}
+            onSaveConversation={saveMessages}
+            onNewChat={newChat}
+          />
+        );
     }
   };
 
   return (
-    <AppLayout currentPage={currentPage} onNavigate={handleNavigate}>
+    <AppLayout
+      currentPage={currentPage}
+      onNavigate={handleNavigate}
+      conversations={conversations}
+      currentConversationId={currentConversationId}
+      onNewChat={newChat}
+      onSelectConversation={selectConversation}
+      onRenameConversation={renameConversation}
+      onDeleteConversation={removeConversation}
+      hasMore={hasMore}
+      onLoadMore={loadMore}
+    >
+      {persistenceError && (
+        <div style={{
+          padding: 'var(--spacing-sm) var(--spacing-md)',
+          backgroundColor: 'rgba(211, 47, 47, 0.1)',
+          border: '1px solid var(--color-danger)',
+          borderRadius: 'var(--radius-sm)',
+          color: 'var(--color-danger)',
+          fontSize: 'var(--font-size-caption)',
+          margin: 'var(--spacing-sm) var(--spacing-md)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
+          <span>{persistenceError}</span>
+          <button onClick={clearPersistenceError} aria-label="Dismiss error" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-body)' }}>×</button>
+        </div>
+      )}
       {renderPage()}
     </AppLayout>
   );

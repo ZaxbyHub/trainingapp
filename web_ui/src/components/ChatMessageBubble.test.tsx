@@ -5,6 +5,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import '@testing-library/jest-dom';
 import { ChatMessageBubble } from './ChatMessageBubble';
 import type { ChatMessage } from '../../types/chat';
 
@@ -51,7 +53,7 @@ describe('ChatMessageBubble', () => {
       };
 
       const { container } = render(<ChatMessageBubble message={message} />);
-      const bubble = container.querySelector('[style*="justifyContent: flex-end"]');
+      const bubble = container.querySelector('[style*="justify-content: flex-end"]');
       expect(bubble).toBeInTheDocument();
     });
 
@@ -76,7 +78,7 @@ describe('ChatMessageBubble', () => {
       };
 
       render(<ChatMessageBubble message={message} />);
-      expect(screen.getByText('just now')).toBeInTheDocument();
+      expect(screen.getByText('Just now')).toBeInTheDocument();
     });
   });
 
@@ -103,7 +105,7 @@ describe('ChatMessageBubble', () => {
       };
 
       const { container } = render(<ChatMessageBubble message={message} />);
-      const bubble = container.querySelector('[style*="justifyContent: flex-start"]');
+      const bubble = container.querySelector('[style*="justify-content: flex-start"]');
       expect(bubble).toBeInTheDocument();
     });
 
@@ -149,7 +151,7 @@ describe('ChatMessageBubble', () => {
       };
 
       const { container } = render(<ChatMessageBubble message={message} />);
-      const bubble = container.querySelector('[style*="justifyContent: center"]');
+      const bubble = container.querySelector('[style*="justify-content: center"]');
       expect(bubble).toBeInTheDocument();
       expect(screen.getByText('System notification')).toBeInTheDocument();
     });
@@ -197,7 +199,7 @@ describe('ChatMessageBubble', () => {
 
       render(<ChatMessageBubble message={message} />);
 
-      const bubble = document.querySelector('[style*="borderBottomLeftRadius"]');
+      const bubble = document.querySelector('[style*="justify-content: flex-start"]');
       fireEvent.mouseEnter(bubble!);
 
       await waitFor(() => {
@@ -286,9 +288,9 @@ describe('ChatMessageBubble', () => {
         timestamp: Date.now(),
       };
 
-      render(<ChatMessageBubble message={message} />);
+      const { container } = render(<ChatMessageBubble message={message} />);
       // Should render without errors
-      expect(screen.getByText('')).toBeInTheDocument();
+      expect(container.firstChild).not.toBeNull();
     });
 
     it('handles very long message content', () => {
@@ -328,18 +330,20 @@ describe('ChatMessageBubble', () => {
         timestamp: Date.now(),
       };
 
-      const { unmount } = render(<ChatMessageBubble message={message} />);
+      const { container, unmount } = render(<ChatMessageBubble message={message} />);
 
-      const bubble = screen.getByText('Test').closest('div');
-      fireEvent.mouseEnter(bubble!);
+      // Hover to reveal copy button (with real timers)
+      const bubble = container.querySelector('[style*="justify-content: flex-end"]');
+      await userEvent.hover(bubble!);
 
-      // Trigger copy to start timer
+      // Button is now visible, click it to start timer
+      const copyButton = screen.getByRole('button', { name: /copy message/i });
+      fireEvent.click(copyButton);
+
+      // Now switch to fake timers and unmount
       vi.useFakeTimers();
-      await waitFor(() => {
-        const copyButton = screen.getByRole('button', { name: /copy message/i });
-        fireEvent.click(copyButton);
-      });
 
+      // Timer was set via setTimeout (1500ms)
       unmount();
 
       // Timer should have been cleared on unmount

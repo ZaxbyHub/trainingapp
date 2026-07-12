@@ -27,15 +27,22 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-export function ChatPage() {
-  return <ChatPageInner />;
+export interface ChatPageProps {
+  messages: ChatMessage[];
+  onMessagesChange: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  onSaveConversation: (messages: ChatMessage[], mode: 'server' | 'wllama', modelUsed: string) => void;
+  onNewChat: () => void;
+}
+
+export function ChatPage(props: ChatPageProps) {
+  return <ChatPageInner {...props} />;
 }
 
 const exportButtonStyle: CSSProperties = {
   backgroundColor: 'transparent',
   color: 'var(--color-text-muted)',
   border: '1px solid var(--color-text-muted)',
-  borderRadius: '4px',
+  borderRadius: 'var(--radius-sm)',
   padding: 'var(--spacing-xs) var(--spacing-sm)',
   fontSize: 'var(--font-size-caption)',
   fontFamily: 'var(--font-family)',
@@ -43,10 +50,11 @@ const exportButtonStyle: CSSProperties = {
   transition: 'all 0.15s ease',
 };
 
-function ChatPageInner() {
+function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, onNewChat }: ChatPageProps) {
   const MAX_MESSAGES = 200;
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl } = useInferenceMode();
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const messages = messagesProp;
+  const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
   const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
@@ -54,6 +62,13 @@ function ChatPageInner() {
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Last sent turn (text + raw image bytes) so Regenerate can re-run it.
   const lastTurnRef = useRef<{ text: string; images?: AttachedImage[] } | null>(null);
+
+  // Mirror of the current messages so async callbacks (onDone/onError) can read
+  // the latest array without placing side effects inside a state updater.
+  const messagesRef = useRef<ChatMessage[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   const isBrowserMode = mode === 'browser-local';
   const isModelBlocked = isBrowserMode && !isModelReady;
@@ -111,41 +126,50 @@ function ChatPageInner() {
     const streamManager = new TokenStreamManager();
     tokenStreamManagerRef.current = streamManager;
 
-    // Wire token callback - append tokens to assistant message
+    // Wire token callback - append tokens to assistant message.
+    // Compute the next array from messagesRef (the always-current mirror),
+    // commit it to the ref synchronously, and set state with the value form
+    // (no updater function) so React never double-invokes a side-effect.
     streamManager.onToken((token) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, content: msg.content + token, timestamp: Date.now() }
-            : msg
-        )
+      const next = messagesRef.current.map((msg) =>
+        msg.id === assistantMessageId
+          ? { ...msg, content: msg.content + token, timestamp: Date.now() }
+          : msg
       );
+      messagesRef.current = next;
+      setMessages(next);
     });
 
-    // Wire done callback - finalize message with sources
+    // Wire done callback - finalize message with sources.
+    // TokenStreamManager.complete() flushes the token buffer (firing onToken)
+    // and then invokes onDone synchronously in the same call stack, so
+    // messagesRef.current already reflects every streamed token here.
     streamManager.onDone((data) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, isStreaming: false, sources: data.sources }
-            : msg
-        )
+      const updated = messagesRef.current.map((msg) =>
+        msg.id === assistantMessageId
+          ? { ...msg, isStreaming: false, sources: data.sources }
+          : msg
       );
+      messagesRef.current = updated;
+      setMessages(updated);
+      // Save to Dexie after stream completes
+      onSaveConversation(updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
       }
     });
 
-    // Wire error callback
+    // Wire error callback. Like onDone, onError fires synchronously after
+    // flushBuffer() inside TokenStreamManager.error(), so read from the ref.
     streamManager.onError((errorMessage) => {
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === assistantMessageId
-            ? { ...msg, content: msg.content + `\n[Error: ${errorMessage}]`, isStreaming: false }
-            : msg
-        )
+      const updated = messagesRef.current.map((msg) =>
+        msg.id === assistantMessageId
+          ? { ...msg, content: msg.content + `\n[Error: ${errorMessage}]`, isStreaming: false }
+          : msg
       );
+      messagesRef.current = updated;
+      setMessages(updated);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
@@ -203,7 +227,7 @@ function ChatPageInner() {
         }
       })();
     }
-  }, [mode, serverUrl, browserEngine, ragPreset]);
+  }, [mode, serverUrl, browserEngine, ragPreset, onSaveConversation]);
 
   const handleSend = useCallback((text: string, attachedImages?: AttachedImage[]) => {
     // Prevent overlapping streams
@@ -234,20 +258,20 @@ function ChatPageInner() {
       isStreaming: true,
     };
 
-    setMessages((prev) => {
-      const appended = [...prev, userMessage, assistantMessage];
-      if (appended.length > MAX_MESSAGES) {
-        const pruned = appended.slice(appended.length - MAX_MESSAGES);
-        const indicator: ChatMessage = {
-          id: 'hidden-messages-indicator',
-          role: 'system',
-          content: `Earlier messages have been hidden (max ${MAX_MESSAGES} shown).`,
-          timestamp: Date.now(),
-        };
-        return [indicator, ...pruned];
-      }
-      return appended;
-    });
+    const appended = [...messagesRef.current, userMessage, assistantMessage];
+    if (appended.length > MAX_MESSAGES) {
+      const pruned = appended.slice(appended.length - MAX_MESSAGES);
+      const indicator: ChatMessage = {
+        id: 'hidden-messages-indicator',
+        role: 'system',
+        content: `Earlier messages have been hidden (max ${MAX_MESSAGES} shown).`,
+        timestamp: Date.now(),
+      };
+      messagesRef.current = [indicator, ...pruned];
+    } else {
+      messagesRef.current = appended;
+    }
+    setMessages(messagesRef.current);
     setIsLoading(true);
     runGeneration(text, attachedImages, assistantMessageId);
   }, [runGeneration]);
@@ -259,38 +283,61 @@ function ChatPageInner() {
     if (!last) return;
 
     const assistantMessageId = generateId();
-    setMessages((prev) =>
-      messagesForRegenerate(prev, {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        isStreaming: true,
-      })
-    );
+    const regenerated = messagesForRegenerate(messagesRef.current, {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      isStreaming: true,
+    });
+    messagesRef.current = regenerated;
+    setMessages(regenerated);
     setIsLoading(true);
     runGeneration(last.text, last.images, assistantMessageId);
   }, [runGeneration]);
 
-  const handleCancel = useCallback(() => {
-    // Cancel via TokenStreamManager
+  // Cancel any in-flight stream and release its resources. Shared by the
+  // explicit Cancel button, Clear Chat, and the external New Chat path
+  // (sidebar) which clears messages without going through ChatPage.
+  const cancelActiveStream = useCallback(() => {
     if (tokenStreamManagerRef.current) {
       tokenStreamManagerRef.current.cancel();
       tokenStreamManagerRef.current = null;
     }
-
-    // Also abort any pending AbortController
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-
-    // Mark any streaming messages as complete
-    setMessages((prev) =>
-      prev.map((msg) => (msg.isStreaming ? { ...msg, isStreaming: false } : msg))
-    );
     setIsLoading(false);
   }, []);
+
+  const handleCancel = useCallback(() => {
+    cancelActiveStream();
+
+    // Mark any streaming messages as complete
+    const finalized = messagesRef.current.map((msg) =>
+      msg.isStreaming ? { ...msg, isStreaming: false } : msg
+    );
+    messagesRef.current = finalized;
+    setMessages(finalized);
+  }, [cancelActiveStream]);
+
+  // If messages are cleared while a stream is in flight (e.g. the sidebar
+  // "New Chat" button calls newChat() in App, which empties currentMessages
+  // without going through ChatPage), cancel the orphaned stream so its
+  // callbacks don't fire against the cleared state and resources are released.
+  // Only react to a non-empty → empty transition so this never cancels a
+  // stream that was started while the view was already empty (e.g. the render
+  // window between handleSend setting the stream ref and the messages prop
+  // updating).
+  const prevMessagesLengthRef = useRef(messages.length);
+  useEffect(() => {
+    const prev = prevMessagesLengthRef.current;
+    prevMessagesLengthRef.current = messages.length;
+    if (prev > 0 && messages.length === 0 && tokenStreamManagerRef.current) {
+      cancelActiveStream();
+    }
+  }, [messages.length, cancelActiveStream]);
 
   const handleClearClick = useCallback(() => {
     if (clearConfirmState === 'idle') {
@@ -305,11 +352,16 @@ function ChatPageInner() {
         clearTimeout(clearTimeoutRef.current);
         clearTimeoutRef.current = null;
       }
+      // Cancel any in-flight stream so its callbacks don't fire against the
+      // cleared state and resources are released immediately.
+      cancelActiveStream();
       setMessages([]);
+      messagesRef.current = [];
+      onNewChat();
       lastTurnRef.current = null; // no turn to regenerate after clearing
       setClearConfirmState('idle');
     }
-  }, [clearConfirmState]);
+  }, [clearConfirmState, cancelActiveStream, onNewChat]);
 
   // Keyboard shortcuts
   useKeyboardShortcuts({
@@ -325,34 +377,25 @@ function ChatPageInner() {
         display: 'flex',
         flexDirection: 'column',
         height: '100%',
-        backgroundColor: 'var(--color-bubble-assistant)',
+        backgroundColor: 'var(--color-bg)',
         position: 'relative',
       }}
     >
       {/* Header */}
       <header
+        aria-label="Chat controls"
         style={{
-          padding: 'var(--spacing-md) var(--spacing-lg)',
+          padding: 'var(--spacing-sm) var(--spacing-md)',
           borderBottom: '1px solid var(--color-bubble-system)',
-          backgroundColor: 'var(--color-bubble-assistant)',
+          backgroundColor: 'var(--color-surface)',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
+          justifyContent: 'flex-end',
           position: 'relative',
           zIndex: 101,
+          boxShadow: 'var(--shadow-sm)',
         }}
       >
-        <h1
-          style={{
-            fontSize: 'var(--font-size-h2)',
-            fontFamily: 'var(--font-family)',
-            fontWeight: 600,
-            color: 'var(--color-text-on-bubble-assistant)',
-            margin: 0,
-          }}
-        >
-          Document Q&A
-        </h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
           {/* API mode warning */}
           {mode === 'api' && !isServerConnected && (
@@ -360,7 +403,7 @@ function ChatPageInner() {
               title="Server not connected. Check your server URL in Settings."
               style={{
                 fontSize: 'var(--font-size-caption)',
-                color: '#eab308',
+                color: 'var(--color-warning)',
                 fontFamily: 'var(--font-family)',
               }}
             >
@@ -381,15 +424,18 @@ function ChatPageInner() {
               <button
                 type="button"
                 onClick={handleClearClick}
+                disabled={isLoading}
+                title={isLoading ? 'Cancel the active response before clearing' : 'Clear chat'}
                 style={{
-                  backgroundColor: clearConfirmState === 'confirming' ? '#dc3545' : 'transparent',
-                  color: clearConfirmState === 'confirming' ? '#fff' : 'var(--color-text-muted)',
+                  backgroundColor: clearConfirmState === 'confirming' ? 'var(--color-danger)' : 'transparent',
+                  color: clearConfirmState === 'confirming' ? 'var(--color-text-on-primary)' : 'var(--color-text-muted)',
                   border: clearConfirmState === 'confirming' ? 'none' : '1px solid var(--color-text-muted)',
-                  borderRadius: '4px',
+                  borderRadius: 'var(--radius-sm)',
                   padding: 'var(--spacing-xs) var(--spacing-sm)',
                   fontSize: 'var(--font-size-caption)',
                   fontFamily: 'var(--font-family)',
-                  cursor: 'pointer',
+                  cursor: isLoading ? 'not-allowed' : 'pointer',
+                  opacity: isLoading ? 0.6 : 1,
                   transition: 'all 0.15s ease',
                 }}
               >
@@ -420,7 +466,7 @@ function ChatPageInner() {
         >
           <div
             style={{
-              backgroundColor: 'var(--color-bubble-assistant)',
+backgroundColor: 'var(--color-surface)',
               padding: 'var(--spacing-xl)',
               borderRadius: '8px',
               textAlign: 'center',
@@ -443,7 +489,7 @@ function ChatPageInner() {
                   width: '100%',
                   height: '8px',
                   backgroundColor: 'var(--color-bubble-system)',
-                  borderRadius: '4px',
+  borderRadius: 'var(--radius-sm)',
                   overflow: 'hidden',
                 }}
               >
@@ -476,6 +522,7 @@ function ChatPageInner() {
         messages={messages}
         isStreaming={isLoading}
         onRegenerate={!isLoading && lastTurnRef.current ? handleRegenerate : undefined}
+        onSuggestedPrompt={(prompt) => handleSend(prompt)}
       />
 
       {/* Streaming Indicator */}

@@ -13,6 +13,7 @@ import { checkPackagedModels, type PackagedModelsReport } from '../lib/models/mo
 import { RAG_PRESET_LABELS } from '../lib/rag/rag-presets';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
+import { ProgressBar, StatusBadge, SectionCard } from '../components/SettingsMetrics';
 
 // ============================================================================
 // Settings Store (IndexedDB)
@@ -270,11 +271,14 @@ const inputStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 };
 
+// SVG data URLs cannot reference CSS variables, so we use the literal hex value
+// of --color-text-muted (#64748b in light mode). This is intentional.
+const SELECT_DROPDOWN_ARROW_COLOR = '#64748b';
 const selectStyle: React.CSSProperties = {
   ...inputStyle,
   cursor: 'pointer',
   appearance: 'none',
-  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
+  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23${SELECT_DROPDOWN_ARROW_COLOR.slice(1)}' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
   backgroundRepeat: 'no-repeat',
   backgroundPosition: 'right 12px center',
   paddingRight: '36px',
@@ -323,34 +327,7 @@ const dangerButtonStyle: React.CSSProperties = {
   transition: 'background-color 0.15s ease',
 };
 
-const statusBadgeStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 'var(--spacing-xs)',
-  padding: 'var(--spacing-xs) var(--spacing-sm)',
-  borderRadius: '12px',
-  fontSize: 'var(--font-size-caption)',
-  fontFamily: 'var(--font-family)',
-  fontWeight: 500,
-};
 
-const statusReadyStyle: React.CSSProperties = {
-  ...statusBadgeStyle,
-  backgroundColor: 'rgba(34, 197, 94, 0.15)',
-  color: '#16a34a',
-};
-
-const statusNotReadyStyle: React.CSSProperties = {
-  ...statusBadgeStyle,
-  backgroundColor: 'rgba(234, 179, 8, 0.15)',
-  color: '#ca8a04',
-};
-
-const statusErrorStyle: React.CSSProperties = {
-  ...statusBadgeStyle,
-  backgroundColor: 'rgba(211, 47, 47, 0.15)',
-  color: '#dc2626',
-};
 
 const storageInfoStyle: React.CSSProperties = {
   display: 'flex',
@@ -421,6 +398,7 @@ function SettingsPageInner(): React.ReactElement {
   // Storage state
   const [memoryPressure, setMemoryPressure] = useState<'normal' | 'moderate' | 'critical'>('normal');
   const [memoryAvailable, setMemoryAvailable] = useState<number>(0);
+  const [memoryTotal, setMemoryTotal] = useState<number>(0);
 
   // Clear cache confirm state
   const [clearCacheState, setClearCacheState] = useState<'idle' | 'confirming'>('idle');
@@ -507,6 +485,7 @@ function SettingsPageInner(): React.ReactElement {
       const budget = getMemoryBudget();
       setMemoryPressure(pressure);
       setMemoryAvailable(budget.availableMB);
+      setMemoryTotal(budget.totalMB);
     };
 
     updateMemoryStatus();
@@ -829,20 +808,14 @@ function SettingsPageInner(): React.ReactElement {
                 </button>
 
                 {connectionResult === 'success' && (
-                  <span style={statusReadyStyle}>
-                    <span aria-hidden="true">✓</span> Connected
-                  </span>
+                  <StatusBadge status="ready" label="Connected" />
                 )}
                 {connectionResult === 'error' && (
-                  <span style={statusErrorStyle}>
-                    <span aria-hidden="true">✗</span> Connection failed
-                  </span>
+                  <StatusBadge status="error" label="Connection failed" />
                 )}
 
                 {isServerConnected && connectionResult === null && (
-                  <span style={statusReadyStyle}>
-                    <span aria-hidden="true">✓</span> Connected
-                  </span>
+                  <StatusBadge status="ready" label="Connected" />
                 )}
               </div>
             </div>
@@ -889,13 +862,9 @@ function SettingsPageInner(): React.ReactElement {
               <span style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
                 Status:
                 {modelCached ? (
-                  <span style={statusReadyStyle}>
-                    <span aria-hidden="true">✓</span> Cached
-                  </span>
+                  <StatusBadge status="ready" label="Cached" />
                 ) : (
-                  <span style={statusNotReadyStyle}>
-                    <span aria-hidden="true">○</span> Not cached
-                  </span>
+                  <StatusBadge status="not-ready" label="Not cached" />
                 )}
               </span>
             </div>
@@ -1001,7 +970,7 @@ function SettingsPageInner(): React.ReactElement {
               </div>
             </fieldset>
             {capability && browserEngine === 'webllm' && !capability.webgpu && (
-              <p style={{ ...descriptionStyle, color: '#dc2626' }}>
+              <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }}>
                 WebGPU was not detected — WebLLM will not run on this device. Switch to wllama or use server mode.
               </p>
             )}
@@ -1116,21 +1085,21 @@ function SettingsPageInner(): React.ReactElement {
         {/* ================================================================== */}
         {/* 5. Storage */}
         {/* ================================================================== */}
-        <section style={sectionStyle} aria-labelledby="storage-heading">
-          <h2 id="storage-heading" style={sectionTitleStyle}>
-            Storage
-          </h2>
+        <SectionCard
+          title="Storage"
+          id="storage-heading"
+          description="Browser storage status and cache management"
+        >
           {packagesReady && (
             <div
               style={{
                 ...storageInfoStyle,
-                borderLeft: `4px solid ${packagesReady.allReady ? '#16a34a' : '#dc2626'}`,
-                marginBottom: 'var(--spacing-md)',
+                borderLeft: `4px solid ${packagesReady.allReady ? 'var(--color-success)' : 'var(--color-danger)'}`,
               }}
             >
               <div style={storageRowStyle}>
                 <span style={storageLabelStyle}>Packaged Models</span>
-                <span style={{ fontWeight: 500, color: packagesReady.allReady ? '#16a34a' : '#dc2626' }}>
+                <span style={{ fontWeight: 500, color: packagesReady.allReady ? 'var(--color-success)' : 'var(--color-danger)' }}>
                   <span aria-hidden="true">{packagesReady.allReady ? '✓ ' : '✗ '}</span>
                   {packagesReady.allReady ? 'Ready' : 'Missing'}
                 </span>
@@ -1143,44 +1112,19 @@ function SettingsPageInner(): React.ReactElement {
               )}
             </div>
           )}
-          <div style={storageInfoStyle}>
-            <div style={storageRowStyle}>
-              <span style={storageLabelStyle}>Available Memory</span>
-              <span>{formatMemory(memoryAvailable)}</span>
-            </div>
-            <div style={storageRowStyle}>
-              <span style={storageLabelStyle}>Memory Pressure</span>
-              <span
-                style={{
-                  color:
-                    memoryPressure === 'normal'
-                      ? '#16a34a'
-                      : memoryPressure === 'moderate'
-                        ? '#ca8a04'
-                        : '#dc2626',
-                  fontWeight: 500,
-                }}
-              >
-                {memoryPressure.charAt(0).toUpperCase() + memoryPressure.slice(1)}
-              </span>
-            </div>
-            <div style={storageRowStyle}>
-              <span style={storageLabelStyle}>Selected Model</span>
-              <span>{selectedModelInfo?.label ?? 'Unknown'}</span>
-            </div>
-            <div style={storageRowStyle}>
-              <span style={storageLabelStyle}>Model Cached</span>
-              <span>{modelCached ? 'Yes' : 'No'}</span>
-            </div>
-          </div>
-
+          <ProgressBar
+            value={memoryTotal - memoryAvailable}
+            max={memoryTotal}
+            label={`Memory Used (${formatMemory(memoryTotal - memoryAvailable)} of ${formatMemory(memoryTotal)})`}
+            color={memoryPressure === 'normal' ? 'success' : memoryPressure === 'moderate' ? 'warning' : 'danger'}
+          />
           <div style={buttonRowStyle}>
             <button
               type="button"
               onClick={handleClearCacheClick}
               style={
                 clearCacheState === 'confirming'
-                  ? { ...dangerButtonStyle, backgroundColor: '#b91c1c' }
+                  ? { ...dangerButtonStyle, backgroundColor: 'var(--color-danger)' }
                   : dangerButtonStyle
               }
               aria-describedby="clear-cache-desc"
@@ -1193,67 +1137,52 @@ function SettingsPageInner(): React.ReactElement {
                 : 'Clear cached models and stored documents from browser storage.'}
             </span>
           </div>
-        </section>
+        </SectionCard>
 
         {/* ================================================================== */}
         {/* 5b. Hardware Capability (diagnostic) */}
         {/* ================================================================== */}
-        <section style={sectionStyle} aria-labelledby="hardware-heading">
-          <h2 id="hardware-heading" style={sectionTitleStyle}>
-            Hardware Capability
-          </h2>
+        <SectionCard
+          title="Hardware Capability"
+          id="hardware-heading"
+          description="Detected hardware features and recommended configuration"
+        >
           {capability ? (
-            <div style={storageInfoStyle}>
-              <div style={storageRowStyle}>
-                <span style={storageLabelStyle}>Suitability</span>
-                <span
-                  style={{
-                    fontWeight: 500,
-                    color:
-                      capability.tier === 'green'
-                        ? '#16a34a'
-                        : capability.tier === 'yellow'
-                          ? '#ca8a04'
-                          : '#dc2626',
-                  }}
-                >
-                  {capability.tier === 'green'
-                    ? 'Good'
-                    : capability.tier === 'yellow'
-                      ? 'Limited'
-                      : 'Use server mode'}
-                </span>
-              </div>
-              <div style={storageRowStyle}>
-                <span style={storageLabelStyle}>WebGPU</span>
-                <span style={{ fontWeight: 500, color: capability.webgpu ? '#16a34a' : '#dc2626' }}>
-                  {capability.webgpu ? 'Available' : 'Not available'}
-                </span>
-              </div>
-              <div style={storageRowStyle}>
-                <span style={storageLabelStyle}>Multi-threading</span>
-                <span style={{ fontWeight: 500, color: capability.crossOriginIsolated ? '#16a34a' : '#ca8a04' }}>
-                  {capability.crossOriginIsolated ? 'Enabled' : 'Single-threaded'}
-                </span>
-              </div>
-              <div style={storageRowStyle}>
-                <span style={storageLabelStyle}>Memory Tier</span>
-                <span style={{ fontWeight: 500 }}>{capability.memoryTier}</span>
-              </div>
-              <div style={storageRowStyle}>
-                <span style={storageLabelStyle}>Recommended Engine</span>
-                <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>
-                  {capability.recommendedEngine === 'wllama' ? 'wllama' : 'WebLLM'}
-                </span>
+            <>
+              <ProgressBar
+                value={capability.tier === 'green' ? 100 : capability.tier === 'yellow' ? 50 : 10}
+                max={100}
+                label={`Hardware Suitability: ${capability.tier === 'green' ? 'Good' : capability.tier === 'yellow' ? 'Limited' : 'Use Server Mode'}`}
+                color={capability.tier === 'green' ? 'success' : capability.tier === 'yellow' ? 'warning' : 'danger'}
+              />
+              <div style={storageInfoStyle}>
+                <div style={storageRowStyle}>
+                  <span style={storageLabelStyle}>WebGPU</span>
+                  <StatusBadge status={capability.webgpu ? 'ready' : 'error'} label={capability.webgpu ? 'Available' : 'Not available'} />
+                </div>
+                <div style={storageRowStyle}>
+                  <span style={storageLabelStyle}>Multi-threading</span>
+                  <StatusBadge status={capability.crossOriginIsolated ? 'ready' : 'not-ready'} label={capability.crossOriginIsolated ? 'Enabled' : 'Single-threaded'} />
+                </div>
+                <div style={storageRowStyle}>
+                  <span style={storageLabelStyle}>Memory Tier</span>
+                  <span style={{ fontWeight: 500 }}>{capability.memoryTier}</span>
+                </div>
+                <div style={storageRowStyle}>
+                  <span style={storageLabelStyle}>Recommended Engine</span>
+                  <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>
+                    {capability.recommendedEngine === 'wllama' ? 'wllama' : 'WebLLM'}
+                  </span>
+                </div>
               </div>
               {capability.reasons.length > 0 && (
                 <p style={descriptionStyle}>{capability.reasons.join(' ')}</p>
               )}
-            </div>
+            </>
           ) : (
             <p style={descriptionStyle}>Detecting hardware capability…</p>
           )}
-        </section>
+        </SectionCard>
 
         {/* ================================================================== */}
         {/* 6. About */}

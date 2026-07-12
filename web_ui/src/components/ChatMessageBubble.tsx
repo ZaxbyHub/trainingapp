@@ -7,26 +7,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '../types/chat';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { SourceCitation } from './SourceCitation';
-
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) {
-    return `${days}d ago`;
-  }
-  if (hours > 0) {
-    return `${hours}h ago`;
-  }
-  if (minutes > 0) {
-    return `${minutes}m ago`;
-  }
-  return 'just now';
-}
+import { formatRelativeTime } from '../utils/relativeTime';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
@@ -66,7 +47,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
   const bubbleStyle: React.CSSProperties = {
     maxWidth: '75%',
     padding: 'var(--spacing-md)',
-    borderRadius: '12px',
+    borderRadius: 'var(--radius-md)',
     position: 'relative',
     wordBreak: 'break-word',
   };
@@ -77,32 +58,35 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
     opacity: 0.7,
   };
 
-  const copyButtonStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: 'var(--spacing-sm)',
-    right: 'var(--spacing-sm)',
+  const actionButtonBaseStyle: React.CSSProperties = {
     background: 'transparent',
-    border: 'none',
+    border: '1px solid var(--color-bubble-system)',
+    borderRadius: 'var(--radius-sm)',
     cursor: 'pointer',
-    padding: 'var(--spacing-xs)',
-    opacity: showCopy ? 1 : 0,
-    transition: 'opacity 0.15s ease',
-    color: 'var(--color-text-muted)',
+    padding: 'var(--spacing-xs) var(--spacing-sm)',
     fontSize: 'var(--font-size-caption)',
+    fontFamily: 'var(--font-family)',
+    color: 'var(--color-text-muted)',
   };
 
-  const copiedFeedbackStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: 'var(--spacing-sm)',
-    right: 'var(--spacing-sm)',
-    backgroundColor: 'var(--color-source-pill-bg)',
+  const copyButtonInlineStyle: React.CSSProperties = {
+    ...actionButtonBaseStyle,
+    opacity: showCopy ? 1 : 0,
+    transition: 'opacity 0.15s ease',
+    visibility: showCopy ? 'visible' : 'hidden',
+  };
+
+  const copiedFeedbackInlineStyle: React.CSSProperties = {
+    backgroundColor: 'var(--color-bubble-system)',
     color: 'var(--color-text-muted)',
-    padding: '2px 6px',
-    borderRadius: '4px',
+    padding: 'var(--spacing-xs) var(--spacing-sm)',
+    borderRadius: 'var(--radius-sm)',
     fontSize: 'var(--font-size-caption)',
     pointerEvents: 'none',
-    opacity: showCopiedFeedback ? 1 : 0,
-    transition: 'opacity 0.15s ease',
+  };
+
+  const regenerateStyle: React.CSSProperties = {
+    ...actionButtonBaseStyle,
   };
 
   const cursorStyle: React.CSSProperties = {
@@ -123,25 +107,17 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
           justifyContent: 'flex-end',
           marginBottom: 'var(--spacing-sm)',
         }}
+        onMouseEnter={() => setShowCopy(true)}
+        onMouseLeave={() => setShowCopy(false)}
       >
         <div
           style={{
             ...bubbleStyle,
             backgroundColor: 'var(--color-bubble-user)',
             color: 'var(--color-text-on-bubble-user)',
-            borderBottomRightRadius: '4px',
+            borderBottomRightRadius: 'var(--radius-xs)',
           }}
-          onMouseEnter={() => setShowCopy(true)}
-          onMouseLeave={() => setShowCopy(false)}
         >
-          <button
-            style={copyButtonStyle}
-            onClick={handleCopy}
-            aria-label="Copy message"
-            type="button"
-          >
-            {showCopiedFeedback ? 'Copied!' : 'Copy'}
-          </button>
           <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-family)' }}>
             {message.content}
           </div>
@@ -162,7 +138,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
                   style={{
                     maxWidth: 160,
                     maxHeight: 160,
-                    borderRadius: '6px',
+                    borderRadius: 'var(--radius-sm)',
                     objectFit: 'cover',
                     display: 'block',
                   }}
@@ -171,6 +147,15 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
             </div>
           )}
           <div style={{ ...timeStyle, textAlign: 'right' }}>{formatRelativeTime(message.timestamp)}</div>
+          <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
+            {showCopiedFeedback ? (
+              <span style={copiedFeedbackInlineStyle}>Copied!</span>
+            ) : (
+              <button style={copyButtonInlineStyle} onClick={handleCopy} aria-label="Copy message" type="button">
+                Copy
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -201,7 +186,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
     );
   }
 
-  // Assistant message
+  // Assistant message — full-width prose
   return (
     <div
       style={{
@@ -212,49 +197,27 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
       onMouseEnter={() => setShowCopy(true)}
       onMouseLeave={() => setShowCopy(false)}
     >
-      <div
-        style={{
-          ...bubbleStyle,
-          backgroundColor: 'var(--color-bubble-assistant)',
-          color: 'var(--color-text-on-bubble-assistant)',
-          borderBottomLeftRadius: '4px',
-        }}
-      >
-        <span style={copiedFeedbackStyle}>Copied!</span>
-        <button
-          style={copyButtonStyle}
-          onClick={handleCopy}
-          aria-label="Copy message"
-          type="button"
-        >
-          {showCopiedFeedback ? 'Copied!' : 'Copy'}
-        </button>
-        <div style={{ fontFamily: 'var(--font-family)' }}>
+      <div style={{ width: '100%', padding: 'var(--spacing-md) 0' }}>
+        <div style={{ fontFamily: 'var(--font-family)', lineHeight: 'var(--line-height-body)' }}>
           <MarkdownRenderer content={message.content} />
           {message.isStreaming && <span style={cursorStyle} aria-hidden="true" />}
         </div>
         <div style={{ ...timeStyle, textAlign: 'left' }}>{formatRelativeTime(message.timestamp)}</div>
+        <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
+          {showCopiedFeedback ? (
+            <span style={copiedFeedbackInlineStyle}>Copied!</span>
+          ) : (
+            <button style={copyButtonInlineStyle} onClick={handleCopy} aria-label="Copy message" type="button">
+              Copy
+            </button>
+          )}
+          {onRegenerate && (
+            <button type="button" onClick={onRegenerate} aria-label="Regenerate response" style={regenerateStyle}>
+              ↻ Regenerate
+            </button>
+          )}
+        </div>
         {message.sources && message.sources.length > 0 && <SourceCitation sources={message.sources} />}
-        {onRegenerate && (
-          <button
-            type="button"
-            onClick={onRegenerate}
-            aria-label="Regenerate response"
-            style={{
-              marginTop: 'var(--spacing-sm)',
-              background: 'transparent',
-              border: '1px solid var(--color-text-muted)',
-              borderRadius: '4px',
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              fontSize: 'var(--font-size-caption)',
-              fontFamily: 'var(--font-family)',
-              color: 'var(--color-text-muted)',
-              cursor: 'pointer',
-            }}
-          >
-            ↻ Regenerate
-          </button>
-        )}
       </div>
     </div>
   );

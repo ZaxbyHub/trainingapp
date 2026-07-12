@@ -148,7 +148,12 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
         ),
       }));
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // The header has zIndex: 101
       // The overlay has zIndex: 100
@@ -188,7 +193,12 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
         ),
       }));
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Even with the blocking overlay displayed, the toggle in header should be accessible
       const toggleButton = screen.getByTestId('inference-toggle');
@@ -219,7 +229,12 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
         }),
       }));
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // Start streaming by sending a message
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -315,7 +330,12 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
         ),
       }));
 
-      render(<ChatPage />);
+      render(<ChatPage
+  messages={[]}
+  onMessagesChange={() => {}}
+  onSaveConversation={() => {}}
+  onNewChat={() => {}}
+/>);
 
       // The model loading overlay should be shown
       // But the header toggle should still be accessible
