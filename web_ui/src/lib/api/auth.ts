@@ -45,6 +45,13 @@ export function clearToken(): void {
 
 /**
  * Login with an API key and store the resulting access token.
+ *
+ * This is the entrypoint for the (future) login UI. The streaming chat path
+ * already passes any stored token (see ChatPage → getToken()), so once a login
+ * screen calls this, server mode will be authenticated end-to-end. Until then,
+ * the default deployment runs with server auth OFF (api_server's ENABLE_AUTH
+ * defaults to false) — see PACKAGING.md. (issue #21 F9)
+ *
  * @param apiKey - The API key to authenticate with
  * @returns Promise resolving to the token response
  * @throws ApiError if authentication fails

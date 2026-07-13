@@ -140,6 +140,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       expect(keyboardShortcutsModule.useKeyboardShortcuts).toHaveBeenCalledTimes(1);
@@ -154,6 +155,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       expect(keyboardShortcutsModule.useKeyboardShortcuts).toHaveBeenCalledTimes(1);
@@ -168,6 +170,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const lastCall = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0];
@@ -181,6 +184,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const lastCall = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0];
@@ -206,6 +210,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Send a message
@@ -240,6 +245,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -277,6 +283,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Should not show Clear Chat button initially
@@ -298,6 +305,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -335,6 +343,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Get the onClearChat callback passed to useKeyboardShortcuts
@@ -350,6 +359,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const onOpenSettings = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0].onOpenSettings;

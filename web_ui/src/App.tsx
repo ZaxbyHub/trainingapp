@@ -6,7 +6,6 @@ import { AppLayout } from './layouts/AppLayout';
 import { ChatPage } from './pages/ChatPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useServiceInitialization } from './hooks/useServiceInitialization';
 import { useConversations } from './hooks/useConversations';
 import '@fontsource/inter/400.css';
@@ -79,7 +78,7 @@ function LoadingOverlay({
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('chat');
-  const { setModelReady, setModelLoadingProgress } = useInferenceMode();
+  const { setModelReady, setModelLoadingProgress, browserEngine } = useInferenceMode();
 
   const {
     conversations,
@@ -100,10 +99,7 @@ function AppContent() {
   const { isInitialized, initError, currentStep } = useServiceInitialization({
     setModelReady,
     setModelLoadingProgress,
-  });
-
-  useKeyboardShortcuts({
-    onOpenSettings: () => setCurrentPage('settings'),
+    browserEngine,
   });
 
   if (!isInitialized) {
@@ -116,6 +112,8 @@ function AppContent() {
     setCurrentPage(page);
   };
 
+  const openSettings = () => setCurrentPage('settings');
+
   const renderPage = () => {
     switch (currentPage) {
       case 'chat':
@@ -125,6 +123,7 @@ function AppContent() {
             onMessagesChange={setCurrentMessages}
             onSaveConversation={saveMessages}
             onNewChat={newChat}
+            onOpenSettings={openSettings}
           />
         );
       case 'documents':
@@ -138,6 +137,7 @@ function AppContent() {
             onMessagesChange={setCurrentMessages}
             onSaveConversation={saveMessages}
             onNewChat={newChat}
+            onOpenSettings={openSettings}
           />
         );
     }

@@ -17,7 +17,7 @@
  * Recovery is handled by the callback (typically createRecoveryHandler).
  */
 
-import { WebLLMService } from './web-llm-service';
+import { WebLLMService, WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
 import { ModelReadinessGate } from './model-readiness';
 
 /**
@@ -242,7 +242,7 @@ export function createRecoveryHandler(service: WebLLMService): (reason: string) 
     console.error('[WebGPUWatchdog] Recovery triggered. Context loss reason:', reason);
 
     // Step 1: Dispose the invalidated service
-    const modelId = service.getModelInfo()?.modelId ?? 'SmolLM3-3B-Q4_K_M';
+    const modelId = service.getModelInfo()?.modelId ?? WEBLLM_DEFAULT_MODEL_ID;
     console.info(`[WebGPUWatchdog] Disposing service (model: ${modelId})`);
     service.dispose();
 

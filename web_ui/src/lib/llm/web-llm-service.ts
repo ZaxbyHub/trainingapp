@@ -14,6 +14,7 @@ import type {
   LLMService,
 } from '@/types/llm';
 import { messageContentToText } from '@/types/llm';
+import { WebGPUWatchdog, createRecoveryHandler } from './webgpu-watchdog';
 
 // Dynamic import to avoid loading the WebGPU machinery until needed.
 // The API surface we're using:
@@ -56,7 +57,18 @@ interface MLCEngine {
 let CreateMLCEngine: CreateMLCEngineFn | null = null;
 let prebuiltMLCAppConfig: unknown = null;
 
-const DEFAULT_MODEL_ID = 'Llama-3.2-3B-Instruct-q4f16_1-MLC';
+/**
+ * Single source of truth for the WebLLM engine's default model id.
+ *
+ * The readiness gate's `modelIdForEngine('webllm')`, the Settings "Download
+ * Model" flow, and `WebLLMService.initialize` must all agree on this value —
+ * a mismatch makes `isModelReady` unreachable (the gate probes one id while the
+ * service/download path uses another). Exported so every consumer reads the
+ * same constant instead of hardcoding a string that can drift.
+ */
+export const WEBLLM_DEFAULT_MODEL_ID = 'Llama-3.2-3B-Instruct-q4f16_1-MLC';
+
+const DEFAULT_MODEL_ID = WEBLLM_DEFAULT_MODEL_ID;
 
 const ALLOWED_MODEL_IDS: readonly string[] = [
   'Llama-3.2-3B-Instruct-q4f16_1-MLC',
@@ -73,6 +85,15 @@ export class WebLLMService implements LLMService {
   private _modelInfo: LLMModelInfo | null = null;
   private _inferenceMode: LLMInferenceMode = 'webgpu';
   private _ready = false;
+  /**
+   * In-flight init guard so concurrent first-time calls share ONE initialize()
+   * run (mirrors WllamaService's initPromise pattern). Without it, two near-
+   * simultaneous callers could each reach CreateMLCEngine and create two
+   * engines. (issue #21 F11)
+   */
+  private _initPromise: Promise<void> | null = null;
+  /** WebGPU context-loss watchdog; started after init, disposed on teardown. */
+  private _watchdog: WebGPUWatchdog | null = null;
 
   private constructor() {}
 
@@ -87,47 +108,48 @@ export class WebLLMService implements LLMService {
   }
 
   /**
-   * Detect whether WebGPU is available via navigator.gpu.
+   * Detect whether WebGPU is available via navigator.gpu, returning the adapter
+   * when it is. The adapter is returned (not discarded) so a sibling monitoring
+   * GPUDevice can be created from the SAME adapter for the WebGPU watchdog — a
+   * driver crash / OOM / tab-backgrounding kill affects every device on the
+   * adapter, so monitoring a sibling catches the real-world context-loss cases
+   * without needing access to WebLLM's internal device. (issue #21 F11)
    */
-  private async _detectWebGPU(): Promise<boolean> {
+  private async _detectWebGPU(): Promise<{ available: boolean; adapter?: GPUAdapter }> {
     try {
       if (!navigator.gpu) {
         console.info('[WebLLM] WebGPU not available (navigator.gpu missing)');
-        return false;
+        return { available: false };
       }
       const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
       if (!adapter) {
         console.info('[WebLLM] WebGPU requestAdapter returned null — WebGPU unavailable');
-        return false;
+        return { available: false };
       }
 
       // Reject software-renderer adapters (SwiftShader, llvmpipe) that work
-      // but provide unusably slow performance for ML inference (FR-005)
+      // but provide unusably slow performance for ML inference (FR-005).
+      // The current WebGPU spec exposes adapter info via the `adapter.info`
+      // property (a GPUAdapterInfo); the old `requestAdapterInfo()` method was
+      // removed from @webgpu/types. Fall back best-effort via try/catch for
+      // browsers that don't expose `info`. (issue #21 F11)
       try {
-        // `requestAdapterInfo()` was removed from strict @webgpu/types but is
-        // still present in shipping browsers (and the try/catch below already
-        // guards browsers that lack it). Cast to preserve the existing runtime
-        // behavior without changing the call.
-        const adapterInfo = await (adapter as GPUAdapter & {
-          requestAdapterInfo(): Promise<{ vendor?: string; architecture?: string }>;
-        }).requestAdapterInfo();
-        const vendor = (adapterInfo.vendor || '').toLowerCase();
-        const architecture = (adapterInfo.architecture || '').toLowerCase();
+        const info = (adapter as GPUAdapter & { info?: { vendor?: string; architecture?: string } }).info;
+        const vendor = (info?.vendor || '').toLowerCase();
+        const architecture = (info?.architecture || '').toLowerCase();
         if (vendor.includes('mesa') || architecture.includes('llvmpipe') || architecture.includes('swiftshader')) {
           console.warn('[WebLLM] Rejected software-renderer adapter:', { vendor, architecture });
-          return false;
+          return { available: false };
         }
       } catch {
-        // adapter.requestAdapterInfo() may not be available in all browsers;
-        // if we can't check, proceed with the adapter (best-effort)
-        console.info('[WebLLM] adapter.requestAdapterInfo() unavailable, proceeding best-effort');
+        console.info('[WebLLM] adapter.info unavailable, proceeding best-effort');
       }
 
       console.info('[WebLLM] WebGPU adapter detected');
-      return true;
+      return { available: true, adapter };
     } catch (err) {
       console.warn('[WebLLM] WebGPU detection failed:', err);
-      return false;
+      return { available: false };
     }
   }
 
@@ -170,11 +192,29 @@ export class WebLLMService implements LLMService {
       return;
     }
 
+    // In-flight guard: concurrent first-time callers share one init run instead
+    // of each creating an engine. (issue #21 F11)
+    if (this._initPromise) {
+      return this._initPromise;
+    }
+
+    this._initPromise = this._doInitialize(modelId, onProgress);
+    try {
+      await this._initPromise;
+    } finally {
+      this._initPromise = null;
+    }
+  }
+
+  private async _doInitialize(
+    modelId: string,
+    onProgress?: InitProgressCallback
+  ): Promise<void> {
     console.info(`[WebLLM] Initializing with model: ${modelId}`);
 
     // 1. Detect backend — only WebGPU is supported
-    const useWebGPU = await this._detectWebGPU();
-    if (!useWebGPU) {
+    const detection = await this._detectWebGPU();
+    if (!detection.available) {
       throw new Error(
         'WebGPU is not available in this browser. ' +
         'Please switch to server API mode for LLM inference (per FR-015).'
@@ -215,6 +255,13 @@ export class WebLLMService implements LLMService {
 
       this._ready = true;
       console.info(`[WebLLM] Model "${modelId}" loaded successfully`);
+
+      // 5. Start the WebGPU context-loss watchdog against a sibling device on
+      // the SAME adapter we just probed. A driver crash / GPU OOM / tab
+      // backgrounding kill affects every device on the adapter, so this catches
+      // the real-world loss cases and triggers recovery via createRecoveryHandler
+      // (dispose + re-init, or surface a switch-to-server error). (issue #21 F11)
+      await this._startWatchdog(detection.adapter);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
 
@@ -348,6 +395,10 @@ export class WebLLMService implements LLMService {
    * Release model resources and reset the service.
    */
   dispose(): void {
+    // Stop the context-loss watchdog before tearing down the engine.
+    this._watchdog?.dispose();
+    this._watchdog = null;
+
     if (this._engine?.unload) {
       // unload is async; fire and forget in dispose path
       this._engine.unload().catch((err) => {
@@ -357,7 +408,35 @@ export class WebLLMService implements LLMService {
     this._engine = null;
     this._modelInfo = null;
     this._ready = false;
+    this._initPromise = null;
     this._inferenceMode = 'webgpu';
     console.info('[WebLLM] Service disposed');
+  }
+
+  /**
+   * Start the WebGPU context-loss watchdog on a sibling device from the given
+   * adapter. `adapter.requestDevice()` is ASYNC in the WebGPU spec (returns a
+   * Promise<GPUDevice>), so this method is async and awaited. The watchdog is
+   * one-shot (it stops itself after the first loss), so re-init creates a fresh
+   * one. Failures here are non-fatal — best-effort monitoring is strictly
+   * better than none. (issue #21 F11)
+   */
+  private async _startWatchdog(adapter?: GPUAdapter): Promise<void> {
+    if (!adapter) return;
+    try {
+      const device = await adapter.requestDevice();
+      if (!device) {
+        console.info('[WebLLM] Watchdog: requestDevice returned null, skipping.');
+        return;
+      }
+      this._watchdog = new WebGPUWatchdog();
+      this._watchdog.start(
+        device,
+        createRecoveryHandler(this),
+        () => this._ready // isGenerating proxy: any in-flight generation has _ready true
+      );
+    } catch (err) {
+      console.warn('[WebLLM] Watchdog start failed (non-fatal):', err);
+    }
   }
 }

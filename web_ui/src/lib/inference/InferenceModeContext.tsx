@@ -214,6 +214,18 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
     }
   }, [state.serverUrl]);
 
+  // On boot, if the persisted mode is 'api', proactively check connectivity so
+  // the user doesn't see a stale "Server not connected" warning until they
+  // manually toggle or open Settings. Runs once per mount. (issue #21 F11)
+  const bootConnectivityCheckedRef = useRef(false);
+  useEffect(() => {
+    if (bootConnectivityCheckedRef.current) return;
+    bootConnectivityCheckedRef.current = true;
+    if (state.mode === 'api') {
+      void checkServerConnectivity();
+    }
+  }, [checkServerConnectivity, state.mode]);
+
   const setModelReady = useCallback((ready: boolean) => {
     setState((prev) => ({
       ...prev,

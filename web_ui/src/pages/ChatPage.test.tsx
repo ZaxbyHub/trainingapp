@@ -59,6 +59,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       expect(screen.getByText('Ask a question about your documents')).toBeInTheDocument();
@@ -70,6 +71,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       expect(screen.getByText('Document Q&A')).toBeInTheDocument();
@@ -81,6 +83,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       expect(screen.queryByText(/clear chat/i)).not.toBeInTheDocument();
@@ -94,6 +97,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -111,6 +115,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -128,6 +133,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -146,6 +152,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -172,6 +179,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -182,7 +190,7 @@ describe('ChatPage', () => {
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // Click cancel
-      const cancelButton = await waitFor(() => 
+      const cancelButton = await waitFor(() =>
         screen.getByRole('button', { name: /stop generation/i })
       );
       fireEvent.click(cancelButton);
@@ -199,13 +207,14 @@ describe('ChatPage', () => {
 
     it('clears mock timer on cancel', async () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
-      
+
       vi.useRealTimers();
       render(<ChatPage
   messages={[]}
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -222,7 +231,7 @@ describe('ChatPage', () => {
 
       // clearTimeout should have been called
       expect(clearTimeoutSpy).toHaveBeenCalled();
-      
+
       vi.useFakeTimers();
     });
   });
@@ -236,6 +245,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Trigger some state that creates timers
@@ -258,6 +268,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Send a message first to make Clear Chat button appear
@@ -288,6 +299,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -311,6 +323,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Send and complete message
@@ -336,6 +349,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Send and complete message
@@ -346,10 +360,10 @@ describe('ChatPage', () => {
       vi.advanceTimersByTime(2000);
 
       const clearButton = await waitFor(() => screen.getByText('Clear Chat'));
-      
+
       // First click
       fireEvent.click(clearButton);
-      
+
       // Second click (confirm)
       const confirmButton = await waitFor(() => screen.getByText('Confirm Clear?'));
       fireEvent.click(confirmButton);
@@ -369,6 +383,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Send and complete message
@@ -402,6 +417,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -419,6 +435,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -446,6 +463,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -463,6 +481,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -484,6 +503,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Send and complete message
@@ -512,6 +532,7 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Send and complete message

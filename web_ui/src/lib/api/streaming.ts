@@ -8,12 +8,14 @@ import { ApiError } from './types';
 
 /**
  * Validates a stream URL.
- * - Allows relative same-origin paths (e.g. /api/chat, /ask/stream)
- * - Allows absolute http:// and https:// URLs
- * - Blocks javascript:, data:, file: schemes
- * - Blocks localhost, 127.0.0.1, ::1, 169.254.169.254, 10.x.x.x,
- *   172.16-31.x.x, 192.168.x.x, *.local, 0.0.0.0
- * @throws ApiError with status 400 if the URL is invalid
+ *
+ * This is a self-hosted, client-side app: the user configures the server URL
+ * (commonly a LAN box, or localhost for local development). SSRF defense
+ * belongs on the server (api_server.py is not an open proxy), so the client
+ * intentionally PERMITS private/LAN/loopback/.local/link-local hostnames. We
+ * only block: empty URLs, dangerous schemes (javascript/data/file), non-http(s)
+ * schemes, malformed URLs, and the cloud metadata endpoint (a genuine
+ * credential-exfiltration target even for a client app). (issue #21 F5)
  */
 function validateStreamUrl(url: string): void {
   if (!url || url.trim() === '') {
@@ -52,39 +54,10 @@ function validateStreamUrl(url: string): void {
 
   const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
-  // Block loopback and localhost variants
-  if (
-    hostname === 'localhost' ||
-    hostname === '::1' ||
-    hostname === '0.0.0.0' ||
-    hostname === '127.0.0.1'
-  ) {
-    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
-  }
-
-  // Block IPv6 link-local addresses (fe80::/10)
-  if (/^fe80:/i.test(hostname)) {
-    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
-  }
-
-  // Block link-local metadata address
+  // Block the cloud metadata endpoint — a genuine SSRF/credential target even
+  // for client-side code. All other private/LAN/loopback hosts are permitted
+  // (this app's realistic deployment is a self-hosted LAN server).
   if (hostname === '169.254.169.254') {
-    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
-  }
-
-  // Block private IP ranges
-  if (/^10\./.test(hostname)) {
-    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
-  }
-  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname)) {
-    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
-  }
-  if (/^192\.168\./.test(hostname)) {
-    throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
-  }
-
-  // Block *.local TLD
-  if (hostname.endsWith('.local')) {
     throw new ApiError(400, `Invalid URL: host "${hostname}" is not allowed`);
   }
 }
@@ -119,6 +92,13 @@ export class SSEStreamConsumer {
   private onDoneCallbacks: DoneCallback[] = [];
   private onErrorCallbacks: ErrorCallback[] = [];
   private decoder: TextDecoder;
+  /**
+   * True once a terminal event (done/error) has been emitted. Used by the
+   * end-of-stream fallback so a server that closes the connection WITHOUT a
+   * terminal SSE payload still resolves the UI — otherwise isLoading sticks
+   * forever. (issue #21 F6)
+   */
+  private _terminated: boolean = false;
 
   /**
    * Create a new SSEStreamConsumer.
@@ -262,6 +242,14 @@ export class SSEStreamConsumer {
       if (buffer.trim()) {
         this.processLine(buffer);
       }
+
+      // End-of-stream fallback: if the server closed the connection without a
+      // terminal `done`/`error` SSE event, synthesize an error completion so the
+      // UI always reaches a terminal state (otherwise isLoading sticks forever).
+      // Safe to double-emit: emitDone/emitError guard on _terminated. (issue #21 F6)
+      if (!this._terminated) {
+        this.emitError('Stream ended without a completion signal');
+      }
     } catch (error) {
       if ((error as Error).name !== 'AbortError') {
         this.emitError((error as Error).message || 'Stream read error');
@@ -315,12 +303,16 @@ export class SSEStreamConsumer {
   }
 
   private emitDone(data: StreamDoneEvent): void {
+    if (this._terminated) return;
+    this._terminated = true;
     for (const callback of this.onDoneCallbacks) {
       callback(data);
     }
   }
 
   private emitError(error: string): void {
+    if (this._terminated) return;
+    this._terminated = true;
     for (const callback of this.onErrorCallbacks) {
       callback(error);
     }

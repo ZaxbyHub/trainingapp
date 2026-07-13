@@ -142,6 +142,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -176,6 +177,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -209,6 +211,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -241,6 +244,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -274,6 +278,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -302,6 +307,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -335,6 +341,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -368,6 +375,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -406,6 +414,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -448,6 +457,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -476,6 +486,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -520,6 +531,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -563,6 +575,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -602,6 +615,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -629,6 +643,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -662,6 +677,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -696,6 +712,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -735,6 +752,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -771,6 +789,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');
@@ -799,6 +818,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       const textarea = screen.getByPlaceholderText('Ask a question...');

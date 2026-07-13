@@ -13,7 +13,10 @@ import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
 import { getLLMService, disposeBrowserEngine } from '../lib/llm/llm-factory';
-import { ensureReadinessGateChecked } from '../lib/llm/readiness-gate';
+import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessCache } from '../lib/llm/readiness-gate';
+import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
+import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
+import { getToken } from '../lib/api/auth';
 import type { AttachedImage } from '../lib/processing/image-input';
 import { presetOptions } from '../lib/rag/rag-presets';
 import { downloadConversation } from '../lib/export/conversation-export';
@@ -32,6 +35,9 @@ export interface ChatPageProps {
   onMessagesChange: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   onSaveConversation: (messages: ChatMessage[], mode: 'server' | 'wllama', modelUsed: string) => void;
   onNewChat: () => void;
+  /** Navigate to the Settings page (wired from App). Used by the model-block
+   *  overlay's "Open Settings" button and the Ctrl+, shortcut. */
+  onOpenSettings: () => void;
 }
 
 export function ChatPage(props: ChatPageProps) {
@@ -50,9 +56,9 @@ const exportButtonStyle: CSSProperties = {
   transition: 'all 0.15s ease',
 };
 
-function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, onNewChat }: ChatPageProps) {
+function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, onNewChat, onOpenSettings }: ChatPageProps) {
   const MAX_MESSAGES = 200;
-  const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl } = useInferenceMode();
+  const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
   const messages = messagesProp;
   const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
@@ -62,6 +68,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Last sent turn (text + raw image bytes) so Regenerate can re-run it.
   const lastTurnRef = useRef<{ text: string; images?: AttachedImage[] } | null>(null);
+  // Current input draft, mirrored from ChatInput so the Ctrl+Enter shortcut can
+  // send it without ChatPage owning the textarea state.
+  const draftRef = useRef('');
 
   // Mirror of the current messages so async callbacks (onDone/onError) can read
   // the latest array without placing side effects inside a state updater.
@@ -76,6 +85,25 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // Image upload is supported by the multimodal wllama engine in browser-local mode.
   const canAttachImages = isBrowserMode && browserEngine === 'wllama' && isModelReady;
 
+  // Dispose the OLD engine heap only on a genuine engine switch — NOT on unmount.
+  // The singleton intentionally survives navigation so returning to chat doesn't
+  // reload the ~1GB wllama heap (tens of seconds on target hardware). It is freed
+  // on engine switch or when the tab closes. The previous engine is tracked in a
+  // ref so the effect body (which runs on the render where the dep changed) can
+  // compare old vs new and dispose the right one. (issue #21 F2)
+  //
+  // Declared BEFORE the readiness effect below so on an engine switch React runs
+  // this effect's body (dispose old) before re-checking readiness for the new
+  // engine, preserving dispose-old → readiness-new ordering.
+  const prevEngineRef = useRef(browserEngine);
+  useEffect(() => {
+    const prev = prevEngineRef.current;
+    prevEngineRef.current = browserEngine;
+    if (mode === 'browser-local' && prev !== browserEngine) {
+      disposeBrowserEngine(prev);
+    }
+  }, [browserEngine, mode]);
+
   // Evaluate model readiness for the selected engine when entering browser-local
   // mode or switching engines. This drives `isModelReady` (and the input gate)
   // engine-awarely — e.g. wllama unblocks on no-WebGPU hardware once its packaged
@@ -84,17 +112,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     if (mode === 'browser-local') {
       void ensureReadinessGateChecked(browserEngine);
     }
-  }, [mode, browserEngine]);
-
-  // Dispose the old engine heap when the user switches engines.
-  // Effect cleanup closes over the current (old) engine value, so it runs
-  // with the previous engine on each change and on unmount.
-  useEffect(() => {
-    return () => {
-      if (mode === 'browser-local') {
-        disposeBrowserEngine(browserEngine);
-      }
-    };
   }, [mode, browserEngine]);
 
   // Cleanup on unmount
@@ -177,21 +194,48 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     });
 
     if (mode === 'api') {
-      // Server API mode — SSE streaming via /ask/stream endpoint
+      // Server API mode — SSE streaming via /ask/stream endpoint.
+      // Pass the stored auth token when present so server mode works whether
+      // auth is off (default) or on. Wrap setup so a synchronous throw (e.g.
+      // URL validation) routes to onError and clears the stream ref instead of
+      // wedging the send pipeline permanently. (issue #21 F5, F9)
       const url = serverUrl ? `${serverUrl.replace(/\/$/, '')}/ask/stream` : '/ask/stream';
-      streamManager.startSSEStream(url, { question: text }, undefined);
+      try {
+        streamManager.startSSEStream(url, { question: text }, getToken() ?? undefined);
+      } catch (err) {
+        streamManager.error(err instanceof Error ? err.message : String(err));
+      }
     } else {
-      // Browser-local mode — RAG pipeline AsyncGenerator
+      // Browser-local mode — RAG pipeline AsyncGenerator.
+      // The LLM service singleton is fetched uninitialized from the factory; we
+      // MUST initialize it before the orchestrator calls generate(), otherwise
+      // generate() throws "not initialized" and the assistant bubble shows the
+      // raw error (issue #21 F1). initialize() is idempotent — fast no-op when
+      // the model is already loaded — so calling it on every send is safe.
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
 
-      const orchestrator = new RAGOrchestrator({ llmService: getLLMService(browserEngine) });
-      let fullAnswer = '';
-      const startTime = Date.now();
-      let sources: string[] = [];
+      const llmService = getLLMService(browserEngine);
+      const initModelId = browserEngine === 'wllama' ? LLM_MODEL_DIR : WEBLLM_DEFAULT_MODEL_ID;
 
       (async () => {
         try {
+          // Ensure the model is loaded before the pipeline touches generate().
+          // Route real load progress into the overlay so a cold first send shows
+          // progress instead of an apparent hang.
+          setModelLoadingProgress(0);
+          await llmService.initialize(initModelId, (p) => {
+            if (tokenStreamManagerRef.current !== streamManager) return;
+            setModelLoadingProgress(Math.min(100, Math.max(0, Math.round((p.progress ?? 0) * 100))));
+          });
+          if (abortController.signal.aborted) return;
+          if (tokenStreamManagerRef.current !== streamManager) return;
+
+          const orchestrator = new RAGOrchestrator({ llmService });
+          let fullAnswer = '';
+          const startTime = Date.now();
+          let sources: string[] = [];
+
           for await (const event of orchestrator.query(text, {
             ...presetOptions(ragPreset),
             signal: abortController.signal,
@@ -213,9 +257,23 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                   inferenceTime: Date.now() - startTime,
                 });
                 break;
-              case 'error':
-                streamManager.error(event.data.message);
-                return;
+              case 'error': {
+                // Only embedding/generation failures are fatal. The orchestrator
+                // treats vector/keyword/rerank/rrf errors as recoverable (it
+                // yields the error and continues); mirror that here so a single
+                // retrieval hiccup doesn't kill a response that could degrade
+                // gracefully (issue #21 F11).
+                const stage = (event.data as { stage?: string }).stage;
+                if (stage === 'embedding' || stage === 'generation') {
+                  streamManager.error((event.data as { message: string }).message);
+                  return;
+                }
+                console.warn(
+                  `[ChatPage] Recoverable RAG stage failed: ${stage}`,
+                  (event.data as { message?: string }).message
+                );
+                break;
+              }
             }
           }
         } catch (error) {
@@ -227,7 +285,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         }
       })();
     }
-  }, [mode, serverUrl, browserEngine, ragPreset, onSaveConversation]);
+  }, [mode, serverUrl, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress]);
 
   const handleSend = useCallback((text: string, attachedImages?: AttachedImage[]) => {
     // Prevent overlapping streams
@@ -363,12 +421,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     }
   }, [clearConfirmState, cancelActiveStream, onNewChat]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — ChatPage is the SOLE registrar (App no longer registers
+  // useKeyboardShortcuts) so there is exactly one window keydown listener.
+  // Ctrl+Enter sends the current draft; Ctrl+L clears; Ctrl+, opens Settings.
   useKeyboardShortcuts({
-    onClearChat: handleClearClick,
-    onOpenSettings: () => {
-      // Navigation handled at App level
+    onSendMessage: () => {
+      const draft = draftRef.current.trim();
+      if (draft && !tokenStreamManagerRef.current) {
+        handleSend(draft);
+      }
     },
+    onClearChat: handleClearClick,
+    onOpenSettings,
   });
 
   return (
@@ -447,75 +511,165 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         </div>
       </header>
 
-      {/* Model loading blocking overlay */}
-      {isModelBlocked && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.7)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 100,
-          }}
-        >
+      {/* Model loading blocking overlay.
+          Engine-aware: shows the actual readiness failures/recommendations
+          instead of a generic "please wait for download" message (which is
+          actively wrong for wllama, where there is no download step — the real
+          cause is usually missing packaged weights). Offers Retry and Open
+          Settings actions. (issue #21 F10) */}
+      {isModelBlocked && (() => {
+        const readinessResult = getReadinessResultSnapshot();
+        const failures = readinessResult?.failures ?? [];
+        const recommendations = readinessResult?.recommendations ?? [];
+        const hasRealFailure = failures.length > 0;
+        // Engine-aware headline. For wllama a missing-weights failure is the
+        // common case (no download step), so don't promise a download.
+        const headline = hasRealFailure
+          ? (browserEngine === 'wllama'
+              ? 'This build is missing the packaged model. See the Packaging guide or contact your administrator.'
+              : 'The browser model is not available. Use Settings to download it, or switch engines.')
+          : 'Preparing the model…';
+        return (
           <div
+            role="alertdialog"
+            aria-label="Model not ready"
             style={{
-backgroundColor: 'var(--color-surface)',
-              padding: 'var(--spacing-xl)',
-              borderRadius: '8px',
-              textAlign: 'center',
-              maxWidth: '400px',
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.7)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 100,
             }}
           >
-            <p
+            <div
               style={{
-                fontSize: 'var(--font-size-body)',
-                color: 'var(--color-text-on-bubble-assistant)',
-                fontFamily: 'var(--font-family)',
-                marginBottom: 'var(--spacing-md)',
+                backgroundColor: 'var(--color-surface)',
+                padding: 'var(--spacing-xl)',
+                borderRadius: '8px',
+                textAlign: 'center',
+                maxWidth: '460px',
               }}
             >
-              Model not loaded. Please wait for the model to download and initialize.
-            </p>
-            {modelLoadingProgress > 0 && (
-              <div
+              <p
                 style={{
-                  width: '100%',
-                  height: '8px',
-                  backgroundColor: 'var(--color-bubble-system)',
-  borderRadius: 'var(--radius-sm)',
-                  overflow: 'hidden',
+                  fontSize: 'var(--font-size-body)',
+                  color: 'var(--color-text-on-bubble-assistant)',
+                  fontFamily: 'var(--font-family)',
+                  marginBottom: 'var(--spacing-md)',
                 }}
               >
-                <div
+                {headline}
+              </p>
+              {/* Show real progress only when actively loading, not when a hard
+                  readiness failure is the cause (otherwise the bar reflects
+                  unrelated boot-time search-index init). */}
+              {!hasRealFailure && modelLoadingProgress > 0 && (
+                <>
+                  <div
+                    style={{
+                      width: '100%',
+                      height: '8px',
+                      backgroundColor: 'var(--color-bubble-system)',
+                      borderRadius: 'var(--radius-sm)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${modelLoadingProgress}%`,
+                        height: '100%',
+                        backgroundColor: '#22c55e',
+                        transition: 'width 0.3s ease',
+                      }}
+                    />
+                  </div>
+                  <p
+                    style={{
+                      fontSize: 'var(--font-size-caption)',
+                      color: 'var(--color-text-muted)',
+                      fontFamily: 'var(--font-family)',
+                      marginTop: 'var(--spacing-sm)',
+                    }}
+                  >
+                    {modelLoadingProgress}%
+                  </p>
+                </>
+              )}
+              {failures.length > 0 && (
+                <ul
                   style={{
-                    width: `${modelLoadingProgress}%`,
-                    height: '100%',
-                    backgroundColor: '#22c55e',
-                    transition: 'width 0.3s ease',
+                    textAlign: 'left',
+                    color: 'var(--color-danger)',
+                    fontSize: 'var(--font-size-caption)',
+                    fontFamily: 'var(--font-family)',
+                    margin: 'var(--spacing-sm) 0',
+                    padding: '0 var(--spacing-md)',
                   }}
-                />
+                >
+                  {failures.map((f, i) => <li key={i}>{f}</li>)}
+                </ul>
+              )}
+              {recommendations.length > 0 && (
+                <ul
+                  style={{
+                    textAlign: 'left',
+                    color: 'var(--color-text-muted)',
+                    fontSize: 'var(--font-size-caption)',
+                    fontFamily: 'var(--font-family)',
+                    margin: 'var(--spacing-sm) 0',
+                    padding: '0 var(--spacing-md)',
+                  }}
+                >
+                  {recommendations.map((r, i) => <li key={i}>{r}</li>)}
+                </ul>
+              )}
+              <div style={{ display: 'flex', gap: 'var(--spacing-sm)', justifyContent: 'center', marginTop: 'var(--spacing-md)' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    resetReadinessCache();
+                    void ensureReadinessGateChecked(browserEngine);
+                  }}
+                  style={{
+                    backgroundColor: 'var(--color-primary)',
+                    color: 'var(--color-text-on-primary)',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: 'var(--spacing-xs) var(--spacing-sm)',
+                    fontFamily: 'var(--font-family)',
+                    fontSize: 'var(--font-size-caption)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Retry
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: 'var(--color-text-muted)',
+                    border: '1px solid var(--color-text-muted)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: 'var(--spacing-xs) var(--spacing-sm)',
+                    fontFamily: 'var(--font-family)',
+                    fontSize: 'var(--font-size-caption)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Open Settings
+                </button>
               </div>
-            )}
-            <p
-              style={{
-                fontSize: 'var(--font-size-caption)',
-                color: 'var(--color-text-muted)',
-                fontFamily: 'var(--font-family)',
-                marginTop: 'var(--spacing-sm)',
-              }}
-            >
-              {modelLoadingProgress > 0 ? `${modelLoadingProgress}%` : 'Loading...'}
-            </p>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Message List */}
       <ChatMessageList
@@ -542,6 +696,7 @@ backgroundColor: 'var(--color-surface)',
         onCancel={handleCancel}
         disabled={isInputDisabled}
         imageUploadEnabled={canAttachImages}
+        onDraftChange={(text) => { draftRef.current = text; }}
       />
     </div>
   );

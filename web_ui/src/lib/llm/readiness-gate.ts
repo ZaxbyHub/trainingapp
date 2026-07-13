@@ -10,18 +10,33 @@
 import { ModelReadinessGate, type ReadinessResult } from './model-readiness';
 import { getPreferredBrowserEngine } from './llm-factory';
 import { LLM_MODEL_DIR } from '../models/model-manifest';
+import { WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
 import type { BrowserEngine } from '../../types/llm';
 
 let readinessGateInitPromise: Promise<ReadinessResult | null> | null = null;
+/**
+ * Engine the IN-FLIGHT check is running for. Set the moment the promise is
+ * created (not after it resolves) so concurrent callers for the SAME engine
+ * share one in-flight promise instead of each spawning a full check. A prior
+ * version keyed this on `lastReadinessEngine`, which stayed null until the
+ * async check completed — making the dedup guard unreachable during in-flight
+ * and spawning duplicate HEAD/adapter probes (issue #21 F7/F8).
+ */
+let readinessGateInitEngine: BrowserEngine | null = null;
 let lastReadinessResult: ReadinessResult | null = null;
 /** Engine the cached readiness result was computed for (cache is engine-specific). */
 let lastReadinessEngine: BrowserEngine | null = null;
 let webgpuAvailableCached = false;
 const readinessGateInstance: { current: ModelReadinessGate | null } = { current: null };
 
-/** Readiness model id for each engine (wllama loads the packaged LFM2-VL GGUF). */
+/**
+ * Readiness model id for each engine. Both branches read a single source of
+ * truth so the readiness gate, the download flow, and the LLM services never
+ * disagree on which model id an engine uses (a prior hardcoded id mismatch
+ * made `isModelReady` unreachable for webllm — see issue #21 F3).
+ */
 function modelIdForEngine(engine: BrowserEngine): string {
-  return engine === 'wllama' ? LLM_MODEL_DIR : 'SmolLM3-3B-Q4_K_M';
+  return engine === 'wllama' ? LLM_MODEL_DIR : WEBLLM_DEFAULT_MODEL_ID;
 }
 
 /** Snapshot of the last readiness check, for the hook's initial servicesReady state. */
@@ -30,6 +45,15 @@ export function getReadinessSnapshot(): { modelCached: boolean; webgpuAvailable:
     modelCached: lastReadinessResult?.checks.modelCached ?? false,
     webgpuAvailable: webgpuAvailableCached,
   };
+}
+
+/**
+ * Full last readiness result, for UI surfaces (e.g. the ChatPage model-block
+ * overlay) that need to render the actual `failures`/`recommendations` rather
+ * than a generic message. Returns null before the first check completes.
+ */
+export function getReadinessResultSnapshot(): ReadinessResult | null {
+  return lastReadinessResult;
 }
 
 export function getReadinessGateInstance(): ModelReadinessGate | null {
@@ -45,6 +69,7 @@ export function applyReadinessFromEvent(result: ReadinessResult | undefined, has
 /** Reset cached readiness state (test/teardown). */
 export function resetReadinessCache(): void {
   readinessGateInitPromise = null;
+  readinessGateInitEngine = null;
   lastReadinessResult = null;
   lastReadinessEngine = null;
   webgpuAvailableCached = false;
@@ -67,10 +92,17 @@ export async function ensureReadinessGateChecked(
   if (lastReadinessResult && lastReadinessEngine === engine) {
     return lastReadinessResult;
   }
-  if (readinessGateInitPromise && lastReadinessEngine === engine) {
+  // Dedupe concurrent IN-FLIGHT checks for the SAME engine. The engine key is
+  // set when the promise is created (below), so concurrent callers arriving
+  // while the check is still running hit this branch and share the promise
+  // instead of each spawning a full check. (issue #21 F7/F8)
+  if (readinessGateInitPromise && readinessGateInitEngine === engine) {
     return readinessGateInitPromise;
   }
 
+  // Tag the in-flight promise with its engine NOW (before any await) so the
+  // dedup guard above can match concurrent same-engine callers.
+  readinessGateInitEngine = engine;
   readinessGateInitPromise = (async () => {
     try {
       readinessGateInstance.current = new ModelReadinessGate();
@@ -129,6 +161,7 @@ export async function ensureReadinessGateChecked(
       return null;
     } finally {
       readinessGateInitPromise = null;
+      readinessGateInitEngine = null;
     }
   })();
 

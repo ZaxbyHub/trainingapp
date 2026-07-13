@@ -8,6 +8,7 @@ import { useInferenceMode } from '../lib/inference';
 import { useTheme } from '../lib/theme';
 import { ModelDownloadManager, type DownloadProgress } from '../lib/llm/model-download';
 import { ModelReadinessGate } from '../lib/llm/model-readiness';
+import { resetReadinessCache, ensureReadinessGateChecked } from '../lib/llm/readiness-gate';
 import { detectEngineCapability, type EngineCapability } from '../lib/llm/engine-capability';
 import { checkPackagedModels, type PackagedModelsReport } from '../lib/models/model-manifest';
 import { RAG_PRESET_LABELS } from '../lib/rag/rag-presets';
@@ -596,6 +597,13 @@ function SettingsPageInner(): React.ReactElement {
         if (progress.status === 'complete') {
           setModelCached(true);
           setIsDownloading(false);
+          // Re-dispatch the readiness gate so the rest of the app (e.g. the chat
+          // model-block overlay) flips to isModelReady=true now that the model
+          // is in OPFS. Without this, the cached readiness result still reports
+          // modelCached=false until an engine switch forces a re-check.
+          // (issue #21 F3)
+          resetReadinessCache();
+          void ensureReadinessGateChecked('webllm');
         } else if (progress.status === 'error') {
           setIsDownloading(false);
         }

@@ -164,6 +164,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -195,6 +196,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -230,6 +232,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -265,6 +268,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -295,6 +299,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
     // Check initial state - no messages
@@ -324,6 +329,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -357,6 +363,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -395,6 +402,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
     const textarea = screen.getByRole('textbox');
@@ -449,6 +457,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -487,6 +496,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -530,6 +540,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
           onMessagesChange={setMessages}
           onSaveConversation={onSaveConversation}
           onNewChat={onNewChat}
+          onOpenSettings={() => {}}
         />
       );
     }
@@ -593,6 +604,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
     submitMessage(userText);
 
@@ -636,6 +648,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
           onMessagesChange={setMessages}
           onSaveConversation={onSaveConversation}
           onNewChat={() => {}}
+          onOpenSettings={() => {}}
         />
       );
     }

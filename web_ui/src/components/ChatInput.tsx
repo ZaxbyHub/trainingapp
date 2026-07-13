@@ -19,6 +19,9 @@ interface ChatInputProps {
   imageUploadEnabled?: boolean;
   /** Max images attachable to a single message. */
   maxImages?: number;
+  /** Notifies the parent of the current draft text so a global shortcut
+   *  (Ctrl+Enter) can send it without owning the input state. */
+  onDraftChange?: (text: string) => void;
 }
 
 const MAX_HEIGHT = 150;
@@ -31,6 +34,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   disabled = false,
   imageUploadEnabled = false,
   maxImages = 3,
+  onDraftChange,
 }) => {
   const [value, setValue] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -65,6 +69,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
       onSend(trimmed);
     }
     setValue('');
+    onDraftChange?.('');
     setImages([]);
     setAttachError(null);
 
@@ -227,7 +232,11 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setValue(next);
+              onDraftChange?.(next);
+            }}
             onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}

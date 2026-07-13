@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import type { BrowserEngine } from '../types/llm';
 import { getEmbeddingService } from '../lib/embeddings/embedding-service';
 import { getVectorIndex } from '../lib/search/vector-index';
 import { getKeywordIndex } from '../lib/search/keyword-index';
@@ -35,6 +36,9 @@ export interface ServiceInitializationState {
 export interface UseServiceInitializationOptions {
   setModelReady: (ready: boolean) => void;
   setModelLoadingProgress: (progress: number) => void;
+  /** Current browser engine — used to filter readiness events so a stale event
+   *  from engine A can't overwrite the readiness state for engine B (issue #21 F7/F8). */
+  browserEngine: BrowserEngine;
 }
 
 export interface UseServiceInitialization {
@@ -92,6 +96,7 @@ export async function ensureEmbeddingServiceReady(): Promise<boolean> {
 export const useServiceInitialization: UseServiceInitialization = ({
   setModelReady,
   setModelLoadingProgress,
+  browserEngine,
 }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
@@ -107,6 +112,16 @@ export const useServiceInitialization: UseServiceInitialization = ({
   const isMountedRef = useRef(true);
   const initializationStartedRef = useRef(false);
   const readinessGateRef = useRef<ModelReadinessGate | null>(null);
+  // Deferred-destructive-cleanup timer for the unmount effect, used to
+  // distinguish a real unmount from React 18 StrictMode's mount→unmount→remount
+  // dev cycle. (issue #21 F11)
+  const strictModeDisposeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirror of the current browser engine so the (once-registered) readiness
+  // event listener can discard stale events from a previous engine selection.
+  const currentEngineRef = useRef<BrowserEngine>(browserEngine);
+  useEffect(() => {
+    currentEngineRef.current = browserEngine;
+  }, [browserEngine]);
 
   const initializeServices = useCallback(async () => {
     if (initializationStartedRef.current) {
@@ -156,6 +171,15 @@ export const useServiceInitialization: UseServiceInitialization = ({
   useEffect(() => {
     isMountedRef.current = true;
 
+    // StrictMode remount cancels any deferred destructive cleanup scheduled by
+    // the previous (StrictMode-unmount) cleanup, so services are NOT torn down
+    // during the dev mount→unmount→remount cycle. This MUST be in the effect
+    // body, not the cleanup, to actually cancel on remount. (issue #21 F11)
+    if (strictModeDisposeTimer.current !== null) {
+      clearTimeout(strictModeDisposeTimer.current);
+      strictModeDisposeTimer.current = null;
+    }
+
     // Sync from module in case ensure*() was invoked by other code prior to this mount
     readinessGateRef.current = getReadinessGateInstance();
 
@@ -184,8 +208,15 @@ export const useServiceInitialization: UseServiceInitialization = ({
         result?: ReadinessResult;
         hasWebGPU?: boolean;
         modelReady?: boolean;
+        engine?: BrowserEngine;
       }>;
       const detail = custom.detail || {};
+      // Discard events whose engine doesn't match the current selection so a
+      // late-resolving check from engine A can't clobber the readiness state set
+      // for engine B after a rapid switch (issue #21 F7/F8).
+      if (detail.engine !== undefined && detail.engine !== currentEngineRef.current) {
+        return;
+      }
       const readinessResult = detail.result;
       const hasWebGPU = detail.hasWebGPU ?? getReadinessSnapshot().webgpuAvailable;
 
@@ -222,55 +253,65 @@ export const useServiceInitialization: UseServiceInitialization = ({
       }
 
       isMountedRef.current = false;
-      initializationStartedRef.current = false;
 
-      // Cleanup: dispose services if they have dispose method (reverse dependency order)
-      try {
-        const webllmService = WebLLMService.getInstance();
-        if (typeof webllmService.dispose === 'function') {
-          webllmService.dispose();
-        }
-      } catch {
-        // Service may not be initialized, ignore
+      // StrictMode-safe destructive cleanup. React 18 StrictMode in dev mounts →
+      // unmounts → remounts a component once to surface side-effect bugs. The
+      // destructive dispose below must NOT run during that first (immediate)
+      // unmount, or it races init on the real mount and can leave the app with
+      // torn-down services. Defer it a tick; if the effect re-runs (StrictMode
+      // remount) within that window, cancel the dispose. Only a genuine, final
+      // unmount proceeds past the timer. (issue #21 F11)
+      if (strictModeDisposeTimer.current !== null) {
+        clearTimeout(strictModeDisposeTimer.current);
+        strictModeDisposeTimer.current = null;
       }
+      strictModeDisposeTimer.current = setTimeout(() => {
+        strictModeDisposeTimer.current = null;
+        // Reset the init guard only on a real unmount so a StrictMode remount
+        // re-runs initializeServices cleanly.
+        initializationStartedRef.current = false;
 
-      try {
-        const embeddingService = getEmbeddingService();
-        if (typeof embeddingService.dispose === 'function') {
-          embeddingService.dispose();
+        // Cleanup: dispose services if they have dispose method (reverse dependency order)
+        try {
+          const webllmService = WebLLMService.getInstance();
+          if (typeof webllmService.dispose === 'function') {
+            webllmService.dispose();
+          }
+        } catch {
+          // Service may not be initialized, ignore
         }
-      } catch {
-        // Service may not be initialized, ignore
-      }
 
-      try {
-        const keywordIndex = getKeywordIndex();
-        if (typeof keywordIndex.dispose === 'function') {
-          keywordIndex.dispose();
+        try {
+          const embeddingService = getEmbeddingService();
+          if (typeof embeddingService.dispose === 'function') {
+            embeddingService.dispose();
+          }
+        } catch {
+          // Service may not be initialized, ignore
         }
-      } catch {
-        // Service may not be initialized, ignore
-      }
 
-      try {
-        const vectorIndex = getVectorIndex();
-        if (typeof vectorIndex.dispose === 'function') {
-          vectorIndex.dispose();
+        try {
+          const keywordIndex = getKeywordIndex();
+          if (typeof keywordIndex.dispose === 'function') {
+            keywordIndex.dispose();
+          }
+        } catch {
+          // Service may not be initialized, ignore
         }
-      } catch {
-        // Service may not be initialized, ignore
-      }
 
-      if (readinessGateRef.current) {
-        // dispose() is not yet on ModelReadinessGate; this guarded call is a
-        // no-op until the LLM-init cleanup lands in sibling PR #21 (chat engine).
-        // @ts-expect-error: dispose() not on ModelReadinessGate — owned by PR #21.
-        if (typeof readinessGateRef.current.dispose === 'function') {
-          // @ts-expect-error: see above — dispose() not on ModelReadinessGate yet.
-          readinessGateRef.current.dispose();
+        try {
+          const vectorIndex = getVectorIndex();
+          if (typeof vectorIndex.dispose === 'function') {
+            vectorIndex.dispose();
+          }
+        } catch {
+          // Service may not be initialized, ignore
         }
-        readinessGateRef.current = null;
-      }
+
+        if (readinessGateRef.current) {
+          readinessGateRef.current = null;
+        }
+      }, 0);
     };
   }, [initializeServices, setModelReady]);
 

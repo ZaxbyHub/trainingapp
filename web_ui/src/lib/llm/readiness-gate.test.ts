@@ -264,18 +264,35 @@ describe('readiness-gate', () => {
 
   describe('ensureReadinessGateChecked() concurrent calls', () => {
     /**
-     * The in-flight deduplication guard requires both `readinessGateInitPromise`
-     * AND `lastReadinessEngine` to match.  Because `lastReadinessEngine` is only
-     * written inside the async IIFE (after checkReadiness resolves), a truly
-     * concurrent second call arrives while `lastReadinessEngine` is still null —
-     * so it falls through and spawns its own check.
-     *
-     * Sequential calls ARE deduplicated: after the first resolves,
-     * `lastReadinessResult` is set and the second call returns the cached value
-     * immediately without invoking checkReadiness again.
-     *
-     * This test documents the actual contract of the module.
+     * The in-flight deduplication guard keys on `readinessGateInitEngine`,
+     * which is set the moment the promise is created (NOT after it resolves).
+     * Concurrent same-engine callers therefore share one in-flight promise and
+     * only one `checkReadiness` runs — no duplicate HEAD/adapter probes.
+     * (issue #21 F7/F8)
      */
+    it('deduplicates concurrent same-engine calls onto a single checkReadiness (issue #21 F7/F8)', async () => {
+      const result = makeReadinessResult();
+      // Make checkReadiness slow enough that concurrent callers arrive while
+      // it is still in-flight.
+      let resolveCheck: (v: ReturnType<typeof makeReadinessResult>) => void;
+      mockCheckReadiness.mockImplementation(
+        () => new Promise((r) => { resolveCheck = r; })
+      );
+
+      const first = ensureReadinessGateChecked('wllama');
+      const second = ensureReadinessGateChecked('wllama');
+      const third = ensureReadinessGateChecked('wllama');
+
+      // All three should resolve to the SAME underlying result.
+      resolveCheck!(result);
+      const [r1, r2, r3] = await Promise.all([first, second, third]);
+
+      expect(mockCheckReadiness).toHaveBeenCalledTimes(1);
+      expect(r1).toBe(result);
+      expect(r2).toBe(result);
+      expect(r3).toBe(result);
+    });
+
     it('returns the cached result on a sequential second call without re-checking', async () => {
       const result = makeReadinessResult();
       mockCheckReadiness.mockResolvedValue(result);

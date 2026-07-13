@@ -30,19 +30,19 @@ describe('memory-aware', () => {
       expect(getDeviceMemory()).toBe(8);
     });
 
-    test('returns 4 as conservative default when deviceMemory is undefined', () => {
+    test('returns 8 (high-capacity) when deviceMemory is undefined so the memory gate does not false-block wllama on unsupported browsers (issue #21 F4)', () => {
       mockNavigator.deviceMemory = undefined;
-      expect(getDeviceMemory()).toBe(4);
+      expect(getDeviceMemory()).toBe(8);
     });
 
-    test('returns 4 when deviceMemory is 0 or negative', () => {
+    test('returns 8 when deviceMemory is 0 (treated as unknown)', () => {
       mockNavigator.deviceMemory = 0;
-      expect(getDeviceMemory()).toBe(4);
+      expect(getDeviceMemory()).toBe(8);
     });
 
-    test('returns 4 when deviceMemory is negative', () => {
+    test('returns 8 when deviceMemory is negative (treated as unknown)', () => {
       mockNavigator.deviceMemory = -2;
-      expect(getDeviceMemory()).toBe(4);
+      expect(getDeviceMemory()).toBe(8);
     });
   });
 
@@ -80,14 +80,15 @@ describe('memory-aware', () => {
       expect(budget.availableMB).toBe(2048);
     });
 
-    test('calculates availableMB with no deviceMemory (defaults to 4GB)', () => {
+    test('calculates availableMB with no deviceMemory (defaults to 8GB high-capacity, waives overhead — issue #21 F4)', () => {
       mockNavigator.deviceMemory = undefined;
       mockNavigator.userAgent = 'Chrome/120.0.0.0';
 
       const budget = getMemoryBudget();
 
-      expect(budget.totalMB).toBe(4096);
-      expect(budget.availableMB).toBe(2048);
+      expect(budget.totalMB).toBe(8192);
+      expect(budget.browserOverheadMB).toBe(0);
+      expect(budget.availableMB).toBe(8192);
     });
   });
 
