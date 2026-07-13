@@ -1,7 +1,8 @@
 /**
  * WebLLM Service — browser-side LLM inference with WebGPU.
  *
- * Supports Llama-3.2-3B-Instruct-q4f16_1-MLC (~1.9GB) and uses OPFS for model artifact caching.
+ * Supports Llama-3.2-3B-Instruct-q4f16_1-MLC (~1.9GB) and uses the Cache Storage API
+ * (`caches.open('webllm/model')`, web-llm's default cacheType) for model artifact caching.
  * WebGPU is the only supported backend; if unavailable, the service fails fast
  * with guidance to use server API mode (per FR-015).
  */

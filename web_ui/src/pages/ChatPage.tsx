@@ -100,6 +100,20 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     const prev = prevEngineRef.current;
     prevEngineRef.current = browserEngine;
     if (mode === 'browser-local' && prev !== browserEngine) {
+      // Abort any in-flight generation on the OLD engine BEFORE disposing it,
+      // so the orchestrator loop exits cleanly (AbortError, handled silently
+      // by the IIFE catch) instead of throwing an opaque "engine disposed"
+      // error when disposeBrowserEngine nulls the singleton under it.
+      // (PR #28 PRR-010)
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      if (tokenStreamManagerRef.current) {
+        tokenStreamManagerRef.current.cancel();
+        tokenStreamManagerRef.current = null;
+      }
+      setIsLoading(false);
       disposeBrowserEngine(prev);
     }
   }, [browserEngine, mode]);

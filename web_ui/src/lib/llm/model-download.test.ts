@@ -34,6 +34,9 @@ vi.mock('./web-llm-service', () => ({
   WebLLMService: {
     getInstance: mockGetInstance,
   },
+  // model-download.ts now imports WEBLLM_DEFAULT_MODEL_ID for the size-estimate
+  // key; expose the real value so the computed Record key resolves under the mock.
+  WEBLLM_DEFAULT_MODEL_ID: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
 }));
 
 // -------------------------------------------------------------------------

@@ -19,6 +19,15 @@ export { ensureReadinessGateChecked };
 // Module-level mutable state for lazy initialization support.
 let embeddingServiceReady = false;
 let embeddingServiceInitPromise: Promise<boolean> | null = null;
+/**
+ * Module-level slot for the StrictMode-deferred destructive-cleanup timer.
+ * Kept at module scope (not a per-instance ref) so a NEW mount of the hook can
+ * cancel a dispose scheduled by a previous instance's unmount — closing the
+ * real-unmount+rapid-remount race where a per-instance ref would be null on
+ * the new instance and the old timer would fire and tear down shared
+ * singletons the new instance is using. (PR #28 PRR-004)
+ */
+let strictModeDisposeTimer: ReturnType<typeof setTimeout> | null = null;
 
 export interface ServiceInitializationState {
   isInitialized: boolean;
@@ -112,10 +121,6 @@ export const useServiceInitialization: UseServiceInitialization = ({
   const isMountedRef = useRef(true);
   const initializationStartedRef = useRef(false);
   const readinessGateRef = useRef<ModelReadinessGate | null>(null);
-  // Deferred-destructive-cleanup timer for the unmount effect, used to
-  // distinguish a real unmount from React 18 StrictMode's mount→unmount→remount
-  // dev cycle. (issue #21 F11)
-  const strictModeDisposeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Mirror of the current browser engine so the (once-registered) readiness
   // event listener can discard stale events from a previous engine selection.
   const currentEngineRef = useRef<BrowserEngine>(browserEngine);
@@ -171,13 +176,14 @@ export const useServiceInitialization: UseServiceInitialization = ({
   useEffect(() => {
     isMountedRef.current = true;
 
-    // StrictMode remount cancels any deferred destructive cleanup scheduled by
-    // the previous (StrictMode-unmount) cleanup, so services are NOT torn down
-    // during the dev mount→unmount→remount cycle. This MUST be in the effect
-    // body, not the cleanup, to actually cancel on remount. (issue #21 F11)
-    if (strictModeDisposeTimer.current !== null) {
-      clearTimeout(strictModeDisposeTimer.current);
-      strictModeDisposeTimer.current = null;
+    // StrictMode remount (or a real remount) cancels any deferred destructive
+    // cleanup scheduled by a previous instance's unmount, so shared singletons
+    // are NOT torn down while a new instance is actively using them. The slot
+    // is module-level so a new instance can cancel a prior instance's timer.
+    // (issue #21 F11, PR #28 PRR-004)
+    if (strictModeDisposeTimer !== null) {
+      clearTimeout(strictModeDisposeTimer);
+      strictModeDisposeTimer = null;
     }
 
     // Sync from module in case ensure*() was invoked by other code prior to this mount
@@ -261,12 +267,12 @@ export const useServiceInitialization: UseServiceInitialization = ({
       // torn-down services. Defer it a tick; if the effect re-runs (StrictMode
       // remount) within that window, cancel the dispose. Only a genuine, final
       // unmount proceeds past the timer. (issue #21 F11)
-      if (strictModeDisposeTimer.current !== null) {
-        clearTimeout(strictModeDisposeTimer.current);
-        strictModeDisposeTimer.current = null;
+      if (strictModeDisposeTimer !== null) {
+        clearTimeout(strictModeDisposeTimer);
+        strictModeDisposeTimer = null;
       }
-      strictModeDisposeTimer.current = setTimeout(() => {
-        strictModeDisposeTimer.current = null;
+      strictModeDisposeTimer = setTimeout(() => {
+        strictModeDisposeTimer = null;
         // Reset the init guard only on a real unmount so a StrictMode remount
         // re-runs initializeServices cleanly.
         initializationStartedRef.current = false;

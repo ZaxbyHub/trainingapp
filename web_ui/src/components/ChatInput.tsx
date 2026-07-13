@@ -119,7 +119,17 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // Enter (no Shift): send. Ctrl/Cmd+Enter also sends — the global
+      // useKeyboardShortcuts handler bails on TEXTAREA targets, so without
+      // handling Ctrl/Cmd+Enter here it would do nothing while the input is
+      // focused (the primary "send from chat input" case, AC6). The first
+      // branch already covers plain Ctrl/Cmd+Enter (shiftKey is false); the
+      // else-if extends send to Shift+Ctrl/Cmd+Enter so the modifier wins over
+      // the "Shift+Enter = newline" reading. (PR #28 PRR-002)
       if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit();
+      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         handleSubmit();
       }
@@ -129,8 +139,12 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
   const handleClear = useCallback(() => {
     setValue('');
+    // Keep the parent's draft mirror in sync so a subsequent Ctrl+Enter
+    // (global shortcut, focus outside the textarea) doesn't send stale text.
+    // (PR #28 PRR-007)
+    onDraftChange?.('');
     textareaRef.current?.focus();
-  }, []);
+  }, [onDraftChange]);
 
   const handleCancel = useCallback(() => {
     onCancel();

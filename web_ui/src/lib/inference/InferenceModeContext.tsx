@@ -104,9 +104,27 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
   const timeoutIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  // Cleanup abort controller, timeout, and mounted flag on unmount
+  // Cleanup abort controller, timeout, and mounted flag on unmount.
+  // Also listen for WebGPU context-loss recovery failures (dispatched by the
+  // watchdog's createRecoveryHandler) so the user sees a modeError instead of
+  // a silent console.error. (PR #28 PRR-003)
   useEffect(() => {
+    const handleRecoveryFailed = (event: Event) => {
+      if (!isMountedRef.current) return;
+      const detail = (event as CustomEvent<{ message?: string }>).detail || {};
+      setState((prev) => ({
+        ...prev,
+        isModelReady: false,
+        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Consider switching engines or using server mode.',
+      }));
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('webgpu-recovery-failed', handleRecoveryFailed as EventListener);
+    }
     return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('webgpu-recovery-failed', handleRecoveryFailed as EventListener);
+      }
       isMountedRef.current = false;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -181,7 +199,24 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
 
       if (response.ok) {
         if (isMountedRef.current) {
-          setState((prev) => ({ ...prev, isServerConnected: true, modeError: null }));
+          // The server is reachable. If it reports auth ENABLED and the client
+          // has no stored token, surface a modeError so the user understands
+          // sends will 401 until a token is provided — rather than reporting
+          // a clean "connected" that masks the auth gap. (PR #28 PRR-011)
+          let authEnabled = false;
+          try {
+            const status = await response.json();
+            authEnabled = !!status?.enabled;
+          } catch {
+            // Older servers may not return JSON; assume auth disabled.
+          }
+          const hasToken = (() => {
+            try { return !!sessionStorage.getItem('doc_qa_access_token'); } catch { return false; }
+          })();
+          const modeError = authEnabled && !hasToken
+            ? 'Server requires authentication. Set an API key (see PACKAGING.md) before chatting.'
+            : null;
+          setState((prev) => ({ ...prev, isServerConnected: true, modeError }));
         }
         return true;
       }

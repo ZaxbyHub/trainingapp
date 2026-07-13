@@ -8,6 +8,7 @@ import { useInferenceMode } from '../lib/inference';
 import { useTheme } from '../lib/theme';
 import { ModelDownloadManager, type DownloadProgress } from '../lib/llm/model-download';
 import { ModelReadinessGate } from '../lib/llm/model-readiness';
+import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { resetReadinessCache, ensureReadinessGateChecked } from '../lib/llm/readiness-gate';
 import { detectEngineCapability, type EngineCapability } from '../lib/llm/engine-capability';
 import { checkPackagedModels, type PackagedModelsReport } from '../lib/models/model-manifest';
@@ -66,7 +67,7 @@ async function openSettingsDatabase(): Promise<IDBDatabase> {
 async function loadSettings(): Promise<UserPreferences> {
   const defaults: UserPreferences = {
     theme: 'system',
-    preferredModel: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+    preferredModel: WEBLLM_DEFAULT_MODEL_ID,
     serverUrl: '',
   };
 
@@ -137,8 +138,8 @@ interface ModelOption {
 
 const AVAILABLE_MODELS: ModelOption[] = [
   {
-    id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
-    label: 'Llama-3.2-3B-Instruct-q4f16_1-MLC',
+    id: WEBLLM_DEFAULT_MODEL_ID,
+    label: WEBLLM_DEFAULT_MODEL_ID,
     description: 'Fast, efficient model optimized for local inference',
     sizeEstimate: '~1.9 GB',
   },
@@ -382,7 +383,7 @@ function SettingsPageInner(): React.ReactElement {
   const { theme, toggleTheme } = useTheme();
 
   // Settings state
-  const [preferredModel, setPreferredModel] = useState<string>('Llama-3.2-3B-Instruct-q4f16_1-MLC');
+  const [preferredModel, setPreferredModel] = useState<string>(WEBLLM_DEFAULT_MODEL_ID);
   const [localServerUrl, setLocalServerUrl] = useState<string>(serverUrl);
   const [themePreference, setThemePreference] = useState<'light' | 'dark' | 'system'>('system');
 

@@ -13,7 +13,7 @@
  */
 
 import { getMemoryBudget } from '../embeddings/memory-aware';
-import { WebLLMService } from './web-llm-service';
+import { WebLLMService, WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
 import { LLM_GGUF_URL, LLM_MMPROJ_URL } from '../models/model-manifest';
 import { probeAsset } from '../models/probe';
 import type { BrowserEngine } from '../../types/llm';
@@ -95,8 +95,9 @@ function getMemoryTier(availableMB: number): MemoryTier {
  * Engine-aware "is the model available for use" check.
  *
  * The two engines have different notions of availability:
- *   - webllm: the model must be DOWNLOADED into OPFS (WebLLMService cache). Until
- *     then the user must trigger a download.
+ *   - webllm: the model must be DOWNLOADED into the browser's Cache Storage
+ *     (`caches.open('webllm/model')`, web-llm's default cacheType). Until then
+ *     the user must trigger a download.
  *   - wllama: there is no separate download step — the GGUF is packaged and loads
  *     lazily on first use. "Available" therefore means the packaged GGUF is present
  *     in the build (same-origin), probed without downloading it.
@@ -196,11 +197,11 @@ export class ModelReadinessGate {
    * browser overhead via getMemoryBudget().
    *
    * @param modelId The model identifier to check memory requirements for.
-   *                Defaults to Llama-3.2-3B-Instruct-q4f16_1-MLC if not provided.
+   *                Defaults to WEBLLM_DEFAULT_MODEL_ID if not provided.
    * @param requiredBytes Optional override for the required memory threshold.
    *                      Defaults to model-specific requirement from getRequiredBytes().
    */
-  checkMemory(modelId: string = 'Llama-3.2-3B-Instruct-q4f16_1-MLC', requiredBytes?: number): MemoryCheck {
+  checkMemory(modelId: string = WEBLLM_DEFAULT_MODEL_ID, requiredBytes?: number): MemoryCheck {
     const { availableMB } = getMemoryBudget();
     const availableBytes = Math.floor(availableMB * 1024 * 1024);
     const required = requiredBytes ?? getRequiredBytes(modelId);
@@ -215,7 +216,8 @@ export class ModelReadinessGate {
   }
 
   /**
-   * Checks whether the model artifact is already present in the browser's OPFS.
+   * Checks whether the model artifact is already present in the browser's Cache
+   * Storage (webllm) or the packaged build (wllama).
    *
    * Returns true if the model is cached and ready to load without a download.
    * Returns false if the model is not cached and must be downloaded first.

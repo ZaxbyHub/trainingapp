@@ -540,7 +540,7 @@ describe('createRecoveryHandler', () => {
 
     await handler('Context lost');
 
-    expect(initSpy).toHaveBeenCalledWith('SmolLM3-3B-Q4_K_M');
+    expect(initSpy).toHaveBeenCalledWith('Llama-3.2-3B-Instruct-q4f16_1-MLC');
   });
 
   test('createRecoveryHandler throws if WebGPU unavailable after loss', async () => {
@@ -602,7 +602,7 @@ describe('createRecoveryHandler', () => {
     expect(service.initialize).toHaveBeenCalledWith('MyCustomModel-Q4');
   });
 
-  test('createRecoveryHandler defaults to SmolLM3-3B-Q4_K_M when modelId is null', async () => {
+  test('createRecoveryHandler defaults to WEBLLM_DEFAULT_MODEL_ID when modelId is null', async () => {
     // WebGPU available
     mockNvgpu.requestAdapter.mockResolvedValue(mockGpuAdapter);
 
@@ -615,7 +615,7 @@ describe('createRecoveryHandler', () => {
     const handler = createRecoveryHandler(service);
     await handler('Context lost');
 
-    expect(service.initialize).toHaveBeenCalledWith('SmolLM3-3B-Q4_K_M');
+    expect(service.initialize).toHaveBeenCalledWith('Llama-3.2-3B-Instruct-q4f16_1-MLC');
   });
 
   test('createRecoveryHandler throws when WebGPU requestAdapter throws', async () => {
