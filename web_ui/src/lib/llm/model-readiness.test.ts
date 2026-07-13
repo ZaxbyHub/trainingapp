@@ -9,6 +9,9 @@ vi.mock('../embeddings/memory-aware', () => ({
   getMemoryBudget: vi.fn<() => { totalMB: number; availableMB: number; browserOverheadMB: number }>(),
 }));
 
+// Cast the imported (mocked) function to a Mock so `.mockReturnValue` type-checks.
+const mockGetMemoryBudget = vi.mocked(getMemoryBudget);
+
 // Mock the WebLLMService module
 vi.mock('./web-llm-service', () => ({
   WebLLMService: {
@@ -94,7 +97,7 @@ describe('ModelReadinessGate', () => {
 
   describe('checkMemory', () => {
     beforeEach(() => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 8192,
         availableMB: 6144,
         browserOverheadMB: 2048,
@@ -102,7 +105,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('returns HIGH tier when availableMB >= 8192', () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 16384,
         availableMB: 14336,
         browserOverheadMB: 2048,
@@ -115,7 +118,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('returns MEDIUM tier when availableMB >= 4096 and < 8192', () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 8192,
         availableMB: 6144,
         browserOverheadMB: 2048,
@@ -127,7 +130,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('returns LOW tier when availableMB < 4096', () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 4096,
         availableMB: 2048,
         browserOverheadMB: 2048,
@@ -141,7 +144,7 @@ describe('ModelReadinessGate', () => {
     test('returns sufficient=false when memory is below required threshold', () => {
       // Default requirement is 2GB = 2_000_000_000 bytes
       // Set available to 1500MB (~1.46GB)
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 4096,
         availableMB: 1500,
         browserOverheadMB: 2048,
@@ -155,7 +158,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('returns sufficient=true when memory meets or exceeds requirement', () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 16384,
         availableMB: 14336,
         browserOverheadMB: 2048,
@@ -167,7 +170,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('uses custom requiredBytes when provided', () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 4096,
         availableMB: 3072, // 3GB available
         browserOverheadMB: 1024,
@@ -182,7 +185,7 @@ describe('ModelReadinessGate', () => {
 
     test('uses modelId to determine required bytes (SmolLM3-3B-Q4_K_M)', () => {
       // SmolLM3-3B-Q4_K_M requires 2GB
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 8192,
         availableMB: 3_000_000_000 / (1024 * 1024), // ~2862MB
         browserOverheadMB: 1024,
@@ -194,7 +197,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('uses default 2GB for unknown modelId', () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 8192,
         availableMB: 3072,
         browserOverheadMB: 1024,
@@ -206,7 +209,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('returns correct memory check structure', () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 8192,
         availableMB: 6144,
         browserOverheadMB: 2048,
@@ -289,7 +292,7 @@ describe('ModelReadinessGate', () => {
 
   describe('checkReadiness', () => {
     beforeEach(() => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 16384,
         availableMB: 14336,
         browserOverheadMB: 2048,
@@ -320,7 +323,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('returns ready=false when memory insufficient', async () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 4096,
         availableMB: 1500, // ~1.5GB available (insufficient for 2GB requirement)
         browserOverheadMB: 2048,
@@ -342,7 +345,7 @@ describe('ModelReadinessGate', () => {
       };
 
       // Mock memory sufficient
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 16384,
         availableMB: 14336,
         browserOverheadMB: 2048,
@@ -374,7 +377,7 @@ describe('ModelReadinessGate', () => {
       };
 
       // Mock memory sufficient
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 16384,
         availableMB: 14336,
         browserOverheadMB: 2048,
@@ -422,7 +425,7 @@ describe('ModelReadinessGate', () => {
     });
 
     test('recommends smaller model when memory is insufficient', async () => {
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 4096,
         availableMB: 1500, // insufficient
         browserOverheadMB: 2048,
@@ -449,7 +452,7 @@ describe('ModelReadinessGate', () => {
 
     test('handles unknown model ID with default 2GB requirement', async () => {
       // With 14GB available and 2GB required, should have sufficient memory
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 16384,
         availableMB: 14336,
         browserOverheadMB: 2048,
@@ -462,7 +465,7 @@ describe('ModelReadinessGate', () => {
 
     test('returns ready=false when both WebGPU and memory fail', async () => {
       mockGpu = undefined;
-      getMemoryBudget.mockReturnValue({
+      mockGetMemoryBudget.mockReturnValue({
         totalMB: 4096,
         availableMB: 1500,
         browserOverheadMB: 2048,

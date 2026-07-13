@@ -15,12 +15,44 @@
  *   "models missing — see packaging guide" state instead of a cryptic load failure.
  */
 
+import { probeAsset } from './probe';
+
 /**
- * Base public path (same-origin) under which all packaged models live.
- * This is also the value of Transformers.js `env.localModelPath`, so every
- * model is addressed by a path RELATIVE to it (e.g. `embeddings/bge-small-en-v1.5`).
+ * Resolve the deploy-relative base (`import.meta.env.BASE_URL`, `'./'` by
+ * default per `vite.config.ts`) into an ABSOLUTE same-origin pathname prefix.
+ *
+ * Why absolute, not relative: Transformers.js sets `env.localModelPath` to this
+ * value and `fetch`es against it, and wllama's GGUF/mmproj URLs are derived from
+ * it. A relative value like `./models` would resolve against the CURRENT client
+ * route (e.g. under `/app/chat/` it would fetch `/app/chat/models/...` — wrong).
+ * Resolving against `document.baseURI` yields the HTML document's deploy root, so
+ * `/training/` deployments produce `/training/models` while origin-root stays
+ * `/models` — identical to the old hardcoded behavior at root, correct everywhere
+ * else. `document.baseURI` is stable across client-side routing.
  */
-export const MODELS_BASE = '/models';
+function resolveAbsoluteBase(): string {
+  const baseUrl = import.meta.env.BASE_URL;
+  try {
+    // `document.baseURI` is the document's URL (the HTML location), unaffected by
+    // client-side route changes. `new URL(baseUrl, document.baseURI).pathname`
+    // normalizes './' → '/' at origin root, './' → '/training/' under a subpath.
+    const resolved = new URL(baseUrl, document.baseURI).pathname;
+    // Ensure exactly one leading slash, no trailing slash, so `${MODELS_BASE}/x`
+    // joins cleanly.
+    return `/${resolved.replace(/^\/+|\/+$/g, '')}`;
+  } catch {
+    // `document` is undefined in non-browser contexts (e.g. tests that import
+    // this module without a jsdom env). Fall back to the historical absolute path.
+    return '/';
+  }
+}
+
+/**
+ * Absolute same-origin base under which all packaged models live. Also the value
+ * of Transformers.js `env.localModelPath`, so every model is addressed by a path
+ * RELATIVE to it (e.g. `embeddings/bge-small-en-v1.5`).
+ */
+export const MODELS_BASE = `${resolveAbsoluteBase()}/models`.replace(/\/+/g, '/');
 
 /** Absolute base for embedding model files (used by the readiness gate). */
 export const EMBEDDING_MODELS_BASE = `${MODELS_BASE}/embeddings`;
@@ -101,6 +133,15 @@ export interface PackagedModelFile {
 }
 
 /**
+ * Packaging group a model belongs to. Mirrors the `group` field in
+ * `public/models/manifest.json` and drives both `validate-build.mjs` (which
+ * group to enforce / skip) and the runtime readiness gate (which groups the
+ * operator intentionally excluded for this build — see
+ * {@link EXCLUDED_MODEL_GROUPS}).
+ */
+export type PackagedModelGroup = 'core' | 'optional' | 'llm';
+
+/**
  * Declarative description of one packaged model and the files it needs.
  */
 export interface PackagedModel {
@@ -109,77 +150,76 @@ export interface PackagedModel {
   /** Human-readable name for the UI. */
   label: string;
   kind: PackagedModelKind;
+  /** Packaging group — drives validation + runtime exclusion (see {@link EXCLUDED_MODEL_GROUPS}). */
+  group: PackagedModelGroup;
   files: PackagedModelFile[];
 }
 
 /**
- * The set of models required for Phase 1 (offline embeddings + ORT runtime).
- * Phase 2 adds the LFM2-VL GGUF + mmproj entries here.
+ * Shape of `public/models/manifest.json` — the single source of truth for what
+ * must be packaged. Paths there are RELATIVE to the models dir; we prefix them
+ * with the deploy-aware absolute {@link MODELS_BASE} when building
+ * {@link PACKAGED_MODELS}. The same JSON is read by `scripts/validate-build.mjs`
+ * to gate the produced dist/, so the TS and the build validator cannot drift.
  */
-export const PACKAGED_MODELS: PackagedModel[] = [
-  {
-    id: EMBEDDING_MODEL_DIR,
-    label: 'BAAI/bge-small-en-v1.5 (embeddings)',
-    kind: 'embedding',
-    files: [
-      { path: `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/onnx/model.onnx`, required: true },
-      { path: `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/tokenizer.json`, required: true },
-      { path: `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/config.json`, required: true },
-      { path: `${EMBEDDING_MODELS_BASE}/${EMBEDDING_MODEL_DIR}/tokenizer_config.json`, required: true },
-    ],
-  },
-  {
-    id: 'onnxruntime-web',
-    label: 'ONNX Runtime (WASM)',
-    kind: 'runtime',
-    files: [
-      // Transformers.js v3 fetches the JSEP threaded-SIMD build and its ESM loader.
-      { path: `${ONNX_RUNTIME_WASM_BASE}${ONNX_RUNTIME_WASM_FILE}`, required: true },
-      { path: `${ONNX_RUNTIME_WASM_BASE}${ONNX_RUNTIME_LOADER_FILE}`, required: true },
-    ],
-  },
-  {
-    // Reranking is OPTIONAL: if these files are absent the app still runs and
-    // simply skips cross-encoder reranking (see RerankerService graceful
-    // degradation). Marked non-required so a build without it is still "ready".
-    id: RERANKER_MODEL_DIR,
-    label: 'cross-encoder/ms-marco-MiniLM-L-6-v2 (reranker, optional)',
-    kind: 'reranker',
-    files: [
-      { path: `${RERANKER_MODELS_BASE}/${RERANKER_MODEL_DIR}/onnx/model.onnx`, required: false },
-      { path: `${RERANKER_MODELS_BASE}/${RERANKER_MODEL_DIR}/tokenizer.json`, required: false },
-      { path: `${RERANKER_MODELS_BASE}/${RERANKER_MODEL_DIR}/config.json`, required: false },
-      { path: `${RERANKER_MODELS_BASE}/${RERANKER_MODEL_DIR}/tokenizer_config.json`, required: false },
-    ],
-  },
-  {
-    // wllama's WASM runtime + offline compat build. Needed for the browser
-    // 'wllama' engine, not for server/WebLLM — non-required at the aggregate
-    // level. Both the modern and compat wasm are packaged because the browser
-    // picks one at runtime based on JSPI/Memory64 support.
-    id: 'wllama-runtime',
-    label: 'wllama WASM runtime',
-    kind: 'runtime',
-    files: [
-      { path: WLLAMA_WASM_FILE, required: false },
-      { path: WLLAMA_COMPAT_WASM_URL, required: false },
-      { path: WLLAMA_COMPAT_WORKER_URL, required: false },
-    ],
-  },
-  {
-    // Browser LLM weights: LFM2-VL-1.6B (vision-language) for wllama. Engine- and
-    // mode-specific (only needed for browser 'wllama' mode), hence non-required at
-    // the aggregate level. WllamaService.initialize() HEAD-probes these before
-    // loading and fails fast with a clear message if absent.
-    id: LLM_MODEL_DIR,
-    label: 'LiquidAI LFM2-VL-1.6B (browser LLM, multimodal)',
-    kind: 'llm',
-    files: [
-      { path: LLM_GGUF_URL, required: false },
-      { path: LLM_MMPROJ_URL, required: false },
-    ],
-  },
-];
+interface ManifestFile {
+  path: string;
+  required: boolean;
+}
+interface ManifestModel {
+  id: string;
+  label: string;
+  kind: PackagedModelKind;
+  group: 'core' | 'optional' | 'llm';
+  files: ManifestFile[];
+}
+interface Manifest {
+  version: string;
+  models: ManifestModel[];
+}
+
+// Imported at build/runtime via Vite's native JSON support (resolveJsonModule).
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore -- JSON modules are resolved by Vite; the resolved shape is typed as Manifest below.
+import packagedManifestSource from '../../../public/models/manifest.json';
+const packagedManifest = packagedManifestSource as Manifest;
+
+/**
+ * Packaging groups the operator intentionally EXCLUDED from this build, so the
+ * runtime readiness gate does not report them as missing. Set at build time via
+ * the `VITE_EXCLUDE_MODEL_GROUPS` env var (a comma-separated list of group
+ * names from `manifest.json`). For example, an embeddings-only / server-mode
+ * archive built with `validate-build --no-llm` sets `VITE_EXCLUDE_MODEL_GROUPS=llm`
+ * so `checkPackagedModels()` does not flag the (deliberately absent) browser-LLM
+ * runtime + weights as missing — which would otherwise leave the UI permanently
+ * showing "models not ready" on a valid, intentional configuration.
+ *
+ * `prepare-models --no-llm` writes this value into the build env automatically.
+ */
+export const EXCLUDED_MODEL_GROUPS: ReadonlySet<PackagedModelGroup> = new Set(
+  ((import.meta.env.VITE_EXCLUDE_MODEL_GROUPS as string | undefined) ?? '')
+    .split(',')
+    .map((g) => g.trim().toLowerCase())
+    .filter((g): g is PackagedModelGroup => g === 'core' || g === 'optional' || g === 'llm')
+);
+
+/**
+ * The full packaged-model set, derived from `public/models/manifest.json` (the
+ * single source of truth) with each relative path prefixed by the deploy-aware
+ * absolute {@link MODELS_BASE}. Group tags (`core` / `optional` / `llm`) drive
+ * packaging validation (see scripts/validate-build.mjs `--no-llm`) and the
+ * runtime exclusion set ({@link EXCLUDED_MODEL_GROUPS}).
+ */
+export const PACKAGED_MODELS: PackagedModel[] = packagedManifest.models.map((m) => ({
+  id: m.id,
+  label: m.label,
+  kind: m.kind,
+  group: m.group,
+  files: m.files.map((f) => ({
+    path: `${MODELS_BASE}/${f.path}`.replace(/\/+/g, '/'),
+    required: f.required,
+  })),
+}));
 
 /** Presence result for a single packaged file. */
 export interface FilePresence {
@@ -193,14 +233,28 @@ export interface ModelReadiness {
   id: string;
   label: string;
   kind: PackagedModelKind;
-  /** True when every REQUIRED file for the model is present. */
+  group: PackagedModelGroup;
+  /**
+   * True when the model is ready to use: either every REQUIRED file is present,
+   * OR the model's group was intentionally excluded for this build
+   * ({@link EXCLUDED_MODEL_GROUPS}, e.g. the `llm` group on a `--no-llm` build).
+   */
   ready: boolean;
+  /**
+   * True when the model's group was intentionally excluded from this build, so
+   * `ready: true` reflects "not applicable" rather than "files present." The UI
+   * can use this to show the model as absent-but-expected instead of missing.
+   */
+  excluded: boolean;
   files: FilePresence[];
 }
 
 /** Aggregate readiness across all packaged models. */
 export interface PackagedModelsReport {
-  /** True when every model's required files are present. */
+  /**
+   * True when every model is ready: either its required files are present, OR
+   * its group was intentionally excluded for this build ({@link EXCLUDED_MODEL_GROUPS}).
+   */
   allReady: boolean;
   models: ModelReadiness[];
   /** Required files that are missing, for a concise "what to fix" message. */
@@ -209,24 +263,25 @@ export interface PackagedModelsReport {
 
 /**
  * A minimal fetcher signature so this is testable without a real network.
- * Defaults to the global `fetch`.
+ * Defaults to the global `fetch`. Carries an optional `contentType` so the
+ * probe can reject SPA-fallback HTML responses (see {@link probeAsset}).
  */
-export type HeadFetcher = (path: string) => Promise<{ ok: boolean }>;
+export type HeadFetcher = (path: string) => Promise<{
+  ok: boolean;
+  contentType?: string | null;
+}>;
 
 /**
  * Probe whether a packaged file exists, same-origin, without downloading it.
  *
- * We use a `HEAD` request (range-limited fallback not needed for static hosts).
- * A network error or non-2xx response counts as "not present" — for an offline
- * static archive a missing file reliably 404s.
+ * Delegates to {@link probeAsset}, which treats HTTP 200 + `Content-Type:
+ * text/html` as "not present" — that is the SPA-fallback signature (Vite
+ * dev/preview serve `index.html` with HTTP 200 for any unmatched path). A
+ * network error or non-2xx response also counts as "not present". Real model
+ * files (`.onnx`, `.wasm`, `.gguf`, `.json`) are never served as HTML.
  */
 async function probe(path: string, fetcher: HeadFetcher): Promise<boolean> {
-  try {
-    const res = await fetcher(path);
-    return res.ok;
-  } catch {
-    return false;
-  }
+  return probeAsset(path, fetcher);
 }
 
 /**
@@ -235,28 +290,53 @@ async function probe(path: string, fetcher: HeadFetcher): Promise<boolean> {
  * This does NOT load any weights — it only checks presence so the UI can render
  * a "ready vs missing" gate. Safe to call on startup.
  *
- * @param fetcher Optional fetch override (used in tests).
- * @param models  Optional model set override (used in tests / future phases).
+ * Models whose `group` is in {@link EXCLUDED_MODEL_GROUPS} (e.g. the `llm`
+ * group on a `--no-llm` embeddings-only build) are reported `ready: true` with
+ * `excluded: true` and their files are NOT probed or counted as missing — so a
+ * valid, intentional configuration is not flagged as broken.
+ *
+ * @param fetcher       Optional fetch override (used in tests).
+ * @param models        Optional model set override (used in tests / future phases).
+ * @param excludedGroups Optional override of the excluded-group set (used in tests).
  */
 export async function checkPackagedModels(
-  fetcher: HeadFetcher = (p) => fetch(p, { method: 'HEAD' }),
-  models: PackagedModel[] = PACKAGED_MODELS
+  fetcher: HeadFetcher = async (p) => {
+    const res = await fetch(p, { method: 'HEAD' });
+    return { ok: res.ok, contentType: res.headers.get('content-type') };
+  },
+  models: PackagedModel[] = PACKAGED_MODELS,
+  excludedGroups: ReadonlySet<PackagedModelGroup> = EXCLUDED_MODEL_GROUPS
 ): Promise<PackagedModelsReport> {
   const results: ModelReadiness[] = await Promise.all(
     models.map(async (model) => {
-      const files: FilePresence[] = await Promise.all(
-        model.files.map(async (f) => ({
-          path: f.path,
-          required: f.required,
-          present: await probe(f.path, fetcher),
-        }))
-      );
-      const ready = files.filter((f) => f.required).every((f) => f.present);
-      return { id: model.id, label: model.label, kind: model.kind, ready, files };
+      const isExcluded = excludedGroups.has(model.group);
+      // An excluded model's files are intentionally absent; don't probe them
+      // (avoids both wasted requests and false "missing" entries).
+      const files: FilePresence[] = isExcluded
+        ? model.files.map((f) => ({ path: f.path, required: f.required, present: false }))
+        : await Promise.all(
+            model.files.map(async (f) => ({
+              path: f.path,
+              required: f.required,
+              present: await probe(f.path, fetcher),
+            }))
+          );
+      // Excluded models are "ready" (not applicable), not missing.
+      const ready = isExcluded || files.filter((f) => f.required).every((f) => f.present);
+      return {
+        id: model.id,
+        label: model.label,
+        kind: model.kind,
+        group: model.group,
+        ready,
+        excluded: isExcluded,
+        files,
+      };
     })
   );
 
   const missing = results
+    .filter((m) => !m.excluded)
     .flatMap((m) => m.files)
     .filter((f) => f.required && !f.present)
     .map((f) => f.path);

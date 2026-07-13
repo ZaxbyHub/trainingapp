@@ -317,7 +317,7 @@ export class RAGOrchestrator {
    * Build a formatted context string from search results.
    * Each chunk is numbered and includes its text and source metadata.
    */
-  private buildContext(question: string, chunks: SearchResult[]): string {
+  private buildContext(_question: string, chunks: SearchResult[]): string {
     if (chunks.length === 0) {
       return 'No relevant context found.';
     }

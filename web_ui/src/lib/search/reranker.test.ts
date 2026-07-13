@@ -4,6 +4,42 @@
 
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RerankerService } from './reranker';
+import type { SearchResult } from '../../types/search';
+
+/**
+ * Test result fixture shape. These fixtures intentionally carry the legacy
+ * field names (`id`, `chunk_id`, `document_id`, `metadata`) used by the
+ * assertions below to verify ordering and field preservation. The production
+ * `rerank()` only reads `result.text` and spreads `...result`, so these
+ * fixtures are cast through `unknown` to {@link SearchResult} at the call
+ * site without altering their runtime shape.
+ */
+type TestResult = {
+  id: string;
+  text: string;
+  score: number;
+  chunk_id: string;
+  document_id: string;
+  metadata?: { foo: string };
+};
+
+/**
+ * Cast an array of {@link TestResult} fixtures to {@link SearchResult} for the
+ * production `rerank()` call. The cast is `unknown`-mediated because the
+ * fixtures use legacy field names; only `text` is read at runtime.
+ */
+function asSearchResults(results: TestResult[]): SearchResult[] {
+  return results as unknown as SearchResult[];
+}
+
+/**
+ * Cast a `rerank()` return value back to {@link TestResult} so legacy
+ * assertions reading `.id` continue to type-check. The production code
+ * spreads `...result`, so all fixture fields survive the round trip.
+ */
+function asTestResults(results: SearchResult[]): TestResult[] {
+  return results as unknown as TestResult[];
+}
 
 // Helper to create a callable mock with dispose
 function createMockPipeline() {
@@ -162,12 +198,12 @@ describe('RerankerService', () => {
       RerankerService.getInstance().dispose();
       const unreadyService = RerankerService.getInstance();
 
-      const results = [
+      const results: TestResult[] = [
         { id: '1', text: 'doc 1', score: 0.9, chunk_id: 'c1', document_id: 'd1' },
         { id: '2', text: 'doc 2', score: 0.8, chunk_id: 'c2', document_id: 'd1' },
       ];
 
-      const reranked = await unreadyService.rerank('query', results);
+      const reranked = asTestResults(await unreadyService.rerank('query', asSearchResults(results)));
       expect(reranked).toEqual(results);
       unreadyService.dispose();
     });
@@ -181,21 +217,21 @@ describe('RerankerService', () => {
         throw new Error('Pipeline failed');
       });
 
-      const results = [
+      const results: TestResult[] = [
         { id: '1', text: 'doc 1', score: 0.9, chunk_id: 'c1', document_id: 'd1' },
         { id: '2', text: 'doc 2', score: 0.8, chunk_id: 'c2', document_id: 'd1' },
       ];
 
-      const reranked = await service.rerank('query', results);
+      const reranked = asTestResults(await service.rerank('query', asSearchResults(results)));
       expect(reranked).toEqual(results);
     });
 
     test('returns results unchanged when query is empty', async () => {
-      const results = [
+      const results: TestResult[] = [
         { id: '1', text: 'doc 1', score: 0.9, chunk_id: 'c1', document_id: 'd1' },
       ];
 
-      const reranked = await service.rerank('', results);
+      const reranked = asTestResults(await service.rerank('', asSearchResults(results)));
       expect(reranked).toEqual(results);
     });
 
@@ -232,13 +268,13 @@ describe('RerankerService', () => {
       service = RerankerService.getInstance();
       await service.initialize();
 
-      const results = [
+      const results: TestResult[] = [
         { id: '1', text: 'doc 1', score: 0.9, chunk_id: 'c1', document_id: 'd1' },
         { id: '2', text: 'doc 2', score: 0.8, chunk_id: 'c2', document_id: 'd1' },
         { id: '3', text: 'doc 3', score: 0.7, chunk_id: 'c3', document_id: 'd1' },
       ];
 
-      const reranked = await service.rerank('query', results);
+      const reranked = asTestResults(await service.rerank('query', asSearchResults(results)));
 
       expect(reranked[0].score).toBe(0.95);
       expect(reranked[1].score).toBe(0.85);
@@ -260,13 +296,13 @@ describe('RerankerService', () => {
       service = RerankerService.getInstance();
       await service.initialize();
 
-      const results = [
+      const results: TestResult[] = [
         { id: '1', text: 'doc 1', score: 0.1, chunk_id: 'c1', document_id: 'd1' },
         { id: '2', text: 'doc 2', score: 0.2, chunk_id: 'c2', document_id: 'd1' },
         { id: '3', text: 'doc 3', score: 0.3, chunk_id: 'c3', document_id: 'd1' },
       ];
 
-      const reranked = await service.rerank('query', results);
+      const reranked = asTestResults(await service.rerank('query', asSearchResults(results)));
 
       expect(reranked[0].id).toBe('2'); // score 0.9
       expect(reranked[1].id).toBe('3'); // score 0.6
@@ -288,13 +324,13 @@ describe('RerankerService', () => {
       service = RerankerService.getInstance();
       await service.initialize();
 
-      const results = [
+      const results: TestResult[] = [
         { id: '1', text: 'doc 1', score: 0.1, chunk_id: 'c1', document_id: 'd1' },
         { id: '2', text: 'doc 2', score: 0.2, chunk_id: 'c2', document_id: 'd1' },
         { id: '3', text: 'doc 3', score: 0.3, chunk_id: 'c3', document_id: 'd1' },
       ];
 
-      const reranked = await service.rerank('query', results, 2);
+      const reranked = asTestResults(await service.rerank('query', asSearchResults(results), 2));
 
       expect(reranked).toHaveLength(2);
       expect(reranked[0].id).toBe('2');
@@ -315,12 +351,12 @@ describe('RerankerService', () => {
       service = RerankerService.getInstance();
       await service.initialize();
 
-      const results = [
+      const results: TestResult[] = [
         { id: '1', text: 'doc 1', score: 0.1, chunk_id: 'c1', document_id: 'd1' },
         { id: '2', text: 'doc 2', score: 0.2, chunk_id: 'c2', document_id: 'd1' },
       ];
 
-      const reranked = await service.rerank('query', results, 10);
+      const reranked = asTestResults(await service.rerank('query', asSearchResults(results), 10));
       expect(reranked).toHaveLength(2);
     });
 
@@ -335,7 +371,7 @@ describe('RerankerService', () => {
       service = RerankerService.getInstance();
       await service.initialize();
 
-      const results = [
+      const results: TestResult[] = [
         {
           id: '1',
           text: 'doc 1',
@@ -346,7 +382,7 @@ describe('RerankerService', () => {
         },
       ];
 
-      const reranked = await service.rerank('query', results);
+      const reranked = asTestResults(await service.rerank('query', asSearchResults(results)));
 
       expect(reranked[0]).toEqual({
         id: '1',
@@ -372,12 +408,12 @@ describe('RerankerService', () => {
       service = RerankerService.getInstance();
       await service.initialize();
 
-      const results = [
+      const results: TestResult[] = [
         { id: '1', text: '', score: 0.1, chunk_id: 'c1', document_id: 'd1' },
         { id: '2', text: 'doc 2', score: 0.2, chunk_id: 'c2', document_id: 'd1' },
       ];
 
-      const reranked = await service.rerank('query', results);
+      const reranked = asTestResults(await service.rerank('query', asSearchResults(results)));
       expect(reranked).toHaveLength(2);
     });
   });

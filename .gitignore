@@ -43,3 +43,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Agent working state (issue traces, session artifacts — not committed)
+.zcode/

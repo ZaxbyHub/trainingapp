@@ -8,7 +8,7 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import { ChatMessageBubble } from './ChatMessageBubble';
-import type { ChatMessage } from '../../types/chat';
+import type { ChatMessage } from '../types/chat';
 
 // Mock clipboard API
 const mockClipboard = {

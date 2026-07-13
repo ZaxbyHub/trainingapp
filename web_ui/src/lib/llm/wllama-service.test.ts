@@ -48,8 +48,18 @@ describe('WllamaService', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     vi.resetModules();
-    // Model presence probe (HEAD) — default: GGUF + mmproj are packaged.
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true }) as Response));
+    // Model presence probe (HEAD) — default: GGUF + mmproj are packaged. The
+    // hardened probe (src/lib/models/probe.ts) reads Content-Type to reject the
+    // SPA-fallback HTML response, so the mock must supply a non-HTML type.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        ({
+          ok: true,
+          headers: { get: () => 'application/octet-stream' },
+        }) as unknown as Response
+      )
+    );
     WllamaService = (await import('./wllama-service')).WllamaService;
   });
 
@@ -132,8 +142,10 @@ describe('WllamaService', () => {
     // Drain the stream.
     for await (const _ of svc.generate(messages)) { /* consume */ }
 
-    const passed = createChatCompletion.mock.calls.at(-1)?.[0];
-    expect(passed.messages[0].content).toEqual([
+    const passed = createChatCompletion.mock.calls.at(-1)?.[0] as
+      | { messages: Array<{ content: unknown }> }
+      | undefined;
+    expect(passed!.messages[0].content).toEqual([
       { type: 'text', text: 'What is in this image?' },
       { type: 'image', data: imgData },
     ]);

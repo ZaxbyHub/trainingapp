@@ -9,7 +9,7 @@ import type { ReadinessResult } from './model-readiness';
 // Mocks — must be declared before any dynamic import of the module under test.
 // ---------------------------------------------------------------------------
 
-const mockCheckReadiness = vi.fn<[string, string], Promise<ReadinessResult>>();
+const mockCheckReadiness = vi.fn<(modelId: string, deviceSuffix: string) => Promise<ReadinessResult>>();
 
 vi.mock('./model-readiness', () => ({
   ModelReadinessGate: vi.fn(() => ({

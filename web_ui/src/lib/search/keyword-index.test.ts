@@ -46,14 +46,20 @@ vi.stubGlobal('indexedDB', {
   })),
 });
 
+// Cast to access the private static `instance` singleton field for test setup.
+// Declared as a type (not `extends`) so the private redeclaration does not
+// trip TS2430/TS2341; the bracket access avoids the private-member check.
+type KeywordIndexTestAccess = { instance: KeywordIndex | null };
+const KeywordIndexInternals = KeywordIndex as unknown as KeywordIndexTestAccess;
+
 describe('KeywordIndex', () => {
   beforeEach(() => {
     // Reset singleton
-    KeywordIndex.instance = null;
+    KeywordIndexInternals.instance = null;
   });
 
   afterEach(() => {
-    KeywordIndex.instance?.dispose();
+    KeywordIndexInternals.instance?.dispose();
     vi.restoreAllMocks();
   });
 

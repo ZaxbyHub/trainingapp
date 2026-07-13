@@ -15,7 +15,13 @@ import { ApiClient, sanitizeDirectoryPath } from './client';
 import { ApiError } from './types';
 import { getToken } from './auth';
 
-interface TestableClient extends ApiClient {
+/**
+ * Test-only view of {@link ApiClient} exposing its private `baseUrl`/`token`
+ * fields. Declared as a standalone interface (not `extends ApiClient`) so the
+ * private-field redeclaration does not trip TS2430; the {@link asTestable}
+ * cast bridges the gap at runtime.
+ */
+interface TestableClient {
   baseUrl: string;
   token?: string;
 }

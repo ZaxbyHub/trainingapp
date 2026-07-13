@@ -61,7 +61,7 @@ describe('ErrorBoundary', () => {
 
   test('Retry button resets error state', () => {
     let throwError = true;
-    const Child = (): null => {
+    const Child = (): React.ReactElement | null => {
       if (throwError) {
         throw new Error('Child error');
       }
@@ -82,7 +82,7 @@ describe('ErrorBoundary', () => {
     // But since Child still throws, it will re-trigger the boundary
     // So we need to also stop the child from throwing
     const retryButton = screen.getByRole('button', { name: /try again/i });
-    
+
     // After clicking retry, if child still throws it will error again
     // So we stop the error first, then click retry
     throwError = false;

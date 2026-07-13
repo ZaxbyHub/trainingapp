@@ -10,7 +10,7 @@
  * `${EMBEDDING_MODELS_BASE}/bge-small-en-v1.5/`.
  */
 
-import { pipeline, type Pipeline } from '@huggingface/transformers';
+import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import type {
   EmbeddingVector,
   EmbeddingResult,
@@ -35,7 +35,9 @@ const EMBEDDING_DIMENSIONS = 384;
 export class EmbeddingService {
   private static instance: EmbeddingService | null = null;
 
-  private featureExtractor: Pipeline | null = null;
+  // Typed as the concrete pipeline so its callable/dispose surface is visible
+  // without falling back to the over-wide base `Pipeline` type.
+  private featureExtractor: FeatureExtractionPipeline | null = null;
   private modelInfo: EmbeddingModelInfo;
   private ready: boolean = false;
   private initPromise: Promise<void> | null = null;
@@ -101,9 +103,16 @@ export class EmbeddingService {
    */
   private async doInitialize(): Promise<void> {
     try {
-      // Create feature extraction pipeline
-      // Using 'feature-extraction' task for embeddings
-      this.featureExtractor = await pipeline(
+      // Create feature extraction pipeline. `pipeline()` is heavily overloaded
+      // across all tasks (TS2590 "union too complex to represent"); narrow the
+      // factory to the single signature we use so the call type-checks cleanly,
+      // then assign to the concrete field.
+      const createFeaturePipeline = pipeline as unknown as (
+        task: 'feature-extraction',
+        modelId: string,
+        options: { dtype: string; device: string }
+      ) => Promise<FeatureExtractionPipeline>;
+      this.featureExtractor = await createFeaturePipeline(
         'feature-extraction',
         MODEL_PATH,
         {

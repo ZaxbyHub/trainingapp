@@ -11,8 +11,10 @@
     "validate-build": "node scripts/validate-build.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "typecheck:all": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "validate-build:no-llm": "node scripts/validate-build.mjs --no-llm"
   },
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
@@ -34,9 +36,11 @@
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.0.0",
+    "@types/node": "^22.20.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "@webgpu/types": "^0.1.71",
     "jsdom": "^25.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",

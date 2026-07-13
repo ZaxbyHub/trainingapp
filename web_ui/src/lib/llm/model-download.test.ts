@@ -89,7 +89,7 @@ describe('ModelDownloadManager', () => {
   test('downloadModel fires onProgress callback during download with updating state', async () => {
     const manager = new ModelDownloadManager();
     const progressCallback = vi.fn();
-    
+
     // Track the progress callback passed to initialize
     let progressHandlerArg: ((payload: { progress: number; timeElapsed: number; text: string }) => void) | null = null;
     mockInitialize.mockImplementation((modelId: string, onProgress: (payload: { progress: number; timeElapsed: number; text: string }) => void) => {
@@ -101,11 +101,11 @@ describe('ModelDownloadManager', () => {
 
     // Progress callback should have been called at least once
     expect(progressCallback).toHaveBeenCalled();
-    
+
     // Should have called with downloading state initially, then complete
     const calls = progressCallback.mock.calls;
     expect(calls.length).toBeGreaterThanOrEqual(1);
-    
+
     const lastCall = calls[calls.length - 1][0];
     expect(lastCall.status).toBe('complete');
     expect(lastCall.modelId).toBe('SmolLM3-3B-Q4_K_M');
@@ -115,7 +115,7 @@ describe('ModelDownloadManager', () => {
   test('progress callback receives multiple updates as download progresses', async () => {
     const manager = new ModelDownloadManager();
     const progressCallback = vi.fn();
-    
+
     mockInitialize.mockImplementation((modelId: string, onProgress: (payload: { progress: number; timeElapsed: number; text: string }) => void) => {
       // Simulate progress events
       onProgress({ progress: 0.25, timeElapsed: 5, text: '25%' });
@@ -146,8 +146,8 @@ describe('ModelDownloadManager', () => {
       (call: unknown[]) => (call[0] as { status: DownloadStatus }).status === 'complete'
     );
     expect(completeCall).toBeDefined();
-    expect(completeCall[0].percentage).toBe(100);
-    expect(completeCall[0].bytesDownloaded).toBe(completeCall[0].totalBytes);
+    expect(completeCall![0].percentage).toBe(100);
+    expect(completeCall![0].bytesDownloaded).toBe(completeCall![0].totalBytes);
   });
 
   // -------------------------------------------------------------------------

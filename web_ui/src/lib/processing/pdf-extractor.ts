@@ -31,6 +31,10 @@ export async function extractPdfText(file: File): Promise<ExtractionResult> {
   const fileName = file.name;
   configurePdfWorker(); // idempotent — safe to call on every extraction
 
+  // Declared at function scope so the outer `finally` can always clean it up,
+  // even when parsing fails before assignment. `null` until loaded.
+  let pdf: pdfjsLib.PDFDocumentProxy | null = null;
+
   try {
     // Read file as ArrayBuffer
     const arrayBuffer = await file.arrayBuffer();
@@ -42,8 +46,6 @@ export async function extractPdfText(file: File): Promise<ExtractionResult> {
       isEvalSupported: false,
       useSystemFonts: true,
     });
-
-    let pdf: pdfjsLib.PDFDocumentProxy;
 
     try {
       pdf = await loadingTask.promise;
@@ -130,7 +132,16 @@ export async function extractPdfText(file: File): Promise<ExtractionResult> {
       stage: 'pdf' as const,
     } satisfies ExtractionError;
   } finally {
-    try { pdf.destroy(); } catch {}
+    // Only destroy when a document was actually loaded. Previously this
+    // referenced a block-scoped `pdf` that was (a) invisible here (TS2304) and
+    // (b) potentially undefined if parsing threw before assignment.
+    if (pdf) {
+      try {
+        pdf.destroy();
+      } catch {
+        // Best-effort cleanup; ignore failures during teardown.
+      }
+    }
   }
 }
 

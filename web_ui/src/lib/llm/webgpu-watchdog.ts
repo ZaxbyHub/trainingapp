@@ -53,11 +53,20 @@ export interface ContextLossInfo {
  */
 export class WebGPUWatchdog {
   private _device: GPUDevice | null = null;
-  private _onContextLost: ((reason: string) => void) | null = null;
+  private _onContextLost: ((reason: string) => void | Promise<void>) | null = null;
   private _isGeneratingCallback: (() => boolean) | null = null;
   private _monitoring = false;
   private _lastLoss: ContextLossInfo | null = null;
   private _lostEventHandler: ((event: Event) => void) | null = null;
+  /**
+   * The device typed to expose the non-standard 'lost' event listener surface.
+   * Populated in start(), cleared in stop()/dispose(). Kept separately from
+   * `_device` (the strict GPUDevice) so both add and remove use the same cast.
+   */
+  private _lostEventTarget: (GPUDevice & {
+    addEventListener(type: 'lost', listener: (ev: Event) => void): void;
+    removeEventListener(type: 'lost', listener: (ev: Event) => void): void;
+  }) | null = null;
 
   /**
    * Starts monitoring the given GPUDevice for context loss.
@@ -102,10 +111,17 @@ export class WebGPUWatchdog {
     // avoid duplicate callbacks.
     this._lostEventHandler = (event: Event) => {
       // TypeScript doesn't have perfect typing for this event; treat it generically.
-      const reason = `device.lost event: ${(event as GPUDeviceLostInfo).message ?? 'unknown'}`;
+      const reason = `device.lost event: ${(event as unknown as GPUDeviceLostInfo).message ?? 'unknown'}`;
       this._handleContextLoss(reason);
     };
-    this._device.addEventListener('lost', this._lostEventHandler);
+    // 'lost' is a non-standard but widely-shipped GPUDevice event (not in
+    // @webgpu/types' EventTarget map). Cast to a minimal listener surface.
+    const deviceWithLostEvent = this._device as GPUDevice & {
+      addEventListener(type: 'lost', listener: (ev: Event) => void): void;
+      removeEventListener(type: 'lost', listener: (ev: Event) => void): void;
+    };
+    deviceWithLostEvent.addEventListener('lost', this._lostEventHandler);
+    this._lostEventTarget = deviceWithLostEvent;
 
     console.info('[WebGPUWatchdog] Started monitoring for context loss');
   }
@@ -123,7 +139,8 @@ export class WebGPUWatchdog {
       return;
     }
 
-    this._device?.removeEventListener('lost', this._lostEventHandler);
+    this._lostEventTarget?.removeEventListener('lost', this._lostEventHandler!);
+    this._lostEventTarget = null;
     this._monitoring = false;
     this._device = null;
     this._onContextLost = null;

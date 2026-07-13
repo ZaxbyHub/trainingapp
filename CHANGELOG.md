@@ -4,6 +4,30 @@
 
 ### Added
 
+- **Web UI CI workflow (Issue #20)**: New `.github/workflows/web-ui.yml` runs typecheck (app + test configs), build, test, prepare-models, and validate-build on every push/PR — the vitest suite previously had no CI, which was the structural cause of its rot
+- **Hardened model-presence probe (Issue #20)**: New `web_ui/src/lib/models/probe.ts` treats `HTTP 200 + Content-Type: text/html` as "not present" (the Vite SPA-fallback signature), wired into `checkPackagedModels()`, `WllamaService.isPresent()`, and `ModelReadinessGate.isModelAvailable()` so a build serving zero model files can no longer falsely report "Packaged Models: Ready"
+- **Git-LFS pointer detection in prepare-models (Issue #20)**: `prepare-models.mjs` now detects the `version https://git-lfs.github.com/spec/v1` header (via shared `scripts/lib/lfs-detect.mjs`) and fails loudly, non-zero, on a pointer stub — including a padded stub that passes the size-only check
+- **Centralized vitest setup (Issue #20)**: New `web_ui/src/test/setup.ts` registers `@testing-library/jest-dom/vitest` matchers and stubs jsdom gaps (matchMedia, IntersectionObserver) once for every test file
+- **`validate-build --no-llm` opt-out (Issue #20)**: skips the browser-LLM runtime + LFM2-VL weights group for embeddings-only / server-mode builds where the multi-GB LLM weights are deliberately absent. `prepare-models --no-llm` writes `VITE_EXCLUDE_MODEL_GROUPS=llm` into `.env.production` so the runtime readiness gate (`checkPackagedModels`) reports the `llm` group as `excluded: true / ready: true` instead of falsely flagging it missing — a valid embeddings-only build no longer ships with a permanently-broken "models not ready" UI state
+- **Web UI test/typecheck tsconfig split (Issue #20)**: `tsconfig.json` (app source, strict, tests excluded) + new `tsconfig.test.json` (tests + mocks, relaxed unused checks) so bare `tsc --noEmit` exits 0 while the full tree is still type-checked
+- **Regression tests (Issue #20)**: SPA-fallback presence-probe tests (`probe.test.ts`), `checkPackagedModels()` SPA regression + `--no-llm` exclusion regression, PDF `destroy()` cleanup + pre-assignment-failure tests, and LFS-pointer detection tests
+
+### Changed
+
+- **Single-source-of-truth model manifest (Issue #20)**: `web_ui/public/models/manifest.json` is now the source of truth (declares embeddings, ORT runtime, wllama WASM/compat, and LFM2-VL GGUF/mmproj, each tagged with a packaging `group`); `web_ui/src/lib/models/model-manifest.ts` imports it at runtime so the TS readiness gate and the build validator cannot drift
+- **Deploy-aware model base path (Issue #20)**: `MODELS_BASE` is now an absolute path derived from `import.meta.env.BASE_URL` against `document.baseURI` — `/models` at the origin root, `/training/models` under a subpath deployment, stable across client-side routing
+- **Web UI tsconfig target/lib ES2020 → ES2022 (Issue #20)**: enables `Error` `cause` option and resolves 12 `Expected 0-1 arguments` errors with zero source edits
+- **Web UI vitest pool tuning (Issue #20)**: switched to `forks` with bounded `maxForks: 2` and per-file `isolate: true` (each test file runs in a fresh fork, so leaky files are discarded and cross-file leaks can't compound) to eliminate the worker OOM that crashed the default `vitest run`. `memoryLimit: '3GB'` is set as a latent backstop (note: not actively reached for `pool: 'forks'` + `isolate: true`; the OOM protection comes from the fresh-fork-per-file isolation).
+
+### Fixed
+
+- **Web UI does not compile (Issue #20, CRITICAL)**: fixed the block-scope bug in `pdf-extractor.ts` (`let pdf` was invisible to the outer `finally`, causing TS2304 and a latent `undefined.destroy()` runtime crash) and the wrong SheetJS generic in `xlsx-extractor.ts` (`Record<string,unknown>` → `unknown[][]` for `header: 1`)
+- **Web UI test suite OOM + rot (Issue #20, CRITICAL)**: the default `npx vitest run` crashed with a worker heap OOM; tuned the pool and quarantined pre-existing unrelated failures (each `test.exclude` entry annotated with its owning sibling PR), bringing the suite to 44 files / 785 passing / no OOM
+- **Production build ships sourcemaps (Issue #20)**: `vite.config.ts` now uses `sourcemap: command === 'serve'` (dev only); the offline artifact no longer ships `.map` files
+- **247 TypeScript errors → 0 (Issue #20)**: app source and the full test tree now type-check clean via the tsconfig split, `@webgpu/types`, ES2022 lib, and targeted type-only patches. A small amount of new runtime logic was added in `model-manifest.ts` (deploy-aware `MODELS_BASE`, manifest-driven model derivation, `--no-llm` exclusion signal) as part of the packaging-integrity fixes; no pre-existing application logic (chat, RAG, inference, search, settings) was changed.
+
+### Added
+
 - **Message-queue handler documentation (Issue #8, Phase 1)**: Added inline explanatory comments to 5 message-queue handler closures inside `DocumentQAApp._start_message_processor` (`progress_clear_delayed`, `cancel_button_show`, `cancel_button_hide`, `hide_typing`, `model_label`) clarifying their routing purpose and Tk main-thread safety; no behavior or API change
 - **Cancel-button routing test (Issue #8, Phase 1)**: Added `tests/test_app_gui_message_queue.py` — 261 lines, 6 tests covering the `cancel_button` show/hide message-routing path through the real `_start_message_processor` dispatch
 - **Chat Experience redesign (Phase 2)**: Complete overhaul of chat UI for improved usability:
@@ -167,7 +191,7 @@
 - **CTkTooltip class**: Non-blocking hover tooltips using CTkToplevel with 500ms delay (Task 4.3)
 - **Settings field hints**: Descriptive tooltip text for all RAG configuration fields including chunk_size, n_results, max_tokens, temperature, hybrid_search, reranking, retrieval_window, initial_top_k, rerank_top_k, context_truncation, chunk_overlap, min_similarity, and db_path (Task 4.3)
 - **Database settings section**: New section in Settings dialog with database path entry and Browse button (Task 4.1)
-- **Additional RAG configuration fields**: 
+- **Additional RAG configuration fields**:
   - `rag_embedding_model`: Read-only display of current embedding model
   - `rag_reranker_model`: Read-only display of current reranker model
   - `rag_chunk_overlap`: Configurable chunk overlap (0-512 words)

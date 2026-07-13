@@ -2,8 +2,7 @@
  * PDF Extractor Tests
  * Tests for web_ui/src/lib/processing/pdf-extractor.ts
  *
- * Framework: vitest
- * Status: SKIP - vitest not installed (no node_modules)
+ * Framework: vitest (mocks pdfjs-dist so no real PDF.js worker is required).
  */
 
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -272,6 +271,57 @@ describe('PDF Text Extraction', () => {
       await expect(extractPdfText(mockFile)).rejects.toMatchObject({
         fileName: 'unknown.pdf',
         error: expect.stringContaining('Unexpected error'),
+        stage: 'pdf',
+      });
+    });
+
+    test('calls pdf.destroy() on the happy path (resource cleanup)', async () => {
+      const destroySpy = vi.fn();
+      const { getDocument } = await import('pdfjs-dist');
+      vi.mocked(getDocument).mockImplementationOnce(() => ({
+        promise: Promise.resolve({
+          numPages: 1,
+          getPage: vi.fn().mockResolvedValue({
+            getTextContent: vi.fn().mockResolvedValue({ items: [{ str: 'cleanup me' }] }),
+            cleanup: vi.fn(),
+          }),
+          destroy: destroySpy,
+        }),
+      }) as any);
+
+      const mockFile = {
+        name: 'cleanup.pdf',
+        type: 'application/pdf',
+        size: 4,
+        arrayBuffer: async () => new ArrayBuffer(4),
+      } as unknown as File;
+
+      await extractPdfText(mockFile);
+      // Regression guard: the outer finally must destroy the loaded document.
+      // Guards against the `if (pdf)` guard being silently inverted to `if (!pdf)`.
+      expect(destroySpy).toHaveBeenCalledTimes(1);
+    });
+
+    test('does NOT throw in finally when parsing fails before pdf is assigned', async () => {
+      // Regression for issue #20 finding #1: the outer finally referenced a
+      // block-scoped `pdf` that was undefined when getDocument() rejected. The
+      // fix guards with `if (pdf)`; this test proves no secondary
+      // "Cannot read properties of undefined (reading 'destroy')" leaks out.
+      const { getDocument } = await import('pdfjs-dist');
+      vi.mocked(getDocument).mockImplementationOnce(() => ({
+        promise: Promise.reject(new Error('Invalid PDF structure')),
+      }) as any);
+
+      const mockFile = {
+        name: 'preassign-fail.pdf',
+        type: 'application/pdf',
+        size: 4,
+        arrayBuffer: async () => new ArrayBuffer(4),
+      } as unknown as File;
+
+      // Should reject with the parse ExtractionError, NOT a TypeError from finally.
+      await expect(extractPdfText(mockFile)).rejects.toMatchObject({
+        fileName: 'preassign-fail.pdf',
         stage: 'pdf',
       });
     });

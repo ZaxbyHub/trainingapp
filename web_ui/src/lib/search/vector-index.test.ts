@@ -37,7 +37,7 @@ vi.mock('edgevec', () => {
   });
 
   // Copy static methods to the constructor
-  (MockEdgeVecConstructor as { load: typeof mockLoadStaticFn }).load = mockLoadStaticFn;
+  (MockEdgeVecConstructor as unknown as { load: typeof mockLoadStaticFn }).load = mockLoadStaticFn;
 
   // EdgeVecConfig mock - exported as named export (must use regular function, not arrow, for 'new' to work)
   const MockEdgeVecConfig = vi.fn().mockImplementation(function(this: { dimensions: number; metric: string; ef_search: number; ef_construction: number; m: number; m0: number; free: ReturnType<typeof vi.fn> }, dimensions: number) {
@@ -71,8 +71,8 @@ describe('VectorIndex', () => {
     const edgevec = await import('edgevec');
     (edgevec.default as ReturnType<typeof vi.fn>).mockReset();
     (edgevec.default as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
-    (edgevec.load as ReturnType<typeof vi.fn>).mockReset();
-    (edgevec.load as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load.mockReset();
+    (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load.mockResolvedValue(null);
 
     // Reset methods on the EXISTING mock instance (don't replace the object!)
     // This ensures this.index still references the same mock object
@@ -181,7 +181,7 @@ describe('VectorIndex', () => {
 
       // Mock static load to succeed
       const edgevec = await import('edgevec');
-      (edgevec.load as ReturnType<typeof vi.fn>).mockResolvedValue(loadedIndex);
+      (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load.mockResolvedValue(loadedIndex);
 
       // Spy on the instance's loadMapping to track call order
       const loadMappingSpy = vi.spyOn(instance as unknown as { loadMapping: () => Promise<void> }, 'loadMapping');
@@ -225,7 +225,7 @@ describe('VectorIndex', () => {
 
       // Mock static load to succeed but make loadMapping fail
       const edgevec = await import('edgevec');
-      (edgevec.load as ReturnType<typeof vi.fn>).mockResolvedValue(loadedIndex);
+      (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load.mockResolvedValue(loadedIndex);
 
       // Spy on the instance's loadMapping to make it throw
       const originalLoadMapping = (instance as unknown as { loadMapping: () => Promise<void> }).loadMapping.bind(instance);
