@@ -6,9 +6,9 @@ import { AppLayout } from './layouts/AppLayout';
 import { ChatPage } from './pages/ChatPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useServiceInitialization } from './hooks/useServiceInitialization';
 import { useConversations } from './hooks/useConversations';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
@@ -79,7 +79,7 @@ function LoadingOverlay({
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('chat');
-  const { setModelReady, setModelLoadingProgress } = useInferenceMode();
+  const { setModelReady, setModelLoadingProgress, browserEngine } = useInferenceMode();
 
   const {
     conversations,
@@ -100,11 +100,21 @@ function AppContent() {
   const { isInitialized, initError, currentStep } = useServiceInitialization({
     setModelReady,
     setModelLoadingProgress,
+    browserEngine,
   });
 
-  useKeyboardShortcuts({
-    onOpenSettings: () => setCurrentPage('settings'),
-  });
+  const openSettings = () => setCurrentPage('settings');
+
+  // Global Ctrl+, (Open Settings) shortcut, registered here so it works from
+  // every page (Documents, Settings, Chat), not just while ChatPage is mounted.
+  // ChatPage additionally registers its own useKeyboardShortcuts for the
+  // chat-scoped send/clear-chat shortcuts, and also wires the same
+  // `openSettings` callback for its model-blocked overlay's "Open Settings"
+  // button and its own Ctrl+, handling. When the user is on the Chat page,
+  // both this hook and ChatPage's hook receive the Ctrl+, keydown and both
+  // call `openSettings`, but `setCurrentPage('settings')` is idempotent when
+  // called twice with the same value, so the double-firing is harmless.
+  useKeyboardShortcuts({ onOpenSettings: openSettings });
 
   if (!isInitialized) {
     return (
@@ -125,6 +135,7 @@ function AppContent() {
             onMessagesChange={setCurrentMessages}
             onSaveConversation={saveMessages}
             onNewChat={newChat}
+            onOpenSettings={openSettings}
           />
         );
       case 'documents':
@@ -138,6 +149,7 @@ function AppContent() {
             onMessagesChange={setCurrentMessages}
             onSaveConversation={saveMessages}
             onNewChat={newChat}
+            onOpenSettings={openSettings}
           />
         );
     }

@@ -153,6 +153,7 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // The header has zIndex: 101
@@ -198,6 +199,7 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Even with the blocking overlay displayed, the toggle in header should be accessible
@@ -234,6 +236,7 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // Start streaming by sending a message
@@ -335,6 +338,7 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  onOpenSettings={() => {}}
 />);
 
       // The model loading overlay should be shown

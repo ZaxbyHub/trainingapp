@@ -154,7 +154,20 @@ export class TokenStreamManager {
     // Reset cancelled flag so new stream can receive tokens
     this.cancelled = false;
 
-    const consumer = new SSEStreamConsumer(url, body, token);
+    // The SSEStreamConsumer constructor validates the URL synchronously and can
+    // throw BEFORE the done/error callbacks are wired. Wrap setup so any throw
+    // is routed through this.error() (which fires the registered onError,
+    // letting the UI reach a terminal state instead of wedging the send
+    // pipeline). (issue #21 F5)
+    let consumer: SSEStreamConsumer;
+    try {
+      consumer = new SSEStreamConsumer(url, body, token);
+    } catch (err) {
+      this.error(err instanceof Error ? err.message : String(err));
+      // Re-throw to preserve the synchronous contract; callers that care wrap
+      // their own try/catch (ChatPage's API branch does, routing to onError).
+      throw err;
+    }
 
     consumer.onToken((token) => {
       this.pushToken(token);

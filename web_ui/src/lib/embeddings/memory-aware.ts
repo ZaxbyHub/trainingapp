@@ -19,15 +19,24 @@ export interface ModelTierConfig {
 export type MemoryPressureStatus = 'normal' | 'moderate' | 'critical';
 
 /**
- * Returns device memory from navigator.deviceMemory API
- * Falls back to 4GB conservative default for browsers without support (Firefox, Safari)
+ * Returns device memory from navigator.deviceMemory API.
+ *
+ * Falls back to 8GB (the Chrome privacy cap) for browsers that don't expose
+ * navigator.deviceMemory (Firefox, Safari). This is intentional: returning a
+ * low conservative value caused the memory budget arithmetic to subtract
+ * browser overhead down below the model requirement, hard-blocking the CPU
+ * wllama engine — the engine that exists precisely for WebGPU-less / memory
+ * constrained machines. Treating unknown as high-capacity waives the overhead
+ * subtraction (see getMemoryBudget's isHighCapacity branch) and lets the model
+ * gate decide on its own merits instead of false-blocking on unknown hardware.
+ * (issue #21 F4)
  */
 export function getDeviceMemory(): number {
   const deviceMemory = (navigator as { deviceMemory?: number }).deviceMemory;
   if (typeof deviceMemory === 'number' && deviceMemory > 0) {
     return deviceMemory;
   }
-  return 4;
+  return 8;
 }
 
 /**

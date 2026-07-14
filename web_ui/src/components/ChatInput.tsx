@@ -19,6 +19,9 @@ interface ChatInputProps {
   imageUploadEnabled?: boolean;
   /** Max images attachable to a single message. */
   maxImages?: number;
+  /** Notifies the parent of the current draft text so a global shortcut
+   *  (Ctrl+Enter) can send it without owning the input state. */
+  onDraftChange?: (text: string) => void;
 }
 
 const MAX_HEIGHT = 150;
@@ -31,6 +34,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   disabled = false,
   imageUploadEnabled = false,
   maxImages = 3,
+  onDraftChange,
 }) => {
   const [value, setValue] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
@@ -65,6 +69,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
       onSend(trimmed);
     }
     setValue('');
+    onDraftChange?.('');
     setImages([]);
     setAttachError(null);
 
@@ -114,7 +119,17 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // Enter (no Shift): send. Ctrl/Cmd+Enter also sends — the global
+      // useKeyboardShortcuts handler bails on TEXTAREA targets, so without
+      // handling Ctrl/Cmd+Enter here it would do nothing while the input is
+      // focused (the primary "send from chat input" case, AC6). The first
+      // branch already covers plain Ctrl/Cmd+Enter (shiftKey is false); the
+      // else-if extends send to Shift+Ctrl/Cmd+Enter so the modifier wins over
+      // the "Shift+Enter = newline" reading. (PR #28 PRR-002)
       if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSubmit();
+      } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         handleSubmit();
       }
@@ -124,8 +139,12 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
   const handleClear = useCallback(() => {
     setValue('');
+    // Keep the parent's draft mirror in sync so a subsequent Ctrl+Enter
+    // (global shortcut, focus outside the textarea) doesn't send stale text.
+    // (PR #28 PRR-007)
+    onDraftChange?.('');
     textareaRef.current?.focus();
-  }, []);
+  }, [onDraftChange]);
 
   const handleCancel = useCallback(() => {
     onCancel();
@@ -227,7 +246,11 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setValue(next);
+              onDraftChange?.(next);
+            }}
             onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}

@@ -189,3 +189,23 @@ handler, accept an optional `image_base64` on the `/ask` request, and route
 multimodal turns through `create_chat_completion` with `image_url` content.
 Until that is verified end-to-end, server mode answers text-only and multimodal
 runs in the browser.
+
+## 8. Server authentication (opt-in)
+
+The API server (`api_server.py`) authentication is **off by default** — the
+`ENABLE_AUTH` environment variable defaults to `false`, in which case
+`require_auth()` allows all requests. The web UI runs unauthenticated in this
+default configuration: the chat streaming path passes an `Authorization: Bearer
+<token>` header **only** when a token is present in `sessionStorage` under the
+key `doc_qa_access_token`, and no token is stored unless a login flow sets one.
+
+To enable authentication:
+1. On the server: set `ENABLE_AUTH=true` and `API_KEY=<your-key>` (also consider
+   `JWT_SECRET` and `JWT_EXPIRATION_HOURS` — see `auth.py`).
+2. On the client: a token must be stored in `sessionStorage['doc_qa_access_token']`.
+   A first-party login UI (calling `login(apiKey)` in `web_ui/src/lib/api/auth.ts`)
+   is intentionally deferred; until it ships, an operator scripting a pre-authed
+   client can set that `sessionStorage` key directly.
+
+The `ApiClient` (non-streaming requests) and the SSE streaming path both honor
+the stored token, so server mode works uniformly in either auth configuration.

@@ -127,6 +127,7 @@ describe('useServiceInitialization', () => {
         const { isInitialized, currentStep } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return (
           <div>
@@ -157,6 +158,7 @@ describe('useServiceInitialization', () => {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <div>Test</div>;
       }
@@ -187,6 +189,7 @@ describe('useServiceInitialization', () => {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <div>Test</div>;
       }
@@ -213,6 +216,7 @@ describe('useServiceInitialization', () => {
         const { currentStep } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <span data-testid="step">{currentStep}</span>;
       }
@@ -235,6 +239,7 @@ describe('useServiceInitialization', () => {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <div>Test</div>;
       }
@@ -264,6 +269,7 @@ describe('useServiceInitialization', () => {
         const { isInitialized, initError } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return (
           <div>
@@ -306,6 +312,7 @@ describe('useServiceInitialization', () => {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <div>Test</div>;
       }
@@ -336,6 +343,7 @@ describe('useServiceInitialization', () => {
         const { servicesReady } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <span data-testid="webgpu">{String(servicesReady.webgpuAvailable)}</span>;
       }
@@ -360,6 +368,7 @@ describe('useServiceInitialization', () => {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <div>Test</div>;
       }
@@ -372,6 +381,13 @@ describe('useServiceInitialization', () => {
       });
 
       unmount();
+
+      // Destructive dispose is deferred via setTimeout(0) so React 18 StrictMode's
+      // mount→unmount→remount cycle doesn't tear down services on the first
+      // (immediate) unmount (issue #21 F11). Flush the timer before asserting.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
 
       expect(mockVectorIndex.dispose).toHaveBeenCalled();
       expect(mockKeywordIndex.dispose).toHaveBeenCalled();
@@ -389,6 +405,7 @@ describe('useServiceInitialization', () => {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <div>Test</div>;
       }
@@ -400,6 +417,10 @@ describe('useServiceInitialization', () => {
       });
 
       expect(() => unmount()).not.toThrow();
+      // Flush the deferred (StrictMode-safe) cleanup so the no-dispose path runs.
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
     });
   });
 
@@ -410,6 +431,7 @@ describe('useServiceInitialization', () => {
         const { isInitialized } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <span data-testid="initialized">{String(isInitialized)}</span>;
       }
@@ -435,6 +457,7 @@ describe('useServiceInitialization', () => {
         const { currentStep } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <span data-testid="step">{currentStep}</span>;
       }
@@ -465,6 +488,7 @@ describe('useServiceInitialization', () => {
         const { servicesReady } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return (
           <div>
@@ -505,6 +529,7 @@ describe('useServiceInitialization', () => {
         const { servicesReady } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <span data-testid="embeddings">{String(servicesReady.embeddings)}</span>;
       }
@@ -546,6 +571,7 @@ describe('useServiceInitialization', () => {
         const { servicesReady } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return (
           <div>
@@ -588,6 +614,7 @@ describe('useServiceInitialization', () => {
         const { servicesReady } = useServiceInitialization({
           setModelReady: mockSetModelReady,
           setModelLoadingProgress: mockSetModelLoadingProgress,
+          browserEngine: "wllama",
         });
         return <span data-testid="embeddings">{String(servicesReady.embeddings)}</span>;
       }

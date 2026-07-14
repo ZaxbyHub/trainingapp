@@ -7,6 +7,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import type { BrowserEngine } from '../../types/llm';
 import type { RAGPreset } from '../rag/rag-presets';
 import { DEFAULT_RAG_PRESET } from '../rag/rag-presets';
+import { disposeBrowserEngine } from '../llm/llm-factory';
+import { getToken } from '../api/auth';
 
 export type InferenceMode = 'browser-local' | 'api';
 
@@ -104,9 +106,27 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
   const timeoutIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  // Cleanup abort controller, timeout, and mounted flag on unmount
+  // Cleanup abort controller, timeout, and mounted flag on unmount.
+  // Also listen for WebGPU context-loss recovery failures (dispatched by the
+  // watchdog's createRecoveryHandler) so the user sees a modeError instead of
+  // a silent console.error. (PR #28 PRR-003)
   useEffect(() => {
+    const handleRecoveryFailed = (event: Event) => {
+      if (!isMountedRef.current) return;
+      const detail = (event as CustomEvent<{ message?: string }>).detail || {};
+      setState((prev) => ({
+        ...prev,
+        isModelReady: false,
+        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Consider switching engines or using server mode.',
+      }));
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('webgpu-recovery-failed', handleRecoveryFailed as EventListener);
+    }
     return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('webgpu-recovery-failed', handleRecoveryFailed as EventListener);
+      }
       isMountedRef.current = false;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -125,13 +145,31 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
     });
   }, []);
 
+  // Dispose the OLD engine heap here (not in ChatPage) because this context is
+  // mounted for the app's entire lifetime, above the page switch in App.tsx —
+  // it survives ChatPage unmount/remount, unlike a ChatPage-local ref, which
+  // gets re-seeded to the already-new value on every remount and permanently
+  // skips disposal (issue #21 F-LEAK). Read `state.browserEngine` directly
+  // (not via the setState updater) so the comparison uses the CURRENT value
+  // at call time — the dependency array below keeps this callback fresh
+  // whenever it changes, so there is no stale-closure risk. Dispose whenever
+  // the engine PREFERENCE is actually changing, regardless of the CURRENT
+  // mode: a user can change this preference from SettingsPage's "Browser
+  // Engine" control while in 'api' mode (that section isn't mode-gated), and
+  // the previously-warm engine — kept alive across a mode switch to 'api' for
+  // fast switching back — would otherwise never be matched against again once
+  // `state.browserEngine` moves past it, leaking it forever (Stage B review,
+  // issue #21 F-LEAK follow-up).
   const setBrowserEngine = useCallback((browserEngine: BrowserEngine) => {
+    if (state.browserEngine !== browserEngine) {
+      disposeBrowserEngine(state.browserEngine);
+    }
     setState((prev) => {
       const next = { ...prev, browserEngine, isModelReady: false, modelLoadingProgress: 0 };
       persistState(prev.mode, prev.serverUrl, browserEngine, prev.ragPreset);
       return next;
     });
-  }, []);
+  }, [state.browserEngine]);
 
   const setRagPreset = useCallback((ragPreset: RAGPreset) => {
     setState((prev) => {
@@ -181,7 +219,22 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
 
       if (response.ok) {
         if (isMountedRef.current) {
-          setState((prev) => ({ ...prev, isServerConnected: true, modeError: null }));
+          // The server is reachable. If it reports auth ENABLED and the client
+          // has no stored token, surface a modeError so the user understands
+          // sends will 401 until a token is provided — rather than reporting
+          // a clean "connected" that masks the auth gap. (PR #28 PRR-011)
+          let authEnabled = false;
+          try {
+            const status = await response.json();
+            authEnabled = !!status?.enabled;
+          } catch {
+            // Older servers may not return JSON; assume auth disabled.
+          }
+          const hasToken = !!getToken();
+          const modeError = authEnabled && !hasToken
+            ? 'Server requires authentication. Contact your administrator — see PACKAGING.md for setup.'
+            : null;
+          setState((prev) => ({ ...prev, isServerConnected: true, modeError }));
         }
         return true;
       }
@@ -213,6 +266,18 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
       }
     }
   }, [state.serverUrl]);
+
+  // On boot, if the persisted mode is 'api', proactively check connectivity so
+  // the user doesn't see a stale "Server not connected" warning until they
+  // manually toggle or open Settings. Runs once per mount. (issue #21 F11)
+  const bootConnectivityCheckedRef = useRef(false);
+  useEffect(() => {
+    if (bootConnectivityCheckedRef.current) return;
+    bootConnectivityCheckedRef.current = true;
+    if (state.mode === 'api') {
+      void checkServerConnectivity();
+    }
+  }, [checkServerConnectivity, state.mode]);
 
   const setModelReady = useCallback((ready: boolean) => {
     setState((prev) => ({

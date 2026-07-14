@@ -41,10 +41,15 @@ describe('SSEStreamConsumer', () => {
   }
 
   // Helper to flush microtasks for async start() processing.
-  // Single deterministic microtask yield using queueMicrotask (replaces brittle
+  // Deterministic microtask yields using queueMicrotask (replaces brittle
   // setTimeout(0) loop which had no guarantee of draining under CI load).
+  // Honors `times`: each call awaits one additional microtask tick, since a
+  // single tick is not always enough to drain chained promise resolutions
+  // (e.g. fetch() resolving -> reader.read() resolving -> callback dispatch).
   async function flushMicrotasks(times = 2): Promise<void> {
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    for (let i = 0; i < times; i++) {
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    }
   }
 
   describe('Constructor', () => {
@@ -89,72 +94,80 @@ describe('SSEStreamConsumer', () => {
       );
     });
 
-    it('rejects localhost', () => {
-      expect(() => new SSEStreamConsumer('http://localhost:8000/ask', {})).toThrow(
-        ApiError
-      );
-      expect(() => new SSEStreamConsumer('http://localhost/ask', {})).toThrow(
-        ApiError
-      );
+    // The URL validator intentionally PERMITS loopback, link-local, private/LAN
+    // and .local hostnames: this is a self-hosted client-side app whose
+    // realistic server URL is a LAN box (or localhost for local dev). SSRF
+    // defense belongs on the server. Only dangerous schemes and the cloud
+    // metadata endpoint remain blocked. (issue #21 F5)
+    it('allows localhost (self-hosted / local dev server)', () => {
+      expect(() => new SSEStreamConsumer('http://localhost:8000/ask', {})).not.toThrow();
+      expect(() => new SSEStreamConsumer('http://localhost/ask', {})).not.toThrow();
     });
 
-    it('rejects 127.0.0.1', () => {
-      expect(() =>
-        new SSEStreamConsumer('http://127.0.0.1:8000/ask', {})
-      ).toThrow(ApiError);
+    it('allows 127.0.0.1 (loopback dev server)', () => {
+      expect(() => new SSEStreamConsumer('http://127.0.0.1:8000/ask', {})).not.toThrow();
     });
 
-    it('rejects ::1 (IPv6 loopback)', () => {
-      expect(() =>
-        new SSEStreamConsumer('http://[::1]:8000/ask', {})
-      ).toThrow(ApiError);
+    it('allows ::1 (IPv6 loopback)', () => {
+      expect(() => new SSEStreamConsumer('http://[::1]:8000/ask', {})).not.toThrow();
     });
 
-    it('rejects IPv6 link-local fe80::/10', () => {
-      expect(() => new SSEStreamConsumer('http://[fe80::1]/api', {})).toThrow(ApiError);
-      expect(() => new SSEStreamConsumer('http://[fe80::2]/api', {})).toThrow(ApiError);
+    // General fe80::/10 link-local addresses are allowed (LAN use), EXCEPT
+    // the specific metadata-equivalent address fe80::a9fe:a9fe — see the
+    // dedicated metadata-IPv6 test below. (issue #21 F-IPV6-METADATA-GAP)
+    it('allows IPv6 link-local fe80::/10', () => {
+      expect(() => new SSEStreamConsumer('http://[fe80::1]/api', {})).not.toThrow();
+      expect(() => new SSEStreamConsumer('http://[fe80::2]/api', {})).not.toThrow();
     });
 
-    it('rejects 169.254.169.254 (cloud metadata)', () => {
+    it('rejects 169.254.169.254 (cloud metadata — cred-exfil target)', () => {
       expect(() =>
         new SSEStreamConsumer('http://169.254.169.254/latest', {})
       ).toThrow(ApiError);
     });
 
-    it('rejects 10.x.x.x private range', () => {
+    // The metadata block must also catch IPv6 encodings of the same address:
+    // the IPv6 link-local form used by some cloud metadata services
+    // (169.254.169.254 == a9fe:a9fe in hex) and the IPv4-mapped-IPv6 form.
+    // This is a narrow carve-out from the general fe80:: allowance above —
+    // only this specific address is blocked. (issue #21 F-IPV6-METADATA-GAP)
+    it('rejects fe80::a9fe:a9fe (IPv6 link-local encoding of the cloud metadata address)', () => {
       expect(() =>
-        new SSEStreamConsumer('http://10.0.0.1/internal', {})
+        new SSEStreamConsumer('http://[fe80::a9fe:a9fe]/latest', {})
       ).toThrow(ApiError);
     });
 
-    it('rejects 172.16-31.x.x private range', () => {
+    it('rejects ::ffff:169.254.169.254 (IPv4-mapped-IPv6 form of the cloud metadata address)', () => {
       expect(() =>
-        new SSEStreamConsumer('http://172.16.0.1/internal', {})
-      ).toThrow(ApiError);
-      expect(() =>
-        new SSEStreamConsumer('http://172.31.255.255/internal', {})
+        new SSEStreamConsumer('http://[::ffff:169.254.169.254]/latest', {})
       ).toThrow(ApiError);
     });
 
-    it('rejects 192.168.x.x private range', () => {
-      expect(() =>
-        new SSEStreamConsumer('http://192.168.1.1/internal', {})
-      ).toThrow(ApiError);
+    it('allows 10.x.x.x private range (LAN deployment)', () => {
+      expect(() => new SSEStreamConsumer('http://10.0.0.1/internal', {})).not.toThrow();
     });
 
-    it('rejects *.local hostnames', () => {
-      expect(() =>
-        new SSEStreamConsumer('http://api.local/ask', {})
-      ).toThrow(ApiError);
-      expect(() =>
-        new SSEStreamConsumer('http://myapp.local/ask', {})
-      ).toThrow(ApiError);
+    it('allows 172.16-31.x.x private range (LAN deployment)', () => {
+      expect(() => new SSEStreamConsumer('http://172.16.0.1/internal', {})).not.toThrow();
+      expect(() => new SSEStreamConsumer('http://172.31.255.255/internal', {})).not.toThrow();
     });
 
-    it('rejects 0.0.0.0', () => {
-      expect(() => new SSEStreamConsumer('http://0.0.0.0/ask', {})).toThrow(
-        ApiError
-      );
+    it('allows 192.168.x.x private range (LAN deployment)', () => {
+      expect(() => new SSEStreamConsumer('http://192.168.1.1/internal', {})).not.toThrow();
+    });
+
+    it('allows *.local hostnames (mDNS LAN hosts)', () => {
+      expect(() => new SSEStreamConsumer('http://api.local/ask', {})).not.toThrow();
+      expect(() => new SSEStreamConsumer('http://myapp.local/ask', {})).not.toThrow();
+    });
+
+    it('allows 0.0.0.0', () => {
+      expect(() => new SSEStreamConsumer('http://0.0.0.0/ask', {})).not.toThrow();
+    });
+
+    it('allows a realistic LAN server URL', () => {
+      expect(() => new SSEStreamConsumer('http://192.168.1.10:8000/ask/stream', {})).not.toThrow();
+      expect(() => new SSEStreamConsumer('http://10.0.0.5/ask', {})).not.toThrow();
     });
 
     it('allows relative same-origin paths', () => {
@@ -369,6 +382,49 @@ describe('SSEStreamConsumer', () => {
 
       expect(errorCallback).not.toHaveBeenCalled();
     });
+
+    it('synthesizes an error when the stream closes without a done/error event (issue #21 F6)', async () => {
+      const errorCallback = vi.fn();
+      consumer.onError(errorCallback);
+
+      // Server sends a token but closes WITHOUT a terminal `done` SSE payload.
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"token":"hi"}\n'));
+          controller.close();
+        },
+      });
+      mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+
+      consumer.start();
+      await flushMicrotasks(3);
+
+      expect(errorCallback).toHaveBeenCalledTimes(1);
+      expect(errorCallback).toHaveBeenCalledWith('Stream ended without a completion signal');
+    });
+
+    it('does NOT synthesize a close error when a done event was emitted (issue #21 F6)', async () => {
+      const doneCallback = vi.fn();
+      const errorCallback = vi.fn();
+      consumer.onDone(doneCallback);
+      consumer.onError(errorCallback);
+
+      // Server closes cleanly AFTER a done payload — no synthetic error.
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"token":"hi"}\n'));
+          controller.enqueue(encoder.encode('data: {"sources":[],"context_length":2,"inference_time":1}\n'));
+          controller.close();
+        },
+      });
+      mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+
+      consumer.start();
+      await flushMicrotasks(3);
+
+      expect(doneCallback).toHaveBeenCalledTimes(1);
+      expect(errorCallback).not.toHaveBeenCalled();
+    });
   });
 
   describe('processLine (tested via start + mocked stream)', () => {
@@ -499,11 +555,15 @@ describe('SSEStreamConsumer', () => {
       freshConsumer.start();
       await flushMicrotasks(3);
 
+      // No token emitted (the event: line produces no data). The stream closed
+      // without a terminal done/error SSE event, so the F6 end-of-stream
+      // fallback synthesizes an error completion — the intended behavior.
       expect(tcb).not.toHaveBeenCalled();
-      expect(ecb).not.toHaveBeenCalled();
+      expect(ecb).toHaveBeenCalledTimes(1);
+      expect(ecb).toHaveBeenCalledWith('Stream ended without a completion signal');
     });
 
-    it('handles malformed JSON gracefully without throwing or emitting', async () => {
+    it('handles malformed JSON gracefully without throwing or emitting (synthesizes close error — issue #21 F6)', async () => {
       const errorCallback = vi.fn();
       consumer.onError(errorCallback);
 
@@ -518,7 +578,10 @@ describe('SSEStreamConsumer', () => {
       consumer.start();
       await flushMicrotasks(3);
 
-      expect(errorCallback).not.toHaveBeenCalled();
+      // Malformed JSON does not throw; the stream closed without a terminal
+      // event, so the F6 fallback synthesizes the close error.
+      expect(errorCallback).toHaveBeenCalledTimes(1);
+      expect(errorCallback).toHaveBeenCalledWith('Stream ended without a completion signal');
     });
   });
 

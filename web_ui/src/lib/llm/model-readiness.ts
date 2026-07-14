@@ -13,7 +13,7 @@
  */
 
 import { getMemoryBudget } from '../embeddings/memory-aware';
-import { WebLLMService } from './web-llm-service';
+import { WebLLMService, WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
 import { LLM_GGUF_URL, LLM_MMPROJ_URL } from '../models/model-manifest';
 import { probeAsset } from '../models/probe';
 import type { BrowserEngine } from '../../types/llm';
@@ -62,11 +62,15 @@ export interface ReadinessResult {
 }
 
 /**
- * Default model requirements.
- * Llama-3.2-3B-Instruct-q4f16_1-MLC: ~1.9 GB model weights + ~300 MB working memory ≈ 2.3 GB total.
+ * Per-model memory requirements (weights + working memory).
+ * Keep sized to the ACTUAL model being loaded, not a one-size-fits-all default,
+ * so the gate doesn't false-block a small model (issue #21 F4).
  */
 const MODEL_REQUIRED_BYTES: Record<string, number> = {
+  // Llama-3.2-3B (WebLLM): ~1.9 GB weights + ~300 MB working ≈ 2.3 GB.
   'Llama-3.2-3B-Instruct-q4f16_1-MLC': 2_300_000_000,
+  // LFM2-VL-1.6B Q4_K_M (wllama): ~1 GB GGUF + ~500 MB WASM/ctx working memory.
+  'lfm2-vl-1.6b': 1_500_000_000,
 };
 
 /**
@@ -91,8 +95,9 @@ function getMemoryTier(availableMB: number): MemoryTier {
  * Engine-aware "is the model available for use" check.
  *
  * The two engines have different notions of availability:
- *   - webllm: the model must be DOWNLOADED into OPFS (WebLLMService cache). Until
- *     then the user must trigger a download.
+ *   - webllm: the model must be DOWNLOADED into the browser's Cache Storage
+ *     (`caches.open('webllm/model')`, web-llm's default cacheType). Until then
+ *     the user must trigger a download.
  *   - wllama: there is no separate download step — the GGUF is packaged and loads
  *     lazily on first use. "Available" therefore means the packaged GGUF is present
  *     in the build (same-origin), probed without downloading it.
@@ -112,15 +117,36 @@ async function isModelAvailable(modelId: string, engine: BrowserEngine): Promise
     ]);
     return gguf && mmproj;
   }
-  // webllm: present in OPFS via WebLLMService cache.
+  // webllm: present in the browser's Cache Storage (web-llm's default
+  // cacheType 'cache' stores weights in `caches.open('webllm/model')`). Probe
+  // the Cache Storage API for a cross-session check (a prior session's download
+  // persists), and fall back to the in-memory _modelInfo (populated once
+  // initialize() runs this session). (issue #21 F3)
   try {
     const info = WebLLMService.getInstance().getModelInfo();
-    if (!info) return false;
-    if (info.modelId !== modelId) return false;
-    return info.cached;
+    if (info && info.modelId === modelId && info.cached) return true;
   } catch {
-    return false;
+    // ignore — fall through to cache probe
   }
+  // Cache Storage persistence probe: web-llm caches model artifacts under the
+  // 'webllm' cache. If the Cache Storage API is unavailable, fall back to false
+  // (the first send's initialize() will populate _modelInfo and a subsequent
+  // gate check passes — see issue #21 F1).
+  if (typeof caches !== 'undefined' && typeof caches.has === 'function') {
+    try {
+      const hasWebllmCache = await caches.has('webllm/model');
+      if (hasWebllmCache) {
+        // Confirm the cache actually contains entries for THIS model id, so an
+        // orphaned/partial cache from a different model doesn't false-positive.
+        const cache = await caches.open('webllm/model');
+        const keys = await cache.keys();
+        if (keys.some((req) => req.url.includes(modelId))) return true;
+      }
+    } catch {
+      // Cache Storage unavailable or denied — fall back below.
+    }
+  }
+  return false;
 }
 
 /**
@@ -171,11 +197,11 @@ export class ModelReadinessGate {
    * browser overhead via getMemoryBudget().
    *
    * @param modelId The model identifier to check memory requirements for.
-   *                Defaults to Llama-3.2-3B-Instruct-q4f16_1-MLC if not provided.
+   *                Defaults to WEBLLM_DEFAULT_MODEL_ID if not provided.
    * @param requiredBytes Optional override for the required memory threshold.
    *                      Defaults to model-specific requirement from getRequiredBytes().
    */
-  checkMemory(modelId: string = 'Llama-3.2-3B-Instruct-q4f16_1-MLC', requiredBytes?: number): MemoryCheck {
+  checkMemory(modelId: string = WEBLLM_DEFAULT_MODEL_ID, requiredBytes?: number): MemoryCheck {
     const { availableMB } = getMemoryBudget();
     const availableBytes = Math.floor(availableMB * 1024 * 1024);
     const required = requiredBytes ?? getRequiredBytes(modelId);
@@ -190,7 +216,8 @@ export class ModelReadinessGate {
   }
 
   /**
-   * Checks whether the model artifact is already present in the browser's OPFS.
+   * Checks whether the model artifact is already present in the browser's Cache
+   * Storage (webllm) or the packaged build (wllama).
    *
    * Returns true if the model is cached and ready to load without a download.
    * Returns false if the model is not cached and must be downloaded first.

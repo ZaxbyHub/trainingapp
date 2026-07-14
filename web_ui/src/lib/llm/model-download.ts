@@ -3,7 +3,7 @@
  * speed/ETA calculation, and storage quota error handling.
  */
 
-import { WebLLMService } from './web-llm-service';
+import { WebLLMService, WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
 
 export type DownloadStatus = 'idle' | 'downloading' | 'complete' | 'error';
 
@@ -33,7 +33,7 @@ interface WebLLMProgressPayload {
  * These are approximate sizes for the Llama-3.2-3B quantization variants.
  */
 const MODEL_SIZE_ESTIMATES: Record<string, number> = {
-  'Llama-3.2-3B-Instruct-q4f16_1-MLC': 2_000_000_000, // ~1.9 GB
+  [WEBLLM_DEFAULT_MODEL_ID]: 2_000_000_000, // ~1.9 GB
 };
 
 /**
