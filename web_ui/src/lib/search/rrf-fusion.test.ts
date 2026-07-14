@@ -155,8 +155,8 @@ describe('rrfFuse', () => {
     });
   });
 
-  describe('text field preserved from first occurrence', () => {
-    it('uses text from highest-ranked occurrence', () => {
+  describe('metadata merged order-agnostically (F1)', () => {
+    it('uses text from the first occurrence that has it', () => {
       const list1: SearchResult[] = [
         { docId: 'doc-a', chunkIndex: 0, score: 0.9, text: 'text from list1 rank0' },
         { docId: 'doc-b', chunkIndex: 0, score: 0.8, text: 'text from list1 rank1' },
@@ -181,7 +181,7 @@ describe('rrfFuse', () => {
       expect(docC?.text).toBe('text from list2 rank0');
     });
 
-    it('preserves text when only one list has text', () => {
+    it('hydrates text from a later list when the first occurrence lacks it (F1)', () => {
       const list1: SearchResult[] = [
         { docId: 'doc-a', chunkIndex: 0, score: 0.9 },
       ];
@@ -191,10 +191,25 @@ describe('rrfFuse', () => {
 
       const result = rrfFuse([list1, list2]);
 
-      // doc-a in list1 at rank 0 has no text, list2 at rank 0 has text
-      // First occurrence (list1 rank0) has no text, so result should have undefined text
+      // Before F1, "first occurrence wins" locked in undefined even when another
+      // list had real text. Now fusion merges the first NON-EMPTY text, so a
+      // chunk that lost its text in one list is hydrated from the other.
       const docA = result.find((r) => r.docId === 'doc-a');
-      expect(docA?.text).toBeUndefined();
+      expect(docA?.text).toBe('text only in list2');
+    });
+
+    it('merges source and page metadata from whichever list carries them (F7)', () => {
+      const list1: SearchResult[] = [
+        { docId: 'doc-a', chunkIndex: 0, score: 0.9, text: 't', source: 'a.pdf' },
+      ];
+      const list2: SearchResult[] = [
+        { docId: 'doc-a', chunkIndex: 0, score: 0.7, page: 4 },
+      ];
+
+      const result = rrfFuse([list1, list2]);
+      const docA = result.find((r) => r.docId === 'doc-a');
+      expect(docA?.source).toBe('a.pdf');
+      expect(docA?.page).toBe(4);
     });
   });
 });

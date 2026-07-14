@@ -198,26 +198,71 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
       onMouseLeave={() => setShowCopy(false)}
     >
       <div style={{ width: '100%', padding: 'var(--spacing-md) 0' }}>
-        <div style={{ fontFamily: 'var(--font-family)', lineHeight: 'var(--line-height-body)' }}>
-          <MarkdownRenderer content={message.content} />
-          {message.isStreaming && <span style={cursorStyle} aria-hidden="true" />}
-        </div>
-        <div style={{ ...timeStyle, textAlign: 'left' }}>{formatRelativeTime(message.timestamp)}</div>
-        <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
-          {showCopiedFeedback ? (
-            <span style={copiedFeedbackInlineStyle}>Copied!</span>
-          ) : (
-            <button style={copyButtonInlineStyle} onClick={handleCopy} aria-label="Copy message" type="button">
-              Copy
-            </button>
-          )}
-          {onRegenerate && (
-            <button type="button" onClick={onRegenerate} aria-label="Regenerate response" style={regenerateStyle}>
-              ↻ Regenerate
-            </button>
-          )}
-        </div>
-        {message.sources && message.sources.length > 0 && <SourceCitation sources={message.sources} />}
+        {message.abstain ? (
+          // F2: distinct abstention state. The pipeline deliberately did NOT
+          // answer because it found no usable evidence, so we never show the
+          // model's content or copy/citation actions.
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              padding: 'var(--spacing-sm) var(--spacing-md)',
+              borderRadius: '8px',
+              backgroundColor: 'var(--color-bubble-system)',
+              color: 'var(--color-text-muted)',
+              fontStyle: 'italic',
+              fontFamily: 'var(--font-family)',
+            }}
+          >
+            {message.abstainReason === 'retrieval_degraded'
+              ? 'Retrieval is degraded (semantic search unavailable) and no relevant passages were found.'
+              : 'Insufficient evidence in the knowledge base to answer this question.'}
+          </div>
+        ) : (
+          <>
+            <div style={{ fontFamily: 'var(--font-family)', lineHeight: 'var(--line-height-body)' }}>
+              <MarkdownRenderer content={message.content} />
+              {message.isStreaming && <span style={cursorStyle} aria-hidden="true" />}
+            </div>
+            {/* F4: non-blocking indicator when only keyword search was available. */}
+            {message.retrievalDegraded && (
+              <div
+                role="status"
+                aria-live="polite"
+                style={{
+                  marginTop: 'var(--spacing-xs)',
+                  fontSize: 'var(--font-size-caption)',
+                  color: 'var(--color-text-muted)',
+                  fontStyle: 'italic',
+                }}
+              >
+                Retrieval is degraded — semantic search unavailable (showing keyword-only results).
+              </div>
+            )}
+            <div style={{ ...timeStyle, textAlign: 'left' }}>{formatRelativeTime(message.timestamp)}</div>
+            <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
+              {showCopiedFeedback ? (
+                <span style={copiedFeedbackInlineStyle}>Copied!</span>
+              ) : (
+                <button style={copyButtonInlineStyle} onClick={handleCopy} aria-label="Copy message" type="button">
+                  Copy
+                </button>
+              )}
+              {onRegenerate && (
+                <button type="button" onClick={onRegenerate} aria-label="Regenerate response" style={regenerateStyle}>
+                  ↻ Regenerate
+                </button>
+              )}
+            </div>
+            {/* F7: prefer structured numbered citations; fall back to legacy
+                sources string array for older persisted messages. */}
+            {message.citations && message.citations.length > 0 ? (
+              <SourceCitation citations={message.citations} />
+            ) : (
+              message.sources && message.sources.length > 0 && <SourceCitation sources={message.sources} />
+            )}
+          </>
+        )}
       </div>
     </div>
   );

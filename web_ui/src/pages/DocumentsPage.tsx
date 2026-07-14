@@ -21,7 +21,33 @@ export function DocumentsPage() {
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // F9: one-time banner when the embedding model was upgraded and the stored
+  // vector index was discarded as incompatible (see VECTOR_INDEX_VERSION).
+  const [showReindexNotice, setShowReindexNotice] = useState(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // F9: surface the re-index requirement once. The flag is set by VectorIndex
+  // on version mismatch; cleared here on dismiss so the user sees it once.
+  useEffect(() => {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('rag-reindex-required') === '1') {
+        setShowReindexNotice(true);
+      }
+    } catch {
+      /* private mode / storage disabled */
+    }
+  }, []);
+
+  const dismissReindexNotice = useCallback(() => {
+    setShowReindexNotice(false);
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('rag-reindex-required');
+      }
+    } catch {
+      /* private mode / storage disabled */
+    }
+  }, []);
 
   // Load documents from IndexedDB on mount
   useEffect(() => {
@@ -106,7 +132,10 @@ export function DocumentsPage() {
       const vectorIndex = getVectorIndex();
       const keywordIndex = getKeywordIndex();
 
-      // Vector index: embed and add
+      // Vector index: embed and add. Pass the chunk's already-present text,
+      // source (filename) and page so vector search results carry real text and
+      // citation metadata (F1/F7). NOTE: this minimal metadata capture overlaps
+      // with PR-4 (#23), which owns broader ingestion work.
       if (embeddingService.isReady() && vectorIndex.isReady()) {
         try {
           const texts = chunks.map((c) => c.text);
@@ -115,6 +144,9 @@ export function DocumentsPage() {
             docId: chunk.docId!,
             chunkIndex: chunk.chunkIndex,
             vector: vectors[i],
+            text: chunk.text,     // F1: real chunk text for grounded context
+            source: chunk.source, // F7: filename for citations
+            page: chunk.page,     // F7: page number for citations
           }));
           await vectorIndex.addBatch(entries);
           await vectorIndex.save();
@@ -316,6 +348,47 @@ export function DocumentsPage() {
           </span>
         )}
       </div>
+
+      {/* F9: one-time re-index notice after an embedding-model upgrade. */}
+      {showReindexNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 'var(--spacing-sm)',
+            padding: 'var(--spacing-sm) var(--spacing-md)',
+            borderRadius: '8px',
+            backgroundColor: 'var(--color-bubble-system)',
+            color: 'var(--color-text-muted)',
+            fontSize: 'var(--font-size-small)',
+            fontFamily: 'var(--font-family)',
+            flexShrink: 0,
+          }}
+        >
+          <span>
+            The search index was upgraded. Re-add your documents to rebuild the index and restore full retrieval quality.
+          </span>
+          <button
+            type="button"
+            onClick={dismissReindexNotice}
+            aria-label="Dismiss notice"
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              color: 'var(--color-text-muted)',
+              fontSize: 'var(--font-size-body)',
+              padding: '0 var(--spacing-xs)',
+              flexShrink: 0,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Drop zone */}
       <div style={{ flexShrink: 0 }}>

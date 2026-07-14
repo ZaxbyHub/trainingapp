@@ -40,6 +40,8 @@ interface IndexEntry {
   docId: string;
   chunkIndex: number;
   text: string;
+  source?: string;
+  page?: number;
 }
 
 interface StoredData {
@@ -61,7 +63,7 @@ export class KeywordIndex {
   private disposed: boolean = false;
 
   // In-memory mapping from FlexSearch document ID to chunk metadata
-  private idMapping: Map<string, { docId: string; chunkIndex: number; text: string }> = new Map();
+  private idMapping: Map<string, { docId: string; chunkIndex: number; text: string; source?: string; page?: number }> = new Map();
   // Reverse mapping: docId -> Set of chunk indices
   private docIdToChunks: Map<string, Set<string>> = new Map();
 
@@ -146,8 +148,14 @@ export class KeywordIndex {
    * @param docId - Document ID this chunk belongs to
    * @param chunkIndex - Chunk index within the document
    * @param text - Text content to index
+   * @param meta - Optional filename/page for citation rendering (F7)
    */
-  addDocument(docId: string, chunkIndex: number, text: string): void {
+  addDocument(
+    docId: string,
+    chunkIndex: number,
+    text: string,
+    meta?: { source?: string; page?: number }
+  ): void {
     if (!this.isReady()) {
       throw new Error('KeywordIndex not initialized. Call initialize() first.');
     }
@@ -159,7 +167,7 @@ export class KeywordIndex {
     const id = this.makeChunkId(docId, chunkIndex);
 
     // Store metadata for retrieval
-    this.idMapping.set(id, { docId, chunkIndex, text });
+    this.idMapping.set(id, { docId, chunkIndex, text, source: meta?.source, page: meta?.page });
 
     // Update reverse mapping
     if (!this.docIdToChunks.has(docId)) {
@@ -189,7 +197,10 @@ export class KeywordIndex {
       if (!chunk.docId) {
         throw new Error(`Document chunk missing docId at index ${chunk.chunkIndex}`);
       }
-      this.addDocument(chunk.docId, chunk.chunkIndex, chunk.text);
+      this.addDocument(chunk.docId, chunk.chunkIndex, chunk.text, {
+        source: chunk.source,
+        page: chunk.page,
+      });
     }
 
     console.info(`[KeywordIndex] Batch indexed ${chunks.length} chunks`);
@@ -227,6 +238,8 @@ export class KeywordIndex {
           chunkIndex: meta?.chunkIndex ?? 0,
           score: 1 / (rank + 1), // Position-based scoring: higher rank = higher score
           text: meta?.text,
+          source: meta?.source, // F7: filename for citations
+          page: meta?.page,     // F7: page number for citations
         };
       });
     } catch (error) {
@@ -279,6 +292,8 @@ export class KeywordIndex {
           docId: meta.docId,
           chunkIndex: meta.chunkIndex,
           text: meta.text,
+          source: meta.source,
+          page: meta.page,
         });
       }
 
@@ -366,6 +381,8 @@ export class KeywordIndex {
           docId: entry.docId,
           chunkIndex: entry.chunkIndex,
           text: entry.text,
+          source: entry.source,
+          page: entry.page,
         });
       }
 

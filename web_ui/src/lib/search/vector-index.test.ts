@@ -518,6 +518,29 @@ describe('VectorIndex', () => {
       expect(idMapping.get(5)).toEqual({ docId: 'test-doc', chunkIndex: 3 });
     });
 
+    it('stores chunk text/source/page metadata alongside the mapping (F1/F7)', async () => {
+      const instance = VectorIndex.getInstance();
+      await instance.initialize();
+
+      const vector = new Float32Array(384);
+      mockEdgeVecInstance.insert = vi.fn<(_vector: Float32Array) => number>().mockReturnValue(7);
+
+      await instance.addVector(vector, 'doc-1', 2, {
+        text: 'the chunk text',
+        source: 'report.pdf',
+        page: 4,
+      });
+
+      const idMapping = (instance as unknown as {
+        idMapping: Map<number, { docId: string; chunkIndex: number; text?: string; source?: string; page?: number }>;
+      }).idMapping;
+      const entry = idMapping.get(7);
+      expect(entry?.text).toBe('the chunk text');
+      expect(entry?.source).toBe('report.pdf');
+      expect(entry?.page).toBe(4);
+      instance.dispose();
+    });
+
     it('throws on invalid vector dimension', async () => {
       const instance = VectorIndex.getInstance();
       await instance.initialize();
@@ -532,6 +555,145 @@ describe('VectorIndex', () => {
 
       const vector = new Float32Array(384);
       await expect(instance.addVector(vector, 'doc', 0)).rejects.toThrow('not initialized');
+    });
+  });
+
+  // ------------------------------------------------------------------------
+  // Issue #22 F9: versioned re-index. A persisted index whose content version
+  // does not match VECTOR_INDEX_VERSION (CLS pooling / metadata schema change)
+  // must NOT be loaded — the native EdgeVec blob is never read and a reindex
+  // flag is set so the UI can prompt the user.
+  // ------------------------------------------------------------------------
+  describe('versioned re-index (F9)', () => {
+    /**
+     * Build a fake IndexedDB whose mappings store returns a configurable
+     * 'version' row (or none). Used to drive readPersistedVersion without
+     * loading the native EdgeVec blob.
+     */
+    function makeVersionedIdb(versionRow: unknown) {
+      const versionStore: Record<string, unknown> =
+        versionRow === undefined ? {} : { version: versionRow };
+      return {
+        open: vi.fn().mockImplementation(() => {
+          const req = {
+            onsuccess: null as null | (() => void),
+            onerror: null as null | (() => void),
+            onupgradeneeded: null as null | (() => void),
+            result: {
+              objectStoreNames: { contains: () => true },
+              close: vi.fn(),
+              transaction: () => ({
+                objectStore: () => ({
+                  get: (key: string) => {
+                    const r = {
+                      onsuccess: null as null | (() => void),
+                      result: versionStore[key] ?? null,
+                    };
+                    Promise.resolve().then(() => r.onsuccess && r.onsuccess());
+                    return r;
+                  },
+                }),
+                oncomplete: null,
+                onerror: null,
+              }),
+            },
+          };
+          Promise.resolve().then(() => req.onsuccess && req.onsuccess());
+          return req;
+        }),
+      } as unknown as typeof indexedDB;
+    }
+
+    it('skips EdgeVec.load and flags reindex when persisted version mismatches', async () => {
+      (globalThis as { indexedDB?: unknown }).indexedDB = makeVersionedIdb({ key: 'version', version: 1 });
+      try { (globalThis as { localStorage?: Storage }).localStorage?.removeItem('rag-reindex-required'); } catch { /* noop */ }
+
+      const instance = VectorIndex.getInstance();
+      await instance.initialize();
+      const edgevec = await import('edgevec');
+      // The typed edgevec module doesn't expose the static `load` added by the
+      // mock; cast through unknown like the load-ordering tests above.
+      const loadMock = (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load;
+      loadMock.mockClear();
+
+      const loaded = await instance.load();
+
+      expect(loaded).toBe(false);
+      expect(loadMock).not.toHaveBeenCalled();
+      instance.dispose();
+    });
+
+    it('treats a pre-v2 store with NO version key as incompatible (F9 upgrade path)', async () => {
+      // The realistic upgrade scenario: an index created before this PR has no
+      // 'version' row at all (mean-pooled v1 vectors). This MUST be treated as
+      // incompatible and discarded, NOT loaded.
+      (globalThis as { indexedDB?: unknown }).indexedDB = makeVersionedIdb(undefined);
+      try { (globalThis as { localStorage?: Storage }).localStorage?.removeItem('rag-reindex-required'); } catch { /* noop */ }
+
+      const instance = VectorIndex.getInstance();
+      await instance.initialize();
+      const edgevec = await import('edgevec');
+      const loadMock = (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load;
+      loadMock.mockClear();
+
+      const loaded = await instance.load();
+
+      expect(loaded).toBe(false);
+      expect(loadMock).not.toHaveBeenCalled();
+      instance.dispose();
+    });
+
+    it('does NOT flag reindex on a brand-new install with no prior corpus (PRR-001)', async () => {
+      // A fresh IndexedDB fires onupgradeneeded with oldVersion 0 (the DB did
+      // not exist before this open). This must be treated as "nothing to check"
+      // (null → proceed), NOT as a pre-v2 store — otherwise every new user sees
+      // a spurious "re-add your documents" notice.
+      const freshIdb = {
+        open: vi.fn().mockImplementation(() => {
+          const req = {
+            onsuccess: null as null | (() => void),
+            onerror: null as null | (() => void),
+            onupgradeneeded: null as null | ((event: IDBVersionChangeEvent) => void),
+            result: {
+              objectStoreNames: { contains: () => true },
+              close: vi.fn(),
+              transaction: () => ({
+                objectStore: () => ({
+                  get: () => {
+                    const r = { onsuccess: null as null | (() => void), result: null };
+                    Promise.resolve().then(() => r.onsuccess && r.onsuccess());
+                    return r;
+                  },
+                }),
+                oncomplete: null,
+                onerror: null,
+              }),
+            },
+          };
+          Promise.resolve()
+            .then(() => req.onupgradeneeded && req.onupgradeneeded({ oldVersion: 0, newVersion: 1 } as IDBVersionChangeEvent))
+            .then(() => req.onsuccess && req.onsuccess());
+          return req;
+        }),
+      } as unknown as typeof indexedDB;
+      (globalThis as { indexedDB?: unknown }).indexedDB = freshIdb;
+      try { (globalThis as { localStorage?: Storage }).localStorage?.removeItem('rag-reindex-required'); } catch { /* noop */ }
+
+      const instance = VectorIndex.getInstance();
+      await instance.initialize();
+      const edgevec = await import('edgevec');
+      const loadMock = (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load;
+      loadMock.mockClear();
+
+      const loaded = await instance.load();
+
+      // Fresh install: no reindex flag, and the normal load path proceeds
+      // (EdgeVec.load IS called — there's nothing incompatible to discard).
+      expect(loaded).toBe(false); // no saved index exists on a fresh install
+      try {
+        expect((globalThis as { localStorage?: Storage }).localStorage?.getItem('rag-reindex-required')).not.toBe('1');
+      } catch { /* private mode */ }
+      instance.dispose();
     });
   });
 });

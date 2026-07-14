@@ -19,6 +19,7 @@ import type { LLMMessage } from '../../types/llm';
 
 const createMockEmbeddingService = () => ({
   encodeWithMetadata: vi.fn(),
+  encodeBatch: vi.fn(),
   isReady: vi.fn().mockReturnValue(true),
 });
 
@@ -79,6 +80,23 @@ vi.mock('../llm/web-llm-service', () => ({
   },
 }));
 
+// F10: the orchestrator now defaults to the offline-first engine via
+// getLLMService() instead of WebLLMService.getInstance() directly. Mock the
+// factory so the no-arg constructor used in these tests resolves to the test
+// LLM service. The mock factory returns whatever LLM service is currently
+// registered below.
+vi.mock('../llm/llm-factory', () => ({
+  getLLMService: vi.fn(),
+}));
+
+// F4: readiness helpers are now consulted (their boolean result drives whether
+// semantic search runs). Mock them so tests can control semantic availability;
+// default to ready (true) so the full pipeline exercises the embedding path.
+vi.mock('../../hooks/useServiceInitialization', () => ({
+  ensureEmbeddingServiceReady: vi.fn().mockResolvedValue(true),
+  ensureReadinessGateChecked: vi.fn().mockResolvedValue({ ready: true }),
+}));
+
 // Import types and class AFTER mocks are set up
 import { RAGOrchestrator } from './rag-orchestrator';
 
@@ -91,7 +109,8 @@ import { getVectorIndex } from '../search/vector-index';
 import { getKeywordIndex } from '../search/keyword-index';
 import { getRerankerService } from '../search/reranker';
 import { rrfFuse } from '../search/rrf-fusion';
-import { WebLLMService } from '../llm/web-llm-service';
+import { getLLMService } from '../llm/llm-factory';
+import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization';
 
 // --- Test Data ---
 
@@ -130,7 +149,12 @@ describe('RAGOrchestrator', () => {
     (getVectorIndex as ReturnType<typeof vi.fn>).mockReturnValue(mockVectorIndex);
     (getKeywordIndex as ReturnType<typeof vi.fn>).mockReturnValue(mockKeywordIndex);
     (getRerankerService as ReturnType<typeof vi.fn>).mockReturnValue(mockRerankerService);
-    (WebLLMService.getInstance as ReturnType<typeof vi.fn>).mockReturnValue(mockWebLLMService);
+    (getLLMService as ReturnType<typeof vi.fn>).mockReturnValue(mockWebLLMService);
+
+    // Default: semantic search available. Tests that exercise the degraded
+    // path override this (F4).
+    (ensureEmbeddingServiceReady as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (ensureReadinessGateChecked as ReturnType<typeof vi.fn>).mockResolvedValue({ ready: true });
     (rrfFuse as ReturnType<typeof vi.fn>).mockImplementation((lists: SearchResult[][]) => {
       const combined: SearchResult[] = [];
       for (const list of lists) {
@@ -255,8 +279,11 @@ describe('RAGOrchestrator', () => {
       events.push(event);
     }
 
-    // Verify embedding was called
-    expect(mockEmbeddingService.encodeWithMetadata).toHaveBeenCalledWith(question);
+    // Verify embedding was called with the BGE retrieval-instruction prefix
+    // prepended to the query (F8 — query side only; passages stay un-prefixed).
+    expect(mockEmbeddingService.encodeWithMetadata).toHaveBeenCalledWith(
+      'Represent this sentence for searching relevant passages: ' + question
+    );
 
     // Verify vector search was called with embedding
     expect(mockVectorIndex.search).toHaveBeenCalledWith(mockEmbedding, { k: 10 });
@@ -453,7 +480,6 @@ describe('RAGOrchestrator', () => {
   // TEST: Context assembly formats numbered sources correctly
   // ========================================================================
   test('Context assembly formats numbered sources correctly', async () => {
-    const question = 'What is AI?';
     const chunks = [
       { docId: 'doc-X', chunkIndex: 0, score: 0.9, text: 'AI is artificial intelligence.' },
       { docId: 'doc-Y', chunkIndex: 1, score: 0.8, text: 'ML is machine learning.' },
@@ -462,27 +488,29 @@ describe('RAGOrchestrator', () => {
 
     const orchestrator = new RAGOrchestrator();
 
-    // Access the private buildContext method via any
-    const context = (orchestrator as unknown as { buildContext: (q: string, c: SearchResult[]) => string }).buildContext(question, chunks);
+    // buildContext no longer takes a question param and no longer emits a
+    // "Context:" header or per-line "Source:" — buildMessages owns the single
+    // header (F6). It numbers chunks [1],[2],... in array order.
+    const context = (orchestrator as unknown as { buildContext: (c: SearchResult[]) => string }).buildContext(chunks);
 
-    // Verify numbered format [1], [2], etc.
+    // Verify numbered format [1], [2], etc. — order matches the input array,
+    // which is what the model's [1],[2] citations resolve against (F7).
     expect(context).toContain('[1] AI is artificial intelligence.');
     expect(context).toContain('[2] ML is machine learning.');
     expect(context).toContain('[3] DL is deep learning.');
 
-    // Verify source metadata is included
-    expect(context).toContain('Source: doc-X');
-    expect(context).toContain('Source: doc-Y');
-
-    expect(context).toContain('Context:');
+    // F6: the duplicate "Context:" header is gone from buildContext.
+    expect(context).not.toContain('Context:');
   });
 
   test('Context handles empty chunks gracefully', async () => {
     const orchestrator = new RAGOrchestrator();
 
-    const context = (orchestrator as unknown as { buildContext: (q: string, c: SearchResult[]) => string }).buildContext('test', []);
+    // buildContext returns an empty string for an empty chunk list (the
+    // abstention path short-circuits before generation, so this is defensive).
+    const context = (orchestrator as unknown as { buildContext: (c: SearchResult[]) => string }).buildContext([]);
 
-    expect(context).toBe('No relevant context found.');
+    expect(context).toBe('');
   });
 
   // ========================================================================
@@ -685,10 +713,16 @@ describe('RAGOrchestrator', () => {
     expect(eventTypes).toContain('complete');
   });
 
-  test('Error during embedding yields error event', async () => {
+  // F4 changed this behavior: an embedding failure no longer hard-fails the
+  // whole query. The pipeline degrades to keyword-only retrieval and, if that
+  // also yields nothing, abstains with a retrieval_degraded reason. It must NOT
+  // emit a fatal embedding error event or invoke the LLM.
+  test('Embedding failure degrades to keyword-only retrieval (F4)', async () => {
     const question = 'embedding error test';
 
     mockEmbeddingService.encodeWithMetadata.mockRejectedValue(new Error('Embedding failed'));
+    // Keyword index has nothing either → the pipeline should abstain.
+    mockKeywordIndex.search.mockReturnValue([]);
 
     const orchestrator = new RAGOrchestrator();
     const events: Array<{ type: string; data?: unknown }> = [];
@@ -697,13 +731,29 @@ describe('RAGOrchestrator', () => {
       events.push(event);
     }
 
-    // Should yield retrieving event first, then error event
-    expect(events).toHaveLength(2);
-    expect(events[0].type).toBe('retrieving');
-    expect(events[1].type).toBe('error');
-    const errorEvent = events[1] as { type: 'error'; data: { stage: string; message: string } };
-    expect(errorEvent.data.stage).toBe('embedding');
-    expect(errorEvent.data.message).toBe('Embedding failed');
+    // No fatal embedding error event — degradation, not failure.
+    const errorEvents = events.filter((e) => e.type === 'error');
+    expect(errorEvents.filter((e) => (e.data as { stage: string }).stage === 'embedding')).toHaveLength(0);
+
+    // Vector search must be skipped (no query embedding available).
+    expect(mockVectorIndex.search).not.toHaveBeenCalled();
+
+    // Keyword search still ran.
+    expect(mockKeywordIndex.search).toHaveBeenCalled();
+
+    // Pipeline abstained with the degraded reason.
+    const complete = events.find((e) => e.type === 'complete') as {
+      type: 'complete';
+      data: { abstain?: boolean; abstainReason?: string; retrievalDegraded?: boolean };
+    };
+    expect(complete).toBeDefined();
+    expect(complete.data.abstain).toBe(true);
+    expect(complete.data.retrievalDegraded).toBe(true);
+    expect(complete.data.abstainReason).toBe('retrieval_degraded');
+
+    // The LLM must never be invoked when there is no evidence.
+    expect(mockWebLLMService.generate).not.toHaveBeenCalled();
+    expect(mockWebLLMService.generateComplete).not.toHaveBeenCalled();
   });
 
   // ========================================================================
@@ -983,6 +1033,262 @@ describe('RAGOrchestrator', () => {
         events.push(ev);
       }
       expect(events.some((e: any) => e.type === 'complete')).toBe(true);
+    });
+  });
+
+  // ==========================================================================
+  // Regression tests for issue #22 (RAG grounding & citations)
+  // ==========================================================================
+  describe('issue #22: grounding, abstention, budget, citations', () => {
+    test('F2: zero-chunk retrieval abstains instead of calling the LLM', async () => {
+      const mockEmbedding = createMockEmbedding();
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue([]);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue([]);
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query('unanswerable', { streamTokens: false })) {
+        events.push(ev);
+      }
+
+      const complete = events.find((e) => e.type === 'complete');
+      expect(complete).toBeDefined();
+      expect(complete.data.abstain).toBe(true);
+      expect(complete.data.chunks).toEqual([]);
+      // The LLM must NEVER be invoked when abstaining.
+      expect(mockWebLLMService.generate).not.toHaveBeenCalled();
+      expect(mockWebLLMService.generateComplete).not.toHaveBeenCalled();
+    });
+
+    test('F3: relevance floor drops sub-threshold RRF chunks and abstains', async () => {
+      const mockEmbedding = createMockEmbedding();
+      // RRF scores well below MIN_RRF_SCORE (0.005): a hit only in one list at
+      // rank 0 scores 1/(60+0+1) ≈ 0.0164; rank 40 → 1/81 ≈ 0.0123 — still above
+      // 0.005. So push a single weak hit and override rrfFuse to return a chunk
+      // with an explicitly tiny score.
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      const weak = [{ docId: 'd', chunkIndex: 0, score: 0.0001, text: 't' }];
+      mockVectorIndex.search.mockResolvedValue(weak);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(weak);
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query('out of corpus', { streamTokens: false, rerank: false })) {
+        events.push(ev);
+      }
+
+      const complete = events.find((e) => e.type === 'complete');
+      expect(complete.data.abstain).toBe(true);
+      expect(mockWebLLMService.generateComplete).not.toHaveBeenCalled();
+    });
+
+    test('F7: complete.chunks order matches the buildContext numbering order', async () => {
+      const mockEmbedding = createMockEmbedding();
+      // Distinct texts so we can verify [1]→chunks[0], [2]→chunks[1] mapping.
+      const fused = [
+        { docId: 'd1', chunkIndex: 0, score: 0.9, text: 'AAA first chunk' },
+        { docId: 'd2', chunkIndex: 0, score: 0.8, text: 'BBB second chunk' },
+      ];
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(fused);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(fused);
+      mockWebLLMService.generateComplete.mockResolvedValue('answer [1] and [2]');
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query('q', { streamTokens: false, rerank: false })) {
+        events.push(ev);
+      }
+      const complete = events.find((e) => e.type === 'complete');
+      // chunks[i] is the chunk the model numbered [i+1].
+      expect(complete.data.chunks[0].text).toBe('AAA first chunk');
+      expect(complete.data.chunks[1].text).toBe('BBB second chunk');
+    });
+
+    test('F8: query embedding receives the BGE instruction prefix', async () => {
+      const mockEmbedding = createMockEmbedding();
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue([]);
+      mockKeywordIndex.search.mockReturnValue([]);
+
+      const orchestrator = new RAGOrchestrator();
+      for await (const _ of orchestrator.query('clinical question', { streamTokens: false })) {
+        void _;
+      }
+      expect(mockEmbeddingService.encodeWithMetadata).toHaveBeenCalledWith(
+        'Represent this sentence for searching relevant passages: clinical question'
+      );
+    });
+
+    test('F8: the BGE prefix lives ONLY in the query path (passages un-prefixed, PRR-007)', async () => {
+      // The prefix is orchestrator-local: it is prepended at the query
+      // encodeWithMetadata call site and NOWHERE else. The passage-ingestion
+      // path (DocumentsPage -> EmbeddingService.encodeBatch) must receive raw
+      // text. We verify two things: (1) the orchestrator only ever calls the
+      // prefixed query embedding, and (2) the prefix string is not referenced
+      // by encodeBatch/encode at all.
+      const mockEmbedding = createMockEmbedding();
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue([]);
+      mockKeywordIndex.search.mockReturnValue([]);
+
+      const orchestrator = new RAGOrchestrator();
+      for await (const _ of orchestrator.query('a question', { streamTokens: false })) {
+        void _;
+      }
+
+      // Only the query embedding is invoked by the orchestrator, and it is
+      // prefixed. encodeBatch (the passage path) is NEVER called by the
+      // orchestrator, so passages cannot be accidentally prefixed here.
+      expect(mockEmbeddingService.encodeWithMetadata).toHaveBeenCalledTimes(1);
+      expect(mockEmbeddingService.encodeWithMetadata).toHaveBeenCalledWith(
+        'Represent this sentence for searching relevant passages: a question'
+      );
+      expect(mockEmbeddingService.encodeBatch).not.toHaveBeenCalled();
+    });
+
+    test('F10: no-arg constructor uses getLLMService (offline-first, not WebLLM)', () => {
+      // getLLMService is mocked in beforeEach to return mockWebLLMService.
+      // Constructing without an explicit llmService must route through the
+      // factory (wllama default), not WebLLMService.getInstance() directly.
+      (getLLMService as ReturnType<typeof vi.fn>).mockClear();
+      new RAGOrchestrator();
+      expect(getLLMService).toHaveBeenCalled();
+    });
+
+    test('F11: token budget drops overflowing chunks and reports contextTrimmed', async () => {
+      const mockEmbedding = createMockEmbedding();
+      // A single chunk far larger than the entire context window (n_ctx=4096 →
+      // ~16k chars total budget). It cannot fit and is dropped, leaving zero
+      // chunks → abstention. The LLM is never fed a truncated prompt.
+      const huge = 'x'.repeat(1_000_000);
+      const fused = [
+        { docId: 'd1', chunkIndex: 0, score: 0.9, text: huge },
+        { docId: 'd2', chunkIndex: 0, score: 0.8, text: huge },
+      ];
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(fused);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(fused);
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query('my question', { streamTokens: false, rerank: false, maxTokens: 512 })) {
+        events.push(ev);
+      }
+      const complete = events.find((e) => e.type === 'complete');
+      // Both oversized chunks are dropped to fit the budget, leaving zero
+      // chunks → abstention.
+      expect(complete.data.abstain).toBe(true);
+      expect(complete.data.contextTrimmed).toBe(2);
+      expect(mockWebLLMService.generateComplete).not.toHaveBeenCalled();
+    });
+
+    test('F11: question text survives in the prompt when chunks fit the budget', async () => {
+      const mockEmbedding = createMockEmbedding();
+      const small = [{ docId: 'd1', chunkIndex: 0, score: 0.9, text: 'small context' }];
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(small);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(small);
+      const captured: string[] = [];
+      mockWebLLMService.generateComplete.mockImplementation(async (msgs: any) => {
+        captured.push(msgs.find((m: any) => m.role === 'user')?.content ?? '');
+        return 'answer';
+      });
+
+      const orchestrator = new RAGOrchestrator();
+      const question = 'the all-important user question';
+      for await (const _ of orchestrator.query(question, { streamTokens: false, rerank: false })) {
+        void _;
+      }
+      // The question must appear verbatim in the final prompt (not truncated).
+      expect(captured[0]).toContain(question);
+    });
+
+    test('F11: partial fit — higher-ranked chunks kept, lower-ranked dropped (PRR-006)', async () => {
+      const mockEmbedding = createMockEmbedding();
+      // Two chunks: the first (higher score) fits the budget, the second (lower
+      // score, same size) overflows it. This exercises the budget accumulation
+      // + drop branch, which the all-or-nothing tests do not.
+      const big = 'y'.repeat(10000);
+      const fused = [
+        { docId: 'd-keep', chunkIndex: 0, score: 0.9, text: big },
+        { docId: 'd-drop', chunkIndex: 0, score: 0.8, text: big },
+      ];
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(fused);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(fused);
+      mockWebLLMService.generateComplete.mockResolvedValue('answer');
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query('q', { streamTokens: false, rerank: false, maxTokens: 512 })) {
+        events.push(ev);
+      }
+      const complete = events.find((e) => e.type === 'complete');
+      // Exactly one chunk fit; the other was dropped for budget.
+      expect(complete.data.chunks).toHaveLength(1);
+      expect(complete.data.chunks[0].docId).toBe('d-keep');
+      expect(complete.data.contextTrimmed).toBe(1);
+    });
+
+    test('F4: semantic-available gate returning false skips vector search and embedding', async () => {
+      // Embedding service never came up.
+      (ensureEmbeddingServiceReady as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+      const keywordHits = [{ docId: 'd1', chunkIndex: 0, score: 0.5, text: 'keyword hit' }];
+      mockKeywordIndex.search.mockReturnValue(keywordHits);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(keywordHits);
+      mockWebLLMService.generateComplete.mockResolvedValue('degraded answer');
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query('q', { streamTokens: false, rerank: false })) {
+        events.push(ev);
+      }
+      // Embedding must not be invoked at all.
+      expect(mockEmbeddingService.encodeWithMetadata).not.toHaveBeenCalled();
+      expect(mockVectorIndex.search).not.toHaveBeenCalled();
+      const complete = events.find((e) => e.type === 'complete');
+      expect(complete.data.retrievalDegraded).toBe(true);
+      expect(complete.data.abstain).not.toBe(true);
     });
   });
 });

@@ -182,21 +182,29 @@ export class RerankerService {
     }
 
     try {
-      // Build batch of [query, text] pairs for cross-encoder
+      // Build batch of [query, text] pairs for the cross-encoder. Chunks with no
+      // text are NOT scored (scoring [query, ''] would demote exactly the chunks
+      // we want to keep); they pass through with their input rank preserved so
+      // upstream ordering still applies. After F1 lands this branch is
+      // unreachable — it exists as defense in depth.
       const pairs: [string, string][] = [];
       const resultMap: SearchResult[] = [];
+      const unscored: Array<{ index: number; result: SearchResult }> = [];
 
-      for (const result of results) {
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
         const text = result.text || '';
         if (text.trim().length === 0) {
-          // Skip empty texts but preserve them in output
-          pairs.push([query, '']);
-          resultMap.push(result);
+          unscored.push({ index: i, result });
           continue;
         }
-
         pairs.push([query, text]);
         resultMap.push(result);
+      }
+
+      // No scorable pairs: return inputs unchanged.
+      if (pairs.length === 0) {
+        return results;
       }
 
       // Batch inference: call pipeline once with all pairs. Cross-encoder
@@ -204,25 +212,30 @@ export class RerankerService {
       // signature only models string|string[], so cast through unknown.
       const scoreResults = (await (this.crossEncoder as unknown as (input: unknown) => Promise<Array<{ label: string; score: number }>>)(pairs)) as Array<{ label: string; score: number }>;
 
-      // Map scores back to results
-      const scoredResults: Array<{ result: SearchResult; crossScore: number }> = scoreResults.map((scoreResult, i) => ({
-        result: resultMap[i],
-        crossScore: scoreResult.score,
+      // Map scores back to the scored results. Iterate over resultMap (one entry
+      // per scored pair) and read the matching score defensively, in case a
+      // pipeline returns more/fewer scores than pairs.
+      const scoredResults: Array<{ result: SearchResult; crossScore: number }> = resultMap.map((result, i) => ({
+        result,
+        crossScore: scoreResults[i]?.score ?? 0,
       }));
 
       // Sort by cross-encoder score descending
       scoredResults.sort((a, b) => b.crossScore - a.crossScore);
 
-      // Extract reranked results, optionally limiting to topK
-      const reranked = scoredResults
-        .slice(0, topK)
-        .map((sr) => ({
-          ...sr.result,
-          // Vector score replaced by cross-encoder relevance score
-          score: sr.crossScore,
-        }));
+      // Scored results first (cross-encoder score replaces the vector score);
+      // unscored (empty-text) results are appended afterwards in their input
+      // order so they are not lost, but never promoted above scored hits.
+      const rerankedAll = scoredResults.map((sr) => ({
+        ...sr.result,
+        score: sr.crossScore,
+      }));
+      for (const { result } of unscored) {
+        rerankedAll.push(result);
+      }
 
-      return reranked;
+      // Optionally limit to topK
+      return topK !== undefined ? rerankedAll.slice(0, topK) : rerankedAll;
     } catch (error) {
       // Graceful degradation: return original results if reranking fails
       console.warn(

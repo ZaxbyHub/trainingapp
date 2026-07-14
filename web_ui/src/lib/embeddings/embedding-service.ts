@@ -124,8 +124,10 @@ export class EmbeddingService {
 
       // Verify model is cached by attempting a test encoding
       // Bypass isReady() check since we know featureExtractor is just created
+      // CLS pooling: the packaged bge-small-en-v1.5 declares
+      // pooling_mode_cls_token:true in its 1_Pooling/config.json (F9).
       const testResult = await this.featureExtractor!('init', {
-        pooling: 'mean',
+        pooling: 'cls',
         normalize: true,
       }) as { data: Float32Array; dims: number[] };
       if (testResult.data.length !== EMBEDDING_DIMENSIONS) {
@@ -186,7 +188,7 @@ export class EmbeddingService {
 
     try {
       const result = await this.featureExtractor!(text, {
-        pooling: 'mean',
+        pooling: 'cls',
         normalize: true,
       }) as {
         data: Float32Array;
@@ -252,7 +254,7 @@ export class EmbeddingService {
 
         // Use native batch inference via featureExtractor directly
         const batchResults = await this.featureExtractor!(batch, {
-          pooling: 'mean',
+          pooling: 'cls',
           normalize: true,
         }) as { data: Float32Array; dims: number[] };
 

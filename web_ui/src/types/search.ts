@@ -15,6 +15,10 @@ export interface SearchResult {
   score: number;
   /** Optional text content of the chunk */
   text?: string;
+  /** Source filename for citation rendering (F7). */
+  source?: string;
+  /** Page number within the source document, when known (F7). */
+  page?: number;
 }
 
 /**
