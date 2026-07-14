@@ -4,9 +4,28 @@
  */
 
 import { SSEStreamConsumer } from '../api/streaming';
+import type { SearchResult } from '../../types/search';
 
 type TokenCallback = (token: string) => void;
-type DoneCallback = (data: { sources: string[]; contextLength: number; inferenceTime: number }) => void;
+
+/** Completion payload. Server (SSE) mode fills sources/contextLength/inferenceTime;
+ *  the browser-local RAG mode additionally fills citations, abstention, and
+ *  degradation signals. All RAG-only fields are optional so the server path is
+ *  unaffected. */
+type DoneCallback = (data: {
+  sources: string[];
+  contextLength: number;
+  inferenceTime: number;
+  /** Structured per-chunk citations aligned with the model's [1],[2] order (F7). */
+  chunks?: SearchResult[];
+  /** True when the pipeline abstained instead of answering (F2). */
+  abstain?: boolean;
+  abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
+  /** True when retrieval ran keyword-only (F4). */
+  retrievalDegraded?: boolean;
+  /** Number of context chunks dropped to fit the token budget (F11). */
+  contextTrimmed?: number;
+}) => void;
 type ErrorCallback = (error: string) => void;
 
 /**
@@ -106,9 +125,19 @@ export class TokenStreamManager {
 
   /**
    * Signal completion of the stream.
-   * @param data - Completion data including sources and inference metrics
+   * @param data - Completion data including sources, inference metrics, and
+   *   optional RAG citation/abstention/degradation signals.
    */
-  complete(data: { sources: string[]; contextLength: number; inferenceTime: number }): void {
+  complete(data: {
+    sources: string[];
+    contextLength: number;
+    inferenceTime: number;
+    chunks?: SearchResult[];
+    abstain?: boolean;
+    abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
+    retrievalDegraded?: boolean;
+    contextTrimmed?: number;
+  }): void {
     if (this.cancelled) return;
 
     // Flush any remaining tokens first

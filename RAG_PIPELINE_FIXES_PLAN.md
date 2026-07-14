@@ -8,6 +8,15 @@
 
 **Tech Stack:** Python 3.10+, FastAPI, ChromaDB, sentence-transformers, pytest
 
+> **Engine scope note:** This document describes the **Python desktop** RAG
+> engine (`vector_store.py`, `rag_engine.py`), whose keyword retriever is
+> **BM25**. The separate **browser web_ui** RAG pipeline
+> (`web_ui/src/lib/search/keyword-index.ts`) is a *different* engine: it uses
+> **FlexSearch resolution-rank scoring** with `suggest:true` fuzzy matching, not
+> BM25. The two share a hybrid (vector + keyword) shape but have different
+> scoring/tuning characteristics — do not transfer BM25 tuning conclusions to
+> the browser engine (and vice versa).
+
 ---
 
 ## File Structure

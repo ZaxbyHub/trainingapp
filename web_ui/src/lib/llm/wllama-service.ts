@@ -35,7 +35,7 @@ import {
 import { probeAsset } from '../models/probe';
 
 /** Context window. LFM2-VL handles long context; 4096 is a safe default for RAM. */
-const DEFAULT_N_CTX = 4096;
+export const DEFAULT_N_CTX = 4096;
 
 function threadCount(): number {
   return navigator.hardwareConcurrency ? Math.min(navigator.hardwareConcurrency, 4) : 2;

@@ -302,6 +302,23 @@ describe('EmbeddingService', () => {
       expect(result.length).toBe(384);
     });
 
+    it('uses CLS pooling (F9 — bge-small-en-v1.5 requires cls, not mean)', async () => {
+      const embedding = createMockEmbedding();
+      setupPipelineMock(embedding);
+      const instance = EmbeddingService.getInstance();
+      await instance.initialize();
+      mockPipelineCallable.mockClear();
+
+      await instance.encode('hello world');
+
+      // The model's 1_Pooling/config.json declares pooling_mode_cls_token:true;
+      // mean pooling silently degrades retrieval accuracy.
+      expect(mockPipelineCallable).toHaveBeenCalledWith(
+        'hello world',
+        expect.objectContaining({ pooling: 'cls', normalize: true })
+      );
+    });
+
     it('throws error for empty text', async () => {
       setupPipelineMock();
       const instance = EmbeddingService.getInstance();

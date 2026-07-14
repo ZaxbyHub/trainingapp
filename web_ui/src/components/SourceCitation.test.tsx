@@ -262,4 +262,93 @@ describe('SourceCitation', () => {
       expect(pill).toBeInTheDocument();
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Structured citations (F7): numbered [1] pills with filename/page/click-
+  // through to chunk text. Numbers align with the model's context order.
+  // -------------------------------------------------------------------------
+  describe('structured citations (F7)', () => {
+    it('renders numbered pills [1] [2] aligned to citations array order', () => {
+      render(
+        <SourceCitation
+          citations={[
+            { docId: 'd1', chunkIndex: 0, source: 'alpha.pdf', page: 3, text: 'first chunk' },
+            { docId: 'd2', chunkIndex: 0, source: 'beta.md', page: 7, text: 'second chunk' },
+          ]}
+        />
+      );
+
+      // Numbering matches array index (model's [1] -> citations[0]).
+      expect(screen.getByText('[1]')).toBeInTheDocument();
+      expect(screen.getByText('[2]')).toBeInTheDocument();
+      // Filename (basename) + page suffix render.
+      expect(screen.getByText('alpha.pdf (p. 3)')).toBeInTheDocument();
+      expect(screen.getByText('beta.md (p. 7)')).toBeInTheDocument();
+    });
+
+    it('omits the page suffix when page is not provided', () => {
+      render(
+        <SourceCitation
+          citations={[{ docId: 'd1', chunkIndex: 0, source: 'no-page.txt', text: 't' }]}
+        />
+      );
+      expect(screen.getByText('no-page.txt')).toBeInTheDocument();
+      // No "(p. N)" suffix anywhere.
+      expect(screen.queryByText(/p\./)).toBeNull();
+    });
+
+    it('falls back to docId when source filename is absent', () => {
+      render(
+        <SourceCitation
+          citations={[{ docId: '1700000000-abc', chunkIndex: 0, text: 't' }]}
+        />
+      );
+      expect(screen.getByText('1700000000-abc')).toBeInTheDocument();
+    });
+
+    it('shows a Copy button only when chunk text is present', () => {
+      const { rerender } = render(
+        <SourceCitation
+          citations={[{ docId: 'd1', chunkIndex: 0, source: 'has-text.pdf', text: 'real text' }]}
+        />
+      );
+      expect(screen.getByRole('button', { name: 'Copy source text' })).toBeInTheDocument();
+
+      // No text → no Copy button.
+      rerender(
+        <SourceCitation
+          citations={[{ docId: 'd2', chunkIndex: 0, source: 'no-text.pdf' }]}
+        />
+      );
+      expect(screen.queryByRole('button', { name: 'Copy source text' })).toBeNull();
+    });
+
+    it('expands to show chunk text on click', () => {
+      render(
+        <SourceCitation
+          citations={[{ docId: 'd1', chunkIndex: 0, source: 'x.pdf', page: 1, text: 'the full chunk body' }]}
+        />
+      );
+      // Popover hidden initially.
+      expect(screen.queryByText('the full chunk body')).toBeNull();
+
+      // Click the pill (role=button) to expand.
+      const pill = screen.getByText('[1]').closest('[role="button"]')!;
+      fireEvent.click(pill);
+
+      expect(screen.getByText('the full chunk body')).toBeInTheDocument();
+    });
+
+    it('prefers structured citations over legacy sources when both are provided', () => {
+      render(
+        <SourceCitation
+          sources={['legacy.pdf']}
+          citations={[{ docId: 'd1', chunkIndex: 0, source: 'structured.pdf', text: 't' }]}
+        />
+      );
+      // Structured mode wins: the [1] label appears, legacy filename does not.
+      expect(screen.getByText('[1]')).toBeInTheDocument();
+      expect(screen.queryByText('legacy.pdf')).toBeNull();
+    });
+  });
 });

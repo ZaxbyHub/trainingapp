@@ -13,7 +13,7 @@ import type { SearchResult } from '../../types/search';
 export function rrfFuse(resultsList: SearchResult[][], k: number = 60): SearchResult[] {
   const rrfScores: Record<
     string,
-    { score: number; docId: string; chunkIndex: number; text?: string }
+    { score: number; docId: string; chunkIndex: number; text?: string; source?: string; page?: number }
   > = {};
 
   for (const results of resultsList) {
@@ -21,19 +21,28 @@ export function rrfFuse(resultsList: SearchResult[][], k: number = 60): SearchRe
       const doc = results[rank];
       const key = `${doc.docId}:${doc.chunkIndex}`;
 
-      // First occurrence wins for the text field (highest rank = lowest rank number)
+      // Ensure an entry exists for this chunk key.
       if (!rrfScores[key]) {
         rrfScores[key] = {
           score: 0,
           docId: doc.docId,
           chunkIndex: doc.chunkIndex,
-          text: doc.text,
         };
       }
+      const entry = rrfScores[key];
+
+      // Merge metadata order-agnostically: first NON-EMPTY value wins for each
+      // field. This makes fusion robust regardless of which input list is first
+      // (defense in depth for F1 — a chunk found only by vector search carries
+      // its text once VectorIndex stores it; a chunk found by both takes text
+      // from whichever list actually has it).
+      if (entry.text === undefined && doc.text !== undefined) entry.text = doc.text;
+      if (entry.source === undefined && doc.source !== undefined) entry.source = doc.source;
+      if (entry.page === undefined && doc.page !== undefined) entry.page = doc.page;
 
       // RRF contribution: 1 / (k + rank + 1)
       // +1 because rank is 0-indexed
-      rrfScores[key].score += 1.0 / (k + rank + 1);
+      entry.score += 1.0 / (k + rank + 1);
     }
   }
 
@@ -45,5 +54,7 @@ export function rrfFuse(resultsList: SearchResult[][], k: number = 60): SearchRe
     chunkIndex: item.chunkIndex,
     score: item.score,
     text: item.text,
+    source: item.source,
+    page: item.page,
   }));
 }

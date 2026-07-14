@@ -15,6 +15,12 @@ export interface EmbeddingEntry {
   docId: string;
   chunkIndex: number;
   vector: EmbeddingVector;
+  /** Chunk text, so the vector index can return real text on search (F1). */
+  text?: string;
+  /** Source filename, threaded into citation metadata (F7). */
+  source?: string;
+  /** Page number, threaded into citation metadata (F7). */
+  page?: number;
 }
 
 /**

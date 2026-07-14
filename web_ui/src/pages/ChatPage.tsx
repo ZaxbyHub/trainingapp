@@ -183,7 +183,25 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     streamManager.onDone((data) => {
       const updated = messagesRef.current.map((msg) =>
         msg.id === assistantMessageId
-          ? { ...msg, isStreaming: false, sources: data.sources }
+          ? {
+              ...msg,
+              isStreaming: false,
+              sources: data.sources,
+              // Structured citations from the retrieved chunks (F7). Map
+              // explicitly to CitationRef so the retrieval-only `score` field
+              // is not persisted into the message / Dexie (PRR-008), and keep
+              // the array in context order so pill [i+1] maps to chunks[i].
+              citations: data.chunks?.map((c) => ({
+                docId: c.docId,
+                chunkIndex: c.chunkIndex,
+                source: c.source,
+                page: c.page,
+                text: c.text,
+              })),
+              abstain: data.abstain,
+              abstainReason: data.abstainReason,
+              retrievalDegraded: data.retrievalDegraded,
+            }
           : msg
       );
       messagesRef.current = updated;
@@ -272,6 +290,11 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                 sources = event.data.sources;
                 streamManager.complete({
                   sources,
+                  chunks: event.data.chunks,
+                  abstain: event.data.abstain,
+                  abstainReason: event.data.abstainReason,
+                  retrievalDegraded: event.data.retrievalDegraded,
+                  contextTrimmed: event.data.contextTrimmed,
                   contextLength: fullAnswer.length,
                   inferenceTime: Date.now() - startTime,
                 });

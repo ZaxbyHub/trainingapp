@@ -33,6 +33,21 @@ const DB_NAME = `${USER_PREFIX}-doc-qa-indexes`;
 const INDEX_NAME = `${USER_PREFIX}-doc-qa-index`;
 
 /**
+ * Vector index content version. Bump when the persisted idMapping schema OR the
+ * embedding space changes. On mismatch with a persisted version we treat the
+ * stored index as incompatible and force a re-index (F1/F7 metadata + F9 CLS
+ * pooling both change the schema/space from v1).
+ *
+ * NOTE: this is the *content* version stored as a key alongside the mapping —
+ * it is distinct from the IndexedDB open-schema version (the `1` passed to
+ * indexedDB.open below), which does not change here.
+ */
+export const VECTOR_INDEX_VERSION = 2;
+/** localStorage flag set when a version mismatch invalidates the stored corpus,
+ *  so the UI can show a one-time "re-add your documents" notice. */
+const REINDEX_FLAG_KEY = 'rag-reindex-required';
+
+/**
  * Default configuration for the vector index.
  */
 const DEFAULT_CONFIG: VectorIndexConfig = {
@@ -55,7 +70,7 @@ export class VectorIndex {
   private config: VectorIndexConfig;
   private ready: boolean = false;
   private initPromise: Promise<void> | null = null;
-  private idMapping: Map<number, { docId: string; chunkIndex: number }> = new Map();
+  private idMapping: Map<number, { docId: string; chunkIndex: number; text?: string; source?: string; page?: number }> = new Map();
   private disposed: boolean = false;
 
   /**
@@ -145,8 +160,15 @@ export class VectorIndex {
    * @param vector - The embedding vector to add
    * @param docId - Document ID this vector belongs to
    * @param chunkIndex - Chunk index within the document
+   * @param meta - Optional chunk text/source/page so search() can return real
+   *   text and citation metadata (F1/F7). Omitted by older callers.
    */
-  async addVector(vector: EmbeddingVector, docId: string, chunkIndex: number): Promise<void> {
+  async addVector(
+    vector: EmbeddingVector,
+    docId: string,
+    chunkIndex: number,
+    meta?: { text?: string; source?: string; page?: number }
+  ): Promise<void> {
     if (!this.isReady()) {
       throw new Error('VectorIndex not initialized. Call initialize() first.');
     }
@@ -167,8 +189,14 @@ export class VectorIndex {
       // EdgeVec.insert expects Float32Array, pass directly without conversion
       const internalId = this.index!.insert(vector as Float32Array);
 
-      // Store mapping from internal ID to document metadata
-      this.idMapping.set(internalId, { docId, chunkIndex });
+      // Store mapping from internal ID to document metadata + chunk text (F1/F7)
+      this.idMapping.set(internalId, {
+        docId,
+        chunkIndex,
+        text: meta?.text,
+        source: meta?.source,
+        page: meta?.page,
+      });
     } catch (error) {
       throw new Error(
         `Failed to add vector: ${error instanceof Error ? error.message : String(error)}`,
@@ -231,6 +259,9 @@ export class VectorIndex {
         this.idMapping.set(internalId, {
           docId: entry.docId!,
           chunkIndex: entry.chunkIndex,
+          text: entry.text,      // F1: real chunk text so search() returns it
+          source: entry.source,  // F7: filename for citations
+          page: entry.page,      // F7: page number for citations
         });
       }
       console.info(`[VectorIndex] Batch indexed ${result.inserted} vectors`);
@@ -275,6 +306,9 @@ export class VectorIndex {
           docId: metadata?.docId ?? 'unknown',
           chunkIndex: metadata?.chunkIndex ?? 0,
           score: result.score,
+          text: metadata?.text,     // F1: real chunk text
+          source: metadata?.source, // F7: filename
+          page: metadata?.page,     // F7: page number
         };
       });
     } catch (error) {
@@ -367,9 +401,13 @@ export class VectorIndex {
           id,
           docId: meta.docId,
           chunkIndex: meta.chunkIndex,
+          text: meta.text,
+          source: meta.source,
+          page: meta.page,
         }));
 
         store.put({ key: 'idMapping', data: mappingArray });
+        store.put({ key: 'version', version: VECTOR_INDEX_VERSION });
         tx.oncomplete = () => {
           db.close();
           resolve();
@@ -420,7 +458,13 @@ export class VectorIndex {
           if (result && result.data) {
             this.idMapping.clear();
             for (const item of result.data) {
-              this.idMapping.set(item.id, { docId: item.docId, chunkIndex: item.chunkIndex });
+              this.idMapping.set(item.id, {
+                docId: item.docId,
+                chunkIndex: item.chunkIndex,
+                text: item.text,
+                source: item.source,
+                page: item.page,
+              });
             }
           } else {
             this.idMapping.clear();
@@ -439,13 +483,124 @@ export class VectorIndex {
   }
 
   /**
+   * Read the persisted content version from IndexedDB WITHOUT loading the
+   * native EdgeVec blob. Return contract:
+   *  - `null`  → there is nothing to check: either IndexedDB is unavailable
+   *              (some test contexts) OR the database did not exist before this
+   *              call (a brand-new install with no prior corpus). The caller
+   *              skips the version check and proceeds with the normal load path.
+   *  - `0`     → a mappings store ALREADY EXISTED (pre-upgrade DB) but has no
+   *              version key. This is the signature of a pre-v2 index (v1,
+   *              mean-pooled) — treated as incompatible and forced through the
+   *              re-index path (F9).
+   *  - number  → the persisted version (compare to VECTOR_INDEX_VERSION).
+   *
+   * The fresh-install distinction is critical: opening a non-existent DB fires
+   * `onupgradeneeded` with `oldVersion === 0`, which would otherwise create the
+   * store as a read side-effect and then (finding no version row) look
+   * indistinguishable from a pre-v2 upgrade — producing a spurious re-index
+   * notice for every new user (PRR-001).
+   */
+  private async readPersistedVersion(): Promise<number | null> {
+    // In environments without IndexedDB, return null so the caller proceeds.
+    if (typeof indexedDB === 'undefined') {
+      return null;
+    }
+    return new Promise((resolve) => {
+      const request = indexedDB.open(DB_NAME, 1);
+      // Track whether the DB (and thus the mappings store) existed BEFORE this
+      // open call. A brand-new DB fires onupgradeneeded with oldVersion 0.
+      let createdFresh = false;
+
+      request.onerror = () => resolve(null);
+
+      request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
+        createdFresh = event.oldVersion === 0;
+        const db = request.result;
+        if (!db.objectStoreNames.contains('mappings')) {
+          db.createObjectStore('mappings', { keyPath: 'key' });
+        }
+      };
+
+      request.onsuccess = () => {
+        const db = request.result;
+        // Fresh install (DB did not exist before): nothing to re-index.
+        if (createdFresh) {
+          db.close();
+          resolve(null);
+          return;
+        }
+        if (!db.objectStoreNames.contains('mappings')) {
+          db.close();
+          // Pre-existing DB but no mappings object store → pre-v2 shape.
+          resolve(0);
+          return;
+        }
+        const tx = db.transaction('mappings', 'readonly');
+        const store = tx.objectStore('mappings');
+        const getReq = store.get('version');
+        getReq.onsuccess = () => {
+          db.close();
+          const v = getReq.result?.version;
+          // No version row → pre-v2 (v1) index. Resolve 0 so the mismatch check
+          // forces a re-index rather than loading incompatible mean-pooled vectors.
+          resolve(typeof v === 'number' ? v : 0);
+        };
+        getReq.onerror = () => {
+          db.close();
+          resolve(0);
+        };
+      };
+    });
+  }
+
+  /**
+   * Mark the stored corpus as needing re-indexing (version mismatch). Sets a
+   * localStorage flag the UI reads once and clears on notice dismissal.
+   */
+  private flagReindexRequired(): void {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(REINDEX_FLAG_KEY, '1');
+      }
+    } catch {
+      /* private mode / storage disabled — non-fatal */
+    }
+  }
+
+  /**
    * Load the index from IndexedDB using EdgeVec's native load.
+   *
+   * The persisted content version is checked BEFORE the native EdgeVec blob is
+   * loaded: on mismatch we skip the load entirely (avoiding a stale v1 HNSW
+   * graph whose internal IDs would not match a v2 mapping), flag a re-index,
+   * and return false so the index is treated as empty. This is the F9 re-index
+   * path — triggered by the CLS-pooling change, which moves the embedding
+   * space and makes existing vectors incompatible.
    *
    * @returns true if a saved index was loaded, false if no saved index exists
    */
   async load(): Promise<boolean> {
     if (this.index === null) {
       throw new Error('VectorIndex not initialized');
+    }
+
+    // F9: check the persisted content version BEFORE loading the native blob.
+    // `null` means IndexedDB is unavailable (e.g. a test context) — proceed with
+    // the normal load path. Any non-null value that isn't VECTOR_INDEX_VERSION —
+    // including 0 (a pre-v2/v1 store with no version key, i.e. mean-pooled
+    // vectors from a previous build) — is incompatible and MUST be discarded so
+    // a CLS-pooling client never loads mean-pooled vectors.
+    const persistedVersion = await this.readPersistedVersion();
+    if (persistedVersion !== null && persistedVersion !== VECTOR_INDEX_VERSION) {
+      console.warn(
+        `[VectorIndex] Stored index version ${persistedVersion === 0 ? '1 (pre-versioned)' : persistedVersion} ` +
+        `is incompatible with current version ${VECTOR_INDEX_VERSION} (embedding space changed). ` +
+        `Discarding stored index — re-add documents to rebuild the search index.`
+      );
+      this.idMapping.clear();
+      this.flagReindexRequired();
+      return false;
     }
 
     let loadedIndex = null;

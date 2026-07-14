@@ -394,12 +394,12 @@ describe('RerankerService', () => {
       });
     });
 
-    test('handles empty text in results', async () => {
+    test('handles empty text in results (F5: empty-text passes through UNSCORED)', async () => {
       const pipeline = pipelineMock as ReturnType<typeof vi.fn> & { dispose: ReturnType<typeof vi.fn> };
+      // Only ONE score is returned because only the non-empty chunk is scored.
       const mockFn = Object.assign(
         vi.fn().mockResolvedValue([
-          { label: 'positive', score: 0.5 }, // empty text
-          { label: 'positive', score: 0.9 }, // non-empty text
+          { label: 'positive', score: 0.9 }, // non-empty text only
         ]),
         { dispose: vi.fn() }
       );
@@ -414,7 +414,20 @@ describe('RerankerService', () => {
       ];
 
       const reranked = asTestResults(await service.rerank('query', asSearchResults(results)));
+
+      // Both results survive.
       expect(reranked).toHaveLength(2);
+      // F5 contract: the cross-encoder must NOT be called with [query, ''] for
+      // the empty-text chunk — only the single non-empty pair is scored.
+      expect(mockFn).toHaveBeenCalledTimes(1);
+      expect(mockFn).toHaveBeenCalledWith([['query', 'doc 2']]);
+      // The empty-text result passes through UNSCORED (retains its original
+      // score 0.1, not a cross-encoder score), and is appended after the
+      // scored result (score 0.9).
+      expect(reranked[0].score).toBe(0.9);
+      expect(reranked[0].id).toBe('2');
+      expect(reranked[1].score).toBe(0.1);
+      expect(reranked[1].id).toBe('1');
     });
   });
 
