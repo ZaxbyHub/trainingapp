@@ -171,47 +171,55 @@ describe('document-store', () => {
     });
   });
 
-  describe('getUserPrefix', () => {
-    it('returns existing sessionStorage value when present', () => {
-      mockSessionStorage.setItem('doc-qa-user-id', 'test-user-12345678');
-      expect(getUserPrefix()).toBe('test-use'); // getUserPrefix returns first 8 chars
-      mockSessionStorage.removeItem('doc-qa-user-id');
+  describe('getUserPrefix (F1: stable localStorage-backed profile)', () => {
+    let mockLocalStorage: Record<string, string>;
+
+    beforeEach(() => {
+      mockLocalStorage = {};
+      // getProfilePrefix reads localStorage directly; provide a controllable
+      // in-memory localStorage for these assertions.
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: {
+          getItem: (key: string) => mockLocalStorage[key] ?? null,
+          setItem: (key: string, value: string) => { mockLocalStorage[key] = value; },
+          removeItem: (key: string) => { delete mockLocalStorage[key]; },
+        },
+        writable: true,
+        configurable: true,
+      });
     });
 
-    it('generates and stores a new prefix when sessionStorage is empty', () => {
-      mockSessionStorage.removeItem('doc-qa-user-id');
+    it('returns the existing persisted profile prefix when present', () => {
+      mockLocalStorage['doc-qa-profile-id'] = 'abcdef12';
+      expect(getUserPrefix()).toBe('abcdef12');
+    });
+
+    it('mints and persists a new lowercase-alphanumeric prefix when none exists', () => {
       const prefix = getUserPrefix();
       expect(prefix).toBeTruthy();
-      expect(prefix.length).toBeGreaterThanOrEqual(3);
+      // Constrained to lowercase alphanumerics so DB_NAME matches its regex.
+      expect(prefix).toMatch(/^[a-z0-9]+$/);
+      // Persisted for future boots.
+      expect(mockLocalStorage['doc-qa-profile-id']).toBe(prefix);
     });
 
-    it('returns short prefix (first 8 chars) when full UUID is stored', () => {
-      mockSessionStorage.setItem('doc-qa-user-id', 'abcdef1234567890abcdef1234567890');
-      expect(getUserPrefix()).toBe('abcdef12');
-      mockSessionStorage.removeItem('doc-qa-user-id');
+    it('is stable across repeated reads (same prefix returned every time)', () => {
+      const first = getUserPrefix();
+      const second = getUserPrefix();
+      expect(second).toBe(first);
     });
 
-    it('returns "anon" when sessionStorage is unavailable', () => {
-      const originalSessionStorage = globalThis.sessionStorage;
-      Object.defineProperty(globalThis, 'sessionStorage', { value: undefined, writable: true });
+    it('returns "anon" fallback when localStorage is unavailable', () => {
+      Object.defineProperty(globalThis, 'localStorage', { value: undefined, writable: true, configurable: true });
       expect(getUserPrefix()).toBe('anon');
-      Object.defineProperty(globalThis, 'sessionStorage', { value: originalSessionStorage, writable: true });
     });
   });
 
-  describe('user isolation (prefix behavior)', () => {
-    it('Different sessionStorage values produce different prefixes', () => {
-      mockSessionStorage.setItem('doc-qa-user-id', 'aaaa1111');
-      const prefixA = getUserPrefix();
-
-      mockSessionStorage.setItem('doc-qa-user-id', 'bbbb2222');
-      const prefixB = getUserPrefix();
-
-      expect(prefixA).not.toBe(prefixB);
-      expect(prefixA).toBe('aaaa1111');
-      expect(prefixB).toBe('bbbb2222');
-
-      mockSessionStorage.removeItem('doc-qa-user-id');
+  describe('DB_NAME shape (F1)', () => {
+    it('derives from the stable profile prefix and matches the isolation regex', () => {
+      // DB_NAME is computed at module load from the profile prefix; with a
+      // localStorage-backed prefix it must still match the historical shape.
+      expect(DB_NAME).toMatch(/^[a-z0-9-]{3,8}-doc-qa-documents$/);
     });
   });
 });

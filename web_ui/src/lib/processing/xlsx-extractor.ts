@@ -44,18 +44,19 @@ export async function extractXlsxText(file: File): Promise<ExtractionResult> {
       // Convert sheet to JSON to inspect contents. With `header: 1`, SheetJS
       // returns an array-of-arrays (each row is a cell array), NOT an array of
       // records — so the element type is `unknown[]`.
+      //
+      // F16: keep `blankrows: true` (the default) so each row's array index
+      // corresponds to its ORIGINAL spreadsheet row number. The previous code
+      // dropped blank rows before numbering, so "Row N" labels slid out of sync
+      // with the source file. Empty rows are now skipped at render time while
+      // preserving their original row index.
       const sheetData = XLSX.utils.sheet_to_json<unknown[]>(sheet, {
         header: 1,
         defval: '',
-        blankrows: false,
+        blankrows: true,
       });
 
-      // Filter out completely empty rows
-      const nonEmptyRows = sheetData.filter((row: unknown[]) =>
-        row.some((cell: unknown) => cell !== null && cell !== undefined && cell !== '')
-      );
-
-      if (nonEmptyRows.length === 0) {
+      if (sheetData.length === 0) {
         // Skip empty sheets
         continue;
       }
@@ -66,10 +67,21 @@ export async function extractXlsxText(file: File): Promise<ExtractionResult> {
       const sheetTextLines: string[] = [];
       sheetTextLines.push(`Sheet: ${sheetName}`);
 
-      // Process each row with row numbers
-      for (let rowIndex = 0; rowIndex < nonEmptyRows.length; rowIndex++) {
-        const row = nonEmptyRows[rowIndex];
+      // Process each row using its ORIGINAL index so the displayed "Row N"
+      // matches the spreadsheet's native row number (F16).
+      for (let rowIndex = 0; rowIndex < sheetData.length; rowIndex++) {
+        const row = sheetData[rowIndex];
+        // The source row number is the 1-based position in the original sheet.
         const rowNumber = rowIndex + 1;
+
+        // Skip rows that are entirely empty (do not emit a "Row N:" line), but
+        // do NOT renumber subsequent rows — rowNumber stays the original index.
+        const isEmpty = !row.some(
+          (cell: unknown) => cell !== null && cell !== undefined && cell !== ''
+        );
+        if (isEmpty) {
+          continue;
+        }
 
         // Convert row cells to text
         const rowText = row

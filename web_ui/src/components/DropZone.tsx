@@ -11,6 +11,39 @@ interface DropZoneProps {
   disabled?: boolean;
 }
 
+/**
+ * F15: check whether a file matches an `accept` filter. The native file picker
+ * (<input type="file" accept>) applies this automatically, but the drag-and-
+ * drop path previously forwarded every dropped file regardless of `accept`.
+ * This shared helper normalizes both paths. `accept` is a comma-separated list
+ * of extensions (e.g. ".pdf,.docx,.txt") and/or MIME types; an undefined/empty
+ * accept matches everything.
+ */
+export function matchesAccept(file: File, accept?: string): boolean {
+  if (!accept || accept.trim().length === 0) {
+    return true;
+  }
+  const tokens = accept
+    .split(',')
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  if (tokens.length === 0) {
+    return true;
+  }
+  const name = file.name.toLowerCase();
+  const mime = (file.type ?? '').toLowerCase();
+  return tokens.some((token) => {
+    if (token.startsWith('.')) {
+      return name.endsWith(token);
+    }
+    // MIME token — allow prefix matches like "text/*".
+    if (token.endsWith('/*')) {
+      return mime.startsWith(token.slice(0, -1));
+    }
+    return mime === token;
+  });
+}
+
 export const DropZone: React.FC<DropZoneProps> = React.memo(
   ({ onFilesSelected, accept, disabled = false }) => {
     const inputRef = useRef<HTMLInputElement>(null);
@@ -43,12 +76,15 @@ export const DropZone: React.FC<DropZoneProps> = React.memo(
           return;
         }
 
-        const files = Array.from(e.dataTransfer.files);
+        // F15: apply the same accept filter the native file picker uses, so
+        // unsupported files dropped via drag-and-drop are filtered out instead
+        // of reaching the extractor and failing later.
+        const files = Array.from(e.dataTransfer.files).filter((f) => matchesAccept(f, accept));
         if (files.length > 0) {
           onFilesSelected(files);
         }
       },
-      [disabled, onFilesSelected]
+      [disabled, onFilesSelected, accept]
     );
 
     const handleClick = useCallback(() => {

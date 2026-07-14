@@ -27,7 +27,7 @@ export type MemoryPressureStatus = 'normal' | 'moderate' | 'critical';
  * browser overhead down below the model requirement, hard-blocking the CPU
  * wllama engine — the engine that exists precisely for WebGPU-less / memory
  * constrained machines. Treating unknown as high-capacity waives the overhead
- * subtraction (see getMemoryBudget's isHighCapacity branch) and lets the model
+ * subtraction (see getMemoryBudget's graduated taper) and lets the model
  * gate decide on its own merits instead of false-blocking on unknown hardware.
  * (issue #21 F4)
  */
@@ -40,12 +40,25 @@ export function getDeviceMemory(): number {
 }
 
 /**
- * Estimates available memory budget after accounting for browser overhead
- * Browser overhead varies by browser family
+ * Whether navigator.deviceMemory reported a real value. Firefox and Safari do
+ * not implement the Device Memory API, so this returns false there. Used by
+ * `getMemoryBudget` to avoid forcing those browsers into the worst-case tier.
+ */
+export function isDeviceMemoryKnown(): boolean {
+  const deviceMemory = (navigator as { deviceMemory?: number }).deviceMemory;
+  return typeof deviceMemory === 'number' && deviceMemory > 0;
+}
+
+/**
+ * Estimates available memory budget after accounting for browser overhead.
  *
- * Note: navigator.deviceMemory caps at 8GB for privacy in Chrome.
- * When raw value >= 8, we waive overhead subtraction because actual
- * RAM on such systems is far higher (typically 16GB+).
+ * F12 (reconciled with issue #21 F4): the binary "isHighCapacity = rawGD >= 8 ?
+ * 0 : overhead" cliff is replaced with a graduated taper so KNOWN mid-range
+ * hardware (5/6/7GB) gets a proportionate overhead estimate rather than the
+ * full worst-case subtraction. Unknown deviceMemory returns 8 from
+ * getDeviceMemory() (the Chrome privacy cap) per #21 F4, which tapers to zero
+ * overhead here — consistent with #21's intent of not false-blocking the CPU
+ * wllama engine on unknown hardware.
  */
 export function getMemoryBudget(): MemoryBudget {
   const rawGD = getDeviceMemory();
@@ -53,10 +66,12 @@ export function getMemoryBudget(): MemoryBudget {
 
   const userAgent = navigator.userAgent;
   const isFirefox = /Firefox/i.test(userAgent);
-  // navigator.deviceMemory caps at 8GB for privacy. Waive overhead when
-  // at the cap — the actual RAM on such systems is far higher.
-  const isHighCapacity = rawGD >= 8;
-  const browserOverheadMB = isHighCapacity ? 0 : (isFirefox ? 2560 : 2048);
+  const baseOverheadMB = isFirefox ? 2560 : 2048;
+  // Graduated taper: 1.0 at rawGD<=4, 0.0 at rawGD>=8. Linear between.
+  // (navigator.deviceMemory caps at 8 in Chrome, so reported 8 already means
+  // "8GB or more" — tapering to 0 there keeps those systems in 'normal'.)
+  const taper = Math.max(0, Math.min(1, (8 - rawGD) / 4));
+  const browserOverheadMB = Math.round(baseOverheadMB * taper);
 
   const availableMB = Math.max(0, totalMB - browserOverheadMB);
 

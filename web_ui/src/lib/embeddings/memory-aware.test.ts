@@ -1,6 +1,7 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   getDeviceMemory,
+  isDeviceMemoryKnown,
   getMemoryBudget,
   selectModelTier,
   getMemoryPressureStatus,
@@ -80,12 +81,15 @@ describe('memory-aware', () => {
       expect(budget.availableMB).toBe(2048);
     });
 
-    test('calculates availableMB with no deviceMemory (defaults to 8GB high-capacity, waives overhead — issue #21 F4)', () => {
+    test('calculates availableMB with no deviceMemory (defaults to 8GB high-capacity, waives overhead — issue #21 F4 / #23 F12 graduated taper)', () => {
       mockNavigator.deviceMemory = undefined;
       mockNavigator.userAgent = 'Chrome/120.0.0.0';
 
       const budget = getMemoryBudget();
 
+      // Unknown deviceMemory → getDeviceMemory() returns 8 (Chrome privacy cap,
+      // per #21 F4). The graduated taper (#23 F12) then yields overhead 0 at
+      // rawGD=8, so available = 8192 (consistent with #21's no-false-block intent).
       expect(budget.totalMB).toBe(8192);
       expect(budget.browserOverheadMB).toBe(0);
       expect(budget.availableMB).toBe(8192);
@@ -169,8 +173,9 @@ describe('memory-aware', () => {
     });
 
     test('returns "moderate" when availableMB >= 4096 and < 8192', () => {
-      // 7GB device, Chrome: total=7168, overhead=2048 (since 7<8, no waiver), available=5120
-      // 5120 >= 4096 is TRUE, 5120 >= 8192 is FALSE -> 'moderate'
+      // 7GB device, Chrome (F12 graduated overhead): total=7168,
+      // taper=(8-7)/4=0.25 → overhead=512 → available=6656.
+      // 6656 >= 4096 is TRUE, 6656 >= 8192 is FALSE -> 'moderate'
       mockNavigator.deviceMemory = 7;
       mockNavigator.userAgent = 'Chrome/120.0.0.0';
 
@@ -183,6 +188,47 @@ describe('memory-aware', () => {
       // availableMB = 4096 - 2048 = 2048 < 4096 -> 'critical'
 
       expect(getMemoryPressureStatus()).toBe('critical');
+    });
+
+    test('F12/#21: unknown deviceMemory (Firefox/Safari) does NOT classify as "critical" (avoids false-blocking)', () => {
+      // Combined fix: #21 F4 makes getDeviceMemory() return 8 (high-capacity)
+      // for unknown, and #23 F12's graduated taper yields overhead 0 at rawGD=8.
+      // Net: unknown hardware classifies as "normal", not "critical" — the core
+      // goal of both findings (don't false-block Firefox/Safari/CPU-engine users).
+      mockNavigator.deviceMemory = undefined;
+      mockNavigator.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15';
+
+      expect(getMemoryPressureStatus()).not.toBe('critical');
+    });
+
+    test('F12: graduated taper gives known mid-range hardware a proportionate (not full) overhead', () => {
+      // The novel #23 F12 contribution: a KNOWN 6GB machine no longer pays the
+      // full 2048MB overhead (the old binary cliff). taper=(8-6)/4=0.5 → 1024.
+      mockNavigator.deviceMemory = 6;
+      mockNavigator.userAgent = 'Chrome/120.0.0.0';
+
+      const budget = getMemoryBudget();
+      expect(budget.browserOverheadMB).toBe(1024); // graduated, not 2048
+      expect(budget.availableMB).toBe(5120); // 6144 - 1024
+    });
+  });
+
+  describe('isDeviceMemoryKnown', () => {
+    test('returns true when navigator.deviceMemory is a positive number', () => {
+      mockNavigator.deviceMemory = 8;
+      expect(isDeviceMemoryKnown()).toBe(true);
+    });
+
+    test('returns false when navigator.deviceMemory is undefined (Firefox/Safari)', () => {
+      mockNavigator.deviceMemory = undefined;
+      expect(isDeviceMemoryKnown()).toBe(false);
+    });
+
+    test('returns false when navigator.deviceMemory is 0 or negative', () => {
+      mockNavigator.deviceMemory = 0;
+      expect(isDeviceMemoryKnown()).toBe(false);
+      mockNavigator.deviceMemory = -2;
+      expect(isDeviceMemoryKnown()).toBe(false);
     });
   });
 

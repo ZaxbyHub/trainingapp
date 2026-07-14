@@ -5,7 +5,19 @@ import path from 'path';
 /**
  * Vite plugin to handle edgevec WASM package internal imports.
  * edgevec's JS bundle imports from ./snippets/ which may not resolve
- * during Rollup production builds.
+ * during Rollup production builds (edgevec 0.6.0 ships without its snippets/
+ * directory), so we stub the storage backend it imports.
+ *
+ * Contract note (F17): the stub must match the real edgevec backend's miss
+ * behavior. The real IndexedDbBackend lives at the content-addressed snippet
+ * path `edgevec-98e271a617b3aceb` (the hash edgevec.js:1 imports). That exact
+ * directory is shipped in edgevec 0.9.0 on npm; its `read(name)` REJECTS with
+ * "File <name> not found" when there is no saved index, and resolves with the
+ * Uint8Array data on hit. The previous stub resolved `null` on miss, which the
+ * Rust `edgevec_load` deserializer treated as truncated/corrupt data and
+ * rejected with ERR_CORRUPTION on every fresh boot. Rejecting on miss makes
+ * `edgevec_load` reject cleanly, which VectorIndex.load() already catches as
+ * the "no index yet" path — no console error on a fresh boot.
  */
 function edgevecSnippetPlugin(): Plugin {
   const VIRTUAL_SNIPPET_ID = '\0edgevec-snippet';
@@ -28,7 +40,18 @@ export class IndexedDbBackend {
         const tx = req.result.transaction('data', 'readonly');
         const store = tx.objectStore('data');
         const getReq = store.get(dbName);
-        getReq.onsuccess = () => resolve(getReq.result || null);
+        getReq.onsuccess = () => {
+          if (getReq.result) {
+            resolve(getReq.result);
+          } else {
+            // Match the real edgevec backend contract (content-addressed
+            // snippet edgevec-98e271a617b3aceb, shipped in 0.9.0): reject on
+            // miss so the Rust edgevec_load surfaces a Promise rejection
+            // (clean "no index" path) rather than resolving null, which the
+            // WASM deserializer treats as corrupt data (ERR_CORRUPTION).
+            reject(new Error('EdgeVec index not found: ' + dbName));
+          }
+        };
         getReq.onerror = () => reject(getReq.error);
       };
       req.onerror = () => reject(req.error);
