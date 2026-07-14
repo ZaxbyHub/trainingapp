@@ -40,16 +40,6 @@ export function getDeviceMemory(): number {
 }
 
 /**
- * Whether navigator.deviceMemory reported a real value. Firefox and Safari do
- * not implement the Device Memory API, so this returns false there. Used by
- * `getMemoryBudget` to avoid forcing those browsers into the worst-case tier.
- */
-export function isDeviceMemoryKnown(): boolean {
-  const deviceMemory = (navigator as { deviceMemory?: number }).deviceMemory;
-  return typeof deviceMemory === 'number' && deviceMemory > 0;
-}
-
-/**
  * Estimates available memory budget after accounting for browser overhead.
  *
  * F12 (reconciled with issue #21 F4): the binary "isHighCapacity = rawGD >= 8 ?

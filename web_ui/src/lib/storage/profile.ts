@@ -110,8 +110,10 @@ const ORPHAN_DB_RE = /^([a-z0-9]{3,8})-doc-qa-(documents|indexes|keywords)$/;
  *
  * - Chrome/Edge: `indexedDB.databases()` is available; migration copies the
  *   most-recently-written orphan document set + keyword index into the stable
- *   namespace. The vector index is discarded with a re-index notice (its WASM
- *   blob is not safely copyable across names).
+ *   namespace. The vector index is NOT copied (its WASM blob is not safely
+ *   copyable across names); when any documents are migrated, the
+ *   `rag-reindex-required` flag is set so the existing one-time re-index notice
+ *   surfaces and the user knows to re-add documents for semantic search.
  * - Firefox/Safari: `indexedDB.databases()` is unavailable; migration is
  *   skipped and the flag is NOT set, so a later session on an enumerating
  *   browser can still migrate.
@@ -175,12 +177,27 @@ export async function migrateOrphanedNamespaces(): Promise<void> {
   // orphans (merging), preferring the current profile's namespace as target.
   // This is a read-all/write-all loop wrapped in try/catch; partial failures do
   // not abort the rest and never surface to the UI.
+  let migratedDocCount = 0;
   for (const orphanPrefix of orphanPrefixes) {
     try {
-      await copyDocumentStore(`${orphanPrefix}-doc-qa-documents`, `${currentPrefix}-doc-qa-documents`);
+      migratedDocCount += await copyDocumentStore(`${orphanPrefix}-doc-qa-documents`, `${currentPrefix}-doc-qa-documents`);
       await copyKeywordIndex(`${orphanPrefix}-doc-qa-keywords`, `${currentPrefix}-doc-qa-keywords`);
     } catch (error) {
       console.warn(`[profile] Could not migrate orphan namespace ${orphanPrefix}:`, error);
+    }
+  }
+
+  // PRR-002: the vector index cannot be copied across names, so any migrated
+  // documents lack semantic-search vectors. Set the existing re-index flag so
+  // the one-time notice tells the user to re-add their documents (rather than
+  // silently presenting a corpus that keyword-searches but won't semantic-search).
+  if (migratedDocCount > 0) {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('rag-reindex-required', '1');
+      }
+    } catch {
+      /* private mode / storage disabled — non-fatal */
     }
   }
 
@@ -197,14 +214,15 @@ export async function migrateOrphanedNamespaces(): Promise<void> {
 /**
  * Copy all documents from a source IndexedDB store into a target database's
  * store, merging (by keyPath `id`). Opens each DB read-only/write-only; never
- * deletes the source. Best-effort.
+ * deletes the source. Returns the number of documents copied. Best-effort.
  */
-async function copyDocumentStore(sourceDbName: string, targetDbName: string): Promise<void> {
+async function copyDocumentStore(sourceDbName: string, targetDbName: string): Promise<number> {
   const docs = await readAllFromStore<{ id: string }>(sourceDbName, 'documents');
   if (docs.length === 0) {
-    return;
+    return 0;
   }
   await mergeIntoStore(targetDbName, 'documents', 'id', docs);
+  return docs.length;
 }
 
 /** Copy keyword-index entries from source to target (merge by keyPath `key`). */
@@ -315,6 +333,15 @@ export async function listStalePrefixes(): Promise<string[]> {
 /**
  * Delete all IndexedDB databases for a given profile prefix.
  * Intended for the Settings "Clear Cache" UI (PR-5). Best-effort.
+ *
+ * NOTE (PRR-008): this deletes the documents, vector-mapping, and keyword DBs,
+ * but it CANNOT delete the native EdgeVec HNSW blob for the prefix — that blob
+ * is stored as a VALUE keyed by `${prefix}-doc-qa-index` inside the shared
+ * `edgevec-db` database (see vite.config.ts IndexedDbBackend stub), not in a
+ * per-profile database. Clearing it requires deleting the key from
+ * `edgevec-db`'s data store (or deleting `edgevec-db` entirely, which would
+ * affect ALL profiles). PR-5's Clear Cache UI must handle the EdgeVec blob
+ * separately; deleting only these three DBs leaves the vector blob orphaned.
  */
 export async function deleteNamespace(prefix: string): Promise<void> {
   // Match the system-wide prefix constraint (see getProfilePrefix / DB_NAME

@@ -72,7 +72,21 @@ export function DocumentsPage() {
         if (cancelled) return;
         const docs = await loadDocuments();
         if (cancelled) return;
-        setDocuments(docs);
+        // PRR-007: a browser/tab close during processing leaves documents
+        // persisted with a non-terminal status ('processing'/'uploading') and
+        // no in-flight promise to resume them. Reset any such stale documents
+        // to 'error' so they don't render stuck forever; the user can delete
+        // and re-add them.
+        const recovered = docs.map((doc) =>
+          doc.status === 'processing' || doc.status === 'uploading'
+            ? {
+                ...doc,
+                status: 'error' as const,
+                errorMessage: 'Processing was interrupted. Please delete and re-add this document.',
+              }
+            : doc
+        );
+        setDocuments(recovered);
       } catch (error) {
         console.error('Failed to load documents:', error);
       } finally {
@@ -306,9 +320,12 @@ export function DocumentsPage() {
       const skipped: string[] = [];
 
       for (const file of files) {
-        const isDuplicate = existing.some(
-          (doc) => doc.fileName === file.name && doc.fileSize === file.size
-        );
+        // F5/PRR-010: dedup against both the existing documents AND any entries
+        // already accepted in THIS batch, so two identical files dropped together
+        // don't both create independent chunk sets.
+        const isDuplicate =
+          existing.some((doc) => doc.fileName === file.name && doc.fileSize === file.size) ||
+          accepted.some((a) => a.entry.fileName === file.name && a.entry.fileSize === file.size);
         if (isDuplicate) {
           skipped.push(file.name);
           continue;

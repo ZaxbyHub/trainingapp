@@ -1,7 +1,6 @@
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   getDeviceMemory,
-  isDeviceMemoryKnown,
   getMemoryBudget,
   selectModelTier,
   getMemoryPressureStatus,
@@ -210,25 +209,6 @@ describe('memory-aware', () => {
       const budget = getMemoryBudget();
       expect(budget.browserOverheadMB).toBe(1024); // graduated, not 2048
       expect(budget.availableMB).toBe(5120); // 6144 - 1024
-    });
-  });
-
-  describe('isDeviceMemoryKnown', () => {
-    test('returns true when navigator.deviceMemory is a positive number', () => {
-      mockNavigator.deviceMemory = 8;
-      expect(isDeviceMemoryKnown()).toBe(true);
-    });
-
-    test('returns false when navigator.deviceMemory is undefined (Firefox/Safari)', () => {
-      mockNavigator.deviceMemory = undefined;
-      expect(isDeviceMemoryKnown()).toBe(false);
-    });
-
-    test('returns false when navigator.deviceMemory is 0 or negative', () => {
-      mockNavigator.deviceMemory = 0;
-      expect(isDeviceMemoryKnown()).toBe(false);
-      mockNavigator.deviceMemory = -2;
-      expect(isDeviceMemoryKnown()).toBe(false);
     });
   });
 

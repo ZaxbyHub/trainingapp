@@ -109,6 +109,105 @@ describe('profile (F1 stable namespace)', () => {
       });
       await expect(migrateOrphanedNamespaces()).resolves.toBeUndefined();
     });
+
+    it('PRR-003/PRR-002: copies orphan documents into the current namespace and sets the re-index flag', async () => {
+      // Minimal fake IndexedDB. Request handlers (onsuccess/oncomplete) are
+      // invoked on the next macrotask via a setter so they fire AFTER the caller
+      // attaches them (mirroring real IDB async semantics).
+      const current = getProfilePrefix();
+      const orphanPrefix = 'oldold01';
+      const orphanDocs = [
+        { id: 'doc-a', fileName: 'a.pdf', status: 'ready' },
+        { id: 'doc-b', fileName: 'b.pdf', status: 'ready' },
+      ];
+
+      // dbName → { storeName → record[] }. Orphan documents store pre-seeded.
+      const dbStore: Record<string, Record<string, Array<Record<string, unknown>>>> = {
+        [`${orphanPrefix}-doc-qa-documents`]: { documents: [...orphanDocs] },
+        [`${orphanPrefix}-doc-qa-keywords`]: { 'keyword-index': [{ key: 'data', entries: [], documentChunks: {} }] },
+      };
+
+      const databases = vi.fn(async () => [
+        { name: `${orphanPrefix}-doc-qa-documents` },
+        { name: `${orphanPrefix}-doc-qa-keywords` },
+        { name: `${current}-doc-qa-documents` },
+      ]);
+
+      // Helper: an IDBRequest-like object whose `onsuccess` fires next tick.
+      function makeRequest(fire: (r: any) => void): any {
+        const r: any = { result: undefined, onsuccess: null, onerror: null };
+        setTimeout(() => {
+          fire(r);
+          if (typeof r.onsuccess === 'function') r.onsuccess();
+        }, 0);
+        return r;
+      }
+
+      function open(dbName: string): any {
+        const stores = (dbStore[dbName] ?? (dbStore[dbName] = {}));
+        const req: any = {
+          result: undefined,
+          onupgradeneeded: null,
+          onsuccess: null,
+          onerror: null,
+        };
+        const buildResult = () => ({
+          objectStoreNames: { contains: (n: string) => Object.keys(stores).includes(n) },
+          close: vi.fn(),
+          createObjectStore: (n: string) => {
+            if (!stores[n]) stores[n] = [];
+            return {};
+          },
+          transaction: (storeName: string, _mode: string) => {
+            const bucket = stores[storeName] ?? (stores[storeName] = []);
+            const tx: any = { oncomplete: null, onerror: null };
+            tx.objectStore = () => ({
+              getAll: () => makeRequest((r: any) => { r.result = [...bucket]; }),
+              get: (_key: string) => makeRequest((r: any) => { r.result = null; }),
+              put: (rec: Record<string, unknown>) => {
+                bucket.push(rec);
+                return makeRequest(() => {});
+              },
+            });
+            setTimeout(() => {
+              if (typeof tx.oncomplete === 'function') tx.oncomplete();
+            }, 0);
+            return tx;
+          },
+        });
+        setTimeout(() => {
+          // Real IDB fires onupgradeneeded (creating stores) when the DB/store
+          // is new, then onsuccess. mergeIntoStore opens at version 1; the
+          // target documents DB is fresh, so simulate the upgrade.
+          if (typeof req.onupgradeneeded === 'function') {
+            req.result = buildResult();
+            req.onupgradeneeded({ target: { result: req.result, oldVersion: 0 } });
+          }
+          req.result = buildResult();
+          if (typeof req.onsuccess === 'function') req.onsuccess();
+        }, 0);
+        return req;
+      }
+
+      Object.defineProperty(globalThis, 'indexedDB', {
+        value: { databases, open: vi.fn((name: string) => open(name)) },
+        writable: true,
+        configurable: true,
+      });
+
+      await migrateOrphanedNamespaces();
+
+      // The orphan documents were copied into the current profile's documents DB.
+      const targetDocs = dbStore[`${current}-doc-qa-documents`]?.documents ?? [];
+      expect(targetDocs.some((d) => d.id === 'doc-a')).toBe(true);
+      expect(targetDocs.some((d) => d.id === 'doc-b')).toBe(true);
+
+      // PRR-002: the re-index flag is set because the vector index can't be copied.
+      expect(mockLocalStorage['rag-reindex-required']).toBe('1');
+
+      // Migration marked complete.
+      expect(mockLocalStorage['doc-qa-profile-migrated']).toBe('1');
+    });
   });
 
   describe('listStalePrefixes', () => {
