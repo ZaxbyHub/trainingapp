@@ -12,7 +12,7 @@ import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
-import { getLLMService, disposeBrowserEngine } from '../lib/llm/llm-factory';
+import { getLLMService } from '../lib/llm/llm-factory';
 import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessCache } from '../lib/llm/readiness-gate';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
@@ -85,26 +85,32 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // Image upload is supported by the multimodal wllama engine in browser-local mode.
   const canAttachImages = isBrowserMode && browserEngine === 'wllama' && isModelReady;
 
-  // Dispose the OLD engine heap only on a genuine engine switch — NOT on unmount.
-  // The singleton intentionally survives navigation so returning to chat doesn't
-  // reload the ~1GB wllama heap (tens of seconds on target hardware). It is freed
-  // on engine switch or when the tab closes. The previous engine is tracked in a
-  // ref so the effect body (which runs on the render where the dep changed) can
-  // compare old vs new and dispose the right one. (issue #21 F2)
+  // Abort any in-flight generation on a genuine engine switch — NOT on unmount.
+  // Disposal of the OLD engine singleton itself now lives in
+  // InferenceModeContext's setBrowserEngine, since that context is mounted for
+  // the app's entire lifetime and survives ChatPage unmount/remount — whereas
+  // this component only sees an engine change on the rare occasion it stays
+  // mounted across one (in practice, engine changes happen from SettingsPage,
+  // which unmounts ChatPage first). Kept here defensively, but note the actual
+  // ordering: setBrowserEngine's disposeBrowserEngine() call runs synchronously
+  // in the SettingsPage onClick/onChange handler, BEFORE React even schedules a
+  // re-render — so it runs BEFORE this effect, not after. This abort only fires
+  // once React commits the re-render and flushes effects, i.e. AFTER dispose
+  // has already happened. That ordering doesn't currently cause a crash because
+  // WllamaService's and WebLLMService's dispose paths are self-guarding against
+  // being called while a generation or init is still in flight — but that's a
+  // property of those services, not an ordering guarantee provided here. (PR #28
+  // PRR-010, issue #21 F-LEAK; Stage B review corrected the prior inaccurate
+  // "BEFORE the context's dispose call runs" claim)
   //
-  // Declared BEFORE the readiness effect below so on an engine switch React runs
-  // this effect's body (dispose old) before re-checking readiness for the new
-  // engine, preserving dispose-old → readiness-new ordering.
+  // Declared BEFORE the readiness effect below so on an engine switch React
+  // runs this effect's body (abort old) before re-checking readiness for the
+  // new engine.
   const prevEngineRef = useRef(browserEngine);
   useEffect(() => {
     const prev = prevEngineRef.current;
     prevEngineRef.current = browserEngine;
     if (mode === 'browser-local' && prev !== browserEngine) {
-      // Abort any in-flight generation on the OLD engine BEFORE disposing it,
-      // so the orchestrator loop exits cleanly (AbortError, handled silently
-      // by the IIFE catch) instead of throwing an opaque "engine disposed"
-      // error when disposeBrowserEngine nulls the singleton under it.
-      // (PR #28 PRR-010)
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
@@ -114,7 +120,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         tokenStreamManagerRef.current = null;
       }
       setIsLoading(false);
-      disposeBrowserEngine(prev);
     }
   }, [browserEngine, mode]);
 
@@ -435,13 +440,21 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     }
   }, [clearConfirmState, cancelActiveStream, onNewChat]);
 
-  // Keyboard shortcuts — ChatPage is the SOLE registrar (App no longer registers
-  // useKeyboardShortcuts) so there is exactly one window keydown listener.
+  // Keyboard shortcuts — ChatPage registers the chat-scoped set (send/clear-chat
+  // plus its own Ctrl+, handling for the model-blocked overlay's Open Settings
+  // affordance). App.tsx's AppContent ALSO registers useKeyboardShortcuts with
+  // only `onOpenSettings`, at the root, so Ctrl+, works from every page — while
+  // on the Chat page there are therefore two window keydown listeners, and both
+  // fire on Ctrl+,, but `openSettings` is idempotent (`setCurrentPage('settings')`
+  // called twice with the same value), so the double-firing is harmless.
   // Ctrl+Enter sends the current draft; Ctrl+L clears; Ctrl+, opens Settings.
   useKeyboardShortcuts({
     onSendMessage: () => {
       const draft = draftRef.current.trim();
-      if (draft && !tokenStreamManagerRef.current) {
+      // Mirror the ChatInput Send button's guard so Ctrl+Enter can't bypass
+      // the model-blocked overlay or send while a response is in flight.
+      // (PR #28 F-CTRL-ENTER-BYPASS)
+      if (draft && !tokenStreamManagerRef.current && !isInputDisabled) {
         handleSend(draft);
       }
     },

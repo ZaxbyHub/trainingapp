@@ -8,6 +8,7 @@ import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { useServiceInitialization } from './hooks/useServiceInitialization';
 import { useConversations } from './hooks/useConversations';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
@@ -102,6 +103,19 @@ function AppContent() {
     browserEngine,
   });
 
+  const openSettings = () => setCurrentPage('settings');
+
+  // Global Ctrl+, (Open Settings) shortcut, registered here so it works from
+  // every page (Documents, Settings, Chat), not just while ChatPage is mounted.
+  // ChatPage additionally registers its own useKeyboardShortcuts for the
+  // chat-scoped send/clear-chat shortcuts, and also wires the same
+  // `openSettings` callback for its model-blocked overlay's "Open Settings"
+  // button and its own Ctrl+, handling. When the user is on the Chat page,
+  // both this hook and ChatPage's hook receive the Ctrl+, keydown and both
+  // call `openSettings`, but `setCurrentPage('settings')` is idempotent when
+  // called twice with the same value, so the double-firing is harmless.
+  useKeyboardShortcuts({ onOpenSettings: openSettings });
+
   if (!isInitialized) {
     return (
       <LoadingOverlay currentStep={currentStep} initError={initError} />
@@ -111,8 +125,6 @@ function AppContent() {
   const handleNavigate = (page: string) => {
     setCurrentPage(page);
   };
-
-  const openSettings = () => setCurrentPage('settings');
 
   const renderPage = () => {
     switch (currentPage) {

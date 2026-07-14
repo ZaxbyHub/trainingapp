@@ -600,8 +600,8 @@ function SettingsPageInner(): React.ReactElement {
           setIsDownloading(false);
           // Re-dispatch the readiness gate so the rest of the app (e.g. the chat
           // model-block overlay) flips to isModelReady=true now that the model
-          // is in OPFS. Without this, the cached readiness result still reports
-          // modelCached=false until an engine switch forces a re-check.
+          // is in Cache Storage. Without this, the cached readiness result still
+          // reports modelCached=false until an engine switch forces a re-check.
           // (issue #21 F3)
           resetReadinessCache();
           void ensureReadinessGateChecked('webllm');
@@ -656,8 +656,19 @@ function SettingsPageInner(): React.ReactElement {
             settingsDbInstance = null;
             console.info('Settings IndexedDB cleared');
           };
-          // Clear OPFS (cached models)
+          // Clear OPFS (legacy/other cached data, if any)
           await navigator.storage?.getDirectory()?.then(dir => dir.removeEntry('webllm', { recursive: true }).catch(() => {}));
+          // Clear Cache Storage (webllm's actual model weight storage — see
+          // model-readiness.ts / web-llm-service.ts. web-llm scopes its
+          // artifacts across three named caches: model weights, model config,
+          // and the wasm runtime).
+          if (typeof caches !== 'undefined' && typeof caches.delete === 'function') {
+            await Promise.all(
+              ['webllm/model', 'webllm/config', 'webllm/wasm'].map((cacheName) =>
+                caches.delete(cacheName).catch(() => {})
+              )
+            );
+          }
           console.info('Cache clear completed — documents and models cleared');
         } catch (err) {
           console.error('Error clearing cache:', err);

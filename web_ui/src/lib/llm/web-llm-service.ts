@@ -95,6 +95,16 @@ export class WebLLMService implements LLMService {
   private _initPromise: Promise<void> | null = null;
   /** WebGPU context-loss watchdog; started after init, disposed on teardown. */
   private _watchdog: WebGPUWatchdog | null = null;
+  /**
+   * Monotonic generation counter, bumped by dispose(). WebLLMService keeps its
+   * singleton alive after dispose (dispose() only resets state — see
+   * llm-factory.ts's disposeBrowserEngine), so an in-flight _startWatchdog()
+   * call that is still awaiting adapter.requestDevice() when dispose() runs
+   * must not resurrect a watchdog on the now-disposed instance.
+   * _startWatchdog captures the generation before awaiting and bails out if
+   * it has since changed. (issue #21 F-WATCHDOG)
+   */
+  private _generation = 0;
 
   private constructor() {}
 
@@ -135,15 +145,29 @@ export class WebLLMService implements LLMService {
       // removed from @webgpu/types. Fall back best-effort via try/catch for
       // browsers that don't expose `info`. (issue #21 F11)
       try {
-        const info = (adapter as GPUAdapter & { info?: { vendor?: string; architecture?: string } }).info;
-        const vendor = (info?.vendor || '').toLowerCase();
-        const architecture = (info?.architecture || '').toLowerCase();
-        if (vendor.includes('mesa') || architecture.includes('llvmpipe') || architecture.includes('swiftshader')) {
-          console.warn('[WebLLM] Rejected software-renderer adapter:', { vendor, architecture });
-          return { available: false };
+        const adapterWithInfo = adapter as GPUAdapter & { info?: { vendor?: string; architecture?: string } };
+        // Explicit capability check: `info` was only added to the spec/types
+        // in mid-2024, so browsers older than that expose no `info` property
+        // at all. Without this check the vendor/architecture below silently
+        // become empty strings and the software-GPU-rejection check
+        // silently no-ops with no visible signal in diagnostics.
+        if (!('info' in adapterWithInfo) || adapterWithInfo.info === undefined) {
+          console.warn(
+            '[WebLLM] adapter.info is unavailable in this browser (pre-mid-2024 WebGPU implementation); ' +
+            'cannot check for a software-renderer adapter (SwiftShader/llvmpipe). Proceeding best-effort — ' +
+            'a software GPU may be used without being rejected.'
+          );
+        } else {
+          const info = adapterWithInfo.info;
+          const vendor = (info.vendor || '').toLowerCase();
+          const architecture = (info.architecture || '').toLowerCase();
+          if (vendor.includes('mesa') || architecture.includes('llvmpipe') || architecture.includes('swiftshader')) {
+            console.warn('[WebLLM] Rejected software-renderer adapter:', { vendor, architecture });
+            return { available: false };
+          }
         }
-      } catch {
-        console.info('[WebLLM] adapter.info unavailable, proceeding best-effort');
+      } catch (err) {
+        console.warn('[WebLLM] adapter.info check failed unexpectedly, proceeding best-effort:', err);
       }
 
       console.info('[WebLLM] WebGPU adapter detected');
@@ -396,6 +420,12 @@ export class WebLLMService implements LLMService {
    * Release model resources and reset the service.
    */
   dispose(): void {
+    // Bump the generation so any _startWatchdog() call still awaiting
+    // adapter.requestDevice() from a prior generation discards its result
+    // instead of resurrecting a watchdog on this now-disposed instance.
+    // (issue #21 F-WATCHDOG)
+    this._generation++;
+
     // Stop the context-loss watchdog before tearing down the engine.
     this._watchdog?.dispose();
     this._watchdog = null;
@@ -424,10 +454,23 @@ export class WebLLMService implements LLMService {
    */
   private async _startWatchdog(adapter?: GPUAdapter): Promise<void> {
     if (!adapter) return;
+    // Snapshot the generation before the async requestDevice() gap so we can
+    // detect a concurrent dispose() when it resolves. (issue #21 F-WATCHDOG)
+    const generation = this._generation;
     try {
       const device = await adapter.requestDevice();
       if (!device) {
         console.info('[WebLLM] Watchdog: requestDevice returned null, skipping.');
+        return;
+      }
+      // dispose() may have run while requestDevice() was in flight. The
+      // singleton survives dispose() (only its state is reset — see
+      // llm-factory.ts), so without this guard we'd unconditionally assign a
+      // fresh, started watchdog (with its recovery handler) onto an instance
+      // nobody thinks is live anymore. Discard the just-created device instead.
+      if (generation !== this._generation) {
+        console.info('[WebLLM] Watchdog: service was disposed while requestDevice() was pending, discarding device.');
+        device.destroy();
         return;
       }
       this._watchdog = new WebGPUWatchdog();

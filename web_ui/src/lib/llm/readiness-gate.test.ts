@@ -222,9 +222,9 @@ describe('readiness-gate', () => {
   // -------------------------------------------------------------------------
 
   describe('ensureReadinessGateChecked() with webllm engine', () => {
-    it('sets modelReady = modelCached (not gated on ready) for webllm', async () => {
-      // ready=false but modelCached=true → modelReady should still be true for webllm
-      const result = makeReadinessResult({ ready: false, checks: { webgpu: true, modelCached: true, memory: { availableBytes: 8_000_000_000, requiredBytes: 2_000_000_000, sufficient: true, tier: 'HIGH' } } });
+    it('sets modelReady = ready && modelCached for webllm', async () => {
+      // ready=true, modelCached=true → modelReady should be true
+      const result = makeReadinessResult({ ready: true, checks: { webgpu: true, modelCached: true, memory: { availableBytes: 8_000_000_000, requiredBytes: 2_000_000_000, sufficient: true, tier: 'HIGH' } } });
       mockCheckReadiness.mockResolvedValue(result);
 
       let modelReady: unknown;
@@ -234,6 +234,24 @@ describe('readiness-gate', () => {
 
       await ensureReadinessGateChecked('webllm');
       expect(modelReady).toBe(true);
+    });
+
+    it('sets modelReady = false when ready=false for webllm even if modelCached=true', async () => {
+      // A previously-downloaded (cached) model whose WebGPU support has since
+      // gone away (or whose memory is now insufficient) must not report
+      // modelReady=true — the hard-requirement failure must be caught by the
+      // model-blocked preflight overlay, not surfaced only at generate-time
+      // (issue #21 F-WEBLLM-READINESS-GAP).
+      const result = makeReadinessResult({ ready: false, checks: { webgpu: false, modelCached: true, memory: { availableBytes: 1_000_000_000, requiredBytes: 2_000_000_000, sufficient: false, tier: 'LOW' } } });
+      mockCheckReadiness.mockResolvedValue(result);
+
+      let modelReady: unknown;
+      onWindowEvent('readiness-gate-checked', (e) => {
+        modelReady = (e as CustomEvent).detail.modelReady;
+      });
+
+      await ensureReadinessGateChecked('webllm');
+      expect(modelReady).toBe(false);
     });
   });
 
@@ -303,6 +321,58 @@ describe('readiness-gate', () => {
 
       expect(mockCheckReadiness).toHaveBeenCalledTimes(1);
       expect(second).toBe(first);
+    });
+
+    it("does not let an earlier in-flight check's cleanup clobber a later-arriving different-engine check's tracking (F-DEDUP)", async () => {
+      // A (wllama) starts, then B (webllm) arrives before A resolves — the
+      // dedup guard only compares against the CURRENT engine, so B overwrites
+      // the module-level tracking to point at itself. When A later resolves,
+      // A's `finally` block must NOT null the module vars (they now belong to
+      // B), or a third caller C for webllm would bypass dedup and spawn a
+      // duplicate checkReadiness call instead of sharing B's in-flight promise.
+      const wllamaResult = makeReadinessResult({
+        checks: { webgpu: false, modelCached: true, memory: { availableBytes: 8_000_000_000, requiredBytes: 2_000_000_000, sufficient: true, tier: 'HIGH' } },
+      });
+      const webllmResult = makeReadinessResult({
+        checks: { webgpu: true, modelCached: true, memory: { availableBytes: 8_000_000_000, requiredBytes: 2_000_000_000, sufficient: true, tier: 'HIGH' } },
+      });
+
+      let resolveWllama!: (v: ReadinessResult) => void;
+      let resolveWebllm!: (v: ReadinessResult) => void;
+      mockCheckReadiness.mockImplementation((_modelId: string, engine: string) => {
+        if (engine === 'wllama') {
+          return new Promise<ReadinessResult>((r) => { resolveWllama = r; });
+        }
+        return new Promise<ReadinessResult>((r) => { resolveWebllm = r; });
+      });
+
+      // A: wllama check starts and is left in-flight.
+      const a = ensureReadinessGateChecked('wllama');
+      // B: webllm check arrives while A is still in-flight (different engine,
+      // so the dedup guard doesn't match — B spawns its own check and takes
+      // over the module-level tracking).
+      const b = ensureReadinessGateChecked('webllm');
+
+      // A resolves first.
+      resolveWllama(wllamaResult);
+      await a;
+
+      // C: a third caller for webllm, arriving while B is still in-flight.
+      const c = ensureReadinessGateChecked('webllm');
+
+      resolveWebllm(webllmResult);
+      const [bResult, cResult] = await Promise.all([b, c]);
+
+      // Only 2 checkReadiness calls total: one for wllama (A), one for webllm
+      // (B). C must dedupe onto B's in-flight promise rather than spawning a
+      // third call. (Promise identity isn't asserted here: `ensureReadiness-
+      // GateChecked` is itself an `async function`, so every call returns a
+      // fresh wrapper promise even when it internally resolves via the same
+      // shared in-flight promise — the call-count and resolved-value checks
+      // are what actually prove dedup happened.)
+      expect(mockCheckReadiness).toHaveBeenCalledTimes(2);
+      expect(bResult).toBe(webllmResult);
+      expect(cResult).toBe(webllmResult);
     });
   });
 

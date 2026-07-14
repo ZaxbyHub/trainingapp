@@ -103,7 +103,13 @@ export async function ensureReadinessGateChecked(
   // Tag the in-flight promise with its engine NOW (before any await) so the
   // dedup guard above can match concurrent same-engine callers.
   readinessGateInitEngine = engine;
-  readinessGateInitPromise = (async () => {
+  // Declared before the closure (and assigned after) rather than inline, so
+  // the `finally` block's reference to `thisPromise` is a closure over an
+  // already-assigned variable at the time it actually runs (after the first
+  // await) — TS's control-flow analysis can't see that ordering if the
+  // closure is created and invoked in the same `const` initializer.
+  let thisPromise: Promise<ReadinessResult | null>;
+  const run = async (): Promise<ReadinessResult | null> => {
     try {
       readinessGateInstance.current = new ModelReadinessGate();
       const readinessResult = await readinessGateInstance.current.checkReadiness(
@@ -118,12 +124,14 @@ export async function ensureReadinessGateChecked(
       lastReadinessResult = readinessResult;
       lastReadinessEngine = engine;
 
-      // Engine-aware "usable now": webllm needs the model downloaded; wllama needs
-      // the hardware to be ready AND the packaged GGUF present (it loads lazily).
-      const modelReady =
-        engine === 'wllama'
-          ? readinessResult.ready && readinessResult.checks.modelCached
-          : readinessResult.checks.modelCached;
+      // Engine-aware "usable now": both engines require the hardware/memory
+      // check to pass AND the model to be present. For webllm, `ready` also
+      // encodes WebGPU availability — a previously-downloaded (cached) model
+      // whose WebGPU support has since gone away (or whose memory is now
+      // insufficient) must NOT report modelReady=true, or the hard-requirement
+      // failure only surfaces as a runtime error at generate-time instead of
+      // being caught by the model-blocked preflight overlay (issue #21).
+      const modelReady = readinessResult.ready && readinessResult.checks.modelCached;
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
@@ -160,10 +168,20 @@ export async function ensureReadinessGateChecked(
       }
       return null;
     } finally {
-      readinessGateInitPromise = null;
-      readinessGateInitEngine = null;
+      // Only clear the module-level tracking if it still points to THIS
+      // invocation's own promise. A later-arriving call for a different
+      // engine may have already overwritten these vars to track its own
+      // in-flight check (since the dedup guard above only matches same-engine
+      // callers); nulling unconditionally here would clobber that later
+      // call's tracking and let a third caller bypass dedup (issue #21).
+      if (readinessGateInitPromise === thisPromise) {
+        readinessGateInitPromise = null;
+        readinessGateInitEngine = null;
+      }
     }
-  })();
+  };
 
-  return readinessGateInitPromise;
+  thisPromise = run();
+  readinessGateInitPromise = thisPromise;
+  return thisPromise;
 }

@@ -7,6 +7,8 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import type { BrowserEngine } from '../../types/llm';
 import type { RAGPreset } from '../rag/rag-presets';
 import { DEFAULT_RAG_PRESET } from '../rag/rag-presets';
+import { disposeBrowserEngine } from '../llm/llm-factory';
+import { getToken } from '../api/auth';
 
 export type InferenceMode = 'browser-local' | 'api';
 
@@ -143,13 +145,31 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
     });
   }, []);
 
+  // Dispose the OLD engine heap here (not in ChatPage) because this context is
+  // mounted for the app's entire lifetime, above the page switch in App.tsx —
+  // it survives ChatPage unmount/remount, unlike a ChatPage-local ref, which
+  // gets re-seeded to the already-new value on every remount and permanently
+  // skips disposal (issue #21 F-LEAK). Read `state.browserEngine` directly
+  // (not via the setState updater) so the comparison uses the CURRENT value
+  // at call time — the dependency array below keeps this callback fresh
+  // whenever it changes, so there is no stale-closure risk. Dispose whenever
+  // the engine PREFERENCE is actually changing, regardless of the CURRENT
+  // mode: a user can change this preference from SettingsPage's "Browser
+  // Engine" control while in 'api' mode (that section isn't mode-gated), and
+  // the previously-warm engine — kept alive across a mode switch to 'api' for
+  // fast switching back — would otherwise never be matched against again once
+  // `state.browserEngine` moves past it, leaking it forever (Stage B review,
+  // issue #21 F-LEAK follow-up).
   const setBrowserEngine = useCallback((browserEngine: BrowserEngine) => {
+    if (state.browserEngine !== browserEngine) {
+      disposeBrowserEngine(state.browserEngine);
+    }
     setState((prev) => {
       const next = { ...prev, browserEngine, isModelReady: false, modelLoadingProgress: 0 };
       persistState(prev.mode, prev.serverUrl, browserEngine, prev.ragPreset);
       return next;
     });
-  }, []);
+  }, [state.browserEngine]);
 
   const setRagPreset = useCallback((ragPreset: RAGPreset) => {
     setState((prev) => {
@@ -210,11 +230,9 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
           } catch {
             // Older servers may not return JSON; assume auth disabled.
           }
-          const hasToken = (() => {
-            try { return !!sessionStorage.getItem('doc_qa_access_token'); } catch { return false; }
-          })();
+          const hasToken = !!getToken();
           const modeError = authEnabled && !hasToken
-            ? 'Server requires authentication. Set an API key (see PACKAGING.md) before chatting.'
+            ? 'Server requires authentication. Contact your administrator — see PACKAGING.md for setup.'
             : null;
           setState((prev) => ({ ...prev, isServerConnected: true, modeError }));
         }

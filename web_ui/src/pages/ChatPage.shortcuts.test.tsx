@@ -5,7 +5,9 @@
  * - Ctrl+L triggers clear confirm state (via handleClearClick callback)
  * - Double Ctrl+L clears messages
  * - Ctrl+L is ignored when textarea is focused
- * - onOpenSettings callback exists (no-op at App level)
+ * - onOpenSettings callback exists and is invoked when triggered (real navigation
+ *   callback, wired from App's `openSettings`, not a no-op — see PR #28
+ *   F-KEYBOARD-REGRESSION / F-STALE-TEST-DOC)
  *
  * Note: useKeyboardShortcuts is mocked, so keyboard events don't trigger callbacks.
  * We verify the wiring by checking the callback passed to the hook is handleClearClick,
@@ -149,7 +151,7 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
       expect(typeof lastCall.onClearChat).toBe('function');
     });
 
-    it('is called with onOpenSettings callback (no-op)', () => {
+    it('is called with onOpenSettings callback (real navigation callback)', () => {
       render(<ChatPage
   messages={[]}
   onMessagesChange={() => {}}
@@ -164,18 +166,24 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
       expect(typeof lastCall.onOpenSettings).toBe('function');
     });
 
-    it('onOpenSettings is a no-op function', () => {
+    it('onOpenSettings passed to the hook is the real onOpenSettings prop, not a no-op', () => {
+      // onOpenSettings is App's real navigation callback (see App.tsx openSettings /
+      // PR #28 F-KEYBOARD-REGRESSION), wired straight through to useKeyboardShortcuts
+      // and to the model-blocked overlay's "Open Settings" button. Assert the callback
+      // the hook receives actually invokes the caller-supplied prop, so a regression
+      // that swaps it back for an inert no-op would be caught here.
+      const onOpenSettingsSpy = vi.fn();
       render(<ChatPage
   messages={[]}
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
-  onOpenSettings={() => {}}
+  onOpenSettings={onOpenSettingsSpy}
 />);
 
       const lastCall = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0];
-      // Should not throw when called
       expect(() => lastCall.onOpenSettings()).not.toThrow();
+      expect(onOpenSettingsSpy).toHaveBeenCalledTimes(1);
     });
 
     it('is called with onSendMessage undefined (not wired in ChatPage)', () => {
@@ -353,19 +361,23 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
       expect(typeof onClearChat).toBe('function');
     });
 
-    it('onOpenSettings is a function that does nothing', () => {
+    it('onOpenSettings callback invokes the real onOpenSettings prop (Ctrl+, would navigate)', () => {
+      // Regression check for PR #28 F-KEYBOARD-REGRESSION: onOpenSettings is real
+      // navigation (App's openSettings), not a no-op, so a simulated Ctrl+, press
+      // (i.e. calling the callback the hook was given) must reach the caller's prop.
+      const onOpenSettingsSpy = vi.fn();
       render(<ChatPage
   messages={[]}
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
-  onOpenSettings={() => {}}
+  onOpenSettings={onOpenSettingsSpy}
 />);
 
       const onOpenSettings = vi.mocked(keyboardShortcutsModule.useKeyboardShortcuts).mock.calls[0][0].onOpenSettings;
 
-      // Should not throw when called
       expect(() => onOpenSettings()).not.toThrow();
+      expect(onOpenSettingsSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

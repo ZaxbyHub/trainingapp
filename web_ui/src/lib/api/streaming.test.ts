@@ -41,10 +41,15 @@ describe('SSEStreamConsumer', () => {
   }
 
   // Helper to flush microtasks for async start() processing.
-  // Single deterministic microtask yield using queueMicrotask (replaces brittle
+  // Deterministic microtask yields using queueMicrotask (replaces brittle
   // setTimeout(0) loop which had no guarantee of draining under CI load).
+  // Honors `times`: each call awaits one additional microtask tick, since a
+  // single tick is not always enough to drain chained promise resolutions
+  // (e.g. fetch() resolving -> reader.read() resolving -> callback dispatch).
   async function flushMicrotasks(times = 2): Promise<void> {
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    for (let i = 0; i < times; i++) {
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    }
   }
 
   describe('Constructor', () => {
@@ -107,6 +112,9 @@ describe('SSEStreamConsumer', () => {
       expect(() => new SSEStreamConsumer('http://[::1]:8000/ask', {})).not.toThrow();
     });
 
+    // General fe80::/10 link-local addresses are allowed (LAN use), EXCEPT
+    // the specific metadata-equivalent address fe80::a9fe:a9fe — see the
+    // dedicated metadata-IPv6 test below. (issue #21 F-IPV6-METADATA-GAP)
     it('allows IPv6 link-local fe80::/10', () => {
       expect(() => new SSEStreamConsumer('http://[fe80::1]/api', {})).not.toThrow();
       expect(() => new SSEStreamConsumer('http://[fe80::2]/api', {})).not.toThrow();
@@ -115,6 +123,23 @@ describe('SSEStreamConsumer', () => {
     it('rejects 169.254.169.254 (cloud metadata — cred-exfil target)', () => {
       expect(() =>
         new SSEStreamConsumer('http://169.254.169.254/latest', {})
+      ).toThrow(ApiError);
+    });
+
+    // The metadata block must also catch IPv6 encodings of the same address:
+    // the IPv6 link-local form used by some cloud metadata services
+    // (169.254.169.254 == a9fe:a9fe in hex) and the IPv4-mapped-IPv6 form.
+    // This is a narrow carve-out from the general fe80:: allowance above —
+    // only this specific address is blocked. (issue #21 F-IPV6-METADATA-GAP)
+    it('rejects fe80::a9fe:a9fe (IPv6 link-local encoding of the cloud metadata address)', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://[fe80::a9fe:a9fe]/latest', {})
+      ).toThrow(ApiError);
+    });
+
+    it('rejects ::ffff:169.254.169.254 (IPv4-mapped-IPv6 form of the cloud metadata address)', () => {
+      expect(() =>
+        new SSEStreamConsumer('http://[::ffff:169.254.169.254]/latest', {})
       ).toThrow(ApiError);
     });
 

@@ -288,6 +288,71 @@ describe('ModelReadinessGate', () => {
 
       expect(result).toBe(false);
     });
+
+    // issue #21 AC3: isModelReady must become true "on reload" — i.e. after a
+    // completed download in a PRIOR session, detected via the Cache Storage
+    // cross-session persistence probe in isModelAvailable() (model-readiness.ts),
+    // not just via the in-memory WebLLMService._modelInfo populated this session.
+    describe('Cache Storage cross-session probe (issue #21 AC3)', () => {
+      afterEach(() => {
+        // Cache Storage is stubbed per-test; ensure it never leaks into other
+        // tests in this file (jsdom does not implement it by default).
+        vi.unstubAllGlobals();
+      });
+
+      test('returns true when Cache Storage has a webllm/model entry matching the modelId (cross-session reload)', async () => {
+        // No in-memory model info this session — simulates a fresh page load
+        // (new session) where only the persisted Cache Storage entry proves
+        // the model was already downloaded.
+        const mockService = createMockService(null);
+        vi.mocked(WebLLMService.getInstance).mockReturnValue(mockService);
+
+        const mockCache = {
+          keys: vi.fn().mockResolvedValue([
+            { url: 'https://example.com/webllm/model/SmolLM3-3B-Q4_K_M/params_shard_0.bin' },
+          ]),
+        };
+        vi.stubGlobal('caches', {
+          has: vi.fn().mockResolvedValue(true),
+          open: vi.fn().mockResolvedValue(mockCache),
+        });
+
+        const result = await gate.checkModelCached('SmolLM3-3B-Q4_K_M');
+
+        expect(result).toBe(true);
+      });
+
+      test('returns false when the cache exists but its entries do not match the modelId (orphaned/different-model cache)', async () => {
+        const mockService = createMockService(null);
+        vi.mocked(WebLLMService.getInstance).mockReturnValue(mockService);
+
+        const mockCache = {
+          keys: vi.fn().mockResolvedValue([
+            { url: 'https://example.com/webllm/model/some-other-model/params_shard_0.bin' },
+          ]),
+        };
+        vi.stubGlobal('caches', {
+          has: vi.fn().mockResolvedValue(true),
+          open: vi.fn().mockResolvedValue(mockCache),
+        });
+
+        const result = await gate.checkModelCached('SmolLM3-3B-Q4_K_M');
+
+        expect(result).toBe(false);
+      });
+
+      test('returns false (does not throw) when Cache Storage access rejects', async () => {
+        const mockService = createMockService(null);
+        vi.mocked(WebLLMService.getInstance).mockReturnValue(mockService);
+
+        vi.stubGlobal('caches', {
+          has: vi.fn().mockRejectedValue(new Error('Cache Storage denied')),
+          open: vi.fn(),
+        });
+
+        await expect(gate.checkModelCached('SmolLM3-3B-Q4_K_M')).resolves.toBe(false);
+      });
+    });
   });
 
   describe('checkReadiness', () => {
