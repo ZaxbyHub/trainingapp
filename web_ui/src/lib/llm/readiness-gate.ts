@@ -34,8 +34,12 @@ const readinessGateInstance: { current: ModelReadinessGate | null } = { current:
  * truth so the readiness gate, the download flow, and the LLM services never
  * disagree on which model id an engine uses (a prior hardcoded id mismatch
  * made `isModelReady` unreachable for webllm — see issue #21 F3).
+ *
+ * Exported so SettingsPage can resolve the same model id when checking cache
+ * status for the selected engine (issue #24 F4) instead of re-deriving it
+ * inline and risking drift from this single source of truth.
  */
-function modelIdForEngine(engine: BrowserEngine): string {
+export function modelIdForEngine(engine: BrowserEngine): string {
   return engine === 'wllama' ? LLM_MODEL_DIR : WEBLLM_DEFAULT_MODEL_ID;
 }
 
