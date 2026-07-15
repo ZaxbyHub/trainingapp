@@ -78,7 +78,16 @@ async function openSettingsDatabase(): Promise<IDBDatabase> {
     };
 
     request.onsuccess = () => {
-      settingsDbInstance = request.result;
+      const db = request.result;
+      // PRR-001: close the cached connection when a version change (e.g.
+      // deleteDatabase from Clear Cache) is requested, so the delete is not
+      // permanently blocked by this open connection. Without this, the
+      // settings DB survives "Clear Cache" while the UI reports success.
+      db.onversionchange = () => {
+        db.close();
+        settingsDbInstance = null;
+      };
+      settingsDbInstance = db;
       resolve(settingsDbInstance);
     };
 
@@ -159,26 +168,28 @@ async function saveSettings(settings: UserPreferences): Promise<void> {
  * (`getStorageDbNames().vector`) in the `'data'` object store of `edgevec-db`
  * (see vite.config.ts `IndexedDbBackend` + vector-index.ts `INDEX_NAME`).
  * Deleting only this key preserves other profiles' blobs — deleting the whole
- * `edgevec-db` would affect ALL profiles. Best-effort: never throws.
+ * `edgevec-db` would affect ALL profiles.
+ *
+ * F-003/PRR-002: rejects on genuine failures (open error, tx error, tx abort)
+ * so the caller's catch block surfaces "Could not clear all data" instead of
+ * falsely reporting success. The "DB/store doesn't exist" path resolves
+ * cleanly (nothing to delete — that's not an error). A synchronous throw from
+ * `db.transaction()` also rejects so no connection is leaked.
  */
 function deleteEdgeVecBlob(prefix: string): Promise<void> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
+      // No IndexedDB at all → nothing to delete; not an error.
       resolve();
       return;
     }
     const vectorKey = `${prefix}-doc-qa-index`;
-    let settled = false;
-    const finish = () => {
-      if (!settled) {
-        settled = true;
-        resolve();
-      }
-    };
+    const fail = (reason: string) => reject(new Error(reason));
     try {
       const req = indexedDB.open('edgevec-db', 1);
       req.onupgradeneeded = () => {
-        // The DB may not exist yet in this session; ensure the 'data' store.
+        // The DB may not exist yet in this session; ensure the 'data' store
+        // so the subsequent transaction does not throw.
         const db = req.result;
         if (!db.objectStoreNames.contains('data')) {
           db.createObjectStore('data');
@@ -187,9 +198,9 @@ function deleteEdgeVecBlob(prefix: string): Promise<void> {
       req.onsuccess = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains('data')) {
-          // No store → no blob to delete.
+          // No store → no blob to delete. Clean exit, not an error.
           db.close();
-          finish();
+          resolve();
           return;
         }
         try {
@@ -198,20 +209,27 @@ function deleteEdgeVecBlob(prefix: string): Promise<void> {
           store.delete(vectorKey);
           tx.oncomplete = () => {
             db.close();
-            finish();
+            resolve();
           };
+          // PRR-002: handle abort (quota, competing tx) so the Promise does
+          // not hang. F-003: reject on error/abort so the caller knows.
           tx.onerror = () => {
             db.close();
-            finish();
+            fail('EdgeVec transaction error');
           };
-        } catch {
+          tx.onabort = () => {
+            db.close();
+            fail('EdgeVec transaction aborted');
+          };
+        } catch (txErr) {
           db.close();
-          finish();
+          fail(`EdgeVec transaction failed: ${txErr instanceof Error ? txErr.message : String(txErr)}`);
         }
       };
-      req.onerror = () => finish();
-    } catch {
-      finish();
+      req.onerror = () => fail('Failed to open edgevec-db');
+      req.onblocked = () => fail('edgevec-db open blocked');
+    } catch (openErr) {
+      fail(`edgevec-db open threw: ${openErr instanceof Error ? openErr.message : String(openErr)}`);
     }
   });
 }
@@ -511,10 +529,17 @@ function SettingsPageInner(): React.ReactElement {
   useEffect(() => {
     if (!settingsLoaded) return;
 
+    // PRR-004: cancellation token prevents an older, slower checkModelCached
+    // promise from overwriting modelCached with stale data after a rapid
+    // engine switch. Mirrors the cancelled-flag pattern in the detect effect.
+    let cancelled = false;
     const modelId = modelIdForEngine(browserEngine);
     readinessGate.checkModelCached(modelId, browserEngine).then((cached) => {
-      if (isMountedRef.current) setModelCached(cached);
+      if (!cancelled && isMountedRef.current) setModelCached(cached);
     });
+    return () => {
+      cancelled = true;
+    };
   }, [browserEngine, readinessGate, settingsLoaded]);
 
   // Detect hardware capability + packaged-model readiness once on mount.
@@ -618,6 +643,11 @@ function SettingsPageInner(): React.ReactElement {
   // webllm-only: downloads weights from the WebLLM CDN into Cache Storage.
   // wllama weights are packaged same-origin and need no download.
   const handleDownloadModel = useCallback(async () => {
+    // PRR-006: engine guard — only webllm has a download step. The UI button
+    // is also gated to webllm, but this prevents a future caller from
+    // triggering a webllm download while wllama is selected.
+    if (browserEngine !== 'webllm') return;
+
     if (!downloadManagerRef.current) {
       downloadManagerRef.current = new ModelDownloadManager();
     }
@@ -656,7 +686,7 @@ function SettingsPageInner(): React.ReactElement {
       }
       setIsDownloading(false);
     }
-  }, []);
+  }, [browserEngine]);
 
   // Cancel download
   const handleCancelDownload = useCallback(() => {
@@ -702,12 +732,20 @@ function SettingsPageInner(): React.ReactElement {
         }
 
         // 4. Settings IndexedDB (non-prefixed).
+        // Close the cached connection first so deleteDatabase is not blocked
+        // (PRR-001). The onversionchange handler in openSettingsDatabase also
+        // fires, but closing here is deterministic and immediate.
+        if (settingsDbInstance) {
+          try {
+            settingsDbInstance.close();
+          } catch {
+            // already closed
+          }
+          settingsDbInstance = null;
+        }
         await new Promise<void>((resolve) => {
           const settingsDeleteReq = indexedDB.deleteDatabase(SETTINGS_DB_NAME);
-          settingsDeleteReq.onsuccess = () => {
-            settingsDbInstance = null;
-            resolve();
-          };
+          settingsDeleteReq.onsuccess = () => resolve();
           settingsDeleteReq.onerror = () => resolve();
           settingsDeleteReq.onblocked = () => resolve();
         });
@@ -1141,7 +1179,7 @@ function SettingsPageInner(): React.ReactElement {
             </button>
             <span id="clear-cache-desc" style={descriptionStyle} aria-live="polite">
               {clearCacheState === 'confirming'
-                ? 'This will delete all documents, keyword/vector indexes, cached model weights, and settings for this profile. This cannot be undone.'
+                ? 'This will delete all documents, keyword/vector indexes, cached model weights, and settings for this profile, plus any orphaned data from previous sessions. This cannot be undone.'
                 : 'Clear cached documents, indexes, model weights, and settings from browser storage.'}
             </span>
             {/* Result feedback (issue #24 F1) — announced to screen readers */}

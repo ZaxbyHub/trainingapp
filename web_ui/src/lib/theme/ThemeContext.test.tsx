@@ -128,12 +128,17 @@ describe('ThemeContext — setTheme + system mode (issue #24 F5)', () => {
       setOsPreference(true);
     });
     expect(contextValue!.theme).toBe('dark');
+    // ADV-1: themePreference must STAY 'system' after an OS change (not flip
+    // to 'dark'), because no explicit preference was stored.
+    expect(contextValue!.themePreference).toBe('system');
+    expect(localStorage.getItem('theme-preference')).toBeNull();
 
     // OS switches back to light.
     act(() => {
       setOsPreference(false);
     });
     expect(contextValue!.theme).toBe('light');
+    expect(contextValue!.themePreference).toBe('system');
   });
 
   test('explicit preference overrides OS preference changes', () => {

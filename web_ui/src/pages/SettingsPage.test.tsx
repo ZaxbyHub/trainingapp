@@ -64,6 +64,21 @@ vi.mock('../lib/embeddings/memory-aware', () => ({
   getMemoryPressureStatus: vi.fn(() => 'normal'),
 }));
 
+// PRR-005: mock checkPackagedModels so the PackagedModelReadiness component
+// mounts with controlled data (real HEAD probes fail in jsdom). Default
+// returns null so existing tests that don't care about readiness still pass.
+import type { PackagedModelsReport } from '../lib/models/model-manifest';
+const checkPackagedModelsMock = vi.fn((): Promise<PackagedModelsReport | null> => Promise.resolve(null));
+vi.mock('../lib/models/model-manifest', () => ({
+  checkPackagedModels: (..._args: unknown[]) => checkPackagedModelsMock(),
+  LLM_MODEL_DIR: 'lfm2-vl-1.6b',
+}));
+
+// Mock detectEngineCapability so it doesn't do real WebGPU probes in jsdom.
+vi.mock('../lib/llm/engine-capability', () => ({
+  detectEngineCapability: vi.fn(() => Promise.resolve(null)),
+}));
+
 vi.mock('../components/ModelDownloadProgress', () => ({
   ModelDownloadProgress: () => null,
 }));
@@ -154,6 +169,9 @@ describe('SettingsPage', () => {
     listStalePrefixesMock.mockClear();
     getProfilePrefixMock.mockClear();
     getProfilePrefixMock.mockReturnValue('testprfx');
+    // Reset checkPackagedModels to default (null = no panel rendered).
+    checkPackagedModelsMock.mockClear();
+    checkPackagedModelsMock.mockResolvedValue(null);
 
     // Setup default mock returns
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
@@ -550,7 +568,11 @@ describe('SettingsPage', () => {
     const call = mockModelReadinessGateInstance.checkModelCached.mock.calls[0] as unknown as [string, string];
     // Second arg must be the browserEngine ('wllama'), not the old 'webllm' default.
     expect(call[1]).toBe('wllama');
-    // First arg is the model id — for wllama it's LLM_MODEL_DIR ('lfm2-vl-1.6b').
+    // First arg is the model id — for wllama it's LLM_MODEL_DIR. We use the
+    // explicit literal here because model-manifest is mocked in this test file,
+    // so importing LLM_MODEL_DIR would read the mock (tautological). The real
+    // value is 'lfm2-vl-1.6b' (model-manifest.ts LLM_MODEL_DIR). If that
+    // constant changes, update this literal AND the mock factory's LLM_MODEL_DIR.
     expect(call[0]).toBe('lfm2-vl-1.6b');
   });
 
@@ -593,21 +615,32 @@ describe('SettingsPage', () => {
 
   test('memory pressure refreshes on an interval (issue #24 F7)', async () => {
     const { getMemoryPressureStatus } = await import('../lib/embeddings/memory-aware');
-    render(<SettingsPage />);
+    const { unmount } = render(<SettingsPage />);
 
+    // Wait for settings to load (the memory effect is gated on settingsLoaded).
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
     });
 
-    // Initial call on mount.
-    const initialCalls = (getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length;
-    expect(initialCalls).toBeGreaterThanOrEqual(1);
+    // ADV-4: exact call count, not just "> initial". After settings load the
+    // memory effect fires once (the initial updateMemoryStatus).
+    await waitFor(() => {
+      expect((getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const callsAfterMount = (getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length;
 
-    // Advance past the 5s interval — should refresh.
+    // One 5s interval tick → exactly one more call.
     vi.advanceTimersByTime(5000);
-    await vi.waitFor(() => {
-      expect((getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(initialCalls);
-    });
+    expect((getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterMount + 1);
+
+    // Another tick → +1 more.
+    vi.advanceTimersByTime(5000);
+    expect((getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterMount + 2);
+
+    // Unmount → interval cleared, no further calls.
+    unmount();
+    vi.advanceTimersByTime(15000);
+    expect((getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterMount + 2);
   });
 
   test('radio groups use native input as the sole radio (no duplicate role) (issue #24 F9)', async () => {
@@ -624,5 +657,94 @@ describe('SettingsPage', () => {
     for (const radio of radios) {
       expect(radio.tagName).toBe('INPUT');
     }
+  });
+
+  // PRR-005: PackagedModelReadiness component tests. The component renders
+  // per-kind readiness from the PackagedModelsReport. These tests mock
+  // checkPackagedModels/detectEngineCapability so the component mounts with
+  // controlled data.
+
+  test('PackagedModelReadiness renders per-kind status badges (PRR-005, issue #24 F6)', async () => {
+    // Override checkPackagedModels to return a report with known kinds.
+    checkPackagedModelsMock.mockResolvedValue({
+      allReady: false,
+      models: [
+        { id: 'emb1', label: 'Embeddings', kind: 'embedding', group: 'core', ready: true, excluded: false, files: [] },
+        { id: 'rt1', label: 'ONNX Runtime', kind: 'runtime', group: 'core', ready: true, excluded: false, files: [] },
+        { id: 'rr1', label: 'Reranker', kind: 'reranker', group: 'optional', ready: false, excluded: false, files: [{ path: '/x.onnx', required: true, present: false }] },
+        { id: 'llm1', label: 'Browser LLM', kind: 'llm', group: 'llm', ready: true, excluded: false, files: [] },
+      ],
+      missing: ['/x.onnx'],
+    });
+
+    render(<SettingsPage />);
+
+    // Wait for the readiness panel to render.
+    await waitFor(() => {
+      expect(screen.getByText('Embeddings')).toBeInTheDocument();
+    });
+
+    // Per-kind labels rendered.
+    expect(screen.getByText('ONNX Runtime')).toBeInTheDocument();
+    expect(screen.getByText('Reranker')).toBeInTheDocument();
+
+    // Overall aggregate shows the missing-files message (reranker not ready).
+    expect(screen.getByText(/required model file/i)).toBeInTheDocument();
+  });
+
+  test('PackagedModelReadiness suppresses llm row for webllm engine (PRR-005, issue #24 F6)', async () => {
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'webllm',
+      ragPreset: 'balanced',
+      isServerConnected: false,
+      isModelReady: false,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    });
+
+    checkPackagedModelsMock.mockResolvedValue({
+      allReady: true,
+      models: [
+        { id: 'emb1', label: 'Embeddings', kind: 'embedding', group: 'core', ready: true, excluded: false, files: [] },
+        { id: 'llm1', label: 'Browser LLM', kind: 'llm', group: 'llm', ready: true, excluded: false, files: [] },
+      ],
+      missing: [],
+    });
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Embeddings')).toBeInTheDocument();
+    });
+
+    // The webllm-suppression note must be shown instead of the llm "Ready" row.
+    expect(screen.getByText(/webllm weights are not packaged/i)).toBeInTheDocument();
+  });
+
+  test('PackagedModelReadiness shows "Excluded from build" for excluded groups (PRR-005)', async () => {
+    checkPackagedModelsMock.mockResolvedValue({
+      allReady: true,
+      models: [
+        { id: 'emb1', label: 'Embeddings', kind: 'embedding', group: 'core', ready: true, excluded: false, files: [] },
+        { id: 'llm1', label: 'Browser LLM', kind: 'llm', group: 'llm', ready: true, excluded: true, files: [] },
+      ],
+      missing: [],
+    });
+
+    render(<SettingsPage />);
+
+    // wllama engine (default) → llm row shows, but it's excluded.
+    await waitFor(() => {
+      expect(screen.getByText('Excluded from build')).toBeInTheDocument();
+    });
   });
 });

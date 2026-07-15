@@ -17,7 +17,7 @@ import * as inferenceModule from '../lib/inference';
 import * as themeModule from '../lib/theme';
 
 const deleteNamespaceMock = vi.fn((_prefix: string) => Promise.resolve());
-const listStalePrefixesMock = vi.fn(() => Promise.resolve([]));
+const listStalePrefixesMock = vi.fn((): Promise<string[]> => Promise.resolve([]));
 const getProfilePrefixMock = vi.fn(() => 'testprfx');
 
 vi.mock('../lib/inference', () => ({
@@ -335,8 +335,12 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
     fireEvent.click(clearButton);
 
+    // PRR-003: text now mentions orphan cleanup from previous sessions.
     expect(
       screen.getByText(/this will delete all documents, keyword\/vector indexes/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/orphaned data from previous sessions/i)
     ).toBeInTheDocument();
   });
 
@@ -353,6 +357,146 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Click Again to Confirm')).not.toBeInTheDocument();
+    });
+  });
+
+  // F-001: deleteNamespace rejection → "Could not clear all data"
+  test('deleteNamespace rejection shows error feedback (F-001)', async () => {
+    deleteNamespaceMock.mockRejectedValueOnce(new Error('IndexedDB quota exceeded'));
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Storage')).toBeInTheDocument();
+    });
+
+    const clearButton = screen.getByRole('button', { name: /clear cache/i });
+    fireEvent.click(clearButton);
+    fireEvent.click(clearButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not clear all data')).toBeInTheDocument();
+    });
+  });
+
+  // F-002: caches.delete rejection does not abort the clear
+  test('caches.delete rejection does not prevent the rest of clearing (F-002)', async () => {
+    // One cache rejects, the others resolve. The .catch(() => {}) suppression
+    // must swallow the rejection so clearing still completes.
+    const cachesDeleteSpy = vi.fn((name: string) =>
+      name === 'webllm/model'
+        ? Promise.reject(new Error('Cache Storage quota'))
+        : Promise.resolve(true)
+    );
+    vi.stubGlobal('caches', { delete: cachesDeleteSpy });
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Storage')).toBeInTheDocument();
+    });
+
+    const clearButton = screen.getByRole('button', { name: /clear cache/i });
+    fireEvent.click(clearButton);
+    fireEvent.click(clearButton);
+
+    // Despite one rejection, the clear succeeds (catch swallows it).
+    await waitFor(() => {
+      expect(screen.getByText('Cache cleared')).toBeInTheDocument();
+    });
+    expect(cachesDeleteSpy).toHaveBeenCalledTimes(3);
+  });
+
+  // F-003/PRR-002: deleteEdgeVecBlob rejection surfaces as error feedback
+  test('EdgeVec blob deletion failure shows error feedback (F-003)', async () => {
+    // Make the EdgeVec transaction error: mockDB.transaction will return
+    // a transaction whose objectStore triggers an error. We simulate by
+    // making the objectStore delete trigger tx.onerror.
+    const errorTx = {
+      objectStore: vi.fn(() => {
+        // Schedule tx.onerror asynchronously (the store.delete call triggers it)
+        setTimeout(() => {
+          if (errorTx.onerror) errorTx.onerror.call(errorTx, new Event('error'));
+        }, 0);
+        return mockObjectStore;
+      }),
+      oncomplete: null as ((e: Event) => void) | null,
+      onerror: null as ((e: Event) => void) | null,
+      onabort: null as ((e: Event) => void) | null,
+    };
+
+    // Override mockDB.transaction to return the error tx for 'data' store
+    // (edgevec) requests, while keeping the normal tx for settings.
+    const originalTransaction = mockDB.transaction;
+    mockDB.transaction = vi.fn((storeName: string) => {
+      if (storeName === 'data') return errorTx;
+      return mockTransaction;
+    }) as typeof mockDB.transaction;
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Storage')).toBeInTheDocument();
+    });
+
+    const clearButton = screen.getByRole('button', { name: /clear cache/i });
+    fireEvent.click(clearButton);
+    fireEvent.click(clearButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Could not clear all data')).toBeInTheDocument();
+    });
+
+    // Restore.
+    mockDB.transaction = originalTransaction;
+  });
+
+  // ADV-2: EdgeVec "data" store doesn't exist → clean resolve (not an error)
+  test('EdgeVec blob deletion when data store is absent resolves cleanly (ADV-2)', async () => {
+    // Temporarily make objectStoreNames.contains('data') return false so
+    // deleteEdgeVecBlob takes the "no store → nothing to delete" path.
+    const originalContains = mockDB.objectStoreNames.contains;
+    mockDB.objectStoreNames.contains = vi.fn((name: string) => {
+      // The settings DB does contain 'settings'; only 'data' is absent.
+      return name !== 'data';
+    }) as typeof mockDB.objectStoreNames.contains;
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Storage')).toBeInTheDocument();
+    });
+
+    const clearButton = screen.getByRole('button', { name: /clear cache/i });
+    fireEvent.click(clearButton);
+    fireEvent.click(clearButton);
+
+    // Should still clear successfully (no EdgeVec store is not an error).
+    await waitFor(() => {
+      expect(screen.getByText('Cache cleared')).toBeInTheDocument();
+    });
+
+    mockDB.objectStoreNames.contains = originalContains;
+  });
+
+  // ADV-3: stale prefix cleanup path (listStalePrefixes returns non-empty)
+  test('Clear Cache deletes stale orphan namespaces (ADV-3)', async () => {
+    listStalePrefixesMock.mockResolvedValueOnce(['orphan1', 'orphan2']);
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Storage')).toBeInTheDocument();
+    });
+
+    const clearButton = screen.getByRole('button', { name: /clear cache/i });
+    fireEvent.click(clearButton);
+    fireEvent.click(clearButton);
+
+    // deleteNamespace should be called for the current profile AND both orphans.
+    await waitFor(() => {
+      expect(deleteNamespaceMock).toHaveBeenCalledWith('orphan1');
+      expect(deleteNamespaceMock).toHaveBeenCalledWith('orphan2');
     });
   });
 });
