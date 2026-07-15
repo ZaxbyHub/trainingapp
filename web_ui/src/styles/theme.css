@@ -5,10 +5,11 @@
 }
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --color-info: #38bdf8;
   --color-warning: #facc15;
   --color-success: #4ade80;
@@ -19,6 +20,18 @@
   --color-bg: #1a1a2e;
   --color-surface: #252539;
   --color-raised: #2a2a3e;
+  --color-surface-elevated: #252539;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+#root {
+  height: 100%;
 }
 
 body {
@@ -26,4 +39,36 @@ body {
   color: var(--color-text-on-bubble-assistant);
   font-family: var(--font-family);
   font-size: var(--font-size-body);
+}
+
+/* Chat message bubble action buttons (Copy / Regenerate).
+   These components use inline styles, which cannot express the
+   :focus-within / :hover / :focus-visible pseudo-classes needed to make the
+   actions keyboard-visible. The classes below drive visibility via CSS so
+   keyboard and touch users can reach the controls. */
+.bubble-row .bubble-action {
+  opacity: 0.45;
+  transition: opacity 0.15s ease;
+}
+.bubble-row:hover .bubble-action,
+.bubble-row:focus-within .bubble-action {
+  opacity: 1;
+}
+.bubble-action:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+/* Touch devices have no hover — always show the actions. */
+@media (hover: none) {
+  .bubble-row .bubble-action {
+    opacity: 1;
+  }
+}
+
+/* Narrow viewports (EHR sidebar / split-screen): let chat header actions wrap. */
+@media (max-width: 500px) {
+  .chat-header-actions {
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+  }
 }

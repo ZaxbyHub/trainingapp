@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { DropZone } from '../components/DropZone';
 import { DocumentList } from '../components/DocumentList';
+import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import type { DocumentEntry } from '../types/document';
 import { extractDocument, SUPPORTED_EXTENSIONS } from '../lib/processing/extractor-factory';
 import { TextChunker } from '../lib/processing/text-chunker';
@@ -446,21 +447,13 @@ export function DocumentsPage() {
         style={{
           display: 'flex',
           flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
+          gap: 'var(--spacing-sm)',
           height: '100%',
-          padding: 'var(--spacing-xxl)',
+          padding: 'var(--spacing-lg)',
         }}
+        aria-label="Loading documents"
       >
-        <p
-          style={{
-            fontSize: 'var(--font-size-body)',
-            fontFamily: 'var(--font-family)',
-            color: 'var(--color-text-muted)',
-          }}
-        >
-          Loading documents...
-        </p>
+        <LoadingSkeleton variant="card" count={3} ariaLabel="Loading documents" />
       </div>
     );
   }

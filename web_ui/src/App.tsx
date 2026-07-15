@@ -3,6 +3,7 @@ import { ThemeProvider } from './lib/theme';
 import { ToastProvider } from './components/ToastProvider';
 import { InferenceModeProvider, useInferenceMode } from './lib/inference/InferenceModeContext';
 import { AppLayout } from './layouts/AppLayout';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { ChatPage } from './pages/ChatPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -130,27 +131,39 @@ function AppContent() {
     switch (currentPage) {
       case 'chat':
         return (
-          <ChatPage
-            messages={currentMessages}
-            onMessagesChange={setCurrentMessages}
-            onSaveConversation={saveMessages}
-            onNewChat={newChat}
-            onOpenSettings={openSettings}
-          />
+          <ErrorBoundary>
+            <ChatPage
+              messages={currentMessages}
+              onMessagesChange={setCurrentMessages}
+              onSaveConversation={saveMessages}
+              onNewChat={newChat}
+              onOpenSettings={openSettings}
+            />
+          </ErrorBoundary>
         );
       case 'documents':
-        return <DocumentsPage />;
+        return (
+          <ErrorBoundary>
+            <DocumentsPage />
+          </ErrorBoundary>
+        );
       case 'settings':
-        return <SettingsPage />;
+        return (
+          <ErrorBoundary>
+            <SettingsPage />
+          </ErrorBoundary>
+        );
       default:
         return (
-          <ChatPage
-            messages={currentMessages}
-            onMessagesChange={setCurrentMessages}
-            onSaveConversation={saveMessages}
-            onNewChat={newChat}
-            onOpenSettings={openSettings}
-          />
+          <ErrorBoundary>
+            <ChatPage
+              messages={currentMessages}
+              onMessagesChange={setCurrentMessages}
+              onSaveConversation={saveMessages}
+              onNewChat={newChat}
+              onOpenSettings={openSettings}
+            />
+          </ErrorBoundary>
         );
     }
   };
@@ -195,7 +208,9 @@ function App() {
     <ThemeProvider>
       <ToastProvider>
         <InferenceModeProvider>
-          <AppContent />
+          <ErrorBoundary>
+            <AppContent />
+          </ErrorBoundary>
         </InferenceModeProvider>
       </ToastProvider>
     </ThemeProvider>

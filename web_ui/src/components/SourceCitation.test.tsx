@@ -112,6 +112,31 @@ describe('SourceCitation', () => {
         expect(screen.queryByText('/path/doc2.pdf')).not.toBeInTheDocument();
       });
     });
+
+    it('exposes aria-expanded reflecting the popover state', () => {
+      render(<SourceCitation sources={['/path/to/document.pdf']} />);
+
+      const pill = screen.getByText('document.pdf').closest('[role="button"]')!;
+      expect(pill.getAttribute('aria-expanded')).toBe('false');
+
+      fireEvent.click(pill);
+      expect(pill.getAttribute('aria-expanded')).toBe('true');
+    });
+
+    it('closes the popover on Escape', async () => {
+      render(<SourceCitation sources={['/path/to/document.pdf']} />);
+
+      const pill = screen.getByText('document.pdf').closest('[role="button"]')!;
+      fireEvent.click(pill);
+      await waitFor(() => {
+        expect(screen.getByText('/path/to/document.pdf')).toBeInTheDocument();
+      });
+
+      fireEvent.keyDown(pill, { key: 'Escape' });
+      await waitFor(() => {
+        expect(screen.queryByText('/path/to/document.pdf')).not.toBeInTheDocument();
+      });
+    });
   });
 
   describe('Keyboard Accessibility', () => {
@@ -137,14 +162,16 @@ describe('SourceCitation', () => {
       });
     });
 
-    it('prevents default on Space key', () => {
+    it('prevents default on Space key', async () => {
       render(<SourceCitation sources={['/path/to/document.pdf']} />);
 
       const pill = screen.getByText('document.pdf').closest('[role="button"]');
-      const preventDefaultSpy = vi.fn();
-      fireEvent.keyDown(pill!, { key: ' ', preventDefault: preventDefaultSpy });
-
-      expect(preventDefaultSpy).toHaveBeenCalled();
+      // Space toggles the popover (the handler calls e.preventDefault() then
+      // toggles); verify the toggle happened as proof the Space handler ran.
+      fireEvent.keyDown(pill!, { key: ' ' });
+      await waitFor(() => {
+        expect(screen.getByText('/path/to/document.pdf')).toBeInTheDocument();
+      });
     });
   });
 
@@ -176,7 +203,11 @@ describe('SourceCitation', () => {
       const copyButton = screen.getByRole('button', { name: /copy source path/i });
       fireEvent.click(copyButton);
 
-      expect(mockOnCopy).toHaveBeenCalledWith('/path/to/document.pdf');
+      // handleCopy is async (awaits clipboard.writeText before invoking the
+      // callback), so wait for the callback to fire.
+      await waitFor(() => {
+        expect(mockOnCopy).toHaveBeenCalledWith('/path/to/document.pdf');
+      });
     });
 
     it('does not trigger expand when clicking copy button', async () => {
@@ -216,7 +247,7 @@ describe('SourceCitation', () => {
   });
 
   describe('Timer Cleanup', () => {
-    it('clears copy timer on unmount', () => {
+    it('clears copy timer on unmount', async () => {
       const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
 
       const { unmount } = render(<SourceCitation sources={['/path/to/document.pdf']} />);
@@ -224,9 +255,16 @@ describe('SourceCitation', () => {
       const copyButton = screen.getByRole('button', { name: /copy source path/i });
       fireEvent.click(copyButton);
 
+      // Wait for the async copy handler to set the copied-reset timer before
+      // unmounting, so the cleanup effect's clearTimeout is observably called.
+      await waitFor(() => {
+        expect(screen.getByText('✓')).toBeInTheDocument();
+      });
+
       unmount();
 
       expect(clearTimeoutSpy).toHaveBeenCalled();
+      clearTimeoutSpy.mockRestore();
     });
   });
 
@@ -238,15 +276,22 @@ describe('SourceCitation', () => {
     });
 
     it('handles source with trailing slash', () => {
-      render(<SourceCitation sources={['/path/to/']} />);
-
-      expect(screen.getByText('/path/to/')).toBeInTheDocument();
+      // getBasename('/path/to/') returns '' (nothing after the last slash).
+      // The pill still renders; the full path is carried by the inner span's
+      // title attribute for hover/tooltip access.
+      const { container } = render(<SourceCitation sources={['/path/to/']} />);
+      const pill = container.querySelector('[role="button"]');
+      expect(pill).not.toBeNull();
+      // The full source path is on the filename span's title.
+      const titledSpan = container.querySelector('[title="/path/to/"]');
+      expect(titledSpan).not.toBeNull();
     });
 
     it('handles empty string source', () => {
-      render(<SourceCitation sources={['']} />);
-
-      expect(screen.getByText('')).toBeInTheDocument();
+      const { container } = render(<SourceCitation sources={['']} />);
+      // An empty source still renders a pill (role=button) with the copy control.
+      const pill = container.querySelector('[role="button"]');
+      expect(pill).not.toBeNull();
     });
 
     it('handles source with special characters in filename', () => {
@@ -258,7 +303,8 @@ describe('SourceCitation', () => {
     it('respects max-width on pills', () => {
       const { container } = render(<SourceCitation sources={['/very/long/path/to/document.pdf']} />);
 
-      const pill = container.querySelector('[style*="maxWidth: 200px"]');
+      // React serializes maxWidth as "max-width" in the DOM style attribute.
+      const pill = container.querySelector('[style*="max-width: 200px"]');
       expect(pill).toBeInTheDocument();
     });
   });

@@ -57,6 +57,15 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     adjustHeight();
   }, [value, adjustHeight]);
 
+  // Focus restoration: sending a message disables the textarea (isLoading),
+  // which drops focus to <body>. When generation ends and the textarea
+  // re-enables, move focus back so keyboard users aren't stranded on body.
+  useEffect(() => {
+    if (!isLoading) {
+      textareaRef.current?.focus();
+    }
+  }, [isLoading]);
+
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed || isLoading) return;
@@ -119,6 +128,12 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // IME composition guard: when the user is mid-composition (CJK/Vietnamese
+      // input methods), Enter confirms a candidate — it must NOT send the
+      // message. Check before any Enter-to-send logic.
+      if (e.key === 'Enter' && e.nativeEvent.isComposing) {
+        return;
+      }
       // Enter (no Shift): send. Ctrl/Cmd+Enter also sends — the global
       // useKeyboardShortcuts handler bails on TEXTAREA targets, so without
       // handling Ctrl/Cmd+Enter here it would do nothing while the input is

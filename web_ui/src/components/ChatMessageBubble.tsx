@@ -16,8 +16,7 @@ interface ChatMessageBubbleProps {
 }
 
 export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({ message, onRegenerate }) => {
-  const [showCopy, setShowCopy] = useState(false);
-  const [showCopiedFeedback, setShowCopiedFeedback] = useState(false);
+  const [copied, setCopied] = useState(false);
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -31,12 +30,12 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(message.content);
-      setShowCopiedFeedback(true);
+      setCopied(true);
       if (copyFeedbackTimerRef.current !== null) {
         clearTimeout(copyFeedbackTimerRef.current);
       }
       copyFeedbackTimerRef.current = setTimeout(() => {
-        setShowCopiedFeedback(false);
+        setCopied(false);
         copyFeedbackTimerRef.current = null;
       }, 1500);
     } catch {
@@ -58,6 +57,10 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
     opacity: 0.7,
   };
 
+  // Shared inline style for the copy/regenerate action buttons. Visibility is
+  // driven by the `.bubble-action` / `.bubble-row` CSS classes in theme.css
+  // (using :hover / :focus-within) so keyboard and touch users can reach them
+  // — inline styles alone cannot express those pseudo-classes.
   const actionButtonBaseStyle: React.CSSProperties = {
     background: 'transparent',
     border: '1px solid var(--color-bubble-system)',
@@ -67,22 +70,6 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
     fontSize: 'var(--font-size-caption)',
     fontFamily: 'var(--font-family)',
     color: 'var(--color-text-muted)',
-  };
-
-  const copyButtonInlineStyle: React.CSSProperties = {
-    ...actionButtonBaseStyle,
-    opacity: showCopy ? 1 : 0,
-    transition: 'opacity 0.15s ease',
-    visibility: showCopy ? 'visible' : 'hidden',
-  };
-
-  const copiedFeedbackInlineStyle: React.CSSProperties = {
-    backgroundColor: 'var(--color-bubble-system)',
-    color: 'var(--color-text-muted)',
-    padding: 'var(--spacing-xs) var(--spacing-sm)',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: 'var(--font-size-caption)',
-    pointerEvents: 'none',
   };
 
   const regenerateStyle: React.CSSProperties = {
@@ -102,13 +89,12 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
   if (message.role === 'user') {
     return (
       <div
+        className="bubble-row"
         style={{
           display: 'flex',
           justifyContent: 'flex-end',
           marginBottom: 'var(--spacing-sm)',
         }}
-        onMouseEnter={() => setShowCopy(true)}
-        onMouseLeave={() => setShowCopy(false)}
       >
         <div
           style={{
@@ -148,13 +134,15 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
           )}
           <div style={{ ...timeStyle, textAlign: 'right' }}>{formatRelativeTime(message.timestamp)}</div>
           <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
-            {showCopiedFeedback ? (
-              <span style={copiedFeedbackInlineStyle}>Copied!</span>
-            ) : (
-              <button style={copyButtonInlineStyle} onClick={handleCopy} aria-label="Copy message" type="button">
-                Copy
-              </button>
-            )}
+            <button
+              className="bubble-action"
+              style={actionButtonBaseStyle}
+              onClick={handleCopy}
+              aria-label={copied ? 'Copied to clipboard' : 'Copy message'}
+              type="button"
+            >
+              {copied ? 'Copied!' : 'Copy'}
+            </button>
           </div>
         </div>
       </div>
@@ -189,15 +177,22 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
   // Assistant message — full-width prose
   return (
     <div
+      className="bubble-row"
       style={{
         display: 'flex',
         justifyContent: 'flex-start',
         marginBottom: 'var(--spacing-sm)',
       }}
-      onMouseEnter={() => setShowCopy(true)}
-      onMouseLeave={() => setShowCopy(false)}
     >
-      <div style={{ width: '100%', padding: 'var(--spacing-md) 0' }}>
+      <div
+        style={{
+          width: '100%',
+          padding: 'var(--spacing-md)',
+          backgroundColor: 'var(--color-surface-elevated)',
+          border: '1px solid var(--color-bubble-system)',
+          borderRadius: 'var(--radius-md)',
+        }}
+      >
         {message.abstain ? (
           // F2: distinct abstention state. The pipeline deliberately did NOT
           // answer because it found no usable evidence, so we never show the
@@ -241,15 +236,23 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
             )}
             <div style={{ ...timeStyle, textAlign: 'left' }}>{formatRelativeTime(message.timestamp)}</div>
             <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
-              {showCopiedFeedback ? (
-                <span style={copiedFeedbackInlineStyle}>Copied!</span>
-              ) : (
-                <button style={copyButtonInlineStyle} onClick={handleCopy} aria-label="Copy message" type="button">
-                  Copy
-                </button>
-              )}
+              <button
+                className="bubble-action"
+                style={actionButtonBaseStyle}
+                onClick={handleCopy}
+                aria-label={copied ? 'Copied to clipboard' : 'Copy message'}
+                type="button"
+              >
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
               {onRegenerate && (
-                <button type="button" onClick={onRegenerate} aria-label="Regenerate response" style={regenerateStyle}>
+                <button
+                  className="bubble-action"
+                  type="button"
+                  onClick={onRegenerate}
+                  aria-label="Regenerate response"
+                  style={regenerateStyle}
+                >
                   ↻ Regenerate
                 </button>
               )}

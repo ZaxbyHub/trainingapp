@@ -33,7 +33,7 @@ export function AppLayout({
       style={{
         display: 'flex',
         height: '100dvh',
-        width: '100vw',
+        width: '100%',
         overflow: 'hidden',
       }}
     >

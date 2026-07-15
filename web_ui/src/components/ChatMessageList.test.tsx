@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ChatMessageList } from './ChatMessageList';
 import type { ChatMessage } from '../types/chat';
@@ -252,6 +252,118 @@ describe('ChatMessageList', () => {
       unmount();
 
       expect(removeEventListenerSpy).toHaveBeenCalledWith('scroll', expect.any(Function));
+    });
+  });
+
+  describe('Scroll-trap fix (issue #25 F6)', () => {
+    it('does NOT force-scroll to bottom while streaming when the user has scrolled up', () => {
+      // Seed an assistant reply already in progress (prev last role = assistant).
+      // Appending more assistant tokens during streaming must respect the
+      // near-bottom heuristic — NOT force-scroll — when the user scrolled up.
+      const messages: ChatMessage[] = [
+        { id: 'msg-1', role: 'user', content: 'Question', timestamp: Date.now() },
+        { id: 'msg-2', role: 'assistant', content: 'Answer part 1', timestamp: Date.now(), isStreaming: true },
+      ];
+
+      Object.defineProperty(Element.prototype, 'scrollHeight', { value: 1000, configurable: true });
+      Object.defineProperty(Element.prototype, 'clientHeight', { value: 500, configurable: true });
+
+      const { rerender } = render(<ChatMessageList messages={messages} isStreaming={true} />);
+      const container = screen.getByRole('log') as HTMLElement;
+
+      // User scrolls up — scrollTop well beyond the near-bottom threshold.
+      let currentScrollTop = 0;
+      Object.defineProperty(container, 'scrollTop', {
+        configurable: true,
+        get: () => currentScrollTop,
+        set: (v: number) => { currentScrollTop = v; },
+      });
+      container.dispatchEvent(new Event('scroll'));
+
+      // Append another streaming assistant token — prevLastRole is already
+      // 'assistant', so this is mid-stream (not reply-start), and the user is
+      // scrolled away from bottom. The component must NOT force scrollTop=1000.
+      const grown: ChatMessage[] = [
+        ...messages,
+        { id: 'msg-3', role: 'assistant', content: 'Answer part 2', timestamp: Date.now(), isStreaming: true },
+      ];
+      currentScrollTop = 0;
+      rerender(<ChatMessageList messages={grown} isStreaming={true} />);
+
+      // scrollTop must remain 0 (not forced to scrollHeight 1000).
+      expect(currentScrollTop).toBe(0);
+    });
+
+    it('force-scrolls to bottom when a new user message is appended (send)', () => {
+      // The positive case: a new USER message must force-scroll to bottom,
+      // even if the user was scrolled up (snapping them to their new message).
+      const messages: ChatMessage[] = [
+        { id: 'msg-1', role: 'assistant', content: 'Previous answer', timestamp: Date.now() },
+      ];
+
+      Object.defineProperty(Element.prototype, 'scrollHeight', { value: 1000, configurable: true });
+      Object.defineProperty(Element.prototype, 'clientHeight', { value: 500, configurable: true });
+
+      const { rerender } = render(<ChatMessageList messages={messages} isStreaming={false} />);
+      const container = screen.getByRole('log') as HTMLElement;
+
+      // User is scrolled up.
+      let currentScrollTop = 0;
+      Object.defineProperty(container, 'scrollTop', {
+        configurable: true,
+        get: () => currentScrollTop,
+        set: (v: number) => { currentScrollTop = v; },
+      });
+      container.dispatchEvent(new Event('scroll'));
+
+      // Append a new user message — this is a "send", last role = user.
+      const withUser: ChatMessage[] = [
+        ...messages,
+        { id: 'msg-2', role: 'user', content: 'New question', timestamp: Date.now() },
+      ];
+      rerender(<ChatMessageList messages={withUser} isStreaming={false} />);
+
+      // Force-scrolled to the bottom (scrollHeight 1000).
+      expect(currentScrollTop).toBe(1000);
+    });
+
+    it('shows a Jump to latest button when scrolled away from the bottom', async () => {
+      const messages: ChatMessage[] = [
+        { id: 'msg-1', role: 'user', content: 'Question', timestamp: Date.now() },
+        { id: 'msg-2', role: 'assistant', content: 'Answer', timestamp: Date.now() },
+      ];
+
+      Object.defineProperty(Element.prototype, 'scrollHeight', { value: 1000, configurable: true });
+      Object.defineProperty(Element.prototype, 'clientHeight', { value: 500, configurable: true });
+
+      render(<ChatMessageList messages={messages} isStreaming={false} />);
+      const container = screen.getByRole('log') as HTMLElement;
+
+      // User scrolls up — scrollTop=0 leaves 500px to the bottom (>threshold).
+      Object.defineProperty(container, 'scrollTop', { value: 0, configurable: true, writable: true });
+      await act(async () => {
+        container.dispatchEvent(new Event('scroll'));
+      });
+
+      expect(await screen.findByRole('button', { name: /jump to latest/i })).toBeInTheDocument();
+    });
+  });
+
+  describe('Completion announcement (issue #25 AC7)', () => {
+    it('announces "Response complete" when streaming ends', () => {
+      const messages: ChatMessage[] = [
+        { id: 'msg-1', role: 'user', content: 'Question', timestamp: Date.now() },
+        { id: 'msg-2', role: 'assistant', content: 'Answer', timestamp: Date.now(), isStreaming: true },
+      ];
+
+      const { rerender } = render(<ChatMessageList messages={messages} isStreaming={true} />);
+
+      // Streaming ends.
+      rerender(<ChatMessageList messages={messages} isStreaming={false} />);
+
+      // The visually-hidden status region should now carry the completion text.
+      const status = screen.getByRole('status');
+      expect(status.textContent).toContain('Response complete');
     });
   });
 });

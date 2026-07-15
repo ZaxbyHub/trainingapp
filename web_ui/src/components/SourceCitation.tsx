@@ -31,6 +31,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return () => {
@@ -39,6 +40,28 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
       }
     };
   }, []);
+
+  // Close the open popover on outside click or Escape (at the document level
+  // so the keydown works regardless of focus location).
+  useEffect(() => {
+    if (expandedKey === null) return;
+    const handlePointerDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setExpandedKey(null);
+      }
+    };
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setExpandedKey(null);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [expandedKey]);
 
   const handleCopy = useCallback(
     async (key: string, text: string, e: React.MouseEvent) => {
@@ -69,6 +92,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
   if (citations && citations.length > 0) {
     return (
       <div
+        ref={containerRef}
         style={{
           marginTop: 'var(--spacing-sm)',
           display: 'flex',
@@ -97,11 +121,31 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
             position: 'relative',
           };
 
+          const popoverStyle: React.CSSProperties = {
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            marginTop: '4px',
+            backgroundColor: 'var(--color-surface-elevated)',
+            color: 'var(--color-text-on-bubble-assistant)',
+            padding: 'var(--spacing-sm)',
+            borderRadius: '4px',
+            border: '1px solid var(--color-bubble-system)',
+            fontSize: 'var(--font-size-caption)',
+            zIndex: 10,
+            maxWidth: 'min(60vw, 480px)',
+            whiteSpace: 'normal',
+            wordBreak: 'break-word',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+            lineHeight: 'var(--line-height-body)',
+          };
+
           return (
             <div
               key={key}
               role="button"
               tabIndex={0}
+              aria-expanded={isExpanded}
               aria-label={`Source ${index + 1}: ${label}${pageSuffix}`}
               style={pillStyle}
               onClick={() => handleToggleExpand(key)}
@@ -109,6 +153,9 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
                   handleToggleExpand(key);
+                }
+                if (e.key === 'Escape') {
+                  setExpandedKey(null);
                 }
               }}
             >
@@ -141,25 +188,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
                 </button>
               )}
               {isExpanded && cite.text && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: 0,
-                    marginTop: '4px',
-                    backgroundColor: 'var(--color-bubble-assistant)',
-                    color: 'var(--color-text-on-bubble-assistant)',
-                    padding: 'var(--spacing-sm)',
-                    borderRadius: '4px',
-                    fontSize: 'var(--font-size-caption)',
-                    zIndex: 10,
-                    maxWidth: '360px',
-                    whiteSpace: 'normal',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                    lineHeight: 'var(--line-height-body)',
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                >
+                <div style={popoverStyle} onClick={(e) => e.stopPropagation()}>
                   {cite.text}
                 </div>
               )}
@@ -177,6 +206,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
 
   return (
     <div
+      ref={containerRef}
       style={{
         marginTop: 'var(--spacing-sm)',
         display: 'flex',
@@ -204,17 +234,40 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
           position: 'relative',
         };
 
+        const legacyPopoverStyle: React.CSSProperties = {
+          position: 'absolute',
+          top: '100%',
+          left: 0,
+          marginTop: '4px',
+          backgroundColor: 'var(--color-surface-elevated)',
+          color: 'var(--color-text-on-bubble-assistant)',
+          padding: 'var(--spacing-xs)',
+          borderRadius: '4px',
+          border: '1px solid var(--color-bubble-system)',
+          fontSize: 'var(--font-size-caption)',
+          zIndex: 10,
+          maxWidth: 'min(60vw, 480px)',
+          whiteSpace: 'normal',
+          wordBreak: 'break-all',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+        };
+
         return (
           <div
             key={key}
             role="button"
             tabIndex={0}
+            aria-expanded={isExpanded}
+            aria-label={`Source ${index + 1}: ${filename}`}
             style={pillStyle}
             onClick={() => handleToggleExpand(key)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
                 handleToggleExpand(key);
+              }
+              if (e.key === 'Escape') {
+                setExpandedKey(null);
               }
             }}
           >
@@ -240,23 +293,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
               {isCopied ? '✓' : 'Copy'}
             </button>
             {isExpanded && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: 0,
-                  marginTop: '4px',
-                  backgroundColor: 'var(--color-bubble-assistant)',
-                  color: 'var(--color-text-on-bubble-assistant)',
-                  padding: 'var(--spacing-xs)',
-                  borderRadius: '4px',
-                  fontSize: 'var(--font-size-caption)',
-                  zIndex: 10,
-                  whiteSpace: 'nowrap',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
+              <div style={legacyPopoverStyle} onClick={(e) => e.stopPropagation()}>
                 {source}
               </div>
             )}

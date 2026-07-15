@@ -41,16 +41,10 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
-      // Orphaned component tests: import components that no longer exist at
-      // the imported path (moved/deleted). Owned by the UI/a11y sibling PR #25.
+      // Pre-existing behavioral failures (status-color and mode-switching
+      // assertions that don't match the component's actual behavior). Not owned
+      // by issue #25; left excluded pending a dedicated fix.
       'src/components/InferenceModeToggle.test.tsx',
-      'src/components/MarkdownRenderer.test.tsx',
-      // SourceCitation.test.tsx: the structured-citations (F7) tests added in
-      // PR #29 pass, but a handful of pre-existing legacy-mode tests (keyboard,
-      // copy-callback, timer-cleanup) have environment-setup failures owned by
-      // the UI/a11y sibling PR #25. Kept excluded until #25 fixes the file's
-      // test environment; the F7 data flow is covered at the orchestrator layer.
-      'src/components/SourceCitation.test.tsx',
       // Depend on the unbuilt edgevec WASM snippet (node_modules artifact not
       // present without a build step). Owned by RAG retrieval PR #22.
       'src/pages/ChatPage.test.tsx',
