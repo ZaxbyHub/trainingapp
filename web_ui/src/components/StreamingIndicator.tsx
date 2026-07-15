@@ -63,7 +63,7 @@ export function StreamingIndicator({ isVisible }: StreamingIndicatorProps): Reac
   };
 
   return (
-    <div style={containerStyle} data-testid="streaming-indicator" role="status" aria-live="polite">
+    <div style={containerStyle} data-testid="streaming-indicator" role="status" aria-live="polite" aria-label="Generating response">
       {prefersReducedMotion ? (
         <span style={textStyle}>Generating...</span>
       ) : (

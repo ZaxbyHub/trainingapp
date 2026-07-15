@@ -162,6 +162,7 @@ const DocumentItem = React.memo<{
 
       {/* Status badge */}
       <div
+        aria-live="polite"
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -183,6 +184,11 @@ const DocumentItem = React.memo<{
         {/* Progress bar for uploading/processing */}
         {(doc.status === 'uploading' || doc.status === 'processing') && (
           <div
+            role="progressbar"
+            aria-valuenow={Math.round(doc.progress)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`${getStatusLabel(doc.status)}: ${Math.round(doc.progress)}%`}
             style={{
               width: '80px',
               height: '4px',
@@ -402,6 +408,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
             return (
               <div
                 key={doc.id}
+                role="listitem"
                 style={{
                   position: 'absolute',
                   top: `${index * ITEM_HEIGHT}px`,

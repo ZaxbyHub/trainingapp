@@ -8,6 +8,7 @@ import type { ChatMessage } from '../types/chat';
 import { ChatMessageList } from '../components/ChatMessageList';
 import { ChatInput } from '../components/ChatInput';
 import { StreamingIndicator } from '../components/StreamingIndicator';
+import { ModelBlockedOverlay } from '../components/ModelBlockedOverlay';
 import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
@@ -510,7 +511,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           boxShadow: 'var(--shadow-sm)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
+        <div className="chat-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
           {/* API mode warning */}
           {mode === 'api' && !isServerConnected && (
             <span
@@ -566,160 +567,20 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           instead of a generic "please wait for download" message (which is
           actively wrong for wllama, where there is no download step — the real
           cause is usually missing packaged weights). Offers Retry and Open
-          Settings actions. (issue #21 F10) */}
-      {isModelBlocked && (() => {
-        const readinessResult = getReadinessResultSnapshot();
-        const failures = readinessResult?.failures ?? [];
-        const recommendations = readinessResult?.recommendations ?? [];
-        const hasRealFailure = failures.length > 0;
-        // Engine-aware headline. For wllama a missing-weights failure is the
-        // common case (no download step), so don't promise a download.
-        const headline = hasRealFailure
-          ? (browserEngine === 'wllama'
-              ? 'This build is missing the packaged model. See the Packaging guide or contact your administrator.'
-              : 'The browser model is not available. Use Settings to download it, or switch engines.')
-          : 'Preparing the model…';
-        return (
-          <div
-            role="alertdialog"
-            aria-label="Model not ready"
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              backgroundColor: 'rgba(0, 0, 0, 0.7)',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              zIndex: 100,
-            }}
-          >
-            <div
-              style={{
-                backgroundColor: 'var(--color-surface)',
-                padding: 'var(--spacing-xl)',
-                borderRadius: '8px',
-                textAlign: 'center',
-                maxWidth: '460px',
-              }}
-            >
-              <p
-                style={{
-                  fontSize: 'var(--font-size-body)',
-                  color: 'var(--color-text-on-bubble-assistant)',
-                  fontFamily: 'var(--font-family)',
-                  marginBottom: 'var(--spacing-md)',
-                }}
-              >
-                {headline}
-              </p>
-              {/* Show real progress only when actively loading, not when a hard
-                  readiness failure is the cause (otherwise the bar reflects
-                  unrelated boot-time search-index init). */}
-              {!hasRealFailure && modelLoadingProgress > 0 && (
-                <>
-                  <div
-                    style={{
-                      width: '100%',
-                      height: '8px',
-                      backgroundColor: 'var(--color-bubble-system)',
-                      borderRadius: 'var(--radius-sm)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: `${modelLoadingProgress}%`,
-                        height: '100%',
-                        backgroundColor: '#22c55e',
-                        transition: 'width 0.3s ease',
-                      }}
-                    />
-                  </div>
-                  <p
-                    style={{
-                      fontSize: 'var(--font-size-caption)',
-                      color: 'var(--color-text-muted)',
-                      fontFamily: 'var(--font-family)',
-                      marginTop: 'var(--spacing-sm)',
-                    }}
-                  >
-                    {modelLoadingProgress}%
-                  </p>
-                </>
-              )}
-              {failures.length > 0 && (
-                <ul
-                  style={{
-                    textAlign: 'left',
-                    color: 'var(--color-danger)',
-                    fontSize: 'var(--font-size-caption)',
-                    fontFamily: 'var(--font-family)',
-                    margin: 'var(--spacing-sm) 0',
-                    padding: '0 var(--spacing-md)',
-                  }}
-                >
-                  {failures.map((f, i) => <li key={i}>{f}</li>)}
-                </ul>
-              )}
-              {recommendations.length > 0 && (
-                <ul
-                  style={{
-                    textAlign: 'left',
-                    color: 'var(--color-text-muted)',
-                    fontSize: 'var(--font-size-caption)',
-                    fontFamily: 'var(--font-family)',
-                    margin: 'var(--spacing-sm) 0',
-                    padding: '0 var(--spacing-md)',
-                  }}
-                >
-                  {recommendations.map((r, i) => <li key={i}>{r}</li>)}
-                </ul>
-              )}
-              <div style={{ display: 'flex', gap: 'var(--spacing-sm)', justifyContent: 'center', marginTop: 'var(--spacing-md)' }}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    resetReadinessCache();
-                    void ensureReadinessGateChecked(browserEngine);
-                  }}
-                  style={{
-                    backgroundColor: 'var(--color-primary)',
-                    color: 'var(--color-text-on-primary)',
-                    border: 'none',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: 'var(--spacing-xs) var(--spacing-sm)',
-                    fontFamily: 'var(--font-family)',
-                    fontSize: 'var(--font-size-caption)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Retry
-                </button>
-                <button
-                  type="button"
-                  onClick={onOpenSettings}
-                  style={{
-                    backgroundColor: 'transparent',
-                    color: 'var(--color-text-muted)',
-                    border: '1px solid var(--color-text-muted)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: 'var(--spacing-xs) var(--spacing-sm)',
-                    fontFamily: 'var(--font-family)',
-                    fontSize: 'var(--font-size-caption)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Open Settings
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+          Settings actions. Extracted into ModelBlockedOverlay (issue #25) which
+          adds aria-modal + a focus trap. (originally issue #21 F10) */}
+      {isModelBlocked && (
+        <ModelBlockedOverlay
+          readinessResult={getReadinessResultSnapshot()}
+          browserEngine={browserEngine}
+          modelLoadingProgress={modelLoadingProgress}
+          onRetry={() => {
+            resetReadinessCache();
+            void ensureReadinessGateChecked(browserEngine);
+          }}
+          onOpenSettings={onOpenSettings}
+        />
+      )}
 
       {/* Message List */}
       <ChatMessageList

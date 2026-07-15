@@ -4,9 +4,41 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Document Q&amp;A Assistant</title>
+    <!-- Offline-safe inline SVG favicon (no external request; the air-gapped
+         bundle would otherwise 404 on the default favicon lookup). -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%231a73e8'/%3E%3Cpath d='M5 7h14v10H5z' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3Cpath d='M5 7l7 6 7-6' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3C/svg%3E"
+    />
+    <meta name="theme-color" content="#1a73e8" />
+    <meta name="color-scheme" content="light dark" />
+    <!-- Pre-paint theme bootstrap: resolve the stored/system theme and set
+         data-theme on <html> BEFORE first paint to avoid a flash of wrong-theme
+         content. Must mirror ThemeContext's source of truth: the
+         'theme-preference' localStorage key (values 'light' | 'dark'), falling
+         back to the OS prefers-color-scheme media query. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('theme-preference');
+          var resolved;
+          if (stored === 'light' || stored === 'dark') {
+            resolved = stored;
+          } else {
+            resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          document.documentElement.setAttribute('data-theme', resolved);
+        } catch (e) {
+          // localStorage unavailable (private mode / restricted iframe) — leave
+          // the default :root color-scheme in place; React applies data-theme
+          // post-mount.
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <noscript>This application requires JavaScript to run.</noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

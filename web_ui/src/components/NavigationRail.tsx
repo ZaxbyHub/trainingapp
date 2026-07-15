@@ -57,40 +57,57 @@ export function NavigationRail({ currentPage, onNavigate }: NavigationRailProps)
         borderRight: '1px solid var(--color-secondary)',
       }}
     >
-      {navItems.map((item) => {
-        const isActive = currentPage === item.id;
-        const [hovered, setHovered] = useState(false);
-        return (
-          <button
-            type="button"
-            key={item.id}
-            onClick={() => onNavigate(item.id)}
-            aria-current={isActive ? 'page' : undefined}
-            title={item.label}
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 'var(--spacing-md)',
-              border: 'none',
-              borderRadius: 'var(--spacing-sm)',
-              backgroundColor: isActive ? 'var(--color-primary)' : hovered ? 'var(--color-secondary)' : 'transparent',
-              color: isActive ? 'var(--color-text-on-primary)' : 'var(--color-text-on-bubble-assistant)',
-              cursor: 'pointer',
-              transition: 'background-color 200ms ease, color 200ms ease',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              minHeight: '56px',
-            }}
-            onMouseEnter={() => setHovered(true)}
-            onMouseLeave={() => setHovered(false)}
-          >
-            <span style={{ marginBottom: 'var(--spacing-xs)' }}>{icons[item.id]}</span>
-            <span style={{ fontSize: 'var(--font-size-small)' }}>{item.label}</span>
-          </button>
-        );
-      })}
+      {navItems.map((item) => (
+        <NavItem
+          key={item.id}
+          item={item}
+          isActive={currentPage === item.id}
+          onNavigate={onNavigate}
+        />
+      ))}
     </nav>
   );
 }
+
+/**
+ * Single navigation button. Extracted into its own component so the hover
+ * state hook is owned by a stable component instance — previously `useState`
+ * was called inside `navItems.map()` (a Rules-of-Hooks violation: hooks must
+ * not be called inside loops/callbacks).
+ */
+const NavItem: React.FC<{
+  item: { id: string; label: string };
+  isActive: boolean;
+  onNavigate: (page: string) => void;
+}> = ({ item, isActive, onNavigate }) => {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => onNavigate(item.id)}
+      aria-current={isActive ? 'page' : undefined}
+      title={item.label}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 'var(--spacing-md)',
+        border: 'none',
+        borderRadius: 'var(--spacing-sm)',
+        backgroundColor: isActive ? 'var(--color-primary)' : hovered ? 'var(--color-secondary)' : 'transparent',
+        color: isActive ? 'var(--color-text-on-primary)' : 'var(--color-text-on-bubble-assistant)',
+        cursor: 'pointer',
+        transition: 'background-color 200ms ease, color 200ms ease',
+        fontSize: 'var(--font-size-small)',
+        fontFamily: 'var(--font-family)',
+        minHeight: '56px',
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <span style={{ marginBottom: 'var(--spacing-xs)' }}>{icons[item.id]}</span>
+      <span style={{ fontSize: 'var(--font-size-small)' }}>{item.label}</span>
+    </button>
+  );
+};

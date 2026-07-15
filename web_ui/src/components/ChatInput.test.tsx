@@ -154,6 +154,27 @@ describe('ChatInput', () => {
 
       expect(mockSend).not.toHaveBeenCalled();
     });
+
+    it('does not call onSend when Enter is pressed during IME composition (issue #25 F11)', () => {
+      const mockSend = vi.fn();
+      render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
+
+      const textarea = screen.getByPlaceholderText('Ask a question...');
+      fireEvent.change(textarea, { target: { value: 'こんにちは' } });
+      // Enter confirms an IME candidate — isComposing must prevent send.
+      // Construct a real KeyboardEvent with isComposing=true so React's
+      // synthetic event exposes e.nativeEvent.isComposing correctly.
+      const composingEnter = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        shiftKey: false,
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(composingEnter, 'isComposing', { value: true });
+      textarea.dispatchEvent(composingEnter);
+
+      expect(mockSend).not.toHaveBeenCalled();
+    });
   });
 
   describe('Cancel Functionality', () => {

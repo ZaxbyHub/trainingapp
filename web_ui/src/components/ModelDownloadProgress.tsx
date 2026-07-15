@@ -83,6 +83,11 @@ export function ModelDownloadProgress({
   onCancel,
   isQuotaError = false,
 }: ModelDownloadProgressProps): React.ReactElement | null {
+  // Hooks must run unconditionally on every render. This state was previously
+  // declared AFTER the early return below, which violates the Rules of Hooks
+  // (the hook count varied between the idle and active branches).
+  const [cancelHovered, setCancelHovered] = React.useState(false);
+
   if (!progress || progress.status === 'idle') {
     return null;
   }
@@ -157,8 +162,6 @@ export function ModelDownloadProgress({
   const cancelButtonHoverStyle: React.CSSProperties = {
     backgroundColor: 'var(--color-danger-hover)',
   };
-
-  const [cancelHovered, setCancelHovered] = React.useState(false);
 
   return (
     <div style={containerStyle} role="region" aria-label="Model download progress">
