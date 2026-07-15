@@ -70,7 +70,6 @@ export default defineConfig({
       'src/lib/processing/pptx-extractor.test.ts',
       'src/lib/llm/web-llm-service.test.ts',
       'src/lib/llm/webgpu-watchdog.test.ts',
-      'src/pages/SettingsPage.test.tsx',
       // Allocates multi-GB page fixtures for TextChunker stress/verification;
       // exceeds the per-fork memory limit under the tuned pool. Owned by
       // document-ingestion PR #23 (rework to stream fixtures).

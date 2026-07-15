@@ -1,15 +1,31 @@
 /**
- * SettingsPage tests
+ * SettingsPage tests — issue #24.
+ *
+ * The component was substantially rebuilt:
+ * - The dead Model Selection section was deleted (preferredModel had no
+ *   runtime consumer).
+ * - Cache status is now engine-aware (passes browserEngine to
+ *   checkModelCached, not a webllm default).
+ * - Theme uses setTheme/themePreference from ThemeContext (no toggleTheme).
+ * - Server URL persists on blur (not onChange).
+ * - Radio cards use <label> + native input (no duplicate role="radio").
+ *
+ * Tests updated to match actual (correct) behavior. This file was previously
+ * in vitest.config.ts's exclude list (masked failing assertions); issue #24
+ * acceptance criterion requires it to pass, so it is un-excluded.
  */
 
 import React from 'react';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
-// Import inference module to get mock
 import * as inferenceModule from '../lib/inference';
 import * as themeModule from '../lib/theme';
+
+const deleteNamespaceMock = vi.fn((_prefix: string) => Promise.resolve());
+const listStalePrefixesMock = vi.fn(() => Promise.resolve([]));
+const getProfilePrefixMock = vi.fn(() => 'testprfx');
 
 // Mock modules before importing component
 vi.mock('../lib/inference', () => ({
@@ -19,6 +35,12 @@ vi.mock('../lib/inference', () => ({
 
 vi.mock('../lib/theme', () => ({
   useTheme: vi.fn(),
+}));
+
+vi.mock('../lib/storage/profile', () => ({
+  getProfilePrefix: () => getProfilePrefixMock(),
+  deleteNamespace: (prefix: string) => deleteNamespaceMock(prefix),
+  listStalePrefixes: () => listStalePrefixesMock(),
 }));
 
 // Create a shared mock instance for ModelReadinessGate
@@ -50,11 +72,28 @@ vi.mock('../components/ModelDownloadProgress', () => ({
 const mockObjectStore = {
   get: vi.fn(),
   put: vi.fn(),
+  delete: vi.fn(),
 };
 
 const mockTransaction = {
   objectStore: vi.fn(() => mockObjectStore),
+  oncomplete: null as ((e: Event) => void) | null,
+  onerror: null as ((e: Event) => void) | null,
+  abort: vi.fn(),
 };
+
+/**
+ * Schedule the transaction's oncomplete to fire after a write operation
+ * (put/delete) is issued — mirrors real IDB where the transaction commits
+ * after all operations complete.
+ */
+function scheduleOnComplete() {
+  setTimeout(() => {
+    if (mockTransaction.oncomplete) {
+      mockTransaction.oncomplete.call(mockTransaction, new Event('complete'));
+    }
+  }, 0);
+}
 
 const mockDB = {
   transaction: vi.fn(() => mockTransaction),
@@ -62,6 +101,7 @@ const mockDB = {
     contains: vi.fn(() => true),
   },
   createObjectStore: vi.fn(),
+  close: vi.fn(),
 };
 
 // Factory for creating IDBRequest-like objects with proper event handling
@@ -79,14 +119,20 @@ global.indexedDB = {
   open: vi.fn((_name: string, _version: number) => {
     const req = createIDBRequest();
     (req as unknown as Record<string, unknown>).result = mockDB;
-    // Simulate successful open
     setTimeout(() => {
       const onsuccess = (req as unknown as Record<string, (e: Event) => void>).onsuccess;
       if (onsuccess) onsuccess.call(req, new Event('success'));
     }, 0);
-    return req as unknown as IDBRequest;
+    return req as unknown as IDBOpenDBRequest;
   }),
-  deleteDatabase: vi.fn(() => ({ onsuccess: null, onerror: null })),
+  deleteDatabase: vi.fn(() => {
+    const req = createIDBRequest();
+    setTimeout(() => {
+      const onsuccess = (req as unknown as Record<string, (e: Event) => void>).onsuccess;
+      if (onsuccess) onsuccess.call(req, new Event('success'));
+    }, 0);
+    return req as unknown as IDBOpenDBRequest;
+  }),
 } as unknown as IDBDatabase & typeof globalThis.indexedDB;
 
 // Import after mocks
@@ -94,6 +140,8 @@ import { SettingsPage } from './SettingsPage';
 
 describe('SettingsPage', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+
     // Reset mock call history only, not implementations
     vi.mocked(inferenceModule.useInferenceMode).mockClear();
     vi.mocked(themeModule.useTheme).mockClear();
@@ -101,6 +149,11 @@ describe('SettingsPage', () => {
     mockModelReadinessGateInstance.checkModelCached.mockResolvedValue(false);
     mockObjectStore.get.mockClear();
     mockObjectStore.put.mockClear();
+    mockObjectStore.delete.mockClear();
+    deleteNamespaceMock.mockClear();
+    listStalePrefixesMock.mockClear();
+    getProfilePrefixMock.mockClear();
+    getProfilePrefixMock.mockReturnValue('testprfx');
 
     // Setup default mock returns
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
@@ -121,9 +174,11 @@ describe('SettingsPage', () => {
       setModelLoadingProgress: vi.fn(),
     });
 
+    // Updated mock shape (issue #24 F5): setTheme + themePreference, no toggleTheme.
     vi.mocked(themeModule.useTheme).mockReturnValue({
       theme: 'light',
-      toggleTheme: vi.fn(),
+      themePreference: 'system',
+      setTheme: vi.fn(),
       isDark: false,
     });
 
@@ -142,16 +197,30 @@ describe('SettingsPage', () => {
         const onsuccess = (req as unknown as Record<string, (e: Event) => void>).onsuccess;
         if (onsuccess) onsuccess.call(req, new Event('success'));
       }, 0);
+      scheduleOnComplete();
+      return req as unknown as IDBRequest;
+    });
+    mockObjectStore.delete.mockImplementation((_key) => {
+      const req = createIDBRequest();
+      setTimeout(() => {
+        const onsuccess = (req as unknown as Record<string, (e: Event) => void>).onsuccess;
+        if (onsuccess) onsuccess.call(req, new Event('success'));
+      }, 0);
+      scheduleOnComplete();
       return req as unknown as IDBRequest;
     });
     mockTransaction.objectStore.mockReturnValue(mockObjectStore);
+
+    // Cache Storage API stub (jsdom lacks `caches`).
+    vi.stubGlobal('caches', { delete: vi.fn().mockResolvedValue(true) });
   });
 
   afterEach(() => {
-    // Don't restoreAllMocks - it clears mock implementations
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
-  test('renders the browser-engine selector and hardware-capability panel (Phase 3)', async () => {
+  test('renders the browser-engine selector and hardware-capability panel', async () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
@@ -191,17 +260,21 @@ describe('SettingsPage', () => {
     expect(setBrowserEngine).toHaveBeenCalledWith('webllm');
   });
 
-  test('Renders all 6 sections', async () => {
+  test('renders the main sections (no dead Model Selection section)', async () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Inference Mode')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Model Selection')).toBeInTheDocument();
+    expect(screen.getByText('Browser Engine')).toBeInTheDocument();
+    expect(screen.getByText('Response Quality')).toBeInTheDocument();
     expect(screen.getByText('Appearance')).toBeInTheDocument();
     expect(screen.getByText('Storage')).toBeInTheDocument();
     expect(screen.getByText('About')).toBeInTheDocument();
+
+    // The dead Model Selection section was deleted (issue #24 F2).
+    expect(screen.queryByText('Model Selection')).not.toBeInTheDocument();
   });
 
   test('Inference mode radio toggle changes mode', async () => {
@@ -241,7 +314,7 @@ describe('SettingsPage', () => {
     expect(setMode).toHaveBeenCalledWith('api');
   });
 
-  test('Server URL input updates on change', async () => {
+  test('Server URL input updates value on change but persists on blur (issue #24 F8)', async () => {
     const setServerUrl = vi.fn();
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
       mode: 'api',
@@ -269,67 +342,22 @@ describe('SettingsPage', () => {
 
     const serverUrlInput = screen.getByLabelText(/server url/i) as HTMLInputElement;
 
+    // Change updates the input value (local state) but does NOT persist.
     fireEvent.change(serverUrlInput, { target: { value: 'http://localhost:8080' } });
-
     expect(serverUrlInput.value).toBe('http://localhost:8080');
+    expect(setServerUrl).not.toHaveBeenCalled();
+
+    // Blur persists (the correct UX — issue #24 F8).
+    fireEvent.blur(serverUrlInput);
     expect(setServerUrl).toHaveBeenCalledWith('http://localhost:8080');
   });
 
-  test.skip('Test connection button triggers connectivity check', async () => {
-    // Skipping - async mock capture issue with useCallback
-    const checkServerConnectivity = vi.fn().mockResolvedValue(true);
-
-    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
-      mode: 'api',
-      browserEngine: 'wllama',
-      ragPreset: 'balanced',
-      isServerConnected: false,
-      isModelReady: false,
-      modelLoadingProgress: 0,
-      modeError: null,
-      serverUrl: 'http://localhost:8080',
-      setMode: vi.fn(),
-      setBrowserEngine: vi.fn(),
-      setRagPreset: vi.fn(),
-      setServerUrl: vi.fn(),
-      checkServerConnectivity,
-      setModelReady: vi.fn(),
-      setModelLoadingProgress: vi.fn(),
-    });
-
-    render(<SettingsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText('Server Configuration')).toBeInTheDocument();
-    });
-
-    const testButton = screen.getByRole('button', { name: /test connection/i });
-
-    fireEvent.click(testButton);
-
-    // Wait for async operation to complete
-    await waitFor(() => {
-      expect(checkServerConnectivity).toHaveBeenCalled();
-    });
-  });
-
-  test('Model selection dropdown updates', async () => {
-    render(<SettingsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/ai model/i)).toBeInTheDocument();
-    });
-
-    const modelSelect = screen.getByLabelText(/ai model/i) as HTMLSelectElement;
-
-    expect(modelSelect.value).toBe('Llama-3.2-3B-Instruct-q4f16_1-MLC');
-  });
-
-  test('Theme toggle changes theme', async () => {
-    const toggleTheme = vi.fn();
+  test('Theme selection calls setTheme (not toggleTheme) (issue #24 F5)', async () => {
+    const setTheme = vi.fn();
     vi.mocked(themeModule.useTheme).mockReturnValue({
       theme: 'light',
-      toggleTheme,
+      themePreference: 'system',
+      setTheme,
       isDark: false,
     });
 
@@ -340,10 +368,27 @@ describe('SettingsPage', () => {
     });
 
     const darkOption = screen.getByRole('radio', { name: /dark/i });
-
     fireEvent.click(darkOption);
 
-    expect(toggleTheme).toHaveBeenCalled();
+    expect(setTheme).toHaveBeenCalledWith('dark');
+  });
+
+  test('System theme radio is selected when themePreference is system', async () => {
+    vi.mocked(themeModule.useTheme).mockReturnValue({
+      theme: 'light',
+      themePreference: 'system',
+      setTheme: vi.fn(),
+      isDark: false,
+    });
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Appearance')).toBeInTheDocument();
+    });
+
+    const systemRadio = screen.getByRole('radio', { name: /system/i });
+    expect(systemRadio).toBeChecked();
   });
 
   test('Clear cache requires two clicks (confirm)', async () => {
@@ -357,7 +402,6 @@ describe('SettingsPage', () => {
 
     // First click - should show confirm state
     fireEvent.click(clearButton);
-
     expect(screen.getByText('Click Again to Confirm')).toBeInTheDocument();
 
     // Second click - should actually clear
@@ -369,7 +413,23 @@ describe('SettingsPage', () => {
     });
   });
 
-  test('Settings persist to IndexedDB via SettingsStore', async () => {
+  test('Clear cache deletes the profile namespace via deleteNamespace (issue #24 F1)', async () => {
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Storage')).toBeInTheDocument();
+    });
+
+    const clearButton = screen.getByRole('button', { name: /clear cache/i });
+    fireEvent.click(clearButton);
+    fireEvent.click(clearButton);
+
+    await waitFor(() => {
+      expect(deleteNamespaceMock).toHaveBeenCalledWith('testprfx');
+    });
+  });
+
+  test('Settings persist to IndexedDB via SettingsStore (serverUrl on blur)', async () => {
     const savedData: unknown[] = [];
 
     mockObjectStore.put.mockImplementation((data) => {
@@ -382,49 +442,48 @@ describe('SettingsPage', () => {
       return req as unknown as IDBRequest;
     });
 
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'api',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isServerConnected: false,
+      isModelReady: false,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    });
+
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+      expect(screen.getByLabelText(/server url/i)).toBeInTheDocument();
     });
 
-    // Trigger a settings change by clicking the dark theme
-    const darkOption = screen.getByRole('radio', { name: /dark/i });
-    fireEvent.click(darkOption);
+    // Trigger a settings persist by typing + blurring the server URL.
+    const serverUrlInput = screen.getByLabelText(/server url/i) as HTMLInputElement;
+    fireEvent.change(serverUrlInput, { target: { value: 'http://localhost:8080' } });
+    fireEvent.blur(serverUrlInput);
 
     await waitFor(() => {
       expect(savedData.length).toBeGreaterThan(0);
     });
 
-    // Verify the saved data structure
+    // Verify the saved data structure — theme and preferredModel are no longer
+    // part of the persisted shape (issue #24 F2/F5).
     const savedSettings = savedData[savedData.length - 1] as Record<string, unknown>;
     expect(savedSettings).toMatchObject({
       key: 'user-preferences',
+      serverUrl: 'http://localhost:8080',
     });
-    expect(['light', 'dark', 'system']).toContain(savedSettings.theme);
-  });
-
-  test.skip('Loading settings displays loading state then renders content', async () => {
-    // Skipping - IndexedDB mock timing issues
-    // Make get return a pending request (no success callback)
-    mockObjectStore.get.mockImplementation(() => {
-      return createIDBRequest() as unknown as IDBRequest;
-    });
-
-    render(<SettingsPage />);
-
-    // Should show loading state initially
-    expect(screen.getByText('Loading settings...')).toBeInTheDocument();
-
-    // After settings load, should show sections
-    await waitFor(
-      () => {
-        expect(screen.queryByText('Loading settings...')).not.toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
-
-    expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+    expect(savedSettings).not.toHaveProperty('theme');
+    expect(savedSettings).not.toHaveProperty('preferredModel');
   });
 
   test('Server Configuration section is hidden in browser-local mode', async () => {
@@ -434,28 +493,36 @@ describe('SettingsPage', () => {
       expect(screen.getByText('Inference Mode')).toBeInTheDocument();
     });
 
-    // Server Configuration should not be visible in browser-local mode
     expect(screen.queryByText('Server Configuration')).not.toBeInTheDocument();
   });
 
-  test.skip('Shows error status when connection test fails', async () => {
-    // Skipping - async mock capture issue with useCallback
-    const checkServerConnectivity = vi.fn().mockResolvedValue(false);
+  test('wllama engine shows "no download needed" and no download button (issue #24 F3)', async () => {
+    render(<SettingsPage />);
 
+    await waitFor(() => {
+      expect(screen.getByText('Browser Engine')).toBeInTheDocument();
+    });
+
+    // wllama is the default engine — weights are bundled, no download button.
+    expect(screen.getByText(/weights are bundled with this build/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /download model/i })).not.toBeInTheDocument();
+  });
+
+  test('webllm engine shows download button when model not cached (issue #24 F3)', async () => {
     vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
-      mode: 'api',
-      browserEngine: 'wllama',
+      mode: 'browser-local',
+      browserEngine: 'webllm',
       ragPreset: 'balanced',
       isServerConnected: false,
       isModelReady: false,
       modelLoadingProgress: 0,
       modeError: null,
-      serverUrl: 'http://localhost:8080',
+      serverUrl: '',
       setMode: vi.fn(),
       setBrowserEngine: vi.fn(),
       setRagPreset: vi.fn(),
       setServerUrl: vi.fn(),
-      checkServerConnectivity,
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
       setModelReady: vi.fn(),
       setModelLoadingProgress: vi.fn(),
     });
@@ -463,29 +530,99 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Server Configuration')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /download model/i })).toBeInTheDocument();
     });
 
-    const testButton = screen.getByRole('button', { name: /test connection/i });
-    fireEvent.click(testButton);
-
-    // Wait for the error status to appear
-    await waitFor(
-      () => {
-        expect(screen.getByText(/connection failed/i)).toBeInTheDocument();
-      },
-      { timeout: 3000 }
-    );
+    // The "requires internet" warning must be shown.
+    expect(screen.getByText(/requires internet access/i)).toBeInTheDocument();
   });
 
-  test('Model not cached shows download button', async () => {
+  test('cache status checks the selected engine, not a hardcoded default (issue #24 F4)', async () => {
+    // Default mock: browserEngine = 'wllama'. The cache check should pass
+    // the wllama engine + the wllama model id (LLM_MODEL_DIR), not the
+    // webllm default.
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Model Selection')).toBeInTheDocument();
+      expect(mockModelReadinessGateInstance.checkModelCached).toHaveBeenCalled();
     });
 
-    expect(screen.getByText('Not cached')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /download model/i })).toBeInTheDocument();
+    const call = mockModelReadinessGateInstance.checkModelCached.mock.calls[0] as unknown as [string, string];
+    // Second arg must be the browserEngine ('wllama'), not the old 'webllm' default.
+    expect(call[1]).toBe('wllama');
+    // First arg is the model id — for wllama it's LLM_MODEL_DIR ('lfm2-vl-1.6b').
+    expect(call[0]).toBe('lfm2-vl-1.6b');
+  });
+
+  test('clicking a radio circle changes selection exactly once (no double-fire) (issue #24 F9)', async () => {
+    const setRagPreset = vi.fn();
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'fast',
+      isServerConnected: false,
+      isModelReady: false,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset,
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    });
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Response Quality')).toBeInTheDocument();
+    });
+
+    // Click directly on the radio input (the circle). With the <label> pattern,
+    // the native input's onChange is the sole handler — no div onClick to
+    // double-fire.
+    const balancedRadio = screen.getByRole('radio', { name: /balanced/i });
+    fireEvent.click(balancedRadio);
+
+    // Should fire exactly once, not twice.
+    expect(setRagPreset).toHaveBeenCalledTimes(1);
+    expect(setRagPreset).toHaveBeenCalledWith('balanced');
+  });
+
+  test('memory pressure refreshes on an interval (issue #24 F7)', async () => {
+    const { getMemoryPressureStatus } = await import('../lib/embeddings/memory-aware');
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Storage')).toBeInTheDocument();
+    });
+
+    // Initial call on mount.
+    const initialCalls = (getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(initialCalls).toBeGreaterThanOrEqual(1);
+
+    // Advance past the 5s interval — should refresh.
+    vi.advanceTimersByTime(5000);
+    await vi.waitFor(() => {
+      expect((getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(initialCalls);
+    });
+  });
+
+  test('radio groups use native input as the sole radio (no duplicate role) (issue #24 F9)', async () => {
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+    });
+
+    // Every radio found by role should be a native <input> (the wrapping
+    // element is a <label>, which has no implicit role="radio").
+    const radios = screen.getAllByRole('radio');
+    expect(radios.length).toBeGreaterThanOrEqual(4);
+    for (const radio of radios) {
+      expect(radio.tagName).toBe('INPUT');
+    }
   });
 });

@@ -1,21 +1,41 @@
 /**
- * Settings page — inference mode, server configuration, model selection,
- * appearance, storage management, and about info.
+ * Settings page — inference mode, server configuration, browser engine &
+ * model cache status, appearance, storage management, and about info.
+ *
+ * Issue #24 rebuild: the page was almost entirely useless — Clear Cache was a
+ * no-op (deleted a nonexistent DB), the Model Selection dropdown was dead
+ * (persisted but never read by runtime), cache status checked the wrong
+ * engine, "System" theme sabotaged itself, readiness showed green while the
+ * LLM was missing, memory pressure was static, and radio cards had duplicate
+ * a11y semantics. All nine findings are addressed here.
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useInferenceMode } from '../lib/inference';
-import { useTheme } from '../lib/theme';
+import { useTheme, type ThemePreference } from '../lib/theme';
 import { ModelDownloadManager, type DownloadProgress } from '../lib/llm/model-download';
 import { ModelReadinessGate } from '../lib/llm/model-readiness';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
-import { resetReadinessCache, ensureReadinessGateChecked } from '../lib/llm/readiness-gate';
+import {
+  resetReadinessCache,
+  ensureReadinessGateChecked,
+  modelIdForEngine,
+} from '../lib/llm/readiness-gate';
 import { detectEngineCapability, type EngineCapability } from '../lib/llm/engine-capability';
-import { checkPackagedModels, type PackagedModelsReport } from '../lib/models/model-manifest';
+import {
+  checkPackagedModels,
+  type PackagedModelsReport,
+  type PackagedModelKind,
+} from '../lib/models/model-manifest';
 import { RAG_PRESET_LABELS } from '../lib/rag/rag-presets';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
 import { ProgressBar, StatusBadge, SectionCard } from '../components/SettingsMetrics';
+import {
+  getProfilePrefix,
+  deleteNamespace,
+  listStalePrefixes,
+} from '../lib/storage/profile';
 
 // ============================================================================
 // Settings Store (IndexedDB)
@@ -25,9 +45,16 @@ const SETTINGS_DB_NAME = 'doc-qa-settings';
 const SETTINGS_STORE_NAME = 'settings';
 const SETTINGS_KEY = 'user-preferences';
 
+/**
+ * Persisted user preferences.
+ *
+ * Note (issue #24 F5): `theme` and `preferredModel` were removed — theme now
+ * lives solely in `localStorage['theme-preference']` (owned by ThemeContext),
+ * and `preferredModel` was dead (read by no runtime code; the readiness gate
+ * resolves the model id per-engine via `modelIdForEngine`). Old IndexedDB
+ * records may still carry these stale fields; they are simply ignored on load.
+ */
 interface UserPreferences {
-  theme: 'light' | 'dark' | 'system';
-  preferredModel: string;
   serverUrl: string;
 }
 
@@ -66,8 +93,6 @@ async function openSettingsDatabase(): Promise<IDBDatabase> {
 
 async function loadSettings(): Promise<UserPreferences> {
   const defaults: UserPreferences = {
-    theme: 'system',
-    preferredModel: WEBLLM_DEFAULT_MODEL_ID,
     serverUrl: '',
   };
 
@@ -87,8 +112,6 @@ async function loadSettings(): Promise<UserPreferences> {
         const result = request.result as StoredSettings | undefined;
         if (result && result.key === SETTINGS_KEY) {
           resolve({
-            theme: result.theme ?? defaults.theme,
-            preferredModel: result.preferredModel ?? defaults.preferredModel,
             serverUrl: result.serverUrl ?? defaults.serverUrl,
           });
         } else {
@@ -126,24 +149,72 @@ async function saveSettings(settings: UserPreferences): Promise<void> {
 }
 
 // ============================================================================
-// Available models
+// EdgeVec blob deletion (Clear Cache — issue #24 F1, resolves PRR-008)
 // ============================================================================
 
-interface ModelOption {
-  id: string;
-  label: string;
-  description: string;
-  sizeEstimate: string;
+/**
+ * Delete this profile's HNSW vector blob from the shared `edgevec-db`.
+ *
+ * The blob is stored as a VALUE keyed by `${prefix}-doc-qa-index`
+ * (`getStorageDbNames().vector`) in the `'data'` object store of `edgevec-db`
+ * (see vite.config.ts `IndexedDbBackend` + vector-index.ts `INDEX_NAME`).
+ * Deleting only this key preserves other profiles' blobs — deleting the whole
+ * `edgevec-db` would affect ALL profiles. Best-effort: never throws.
+ */
+function deleteEdgeVecBlob(prefix: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof indexedDB === 'undefined') {
+      resolve();
+      return;
+    }
+    const vectorKey = `${prefix}-doc-qa-index`;
+    let settled = false;
+    const finish = () => {
+      if (!settled) {
+        settled = true;
+        resolve();
+      }
+    };
+    try {
+      const req = indexedDB.open('edgevec-db', 1);
+      req.onupgradeneeded = () => {
+        // The DB may not exist yet in this session; ensure the 'data' store.
+        const db = req.result;
+        if (!db.objectStoreNames.contains('data')) {
+          db.createObjectStore('data');
+        }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('data')) {
+          // No store → no blob to delete.
+          db.close();
+          finish();
+          return;
+        }
+        try {
+          const tx = db.transaction('data', 'readwrite');
+          const store = tx.objectStore('data');
+          store.delete(vectorKey);
+          tx.oncomplete = () => {
+            db.close();
+            finish();
+          };
+          tx.onerror = () => {
+            db.close();
+            finish();
+          };
+        } catch {
+          db.close();
+          finish();
+        }
+      };
+      req.onerror = () => finish();
+    } catch {
+      finish();
+    }
+  });
 }
-
-const AVAILABLE_MODELS: ModelOption[] = [
-  {
-    id: WEBLLM_DEFAULT_MODEL_ID,
-    label: WEBLLM_DEFAULT_MODEL_ID,
-    description: 'Fast, efficient model optimized for local inference',
-    sizeEstimate: '~1.9 GB',
-  },
-];
 
 // ============================================================================
 // App version
@@ -252,6 +323,7 @@ const radioInputStyle: React.CSSProperties = {
   height: '16px',
   accentColor: 'var(--color-primary)',
   cursor: 'pointer',
+  flexShrink: 0,
 };
 
 const radioLabelStyle: React.CSSProperties = {
@@ -271,19 +343,6 @@ const inputStyle: React.CSSProperties = {
   fontFamily: 'var(--font-family)',
   color: 'var(--color-text-on-bubble-assistant)',
   boxSizing: 'border-box',
-};
-
-// SVG data URLs cannot reference CSS variables, so we use the literal hex value
-// of --color-text-muted (#64748b in light mode). This is intentional.
-const SELECT_DROPDOWN_ARROW_COLOR = '#64748b';
-const selectStyle: React.CSSProperties = {
-  ...inputStyle,
-  cursor: 'pointer',
-  appearance: 'none',
-  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23${SELECT_DROPDOWN_ARROW_COLOR.slice(1)}' d='M6 8L1 3h10z'/%3E%3C/svg%3E")`,
-  backgroundRepeat: 'no-repeat',
-  backgroundPosition: 'right 12px center',
-  paddingRight: '36px',
 };
 
 const buttonRowStyle: React.CSSProperties = {
@@ -328,8 +387,6 @@ const dangerButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
   transition: 'background-color 0.15s ease',
 };
-
-
 
 const storageInfoStyle: React.CSSProperties = {
   display: 'flex',
@@ -380,12 +437,10 @@ function SettingsPageInner(): React.ReactElement {
     checkServerConnectivity,
   } = useInferenceMode();
 
-  const { theme, toggleTheme } = useTheme();
+  const { themePreference, setTheme } = useTheme();
 
   // Settings state
-  const [preferredModel, setPreferredModel] = useState<string>(WEBLLM_DEFAULT_MODEL_ID);
   const [localServerUrl, setLocalServerUrl] = useState<string>(serverUrl);
-  const [themePreference, setThemePreference] = useState<'light' | 'dark' | 'system'>('system');
 
   // Download state
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
@@ -402,8 +457,9 @@ function SettingsPageInner(): React.ReactElement {
   const [memoryAvailable, setMemoryAvailable] = useState<number>(0);
   const [memoryTotal, setMemoryTotal] = useState<number>(0);
 
-  // Clear cache confirm state
+  // Clear cache confirm + result state (issue #24 F1)
   const [clearCacheState, setClearCacheState] = useState<'idle' | 'confirming'>('idle');
+  const [clearCacheResult, setClearCacheResult] = useState<'idle' | 'clearing' | 'cleared' | 'error'>('idle');
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Connection test state
@@ -422,15 +478,7 @@ function SettingsPageInner(): React.ReactElement {
   // Load settings on mount
   useEffect(() => {
     loadSettings().then((settings) => {
-      setPreferredModel(settings.preferredModel);
       setLocalServerUrl(settings.serverUrl);
-      setThemePreference(settings.theme);
-      // Apply theme preference
-      if (settings.theme === 'system') {
-        // System default — no explicit toggle needed
-      } else if (settings.theme !== theme) {
-        toggleTheme();
-      }
       setSettingsLoaded(true);
     });
 
@@ -455,14 +503,19 @@ function SettingsPageInner(): React.ReactElement {
     setLocalServerUrl(serverUrl);
   }, [serverUrl]);
 
-  // Check model cache status when model changes
+  // Check model cache status — engine-aware (issue #24 F4).
+  // Previously this called checkModelCached(preferredModel) which defaulted
+  // engine='webllm', so a wllama user saw "Not cached" for their packaged GGUF.
+  // Now resolve the model id per-engine via modelIdForEngine and pass the
+  // actually-selected browserEngine.
   useEffect(() => {
     if (!settingsLoaded) return;
 
-    readinessGate.checkModelCached(preferredModel).then((cached) => {
-      setModelCached(cached);
+    const modelId = modelIdForEngine(browserEngine);
+    readinessGate.checkModelCached(modelId, browserEngine).then((cached) => {
+      if (isMountedRef.current) setModelCached(cached);
     });
-  }, [preferredModel, readinessGate, settingsLoaded]);
+  }, [browserEngine, readinessGate, settingsLoaded]);
 
   // Detect hardware capability + packaged-model readiness once on mount.
   useEffect(() => {
@@ -478,7 +531,8 @@ function SettingsPageInner(): React.ReactElement {
     };
   }, []);
 
-  // Update memory pressure periodically
+  // Update memory pressure periodically (issue #24 F7).
+  // Previously ran exactly once; now refreshes every 5s while Settings is open.
   useEffect(() => {
     if (!settingsLoaded) return;
 
@@ -491,51 +545,30 @@ function SettingsPageInner(): React.ReactElement {
     };
 
     updateMemoryStatus();
+    const intervalId = setInterval(updateMemoryStatus, 5000);
+    return () => clearInterval(intervalId);
   }, [settingsLoaded]);
 
   // Persist settings when they change
   const persistSettings = useCallback(
     (updates: Partial<UserPreferences>) => {
       saveSettings({
-        theme: themePreference,
-        preferredModel,
         serverUrl: localServerUrl,
         ...updates,
       });
     },
-    [themePreference, preferredModel, localServerUrl]
+    [localServerUrl]
   );
 
-  // Handle theme preference change
+  // Handle theme preference change (issue #24 F5).
+  // Delegates entirely to ThemeContext.setTheme, which persists/clears
+  // localStorage['theme-preference'] and applies the theme. 'system' clears
+  // the stored preference so the OS media-query listener follows changes.
   const handleThemeChange = useCallback(
-    (newTheme: 'light' | 'dark' | 'system') => {
-      setThemePreference(newTheme);
-      persistSettings({ theme: newTheme });
-
-      if (newTheme === 'system') {
-        // Clear stored preference so ThemeProvider's media query listener takes over
-        localStorage.removeItem('theme-preference');
-        // If OS preference differs from current theme, toggle to align
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        if (prefersDark && theme === 'light') {
-          toggleTheme();
-        } else if (!prefersDark && theme === 'dark') {
-          toggleTheme();
-        }
-      } else if (newTheme !== theme) {
-        toggleTheme();
-      }
+    (newTheme: ThemePreference) => {
+      setTheme(newTheme);
     },
-    [theme, toggleTheme, persistSettings]
-  );
-
-  // Handle model change
-  const handleModelChange = useCallback(
-    (newModel: string) => {
-      setPreferredModel(newModel);
-      persistSettings({ preferredModel: newModel });
-    },
-    [persistSettings]
+    [setTheme]
   );
 
   // Handle server URL change
@@ -581,7 +614,9 @@ function SettingsPageInner(): React.ReactElement {
     setConnectionResult(connected ? 'success' : 'error');
   }, [checkServerConnectivity, localServerUrl, setServerUrl]);
 
-  // Download model
+  // Download model (issue #24 F3).
+  // webllm-only: downloads weights from the WebLLM CDN into Cache Storage.
+  // wllama weights are packaged same-origin and need no download.
   const handleDownloadModel = useCallback(async () => {
     if (!downloadManagerRef.current) {
       downloadManagerRef.current = new ModelDownloadManager();
@@ -592,7 +627,7 @@ function SettingsPageInner(): React.ReactElement {
     setDownloadProgress(null);
 
     try {
-      await downloadManagerRef.current.downloadModel(preferredModel, (progress) => {
+      await downloadManagerRef.current.downloadModel(WEBLLM_DEFAULT_MODEL_ID, (progress) => {
         if (!isMountedRef.current) return;
         setDownloadProgress(progress);
         if (progress.status === 'complete') {
@@ -621,7 +656,7 @@ function SettingsPageInner(): React.ReactElement {
       }
       setIsDownloading(false);
     }
-  }, [preferredModel]);
+  }, []);
 
   // Cancel download
   const handleCancelDownload = useCallback(() => {
@@ -629,7 +664,12 @@ function SettingsPageInner(): React.ReactElement {
     setIsDownloading(false);
   }, []);
 
-  // Clear cache (two-click confirm)
+  // Clear cache (two-click confirm) — issue #24 F1.
+  // Previously deleted a nonexistent bare 'doc-qa-documents' DB (no profile
+  // prefix) and an OPFS dir no engine uses — a near-total no-op. Now reuses
+  // PR-4's profile-scoped namespace utilities to delete the real user-prefixed
+  // document/keyword/vector-mapping DBs, the EdgeVec HNSW blob, stale orphan
+  // namespaces, the settings DB, and the webllm Cache Storage entries.
   const handleClearCacheClick = useCallback(async () => {
     if (clearCacheState === 'idle') {
       setClearCacheState('confirming');
@@ -644,35 +684,58 @@ function SettingsPageInner(): React.ReactElement {
         clearTimeoutRef.current = null;
       }
       setClearCacheState('idle');
+      setClearCacheResult('clearing');
 
-        // Clear IndexedDB and OPFS
-        try {
-          const deleteReq = indexedDB.deleteDatabase('doc-qa-documents');
-          deleteReq.onsuccess = () => {
-            console.info('Documents IndexedDB cleared');
-          };
+      try {
+        // 1. Current profile's document/keyword/vector-mapping IndexedDBs.
+        const prefix = getProfilePrefix();
+        await deleteNamespace(prefix);
+
+        // 2. EdgeVec HNSW blob (key in shared edgevec-db, store 'data').
+        //    Resolves PRR-008: deleteNamespace cannot reach this shared DB.
+        await deleteEdgeVecBlob(prefix);
+
+        // 3. Stale/orphan namespaces from prior sessions/profiles.
+        const stale = await listStalePrefixes();
+        if (stale.length > 0) {
+          await Promise.all(stale.map((p) => deleteNamespace(p)));
+        }
+
+        // 4. Settings IndexedDB (non-prefixed).
+        await new Promise<void>((resolve) => {
           const settingsDeleteReq = indexedDB.deleteDatabase(SETTINGS_DB_NAME);
           settingsDeleteReq.onsuccess = () => {
             settingsDbInstance = null;
-            console.info('Settings IndexedDB cleared');
+            resolve();
           };
-          // Clear OPFS (legacy/other cached data, if any)
-          await navigator.storage?.getDirectory()?.then(dir => dir.removeEntry('webllm', { recursive: true }).catch(() => {}));
-          // Clear Cache Storage (webllm's actual model weight storage — see
-          // model-readiness.ts / web-llm-service.ts. web-llm scopes its
-          // artifacts across three named caches: model weights, model config,
-          // and the wasm runtime).
-          if (typeof caches !== 'undefined' && typeof caches.delete === 'function') {
-            await Promise.all(
-              ['webllm/model', 'webllm/config', 'webllm/wasm'].map((cacheName) =>
-                caches.delete(cacheName).catch(() => {})
-              )
-            );
-          }
-          console.info('Cache clear completed — documents and models cleared');
-        } catch (err) {
-          console.error('Error clearing cache:', err);
+          settingsDeleteReq.onerror = () => resolve();
+          settingsDeleteReq.onblocked = () => resolve();
+        });
+
+        // 5. WebLLM Cache Storage (web-llm scopes artifacts across three
+        //    named caches: model weights, model config, and the wasm runtime).
+        if (typeof caches !== 'undefined' && typeof caches.delete === 'function') {
+          await Promise.all(
+            ['webllm/model', 'webllm/config', 'webllm/wasm'].map((cacheName) =>
+              caches.delete(cacheName).catch(() => {})
+            )
+          );
         }
+
+        setClearCacheResult('cleared');
+      } catch (err) {
+        console.error('Error clearing cache:', err);
+        setClearCacheResult('error');
+      }
+
+      // Clear the result status after a few seconds so it doesn't linger.
+      if (clearTimeoutRef.current) {
+        clearTimeout(clearTimeoutRef.current);
+      }
+      clearTimeoutRef.current = setTimeout(() => {
+        setClearCacheResult('idle');
+        clearTimeoutRef.current = null;
+      }, 3000);
     }
   }, [clearCacheState]);
 
@@ -683,9 +746,6 @@ function SettingsPageInner(): React.ReactElement {
     }
     return `${mb} MB`;
   };
-
-  // Get model info for selected model
-  const selectedModelInfo = AVAILABLE_MODELS.find((m) => m.id === preferredModel);
 
   if (!settingsLoaded) {
     return (
@@ -719,18 +779,12 @@ function SettingsPageInner(): React.ReactElement {
               <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select inference mode</legend>
               <div style={radioGroupStyle}>
                 {/* Browser-local option */}
-                <div
+                {/* Radio a11y (issue #24 F9): the wrapping <label> is presentational
+                    (no role="radio"); the native <input type="radio"> is the sole
+                    AT-facing radio. Clicking the card checks the input via native
+                    label behavior — no duplicate onClick, no double-fire. */}
+                <label
                   style={mode === 'browser-local' ? radioOptionSelectedStyle : radioOptionStyle}
-                  onClick={() => setMode('browser-local')}
-                  role="radio"
-                  aria-checked={mode === 'browser-local'}
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setMode('browser-local');
-                    }
-                  }}
                 >
                   <input
                     type="radio"
@@ -747,21 +801,11 @@ function SettingsPageInner(): React.ReactElement {
                       Run the AI model directly in your browser (CPU via wllama, or WebGPU via WebLLM — choose below)
                     </p>
                   </div>
-                </div>
+                </label>
 
                 {/* API server option */}
-                <div
+                <label
                   style={mode === 'api' ? radioOptionSelectedStyle : radioOptionStyle}
-                  onClick={() => setMode('api')}
-                  role="radio"
-                  aria-checked={mode === 'api'}
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setMode('api');
-                    }
-                  }}
                 >
                   <input
                     type="radio"
@@ -778,7 +822,7 @@ function SettingsPageInner(): React.ReactElement {
                       Connect to a remote inference server
                     </p>
                   </div>
-                </div>
+                </label>
               </div>
             </fieldset>
           </div>
@@ -812,7 +856,7 @@ function SettingsPageInner(): React.ReactElement {
                 />
               </div>
 
-              <div style={buttonRowStyle}>
+              <div style={buttonRowStyle} role="status" aria-live="polite">
                 <button
                   type="button"
                   onClick={handleTestConnection}
@@ -843,88 +887,7 @@ function SettingsPageInner(): React.ReactElement {
         )}
 
         {/* ================================================================== */}
-        {/* 3. Model Selection */}
-        {/* ================================================================== */}
-        <section style={sectionStyle} aria-labelledby="model-selection-heading">
-          <h2 id="model-selection-heading" style={sectionTitleStyle}>
-            Model Selection
-          </h2>
-          <div style={fieldGroupStyle}>
-            <div>
-              <label htmlFor="model-select" style={labelStyle}>
-                AI Model
-              </label>
-              <p id="model-select-desc" style={descriptionStyle}>
-                Choose the AI model for browser-local inference
-              </p>
-              <select
-                id="model-select"
-                value={preferredModel}
-                onChange={(e) => handleModelChange(e.target.value)}
-                style={selectStyle}
-                aria-describedby="model-select-desc"
-                disabled={mode === 'api'}
-              >
-                {AVAILABLE_MODELS.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.label} ({model.sizeEstimate})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {selectedModelInfo && (
-              <p style={descriptionStyle}>{selectedModelInfo.description}</p>
-            )}
-
-            {/* Cache status */}
-            <div style={buttonRowStyle}>
-              <span style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-                Status:
-                {modelCached ? (
-                  <StatusBadge status="ready" label="Cached" />
-                ) : (
-                  <StatusBadge status="not-ready" label="Not cached" />
-                )}
-              </span>
-            </div>
-
-            {/* Download progress */}
-            {isDownloading && (
-              <ModelDownloadProgress
-                progress={downloadProgress}
-                onCancel={handleCancelDownload}
-                isQuotaError={isQuotaError}
-              />
-            )}
-
-            {/* Download button */}
-            {mode === 'browser-local' && !modelCached && !isDownloading && (
-              <button
-                type="button"
-                onClick={handleDownloadModel}
-                style={primaryButtonStyle}
-              >
-                Download Model
-              </button>
-            )}
-
-            {mode === 'browser-local' && modelCached && !isDownloading && (
-              <span style={{ ...labelStyle, color: 'var(--color-primary)' }}>
-                Model ready to use
-              </span>
-            )}
-
-            {mode === 'api' && (
-              <p style={descriptionStyle}>
-                Model downloads are only available in browser-local mode
-              </p>
-            )}
-          </div>
-        </section>
-
-        {/* ================================================================== */}
-        {/* 3b. Browser Engine (browser-local only) */}
+        {/* 3. Browser Engine (browser-local only) + model cache status */}
         {/* ================================================================== */}
         <section style={sectionStyle} aria-labelledby="browser-engine-heading">
           <h2 id="browser-engine-heading" style={sectionTitleStyle}>
@@ -955,19 +918,9 @@ function SettingsPageInner(): React.ReactElement {
                     desc: 'Fastest when WebGPU is available; text only. Requires a GPU-capable browser.',
                   },
                 ]).map((opt) => (
-                  <div
+                  <label
                     key={opt.id}
                     style={browserEngine === opt.id ? radioOptionSelectedStyle : radioOptionStyle}
-                    onClick={() => setBrowserEngine(opt.id)}
-                    role="radio"
-                    aria-checked={browserEngine === opt.id}
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setBrowserEngine(opt.id);
-                      }
-                    }}
                   >
                     <input
                       type="radio"
@@ -975,9 +928,6 @@ function SettingsPageInner(): React.ReactElement {
                       value={opt.id}
                       checked={browserEngine === opt.id}
                       onChange={() => setBrowserEngine(opt.id)}
-                      // Stop the native input click from bubbling to the row's
-                      // onClick, which would call setBrowserEngine a second time.
-                      onClick={(e) => e.stopPropagation()}
                       style={radioInputStyle}
                       aria-describedby={`${opt.id}-desc`}
                     />
@@ -985,7 +935,7 @@ function SettingsPageInner(): React.ReactElement {
                       <span style={radioLabelStyle}>{opt.label}</span>
                       <p id={`${opt.id}-desc`} style={descriptionStyle}>{opt.desc}</p>
                     </div>
-                  </div>
+                  </label>
                 ))}
               </div>
             </fieldset>
@@ -994,11 +944,67 @@ function SettingsPageInner(): React.ReactElement {
                 WebGPU was not detected — WebLLM will not run on this device. Switch to wllama or use server mode.
               </p>
             )}
+
+            {/* Model cache status + download — engine-aware (issue #24 F2/F3/F4).
+                Moved here from the deleted Model Selection section. The status
+                reflects the actually-selected engine, and the Download button
+                only shows for webllm (the only engine with a download step). */}
+            {mode === 'browser-local' && (
+              <div style={fieldGroupStyle} role="status" aria-live="polite">
+                <div style={buttonRowStyle}>
+                  <span style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
+                    Status:
+                    {modelCached ? (
+                      <StatusBadge status="ready" label="Cached" />
+                    ) : (
+                      <StatusBadge status="not-ready" label="Not cached" />
+                    )}
+                  </span>
+                </div>
+
+                {/* Download progress */}
+                {isDownloading && (
+                  <ModelDownloadProgress
+                    progress={downloadProgress}
+                    onCancel={handleCancelDownload}
+                    isQuotaError={isQuotaError}
+                  />
+                )}
+
+                {/* Download button — webllm only (issue #24 F3) */}
+                {browserEngine === 'webllm' && !modelCached && !isDownloading && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleDownloadModel}
+                      style={primaryButtonStyle}
+                    >
+                      Download Model
+                    </button>
+                    <p style={{ ...descriptionStyle, color: 'var(--color-warning)' }}>
+                      Requires internet access (~1.9 GB) — downloads weights from the WebLLM CDN.
+                    </p>
+                  </>
+                )}
+
+                {browserEngine === 'webllm' && modelCached && !isDownloading && (
+                  <span style={{ ...labelStyle, color: 'var(--color-primary)' }}>
+                    Model ready to use
+                  </span>
+                )}
+
+                {browserEngine === 'wllama' && (
+                  <p style={descriptionStyle}>
+                    Weights are bundled with this build — no download needed. The model loads automatically on first use.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </section>
 
         {/* ================================================================== */}
-        {/* 3c. Response Quality (RAG preset) */}
+        {/* 4. Response Quality (RAG preset) */}
         {/* ================================================================== */}
         <section style={sectionStyle} aria-labelledby="rag-preset-heading">
           <h2 id="rag-preset-heading" style={sectionTitleStyle}>
@@ -1013,19 +1019,9 @@ function SettingsPageInner(): React.ReactElement {
               <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select response quality preset</legend>
               <div style={radioGroupStyle}>
                 {(['fast', 'balanced', 'quality'] as const).map((preset) => (
-                  <div
+                  <label
                     key={preset}
                     style={ragPreset === preset ? radioOptionSelectedStyle : radioOptionStyle}
-                    onClick={() => setRagPreset(preset)}
-                    role="radio"
-                    aria-checked={ragPreset === preset}
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        setRagPreset(preset);
-                      }
-                    }}
                   >
                     <input
                       type="radio"
@@ -1033,9 +1029,6 @@ function SettingsPageInner(): React.ReactElement {
                       value={preset}
                       checked={ragPreset === preset}
                       onChange={() => setRagPreset(preset)}
-                      // Stop the native input click from bubbling to the row's
-                      // onClick, which would call setRagPreset a second time.
-                      onClick={(e) => e.stopPropagation()}
                       style={radioInputStyle}
                       aria-describedby={`rag-${preset}-desc`}
                     />
@@ -1045,7 +1038,7 @@ function SettingsPageInner(): React.ReactElement {
                         {RAG_PRESET_LABELS[preset].description}
                       </p>
                     </div>
-                  </div>
+                  </label>
                 ))}
               </div>
             </fieldset>
@@ -1053,7 +1046,7 @@ function SettingsPageInner(): React.ReactElement {
         </section>
 
         {/* ================================================================== */}
-        {/* 4. Appearance */}
+        {/* 5. Appearance */}
         {/* ================================================================== */}
         <section style={sectionStyle} aria-labelledby="appearance-heading">
           <h2 id="appearance-heading" style={sectionTitleStyle}>
@@ -1066,23 +1059,13 @@ function SettingsPageInner(): React.ReactElement {
               </legend>
               <div style={{ display: 'flex', gap: 'var(--spacing-md)', flexWrap: 'wrap' }}>
                 {(['light', 'dark', 'system'] as const).map((option) => (
-                  <div
+                  <label
                     key={option}
                     style={
                       themePreference === option
                         ? radioOptionSelectedStyle
                         : radioOptionStyle
                     }
-                    onClick={() => handleThemeChange(option)}
-                    role="radio"
-                    aria-checked={themePreference === option}
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        handleThemeChange(option);
-                      }
-                    }}
                   >
                     <input
                       type="radio"
@@ -1095,36 +1078,41 @@ function SettingsPageInner(): React.ReactElement {
                     <span style={radioLabelStyle}>
                       {option.charAt(0).toUpperCase() + option.slice(1)}
                     </span>
-                  </div>
+                  </label>
                 ))}
               </div>
+              <p style={descriptionStyle}>
+                System follows your OS color scheme and updates automatically when it changes.
+              </p>
             </fieldset>
           </div>
         </section>
 
         {/* ================================================================== */}
-        {/* 5. Storage */}
+        {/* 6. Storage */}
         {/* ================================================================== */}
         <SectionCard
           title="Storage"
           id="storage-heading"
           description="Browser storage status and cache management"
         >
+          {/* Per-kind packaged-model readiness (issue #24 F6).
+              Previously only the aggregate `allReady` was shown, which reported
+              green even when the browser LLM was absent (excluded group). Now
+              each kind is reported individually, scoped to the selected engine. */}
           {packagesReady && (
             <div
               style={{
                 ...storageInfoStyle,
                 borderLeft: `4px solid ${packagesReady.allReady ? 'var(--color-success)' : 'var(--color-danger)'}`,
               }}
+              aria-live="polite"
             >
-              <div style={storageRowStyle}>
-                <span style={storageLabelStyle}>Packaged Models</span>
-                <span style={{ fontWeight: 500, color: packagesReady.allReady ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                  <span aria-hidden="true">{packagesReady.allReady ? '✓ ' : '✗ '}</span>
-                  {packagesReady.allReady ? 'Ready' : 'Missing'}
-                </span>
-              </div>
-              {!packagesReady.allReady && (
+              <PackagedModelReadiness
+                report={packagesReady}
+                browserEngine={browserEngine}
+              />
+              {!packagesReady.allReady && packagesReady.missing.length > 0 && (
                 <p style={descriptionStyle}>
                   {packagesReady.missing.length} required model file(s) not found in this build.
                   See the packaging guide (PACKAGING.md) to bundle models for offline use.
@@ -1151,16 +1139,32 @@ function SettingsPageInner(): React.ReactElement {
             >
               {clearCacheState === 'confirming' ? 'Click Again to Confirm' : 'Clear Cache'}
             </button>
-            <span id="clear-cache-desc" style={descriptionStyle}>
+            <span id="clear-cache-desc" style={descriptionStyle} aria-live="polite">
               {clearCacheState === 'confirming'
-                ? 'Are you sure? Click again to clear all cached data.'
-                : 'Clear cached models and stored documents from browser storage.'}
+                ? 'This will delete all documents, keyword/vector indexes, cached model weights, and settings for this profile. This cannot be undone.'
+                : 'Clear cached documents, indexes, model weights, and settings from browser storage.'}
             </span>
+            {/* Result feedback (issue #24 F1) — announced to screen readers */}
+            {clearCacheResult === 'clearing' && (
+              <span role="status" aria-live="polite" style={descriptionStyle}>
+                Clearing…
+              </span>
+            )}
+            {clearCacheResult === 'cleared' && (
+              <span role="status" aria-live="polite" style={{ ...descriptionStyle, color: 'var(--color-success)' }}>
+                Cache cleared
+              </span>
+            )}
+            {clearCacheResult === 'error' && (
+              <span role="status" aria-live="polite" style={{ ...descriptionStyle, color: 'var(--color-danger)' }}>
+                Could not clear all data
+              </span>
+            )}
           </div>
         </SectionCard>
 
         {/* ================================================================== */}
-        {/* 5b. Hardware Capability (diagnostic) */}
+        {/* 7. Hardware Capability (diagnostic) */}
         {/* ================================================================== */}
         <SectionCard
           title="Hardware Capability"
@@ -1205,7 +1209,7 @@ function SettingsPageInner(): React.ReactElement {
         </SectionCard>
 
         {/* ================================================================== */}
-        {/* 6. About */}
+        {/* 8. About */}
         {/* ================================================================== */}
         <section style={sectionStyle} aria-labelledby="about-heading">
           <h2 id="about-heading" style={sectionTitleStyle}>
@@ -1213,7 +1217,7 @@ function SettingsPageInner(): React.ReactElement {
           </h2>
           <div style={aboutSectionStyle}>
             <p>
-              <strong>Document Q&A</strong>
+              <strong>Document Q&amp;A</strong>
             </p>
             <p>Version: {APP_VERSION}</p>
             <p>
@@ -1227,6 +1231,98 @@ function SettingsPageInner(): React.ReactElement {
         </section>
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// PackagedModelReadiness — per-kind readiness display (issue #24 F6)
+// ============================================================================
+
+const KIND_LABELS: Record<PackagedModelKind, string> = {
+  embedding: 'Embeddings',
+  reranker: 'Reranker',
+  llm: 'Browser LLM',
+  runtime: 'ONNX Runtime',
+};
+
+/**
+ * Render per-kind packaged-model readiness from the PackagedModelsReport.
+ *
+ * Issue #24 F6: the aggregate `allReady` collapsed a real distinction
+ * (excluded-vs-present) into a single misleading green. This surfaces each
+ * kind individually so a missing browser LLM isn't hidden by green embeddings.
+ *
+ * For the webllm engine, the packaged `llm` kind (the wllama GGUF) is NOT
+ * what webllm uses — webllm weights live in Cache Storage — so that row is
+ * suppressed with an explanatory note to avoid a contradictory "Ready" signal
+ * (issue #24 critic M4).
+ */
+function PackagedModelReadiness({
+  report,
+  browserEngine,
+}: {
+  report: PackagedModelsReport;
+  browserEngine: 'wllama' | 'webllm';
+}): React.ReactElement {
+  // Group models by kind, preserving a stable display order.
+  const kindOrder: PackagedModelKind[] = ['embedding', 'runtime', 'reranker', 'llm'];
+  const byKind = new Map<PackagedModelKind, typeof report.models>();
+  for (const m of report.models) {
+    const arr = byKind.get(m.kind) ?? [];
+    arr.push(m);
+    byKind.set(m.kind, arr);
+  }
+
+  return (
+    <>
+      <div style={storageRowStyle}>
+        <span style={storageLabelStyle}>Packaged Models (overall)</span>
+        <span style={{ fontWeight: 500, color: report.allReady ? 'var(--color-success)' : 'var(--color-danger)' }}>
+          <span aria-hidden="true">{report.allReady ? '✓ ' : '✗ '}</span>
+          {report.allReady ? 'Ready' : 'Missing'}
+        </span>
+      </div>
+      {kindOrder.map((kind) => {
+        const models = byKind.get(kind);
+        if (!models || models.length === 0) return null;
+        // Suppress the packaged llm kind for webllm — its weights are in Cache
+        // Storage, not packaged. Showing "Ready" here would contradict the
+        // "Not cached" status above for a webllm user without a download.
+        if (kind === 'llm' && browserEngine === 'webllm') {
+          return (
+            <div key={kind} style={storageRowStyle}>
+              <span style={storageLabelStyle}>{KIND_LABELS[kind]}</span>
+              <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}>
+                WebLLM weights are not packaged — see cache status above
+              </span>
+            </div>
+          );
+        }
+        const allReady = models.every((m) => m.ready);
+        const allExcluded = models.every((m) => m.excluded);
+        // Check allExcluded BEFORE allReady: an excluded model reports
+        // ready=true (model-manifest.ts marks excluded groups ready), so
+        // allReady would otherwise win and show green for "Excluded from
+        // build" — a misleading color. Map excluded to 'not-ready' (warning)
+        // to match the label.
+        const status: 'ready' | 'error' | 'not-ready' = allExcluded
+          ? 'not-ready'
+          : allReady
+            ? 'ready'
+            : 'error';
+        const label = allExcluded
+          ? 'Excluded from build'
+          : allReady
+            ? 'Ready'
+            : 'Missing';
+        return (
+          <div key={kind} style={storageRowStyle}>
+            <span style={storageLabelStyle}>{KIND_LABELS[kind]}</span>
+            <StatusBadge status={status} label={label} />
+          </div>
+        );
+      })}
+    </>
   );
 }
 
