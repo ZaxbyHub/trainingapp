@@ -13,6 +13,7 @@ const mockEmbeddingService = {
 // Mock the vector index
 const mockVectorIndex = {
   isReady: vi.fn(() => true),
+  initialize: vi.fn(async () => {}),
   addBatch: vi.fn(async (_entries: Array<{ docId: string; chunkIndex: number; vector: number[] }>) => {}),
   save: vi.fn(async () => {}),
   removeByDocId: vi.fn(async (_docId: string) => {}),
@@ -27,9 +28,22 @@ const mockKeywordIndex = {
 };
 
 // Mock document store
-const mockLoadDocuments = vi.fn(async () => []);
-const mockSaveDocuments = vi.fn(async () => {});
+const mockLoadDocuments = vi.fn(async (): Promise<Array<{ id: string; fileName: string; fileSize: number; fileType: string; status: string; progress: number; uploadedAt: number; errorMessage?: string; chunkCount?: number }>> => []);
+const mockSaveDocuments = vi.fn(async (_docs: Array<{ status: string; fileName: string; errorMessage?: string }>) => {});
 const mockDeleteDocumentFromStore = vi.fn(async () => {});
+
+// F2: mock the lazy embedding-service initializer so processFile's readiness
+// guard can be exercised without pulling in the real (heavy) service hook.
+const mockEnsureEmbeddingServiceReady = vi.fn(async () => true);
+
+// F1: migration is best-effort; stub it so the page mount doesn't touch IDB.
+vi.mock('../lib/storage/profile', () => ({
+  migrateOrphanedNamespaces: vi.fn(async () => {}),
+}));
+
+vi.mock('../hooks/useServiceInitialization', () => ({
+  ensureEmbeddingServiceReady: () => mockEnsureEmbeddingServiceReady(),
+}));
 
 // Mock the TextChunker
 vi.mock('../lib/processing/text-chunker', () => ({
@@ -92,6 +106,10 @@ describe('DocumentsPage search index integration', () => {
     mockLoadDocuments.mockClear();
     mockSaveDocuments.mockClear();
     mockDeleteDocumentFromStore.mockClear();
+    mockEnsureEmbeddingServiceReady.mockClear();
+    mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
+    mockVectorIndex.initialize.mockClear();
+    mockVectorIndex.initialize.mockResolvedValue(undefined);
   });
 
   describe('processFile indexing flow', () => {
@@ -224,30 +242,135 @@ describe('DocumentsPage search index integration', () => {
     });
   });
 
-  describe('Error handling', () => {
-    test('9. Indexing continues even if embedding service is not ready', async () => {
-      // Reset mock to return false for isReady
-      mockEmbeddingService.isReady.mockReturnValueOnce(false);
-      mockVectorIndex.isReady.mockReturnValueOnce(false);
-      mockKeywordIndex.isReady.mockReturnValueOnce(false);
+  describe('Error handling (F2: embedding/vector init failures surface an error)', () => {
+    test('9. processFile sets status:error when ensureEmbeddingServiceReady() returns false (no silent skip-to-ready)', async () => {
+      // F2: a document uploaded when the embedding service cannot initialize
+      // must NOT be silently marked 'ready' with no vectors. processFile now
+      // awaits ensureEmbeddingServiceReady() and throws → status:'error'.
+      // This renders the real component and exercises the actual path.
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
 
-      const embeddingServiceReady = mockEmbeddingService.isReady();
-      const vectorIndexReady = mockVectorIndex.isReady();
-      const keywordIndexReady = mockKeywordIndex.isReady();
+      // ensureEmbeddingServiceReady resolves false → ingestion must error.
+      mockEnsureEmbeddingServiceReady.mockResolvedValue(false);
 
-      // When not ready, the indexing should be skipped but not throw
-      if (!embeddingServiceReady && !vectorIndexReady) {
-        // This is the expected behavior - skip vector indexing
+      const { unmount } = render(<DocumentsPage />);
+
+      // Wait for the initial load to finish, then drop a file.
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      const file = new File(['hello world'], 'test.txt', { type: 'text/plain' });
+      // Trigger the drop via the DropZone input change handler.
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      expect(input).toBeTruthy();
+      await act(async () => {
+        Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      // The document must reach status:'error', never 'ready'.
+      await waitFor(() => {
+        const saveCalls = mockSaveDocuments.mock.calls;
+        const lastSaved = saveCalls[saveCalls.length - 1]?.[0] as
+          | Array<{ status: string; fileName: string; errorMessage?: string }>
+          | undefined;
+        const doc = lastSaved?.find((d) => d.fileName === 'test.txt');
+        expect(doc?.status).toBe('error');
+        expect(doc?.errorMessage).toMatch(/embedding/i);
+      });
+
+      // And encodeBatch must NOT have been called (no silent indexing).
+      expect(mockEmbeddingService.encodeBatch).not.toHaveBeenCalled();
+
+      unmount();
+    });
+
+    test('F3: deleting a document while it is still processing waits for processing to settle before removing chunks (no orphan chunks)', async () => {
+      // Acceptance criterion #3: "Delete mid-processing leaves no orphan chunks
+      // (verified via index inspection)". The fix: handleDelete awaits the
+      // in-flight processFile promise before calling removeByDocId, so a late
+      // addBatch+save cannot leave orphaned vectors. This test renders the real
+      // component, blocks processFile mid-flight, triggers a delete, and asserts
+      // removeByDocId is called ONLY after processFile settles.
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
+
+      // Block processFile inside extractDocument on a deferred we control.
+      const mockExtract = extractDocument as unknown as { mockImplementation: (fn: () => Promise<unknown>) => void };
+      // Holder for the deferred resolver so the test can release the blocked
+      // extraction on demand. Typed as an array to dodge TS control-flow
+      // narrowing of closure-captured lets.
+      const releaseHolder: Array<() => void> = [];
+      const extractionBlocked = new Promise<void>((resolve) => {
+        releaseHolder.push(resolve);
+      });
+      mockExtract.mockImplementation(async () => {
+        await extractionBlocked;
+        return {
+          fullText: 'content for the in-flight document',
+          pages: [{ pageNumber: 1, text: 'content for the in-flight document' }],
+          metadata: {},
+        };
+      });
+
+      // embedding + vector index are ready so processFile proceeds to indexing
+      // once extraction resolves (then we'll have chunks to remove).
+      mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
+      mockEmbeddingService.isReady.mockReturnValue(true);
+      mockVectorIndex.isReady.mockReturnValue(true);
+      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
+
+      const { unmount } = render(<DocumentsPage />);
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      const file = new File(['in-flight content'], 'inflight.txt', { type: 'text/plain' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      // Wait until processFile has started (status flips to 'processing').
+      await waitFor(() => {
+        const calls = mockSaveDocuments.mock.calls;
+        const last = calls[calls.length - 1]?.[0];
+        return !!last?.some((d: { fileName: string; status: string }) => d.fileName === 'inflight.txt' && d.status === 'processing');
+      });
+
+      // Sanity: removeByDocId has NOT been called yet (no delete happened).
+      expect(mockVectorIndex.removeByDocId).not.toHaveBeenCalled();
+
+      // Trigger deletion of the still-processing document. handleDelete should
+      // await the in-flight processFile, so it stays pending while extraction
+      // is blocked. We don't await the delete here; we fire it and let it hang.
+      // Find the delete button for the row (aria-label="Delete <filename>").
+      await waitFor(() => {
+        const btns = document.querySelectorAll('button[aria-label^="Delete "]');
+        expect(btns.length).toBeGreaterThan(0);
+      });
+      const deleteButton = document.querySelector('button[aria-label^="Delete "]') as HTMLButtonElement;
+      await act(async () => {
+        deleteButton.click();
+      });
+
+      // The delete is now in flight and waiting on processFile. removeByDocId
+      // must still NOT have been called because processFile hasn't settled
+      // (extraction is blocked) — proving handleDelete awaits the in-flight work.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(mockVectorIndex.removeByDocId).not.toHaveBeenCalled();
+
+      // Release the blocked extraction so processFile can complete. handleDelete
+      // (awaiting it) then proceeds to removeByDocId.
+      for (const release of releaseHolder) {
+        release();
       }
 
-      if (!keywordIndexReady) {
-        // Skip keyword indexing
-      }
+      await waitFor(() => {
+        expect(mockVectorIndex.removeByDocId).toHaveBeenCalled();
+      });
 
-      // No error should be thrown
-      expect(embeddingServiceReady).toBe(false);
-      expect(vectorIndexReady).toBe(false);
-      expect(keywordIndexReady).toBe(false);
+      unmount();
     });
 
     test('10. Deletion continues even if index removal fails', async () => {
@@ -270,6 +393,112 @@ describe('DocumentsPage search index integration', () => {
       expect(mockVectorIndex.removeByDocId).toHaveBeenCalledWith(docId);
       // keywordIndex.removeByDocId should still be called (deletion continues)
       expect(mockKeywordIndex.removeByDocId).toHaveBeenCalledWith(docId);
+    });
+  });
+
+  describe('F4/F5/F13 behavioral coverage (PRR-004)', () => {
+    test('F5: a duplicate fileName+fileSize upload is skipped and surfaces a notice', async () => {
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
+
+      // Seed the document store with an existing document.
+      mockLoadDocuments.mockResolvedValueOnce([
+        { id: 'existing-1', fileName: 'dup.txt', fileSize: 100, fileType: '.txt', status: 'ready', progress: 100, uploadedAt: 1000 },
+      ]);
+      mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
+      mockEmbeddingService.isReady.mockReturnValue(true);
+      mockVectorIndex.isReady.mockReturnValue(true);
+      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
+
+      const { unmount, container } = render(<DocumentsPage />);
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      // Drop a file with the same name+size as the existing document.
+      const file = new File(['x'.repeat(100)], 'dup.txt', { type: 'text/plain' });
+      expect(file.size).toBe(100);
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      // A duplicate-skip notice must appear, and encodeBatch must NOT run for it.
+      await waitFor(() => {
+        expect(container.textContent).toMatch(/Skipped duplicate file: dup\.txt/);
+      });
+      expect(mockEmbeddingService.encodeBatch).not.toHaveBeenCalled();
+
+      unmount();
+    });
+
+    test('F13: a delete cancels an armed stale debounced save so it cannot resurrect the doc', async () => {
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
+
+      // Seed a ready document.
+      mockLoadDocuments.mockResolvedValueOnce([
+        { id: 'del-1', fileName: 'todelete.txt', fileSize: 50, fileType: '.txt', status: 'ready', progress: 100, uploadedAt: 1000 },
+      ]);
+      mockVectorIndex.isReady.mockReturnValue(true);
+      mockKeywordIndex.isReady.mockReturnValue(true);
+
+      const { unmount } = render(<DocumentsPage />);
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      // Click delete on the ready document.
+      await waitFor(() => {
+        expect(document.querySelector('button[aria-label^="Delete "]')).toBeTruthy();
+      });
+      const saveCountBefore = mockSaveDocuments.mock.calls.length;
+      await act(async () => {
+        (document.querySelector('button[aria-label^="Delete "]') as HTMLButtonElement).click();
+      });
+
+      // After delete settles, the most recent save must NOT contain the deleted doc.
+      await waitFor(() => {
+        const calls = mockSaveDocuments.mock.calls;
+        expect(calls.length).toBeGreaterThan(saveCountBefore);
+      });
+      const lastSaved = mockSaveDocuments.mock.calls[mockSaveDocuments.mock.calls.length - 1]?.[0] as
+        Array<{ fileName: string }> | undefined;
+      expect(lastSaved?.some((d) => d.fileName === 'todelete.txt')).toBe(false);
+
+      unmount();
+    });
+
+    test('F4: unmount while a debounced save is pending flushes the latest documents', async () => {
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
+
+      // The component mounts, loadDocuments returns [], then we trigger an
+      // upload that mutates state within the 500ms debounce window, then
+      // immediately unmount — the pending save should flush.
+      mockEnsureEmbeddingServiceReady.mockResolvedValue(false); // error fast, no encode
+      const { unmount } = render(<DocumentsPage />);
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      const file = new File(['flush-test'], 'flush.txt', { type: 'text/plain' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      // Unmount immediately (within the 500ms debounce). A flush save should fire.
+      const callsBeforeUnmount = mockSaveDocuments.mock.calls.length;
+      unmount();
+
+      // Allow the fire-and-forget flush promise to settle.
+      await waitFor(() => {
+        expect(mockSaveDocuments.mock.calls.length).toBeGreaterThan(callsBeforeUnmount);
+      });
+      // The flushed save should include the uploaded file's entry.
+      const flushedCalls = mockSaveDocuments.mock.calls.slice(callsBeforeUnmount);
+      const sawFlushEntry = flushedCalls.some((c) => {
+        const docs = c[0] as Array<{ fileName: string }> | undefined;
+        return docs?.some((d) => d.fileName === 'flush.txt');
+      });
+      expect(sawFlushEntry).toBe(true);
     });
   });
 

@@ -196,6 +196,38 @@ describe('KeywordIndex', () => {
     });
   });
 
+  describe('F11: search skips unmapped ids instead of fabricating unknown docId', () => {
+    it('returns only resolvable results, dropping ids absent from idMapping', () => {
+      const index = KeywordIndex.getInstance();
+      // Force-ready so search() runs without a full initialize() (the flexsearch
+      // Index and IDB are mocked). isReady() requires ready=true, disposed=false,
+      // and a non-null index.
+      (index as unknown as { ready: boolean }).ready = true;
+      (index as unknown as { disposed: boolean }).disposed = false;
+      (index as unknown as { index: unknown }).index = { search: mockSearch };
+
+      // Populate the internal idMapping with one resolvable chunk.
+      const internals = index as unknown as {
+        idMapping: Map<string, { docId: string; chunkIndex: number; text: string; source?: string; page?: number }>;
+      };
+      internals.idMapping.set('docA:0', { docId: 'docA', chunkIndex: 0, text: 'alpha' });
+
+      // Mock flexsearch search to return one mapped + one unmapped id.
+      mockSearch.mockReturnValueOnce(['docA:0', 'docZ:9']);
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const results = index.search('alpha');
+      warnSpy.mockRestore();
+
+      // Only the resolvable id is returned; the unmapped one is skipped (not
+      // fabricated as docId:'unknown').
+      expect(results).toHaveLength(1);
+      expect(results[0].docId).toBe('docA');
+
+      index.dispose();
+    });
+  });
+
   // -------------------------------------------------------------------------
   // User isolation via sessionStorage prefix (FR-007)
   // DB_NAME is private; we observe it via the indexedDB.open mock calls.
@@ -254,9 +286,20 @@ describe('KeywordIndex', () => {
       index.dispose();
     });
 
-    it('Same session produces same prefix on reload', async () => {
-      sessionStorage.clear();
-      sessionStorage.setItem('doc-qa-user-id', 'same-sess-00112233');
+    it('F1: stable profile prefix produces the same DB name across reloads', async () => {
+      // F1 changed the namespace from a per-session sessionStorage UUID to a
+      // stable localStorage-backed profile id. Provide a controllable
+      // localStorage so the test is deterministic.
+      const store: Record<string, string> = {};
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: {
+          getItem: (k: string) => store[k] ?? null,
+          setItem: (k: string, v: string) => { store[k] = v; },
+          removeItem: (k: string) => { delete store[k]; },
+        },
+        writable: true,
+        configurable: true,
+      });
 
       vi.resetModules();
       const { KeywordIndex: K } = await import('./keyword-index');
@@ -270,7 +313,7 @@ describe('KeywordIndex', () => {
       const n1 = openMock.mock.calls[0]?.[0];
       i1.dispose();
 
-      // same session, same module after first reset: prefix must be identical
+      // A second instance reads the same persisted profile prefix → same DB name.
       const i2 = K.getInstance();
       openMock.mockClear();
       try { await i2.initialize(); } catch {}
@@ -281,7 +324,21 @@ describe('KeywordIndex', () => {
       expect(n1).toMatch(/-doc-qa-keywords$/);
     });
 
-    it('Different sessionStorage values produce different DB_NAMEs', async () => {
+    it('F1: sessionStorage no longer affects the DB name (persistence is profile-scoped)', async () => {
+      // The fix: changing sessionStorage must NOT change the DB name, because
+      // documents must survive a browser-session restart (sessionStorage is
+      // cleared on close). Only the stable profile id (localStorage) matters.
+      const store: Record<string, string> = {};
+      Object.defineProperty(globalThis, 'localStorage', {
+        value: {
+          getItem: (k: string) => store[k] ?? null,
+          setItem: (k: string, v: string) => { store[k] = v; },
+          removeItem: (k: string) => { delete store[k]; },
+        },
+        writable: true,
+        configurable: true,
+      });
+
       sessionStorage.clear();
       sessionStorage.setItem('doc-qa-user-id', 'user-aaaa-11111111');
       vi.resetModules();
@@ -296,6 +353,7 @@ describe('KeywordIndex', () => {
       const na = openMock.mock.calls[0]?.[0];
       ia.dispose();
 
+      // Change sessionStorage — must NOT change the DB name anymore.
       sessionStorage.setItem('doc-qa-user-id', 'user-bbbb-22222222');
       vi.resetModules();
 
@@ -308,9 +366,8 @@ describe('KeywordIndex', () => {
       const nb = openMock.mock.calls[0]?.[0];
       ib.dispose();
 
-      expect(na).not.toBe(nb);
+      expect(na).toBe(nb);
       expect(na).toMatch(/-doc-qa-keywords$/);
-      expect(nb).toMatch(/-doc-qa-keywords$/);
     });
   });
 });

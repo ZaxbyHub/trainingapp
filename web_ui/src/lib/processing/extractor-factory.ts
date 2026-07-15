@@ -35,14 +35,37 @@ const EXTRACTOR_MAP: Record<string, (file: File) => Promise<ExtractionResult>> =
  * to detect mismatches between the file's declared type and its extension.
  * A file with no MIME type (empty string) or application/octet-stream
  * is treated as "unknown" and accepted based on extension heuristic.
+ *
+ * F15: the allowlist includes common real-world MIME variants that browsers
+ * and OSes attach to these document types (e.g. `application/x-pdf`,
+ * `application/x-zip-compressed` on Windows, `application/download`), so
+ * legitimate files are not rejected. Previously only the canonical MIME per
+ * type passed, causing false rejects.
  */
 const MIME_COMPATIBILITY: Record<string, readonly string[]> = {
-  '.pdf': ['application/pdf'],
-  '.docx': ['application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/zip'],
-  '.xlsx': ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'application/vnd.ms-excel', 'application/zip'],
+  '.pdf': ['application/pdf', 'application/x-pdf', 'application/force-download'],
+  '.docx': [
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/zip',
+    'application/x-zip-compressed',
+    'application/octet-stream',
+  ],
+  '.xlsx': [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-excel',
+    'application/zip',
+    'application/x-zip-compressed',
+    'application/octet-stream',
+  ],
   '.txt': ['text/plain', 'text/markdown', 'application/octet-stream'],
-  '.md':  ['text/plain', 'text/markdown', 'text/x-markdown', 'application/octet-stream'],
-  '.pptx': ['application/vnd.openxmlformats-officedocument.presentationml.presentation', 'application/vnd.ms-powerpoint', 'application/zip'],
+  '.md': ['text/plain', 'text/markdown', 'text/x-markdown', 'application/octet-stream'],
+  '.pptx': [
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'application/vnd.ms-powerpoint',
+    'application/zip',
+    'application/x-zip-compressed',
+    'application/octet-stream',
+  ],
 };
 
 /**

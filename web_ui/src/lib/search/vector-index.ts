@@ -7,30 +7,17 @@
 import type { EmbeddingEntry, EmbeddingVector } from '../../types/embedding';
 import type { SearchResult, VectorIndexConfig, VectorSearchOptions } from '../../types/search';
 import initWasm, { EdgeVec, EdgeVecConfig } from 'edgevec';
+import { getStorageDbNames } from '../storage/profile';
 
 /**
- * Generate a stable, user-scoped prefix for IndexedDB names.
- * Uses sessionStorage UUID if available, else falls back to origin-derived
- * hash. Result is stable across page reloads in the same browser session.
+ * F1: the per-store IndexedDB names now derive from the stable localStorage
+ * profile prefix (see ../storage/profile) instead of a per-session
+ * sessionStorage UUID, so the vector index persists across browser restarts and
+ * is shared across tabs.
  */
-function getUserPrefix(): string {
-  const KEY = 'doc-qa-user-id';
-  if (typeof sessionStorage !== 'undefined') {
-    let id = sessionStorage.getItem(KEY);
-    if (!id) {
-      id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      try { sessionStorage.setItem(KEY, id); } catch { /* private mode */ }
-    }
-    return id.slice(0, 8); // short prefix
-  }
-  return 'anon';
-}
-
-const USER_PREFIX = getUserPrefix();
-const DB_NAME = `${USER_PREFIX}-doc-qa-indexes`;
-const INDEX_NAME = `${USER_PREFIX}-doc-qa-index`;
+const DB_NAMES = getStorageDbNames();
+const DB_NAME = DB_NAMES.vectorMapping;
+const INDEX_NAME = DB_NAMES.vector;
 
 /**
  * Vector index content version. Bump when the persisted idMapping schema OR the
@@ -299,18 +286,27 @@ export class VectorIndex {
       // Pass Float32Array directly without conversion
       const results = this.index!.search(queryVector as Float32Array, k) as Array<{ id: number; score: number }>;
 
-      // Map results to SearchResult format
-      return results.map((result) => {
+      // Map results to SearchResult format. F11: skip entries whose internal id
+      // has no resolvable metadata (orphaned ids from a non-atomic save or a
+      // mapping desync) instead of fabricating `docId:'unknown'` results, which
+      // silently polluted RAG retrieval with placeholder chunks.
+      const mapped: SearchResult[] = [];
+      for (const result of results) {
         const metadata = this.idMapping.get(result.id);
-        return {
-          docId: metadata?.docId ?? 'unknown',
-          chunkIndex: metadata?.chunkIndex ?? 0,
+        if (!metadata) {
+          console.warn(`[VectorIndex] Skipping search result with unmapped internal id ${result.id}`);
+          continue;
+        }
+        mapped.push({
+          docId: metadata.docId,
+          chunkIndex: metadata.chunkIndex,
           score: result.score,
-          text: metadata?.text,     // F1: real chunk text
-          source: metadata?.source, // F7: filename
-          page: metadata?.page,     // F7: page number
-        };
-      });
+          text: metadata.text,     // F1: real chunk text
+          source: metadata.source, // F7: filename
+          page: metadata.page,     // F7: page number
+        });
+      }
+      return mapped;
     } catch (error) {
       throw new Error(
         `Search failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -362,11 +358,16 @@ export class VectorIndex {
     }
 
     try {
-      // Use EdgeVec's native save with custom index name
-      await this.index!.save(INDEX_NAME);
-
-      // Persist idMapping alongside the EdgeVec index (FIX #2)
+      // F11: persist idMapping BEFORE the EdgeVec snapshot. The two writes span
+      // different databases/transactions so they cannot be made fully atomic,
+      // but writing the mapping first means a crash between the two leaves the
+      // PREVIOUS consistent state (old snapshot + old mapping) rather than a
+      // new snapshot whose internal IDs have no resolvable metadata. A mapping
+      // without its snapshot is harmless (loads as empty); a snapshot without
+      // its mapping yields orphaned internal IDs that previously produced
+      // fabricated `docId:'unknown'` search results.
       await this.saveMapping();
+      await this.index!.save(INDEX_NAME);
 
       console.info(`[VectorIndex] Saved ${this.size()} vectors to IndexedDB`);
     } catch (error) {
@@ -630,7 +631,19 @@ export class VectorIndex {
       console.info(`[VectorIndex] Loaded ${this.size()} vectors from IndexedDB`);
       return true;
     } catch (error) {
-      console.error('[VectorIndex] Load failed:', error);
+      // F17: a "not found" rejection is the expected fresh-boot case (no saved
+      // index yet). The edgevec stub now rejects on miss (matching the real
+      // backend), so log it at info level rather than error — a fresh boot with
+      // no prior index must not produce an ERR_CORRUPTION console error. Any
+      // other failure (genuine deserialization/corruption) still logs as error.
+      const message = error instanceof Error ? error.message : String(error);
+      // m3: match case-insensitively so a future backend message variant
+      // ("Not Found" / "NOT FOUND") still routes to the benign fresh-boot path.
+      if (/not found/i.test(message)) {
+        console.info('[VectorIndex] No saved index found (fresh boot).');
+      } else {
+        console.error('[VectorIndex] Load failed:', error);
+      }
       // Dispose loadedIndex to avoid WASM memory leak
       if (loadedIndex) {
         if (typeof loadedIndex[Symbol.dispose] === 'function') {

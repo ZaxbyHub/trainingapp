@@ -9,29 +9,16 @@
 import { Index } from 'flexsearch';
 import type { SearchResult } from '../../types/search';
 import type { DocumentChunk } from '../../types/document';
+import { getStorageDbNames } from '../storage/profile';
 
 /**
- * Generate a stable, user-scoped prefix for IndexedDB names.
- * Uses sessionStorage UUID if available, else falls back to origin-derived
- * hash. Result is stable across page reloads in the same browser session.
+ * F1: the per-store IndexedDB names now derive from the stable localStorage
+ * profile prefix (see ../storage/profile) instead of a per-session
+ * sessionStorage UUID, so the keyword index persists across browser restarts
+ * and is shared across tabs.
  */
-function getUserPrefix(): string {
-  const KEY = 'doc-qa-user-id';
-  if (typeof sessionStorage !== 'undefined') {
-    let id = sessionStorage.getItem(KEY);
-    if (!id) {
-      id = (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      try { sessionStorage.setItem(KEY, id); } catch { /* private mode */ }
-    }
-    return id.slice(0, 8); // short prefix
-  }
-  return 'anon';
-}
-
-const USER_PREFIX = getUserPrefix();
-const DB_NAME = `${USER_PREFIX}-doc-qa-keywords`;
+const DB_NAMES = getStorageDbNames();
+const DB_NAME = DB_NAMES.keyword;
 const DB_VERSION = 1;
 const STORE_NAME = 'keyword-index';
 
@@ -231,17 +218,27 @@ export class KeywordIndex {
       // to the synchronous array shape actually produced here.
       const results = this.index!.search(query, { limit, suggest: true }) as Array<string | number>;
 
-      return results.map((id: string | number, rank: number) => {
+      // F11: skip entries whose FlexSearch id has no resolvable metadata
+      // instead of fabricating `docId:'unknown'` results (mirrors VectorIndex).
+      const mapped: SearchResult[] = [];
+      let rank = 0;
+      for (const id of results) {
         const meta = this.idMapping.get(String(id));
-        return {
-          docId: meta?.docId ?? 'unknown',
-          chunkIndex: meta?.chunkIndex ?? 0,
+        if (!meta) {
+          console.warn(`[KeywordIndex] Skipping search result with unmapped id ${id}`);
+          continue;
+        }
+        mapped.push({
+          docId: meta.docId,
+          chunkIndex: meta.chunkIndex,
           score: 1 / (rank + 1), // Position-based scoring: higher rank = higher score
-          text: meta?.text,
-          source: meta?.source, // F7: filename for citations
-          page: meta?.page,     // F7: page number for citations
-        };
-      });
+          text: meta.text,
+          source: meta.source, // F7: filename for citations
+          page: meta.page,     // F7: page number for citations
+        });
+        rank++;
+      }
+      return mapped;
     } catch (error) {
       console.error('[KeywordIndex] Search failed:', error);
       return [];

@@ -407,6 +407,40 @@ describe('EmbeddingService', () => {
       const texts = ['hello', 123 as unknown as string, 'world'];
       await expect(instance.encodeBatch(texts)).rejects.toThrow('Text at index 1 is not a string');
     });
+
+    it('F14: throws on tensor row-count mismatch instead of silently misassigning vectors', async () => {
+      const embedding = createMockEmbedding();
+      const instance = EmbeddingService.getInstance();
+      await instance.initialize();
+
+      // Simulate a model/runtime returning FEWER rows than requested (e.g. a
+      // future model swap or pooling mismatch). dims[0] must equal batch.length.
+      mockPipelineCallable.mockImplementation((texts: string[]) => {
+        const requested = Array.isArray(texts) ? texts.length : 1;
+        // Return data for only (requested - 1) rows, with dims claiming that count.
+        const returned = Math.max(0, requested - 1);
+        const flatData = new Float32Array(embedding.length * returned);
+        for (let i = 0; i < returned; i++) {
+          flatData.set(embedding, i * embedding.length);
+        }
+        return Promise.resolve({ data: flatData, dims: [returned, embedding.length] });
+      });
+
+      const texts = ['hello', 'world', 'test'];
+      await expect(instance.encodeBatch(texts)).rejects.toThrow(/shape mismatch/i);
+    });
+
+    it('F14: throws when the tensor data is too small for the requested batch', async () => {
+      const instance = EmbeddingService.getInstance();
+      await instance.initialize();
+
+      // dims claim 2 rows but data only holds 1 row worth of elements.
+      mockPipelineCallable.mockImplementation(() =>
+        Promise.resolve({ data: new Float32Array(384), dims: [2, 384] })
+      );
+
+      await expect(instance.encodeBatch(['a', 'b'])).rejects.toThrow(/too small/i);
+    });
   });
 
   describe('isReady()', () => {

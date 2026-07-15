@@ -245,6 +245,51 @@ describe('VectorIndex', () => {
       // Restore original
       (instance as unknown as { loadMapping: () => Promise<void> }).loadMapping = originalLoadMapping;
     });
+
+    it('F17: a fresh-boot "not found" rejection returns false and logs at info, not error', async () => {
+      // F17: the edgevec stub now rejects on miss (matching the real backend),
+      // so a fresh boot surfaces a Promise rejection. load() must treat a
+      // "not found" rejection as the benign no-index-yet case (return false,
+      // console.info) rather than logging an error (acceptance criterion #5).
+      const instance = VectorIndex.getInstance();
+      await instance.initialize();
+
+      const edgevec = await import('edgevec');
+      (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load.mockRejectedValueOnce(
+        new Error('EdgeVec index not found: abc12345-doc-qa-index')
+      );
+
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+      const result = await instance.load();
+
+      expect(result).toBe(false);
+      // Must NOT log an error for the expected fresh-boot case.
+      expect(errorSpy).not.toHaveBeenCalled();
+      // Must log at info level (benign no-index notice).
+      expect(infoSpy).toHaveBeenCalled();
+
+      errorSpy.mockRestore();
+      infoSpy.mockRestore();
+    });
+
+    it('F17: a genuine corruption error (not "not found") still logs at error level', async () => {
+      const instance = VectorIndex.getInstance();
+      await instance.initialize();
+
+      const edgevec = await import('edgevec');
+      (edgevec as unknown as { load: ReturnType<typeof vi.fn> }).load.mockRejectedValueOnce(
+        new Error('ERR_CORRUPTION: deserialization failed')
+      );
+
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const result = await instance.load();
+
+      expect(result).toBe(false);
+      expect(errorSpy).toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
   });
 
   describe('addBatch - KEY: uses startId = liveCount()', () => {
@@ -333,20 +378,25 @@ describe('VectorIndex', () => {
       expect(results[1]).toEqual({ docId: 'doc-xyz', chunkIndex: 12, score: 0.87 });
     });
 
-    it('handles missing idMapping entries with unknown docId', async () => {
+    it('F11: skips missing idMapping entries instead of fabricating unknown docId', async () => {
       const instance = VectorIndex.getInstance();
       await instance.initialize();
 
-      // Mock search to return a result with an ID not in mapping
+      // Mock search to return a result with an ID not in the mapping.
       mockEdgeVecInstance.search = vi.fn<(_query: Float32Array, k: number) => Array<{ id: number; score: number }>>()
         .mockReturnValue([
           { id: 99, score: 0.75 },
         ]);
 
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const results = await instance.search(new Float32Array(384), { k: 1 });
 
-      // Should return 'unknown' for missing docId
-      expect(results[0]).toEqual({ docId: 'unknown', chunkIndex: 0, score: 0.75 });
+      // F11: an unmapped internal id must be SKIPPED, not returned as a
+      // fabricated `docId:'unknown'` placeholder. The empty result avoids
+      // polluting RAG retrieval with phantom chunks.
+      expect(results).toHaveLength(0);
+      expect(warnSpy).toHaveBeenCalled();
+      warnSpy.mockRestore();
     });
 
     it('respects efSearch option', async () => {

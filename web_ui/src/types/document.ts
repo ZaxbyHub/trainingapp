@@ -63,4 +63,12 @@ export interface DocumentChunk {
   chunkIndex: number;
   docId?: string;
   sourcePath?: string;
+  /**
+   * Character offset of the start of this chunk into the cleaned full text
+   * (F8). Used for reliable PDF page attribution by mapping the offset against
+   * per-page text boundaries, instead of the unreliable prefix-string matching
+   * that preceded it. Consumed by RAG retrieval (issue #22) for citations.
+   * Optional so older callers and stored shapes remain valid.
+   */
+  charOffset?: number;
 }

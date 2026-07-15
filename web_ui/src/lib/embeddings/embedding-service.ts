@@ -258,6 +258,29 @@ export class EmbeddingService {
           normalize: true,
         }) as { data: Float32Array; dims: number[] };
 
+        // F14: validate the returned tensor shape before slicing. Without this
+        // check, a model/runtime returning fewer rows than requested (e.g. from
+        // a future model swap or a pooling mismatch) would silently produce
+        // zero-filled/short vectors misassigned to the wrong chunks. dims[0] is
+        // the row count; data.length must cover batch.length rows of
+        // EMBEDDING_DIMENSIONS each. (The single-text encode() already checks
+        // embedding length; this is the batch-path analog.)
+        const expectedRows = batch.length;
+        const actualRows =
+          Array.isArray(batchResults.dims) && batchResults.dims.length > 0
+            ? batchResults.dims[0]
+            : Math.floor(batchResults.data.length / EMBEDDING_DIMENSIONS);
+        if (actualRows !== expectedRows) {
+          throw new Error(
+            `Embedding batch shape mismatch: expected ${expectedRows} row(s) but the model returned ${actualRows}`
+          );
+        }
+        if (batchResults.data.length < expectedRows * EMBEDDING_DIMENSIONS) {
+          throw new Error(
+            `Embedding tensor too small: need ${expectedRows * EMBEDDING_DIMENSIONS} elements for ${expectedRows} vector(s), got ${batchResults.data.length}`
+          );
+        }
+
         // batchResults.data is flat with all embeddings concatenated
         // Split into individual embedding vectors
         const embeddingLength = EMBEDDING_DIMENSIONS;
