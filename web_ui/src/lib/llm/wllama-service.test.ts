@@ -40,6 +40,9 @@ vi.mock('@wllama/wllama', () => ({
     supportInputModality = supportInputModality;
     setCompat = setCompat;
   },
+  CacheManager: class {
+    constructor() {}
+  },
 }));
 
 describe('WllamaService', () => {
@@ -84,8 +87,8 @@ describe('WllamaService', () => {
     // Loaded GGUF + mmproj from same-origin /models/llm paths.
     expect(loadModelFromUrl).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: '/models/llm/lfm2-vl-1.6b/model.gguf',
-        mmprojUrl: '/models/llm/lfm2-vl-1.6b/mmproj.gguf',
+        url: '/models/llm/lfm2.5-vl-450m/model.gguf',
+        mmprojUrl: '/models/llm/lfm2.5-vl-450m/mmproj.gguf',
       }),
       expect.objectContaining({ useCache: true })
     );
@@ -198,5 +201,46 @@ describe('WllamaService', () => {
     const svc = WllamaService.getInstance();
     await expect(svc.initialize()).rejects.toThrow('Failed to initialize wllama model');
     expect(svc.isReady()).toBe(false);
+  });
+
+  // PRR-004: InMemoryStorageBackend round-trip test — verifies write() drains
+  // the stream into a Blob and read() returns it, proving the OPFS bypass works.
+  it('InMemoryStorageBackend write/read round-trips a stream into a Blob', async () => {
+    const { InMemoryStorageBackend } = await import('./wllama-service');
+    const backend = new InMemoryStorageBackend();
+
+    expect(backend.isSupported()).toBe(true);
+
+    // Create a ReadableStream with known data.
+    const data = new TextEncoder().encode('Hello, model weights!');
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(data);
+        controller.close();
+      },
+    });
+
+    await backend.write('test-key', stream);
+
+    // getSize() reports the correct byte length (proves the stream was drained).
+    expect(await backend.getSize('test-key')).toBe(data.byteLength);
+
+    // read() returns a Blob (proves the data was stored).
+    const blob = await backend.read('test-key');
+    expect(blob).not.toBeNull();
+    expect(blob!.size).toBe(data.byteLength);
+
+    // read() on a missing key returns null.
+    expect(await backend.read('nonexistent')).toBeNull();
+    expect(await backend.getSize('nonexistent')).toBe(-1);
+
+    // list() includes the entry.
+    const entries = await backend.list();
+    expect(entries.some((e: { key: string }) => e.key === 'test-key')).toBe(true);
+
+    // delete() removes it.
+    await backend.delete('test-key');
+    expect(await backend.read('test-key')).toBeNull();
+    expect(await backend.getSize('test-key')).toBe(-1);
   });
 });

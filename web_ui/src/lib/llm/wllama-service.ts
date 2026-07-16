@@ -15,7 +15,7 @@
  * WebLLMService behind the engine factory.
  */
 
-import { Wllama } from '@wllama/wllama';
+import { Wllama, CacheManager } from '@wllama/wllama';
 import type {
   LLMService,
   LLMMessage,
@@ -34,7 +34,7 @@ import {
 } from '../models/model-manifest';
 import { probeAsset } from '../models/probe';
 
-/** Context window. LFM2-VL handles long context; 4096 is a safe default for RAM. */
+/** Context window. LFM2.5-VL-450M handles long context; 4096 is a safe default for RAM. */
 export const DEFAULT_N_CTX = 4096;
 
 function threadCount(): number {
@@ -63,6 +63,67 @@ function toWllamaMessages(
  */
 function isPresent(url: string): Promise<boolean> {
   return probeAsset(url);
+}
+
+/**
+ * In-memory StorageBackend for wllama's CacheManager.
+ *
+ * wllama's default backend (OPFS) writes the full GGUF to the Origin Private
+ * File System via FileSystemSyncAccessHandle. On systems with limited OPFS
+ * quota, this fails with "No space available for this operation" — even with
+ * cacheManager.clear() called first, because the write happens AFTER the clear
+ * and the quota is genuinely too small for the 219MB GGUF.
+ *
+ * This backend stores the downloaded blobs in a Map in memory. The tradeoff:
+ * no cross-session persistence (the model re-fetches each page load), but the
+ * same-origin fetch is fast and avoids OPFS entirely. This is acceptable for a
+ * browser-local app where the GGUF is already packaged same-origin.
+ *
+ * write() MUST fully drain the ReadableStream into a Blob — it is the sole
+ * consumer of the download response body, and read() must return those bytes
+ * for the model to load.
+ */
+export class InMemoryStorageBackend {
+  private store = new Map<string, Blob>();
+
+  isSupported(): boolean {
+    return true;
+  }
+
+  async read(key: string): Promise<Blob | null> {
+    return this.store.get(key) ?? null;
+  }
+
+  async write(key: string, stream: ReadableStream<Uint8Array>): Promise<void> {
+    const reader = stream.getReader();
+    const chunks: Uint8Array[] = [];
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) chunks.push(value);
+      }
+      this.store.set(key, new Blob(chunks as BlobPart[]));
+    } finally {
+      // PRR-001: always release the reader lock so a mid-stream error doesn't
+      // leave the ReadableStream permanently locked.
+      reader.releaseLock();
+    }
+  }
+
+  async getSize(key: string): Promise<number> {
+    const blob = this.store.get(key);
+    return blob ? blob.size : -1;
+  }
+
+  async list(): Promise<Array<{ key: string; size: number }>> {
+    return Array.from(this.store.entries()).map(([key, blob]) => ({ key, size: blob.size }));
+  }
+
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
+  }
 }
 
 export class WllamaService implements LLMService {
@@ -124,9 +185,15 @@ export class WllamaService implements LLMService {
 
       // wllama uses AssetsPathConfig `default` VERBATIM as the wasm URL, so it
       // must be the full path to the .wasm file (not a directory).
+      // Use an in-memory CacheManager to avoid OPFS — wllama's default backend
+      // writes the full GGUF to OPFS, which fails with "No space available" on
+      // systems with limited OPFS quota. The in-memory backend stores the
+      // downloaded blobs in RAM; the model re-fetches from same-origin each
+      // page load (fast, no persistence needed for a packaged offline app).
       this.wllama = new Wllama(
         { default: WLLAMA_WASM_FILE },
-        { allowOffline: true, parallelDownloads: 3, suppressNativeLog: true }
+        { allowOffline: true, parallelDownloads: 3, suppressNativeLog: true,
+          cacheManager: new CacheManager([new InMemoryStorageBackend()]) }
       );
 
       // Point the offline-compat fallback (used when the browser lacks

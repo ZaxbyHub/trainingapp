@@ -39,7 +39,13 @@ describe('configureOfflineEnv', () => {
     expect(env.allowRemoteModels).toBe(false);
     expect(env.allowLocalModels).toBe(true);
     expect(env.localModelPath).toBe('/models');
-    expect(env.backends.onnx.wasm?.wasmPaths).toBe('/models/ort/');
+    // Under vitest, import.meta.env.DEV is true (test mode), so wasmPaths
+    // points at node_modules for Vite dev compatibility. In production builds
+    // (DEV=false), it would be ONNX_RUNTIME_WASM_BASE = '/models/ort/'.
+    const expectedWasmPaths = import.meta.env.DEV
+      ? '/node_modules/onnxruntime-web/dist/'
+      : '/models/ort/';
+    expect(env.backends.onnx.wasm?.wasmPaths).toBe(expectedWasmPaths);
   });
 
   it('stays offline regardless of construction order (embeddings then reranker)', async () => {
@@ -58,5 +64,36 @@ describe('configureOfflineEnv', () => {
     // ...and the reverse order is equally safe.
     RerankerService.getInstance().dispose();
     EmbeddingService.getInstance().dispose();
+  });
+
+  // PRR-005: numThreads guard — forces numThreads=1 when not cross-origin
+  // isolated to prevent the ONNX Runtime proxy-worker silent deadlock.
+  it('forces numThreads=1 when not cross-origin isolated', async () => {
+    const originalCOI = (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated;
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated = false;
+
+    vi.resetModules();
+    const { configureOfflineEnv } = await import('./offline-env');
+    const { env } = await import('@huggingface/transformers');
+    configureOfflineEnv();
+
+    expect(env.backends.onnx.wasm?.numThreads).toBe(1);
+
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated = originalCOI;
+  });
+
+  it('allows multi-threading when cross-origin isolated', async () => {
+    const originalCOI = (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated;
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated = true;
+
+    vi.resetModules();
+    const { configureOfflineEnv } = await import('./offline-env');
+    const { env } = await import('@huggingface/transformers');
+    configureOfflineEnv();
+
+    // When isolated, numThreads should be > 1 (capped at 4 by hardwareConcurrency).
+    expect(env.backends.onnx.wasm?.numThreads).toBeGreaterThan(1);
+
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated = originalCOI;
   });
 });

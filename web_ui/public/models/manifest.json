@@ -48,13 +48,13 @@
       ]
     },
     {
-      "id": "lfm2-vl-1.6b",
-      "label": "LiquidAI LFM2-VL-1.6B (browser LLM, multimodal)",
+      "id": "lfm2.5-vl-450m",
+      "label": "LiquidAI LFM2.5-VL-450M (browser LLM, multimodal)",
       "kind": "llm",
       "group": "llm",
       "files": [
-        { "path": "llm/lfm2-vl-1.6b/model.gguf", "required": true },
-        { "path": "llm/lfm2-vl-1.6b/mmproj.gguf", "required": true }
+        { "path": "llm/lfm2.5-vl-450m/model.gguf", "required": true },
+        { "path": "llm/lfm2.5-vl-450m/mmproj.gguf", "required": true }
       ]
     }
   ]

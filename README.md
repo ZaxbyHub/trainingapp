@@ -17,7 +17,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Two user-selectable browser engines** — **wllama** (llama.cpp WASM, CPU/SIMD, **no WebGPU**,
   the default and most robust on i5/Iris Xe) and **WebLLM** (WebGPU, faster when available). A
   hardware-capability panel detects WebGPU/threads/memory and recommends an engine.
-- **Multimodal** — attach a screenshot in chat and ask about it (wllama + LFM2-VL mmproj), offline.
+- **Multimodal** — attach a screenshot in chat and ask about it (wllama + LFM2.5-VL mmproj), offline.
 - **Chat UX** — streaming with interactive source citations, regenerate, conversation export
   (Markdown/JSON), and Fast/Balanced/Quality RAG presets.
 - **Self-contained archive** — `npm run build:offline` produces a validated `web_ui/dist/` the

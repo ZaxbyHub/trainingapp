@@ -12,7 +12,7 @@
  *   2. Copy the ONNX Runtime WASM binaries (shipped inside node_modules) into
  *      public/models/ort/ so Transformers.js never reaches for the jsdelivr CDN.
  *
- * Phase 2 will extend this to copy/convert/split the LFM2-VL GGUF + mmproj.
+ * Phase 2 will extend this to copy/convert/split the LFM2.5-VL GGUF + mmproj.
  *
  * Usage:  node scripts/prepare-models.mjs   (or: npm run prepare-models)
  * Exit code is non-zero if a required source asset cannot be found.
@@ -194,20 +194,20 @@ function prepareWllamaRuntime() {
 }
 
 // ---------------------------------------------------------------------------
-// 1d. Browser LLM weights (OPTIONAL): LFM2-VL-1.6B GGUF + mmproj projector.
+// 1d. Browser LLM weights (OPTIONAL): LFM2.5-VL-450M GGUF + mmproj projector.
 //     Large binaries assembled at packaging time; absence is a warning so an
 //     embeddings-only / server-mode build still succeeds.
 // ---------------------------------------------------------------------------
 function prepareBrowserLLM() {
   const srcDir = firstExisting([
-    join(REPO_ROOT, 'models', 'lfm2-vl-1.6b'),
-    join(WEB_UI, 'models', 'lfm2-vl-1.6b'),
+    join(REPO_ROOT, 'models', 'lfm2.5-vl-450m'),
+    join(WEB_UI, 'models', 'lfm2.5-vl-450m'),
   ]);
-  const destDir = join(PUBLIC_MODELS, 'llm', 'lfm2-vl-1.6b');
+  const destDir = join(PUBLIC_MODELS, 'llm', 'lfm2.5-vl-450m');
 
   if (!srcDir) {
     warn(
-      'browser LLM (LFM2-VL-1.6B) source not found at models/lfm2-vl-1.6b/ (optional). ' +
+      'browser LLM (LFM2.5-VL-450M) source not found at models/lfm2.5-vl-450m/ (optional). ' +
         'Browser wllama generation will be unavailable; server mode is unaffected. ' +
         'See PACKAGING.md to include model.gguf + mmproj.gguf.'
     );
@@ -229,7 +229,7 @@ function prepareBrowserLLM() {
     copyInto(src, join(destDir, name));
     staged++;
   }
-  if (staged === 2) log(`browser LLM (LFM2-VL) -> ${destDir}`);
+  if (staged === 2) log(`browser LLM (LFM2.5-VL-450M) -> ${destDir}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +278,7 @@ if (!NO_LLM) {
   prepareWllamaRuntime();
   prepareBrowserLLM();
 } else {
-  log('--no-llm: skipping browser-LLM runtime (wllama WASM/compat) + LFM2-VL weights.');
+  log('--no-llm: skipping browser-LLM runtime (wllama WASM/compat) + LFM2.5-VL weights.');
 }
 prepareOnnxRuntimeWasm();
 

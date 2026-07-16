@@ -69,8 +69,11 @@ export interface ReadinessResult {
 const MODEL_REQUIRED_BYTES: Record<string, number> = {
   // Llama-3.2-3B (WebLLM): ~1.9 GB weights + ~300 MB working ≈ 2.3 GB.
   'Llama-3.2-3B-Instruct-q4f16_1-MLC': 2_300_000_000,
-  // LFM2-VL-1.6B Q4_K_M (wllama): ~1 GB GGUF + ~500 MB WASM/ctx working memory.
-  'lfm2-vl-1.6b': 1_500_000_000,
+  // LFM2.5-VL-450M Q4_K_M (wllama): ~229 MB GGUF + ~99 MB mmproj + ~270 MB
+  // WASM/ctx working memory. The InMemoryStorageBackend retains the downloaded
+  // blobs (~328 MB) in JS heap alongside the WASM decode, so the real peak is
+  // ~900 MB — budgeted conservatively at 1 GB to avoid false-passing the gate.
+  'lfm2.5-vl-450m': 1_000_000_000,
 };
 
 /**
@@ -285,12 +288,24 @@ export class ModelReadinessGate {
       );
     }
 
-    // Soft warning: model not cached
+    // Soft warning: model not cached — engine-aware messaging.
+    // wllama weights are packaged same-origin and loaded on first use, NOT
+    // downloaded from the internet. webllm weights ARE fetched from a CDN
+    // into Cache Storage on first use.
     if (!modelCached) {
-      recommendations.push(
-        `Model "${modelId}" is not cached locally. A download (~2 GB) will be required ` +
-        'before first inference. Ensure stable internet connection.'
-      );
+      if (webgpuRequired) {
+        recommendations.push(
+          `Model "${modelId}" is not in the browser cache. A download (~2 GB) ` +
+          'from the WebLLM CDN will be required before first inference. ' +
+          'Ensure a stable internet connection.'
+        );
+      } else {
+        recommendations.push(
+          `The browser model files ("${modelId}") were not found in this build. ` +
+          'Run "npm run prepare-models" to stage the packaged weights, ' +
+          'or switch to API Server mode in Settings.'
+        );
+      }
     }
 
     const ready = (!webgpuRequired || webgpu) && memory.sufficient;

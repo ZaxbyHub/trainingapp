@@ -105,12 +105,11 @@ export const WLLAMA_COMPAT_WORKER_URL = `${WLLAMA_COMPAT_BASE}wllama.js`;
 /** Base directory for packaged GGUF LLM weights (wllama). */
 export const LLM_MODELS_BASE = `${MODELS_BASE}/llm`;
 
-/** Packaged browser LLM: LFM2-VL (vision-language) for wllama. */
-export const LLM_MODEL_DIR = 'lfm2-vl-1.6b';
+/** Packaged browser LLM: LFM2.5-VL-450M (vision-language) for wllama. */
+export const LLM_MODEL_DIR = 'lfm2.5-vl-450m';
 /**
- * GGUF weights URL passed to wllama `loadModelFromUrl`. LFM2-VL-1.6B Q4 is ~1 GB
- * (under wllama's 2 GB/file limit) so a single file is used; if a larger quant is
- * packaged, split with `llama-gguf-split` and point this at the `-00001-of-...` shard.
+ * GGUF weights URL passed to wllama `loadModelFromUrl`. LFM2.5-VL-450M Q4_K_M is
+ * ~229 MB — well under wllama's 2 GB/file limit, so a single unsplit file is used.
  */
 export const LLM_GGUF_URL = `${LLM_MODELS_BASE}/${LLM_MODEL_DIR}/model.gguf`;
 /** Multimodal projector (mmproj) URL, passed via wllama ModelSource.mmprojUrl. */

@@ -12,7 +12,7 @@ desktop app's GGUF policy). They are assembled into `web_ui/public/models/` at
 packaging time by `web_ui/scripts/prepare-models.mjs`.
 
 > Status: **Phase 1** covers the embedding model + ONNX Runtime WASM. The
-> LFM2-VL GGUF (browser LLM, wllama) lands in Phase 2 and is documented below as
+> LFM2.5-VL GGUF (browser LLM, wllama) lands in Phase 2 and is documented below as
 > the target procedure.
 
 ---
@@ -73,7 +73,7 @@ npm run build:offline      # = prepare-models && tsc/vite build && validate-buil
    `public/models/manifest.json` is absent from `dist/models/`. The manifest is
    the **single source of truth** shared with `src/lib/models/model-manifest.ts`
    (imported at runtime), so the TS readiness gate and the build validator
-   cannot drift. Pass `--no-llm` to skip the browser-LLM runtime + LFM2-VL
+   cannot drift. Pass `--no-llm` to skip the browser-LLM runtime + LFM2.5-VL
    weights group (for an embeddings-only / server-mode archive where the
    multi-GB LLM weights are deliberately absent). (It does not grep bundled JS
    for CDN hostnames — vendored ML libs embed default-CDN constants that survive
@@ -119,10 +119,10 @@ would otherwise make a build with zero model files falsely report "ready".
 
 ---
 
-## 5. Browser LLM — wllama + LFM2-VL (multimodal)
+## 5. Browser LLM — wllama + LFM2.5-VL (multimodal)
 
 Browser inference uses **wllama** (llama.cpp in WASM, CPU/SIMD, **no WebGPU**)
-running **LFM2-VL-1.6B GGUF + mmproj**. Two pieces are packaged:
+running **LiquidAI LFM2.5-VL-450M GGUF + mmproj**. Two pieces are packaged:
 
 1. **wllama runtime** — `npm run prepare-models` copies, from node_modules:
    - `@wllama/wllama` → `public/models/wllama/wasm/wllama.wasm` (the modern build)
@@ -136,20 +136,17 @@ running **LFM2-VL-1.6B GGUF + mmproj**. Two pieces are packaged:
    browser generation, server mode is unaffected):
 
 ```bash
-# (a) obtain LFM2-VL GGUF + mmproj (e.g. LiquidAI/LFM2-VL-1.6B-GGUF: Q4 weights + mmproj),
+# (a) obtain LFM2.5-VL GGUF + mmproj from LiquidAI/LFM2.5-VL-450M-GGUF on HuggingFace:
+#       LFM2.5-VL-450M-Q4_K_M.gguf     (~229 MB) → rename to model.gguf
+#       mmproj-LFM2.5-VL-450m-Q8_0.gguf (~99 MB)  → rename to mmproj.gguf
 #     then place them at the repo root as:
-#       models/lfm2-vl-1.6b/model.gguf
-#       models/lfm2-vl-1.6b/mmproj.gguf
-# (b) npm run prepare-models   # copies them to public/models/llm/lfm2-vl-1.6b/
+#       models/lfm2.5-vl-450m/model.gguf
+#       models/lfm2.5-vl-450m/mmproj.gguf
+# (b) npm run prepare-models   # copies them to public/models/llm/lfm2.5-vl-450m/
 ```
 
-LFM2-VL-1.6B Q4 is ~1 GB, under wllama's 2 GB/file `ArrayBuffer` limit, so a
-single `model.gguf` works. For a larger quant, split with `llama-gguf-split`
-(`model-00001-of-000NN.gguf`) and update `LLM_GGUF_URL` to the first shard.
-
-If only `LFM2.5-VL` safetensors are available (no prebuilt GGUF), convert at
-packaging time with llama.cpp's `convert_hf_to_gguf.py` plus the multimodal
-projector export, then quantize.
+LFM2.5-VL-450M Q4_K_M is ~229 MB, well under wllama's 2 GB/file `ArrayBuffer`
+limit, so a single `model.gguf` works.
 
 The desktop app already runs the same GGUF family via `llama-cpp-python`, so
 server mode gains VLM support from the same weights.
@@ -179,11 +176,11 @@ To run the server serving the archive: `python api_server.py` (or
 
 ## 7. Server-side VLM (multimodal) — deferred extension
 
-The **browser** engine (wllama + LFM2-VL mmproj, Phase 4) already provides
+The **browser** engine (wllama + LFM2.5-VL mmproj, Phase 4) already provides
 verified offline multimodal (image) Q&A. A **server-side** VLM path
 (image → `llama-cpp-python` with the mmproj) is intentionally **not yet wired**:
 it requires constructing a model-specific multimodal chat handler with
-`llama-cpp-python >= 0.3.0` and must be validated against the actual LFM2-VL
+`llama-cpp-python >= 0.3.0` and must be validated against the actual LFM2.5-VL
 GGUF on real hardware. To add it: build `GGUFBackend` with a clip/mmproj chat
 handler, accept an optional `image_base64` on the `/ask` request, and route
 multimodal turns through `create_chat_completion` with `image_url` content.

@@ -431,7 +431,23 @@ describe('ModelReadinessGate', () => {
 
       expect(result.ready).toBe(true);
       expect(result.checks.modelCached).toBe(false);
-      expect(result.recommendations.some(r => r.includes('not cached'))).toBe(true);
+      // webllm engine (default): recommendation says the model is not in the
+      // browser cache and a CDN download is required.
+      expect(result.recommendations.some(r => r.includes('not in the browser cache'))).toBe(true);
+    });
+
+    // PRR-006: wllama engine with model not cached shows the packaged-weights
+    // message ("not found in this build"), NOT the webllm CDN download message.
+    test('wllama engine not-cached shows packaged-weights message, not CDN download', async () => {
+      mockGpu = undefined; // wllama doesn't need WebGPU.
+
+      const result = await gate.checkReadiness('SmolLM3-3B-Q4_K_M', 'wllama');
+
+      expect(result.checks.modelCached).toBe(false);
+      // The wllama-specific message about packaged weights.
+      expect(result.recommendations.some(r => r.includes('not found in this build'))).toBe(true);
+      // Must NOT show the webllm CDN download message.
+      expect(result.recommendations.some(r => r.includes('CDN'))).toBe(false);
     });
 
     test('returns ready=true with model cached', async () => {

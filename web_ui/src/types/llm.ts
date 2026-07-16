@@ -68,7 +68,7 @@ export type LLMInferenceMode = 'webgpu' | 'wasm';
 /**
  * Which browser inference engine to use for local generation.
  * Defaults to 'wllama' (robust on hardware without usable WebGPU, and the
- * multimodal-capable path via LFM2-VL + mmproj).
+ * multimodal-capable path via LFM2.5-VL + mmproj).
  */
 export type BrowserEngine = 'wllama' | 'webllm';
 
