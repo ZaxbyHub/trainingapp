@@ -431,7 +431,9 @@ describe('ModelReadinessGate', () => {
 
       expect(result.ready).toBe(true);
       expect(result.checks.modelCached).toBe(false);
-      expect(result.recommendations.some(r => r.includes('not cached'))).toBe(true);
+      // webllm engine (default): recommendation says the model is not in the
+      // browser cache and a CDN download is required.
+      expect(result.recommendations.some(r => r.includes('not in the browser cache'))).toBe(true);
     });
 
     test('returns ready=true with model cached', async () => {

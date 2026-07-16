@@ -40,12 +40,31 @@ export function configureOfflineEnv(): void {
   if (wasm) {
     // Serve the ONNX Runtime WASM binaries locally rather than the default
     // jsdelivr CDN — otherwise the app is not truly offline.
-    wasm.wasmPaths = ONNX_RUNTIME_WASM_BASE;
+    //
+    // Dev-mode caveat: Vite serves files in `public/` as static assets only and
+    // blocks dynamic `import()` of JS modules from that path. The ORT `.mjs`
+    // glue file must go through Vite's module pipeline, so in dev we point
+    // wasmPaths at the onnxruntime-web package in node_modules (Vite serves
+    // node_modules files as proper modules). In production builds the files are
+    // copied into dist/models/ort/ and served same-origin, so the packaged
+    // ONNX_RUNTIME_WASM_BASE path is used.
+    if (import.meta.env.DEV) {
+      wasm.wasmPaths = '/node_modules/onnxruntime-web/dist/';
+    } else {
+      wasm.wasmPaths = ONNX_RUNTIME_WASM_BASE;
+    }
 
     // Adaptive thread count for the WASM backend. Guard `navigator` so this
     // module can be imported in non-browser contexts (SSR, node-env tests).
+    // CRITICAL: ONNX Runtime's multi-threaded proxy worker deadlocks silently
+    // when the page is NOT cross-origin isolated (SharedArrayBuffer unavailable).
+    // The worker spawns but never posts a message, so createInferenceSession
+    // never resolves — the app hangs on first document upload with no error.
+    // Force numThreads=1 when crossOriginIsolated is false to avoid the hang.
     const cores =
       typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
-    wasm.numThreads = cores ? Math.min(cores, 4) : 2;
+    const isCrossOriginIsolated =
+      typeof globalThis !== 'undefined' && globalThis.crossOriginIsolated === true;
+    wasm.numThreads = isCrossOriginIsolated && cores ? Math.min(cores, 4) : 1;
   }
 }

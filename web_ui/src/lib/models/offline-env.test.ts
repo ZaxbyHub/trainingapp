@@ -39,7 +39,13 @@ describe('configureOfflineEnv', () => {
     expect(env.allowRemoteModels).toBe(false);
     expect(env.allowLocalModels).toBe(true);
     expect(env.localModelPath).toBe('/models');
-    expect(env.backends.onnx.wasm?.wasmPaths).toBe('/models/ort/');
+    // Under vitest, import.meta.env.DEV is true (test mode), so wasmPaths
+    // points at node_modules for Vite dev compatibility. In production builds
+    // (DEV=false), it would be ONNX_RUNTIME_WASM_BASE = '/models/ort/'.
+    const expectedWasmPaths = import.meta.env.DEV
+      ? '/node_modules/onnxruntime-web/dist/'
+      : '/models/ort/';
+    expect(env.backends.onnx.wasm?.wasmPaths).toBe(expectedWasmPaths);
   });
 
   it('stays offline regardless of construction order (embeddings then reranker)', async () => {

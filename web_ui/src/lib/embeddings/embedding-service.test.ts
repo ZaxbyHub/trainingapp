@@ -124,8 +124,12 @@ describe('EmbeddingService', () => {
       // Models resolved from the locally packaged base (/models); the embedding
       // pipeline path is `embeddings/bge-small-en-v1.5` relative to this.
       expect(env.localModelPath).toBe('/models');
-      // ORT WASM served locally, not from jsdelivr.
-      expect(env.backends.onnx.wasm?.wasmPaths).toBe('/models/ort/');
+      // ORT WASM served locally, not from jsdelivr. Under vitest (DEV=true),
+      // wasmPaths points at node_modules for Vite dev; in prod it's /models/ort/.
+      const expectedWasmPaths = import.meta.env.DEV
+        ? '/node_modules/onnxruntime-web/dist/'
+        : '/models/ort/';
+      expect(env.backends.onnx.wasm?.wasmPaths).toBe(expectedWasmPaths);
     });
   });
 

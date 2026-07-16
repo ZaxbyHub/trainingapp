@@ -122,7 +122,7 @@ would otherwise make a build with zero model files falsely report "ready".
 ## 5. Browser LLM — wllama + LFM2-VL (multimodal)
 
 Browser inference uses **wllama** (llama.cpp in WASM, CPU/SIMD, **no WebGPU**)
-running **LFM2-VL-1.6B GGUF + mmproj**. Two pieces are packaged:
+running **LiquidAI LFM2.5-VL-450M GGUF + mmproj**. Two pieces are packaged:
 
 1. **wllama runtime** — `npm run prepare-models` copies, from node_modules:
    - `@wllama/wllama` → `public/models/wllama/wasm/wllama.wasm` (the modern build)
@@ -136,20 +136,17 @@ running **LFM2-VL-1.6B GGUF + mmproj**. Two pieces are packaged:
    browser generation, server mode is unaffected):
 
 ```bash
-# (a) obtain LFM2-VL GGUF + mmproj (e.g. LiquidAI/LFM2-VL-1.6B-GGUF: Q4 weights + mmproj),
+# (a) obtain LFM2.5-VL GGUF + mmproj from LiquidAI/LFM2.5-VL-450M-GGUF on HuggingFace:
+#       LFM2.5-VL-450M-Q4_K_M.gguf     (~229 MB) → rename to model.gguf
+#       mmproj-LFM2.5-VL-450m-Q8_0.gguf (~99 MB)  → rename to mmproj.gguf
 #     then place them at the repo root as:
-#       models/lfm2-vl-1.6b/model.gguf
-#       models/lfm2-vl-1.6b/mmproj.gguf
-# (b) npm run prepare-models   # copies them to public/models/llm/lfm2-vl-1.6b/
+#       models/lfm2.5-vl-450m/model.gguf
+#       models/lfm2.5-vl-450m/mmproj.gguf
+# (b) npm run prepare-models   # copies them to public/models/llm/lfm2.5-vl-450m/
 ```
 
-LFM2-VL-1.6B Q4 is ~1 GB, under wllama's 2 GB/file `ArrayBuffer` limit, so a
-single `model.gguf` works. For a larger quant, split with `llama-gguf-split`
-(`model-00001-of-000NN.gguf`) and update `LLM_GGUF_URL` to the first shard.
-
-If only `LFM2.5-VL` safetensors are available (no prebuilt GGUF), convert at
-packaging time with llama.cpp's `convert_hf_to_gguf.py` plus the multimodal
-projector export, then quantize.
+LFM2.5-VL-450M Q4_K_M is ~229 MB, well under wllama's 2 GB/file `ArrayBuffer`
+limit, so a single `model.gguf` works.
 
 The desktop app already runs the same GGUF family via `llama-cpp-python`, so
 server mode gains VLM support from the same weights.

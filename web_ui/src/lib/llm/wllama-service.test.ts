@@ -40,6 +40,9 @@ vi.mock('@wllama/wllama', () => ({
     supportInputModality = supportInputModality;
     setCompat = setCompat;
   },
+  CacheManager: class {
+    constructor() {}
+  },
 }));
 
 describe('WllamaService', () => {
@@ -84,8 +87,8 @@ describe('WllamaService', () => {
     // Loaded GGUF + mmproj from same-origin /models/llm paths.
     expect(loadModelFromUrl).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: '/models/llm/lfm2-vl-1.6b/model.gguf',
-        mmprojUrl: '/models/llm/lfm2-vl-1.6b/mmproj.gguf',
+        url: '/models/llm/lfm2.5-vl-450m/model.gguf',
+        mmprojUrl: '/models/llm/lfm2.5-vl-450m/mmproj.gguf',
       }),
       expect.objectContaining({ useCache: true })
     );
