@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Launch Document Q&A offline edition (macOS / Linux)
 cd "$(dirname "$0")"
 echo ""

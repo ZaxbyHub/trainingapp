@@ -69,8 +69,11 @@ export interface ReadinessResult {
 const MODEL_REQUIRED_BYTES: Record<string, number> = {
   // Llama-3.2-3B (WebLLM): ~1.9 GB weights + ~300 MB working ≈ 2.3 GB.
   'Llama-3.2-3B-Instruct-q4f16_1-MLC': 2_300_000_000,
-  // LFM2.5-VL-450M Q4_K_M (wllama): ~229 MB GGUF + ~99 MB mmproj + ~270 MB WASM/ctx.
-  'lfm2.5-vl-450m': 600_000_000,
+  // LFM2.5-VL-450M Q4_K_M (wllama): ~229 MB GGUF + ~99 MB mmproj + ~270 MB
+  // WASM/ctx working memory. The InMemoryStorageBackend retains the downloaded
+  // blobs (~328 MB) in JS heap alongside the WASM decode, so the real peak is
+  // ~900 MB — budgeted conservatively at 1 GB to avoid false-passing the gate.
+  'lfm2.5-vl-450m': 1_000_000_000,
 };
 
 /**
@@ -300,7 +303,7 @@ export class ModelReadinessGate {
         recommendations.push(
           `The browser model files ("${modelId}") were not found in this build. ` +
           'Run "npm run prepare-models" to stage the packaged weights, ' +
-          'or rebuild with --no-llm for a server-mode-only archive.'
+          'or switch to API Server mode in Settings.'
         );
       }
     }

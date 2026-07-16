@@ -10,10 +10,10 @@
 
   Key design points:
   - HEAD requests return headers ONLY (no body) — the readiness gate probes
-    model files with HEAD, and reading a 219 MB GGUF into memory for every
+    model files with HEAD, and reading a 229 MB GGUF into memory for every
     probe would be catastrophically slow and error-prone.
   - Large files are streamed (chunked) rather than loaded into memory, so
-    the 219 MB model GGUF doesn't OOM the server.
+    the 229 MB model GGUF doesn't OOM the server.
   - Range requests are supported so wllama/ONNX can byte-range fetch.
 #>
 
@@ -120,24 +120,35 @@ while ($Listener.IsListening) {
             continue
         }
 
-        # Map to file on disk.
+        # Map to file on disk and canonicalize.
         $FilePath = Join-Path $DistDir $Path.TrimStart('/\')
         $FilePath = $FilePath -replace '/', '\'
+        # PRR-003: defense-in-depth canonical-path containment check, matching
+        # the Node server's normalize+startsWith pattern. Prevents any traversal
+        # gadget that the regex above might miss. Append a trailing separator to
+        # the base so a sibling like "dist-evil" doesn't false-match "dist".
+        $ResolvedPath = [System.IO.Path]::GetFullPath($FilePath)
+        $DistDirRoot = if ($DistDir.EndsWith('\')) { $DistDir } else { "$DistDir\" }
+        if (-not $ResolvedPath.StartsWith($DistDirRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            $Response.StatusCode = 403
+            $Response.Close()
+            continue
+        }
 
         # Directory → index.html
-        if ((Test-Path $FilePath -PathType Container)) {
-            $FilePath = Join-Path $FilePath 'index.html'
+        if ((Test-Path $ResolvedPath -PathType Container)) {
+            $ResolvedPath = Join-Path $ResolvedPath 'index.html'
         }
 
         # SPA fallback: if file doesn't exist and has no extension, serve index.html.
-        if (-not (Test-Path $FilePath -PathType Leaf)) {
-            $Ext = [System.IO.Path]::GetExtension($FilePath)
+        if (-not (Test-Path $ResolvedPath -PathType Leaf)) {
+            $Ext = [System.IO.Path]::GetExtension($ResolvedPath)
             if ([string]::IsNullOrEmpty($Ext)) {
-                $FilePath = Join-Path $DistDir 'index.html'
+                $ResolvedPath = Join-Path $DistDir 'index.html'
             }
         }
 
-        if (-not (Test-Path $FilePath -PathType Leaf)) {
+        if (-not (Test-Path $ResolvedPath -PathType Leaf)) {
             $Response.StatusCode = 404
             $Bytes = [System.Text.Encoding]::UTF8.GetBytes('404 Not Found')
             $Response.ContentLength64 = $Bytes.Length
@@ -147,7 +158,7 @@ while ($Listener.IsListening) {
         }
 
         # Determine content type.
-        $Ext = [System.IO.Path]::GetExtension($FilePath).ToLowerInvariant()
+        $Ext = [System.IO.Path]::GetExtension($ResolvedPath).ToLowerInvariant()
         $ContentType = if ($MimeTypes.ContainsKey($Ext)) { $MimeTypes[$Ext] } else { 'application/octet-stream' }
 
         # Cross-origin isolation headers — required for SharedArrayBuffer.
@@ -160,7 +171,7 @@ while ($Listener.IsListening) {
         $Response.Headers.Set('Cache-Control', 'no-cache')
         $Response.ContentType = $ContentType
 
-        $FileLen = (Get-Item $FilePath).Length
+        $FileLen = (Get-Item $ResolvedPath).Length
 
         # ---- HEAD request: headers only, no body ----
         # The readiness gate AND wllama's download progress both read the
@@ -178,10 +189,10 @@ while ($Listener.IsListening) {
         }
 
         # ---- GET request: stream the file ----
-        # Use FileStream + chunked copy so the 219 MB model GGUF doesn't load
+        # Use FileStream + chunked copy so the 229 MB model GGUF doesn't load
         # entirely into memory. Supports Range requests via the stream offset.
         $AcceptRanges = $Request.Headers['Range']
-        $Fs = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+        $Fs = [System.IO.File]::Open($ResolvedPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
         try {
             if ($AcceptRanges) {
                 # Parse "bytes=start-end" (end optional).

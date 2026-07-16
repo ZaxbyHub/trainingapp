@@ -12,7 +12,7 @@
  *   2. Copy the ONNX Runtime WASM binaries (shipped inside node_modules) into
  *      public/models/ort/ so Transformers.js never reaches for the jsdelivr CDN.
  *
- * Phase 2 will extend this to copy/convert/split the LFM2-VL GGUF + mmproj.
+ * Phase 2 will extend this to copy/convert/split the LFM2.5-VL GGUF + mmproj.
  *
  * Usage:  node scripts/prepare-models.mjs   (or: npm run prepare-models)
  * Exit code is non-zero if a required source asset cannot be found.
@@ -278,7 +278,7 @@ if (!NO_LLM) {
   prepareWllamaRuntime();
   prepareBrowserLLM();
 } else {
-  log('--no-llm: skipping browser-LLM runtime (wllama WASM/compat) + LFM2-VL weights.');
+  log('--no-llm: skipping browser-LLM runtime (wllama WASM/compat) + LFM2.5-VL weights.');
 }
 prepareOnnxRuntimeWasm();
 

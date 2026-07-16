@@ -18,16 +18,16 @@
  */
 
 import { createServer } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { createReadStream, existsSync, statSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath, dirname } from 'node:url';
-import { existsSync } from 'node:fs';
+import { exec } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = join(__dirname, 'dist');
 const PORT = parseInt(process.argv[2] || '8080', 10);
 
-const MIME_TYPES: Record<string, string> = {
+const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8',
@@ -51,7 +51,15 @@ if (!existsSync(DIST_DIR)) {
   process.exit(1);
 }
 
-const server = createServer(async (req, res) => {
+// COOP/COEP/CORP headers applied to ALL responses (including errors) for
+// consistent cross-origin isolation (required for SharedArrayBuffer).
+const COI_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+};
+
+const server = createServer((req, res) => {
   try {
     // Parse the URL and prevent path traversal.
     const url = new URL(req.url || '/', `http://localhost:${PORT}`);
@@ -61,7 +69,7 @@ const server = createServer(async (req, res) => {
     // Normalize and prevent directory traversal.
     const filePath = normalize(join(DIST_DIR, pathname));
     if (!filePath.startsWith(DIST_DIR)) {
-      res.writeHead(403);
+      res.writeHead(403, COI_HEADERS);
       res.end('Forbidden');
       return;
     }
@@ -80,25 +88,61 @@ const server = createServer(async (req, res) => {
     }
 
     if (!existsSync(resolvedPath)) {
-      res.writeHead(404);
+      res.writeHead(404, COI_HEADERS);
       res.end('Not found');
       return;
     }
 
-    const data = await readFile(resolvedPath);
     const contentType = MIME_TYPES[extname(resolvedPath)] || 'application/octet-stream';
+    const fileLen = statSync(resolvedPath).size;
 
+    // HEAD request: headers only, no body (used by readiness probes).
+    if (req.method === 'HEAD') {
+      res.writeHead(200, { ...COI_HEADERS, 'Content-Type': contentType, 'Content-Length': fileLen, 'Cache-Control': 'no-cache' });
+      res.end();
+      return;
+    }
+
+    // Range request support (wllama/ONNX use byte-range fetches).
+    const range = req.headers['range'];
+    if (range) {
+      const match = range.match(/bytes=(\d+)-(\d*)/);
+      if (match) {
+        const start = parseInt(match[1], 10);
+        const end = match[2] ? parseInt(match[2], 10) : fileLen - 1;
+        if (start < fileLen && end < fileLen && start <= end) {
+          res.writeHead(206, {
+            ...COI_HEADERS,
+            'Content-Type': contentType,
+            'Content-Length': end - start + 1,
+            'Content-Range': `bytes ${start}-${end}/${fileLen}`,
+            'Cache-Control': 'no-cache',
+          });
+          const stream = createReadStream(resolvedPath, { start, end });
+          stream.on('error', (err) => { console.error(err); try { res.writeHead(500, COI_HEADERS); res.end('Internal server error'); } catch {} });
+          res.on('error', () => stream.destroy());
+          stream.pipe(res);
+          return;
+        }
+      }
+      res.writeHead(416, COI_HEADERS);
+      res.end('Range Not Satisfiable');
+      return;
+    }
+
+    // Full GET: stream the file (avoid loading large GGUF into memory).
     res.writeHead(200, {
+      ...COI_HEADERS,
       'Content-Type': contentType,
-      // Cross-origin isolation headers — required for SharedArrayBuffer,
-      // which enables multi-threaded WASM (ONNX Runtime, wllama).
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Content-Length': fileLen,
       'Cache-Control': 'no-cache',
     });
-    res.end(data);
+    const stream = createReadStream(resolvedPath);
+    stream.on('error', (err) => { console.error(err); try { res.writeHead(500, COI_HEADERS); res.end('Internal server error'); } catch {} });
+    res.on('error', () => stream.destroy());
+    stream.pipe(res);
   } catch (err) {
-    res.writeHead(500);
+    res.writeHead(500, COI_HEADERS);
     res.end('Internal server error');
     console.error(err);
   }
@@ -117,7 +161,6 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('');
 
   // Auto-open the browser (best-effort, platform-specific).
-  const { exec } = await import('node:child_process');
   const platform = process.platform;
   const openCmd =
     platform === 'win32' ? `start "" "${url}"` :

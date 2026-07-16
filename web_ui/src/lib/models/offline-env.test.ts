@@ -65,4 +65,35 @@ describe('configureOfflineEnv', () => {
     RerankerService.getInstance().dispose();
     EmbeddingService.getInstance().dispose();
   });
+
+  // PRR-005: numThreads guard — forces numThreads=1 when not cross-origin
+  // isolated to prevent the ONNX Runtime proxy-worker silent deadlock.
+  it('forces numThreads=1 when not cross-origin isolated', async () => {
+    const originalCOI = (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated;
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated = false;
+
+    vi.resetModules();
+    const { configureOfflineEnv } = await import('./offline-env');
+    const { env } = await import('@huggingface/transformers');
+    configureOfflineEnv();
+
+    expect(env.backends.onnx.wasm?.numThreads).toBe(1);
+
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated = originalCOI;
+  });
+
+  it('allows multi-threading when cross-origin isolated', async () => {
+    const originalCOI = (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated;
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated = true;
+
+    vi.resetModules();
+    const { configureOfflineEnv } = await import('./offline-env');
+    const { env } = await import('@huggingface/transformers');
+    configureOfflineEnv();
+
+    // When isolated, numThreads should be > 1 (capped at 4 by hardwareConcurrency).
+    expect(env.backends.onnx.wasm?.numThreads).toBeGreaterThan(1);
+
+    (globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated = originalCOI;
+  });
 });

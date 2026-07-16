@@ -12,7 +12,7 @@ desktop app's GGUF policy). They are assembled into `web_ui/public/models/` at
 packaging time by `web_ui/scripts/prepare-models.mjs`.
 
 > Status: **Phase 1** covers the embedding model + ONNX Runtime WASM. The
-> LFM2-VL GGUF (browser LLM, wllama) lands in Phase 2 and is documented below as
+> LFM2.5-VL GGUF (browser LLM, wllama) lands in Phase 2 and is documented below as
 > the target procedure.
 
 ---
@@ -73,7 +73,7 @@ npm run build:offline      # = prepare-models && tsc/vite build && validate-buil
    `public/models/manifest.json` is absent from `dist/models/`. The manifest is
    the **single source of truth** shared with `src/lib/models/model-manifest.ts`
    (imported at runtime), so the TS readiness gate and the build validator
-   cannot drift. Pass `--no-llm` to skip the browser-LLM runtime + LFM2-VL
+   cannot drift. Pass `--no-llm` to skip the browser-LLM runtime + LFM2.5-VL
    weights group (for an embeddings-only / server-mode archive where the
    multi-GB LLM weights are deliberately absent). (It does not grep bundled JS
    for CDN hostnames — vendored ML libs embed default-CDN constants that survive
@@ -119,7 +119,7 @@ would otherwise make a build with zero model files falsely report "ready".
 
 ---
 
-## 5. Browser LLM — wllama + LFM2-VL (multimodal)
+## 5. Browser LLM — wllama + LFM2.5-VL (multimodal)
 
 Browser inference uses **wllama** (llama.cpp in WASM, CPU/SIMD, **no WebGPU**)
 running **LiquidAI LFM2.5-VL-450M GGUF + mmproj**. Two pieces are packaged:
@@ -176,11 +176,11 @@ To run the server serving the archive: `python api_server.py` (or
 
 ## 7. Server-side VLM (multimodal) — deferred extension
 
-The **browser** engine (wllama + LFM2-VL mmproj, Phase 4) already provides
+The **browser** engine (wllama + LFM2.5-VL mmproj, Phase 4) already provides
 verified offline multimodal (image) Q&A. A **server-side** VLM path
 (image → `llama-cpp-python` with the mmproj) is intentionally **not yet wired**:
 it requires constructing a model-specific multimodal chat handler with
-`llama-cpp-python >= 0.3.0` and must be validated against the actual LFM2-VL
+`llama-cpp-python >= 0.3.0` and must be validated against the actual LFM2.5-VL
 GGUF on real hardware. To add it: build `GGUFBackend` with a clip/mmproj chat
 handler, accept an optional `image_base64` on the `/ask` request, and route
 multimodal turns through `create_chat_completion` with `image_url` content.

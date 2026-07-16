@@ -83,7 +83,7 @@ function isPresent(url: string): Promise<boolean> {
  * consumer of the download response body, and read() must return those bytes
  * for the model to load.
  */
-class InMemoryStorageBackend {
+export class InMemoryStorageBackend {
   private store = new Map<string, Blob>();
 
   isSupported(): boolean {
@@ -97,13 +97,19 @@ class InMemoryStorageBackend {
   async write(key: string, stream: ReadableStream<Uint8Array>): Promise<void> {
     const reader = stream.getReader();
     const chunks: Uint8Array[] = [];
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) chunks.push(value);
+    try {
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) chunks.push(value);
+      }
+      this.store.set(key, new Blob(chunks as BlobPart[]));
+    } finally {
+      // PRR-001: always release the reader lock so a mid-stream error doesn't
+      // leave the ReadableStream permanently locked.
+      reader.releaseLock();
     }
-    this.store.set(key, new Blob(chunks as BlobPart[]));
   }
 
   async getSize(key: string): Promise<number> {
