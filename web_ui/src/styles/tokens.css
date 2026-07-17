@@ -24,9 +24,11 @@
   --color-primary-rgb: 26, 115, 232;
   --color-text-primary: #1a1a2e;
   /* AA-compliant toast/surface tokens (white text, both themes). Verified
-     via the WCAG relative-luminance formula: success 5.02:1, info 5.93:1. */
+     via the WCAG relative-luminance formula: success 5.02:1, info 5.93:1,
+     warning 4.97:1 on the light bubble-assistant surface. */
   --color-success-strong: #15803d;
   --color-info-strong: #0369a1;
+  --color-warning-strong: #a16207;
   --color-surface-elevated: #ffffff;
 
   /* Type scale — font family + sizes */
@@ -96,4 +98,18 @@
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* U6d: respect prefers-reduced-motion. Disable the spin/blink/shimmer loops
+   for users who request reduced motion. StreamingIndicator already guards
+   itself; this covers the boot overlay spinner, the streaming cursor, and
+   LoadingSkeleton's shimmer. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

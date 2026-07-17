@@ -80,6 +80,7 @@ function LoadingOverlay({
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('chat');
+  const [initErrorDismissed, setInitErrorDismissed] = useState(false);
   const { setModelReady, setModelLoadingProgress, browserEngine } = useInferenceMode();
 
   const {
@@ -87,6 +88,7 @@ function AppContent() {
     currentConversationId,
     currentMessages,
     setCurrentMessages,
+    setCurrentConversationId,
     selectConversation,
     newChat,
     saveMessages,
@@ -105,6 +107,7 @@ function AppContent() {
   });
 
   const openSettings = () => setCurrentPage('settings');
+  const goToDocuments = () => setCurrentPage('documents');
 
   // Global Ctrl+, (Open Settings) shortcut, registered here so it works from
   // every page (Documents, Settings, Chat), not just while ChatPage is mounted.
@@ -136,8 +139,11 @@ function AppContent() {
               messages={currentMessages}
               onMessagesChange={setCurrentMessages}
               onSaveConversation={saveMessages}
+              currentConversationId={currentConversationId}
+              setCurrentConversationId={setCurrentConversationId}
               onNewChat={newChat}
               onOpenSettings={openSettings}
+              onNavigateToDocuments={goToDocuments}
             />
           </ErrorBoundary>
         );
@@ -160,11 +166,14 @@ function AppContent() {
               messages={currentMessages}
               onMessagesChange={setCurrentMessages}
               onSaveConversation={saveMessages}
+              currentConversationId={currentConversationId}
+              setCurrentConversationId={setCurrentConversationId}
               onNewChat={newChat}
               onOpenSettings={openSettings}
+              onNavigateToDocuments={goToDocuments}
             />
           </ErrorBoundary>
-        );
+      );
     }
   };
 
@@ -196,6 +205,49 @@ function AppContent() {
         }}>
           <span>{persistenceError}</span>
           <button onClick={clearPersistenceError} aria-label="Dismiss error" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-body)' }}>×</button>
+        </div>
+      )}
+      {/* U3a: boot init-error banner. useServiceInitialization sets both
+          setInitError and setIsInitialized(true) in one synchronous block, so
+          React 18 batches them and the !isInitialized-gated overlay never
+          paints the error. This banner surfaces it POST-init so search/vector
+          init failures are visible. Retry reloads the page (the most reliable
+          re-init, since the hook guards against re-running in-process). */}
+      {initError && !initErrorDismissed && (
+        <div
+          role="status"
+          style={{
+            padding: 'var(--spacing-sm) var(--spacing-md)',
+            backgroundColor: 'rgba(234, 179, 8, 0.12)',
+            border: '1px solid var(--color-warning-strong)',
+            borderRadius: 'var(--radius-sm)',
+            color: 'var(--color-warning-strong)',
+            fontSize: 'var(--font-size-caption)',
+            margin: 'var(--spacing-sm) var(--spacing-md)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 'var(--spacing-md)',
+          }}
+        >
+          <span>Search is degraded — answers may miss information. ({initError})</span>
+          <span style={{ display: 'flex', gap: 'var(--spacing-sm)', flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              style={{ background: 'transparent', border: '1px solid currentColor', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-caption)', padding: '2px var(--spacing-sm)' }}
+            >
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => setInitErrorDismissed(true)}
+              aria-label="Dismiss degraded-search notice"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-body)' }}
+            >
+              ×
+            </button>
+          </span>
         </div>
       )}
       {renderPage()}

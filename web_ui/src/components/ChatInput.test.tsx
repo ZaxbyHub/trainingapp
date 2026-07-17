@@ -45,7 +45,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      expect(screen.getByPlaceholderText('Ask a question...')).toBeInTheDocument();
+      expect(screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)')).toBeInTheDocument();
     });
 
     it('renders Send button initially', () => {
@@ -59,14 +59,14 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} disabled={true} />);
 
-      expect(screen.getByPlaceholderText('Ask a question...')).toBeDisabled();
+      expect(screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)')).toBeDisabled();
     });
 
     it('renders disabled textarea when isLoading is true', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={true} onCancel={vi.fn()} />);
 
-      expect(screen.getByPlaceholderText('Ask a question...')).toBeDisabled();
+      expect(screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)')).toBeDisabled();
     });
   });
 
@@ -75,7 +75,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: '  Hello world  ' } });
 
       const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -88,7 +88,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test message' } });
 
       const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -111,7 +111,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: '   ' } });
 
       const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -126,7 +126,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test' } });
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -137,7 +137,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test\nNew line' } });
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
 
@@ -148,7 +148,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={true} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test' } });
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
@@ -159,7 +159,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'こんにちは' } });
       // Enter confirms an IME candidate — isComposing must prevent send.
       // Construct a real KeyboardEvent with isComposing=true so React's
@@ -208,7 +208,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test' } });
 
       expect(screen.getByRole('button', { name: /clear input/i })).toBeInTheDocument();
@@ -225,7 +225,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={true} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test' } });
 
       expect(screen.queryByRole('button', { name: /clear input/i })).not.toBeInTheDocument();
@@ -235,7 +235,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test message' } });
 
       const clearButton = screen.getByRole('button', { name: /clear input/i });
@@ -248,7 +248,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test' } });
 
       const clearButton = screen.getByRole('button', { name: /clear input/i });
@@ -263,7 +263,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Line 1\nLine 2\nLine 3' } });
 
       // The height should change based on content
@@ -293,7 +293,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test' } });
 
       const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -307,7 +307,7 @@ describe('ChatInput', () => {
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
       const longText = 'A'.repeat(10000);
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: longText } });
 
       expect((textarea as HTMLTextAreaElement).value).toBe(longText);
@@ -317,7 +317,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Test with `code` and **bold** and "quotes"' } });
 
       const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -330,7 +330,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Line 1\nLine 2' } });
 
       // Shift+Enter should not send
@@ -368,7 +368,7 @@ describe('ChatInput', () => {
       await act(async () => { await Promise.resolve(); });
 
       // Type and send
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Describe this image' } });
       fireEvent.click(screen.getByRole('button', { name: /send message/i }));
 
@@ -381,7 +381,7 @@ describe('ChatInput', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} imageUploadEnabled />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'Text only message' } });
       fireEvent.click(screen.getByRole('button', { name: /send message/i }));
 
@@ -401,7 +401,7 @@ describe('ChatInput', () => {
       await act(async () => { await Promise.resolve(); });
 
       // Send
-      const textarea = screen.getByPlaceholderText('Ask a question...');
+      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
       fireEvent.change(textarea, { target: { value: 'hi' } });
       fireEvent.click(screen.getByRole('button', { name: /send message/i }));
 

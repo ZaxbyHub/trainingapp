@@ -333,6 +333,26 @@ export class WebLLMService implements LLMService {
 
     const signal = options?.signal ?? new AbortController().signal;
 
+    // S7: web-llm's `signal` field on chat.completions.create is inert at
+    // runtime (it is not honored by the MLCEngine streaming loop). The REAL
+    // cancellation primitive is engine.interruptGenerate(), invoked via the
+    // service's interrupt() — but the orchestrator/RAG path only has the
+    // AbortSignal. Wire an abort listener here so aborting the signal (from
+    // ChatPage.cancelActiveStream → abortController.abort()) actually stops
+    // the WebGPU generation. Mirrors the wllama path's abort-forwarding.
+    const onAbort = () => {
+      try {
+        this._engine?.interruptGenerate();
+      } catch (err) {
+        console.warn('[WebLLM] interruptGenerate on abort failed', err);
+      }
+    };
+    if (signal.aborted) {
+      onAbort();
+    } else {
+      signal.addEventListener('abort', onAbort);
+    }
+
     try {
       const completion = await this._engine.chat.completions.create({
         messages: messages.map((m) => ({ role: m.role, content: messageContentToText(m.content) })),
@@ -344,6 +364,11 @@ export class WebLLMService implements LLMService {
       });
 
       for await (const chunk of completion) {
+        if (signal.aborted) {
+          // interruptGenerate() causes the async iterator to end/throw; break
+          // defensively if it hasn't yet.
+          break;
+        }
         const content = chunk.choices?.[0]?.delta?.content;
         if (content) {
           yield content;
@@ -355,6 +380,8 @@ export class WebLLMService implements LLMService {
         throw err;
       }
       throw err;
+    } finally {
+      signal.removeEventListener('abort', onAbort);
     }
   }
 

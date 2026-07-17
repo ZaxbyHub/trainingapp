@@ -12,6 +12,7 @@ export function InferenceModeToggle() {
     isModelReady,
     isServerConnected,
     modeError,
+    serverUrl,
     setMode,
     checkServerConnectivity,
   } = useInferenceMode();
@@ -52,8 +53,9 @@ export function InferenceModeToggle() {
   };
 
   const getModeLabel = (): string => {
-    if (mode === 'browser-local') return 'Local';
-    return 'API';
+    // U7b: plain-English labels instead of 'Local'/'API' jargon.
+    if (mode === 'browser-local') return 'On this computer';
+    return 'Company server';
   };
 
   const getTooltipText = (): string => {
@@ -69,6 +71,15 @@ export function InferenceModeToggle() {
 
   const statusColor = getStatusColor();
 
+  // U7b air-gap safety: the toggle is a one-click flip to API mode, so only
+  // render it when an API server is actually configured. When `serverUrl` is
+  // empty the app is browser-local only and the toggle would be a dead control
+  // (and a confusing "Company server" affordance) — hide it and let the parent
+  // layout collapse the slot.
+  if (!serverUrl) {
+    return null;
+  }
+
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
       {/* Status indicator dot */}
@@ -82,6 +93,20 @@ export function InferenceModeToggle() {
           transition: 'background-color 0.2s ease',
         }}
       />
+
+      {/* U7b: visible mode label next to the dot, so the current mode is
+          legible without hovering for the tooltip. */}
+      <span
+        aria-label={getTooltipText()}
+        style={{
+          fontSize: 'var(--font-size-caption)',
+          fontFamily: 'var(--font-family)',
+          color: 'var(--color-text-muted)',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {getModeLabel()}
+      </span>
 
       {/* Mode toggle button */}
       <button

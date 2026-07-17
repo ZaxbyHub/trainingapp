@@ -39,7 +39,12 @@ export interface ChatMessage {
   abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
   /** True when retrieval ran keyword-only because semantic search was unavailable (F4). */
   retrievalDegraded?: boolean;
+  /** Structured error string when generation failed mid-stream (S6). Rendered
+   *  as a styled error card instead of being injected into `content`. */
+  error?: string;
   timestamp: number;
+  /** Transient UI flag — stripped before persistence (S3). Drives the
+   *  streaming cursor; never persisted to IndexedDB. */
   isStreaming?: boolean;
   /** Images the user attached to this message (multimodal). */
   images?: ChatImage[];

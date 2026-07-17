@@ -3,7 +3,7 @@
  * Displays messages, renders markdown, and supports streaming responses.
  */
 
-import { useState, useCallback, useRef, useEffect, type CSSProperties } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react';
 import type { ChatMessage } from '../types/chat';
 import { ChatMessageList } from '../components/ChatMessageList';
 import { ChatInput } from '../components/ChatInput';
@@ -34,11 +34,27 @@ function generateId(): string {
 export interface ChatPageProps {
   messages: ChatMessage[];
   onMessagesChange: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  onSaveConversation: (messages: ChatMessage[], mode: 'server' | 'wllama', modelUsed: string) => void;
+  /** Persist `messages` into the conversation identified by `conversationId`.
+   *  The owning id is captured at send time (S1) so an in-flight stream can
+   *  never write to a conversation other than the one that produced it. */
+  onSaveConversation: (
+    conversationId: string | undefined,
+    messages: ChatMessage[],
+    mode: 'server' | 'wllama',
+    modelUsed: string,
+    onCreate?: (newId: string) => void
+  ) => void;
+  /** The active conversation id (lifted state from useConversations). */
+  currentConversationId: string | undefined;
+  /** Set the active conversation id (also updates the ref mirror). Exposed so
+   *  a send-time-created conversation becomes the owning + active id. */
+  setCurrentConversationId: (id: string | undefined) => void;
   onNewChat: () => void;
   /** Navigate to the Settings page (wired from App). Used by the model-block
    *  overlay's "Open Settings" button and the Ctrl+, shortcut. */
   onOpenSettings: () => void;
+  /** U4: navigate to the Documents page (zero-doc empty-state CTA). */
+  onNavigateToDocuments?: () => void;
 }
 
 export function ChatPage(props: ChatPageProps) {
@@ -57,8 +73,7 @@ const exportButtonStyle: CSSProperties = {
   transition: 'all 0.15s ease',
 };
 
-function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, onNewChat, onOpenSettings }: ChatPageProps) {
-  const MAX_MESSAGES = 200;
+function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments }: ChatPageProps) {
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
   const messages = messagesProp;
   const setMessages = onMessagesChange;
@@ -73,18 +88,109 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // send it without ChatPage owning the textarea state.
   const draftRef = useRef('');
 
-  // Mirror of the current messages so async callbacks (onDone/onError) can read
-  // the latest array without placing side effects inside a state updater.
+  // Mirror of the current messages so async callbacks (onToken) can read the
+  // latest array without placing side effects inside a state updater. NOTE
+  // (S1): onDone/onError do NOT read this ref — they read the owningMessages
+  // snapshot captured at send time, so switching conversations mid-stream
+  // cannot overwrite the switched-FROM conversation with the switched-TO
+  // conversation's messages.
   const messagesRef = useRef<ChatMessage[]>(messages);
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
+  // S1: cancel any in-flight stream when the active conversation changes (a
+  // non-empty→non-empty switch). This is ADDITIVE to the existing
+  // non-empty→empty New-Chat guard below; both must be preserved.
+  const prevConversationIdRef = useRef(currentConversationId);
+  // F1 (reviewer): owning-conversation-id ref for the in-flight stream. Set
+  // synchronously at send time and updated synchronously in the send-time
+  // save's onCreate callback, so runGeneration's onDone/onError read the
+  // CURRENT owning id (which may have just been created) rather than a stale
+  // closure value. Without this, a first-turn send captures
+  // owningConversationId===undefined and onDone later saves with undefined →
+  // a DUPLICATE conversation is created.
+  const owningConversationIdRef = useRef<string | undefined>(currentConversationId);
+  // PRR-001: owning-messages ref for the in-flight stream. Mirrors runGeneration's
+  // local `snapshot` (the owning conversation's messages, updated on each token)
+  // so the switch / unmount / engine-switch effects can read the OWNING
+  // conversation's partial turn — NOT the live `messagesRef`, which a mid-stream
+  // conversation switch reassigns to the switched-TO conversation's messages
+  // (and which the messagesRef-mirror passive effect clobbers before the switch
+  // effect's create runs). Parallels owningConversationIdRef. nulled when the
+  // stream finalizes so stale data can't be re-persisted after completion.
+  const owningMessagesRef = useRef<ChatMessage[] | null>(null);
+  const cancelActiveStream = useCallback(() => {
+    if (tokenStreamManagerRef.current) {
+      tokenStreamManagerRef.current.cancel();
+      tokenStreamManagerRef.current = null;
+    }
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    // S7: also interrupt the LLM engine directly. web-llm's `signal` field is
+    // inert at runtime (web-llm-service wires an abort→interruptGenerate
+    // listener as the real mechanism), so the AbortController above is not
+    // sufficient for WebGPU generation. WllamaService.interrupt aborts its real
+    // internal controller (harmless + desired). interrupt() is on the
+    // LLMService interface (types/llm.ts) and both services implement it.
+    try {
+      getLLMService(browserEngine).interrupt();
+    } catch (err) {
+      console.warn('[ChatPage] LLM interrupt failed during stream cancel', err);
+    }
+    setIsLoading(false);
+  }, [browserEngine]);
+
+  useEffect(() => {
+    if (prevConversationIdRef.current !== currentConversationId && tokenStreamManagerRef.current) {
+      // A conversation switch happened while a stream is active. Finalize the
+      // in-flight assistant message (S3: clear isStreaming so no blinking
+      // cursor), PERSIST the partial turn to the OWNING conversation id
+      // (PRR-001: previously this did not save, and cancel() never fires
+      // onDone/onError, so the partial answer was irrecoverably lost), then
+      // cancel the stream. The owning id is read from the ref (captured at
+      // send time) so the save targets the conversation that produced the
+      // turn, NOT the switched-to one. Mirrors handleCancel + the engine-
+      // switch effect.
+      const owningId = owningConversationIdRef.current;
+      // PRR-001: read the OWNING conversation's messages from the owning
+      // snapshot ref (captured at send time, updated per token) — NOT the live
+      // messagesRef, which a mid-stream switch has already reassigned to the
+      // switched-TO conversation's messages.
+      const owningMessages = owningMessagesRef.current ?? messagesRef.current;
+      const finalized = owningMessages.map((msg) =>
+        msg.isStreaming ? { ...msg, isStreaming: false } : msg
+      );
+      messagesRef.current = finalized;
+      setMessages(finalized);
+      onSaveConversation(owningId, finalized, mode === 'api' ? 'server' : 'wllama', browserEngine);
+      // Clear the owning snapshot so a later switch can't re-persist it.
+      owningMessagesRef.current = null;
+      cancelActiveStream();
+    }
+    prevConversationIdRef.current = currentConversationId;
+  }, [currentConversationId, cancelActiveStream, setMessages, onSaveConversation, mode, browserEngine]);
+
   const isBrowserMode = mode === 'browser-local';
   const isModelBlocked = isBrowserMode && !isModelReady;
   const isInputDisabled = isLoading || isModelBlocked;
-  // Image upload is supported by the multimodal wllama engine in browser-local mode.
-  const canAttachImages = isBrowserMode && browserEngine === 'wllama' && isModelReady;
+  // U8c: image upload requires the multimodal wllama engine AND the loaded
+  // model's actual image-modality support. The previous check only verified
+  // engine name + readiness, so a wllama build with a packaged GGUF but a
+  // missing/broken mmproj would allow image attach then fail at generate().
+  // supportsImages() consults wllama's supportInputModality('image'). Guarded
+  // with try/catch because the service singleton may not be initialized yet.
+  const engineSupportsImages = useMemo(() => {
+    if (!isBrowserMode || browserEngine !== 'wllama' || !isModelReady) return false;
+    try {
+      const svc = getLLMService(browserEngine);
+      return typeof svc.supportsImages === 'function' ? svc.supportsImages() : false;
+    }
+    catch { return false; }
+  }, [isBrowserMode, browserEngine, isModelReady]);
+  const canAttachImages = engineSupportsImages;
 
   // Abort any in-flight generation on a genuine engine switch — NOT on unmount.
   // Disposal of the OLD engine singleton itself now lives in
@@ -112,6 +218,26 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     const prev = prevEngineRef.current;
     prevEngineRef.current = browserEngine;
     if (mode === 'browser-local' && prev !== browserEngine) {
+      // S2/S3: finalize the in-flight assistant message and persist the
+      // partial turn before aborting, so an engine switch doesn't discard
+      // minutes of generation or leave a blinking cursor. PRR-001: read the
+      // OWNING conversation's id + messages from the send-time refs so an
+      // engine switch mid-stream persists the turn that was actually in flight
+      // (the live currentConversationId / messagesRef are the engine-switch
+      // view, which is correct here because an engine switch doesn't change the
+      // active conversation, but using the owning refs is consistent with the
+      // switch + unmount paths and resilient to ordering).
+      const owningId = owningConversationIdRef.current ?? currentConversationId;
+      const owningMessages = owningMessagesRef.current ?? messagesRef.current;
+      const finalized = owningMessages.map((msg) =>
+        msg.isStreaming ? { ...msg, isStreaming: false } : msg
+      );
+      if (owningMessages.some((m) => m.isStreaming)) {
+        messagesRef.current = finalized;
+        setMessages(finalized);
+        onSaveConversation(owningId, finalized, 'wllama', prev);
+        owningMessagesRef.current = null;
+      }
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
@@ -122,7 +248,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       }
       setIsLoading(false);
     }
-  }, [browserEngine, mode]);
+  }, [browserEngine, mode, currentConversationId, onSaveConversation, setMessages]);
 
   // Evaluate model readiness for the selected engine when entering browser-local
   // mode or switching engines. This drives `isModelReady` (and the input gate)
@@ -134,9 +260,36 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     }
   }, [mode, browserEngine]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — finalize + persist the in-flight turn (S2/S3) before
+  // releasing resources. Reads from refs (not closure state) so the latest
+  // values are used even though the effect has an empty dep array.
+  const persistOnUnmountRef = useRef<(messages: ChatMessage[], owningId: string | undefined) => void>(() => {});
+  persistOnUnmountRef.current = (messages, owningId) => {
+    onSaveConversation(owningId, messages, mode === 'api' ? 'server' : 'wllama', browserEngine);
+  };
+  // S2/S3 + PRR-001 unblock: dep array is `[]` so the cleanup fires ONLY on a
+  // genuine unmount, NOT on every conversation switch. Previously the dep was
+  // `[currentConversationId]`; because React runs pending effect DESTROYS
+  // before CREATES on a dep change, that cleanup ran BEFORE the switch
+  // effect's create on an A->B switch — nulling `tokenStreamManagerRef.current`
+  // first and making the PRR-001 switch-effect persist line unreachable (dead
+  // code). With `[]`, the switch effect owns mid-stream persistence on a
+  // conversation switch; this cleanup owns only true unmount. Reads from refs
+  // (owningConversationIdRef + owningMessagesRef, both kept fresh) so the `[]`
+  // dep is safe — no stale closure values.
   useEffect(() => {
     return () => {
+      // S2/S3: if a stream was in flight, finalize flags + persist so unmount
+      // (e.g. navigating away mid-generation) doesn't discard the turn or leave
+      // a blinking cursor persisted.
+      if (tokenStreamManagerRef.current !== null) {
+        const owningId = owningConversationIdRef.current;
+        const owningMessages = owningMessagesRef.current ?? messagesRef.current;
+        const finalized = owningMessages.map((msg) =>
+          msg.isStreaming ? { ...msg, isStreaming: false } : msg
+        );
+        persistOnUnmountRef.current(finalized, owningId);
+      }
       if (clearTimeoutRef.current !== null) {
         clearTimeout(clearTimeoutRef.current);
       }
@@ -154,14 +307,33 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // Run a query for an existing assistant placeholder message. Shared by send +
   // regenerate. `images` carry the raw bytes (not stored on ChatMessage), so
   // regenerate captures them via lastTurnRef.
+  //
+  // S1 fix: `owningConversationId` + `owningMessages` are captured at send
+  // time and threaded through so onDone/onError read from the SNAPSHOT, never
+  // from the live messagesRef (which reassigns on a conversation switch). This
+  // is what prevents a mid-stream switch from overwriting the switched-FROM
+  // conversation with the switched-TO conversation's messages.
   const runGeneration = useCallback((
     text: string,
     images: AttachedImage[] | undefined,
-    assistantMessageId: string
+    assistantMessageId: string,
+    _owningConversationId: string | undefined,
+    owningMessages: ChatMessage[]
   ) => {
     // Create TokenStreamManager for this request
     const streamManager = new TokenStreamManager();
     tokenStreamManagerRef.current = streamManager;
+
+    // A local accumulator for the owning snapshot. onToken writes to BOTH the
+    // live messagesRef (for live UI updates of the active conversation) AND
+    // this snapshot (so onDone/onError persist the correct messages even if
+    // the user switched conversations mid-stream). PRR-001: the snapshot is
+    // ALSO mirrored onto owningMessagesRef so the switch / unmount / engine-
+    // switch effects can read the OWNING conversation's partial turn (the live
+    // messagesRef is clobbered by a mid-stream switch + the messagesRef-mirror
+    // passive effect before those effects' create runs).
+    let snapshot = owningMessages;
+    owningMessagesRef.current = snapshot;
 
     // Wire token callback - append tokens to assistant message.
     // Compute the next array from messagesRef (the always-current mirror),
@@ -175,14 +347,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       );
       messagesRef.current = next;
       setMessages(next);
+      // Mirror into the snapshot so the final save reflects every token.
+      snapshot = next;
+      owningMessagesRef.current = snapshot;
     });
 
     // Wire done callback - finalize message with sources.
     // TokenStreamManager.complete() flushes the token buffer (firing onToken)
-    // and then invokes onDone synchronously in the same call stack, so
-    // messagesRef.current already reflects every streamed token here.
+    // and then invokes onDone synchronously in the same call stack, so the
+    // snapshot already reflects every streamed token here. Read from the
+    // snapshot (NOT messagesRef) so a mid-stream switch cannot mis-target.
     streamManager.onDone((data) => {
-      const updated = messagesRef.current.map((msg) =>
+      const updated = snapshot.map((msg) =>
         msg.id === assistantMessageId
           ? {
               ...msg,
@@ -205,29 +381,54 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
             }
           : msg
       );
-      messagesRef.current = updated;
-      setMessages(updated);
-      // Save to Dexie after stream completes
-      onSaveConversation(updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
+      snapshot = updated;
+      // PRR-001: keep the ref in sync, then null it once the turn is finalized
+      // so a later switch/unmount/engine-switch can't re-persist a completed
+      // turn (the stream manager ref is also nulled below).
+      owningMessagesRef.current = snapshot;
+      // F1: read the owning id from the REF (updated synchronously by the
+      // send-time save's onCreate callback when a first-turn conversation is
+      // created), NOT the captured `owningConversationId` param — which is
+      // undefined on a first turn and would cause a duplicate conversation.
+      const liveOwningId = owningConversationIdRef.current;
+      // Only update live UI state if the user is still on the owning
+      // conversation; otherwise leave the switched-to view untouched.
+      if (currentConversationId === liveOwningId) {
+        messagesRef.current = updated;
+        setMessages(updated);
+      }
+      // Save to Dexie — always to the OWNING id (S1).
+      onSaveConversation(liveOwningId, updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
+        owningMessagesRef.current = null;
       }
     });
 
     // Wire error callback. Like onDone, onError fires synchronously after
-    // flushBuffer() inside TokenStreamManager.error(), so read from the ref.
+    // flushBuffer() inside TokenStreamManager.error(), so read from snapshot.
+    // S6: set the structured `error` field instead of injecting into content.
     streamManager.onError((errorMessage) => {
-      const updated = messagesRef.current.map((msg) =>
+      const updated = snapshot.map((msg) =>
         msg.id === assistantMessageId
-          ? { ...msg, content: msg.content + `\n[Error: ${errorMessage}]`, isStreaming: false }
+          ? { ...msg, error: errorMessage, isStreaming: false }
           : msg
       );
-      messagesRef.current = updated;
-      setMessages(updated);
+      snapshot = updated;
+      owningMessagesRef.current = snapshot;
+      const liveOwningId = owningConversationIdRef.current;
+      if (currentConversationId === liveOwningId) {
+        messagesRef.current = updated;
+        setMessages(updated);
+      }
+      // S2: persist the errored turn to the OWNING id so the partial answer +
+      // user question survive (the save layer strips isStreaming — S3).
+      onSaveConversation(liveOwningId, updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
+        owningMessagesRef.current = null;
       }
     });
 
@@ -328,9 +529,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         }
       })();
     }
-  }, [mode, serverUrl, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress]);
+  }, [mode, serverUrl, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages]);
 
-  const handleSend = useCallback((text: string, attachedImages?: AttachedImage[]) => {
+  const handleSend = useCallback(async (text: string, attachedImages?: AttachedImage[]) => {
     // Prevent overlapping streams
     if (tokenStreamManagerRef.current) return;
 
@@ -359,23 +560,54 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       isStreaming: true,
     };
 
+    // S5: keep the FULL history in state (windowing is render-only, handled in
+    // ChatMessageList). Previously this pruned to MAX_MESSAGES at send time,
+    // which then got persisted wholesale — deleting old messages from
+    // IndexedDB. Persistence now always sees the full array.
     const appended = [...messagesRef.current, userMessage, assistantMessage];
-    if (appended.length > MAX_MESSAGES) {
-      const pruned = appended.slice(appended.length - MAX_MESSAGES);
-      const indicator: ChatMessage = {
-        id: 'hidden-messages-indicator',
-        role: 'system',
-        content: `Earlier messages have been hidden (max ${MAX_MESSAGES} shown).`,
-        timestamp: Date.now(),
-      };
-      messagesRef.current = [indicator, ...pruned];
-    } else {
-      messagesRef.current = appended;
-    }
-    setMessages(messagesRef.current);
+    messagesRef.current = appended;
+    setMessages(appended);
     setIsLoading(true);
-    runGeneration(text, attachedImages, assistantMessageId);
-  }, [runGeneration]);
+
+    // S1+S2: capture the owning conversation id + snapshot at send time, and
+    // persist the user message + placeholder immediately so the turn survives
+    // any later interruption (Stop, error, close, switch). For a first turn
+    // with no current conversation, create one and adopt its id as the owning
+    // id (H4 + F1: prevents a duplicate conversation when onDone later saves).
+    //
+    // F1 (corrected): the send-time save is AWAITED so the owning id ref is
+    // set BEFORE runGeneration starts. The prior approach set the ref
+    // synchronously and relied on saveMessages' onCreate callback to update
+    // it — but onCreate fires inside the async saveMessages after two awaits
+    // (a microtask), so on a fast-complete first turn (warm model / zero-doc
+    // abstain) onDone fired before onCreate resolved, read undefined, and
+    // created a duplicate conversation. Awaiting the save guarantees ordering.
+    owningConversationIdRef.current = currentConversationId;
+    let resolvedOwningId = currentConversationId;
+    try {
+      await onSaveConversation(
+        currentConversationId,
+        appended,
+        mode === 'api' ? 'server' : 'wllama',
+        browserEngine,
+        (newId) => {
+          // First-turn creation: adopt the new id as both the owning id (for
+          // this stream's saves, via the ref) and the active conversation.
+          if (currentConversationId === undefined) {
+            resolvedOwningId = newId;
+          }
+        }
+      );
+    } catch (err) {
+      console.error('[ChatPage] Send-time persistence failed; streaming will proceed without a guaranteed owning id.', err);
+    }
+    if (resolvedOwningId !== currentConversationId) {
+      owningConversationIdRef.current = resolvedOwningId;
+      setCurrentConversationId(resolvedOwningId);
+    }
+
+    runGeneration(text, attachedImages, assistantMessageId, resolvedOwningId, appended);
+  }, [runGeneration, onSaveConversation, mode, browserEngine, currentConversationId, setCurrentConversationId]);
 
   // Re-run the most recent user turn, replacing the last assistant response.
   const handleRegenerate = useCallback(() => {
@@ -394,34 +626,33 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     messagesRef.current = regenerated;
     setMessages(regenerated);
     setIsLoading(true);
-    runGeneration(last.text, last.images, assistantMessageId);
-  }, [runGeneration]);
-
-  // Cancel any in-flight stream and release its resources. Shared by the
-  // explicit Cancel button, Clear Chat, and the external New Chat path
-  // (sidebar) which clears messages without going through ChatPage.
-  const cancelActiveStream = useCallback(() => {
-    if (tokenStreamManagerRef.current) {
-      tokenStreamManagerRef.current.cancel();
-      tokenStreamManagerRef.current = null;
-    }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-      abortControllerRef.current = null;
-    }
-    setIsLoading(false);
-  }, []);
+    // F1: regenerate re-uses the current conversation; set the owning ref so
+    // runGeneration's saves target it.
+    owningConversationIdRef.current = currentConversationId;
+    runGeneration(last.text, last.images, assistantMessageId, currentConversationId, regenerated);
+  }, [runGeneration, currentConversationId]);
 
   const handleCancel = useCallback(() => {
+    // Capture owning id BEFORE cancel (it's from state, survives cancel).
+    const owningId = currentConversationId;
+
     cancelActiveStream();
 
-    // Mark any streaming messages as complete
+    // PRR-005: read messagesRef.current AFTER cancelActiveStream so the
+    // cancel-flushed tail tokens (S4: cancel() flushes the buffer via onToken
+    // before clearing) are included. Previously the snapshot was captured
+    // before cancel, so finalized was derived from a stale array and the
+    // cancel-flushed tokens were lost from both UI and persistence.
     const finalized = messagesRef.current.map((msg) =>
       msg.isStreaming ? { ...msg, isStreaming: false } : msg
     );
     messagesRef.current = finalized;
     setMessages(finalized);
-  }, [cancelActiveStream]);
+    onSaveConversation(owningId, finalized, mode === 'api' ? 'server' : 'wllama', browserEngine);
+    // PRR-001: the in-flight turn is finalized; clear the owning snapshot so a
+    // later switch/unmount/engine-switch can't re-persist it.
+    owningMessagesRef.current = null;
+  }, [cancelActiveStream, currentConversationId, onSaveConversation, mode, browserEngine]);
 
   // If messages are cleared while a stream is in flight (e.g. the sidebar
   // "New Chat" button calls newChat() in App, which empties currentMessages
@@ -588,16 +819,23 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         isStreaming={isLoading}
         onRegenerate={!isLoading && lastTurnRef.current ? handleRegenerate : undefined}
         onSuggestedPrompt={(prompt) => handleSend(prompt)}
+        onNavigateToDocuments={onNavigateToDocuments}
       />
 
-      {/* Streaming Indicator */}
+      {/* Streaming Indicator — U1: during a cold model load (multi-minute on
+          target CPU hardware), show a determinate progress bar instead of the
+          indeterminate "Generating" cursor so the load is visible. */}
       <div
         style={{
           padding: 'var(--spacing-xs) var(--spacing-lg)',
           minHeight: '28px',
         }}
       >
-        <StreamingIndicator isVisible={isLoading} />
+        <StreamingIndicator
+          isVisible={isLoading}
+          modelLoadProgress={isLoading && modelLoadingProgress > 0 && modelLoadingProgress < 100 ? modelLoadingProgress : undefined}
+          modelLoadLabel="Loading the AI model — one-time, may take a few minutes…"
+        />
       </div>
 
       {/* Input */}

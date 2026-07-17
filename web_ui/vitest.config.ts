@@ -55,14 +55,12 @@ export default defineConfig({
       'src/pages/ChatPage.rag.test.tsx',
       'src/pages/ChatPage.server-mode.test.tsx',
       'src/pages/ChatPage.shortcuts.test.tsx',
-      'src/lib/streaming/TokenStreamManager.test.ts',
       'src/lib/inference/InferenceModeContext.test.tsx',
       // Extractor return-shape drift (asserts string, code returns object) and
       // stale model-id expectations. Owned by document-ingestion PR #23.
       'src/lib/processing/docx-extractor.test.ts',
       'src/lib/processing/xlsx-extractor.test.ts',
       'src/lib/processing/pptx-extractor.test.ts',
-      'src/lib/llm/web-llm-service.test.ts',
       'src/lib/llm/webgpu-watchdog.test.ts',
       // Allocates multi-GB page fixtures for TextChunker stress/verification;
       // exceeds the per-fork memory limit under the tuned pool. Owned by

@@ -242,17 +242,48 @@ describe('DocumentList', () => {
       expect(deleteButtons).toHaveLength(2);
     });
 
-    it('calls onDelete with document id when delete button clicked', () => {
+    it('calls onDelete with document id only after confirming (two-step delete, issue #36)', () => {
       const mockOnDelete = vi.fn();
       const documents = [
         createDocument({ id: 'doc-123', fileName: 'delete-me.pdf' }),
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
+      // Step 1: clicking the trash icon arms the inline confirm — it must NOT
+      // call onDelete yet.
+      const deleteButton = screen.getByRole('button', { name: /delete delete-me\.pdf/i });
+      fireEvent.click(deleteButton);
+      expect(mockOnDelete).not.toHaveBeenCalled();
+
+      // The confirm UI is now shown.
+      const confirmButton = screen.getByRole('button', { name: /confirm delete delete-me\.pdf/i });
+      fireEvent.click(confirmButton);
+
+      // Step 2: only Confirm actually fires onDelete.
+      expect(mockOnDelete).toHaveBeenCalledTimes(1);
+      expect(mockOnDelete).toHaveBeenCalledWith('doc-123');
+    });
+
+    it('does NOT call onDelete when Cancel is clicked in the confirm step (issue #36)', () => {
+      const mockOnDelete = vi.fn();
+      const documents = [
+        createDocument({ id: 'doc-123', fileName: 'delete-me.pdf' }),
+      ];
+      render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
+
+      // Arm the confirm.
       const deleteButton = screen.getByRole('button', { name: /delete delete-me\.pdf/i });
       fireEvent.click(deleteButton);
 
-      expect(mockOnDelete).toHaveBeenCalledWith('doc-123');
+      // Cancel the confirm.
+      const cancelButton = screen.getByRole('button', { name: /cancel delete delete-me\.pdf/i });
+      fireEvent.click(cancelButton);
+
+      expect(mockOnDelete).not.toHaveBeenCalled();
+
+      // The trash icon reappears (confirm UI dismissed) and is usable again.
+      const deleteButtonAgain = screen.getByRole('button', { name: /delete delete-me\.pdf/i });
+      expect(deleteButtonAgain).toBeInTheDocument();
     });
 
     it('disables delete button when document is being deleted', () => {

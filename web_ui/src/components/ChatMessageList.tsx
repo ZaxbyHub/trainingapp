@@ -1,17 +1,24 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import type { ChatMessage } from '../types/chat';
 import { ChatMessageBubble } from './ChatMessageBubble';
+import { useDocumentCount } from '../hooks/useDocumentCount';
 
 interface ChatMessageListProps {
   messages: ChatMessage[];
   isStreaming: boolean;
   onRegenerate?: () => void;
   onSuggestedPrompt?: (prompt: string) => void;
+  /** U4: navigate to the Documents page (for the zero-doc empty state). */
+  onNavigateToDocuments?: () => void;
 }
 
 const SCROLL_THRESHOLD = 100;
 /** Re-render interval so relative timestamps ("3m ago") stay fresh. */
 const RELATIVE_TIME_TICK_MS = 60_000;
+/** S5: cap on how many messages RENDER at once. Windowing is render-only —
+ *  the full history remains in state + IndexedDB. The indicator is a
+ *  non-persisted render element, never written to Dexie. */
+const MAX_RENDERED_MESSAGES = 200;
 
 const suggestedPrompts = [
   "Summarize my documents",
@@ -24,7 +31,11 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   isStreaming,
   onRegenerate,
   onSuggestedPrompt,
+  onNavigateToDocuments,
 }) => {
+  // U4: document-count-aware empty state. With zero docs, suggesting prompts
+  // that route through the cold-load then abstain is a guaranteed dead end.
+  const { count: documentCount } = useDocumentCount();
   const containerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   // Render-mirror of isNearBottomRef so we can show/hide the Jump-to-latest button.
@@ -110,11 +121,14 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
     onSuggestedPrompt?.(prompt);
   };
 
-  // The `now` state setter triggers a re-render every 60s. formatRelativeTime
-  // reads Date.now() at render time, so the re-render refreshes the relative
-  // timestamps. `now` itself doesn't need to be passed down — the re-render
-  // is what drives the refresh. The void just silences the unused-var lint.
-  void now;
+  // S8: the `now` tick is passed down to ChatMessageBubble so its React.memo
+  // comparison sees a changed prop and re-renders, recomputing the relative
+  // timestamp. Previously the tick was discarded (`void now;`) and the memo
+  // blocked the re-render, freezing timestamps at first paint.
+  // S5: window the render array to the last MAX_RENDERED_MESSAGES items. This
+  // is render-only — the full `messages` array stays in state + IndexedDB.
+  const hiddenCount = Math.max(0, messages.length - MAX_RENDERED_MESSAGES);
+  const renderedMessages = hiddenCount > 0 ? messages.slice(hiddenCount) : messages;
 
   const containerStyle: React.CSSProperties = {
     flex: 1,
@@ -212,7 +226,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   };
 
   return (
-    <div ref={containerRef} style={containerStyle} role="log" aria-live="polite">
+    <div ref={containerRef} style={containerStyle} role="log">
       {/* Visually-hidden completion announcement. The log container announces
           streamed content mutations, but not the generation-complete
           transition; this status region does. */}
@@ -221,39 +235,92 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
       </div>
       {messages.length === 0 ? (
         <div style={emptyStateStyle} role="region" aria-labelledby="welcome-heading">
-          <div>
-            <h1 id="welcome-heading" style={heroStyle}>How can I help with your documents?</h1>
-            <p style={subtitleStyle}>
-              Ask anything about your uploaded documents. Get summaries, extract insights, or find specific information instantly.
-            </p>
-          </div>
-          <div style={promptsStyle} role="group" aria-label="Suggested prompts">
-            {suggestedPrompts.map((prompt, index) => (
-              <button
-                key={index}
-                type="button"
-                style={cardStyle}
-                onMouseOver={(e) => { Object.assign(e.currentTarget.style, cardHoverStyle); }}
-                onMouseOut={(e) => { Object.assign(e.currentTarget.style, cardStyle); }}
-                onClick={() => handlePromptClick(prompt)}
-                aria-label={`Suggested prompt: ${prompt}`}
-              >
-                {prompt}
-              </button>
-            ))}
-          </div>
+          {documentCount === 0 ? (
+            // U4: zero-doc first-run state. Suggesting "Summarize my documents"
+            // here would route through a multi-minute cold load then abstain —
+            // a guaranteed dead end. Guide the user to add documents first.
+            <>
+              <div>
+                <h1 id="welcome-heading" style={heroStyle}>Add documents to get started</h1>
+                <p style={subtitleStyle}>
+                  Upload your documents and I can summarize them, extract key topics, and answer specific questions — all locally in your browser.
+                </p>
+              </div>
+              {onNavigateToDocuments && (
+                <button
+                  type="button"
+                  style={{
+                    padding: 'var(--spacing-sm) var(--spacing-xl)',
+                    backgroundColor: 'var(--color-primary)',
+                    color: 'var(--color-text-on-primary)',
+                    border: 'none',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: 'var(--font-size-body)',
+                    fontFamily: 'var(--font-family)',
+                    cursor: 'pointer',
+                    fontWeight: 500,
+                  }}
+                  onClick={onNavigateToDocuments}
+                >
+                  Go to Documents
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <div>
+                <h1 id="welcome-heading" style={heroStyle}>How can I help with your documents?</h1>
+                <p style={subtitleStyle}>
+                  Ask anything about your uploaded documents. Get summaries, extract insights, or find specific information instantly.
+                </p>
+              </div>
+              <div style={promptsStyle} role="group" aria-label="Suggested prompts">
+                {suggestedPrompts.map((prompt, index) => (
+                  <button
+                    key={index}
+                    type="button"
+                    style={cardStyle}
+                    onMouseOver={(e) => { Object.assign(e.currentTarget.style, cardHoverStyle); }}
+                    onMouseOut={(e) => { Object.assign(e.currentTarget.style, cardStyle); }}
+                    onClick={() => handlePromptClick(prompt)}
+                    aria-label={`Suggested prompt: ${prompt}`}
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           <div style={footerStyle}>All conversations are stored locally in your browser</div>
         </div>
       ) : (
         <>
-          {messages.map((message, idx) => (
+          {/* S5: render-only windowing indicator. The full history is still in
+              state + IndexedDB; this only limits what is painted. Never
+              persisted (it's a <div>, not a ChatMessage). */}
+          {hiddenCount > 0 && (
+            <div
+              role="status"
+              style={{
+                textAlign: 'center',
+                fontSize: 'var(--font-size-caption)',
+                color: 'var(--color-text-muted)',
+                padding: 'var(--spacing-xs) var(--spacing-sm)',
+                fontStyle: 'italic',
+              }}
+            >
+              {hiddenCount} earlier message{hiddenCount === 1 ? '' : 's'} hidden (showing the last {MAX_RENDERED_MESSAGES})
+            </div>
+          )}
+          {renderedMessages.map((message, idx) => (
             <ChatMessageBubble
               key={message.id}
               message={message}
+              now={now}
               onRegenerate={
                 onRegenerate &&
                 message.role === 'assistant' &&
-                idx === messages.length - 1 &&
+                idx === renderedMessages.length - 1 &&
                 !message.isStreaming
                   ? onRegenerate
                   : undefined

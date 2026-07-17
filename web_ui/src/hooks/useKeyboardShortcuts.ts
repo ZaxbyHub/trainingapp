@@ -29,9 +29,12 @@ export function useKeyboardShortcuts({
             onSendMessage();
           }
           break;
+        // U7d: Ctrl+Shift+L clears the chat. Plain Ctrl+L is the browser's
+        // focus-address-bar shortcut and must NOT be hijacked (the previous
+        // binding overrode it app-wide and double-press cleared the chat).
         case 'l':
         case 'L':
-          if (onClearChat) {
+          if (event.shiftKey && onClearChat) {
             event.preventDefault();
             onClearChat();
           }

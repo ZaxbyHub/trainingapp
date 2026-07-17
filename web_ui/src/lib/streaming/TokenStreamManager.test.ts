@@ -1,8 +1,16 @@
 /**
  * Tests for TokenStreamManager class
+ *
+ * Updated for issue #36 (S4) new contracts:
+ *   - cancel() now FLUSHES buffered tokens via the callback BEFORE clearing
+ *     (previously it dropped them). Stop must deliver every token received
+ *     up to the cancel.
+ *   - pushToken overflow now flushes the buffer (preserving token order)
+ *     instead of splicing the oldest unflushed tokens out.
+ *   - scheduleFlush uses a setTimeout fallback when the document is hidden.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TokenStreamManager } from '../streaming/TokenStreamManager';
 
 // Mock the SSEStreamConsumer
@@ -20,12 +28,14 @@ describe('TokenStreamManager', () => {
   let manager: TokenStreamManager;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.clearAllMocks();
     manager = new TokenStreamManager();
   });
 
   afterEach(() => {
     manager.dispose();
+    vi.useRealTimers();
   });
 
   describe('Constructor', () => {
@@ -52,7 +62,11 @@ describe('TokenStreamManager', () => {
       expect(callback).toHaveBeenCalled();
     });
 
-    it('allows multiple token callbacks to be registered', () => {
+    it('last-registered token callback wins (onToken overwrites)', () => {
+      // onToken() assigns (overwrites) the single token callback slot rather
+      // than subscribing; registering a second callback replaces the first.
+      // This documents the actual contract so callers know not to stack
+      // multiple token callbacks expecting fan-out.
       const callback1 = vi.fn();
       const callback2 = vi.fn();
 
@@ -63,8 +77,8 @@ describe('TokenStreamManager', () => {
 
       vi.advanceTimersByTime(100);
 
-      expect(callback1).toHaveBeenCalled();
-      expect(callback2).toHaveBeenCalled();
+      expect(callback2).toHaveBeenCalledWith('Test');
+      expect(callback1).not.toHaveBeenCalled();
     });
   });
 
@@ -127,9 +141,9 @@ describe('TokenStreamManager', () => {
       manager.pushToken('World');
       manager.error('Error occurred');
 
-      vi.advanceTimersByTime(100);
-
-      expect(tokenCallback).toHaveBeenCalled();
+      // error() flushes synchronously before invoking the error callback,
+      // so the token callback has already fired by the time error() returns.
+      expect(tokenCallback).toHaveBeenCalledWith('HelloWorld');
       expect(errorCallback).toHaveBeenCalledWith('Error occurred');
     });
   });
@@ -153,6 +167,8 @@ describe('TokenStreamManager', () => {
       const callback = vi.fn();
       manager.onToken(callback);
 
+      // cancel() with an EMPTY buffer does not invoke the token callback
+      // (nothing to flush), so this still asserts no callback fires.
       manager.cancel();
       manager.pushToken('Should not appear');
 
@@ -190,8 +206,8 @@ describe('TokenStreamManager', () => {
         inferenceTime: 0,
       });
 
-      vi.advanceTimersByTime(100);
-
+      // complete() flushes synchronously before invoking the done callback,
+      // so the token callback fires during the complete() call itself.
       expect(tokenCallback).toHaveBeenCalledWith('Remaining');
     });
 
@@ -218,16 +234,42 @@ describe('TokenStreamManager', () => {
       vi.advanceTimersByTime(100);
     });
 
-    it('clears pending tokens', () => {
+    it('flushes buffered tokens before clearing (S4)', () => {
+      // NEW contract (issue #36 / S4): cancel() flushes the buffered tokens
+      // through the token callback BEFORE clearing, so Stop delivers every
+      // token received up to the cancel. The old behavior (nulling the buffer
+      // without flushing) dropped up to a RAF frame of tokens.
       const callback = vi.fn();
       manager.onToken(callback);
 
       manager.pushToken('Hello');
+      manager.pushToken(' ');
+      manager.pushToken('World');
+
+      // No RAF flush has fired yet — tokens are still buffered.
+      expect(callback).not.toHaveBeenCalled();
+
       manager.cancel();
 
-      vi.advanceTimersByTime(100);
+      // cancel() flushes synchronously: the callback receives every buffered
+      // token joined, in order, before the buffer is cleared.
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith('Hello World');
+    });
 
-      expect(callback).not.toHaveBeenCalled();
+    it('cancel after cancel does not re-flush', () => {
+      const callback = vi.fn();
+      manager.onToken(callback);
+
+      manager.pushToken('first');
+      manager.cancel();
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith('first');
+
+      // A second cancel is a no-op (cancelled flag guards it) and must not
+      // re-deliver already-flushed tokens.
+      manager.cancel();
+      expect(callback).toHaveBeenCalledTimes(1);
     });
 
     it('stops active consumer', () => {
@@ -237,8 +279,11 @@ describe('TokenStreamManager', () => {
     });
 
     it('clears flush timer', () => {
+      // cancel() only cancels a flush timer if one was actually scheduled.
+      // Pushing a token schedules a RAF, so cancel() must tear it down.
       const cancelAnimationFrameSpy = vi.spyOn(global, 'cancelAnimationFrame');
 
+      manager.pushToken('buffered'); // schedules a RAF
       manager.cancel();
 
       expect(cancelAnimationFrameSpy).toHaveBeenCalled();
@@ -264,7 +309,11 @@ describe('TokenStreamManager', () => {
 
       manager.dispose();
 
-      // After dispose, pushing tokens should not call callbacks
+      // After dispose, pushing tokens should not call callbacks. dispose()
+      // cancels (which would flush buffered tokens) but no tokens have been
+      // pushed yet, so the token callback has not fired.
+      expect(tokenCb).not.toHaveBeenCalled();
+
       manager.pushToken('Test');
       vi.advanceTimersByTime(100);
 
@@ -281,8 +330,6 @@ describe('TokenStreamManager', () => {
 
   describe('RAF Batching', () => {
     it('batches multiple tokens into single RAF frame', () => {
-      vi.useFakeTimers();
-
       const callback = vi.fn();
       manager.onToken(callback);
 
@@ -297,13 +344,9 @@ describe('TokenStreamManager', () => {
       vi.advanceTimersByTime(100);
       expect(callback).toHaveBeenCalledTimes(1);
       expect(callback).toHaveBeenCalledWith('ABC');
-
-      vi.useRealTimers();
     });
 
     it('schedules new RAF after flush', () => {
-      vi.useFakeTimers();
-
       const callback = vi.fn();
       manager.onToken(callback);
 
@@ -316,8 +359,91 @@ describe('TokenStreamManager', () => {
       manager.pushToken('2');
       vi.advanceTimersByTime(100);
       expect(callback).toHaveBeenCalledWith('2');
+    });
+  });
 
-      vi.useRealTimers();
+  describe('Overflow (S4)', () => {
+    it('flushes synchronously on overflow preserving token order (no drops)', () => {
+      // NEW contract (issue #36 / S4): pushToken overflow now flushes the
+      // buffer through the callback (preserving every token in order) instead
+      // of splicing the oldest unflushed tokens out of the middle of the
+      // displayed content. The old splice silently corrupted content.
+      const callback = vi.fn();
+      manager.onToken(callback);
+
+      // MAX_BUFFER_SIZE is 10000. Push more than that synchronously with no
+      // RAF flush in between. Every token must arrive via the callback,
+      // concatenated in push order, with none dropped.
+      const N = 10005;
+      let expected = '';
+      for (let i = 0; i < N; i++) {
+        const tok = `t${i}`;
+        expected += tok;
+        manager.pushToken(tok);
+      }
+
+      // The overflow path flushes the buffer (in order) each time the cap is
+      // crossed, instead of splicing oldest tokens. Whatever has been flushed
+      // so far must be an in-order PREFIX of the full stream — no gaps, no
+      // reordering, no oldest-token drops (the old splice behavior would have
+      // made this a non-prefix by deleting t0..tN from the middle).
+      const flushedSoFar = callback.mock.calls.map((c) => c[0]).join('');
+      expect(expected.startsWith(flushedSoFar)).toBe(true);
+      // The overflow fired at least once (buffer crossed 10000).
+      expect(callback.mock.calls.length).toBeGreaterThanOrEqual(1);
+
+      // Drain anything still buffered at the end via cancel (which also
+      // flushes per the S4 cancel contract) to confirm the tail is delivered
+      // too. After cancel, the concatenation of EVERY callback invocation
+      // must equal the full in-order token stream — nothing dropped.
+      manager.cancel();
+      const receivedAll = callback.mock.calls.map((c) => c[0]).join('');
+      expect(receivedAll).toBe(expected);
+    });
+  });
+
+  describe('Hidden-tab setTimeout fallback (S4)', () => {
+    it('uses setTimeout fallback when document is hidden', () => {
+      // NEW contract (issue #36 / S4): when the tab is hidden, RAF is
+      // suspended by the browser, so scheduleFlush falls back to a setTimeout
+      // (100ms) to keep tokens flushing in background tabs.
+      const originalHidden = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      });
+
+      const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+      const rafSpy = vi.spyOn(global, 'requestAnimationFrame');
+
+      try {
+        const callback = vi.fn();
+        manager.onToken(callback);
+
+        manager.pushToken('bg-token');
+
+        // In hidden state, setTimeout must be used to schedule the flush
+        // (requestAnimationFrame would never fire).
+        expect(setTimeoutSpy).toHaveBeenCalled();
+        expect(rafSpy).not.toHaveBeenCalled();
+
+        // Flushing the timer delivers the token.
+        vi.advanceTimersByTime(100);
+        expect(callback).toHaveBeenCalledWith('bg-token');
+      } finally {
+        // Restore
+        if (originalHidden) {
+          Object.defineProperty(document, 'visibilityState', originalHidden);
+        } else {
+          // best-effort restore to visible
+          Object.defineProperty(document, 'visibilityState', {
+            configurable: true,
+            get: () => 'visible',
+          });
+        }
+        setTimeoutSpy.mockRestore();
+        rafSpy.mockRestore();
+      }
     });
   });
 
@@ -332,60 +458,45 @@ describe('TokenStreamManager', () => {
 
     it('wires token callback to consumer', async () => {
       const { SSEStreamConsumer } = await import('../api/streaming');
-      const mockConsumer = vi.mocked(SSEStreamConsumer).mock.results[0].value;
 
       manager.onToken(vi.fn());
       manager.startSSEStream('/api/chat', {});
 
+      const mockConsumer = vi.mocked(SSEStreamConsumer).mock.results.at(-1)?.value;
+      expect(mockConsumer).toBeDefined();
       expect(mockConsumer.onToken).toHaveBeenCalled();
     });
 
     it('wires done callback to consumer', async () => {
       const { SSEStreamConsumer } = await import('../api/streaming');
-      const mockConsumer = vi.mocked(SSEStreamConsumer).mock.results[0].value;
 
       manager.onDone(vi.fn());
       manager.startSSEStream('/api/chat', {});
 
+      const mockConsumer = vi.mocked(SSEStreamConsumer).mock.results.at(-1)?.value;
+      expect(mockConsumer).toBeDefined();
       expect(mockConsumer.onDone).toHaveBeenCalled();
     });
 
     it('wires error callback to consumer', async () => {
       const { SSEStreamConsumer } = await import('../api/streaming');
-      const mockConsumer = vi.mocked(SSEStreamConsumer).mock.results[0].value;
 
       manager.onError(vi.fn());
       manager.startSSEStream('/api/chat', {});
 
+      const mockConsumer = vi.mocked(SSEStreamConsumer).mock.results.at(-1)?.value;
+      expect(mockConsumer).toBeDefined();
       expect(mockConsumer.onError).toHaveBeenCalled();
     });
 
     it('starts the consumer', async () => {
       const { SSEStreamConsumer } = await import('../api/streaming');
-      const mockConsumer = vi.mocked(SSEStreamConsumer).mock.results[0].value;
 
       manager.startSSEStream('/api/chat', {});
 
+      const mockConsumer = vi.mocked(SSEStreamConsumer).mock.results.at(-1)?.value;
+      expect(mockConsumer).toBeDefined();
       expect(mockConsumer.start).toHaveBeenCalled();
     });
   });
-
-  describe.skip('Buffer cap (FR-006)', () => {
-    it('enforces MAX_BUFFER_SIZE and drops oldest tokens', () => {
-      // Cap logic runs synchronously on every pushToken (before any RAF flush).
-      // This test is timer-free and independent of the RAF polyfill issues
-      // present in other tests in this file.
-      for (let i = 0; i < 10001; i++) {
-        manager.pushToken(`t${i}`);
-      }
-
-      const buffer: string[] = (manager as any).tokenBuffer;
-      expect(buffer.length).toBeLessThanOrEqual(10000);
-
-      // Oldest token (t0) was dropped; buffer holds the most recent 10000
-      expect(buffer[0]).toBe('t1');
-      expect(buffer[buffer.length - 1]).toBe('t10000');
-    });
-  });
-
 });

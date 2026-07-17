@@ -9,10 +9,25 @@ import '@testing-library/jest-dom';
 import { ChatMessageList } from './ChatMessageList';
 import type { ChatMessage } from '../types/chat';
 
+// U4: ChatMessageList now keys its empty state off useDocumentCount(). In
+// jsdom the underlying raw-IndexedDB document store throws ("indexedDB is
+// not defined") so the hook reports count=0 — which would route every
+// existing "How can I help" / suggested-prompt test into the zero-doc branch
+// and silently stop exercising that path. Default the mock to count>0 so the
+// legacy empty-state behavior is tested as before; the zero-doc branch is
+// covered explicitly below.
+const mockUseDocumentCount = vi.fn();
+vi.mock('../hooks/useDocumentCount', () => ({
+  useDocumentCount: (...args: unknown[]) => mockUseDocumentCount(...args),
+}));
+
 describe('ChatMessageList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     cleanup();
+    // Default: documents present so the legacy "How can I help" + suggested
+    // prompts empty state is exercised.
+    mockUseDocumentCount.mockReturnValue({ count: 3, loading: false });
   });
 
   afterEach(() => {
@@ -364,6 +379,55 @@ describe('ChatMessageList', () => {
       // The visually-hidden status region should now carry the completion text.
       const status = screen.getByRole('status');
       expect(status.textContent).toContain('Response complete');
+    });
+  });
+
+  describe('Zero-document empty state (U4)', () => {
+    it('renders the add-documents hero when documentCount is 0', () => {
+      mockUseDocumentCount.mockReturnValue({ count: 0, loading: false });
+
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
+
+      expect(screen.getByText('Add documents to get started')).toBeInTheDocument();
+      // The doc-present hero must NOT render in the zero-doc branch.
+      expect(screen.queryByText('How can I help with your documents?')).not.toBeInTheDocument();
+      // And no suggested-prompt buttons (those route through a cold load then
+      // abstain when there are no documents — a guaranteed dead end).
+      expect(screen.queryByLabelText('Suggested prompt: Summarize my documents')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Suggested prompt: What are the key topics?')).not.toBeInTheDocument();
+      expect(screen.queryByLabelText('Suggested prompt: Find specific information')).not.toBeInTheDocument();
+    });
+
+    it('does NOT render the "Go to Documents" button when onNavigateToDocuments is omitted', () => {
+      mockUseDocumentCount.mockReturnValue({ count: 0, loading: false });
+
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
+
+      expect(screen.queryByRole('button', { name: /go to documents/i })).not.toBeInTheDocument();
+    });
+
+    it('renders the "Go to Documents" button and calls onNavigateToDocuments on click', () => {
+      mockUseDocumentCount.mockReturnValue({ count: 0, loading: false });
+      const onNavigate = vi.fn();
+
+      render(<ChatMessageList messages={[]} isStreaming={false} onNavigateToDocuments={onNavigate} />);
+
+      const button = screen.getByRole('button', { name: /go to documents/i });
+      expect(button).toBeInTheDocument();
+
+      fireEvent.click(button);
+      expect(onNavigate).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the doc-present hero when documentCount > 0', () => {
+      mockUseDocumentCount.mockReturnValue({ count: 5, loading: false });
+
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
+
+      expect(screen.getByText('How can I help with your documents?')).toBeInTheDocument();
+      expect(screen.queryByText('Add documents to get started')).not.toBeInTheDocument();
+      // Suggested prompts render in the doc-present branch.
+      expect(screen.getByLabelText('Suggested prompt: Summarize my documents')).toBeInTheDocument();
     });
   });
 });

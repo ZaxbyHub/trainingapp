@@ -2,7 +2,34 @@
  * Tests for DocumentsPage search index integration (Task 8.2)
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import React from 'react';
+
+// PRR-009: mock the ToastProvider module so we can spy on `showToast` calls
+// precisely (rather than asserting on rendered toast DOM). The factory keeps a
+// pass-through ToastProvider that just renders its children, so every existing
+// test that wraps a render in <ToastProvider> continues to work unchanged —
+// the only difference is no real toast DOM is rendered (none of the existing
+// tests assert on toast text in the DOM; they assert on DocumentsPage-rendered
+// notices or on persisted state).
+const showToastSpy = vi.fn();
+vi.mock('../components/ToastProvider', () => ({
+  // Pass-through provider: render children, ignore toasts (we assert via spy).
+  ToastProvider: ({ children }: { children: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children),
+  useToast: () => ({ showToast: showToastSpy }),
+}));
+// Bind the mocked ToastProvider for JSX usage in renders below. (vi.mock is
+// hoisted above imports, so this resolves to the pass-through factory above.)
+import { ToastProvider } from '../components/ToastProvider';
+// RTL auto-cleanup does not register reliably when @testing-library/react is
+// loaded via dynamic import inside each test (the afterEach hook is registered
+// too late). Several tests below bail on a failed assertion BEFORE reaching
+// their explicit `unmount()`, which would leak the mounted component into the
+// shared jsdom document and cause later tests' `document.querySelector` to hit
+// a STALE DropZone input from an earlier test. Importing `cleanup` and calling
+// it in afterEach guarantees every render is torn down between tests.
+import { cleanup } from '@testing-library/react';
 
 // Mock the embedding service
 const mockEmbeddingService = {
@@ -110,6 +137,16 @@ describe('DocumentsPage search index integration', () => {
     mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
     mockVectorIndex.initialize.mockClear();
     mockVectorIndex.initialize.mockResolvedValue(undefined);
+    // PRR-009: reset the shared toast spy between tests.
+    showToastSpy.mockClear();
+  });
+
+  // Tear down any mounted component between tests. Critical because several
+  // tests bail on a failed assertion before their explicit `unmount()`, and a
+  // leaked DocumentsPage leaves its DropZone input in the shared document,
+  // sending later tests' file-drop events to the wrong instance.
+  afterEach(() => {
+    cleanup();
   });
 
   describe('processFile indexing flow', () => {
@@ -255,7 +292,7 @@ describe('DocumentsPage search index integration', () => {
       // ensureEmbeddingServiceReady resolves false → ingestion must error.
       mockEnsureEmbeddingServiceReady.mockResolvedValue(false);
 
-      const { unmount } = render(<DocumentsPage />);
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
 
       // Wait for the initial load to finish, then drop a file.
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
@@ -321,7 +358,7 @@ describe('DocumentsPage search index integration', () => {
       mockVectorIndex.isReady.mockReturnValue(true);
       mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
 
-      const { unmount } = render(<DocumentsPage />);
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['in-flight content'], 'inflight.txt', { type: 'text/plain' });
@@ -344,7 +381,9 @@ describe('DocumentsPage search index integration', () => {
       // Trigger deletion of the still-processing document. handleDelete should
       // await the in-flight processFile, so it stays pending while extraction
       // is blocked. We don't await the delete here; we fire it and let it hang.
-      // Find the delete button for the row (aria-label="Delete <filename>").
+      // U5: DocumentList uses a two-step inline confirmation — first click the
+      // "Delete <filename>" trigger to arm the confirm, then click "Confirm
+      // delete <filename>" to actually fire onDelete (which awaits processFile).
       await waitFor(() => {
         const btns = document.querySelectorAll('button[aria-label^="Delete "]');
         expect(btns.length).toBeGreaterThan(0);
@@ -352,6 +391,14 @@ describe('DocumentsPage search index integration', () => {
       const deleteButton = document.querySelector('button[aria-label^="Delete "]') as HTMLButtonElement;
       await act(async () => {
         deleteButton.click();
+      });
+      // Arm step done; now fire the actual confirm to trigger handleDelete.
+      await waitFor(() => {
+        expect(document.querySelector('button[aria-label^="Confirm delete "]')).toBeTruthy();
+      });
+      const confirmButton = document.querySelector('button[aria-label^="Confirm delete "]') as HTMLButtonElement;
+      await act(async () => {
+        confirmButton.click();
       });
 
       // The delete is now in flight and waiting on processFile. removeByDocId
@@ -410,7 +457,7 @@ describe('DocumentsPage search index integration', () => {
       mockVectorIndex.isReady.mockReturnValue(true);
       mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
 
-      const { unmount, container } = render(<DocumentsPage />);
+      const { unmount, container } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       // Drop a file with the same name+size as the existing document.
@@ -442,16 +489,26 @@ describe('DocumentsPage search index integration', () => {
       mockVectorIndex.isReady.mockReturnValue(true);
       mockKeywordIndex.isReady.mockReturnValue(true);
 
-      const { unmount } = render(<DocumentsPage />);
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       // Click delete on the ready document.
+      // U5: DocumentList uses a two-step inline confirmation — click the
+      // "Delete <filename>" trigger to arm, then "Confirm delete <filename>"
+      // to actually fire onDelete (which cancels the stale debounced save and
+      // re-arms it with the post-delete list).
       await waitFor(() => {
         expect(document.querySelector('button[aria-label^="Delete "]')).toBeTruthy();
       });
       const saveCountBefore = mockSaveDocuments.mock.calls.length;
       await act(async () => {
         (document.querySelector('button[aria-label^="Delete "]') as HTMLButtonElement).click();
+      });
+      await waitFor(() => {
+        expect(document.querySelector('button[aria-label^="Confirm delete "]')).toBeTruthy();
+      });
+      await act(async () => {
+        (document.querySelector('button[aria-label^="Confirm delete "]') as HTMLButtonElement).click();
       });
 
       // After delete settles, the most recent save must NOT contain the deleted doc.
@@ -474,7 +531,7 @@ describe('DocumentsPage search index integration', () => {
       // upload that mutates state within the 500ms debounce window, then
       // immediately unmount — the pending save should flush.
       mockEnsureEmbeddingServiceReady.mockResolvedValue(false); // error fast, no encode
-      const { unmount } = render(<DocumentsPage />);
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['flush-test'], 'flush.txt', { type: 'text/plain' });
@@ -499,6 +556,254 @@ describe('DocumentsPage search index integration', () => {
         return docs?.some((d) => d.fileName === 'flush.txt');
       });
       expect(sawFlushEntry).toBe(true);
+    });
+  });
+
+  describe('PRR-008a: per-document indexing cancel (U2)', () => {
+    test('cancel mid-indexing aborts the AbortController and sets a terminal "Indexing cancelled" error', async () => {
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
+
+      // Park vectorIndex.save() on a deferred we control. save() is called at
+      // the end of the embedding try-block (DocumentsPage.tsx:293); while it is
+      // parked, the run is MID-indexing (status 'processing', encodeBatch
+      // already completed). We cancel here, then release save() so the run
+      // proceeds to keyword indexing and hits the next throwIfCancelled()
+      // checkpoint (line 323), which throws 'Indexing cancelled' -> the outer
+      // catch records terminal error state. This faithfully exercises the
+      // cancel path: abort() is called while indexing, and the checkpoint the
+      // source actually uses to terminate the run raises.
+      const releaseSave: Array<() => void> = [];
+      const saveEntered = new Promise<void>((resolve) => {
+        releaseSave.push(resolve);
+      });
+      const saveBlocked = new Promise<void>((resolve) => {
+        releaseSave.push(resolve);
+      });
+      let encodeCalled = false;
+      mockEmbeddingService.isReady.mockReturnValue(true);
+      mockVectorIndex.isReady.mockReturnValue(true);
+      mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
+      mockEmbeddingService.encodeBatch.mockImplementation(
+        async (texts: string[]) => {
+          encodeCalled = true;
+          return texts.map(() => new Array(384).fill(0));
+        }
+      );
+      mockVectorIndex.save.mockImplementation(async () => {
+        releaseSave[0](); // signal save was reached (run is mid-indexing)
+        await saveBlocked; // park until the test releases
+      });
+
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      const file = new File(['cancel me'], 'cancel.txt', { type: 'text/plain' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      // Wait until the run has reached vectorIndex.save() — i.e. encodeBatch
+      // completed and we are genuinely mid-indexing.
+      await waitFor(() => expect(encodeCalled).toBe(true));
+      await saveEntered;
+
+      // The Cancel button is rendered by DocumentList during 'processing' with
+      // aria-label "Cancel indexing <filename>".
+      await waitFor(() => {
+        expect(
+          document.querySelector('button[aria-label^="Cancel indexing "]')
+        ).toBeTruthy();
+      });
+
+      // Fire cancel. handleCancelIndexing calls controller.abort(); releasing
+      // save() lets the run reach the throwIfCancelled() checkpoint after the
+      // keyword-index phase, which raises 'Indexing cancelled'.
+      const cancelButton = document.querySelector(
+        'button[aria-label^="Cancel indexing "]'
+      ) as HTMLButtonElement;
+      await act(async () => {
+        cancelButton.click();
+      });
+      // Release the parked save so the run can advance to the checkpoint.
+      releaseSave[1]();
+
+      // The document must reach a terminal 'error' state with the cancellation
+      // message. Verified via the persisted saveDocuments payload (the source
+      // of truth for terminal state).
+      await waitFor(() => {
+        const calls = mockSaveDocuments.mock.calls;
+        const last = calls[calls.length - 1]?.[0] as
+          | Array<{ fileName: string; status: string; errorMessage?: string }>
+          | undefined;
+        const doc = last?.find((d) => d.fileName === 'cancel.txt');
+        expect(doc?.status).toBe('error');
+        expect(doc?.errorMessage).toBe('Indexing cancelled');
+      });
+
+      // Cancellation is user-initiated: the source intentionally does NOT fire
+      // an error toast (the terminal 'Indexing cancelled' state is sufficient).
+      expect(
+        showToastSpy.mock.calls.some(([, type]) => type === 'error')
+      ).toBe(false);
+
+      unmount();
+    });
+  });
+
+  describe('PRR-008b: embedding progress maps to the 78->95 band', () => {
+    test('encodeBatch onProgress(5,10) updates the progressbar aria-valuenow to 78 + round(5/10*17) = 87', async () => {
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
+
+      // Capture the onProgress callback passed to encodeBatch (2nd arg). Park
+      // the encode so we can drive onProgress ourselves and observe the mapped
+      // progress in the DOM before the run completes.
+      let capturedOnProgress: ((processed: number, total: number) => void) | undefined;
+      const releaseEncode: Array<() => void> = [];
+      const encodeEntered = new Promise<void>((resolve) => {
+        releaseEncode.push(resolve);
+      });
+      mockEmbeddingService.isReady.mockReturnValue(true);
+      mockVectorIndex.isReady.mockReturnValue(true);
+      mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
+      mockEmbeddingService.encodeBatch.mockImplementation(
+        async (_texts: string[], onProgress?: (processed: number, total: number) => void) => {
+          capturedOnProgress = onProgress;
+          releaseEncode[0]();
+          await new Promise<void>(() => {
+            /* park forever; test drives progress via capturedOnProgress */
+          });
+          return [];
+        }
+      );
+
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      const file = new File(['progress mapping'], 'progress.txt', { type: 'text/plain' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      await waitFor(() => expect(mockEmbeddingService.encodeBatch).toHaveBeenCalled());
+      await encodeEntered;
+      await waitFor(() => expect(capturedOnProgress).toBeDefined());
+
+      // Drive the captured onProgress with (processed=5, total=10). The source
+      // maps this to 78 + round((5/10) * 17) = 78 + 9 = 87.
+      await act(async () => {
+        capturedOnProgress!(5, 10);
+      });
+
+      // The processing row renders a progressbar with aria-valuenow reflecting
+      // the mapped value. Wait for React to flush the state update.
+      await waitFor(() => {
+        const bar = document.querySelector(
+          'div[role="progressbar"]'
+        ) as HTMLElement | null;
+        expect(bar).toBeTruthy();
+        expect(bar?.getAttribute('aria-valuenow')).toBe('87');
+      });
+
+      // Explicitly assert the mapped value equals the documented formula.
+      const bar = document.querySelector('div[role="progressbar"]') as HTMLElement;
+      const expected = 78 + Math.round((5 / 10) * 17);
+      expect(expected).toBe(87);
+      expect(Number(bar.getAttribute('aria-valuenow'))).toBe(expected);
+      // And that it falls within the reserved embedding band [78, 95].
+      expect(Number(bar.getAttribute('aria-valuenow'))).toBeGreaterThanOrEqual(78);
+      expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThanOrEqual(95);
+
+      unmount();
+    });
+  });
+
+  describe('PRR-009: showToast call sites (U3b)', () => {
+    test('delete-success fires showToast("Document deleted", "success")', async () => {
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
+
+      // Seed a ready document so handleDelete can run its full path.
+      mockLoadDocuments.mockResolvedValueOnce([
+        {
+          id: 'del-toast-1',
+          fileName: 'toastdel.txt',
+          fileSize: 42,
+          fileType: '.txt',
+          status: 'ready',
+          progress: 100,
+          uploadedAt: 1000,
+        },
+      ]);
+      mockVectorIndex.isReady.mockReturnValue(true);
+      mockKeywordIndex.isReady.mockReturnValue(true);
+
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      // U5: two-step inline delete confirmation.
+      await waitFor(() => {
+        expect(document.querySelector('button[aria-label^="Delete "]')).toBeTruthy();
+      });
+      await act(async () => {
+        (document.querySelector('button[aria-label^="Delete "]') as HTMLButtonElement).click();
+      });
+      await waitFor(() => {
+        expect(document.querySelector('button[aria-label^="Confirm delete "]')).toBeTruthy();
+      });
+      await act(async () => {
+        (document.querySelector('button[aria-label^="Confirm delete "]') as HTMLButtonElement).click();
+      });
+
+      // handleDelete's success path calls showToast('Document deleted', 'success').
+      await waitFor(() => {
+        expect(showToastSpy).toHaveBeenCalledWith('Document deleted', 'success');
+      });
+
+      unmount();
+    });
+
+    test('a vector-index addBatch failure fires a showToast with type "error" (semantic-search failure path)', async () => {
+      const { render, waitFor, act } = await import('@testing-library/react');
+      const { DocumentsPage } = await import('./DocumentsPage');
+
+      // Make addBatch reject. processFile catches it inside the vector-index
+      // try and calls showToast('Failed to index document for semantic search.', 'error')
+      // (source line ~300), then continues. The doc still reaches 'ready'.
+      mockEmbeddingService.isReady.mockReturnValue(true);
+      mockVectorIndex.isReady.mockReturnValue(true);
+      mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
+      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
+      mockVectorIndex.addBatch.mockRejectedValueOnce(new Error('vector index write failed'));
+
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
+      await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
+
+      const file = new File(['toast fail'], 'toastfail.txt', { type: 'text/plain' });
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      await act(async () => {
+        Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+
+      // Assert the specific semantic-search failure toast fired with type error.
+      await waitFor(() => {
+        expect(showToastSpy).toHaveBeenCalledWith(
+          'Failed to index document for semantic search.',
+          'error'
+        );
+      });
+      // And at least one error-type toast fired overall.
+      expect(
+        showToastSpy.mock.calls.some(([, type]) => type === 'error')
+      ).toBe(true);
+
+      unmount();
     });
   });
 

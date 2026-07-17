@@ -144,6 +144,10 @@ function renderChatPage(onOpenSettings: () => void = () => {}) {
       onMessagesChange={() => {}}
       onSaveConversation={() => {}}
       onNewChat={() => {}}
+      currentConversationId={undefined}
+
+      setCurrentConversationId={() => {}}
+
       onOpenSettings={onOpenSettings}
     />
   );

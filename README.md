@@ -83,7 +83,7 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 ### Chat UI (Phase 3)
 - **Streaming Chat Interface**: Full-featured chat page (`ChatPage.tsx`) with real-time token streaming display using RAF-batched updates via `TokenStreamManager`
 - **Role-Based Message Bubbles**: Distinct styling for user, assistant, and system messages with relative timestamps ("2m ago", "just now")
-- **Inline Markdown Renderer**: Zero-dependency markdown parser supporting bold, italic, inline code, fenced code blocks, ordered/unordered lists, and links with URL validation (rejects javascript: and data: URLs)
+- **Inline Markdown Renderer**: react-markdown + remark-gfm based renderer supporting CommonMark + GFM (tables, strikethrough, task lists, autolinks, nested emphasis), fenced code blocks with language chips and per-block copy, and a URL allowlist (allows http/https/mailto/tel; rejects javascript:, data:, and scheme-less/relative URLs)
 - **Source Citation Pills**: Expandable/collapsible source pills with filename truncation, full path reveal on click, and one-click copy-to-clipboard
 - **Inference Mode Toggle**: Status indicator (green/yellow/red) for browser-local vs API mode with server connectivity check against `/auth/status` endpoint
 - **Streaming Cursor Animation**: Blinking cursor (`@keyframes blink`) appended to assistant messages during streaming for visual feedback
@@ -225,7 +225,7 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 | `ChatMessageList.tsx` | `src/components/` | Centered transcript (768px max-width), rich empty state with suggested prompts (Phase 2) |
 | `ChatMessageBubble.tsx` | `src/components/` | Role-based messages: assistant full-width prose, user 75% bubbles, action-row copy (Phase 2) |
 | `ChatInput.tsx` | `src/components/` | Raised card composer with focus feedback, elevation shadow, 20px radius (Phase 2) |
-| `MarkdownRenderer.tsx` | `src/components/` | Zero-dependency inline markdown parser |
+| `MarkdownRenderer.tsx` | `src/components/` | react-markdown + remark-gfm renderer (CommonMark + GFM, URL allowlist) |
 | `SourceCitation.tsx` | `src/components/` | Expandable citation pills with copy-to-clipboard |
 | `InferenceModeToggle.tsx` | `src/components/` | Status dot (green/yellow/red) for browser-local vs API mode |
 | `StreamingIndicator.tsx` | `src/components/` | Bouncing dots animation during generation |
@@ -965,7 +965,7 @@ doc_qa_app/
 │   │   │   ├── ChatMessageBubble.tsx # Role-based message bubbles (Phase 3)
 │   │   │   ├── ChatMessageList.tsx   # Scrollable message container (Phase 3)
 │   │   │   ├── ChatInput.tsx         # Input with send/cancel (Phase 3)
-│   │   │   ├── MarkdownRenderer.tsx  # Zero-dependency markdown (Phase 3)
+│   │   │   ├── MarkdownRenderer.tsx  # react-markdown + remark-gfm (Phase 3)
 │   │   │   ├── SourceCitation.tsx    # Expandable citation pills (Phase 3)
 │   │   │   ├── InferenceModeToggle.tsx # Mode status toggle (Phase 3)
 │   │   │   ├── StreamingIndicator.tsx  # Bouncing dots animation (Phase 3)

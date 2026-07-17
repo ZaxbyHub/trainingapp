@@ -269,7 +269,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             onKeyDown={handleKeyDown}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
-            placeholder="Ask a question..."
+            placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
             disabled={isLoading || disabled}
             rows={1}
             style={{

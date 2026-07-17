@@ -21,6 +21,10 @@ export function SidebarConversationItem({
   onDelete,
 }: SidebarConversationItemProps) {
   const [hovered, setHovered] = useState(false);
+  // U6b: track keyboard/programmatic focus on the row so a visible focus ring
+  // replaces the bare `outline: 'none'`, and the kebab menu is revealed for
+  // keyboard users (not just on mouse hover).
+  const [isFocused, setIsFocused] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
@@ -152,6 +156,8 @@ export function SidebarConversationItem({
       onKeyDown={handleRootKeyDown}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      onFocus={() => setIsFocused(true)}
+      onBlur={() => setIsFocused(false)}
       aria-current={isSelected ? 'page' : undefined}
       style={{
         position: 'relative',
@@ -171,9 +177,15 @@ export function SidebarConversationItem({
           : 'var(--color-text-on-bubble-assistant)',
         cursor: isRenaming ? 'default' : 'pointer',
         textAlign: 'left',
-        transition: 'background-color 150ms ease',
+        transition: 'background-color 150ms ease, box-shadow 150ms ease',
         gap: 'var(--spacing-xs)',
         outline: 'none',
+        // U6b: replace the bare outline:none with a visible focus ring driven
+        // by focus state (covers both keyboard and programmatic focus). Uses a
+        // box-shadow so it renders outside the row's rounded background.
+        boxShadow: isFocused
+          ? '0 0 0 2px rgb(var(--color-primary-rgb), 0.5)'
+          : 'none',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', width: '100%' }}>
@@ -215,7 +227,7 @@ export function SidebarConversationItem({
             aria-haspopup="menu"
             aria-expanded={isMenuOpen || isDeleteConfirmOpen}
             style={{
-              opacity: hovered ? 1 : 0,
+              opacity: hovered || isFocused ? 1 : 0,
               transition: 'opacity 150ms ease',
               backgroundColor: 'transparent', border: 'none', color: 'inherit',
               fontSize: '20px', lineHeight: 1, padding: 'var(--spacing-xs)',

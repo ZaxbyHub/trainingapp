@@ -1290,5 +1290,70 @@ describe('RAGOrchestrator', () => {
       expect(complete.data.retrievalDegraded).toBe(true);
       expect(complete.data.abstain).not.toBe(true);
     });
+
+    // U8a / PRR-010: a multimodal question with an attached image must NOT
+    // abstain on an empty corpus. The abstain guard's `&& !(options.images?.length)`
+    // clause is what keeps the pipeline alive so buildMessages can forward the
+    // image to the VLM. This is a TRUE regression test: revert that clause and
+    // the pipeline would abstain (the LLM would never be called and there would
+    // be no image part in any message), failing both assertions below.
+    test('U8a: image-on-empty-corpus does NOT abstain, falls through to the VLM (PRR-010)', async () => {
+      const mockEmbedding = createMockEmbedding();
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      // Empty corpus — the condition that would normally trigger F2 abstention.
+      mockVectorIndex.search.mockResolvedValue([]);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue([]);
+
+      // Capture the message array handed to the LLM so we can assert the image
+      // part survived the fall-through into buildMessages.
+      let capturedMessages: LLMMessage[] | null = null;
+      mockWebLLMService.generateComplete.mockImplementation(async (messages: LLMMessage[]) => {
+        capturedMessages = messages;
+        return 'a screenshot of a dashboard';
+      });
+
+      // A real-ish image payload: a few PNG-ish bytes in an ArrayBuffer.
+      const imageData = new ArrayBuffer(8);
+      new Uint8Array(imageData).set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query(
+        "what's in this screenshot?",
+        {
+          streamTokens: false,
+          rerank: false,
+          images: [{ data: imageData, mimeType: 'image/png' }],
+        }
+      )) {
+        events.push(ev);
+      }
+
+      // 1. The pipeline must NOT yield an abstaining complete event. (If the
+      //    U8a clause were removed, this would be the failure mode.)
+      const complete = events.find((e) => e.type === 'complete');
+      expect(complete).toBeDefined();
+      expect(complete.data.abstain).not.toBe(true);
+
+      // 2. The pipeline fell through to generation: the LLM was invoked, and
+      //    the user message carries the image part (data is the same
+      //    ArrayBuffer we passed in). buildMessages builds a multimodal content
+      //    array only when images are present, so observing an `image` part
+      //    proves both the fall-through AND the image-forwarding path.
+      expect(mockWebLLMService.generateComplete).toHaveBeenCalledTimes(1);
+      expect(capturedMessages).not.toBeNull();
+      const userMessage = capturedMessages!.find((m) => m.role === 'user');
+      expect(userMessage).toBeDefined();
+      expect(Array.isArray(userMessage!.content)).toBe(true);
+      const imagePart = (userMessage!.content as Array<{ type: string; data?: unknown }>)
+        .find((p) => p.type === 'image');
+      expect(imagePart).toBeDefined();
+      expect(imagePart!.data).toBe(imageData);
+    });
   });
 });

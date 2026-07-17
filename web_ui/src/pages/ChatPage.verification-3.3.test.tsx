@@ -153,6 +153,10 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -199,6 +203,10 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -236,6 +244,10 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -338,6 +350,10 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 

@@ -110,6 +110,10 @@ export interface LLMService {
   isReady(): boolean;
   /** Interrupt an in-progress generation. */
   interrupt(): void;
+  /** U8c: true when the loaded model accepts image inputs (multimodal).
+   *  Optional — WebLLMService returns false; WllamaService consults
+   *  wllama.supportInputModality('image'). */
+  supportsImages?(): boolean;
   /** Release resources held by the engine. */
   dispose(): void;
 }
