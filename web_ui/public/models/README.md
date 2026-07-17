@@ -31,9 +31,9 @@ public/models/
 │       ├── wllama.wasm
 │       └── wllama.js
 └── llm/                              # GGUF browser-LLM weights for wllama (optional)
-    └── lfm2.5-vl-450m/
-        ├── model.gguf               # LiquidAI LFM2.5-VL-450M Q4_K_M (~229 MB)
-        └── mmproj.gguf              # multimodal vision projector (~99 MB, enables image input)
+    └── gemma-4-e2b-it/
+        ├── model.gguf               # Google Gemma 4 E2B-it Q4_K_M (~1.5 GB)
+        └── mmproj.gguf              # multimodal vision projector (~150 MB, enables image input)
 ```
 
 ## How files get here

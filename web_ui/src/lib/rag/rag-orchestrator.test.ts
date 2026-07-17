@@ -1242,8 +1242,10 @@ describe('RAGOrchestrator', () => {
       const mockEmbedding = createMockEmbedding();
       // Two chunks: the first (higher score) fits the budget, the second (lower
       // score, same size) overflows it. This exercises the budget accumulation
-      // + drop branch, which the all-or-nothing tests do not.
-      const big = 'y'.repeat(10000);
+      // + drop branch, which the all-or-nothing tests do not. Chunk size is
+      // calibrated to DEFAULT_N_CTX=8192: budget ≈ (8192 - reserved) * 4 chars,
+      // so one ~20k-char chunk fits and two (~40k chars) overflow.
+      const big = 'y'.repeat(20000);
       const fused = [
         { docId: 'd-keep', chunkIndex: 0, score: 0.9, text: big },
         { docId: 'd-drop', chunkIndex: 0, score: 0.8, text: big },

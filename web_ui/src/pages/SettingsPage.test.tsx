@@ -71,7 +71,7 @@ import type { PackagedModelsReport } from '../lib/models/model-manifest';
 const checkPackagedModelsMock = vi.fn((): Promise<PackagedModelsReport | null> => Promise.resolve(null));
 vi.mock('../lib/models/model-manifest', () => ({
   checkPackagedModels: (..._args: unknown[]) => checkPackagedModelsMock(),
-  LLM_MODEL_DIR: 'lfm2.5-vl-450m',
+  LLM_MODEL_DIR: 'gemma-4-e2b-it',
 }));
 
 // Mock detectEngineCapability so it doesn't do real WebGPU probes in jsdom.
@@ -571,9 +571,9 @@ describe('SettingsPage', () => {
     // First arg is the model id — for wllama it's LLM_MODEL_DIR. We use the
     // explicit literal here because model-manifest is mocked in this test file,
     // so importing LLM_MODEL_DIR would read the mock (tautological). The real
-    // value is 'lfm2.5-vl-450m' (model-manifest.ts LLM_MODEL_DIR). If that
+    // value is 'gemma-4-e2b-it' (model-manifest.ts LLM_MODEL_DIR). If that
     // constant changes, update this literal AND the mock factory's LLM_MODEL_DIR.
-    expect(call[0]).toBe('lfm2.5-vl-450m');
+    expect(call[0]).toBe('gemma-4-e2b-it');
   });
 
   test('clicking a radio circle changes selection exactly once (no double-fire) (issue #24 F9)', async () => {

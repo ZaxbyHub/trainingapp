@@ -13,7 +13,7 @@
  *
  * Group handling (manifest v2 `group` field):
  *   - `core`    — always enforced (embedding + ORT runtime).
- *   - `llm`     — the browser-LLM runtime (wllama WASM/compat) + LFM2.5-VL weights.
+ *   - `llm`     — the browser-LLM runtime (wllama WASM/compat) + Gemma 4 E2B-it weights.
  *                  Enforced by default; skipped when `--no-llm` is passed (for
  *                  embeddings-only / server-mode builds where the multi-GB LLM
  *                  weights are deliberately absent).

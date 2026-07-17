@@ -87,8 +87,8 @@ describe('WllamaService', () => {
     // Loaded GGUF + mmproj from same-origin /models/llm paths.
     expect(loadModelFromUrl).toHaveBeenCalledWith(
       expect.objectContaining({
-        url: '/models/llm/lfm2.5-vl-450m/model.gguf',
-        mmprojUrl: '/models/llm/lfm2.5-vl-450m/mmproj.gguf',
+        url: '/models/llm/gemma-4-e2b-it/model.gguf',
+        mmprojUrl: '/models/llm/gemma-4-e2b-it/mmproj.gguf',
       }),
       expect.objectContaining({ useCache: true })
     );

@@ -105,11 +105,12 @@ export const WLLAMA_COMPAT_WORKER_URL = `${WLLAMA_COMPAT_BASE}wllama.js`;
 /** Base directory for packaged GGUF LLM weights (wllama). */
 export const LLM_MODELS_BASE = `${MODELS_BASE}/llm`;
 
-/** Packaged browser LLM: LFM2.5-VL-450M (vision-language) for wllama. */
-export const LLM_MODEL_DIR = 'lfm2.5-vl-450m';
+/** Packaged browser LLM: Google Gemma 4 E2B-it (multimodal vision-language) for wllama. */
+export const LLM_MODEL_DIR = 'gemma-4-e2b-it';
 /**
- * GGUF weights URL passed to wllama `loadModelFromUrl`. LFM2.5-VL-450M Q4_K_M is
- * ~229 MB — well under wllama's 2 GB/file limit, so a single unsplit file is used.
+ * GGUF weights URL passed to wllama `loadModelFromUrl`. Gemma 4 E2B-it Q4_K_M is
+ * ~1.5 GB — under wllama's 2 GB/file limit, so a single unsplit file is used.
+ * ~2.3B effective parameters (~5.1B total with Per-Layer Embeddings), 128K context.
  */
 export const LLM_GGUF_URL = `${LLM_MODELS_BASE}/${LLM_MODEL_DIR}/model.gguf`;
 /** Multimodal projector (mmproj) URL, passed via wllama ModelSource.mmprojUrl. */
