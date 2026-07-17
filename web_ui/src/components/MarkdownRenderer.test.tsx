@@ -14,9 +14,12 @@ describe('MarkdownRenderer', () => {
       expect(screen.getByText('Hello, world!')).toBeInTheDocument();
     });
 
-    it('renders empty string', () => {
+    it('renders empty string without crashing', () => {
       const { container } = render(<MarkdownRenderer content="" />);
-      expect(container.firstChild).toBeNull();
+      // The renderer always wraps output in a styled <div> host; empty content
+      // simply yields no markdown children inside it. Assert it does not throw
+      // and produces no list/heading/table structure.
+      expect(container.querySelector('ol, ul, table, h1, h2, h3, h4, h5, h6')).toBeNull();
     });
   });
 
@@ -49,6 +52,25 @@ describe('MarkdownRenderer', () => {
 
       expect(screen.getByText('const str = "Hello \\"World\\"";')).toBeInTheDocument();
     });
+
+    it('renders a copy button and language chip for a fenced code block (issue #36)', () => {
+      const content = '```js\nconsole.log(1)\n```';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      // A copy button exists with an accessible name containing "Copy".
+      const copyButton = container.querySelector('button');
+      expect(copyButton).not.toBeNull();
+      const copyAria = copyButton!.getAttribute('aria-label') || '';
+      const copyText = copyButton!.textContent || '';
+      expect(copyAria.toLowerCase()).toContain('copy');
+
+      // The language chip renders the fence's language ("js").
+      const chips = Array.from(container.querySelectorAll('span')).map((s) => s.textContent);
+      expect(chips).toContain('js');
+
+      // And the code body is present.
+      expect(container.textContent).toContain('console.log(1)');
+    });
   });
 
   describe('List Parsing', () => {
@@ -77,6 +99,54 @@ describe('MarkdownRenderer', () => {
       // Bold/code inline parsing splits each item across multiple span/code
       // elements, so assert on the list text rather than a single node.
       expect(screen.getAllByText(/Item with/).length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('groups a loose ordered list (blank lines between items) into ONE <ol> (issue #36)', () => {
+      // The old regex parser fragmented this into two separate <ol> elements
+      // because of the blank line. react-markdown correctly treats it as a
+      // single "loose" ordered list with two <li> children.
+      const content = '1. a\n\n2. b';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      const ols = container.querySelectorAll('ol');
+      expect(ols.length).toBe(1);
+
+      const lis = ols[0].querySelectorAll('li');
+      expect(lis.length).toBe(2);
+      // Loose-list items are wrapped in <p>, so trim the surrounding whitespace.
+      expect(lis[0].textContent?.trim()).toBe('a');
+      expect(lis[1].textContent?.trim()).toBe('b');
+    });
+
+    it('preserves the marker value via the <ol start> attribute (issue #36)', () => {
+      // Starting at "3." sets start="3" on the <ol> rather than resetting to 1.
+      const content = '3. c\n4. d';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      const ol = container.querySelector('ol');
+      expect(ol).not.toBeNull();
+      expect(ol!.getAttribute('start')).toBe('3');
+
+      const lis = ol!.querySelectorAll('li');
+      expect(lis.length).toBe(2);
+      expect(lis[0].textContent).toBe('c');
+      expect(lis[1].textContent).toBe('d');
+    });
+
+    it('keeps a bare leading year intact (issue #36)', () => {
+      // CommonMark treats a bare "1969. " line as a list item; react-markdown
+      // emits an <ol start="1969">. The acceptance criterion is "year intact":
+      // assert the year survives into the rendered DOM (via the start attr)
+      // and the rest of the sentence renders as the item body.
+      const content = '1969. It was a great year';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      const ol = container.querySelector('ol');
+      expect(ol).not.toBeNull();
+      // The year is preserved as the list's starting marker.
+      expect(ol!.getAttribute('start')).toBe('1969');
+      // And the body text renders.
+      expect(container.textContent).toContain('It was a great year');
     });
   });
 
@@ -115,10 +185,13 @@ describe('MarkdownRenderer', () => {
 
     it('renders bold text with __', () => {
       const content = 'This is __bold__ text.';
-      const { container } = render(<MarkdownRenderer content={content} />);
+      render(<MarkdownRenderer content={content} />);
 
-      // The regex only matches ** pattern, not __
-      expect(container.textContent).toContain('This is __bold__ text.');
+      // Issue #36: the rewritten renderer (react-markdown + remark-gfm) now
+      // correctly parses __bold__ as <strong> (the old regex parser only
+      // matched ** and left the underscores literal).
+      const bold = screen.getByText('bold');
+      expect(bold.tagName).toBe('STRONG');
     });
   });
 
@@ -129,6 +202,25 @@ describe('MarkdownRenderer', () => {
 
       const italic = screen.getByText('italic');
       expect(italic.tagName).toBe('EM');
+    });
+
+    it('renders italic text with _ (issue #36)', () => {
+      const content = 'This is _italic_ text.';
+      render(<MarkdownRenderer content={content} />);
+
+      // remark-gfm parses _italic_ into <em>.
+      const italic = screen.getByText('italic');
+      expect(italic.tagName).toBe('EM');
+    });
+  });
+
+  describe('Inline Formatting - Strikethrough (issue #36)', () => {
+    it('renders ~~strike~~ as <del>', () => {
+      const content = 'This is ~~strike~~ text.';
+      render(<MarkdownRenderer content={content} />);
+
+      const del = screen.getByText('strike');
+      expect(del.tagName).toBe('DEL');
     });
   });
 
@@ -179,6 +271,32 @@ describe('MarkdownRenderer', () => {
       expect(container.textContent).toContain('Code:');
       expect(container.textContent).toContain('with nested marks.');
     });
+
+    it('does NOT turn a markdown link inside inline code into a live <a> (issue #36)', () => {
+      const content = '`[a](https://b)`';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      // The whole `[a](https://b)` is inline code — no <a> should be rendered.
+      expect(container.querySelector('a')).toBeNull();
+      const code = container.querySelector('code');
+      expect(code).not.toBeNull();
+      expect(code!.textContent).toBe('[a](https://b)');
+    });
+  });
+
+  describe('GFM Tables (issue #36)', () => {
+    it('renders a pipe table as a <table> element', () => {
+      const content = '| a | b |\n|---|---|\n| 1 | 2 |';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      const table = container.querySelector('table');
+      expect(table).not.toBeNull();
+      // Header + body cells render.
+      expect(container.textContent).toContain('a');
+      expect(container.textContent).toContain('b');
+      expect(container.textContent).toContain('1');
+      expect(container.textContent).toContain('2');
+    });
   });
 
   describe('Inline Formatting - Links', () => {
@@ -226,6 +344,36 @@ describe('MarkdownRenderer', () => {
       expect(link).not.toBeInTheDocument();
     });
 
+    it('strips scheme-relative URLs like //evil.com/y (issue #36)', () => {
+      // The old parser resolved this against a placeholder base and produced a
+      // live open-redirect link. The new urlTransform rejects scheme-less URLs.
+      const content = '[x](//evil.com/y)';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      expect(container.textContent).toContain('x');
+      // No live <a> is rendered.
+      expect(container.querySelector('a')).toBeNull();
+      expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    });
+
+    it('strips root-relative URLs like /settings (issue #36)', () => {
+      const content = '[x](/settings)';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      expect(container.textContent).toContain('x');
+      expect(container.querySelector('a')).toBeNull();
+      expect(screen.queryByRole('link')).not.toBeInTheDocument();
+    });
+
+    it('renders a sanitized https link with the href intact (issue #36)', () => {
+      const content = '[x](https://valid.com)';
+      const { container } = render(<MarkdownRenderer content={content} />);
+
+      const a = container.querySelector('a');
+      expect(a).not.toBeNull();
+      expect(a!.getAttribute('href')).toBe('https://valid.com');
+    });
+
     it('allows mailto: URLs', () => {
       const content = 'Contact [us](mailto:test@example.com).';
       render(<MarkdownRenderer content={content} />);
@@ -244,14 +392,15 @@ describe('MarkdownRenderer', () => {
       expect(link).toHaveAttribute('href', 'tel:+1234567890');
     });
 
-    it('renders invalid URLs as plain text', () => {
+    it('renders invalid URLs as plain text (no live link)', () => {
       const content = 'Check [this](not-a-url).';
       const { container } = render(<MarkdownRenderer content={content} />);
 
-      // The text content should be present regardless of whether the URL
-      // validates (the URL `not-a-url` may resolve relative to the placeholder
-      // base; assert on content presence, not link absence).
+      // `not-a-url` is scheme-less with no path separator, so urlTransform
+      // rejects it (returns '') → no <a> element renders. The link text is
+      // still visible as plain text.
       expect(container.textContent).toContain('this');
+      expect(container.querySelector('a')).toBeNull();
     });
 
     it('handles links with special characters', () => {

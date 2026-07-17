@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { DropZone } from '../components/DropZone';
 import { DocumentList } from '../components/DocumentList';
 import { LoadingSkeleton } from '../components/LoadingSkeleton';
+import { useToast } from '../components/ToastProvider';
 import type { DocumentEntry } from '../types/document';
 import { extractDocument, SUPPORTED_EXTENSIONS } from '../lib/processing/extractor-factory';
 import { TextChunker } from '../lib/processing/text-chunker';
@@ -21,6 +22,8 @@ function generateId(): string {
 }
 
 export function DocumentsPage() {
+  // U3b: surface user-facing failures (and delete success) as toasts.
+  const { showToast } = useToast();
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -37,6 +40,10 @@ export function DocumentsPage() {
   // F3: in-flight processFile promises keyed by docId, so handleDelete can wait
   // for processing to settle before removing chunks (avoids orphan chunks).
   const processingPromisesRef = useRef<Map<string, Promise<void>>>(new Map());
+  // U2: per-document AbortControllers keyed by docId. processFile arms one at
+  // start and checks controller.signal between stages; the UI Cancel button
+  // calls controller.abort() so the next check throws (caught -> terminal error).
+  const cancelControllersRef = useRef<Map<string, AbortController>>(new Map());
 
   // F9: surface the re-index requirement once. The flag is set by VectorIndex
   // on version mismatch; cleared here on dismiss so the user sees it once.
@@ -90,6 +97,7 @@ export function DocumentsPage() {
         setDocuments(recovered);
       } catch (error) {
         console.error('Failed to load documents:', error);
+        showToast('Failed to load documents. Please reload the page.', 'error');
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -122,6 +130,7 @@ export function DocumentsPage() {
         await saveDocuments(latestDocumentsRef.current);
       } catch (error) {
         console.error('Failed to save documents:', error);
+        showToast('Failed to save document changes. They may not persist after reload.', 'error');
       }
     }, 500);
 
@@ -156,6 +165,18 @@ export function DocumentsPage() {
     const run = async () => {
       const chunker = new TextChunker();
 
+      // U2: arm a per-document AbortController so the UI Cancel button can stop
+      // indexing before the next batch. Replaced on every processFile invocation.
+      const controller = new AbortController();
+      cancelControllersRef.current.set(docId, controller);
+      // Helper: if the user cancelled, mark the doc terminal and throw so the
+      // outer catch records a single 'Indexing cancelled' error.
+      const throwIfCancelled = () => {
+        if (controller.signal.aborted) {
+          throw new Error('Indexing cancelled');
+        }
+      };
+
     try {
       // Update status to processing
       setDocuments((prev) =>
@@ -166,6 +187,7 @@ export function DocumentsPage() {
 
       // Extract text from document
       const extractionResult = await extractDocument(file);
+      throwIfCancelled(); // U2: check cancel after extraction
 
       setDocuments((prev) =>
         prev.map((doc) =>
@@ -191,6 +213,7 @@ export function DocumentsPage() {
           doc.id === docId ? { ...doc, progress: 75 } : doc
         )
       );
+      throwIfCancelled(); // U2: check cancel before model init
 
       // F2: ensure BOTH the embedding service and the vector index are ready
       // before deciding whether to vector-index. The embedding model is
@@ -230,9 +253,34 @@ export function DocumentsPage() {
       // source (filename) and page so vector search results carry real text and
       // citation metadata (F1/F7). NOTE: this minimal metadata capture overlaps
       // with PR-4 (#23), which owns broader ingestion work.
+      //
+      // U2: the embedding loop is the long pole. encodeBatch already supports an
+      // onProgress callback (embedding-service.ts:225), so map its (processed,
+      // total) onto the indexing band of the progress bar. Earlier milestones
+      // reserved 30 (start) / 60 (extracted) / 75 (chunked) / 78 (model ready).
+      // Embedding runs the bar from 78 up to 95; the post-embedding keyword +
+      // finalize stages fill 90-100 below. Stage label is surfaced via the
+      // existing errorMessage field (used creatively as in-flight status text)
+      // WITHOUT changing the DocumentEntry type; cleared on success.
+      setDocuments((prev) =>
+        prev.map((doc) =>
+          doc.id === docId
+            ? { ...doc, errorMessage: 'Generating embeddings\u2026' }
+            : doc
+        )
+      );
       try {
         const texts = chunks.map((c) => c.text);
-        const vectors = await embeddingService.encodeBatch(texts);
+        const vectors = await embeddingService.encodeBatch(texts, (processed, total) => {
+          if (total <= 0) return;
+          // Map embedding progress onto the 78 -> 95 band.
+          const embeddingProgress = 78 + Math.round((processed / total) * 17);
+          setDocuments((prev) =>
+            prev.map((doc) =>
+              doc.id === docId ? { ...doc, progress: embeddingProgress } : doc
+            )
+          );
+        });
         const entries = chunks.map((chunk, i) => ({
           docId: chunk.docId!,
           chunkIndex: chunk.chunkIndex,
@@ -245,11 +293,25 @@ export function DocumentsPage() {
         await vectorIndex.save();
       } catch (indexError) {
         console.error('Failed to add to vector index:', indexError);
+        // U2: a cancel surfaces here as an abort; rethrow so the outer handler
+        // records the terminal 'Indexing cancelled' state rather than silently
+        // continuing to keyword indexing.
+        if (controller.signal.aborted) throw indexError;
+        showToast('Failed to index document for semantic search.', 'error');
         // Continue so keyword indexing can proceed
       }
 
       // Keyword index: add text chunks
       if (keywordIndex.isReady()) {
+        // U2: stage label for the keyword-indexing phase (reuses errorMessage
+        // creatively; cleared on success below).
+        setDocuments((prev) =>
+          prev.map((doc) =>
+            doc.id === docId
+              ? { ...doc, errorMessage: 'Indexing keywords\u2026' }
+              : doc
+          )
+        );
         try {
           keywordIndex.addDocuments(chunks);
           await keywordIndex.save();
@@ -258,11 +320,14 @@ export function DocumentsPage() {
           // Continue so document is still marked as processed
         }
       }
+      throwIfCancelled(); // U2: check cancel before finalize
 
-      // Update progress to 90 after indexing
+      // Update progress to 90 after indexing and clear the in-flight status text.
       setDocuments((prev) =>
         prev.map((doc) =>
-          doc.id === docId ? { ...doc, progress: 90 } : doc
+          doc.id === docId
+            ? { ...doc, progress: 90, errorMessage: undefined }
+            : doc
         )
       );
 
@@ -274,6 +339,7 @@ export function DocumentsPage() {
                 status: 'ready',
                 progress: 100,
                 chunkCount: chunks.length,
+                errorMessage: undefined,
               }
             : doc
         )
@@ -285,6 +351,7 @@ export function DocumentsPage() {
           : typeof error === 'object' && error !== null && 'error' in error
           ? String((error as Record<string, unknown>).error)
           : 'Unknown error occurred';
+      const wasCancelled = controller.signal.aborted;
       console.error('Failed to process document:', error);
 
       setDocuments((prev) =>
@@ -294,6 +361,17 @@ export function DocumentsPage() {
             : doc
         )
       );
+      // U3b: surface indexing/quota/init failures as a toast. Cancellation is
+      // user-initiated, so it stays silent here (the doc already shows the
+      // terminal 'Indexing cancelled' state).
+      if (!wasCancelled) {
+        showToast(`Failed to process "${file.name}": ${errorMessage}`, 'error');
+      }
+    } finally {
+      // U2: drop this run's AbortController unless a newer run replaced it.
+      if (cancelControllersRef.current.get(docId) === controller) {
+        cancelControllersRef.current.delete(docId);
+      }
     }
     }; // end run()
 
@@ -375,6 +453,17 @@ export function DocumentsPage() {
     return () => clearTimeout(t);
   }, [duplicateNotice]);
 
+  // U2: per-document indexing cancel. Aborts the AbortController armed in
+  // processFile; the next throwIfCancelled() checkpoint (or the embedding batch
+  // boundary) records the terminal 'Indexing cancelled' state. No-op if the
+  // document isn't currently being indexed.
+  const handleCancelIndexing = useCallback((docId: string) => {
+    const controller = cancelControllersRef.current.get(docId);
+    if (controller) {
+      controller.abort();
+    }
+  }, []);
+
   // Handle document deletion.
   // F3: if the document is still being processed, await the in-flight
   // processFile first so its addBatch/save either completes (and is then
@@ -429,8 +518,11 @@ export function DocumentsPage() {
 
       // Remove from state
       setDocuments((prev) => prev.filter((doc) => doc.id !== docId));
+      // U3b: confirm the deletion to the user.
+      showToast('Document deleted', 'success');
     } catch (error) {
       console.error('Failed to delete document:', error);
+      showToast('Failed to delete document. Please try again.', 'error');
     } finally {
       setDeletingId(null);
     }
@@ -569,6 +661,13 @@ export function DocumentsPage() {
         <DropZone
           onFilesSelected={handleFilesSelected}
           accept={SUPPORTED_EXTENSIONS.join(',')}
+          onFilesRejected={(fileNames) => {
+            // U7a: surface skipped filenames so the user knows files were
+            // discarded (previously DropZone filtered silently).
+            const preview = fileNames.slice(0, 3).join(', ');
+            const extra = fileNames.length > 3 ? ` and ${fileNames.length - 3} more` : '';
+            showToast(`Unsupported file type: ${preview}${extra}`, 'error');
+          }}
         />
       </div>
 
@@ -578,6 +677,7 @@ export function DocumentsPage() {
           documents={documents}
           onDelete={handleDelete}
           deletingId={deletingId}
+          onCancelIndexing={handleCancelIndexing}
         />
       </div>
     </div>

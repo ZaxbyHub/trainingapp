@@ -160,6 +160,10 @@ describe('ChatPage F1 — LLM init before generation (cold send)', () => {
         onMessagesChange={() => {}}
         onSaveConversation={() => {}}
         onNewChat={() => {}}
+        currentConversationId={undefined}
+
+        setCurrentConversationId={() => {}}
+
         onOpenSettings={() => {}}
       />
     );
@@ -203,6 +207,10 @@ describe('ChatPage F1 — LLM init before generation (cold send)', () => {
         onMessagesChange={() => {}}
         onSaveConversation={() => {}}
         onNewChat={() => {}}
+        currentConversationId={undefined}
+
+        setCurrentConversationId={() => {}}
+
         onOpenSettings={() => {}}
       />
     );

@@ -378,7 +378,12 @@ export class RAGOrchestrator {
     // F2: abstention. If no chunks survive the floor AND budget, short-circuit
     // BEFORE generation so the model never answers from pretrained knowledge
     // with no source. The UI renders a visually distinct abstention state.
-    if (contextChunks.length === 0) {
+    //
+    // U8a: do NOT abstain when the user attached images — a multimodal question
+    // like "what's in this screenshot?" on an empty corpus should reach the VLM
+    // rather than abstaining. buildMessages (below) already forwards images
+    // into the multimodal content array, so falling through here is sufficient.
+    if (contextChunks.length === 0 && !(options.images?.length)) {
       yield {
         type: 'complete',
         data: {

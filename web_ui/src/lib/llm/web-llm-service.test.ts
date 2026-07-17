@@ -341,11 +341,15 @@ describe('WebLLMService', () => {
     await service.initialize();
 
     const messages: LLMMessage[] = [{ role: 'user', content: 'hi' }];
-    await service.generate(messages, {
+    // generate() is an async generator — its body (and the completions.create
+    // call) only runs when iterated. Drain it so the options are forwarded.
+    for await (const _ of service.generate(messages, {
       maxTokens: 100,
       temperature: 0.7,
       topP: 0.9,
-    });
+    })) {
+      void _;
+    }
 
     expect(mockEngine.chat.completions.create).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -410,6 +414,137 @@ describe('WebLLMService', () => {
     service.dispose();
 
     expect(() => service.interrupt()).not.toThrow();
+  });
+
+  // -------------------------------------------------------------------------
+  // S7 (issue #36): generate() wires an abort listener that calls
+  // engine.interruptGenerate() and removes it on settle (no listener leak).
+  // -------------------------------------------------------------------------
+  test('generate calls engine.interruptGenerate() when the abort signal fires (S7)', async () => {
+    // The completion iterator stays open until interruptGenerate() ends it;
+    // we release it only after the abort fires so the test reaches the
+    // abort-listener path deterministically.
+    let releaseIterator: () => void = () => {};
+    const iteratorDone = new Promise<void>((resolve) => {
+      releaseIterator = resolve;
+    });
+    let firstTokenDelivered: () => void = () => {};
+    const firstTokenSeen = new Promise<void>((resolve) => {
+      firstTokenDelivered = resolve;
+    });
+    const mockCompletion = {
+      [Symbol.asyncIterator]: async function* () {
+        yield { choices: [{ delta: { content: 'partial' } }] };
+        await iteratorDone;
+      },
+    };
+
+    const mockEngine = createMockEngine({
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(mockCompletion),
+        },
+      },
+    });
+    mockCreateMLCEngine.mockResolvedValue(mockEngine);
+
+    const service = WebLLMService.getInstance();
+    await service.initialize();
+
+    const controller = new AbortController();
+    const messages: LLMMessage[] = [{ role: 'user', content: 'hi' }];
+
+    // Drive the generator. The first chunk yields; then we abort, which must
+    // trigger engine.interruptGenerate() via the abort listener.
+    const collected: string[] = [];
+    const generation = (async () => {
+      for await (const tok of service.generate(messages, { signal: controller.signal })) {
+        collected.push(tok);
+        firstTokenDelivered();
+      }
+    })();
+
+    // Wait until the first token is actually delivered to the consumer so we
+    // know the generator body has run and the abort listener is registered.
+    await firstTokenSeen;
+    expect(mockEngine.interruptGenerate).not.toHaveBeenCalled();
+
+    controller.abort();
+    releaseIterator();
+
+    await generation;
+
+    expect(mockEngine.interruptGenerate).toHaveBeenCalledTimes(1);
+    expect(collected).toEqual(['partial']);
+  });
+
+  test('generate removes its abort listener after settling — no leak (S7)', async () => {
+    const mockCompletion = {
+      [Symbol.asyncIterator]: async function* () {
+        yield { choices: [{ delta: { content: 'hi' } }] };
+      },
+    };
+
+    const mockEngine = createMockEngine({
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(mockCompletion),
+        },
+      },
+    });
+    mockCreateMLCEngine.mockResolvedValue(mockEngine);
+
+    const service = WebLLMService.getInstance();
+    await service.initialize();
+
+    const controller = new AbortController();
+    const removeEventListenerSpy = vi.spyOn(controller.signal, 'removeEventListener');
+
+    // Drain the generator to completion so the finally block runs.
+    for await (const _ of service.generate([{ role: 'user', content: 'hi' }], {
+      signal: controller.signal,
+    })) {
+      void _;
+    }
+
+    // The abort listener registered in generate() must be removed in the
+    // finally block so repeated generations don't accumulate stale listeners
+    // on long-lived AbortSignals/AbortControllers.
+    expect(removeEventListenerSpy).toHaveBeenCalledWith('abort', expect.any(Function));
+    removeEventListenerSpy.mockRestore();
+  });
+
+  test('generate calls interruptGenerate() up front if the signal is already aborted (S7)', async () => {
+    const mockCompletion = {
+      [Symbol.asyncIterator]: async function* () {
+        yield { choices: [{ delta: { content: 'hi' } }] };
+      },
+    };
+
+    const mockEngine = createMockEngine({
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(mockCompletion),
+        },
+      },
+    });
+    mockCreateMLCEngine.mockResolvedValue(mockEngine);
+
+    const service = WebLLMService.getInstance();
+    await service.initialize();
+
+    const controller = new AbortController();
+    controller.abort();
+
+    for await (const _ of service.generate([{ role: 'user', content: 'hi' }], {
+      signal: controller.signal,
+    })) {
+      void _;
+    }
+
+    // When the signal is already aborted at entry, generate() invokes
+    // interruptGenerate() immediately (mirrors the addEventListener path).
+    expect(mockEngine.interruptGenerate).toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -563,7 +698,11 @@ describe('WebLLMService', () => {
       { role: 'assistant', content: 'Hi there' },
     ];
 
-    await service.generate(messages);
+    // generate() is an async generator — drain it so the body runs and the
+    // messages are mapped and forwarded to completions.create.
+    for await (const _ of service.generate(messages)) {
+      void _;
+    }
 
     expect(mockEngine.chat.completions.create).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -9,6 +9,11 @@ interface DocumentListProps {
   documents: DocumentEntry[];
   onDelete: (docId: string) => void;
   deletingId: string | null;
+  /**
+   * U2: optional per-document indexing-cancel handler. When provided, the
+   * processing row renders a small Cancel button that aborts in-flight indexing.
+   */
+  onCancelIndexing?: (docId: string) => void;
 }
 
 function formatFileSize(bytes: number): string {
@@ -29,14 +34,17 @@ function formatDate(timestamp: number): string {
   });
 }
 
+// U6a: status labels render at --font-size-small (11px) on the light bubble
+// surface and must meet WCAG AA. The base info/warning/success tokens are
+// borderline AA at small sizes, so use the *-strong variants here.
 function getStatusColor(status: DocumentEntry['status']): string {
   switch (status) {
     case 'uploading':
-      return 'var(--color-info)';
+      return 'var(--color-info-strong)';
     case 'processing':
-      return 'var(--color-warning)';
+      return 'var(--color-warning-strong)';
     case 'ready':
-      return 'var(--color-success)';
+      return 'var(--color-success-strong)';
     case 'error':
       return 'var(--color-danger)';
     default:
@@ -66,12 +74,28 @@ const DocumentItem = React.memo<{
   doc: DocumentEntry;
   onDelete: (docId: string) => void;
   isDeleting: boolean;
-}>(({ doc, onDelete, isDeleting }) => {
+  onCancelIndexing?: (docId: string) => void;
+}>(({ doc, onDelete, isDeleting, onCancelIndexing }) => {
+  // U5: two-step delete confirmation. First click of the trash icon arms the
+  // inline confirm (reusing the SidebarConversationItem idiom); Confirm fires
+  // onDelete, Cancel reverts. Keeps the virtualized 60px row height by showing
+  // the confirm controls in place of the status badge + delete button.
+  const [isConfirming, setIsConfirming] = useState(false);
+
   const handleDelete = useCallback(() => {
     if (!isDeleting) {
-      onDelete(doc.id);
+      setIsConfirming(true);
     }
-  }, [doc.id, onDelete, isDeleting]);
+  }, [isDeleting]);
+
+  const handleConfirmDelete = useCallback(() => {
+    setIsConfirming(false);
+    onDelete(doc.id);
+  }, [doc.id, onDelete]);
+
+  const handleCancelDelete = useCallback(() => {
+    setIsConfirming(false);
+  }, []);
 
   return (
     <div
@@ -160,118 +184,210 @@ const DocumentItem = React.memo<{
         </div>
       </div>
 
-      {/* Status badge */}
-      <div
-        aria-live="polite"
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-end',
-          gap: 'var(--spacing-xs)',
-        }}
-      >
-        <span
+      {/* Status badge (collapsed during delete-confirmation to make room). */}
+      {!isConfirming && (
+        <div
+          aria-live="polite"
           style={{
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-            color: getStatusColor(doc.status),
-            fontWeight: 500,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: 'var(--spacing-xs)',
           }}
         >
-          {getStatusLabel(doc.status)}
-        </span>
-
-        {/* Progress bar for uploading/processing */}
-        {(doc.status === 'uploading' || doc.status === 'processing') && (
-          <div
-            role="progressbar"
-            aria-valuenow={Math.round(doc.progress)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-label={`${getStatusLabel(doc.status)}: ${Math.round(doc.progress)}%`}
-            style={{
-              width: '80px',
-              height: '4px',
-              backgroundColor: 'var(--color-bubble-system)',
-              borderRadius: '2px',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                width: `${doc.progress}%`,
-                height: '100%',
-                backgroundColor: getStatusColor(doc.status),
-                transition: 'width 0.3s ease',
-              }}
-            />
-          </div>
-        )}
-
-        {/* Error message */}
-        {doc.status === 'error' && doc.errorMessage && (
           <span
             style={{
               fontSize: 'var(--font-size-small)',
               fontFamily: 'var(--font-family)',
-              color: 'var(--color-danger)',
-              maxWidth: '200px',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
+              color: getStatusColor(doc.status),
+              fontWeight: 500,
+            }}
+          >
+            {getStatusLabel(doc.status)}
+          </span>
+
+          {/* Progress bar for uploading/processing */}
+          {(doc.status === 'uploading' || doc.status === 'processing') && (
+            <div
+              role="progressbar"
+              aria-valuenow={Math.round(doc.progress)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label={`${getStatusLabel(doc.status)}: ${Math.round(doc.progress)}%`}
+              style={{
+                width: '80px',
+                height: '4px',
+                backgroundColor: 'var(--color-bubble-system)',
+                borderRadius: '2px',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  width: `${doc.progress}%`,
+                  height: '100%',
+                  backgroundColor: getStatusColor(doc.status),
+                  transition: 'width 0.3s ease',
+                }}
+              />
+            </div>
+          )}
+
+          {/* U2: per-document indexing Cancel button. Only rendered during the
+              processing stage and only when the host wires the cancel handler. */}
+          {doc.status === 'processing' && onCancelIndexing && (
+            <button
+              type="button"
+              onClick={() => onCancelIndexing(doc.id)}
+              aria-label={`Cancel indexing ${doc.fileName}`}
+              style={{
+                border: '1px solid var(--color-text-muted)',
+                borderRadius: '6px',
+                backgroundColor: 'transparent',
+                color: 'var(--color-text-muted)',
+                fontSize: 'var(--font-size-small)',
+                fontFamily: 'var(--font-family)',
+                padding: '0 var(--spacing-xs)',
+                cursor: 'pointer',
+                lineHeight: 1.4,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Cancel
+            </button>
+          )}
+
+          {/* Error message */}
+          {doc.status === 'error' && doc.errorMessage && (
+            <span
+              style={{
+                fontSize: 'var(--font-size-small)',
+                fontFamily: 'var(--font-family)',
+                color: 'var(--color-danger)',
+                maxWidth: '200px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+              title={doc.errorMessage}
+            >
+              {doc.errorMessage}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* U5: two-step delete confirmation (inline alert, SidebarConversationItem idiom).
+          Confirm/Cancel buttons replace the status badge + trash icon when armed. */}
+      {isConfirming ? (
+        <div
+          role="alert"
+          aria-label={`Delete ${doc.fileName}?`}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--spacing-xs)',
+            flexShrink: 0,
+          }}
+        >
+          <span
+            style={{
+              fontSize: 'var(--font-size-small)',
+              fontFamily: 'var(--font-family)',
+              color: 'var(--color-text-on-bubble-assistant)',
+              marginRight: 'var(--spacing-xs)',
               whiteSpace: 'nowrap',
             }}
-            title={doc.errorMessage}
           >
-            {doc.errorMessage}
+            Delete {doc.fileName}?
           </span>
-        )}
-      </div>
-
-      {/* Delete button */}
-      <button
-        type="button"
-        onClick={handleDelete}
-        disabled={isDeleting}
-        aria-label={`Delete ${doc.fileName}`}
-        style={{
-          width: '32px',
-          height: '32px',
-          border: 'none',
-          borderRadius: '6px',
-          backgroundColor: 'transparent',
-          cursor: isDeleting ? 'not-allowed' : 'pointer',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-          color: 'var(--color-text-muted)',
-          transition: 'all 0.2s ease',
-        }}
-        onMouseEnter={(e) => {
-          if (!isDeleting) {
-            e.currentTarget.style.backgroundColor = 'var(--color-danger)';
-            e.currentTarget.style.color = 'var(--color-text-on-primary)';
-          }
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.backgroundColor = 'transparent';
-          e.currentTarget.style.color = 'var(--color-text-muted)';
-        }}
-      >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+          <button
+            type="button"
+            onClick={handleConfirmDelete}
+            disabled={isDeleting}
+            aria-label={`Confirm delete ${doc.fileName}`}
+            style={{
+              padding: 'var(--spacing-xs) var(--spacing-sm)',
+              backgroundColor: 'var(--color-danger)',
+              color: 'var(--color-text-on-primary)',
+              border: 'none',
+              borderRadius: '6px',
+              fontSize: 'var(--font-size-small)',
+              fontFamily: 'var(--font-family)',
+              fontWeight: 500,
+              cursor: isDeleting ? 'not-allowed' : 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Confirm
+          </button>
+          <button
+            type="button"
+            onClick={handleCancelDelete}
+            disabled={isDeleting}
+            aria-label={`Cancel delete ${doc.fileName}`}
+            style={{
+              padding: 'var(--spacing-xs) var(--spacing-sm)',
+              backgroundColor: 'transparent',
+              color: 'var(--color-text-muted)',
+              border: '1px solid var(--color-text-muted)',
+              borderRadius: '6px',
+              fontSize: 'var(--font-size-small)',
+              fontFamily: 'var(--font-family)',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        /* Delete trigger button (arms the inline confirm). */
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={isDeleting}
+          aria-label={`Delete ${doc.fileName}`}
+          style={{
+            width: '32px',
+            height: '32px',
+            border: 'none',
+            borderRadius: '6px',
+            backgroundColor: 'transparent',
+            cursor: isDeleting ? 'not-allowed' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+            color: 'var(--color-text-muted)',
+            transition: 'all 0.2s ease',
+          }}
+          onMouseEnter={(e) => {
+            if (!isDeleting) {
+              e.currentTarget.style.backgroundColor = 'var(--color-danger)';
+              e.currentTarget.style.color = 'var(--color-text-on-primary)';
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = 'transparent';
+            e.currentTarget.style.color = 'var(--color-text-muted)';
+          }}
         >
-          <polyline points="3 6 5 6 21 6" />
-          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-        </svg>
-      </button>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 });
@@ -279,7 +395,7 @@ const DocumentItem = React.memo<{
 DocumentItem.displayName = 'DocumentItem';
 
 export const DocumentList: React.FC<DocumentListProps> = React.memo(
-  ({ documents, onDelete, deletingId }) => {
+  ({ documents, onDelete, deletingId, onCancelIndexing }) => {
     const [scrollTop, setScrollTop] = useState(0);
     const [containerHeight, setContainerHeight] = useState(300);
     const listRef = useRef<HTMLDivElement>(null);
@@ -421,6 +537,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
                   doc={doc}
                   onDelete={onDelete}
                   isDeleting={deletingId === doc.id}
+                  onCancelIndexing={onCancelIndexing}
                 />
               </div>
             );

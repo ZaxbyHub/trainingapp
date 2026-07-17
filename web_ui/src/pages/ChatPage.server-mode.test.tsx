@@ -142,6 +142,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -177,6 +181,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -211,6 +219,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -244,6 +256,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -278,6 +294,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -307,6 +327,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -341,6 +365,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -375,6 +403,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -414,6 +446,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -457,6 +493,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -486,6 +526,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -531,6 +575,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -575,6 +623,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -615,6 +667,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -643,6 +699,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -677,6 +737,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -712,6 +776,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -752,6 +820,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -789,6 +861,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -818,6 +894,10 @@ describe('ChatPage API Mode (Task 8.4)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 

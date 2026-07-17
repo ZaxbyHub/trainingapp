@@ -2,7 +2,18 @@
  * Tests for DocumentsPage search index integration (Task 8.2)
  */
 
-import { describe, test, expect, beforeEach, vi } from 'vitest';
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest';
+import React from 'react';
+// U3b: DocumentsPage now calls useToast(), which requires a ToastProvider.
+import { ToastProvider } from '../components/ToastProvider';
+// RTL auto-cleanup does not register reliably when @testing-library/react is
+// loaded via dynamic import inside each test (the afterEach hook is registered
+// too late). Several tests below bail on a failed assertion BEFORE reaching
+// their explicit `unmount()`, which would leak the mounted component into the
+// shared jsdom document and cause later tests' `document.querySelector` to hit
+// a STALE DropZone input from an earlier test. Importing `cleanup` and calling
+// it in afterEach guarantees every render is torn down between tests.
+import { cleanup } from '@testing-library/react';
 
 // Mock the embedding service
 const mockEmbeddingService = {
@@ -110,6 +121,14 @@ describe('DocumentsPage search index integration', () => {
     mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
     mockVectorIndex.initialize.mockClear();
     mockVectorIndex.initialize.mockResolvedValue(undefined);
+  });
+
+  // Tear down any mounted component between tests. Critical because several
+  // tests bail on a failed assertion before their explicit `unmount()`, and a
+  // leaked DocumentsPage leaves its DropZone input in the shared document,
+  // sending later tests' file-drop events to the wrong instance.
+  afterEach(() => {
+    cleanup();
   });
 
   describe('processFile indexing flow', () => {
@@ -255,7 +274,7 @@ describe('DocumentsPage search index integration', () => {
       // ensureEmbeddingServiceReady resolves false → ingestion must error.
       mockEnsureEmbeddingServiceReady.mockResolvedValue(false);
 
-      const { unmount } = render(<DocumentsPage />);
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
 
       // Wait for the initial load to finish, then drop a file.
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
@@ -321,7 +340,7 @@ describe('DocumentsPage search index integration', () => {
       mockVectorIndex.isReady.mockReturnValue(true);
       mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
 
-      const { unmount } = render(<DocumentsPage />);
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['in-flight content'], 'inflight.txt', { type: 'text/plain' });
@@ -344,7 +363,9 @@ describe('DocumentsPage search index integration', () => {
       // Trigger deletion of the still-processing document. handleDelete should
       // await the in-flight processFile, so it stays pending while extraction
       // is blocked. We don't await the delete here; we fire it and let it hang.
-      // Find the delete button for the row (aria-label="Delete <filename>").
+      // U5: DocumentList uses a two-step inline confirmation — first click the
+      // "Delete <filename>" trigger to arm the confirm, then click "Confirm
+      // delete <filename>" to actually fire onDelete (which awaits processFile).
       await waitFor(() => {
         const btns = document.querySelectorAll('button[aria-label^="Delete "]');
         expect(btns.length).toBeGreaterThan(0);
@@ -352,6 +373,14 @@ describe('DocumentsPage search index integration', () => {
       const deleteButton = document.querySelector('button[aria-label^="Delete "]') as HTMLButtonElement;
       await act(async () => {
         deleteButton.click();
+      });
+      // Arm step done; now fire the actual confirm to trigger handleDelete.
+      await waitFor(() => {
+        expect(document.querySelector('button[aria-label^="Confirm delete "]')).toBeTruthy();
+      });
+      const confirmButton = document.querySelector('button[aria-label^="Confirm delete "]') as HTMLButtonElement;
+      await act(async () => {
+        confirmButton.click();
       });
 
       // The delete is now in flight and waiting on processFile. removeByDocId
@@ -410,7 +439,7 @@ describe('DocumentsPage search index integration', () => {
       mockVectorIndex.isReady.mockReturnValue(true);
       mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
 
-      const { unmount, container } = render(<DocumentsPage />);
+      const { unmount, container } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       // Drop a file with the same name+size as the existing document.
@@ -442,16 +471,26 @@ describe('DocumentsPage search index integration', () => {
       mockVectorIndex.isReady.mockReturnValue(true);
       mockKeywordIndex.isReady.mockReturnValue(true);
 
-      const { unmount } = render(<DocumentsPage />);
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       // Click delete on the ready document.
+      // U5: DocumentList uses a two-step inline confirmation — click the
+      // "Delete <filename>" trigger to arm, then "Confirm delete <filename>"
+      // to actually fire onDelete (which cancels the stale debounced save and
+      // re-arms it with the post-delete list).
       await waitFor(() => {
         expect(document.querySelector('button[aria-label^="Delete "]')).toBeTruthy();
       });
       const saveCountBefore = mockSaveDocuments.mock.calls.length;
       await act(async () => {
         (document.querySelector('button[aria-label^="Delete "]') as HTMLButtonElement).click();
+      });
+      await waitFor(() => {
+        expect(document.querySelector('button[aria-label^="Confirm delete "]')).toBeTruthy();
+      });
+      await act(async () => {
+        (document.querySelector('button[aria-label^="Confirm delete "]') as HTMLButtonElement).click();
       });
 
       // After delete settles, the most recent save must NOT contain the deleted doc.
@@ -474,7 +513,7 @@ describe('DocumentsPage search index integration', () => {
       // upload that mutates state within the 500ms debounce window, then
       // immediately unmount — the pending save should flush.
       mockEnsureEmbeddingServiceReady.mockResolvedValue(false); // error fast, no encode
-      const { unmount } = render(<DocumentsPage />);
+      const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['flush-test'], 'flush.txt', { type: 'text/plain' });

@@ -114,30 +114,6 @@ export async function countConversations(): Promise<number> {
 }
 
 /**
- * Append a message to a conversation and update its updatedAt timestamp.
- *
- * @param conversationId - Target conversation ID
- * @param message - ChatMessage to append
- */
-export async function appendMessage(
-  conversationId: string,
-  message: ChatMessage
-): Promise<void> {
-  try {
-    await db.conversations
-      .where('id')
-      .equals(conversationId)
-      .modify((conversation) => {
-        conversation.messages.push(message);
-        conversation.updatedAt = Date.now();
-      });
-  } catch (error) {
-    console.error('[conversations] Failed to append message:', error);
-    throw error;
-  }
-}
-
-/**
  * Update only the title of a conversation.
  *
  * @param conversationId - Target conversation ID

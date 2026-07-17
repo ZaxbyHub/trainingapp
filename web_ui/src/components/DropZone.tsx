@@ -9,6 +9,14 @@ interface DropZoneProps {
   onFilesSelected: (files: File[]) => void;
   accept?: string;
   disabled?: boolean;
+  /**
+   * U7a: optional callback invoked with the names of dropped files that were
+   * rejected by the `accept` filter, so callers can surface rejection
+   * feedback. When omitted the filter stays silent (preserves existing
+   * behavior). Only fires for the drag-and-drop path — the native file picker
+   * already enforces `accept` and never offers unsupported files.
+   */
+  onFilesRejected?: (fileNames: string[]) => void;
 }
 
 /**
@@ -45,7 +53,7 @@ export function matchesAccept(file: File, accept?: string): boolean {
 }
 
 export const DropZone: React.FC<DropZoneProps> = React.memo(
-  ({ onFilesSelected, accept, disabled = false }) => {
+  ({ onFilesSelected, accept, disabled = false, onFilesRejected }) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const [isDragOver, setIsDragOver] = useState(false);
 
@@ -79,12 +87,23 @@ export const DropZone: React.FC<DropZoneProps> = React.memo(
         // F15: apply the same accept filter the native file picker uses, so
         // unsupported files dropped via drag-and-drop are filtered out instead
         // of reaching the extractor and failing later.
-        const files = Array.from(e.dataTransfer.files).filter((f) => matchesAccept(f, accept));
+        const allDropped = Array.from(e.dataTransfer.files);
+        const files = allDropped.filter((f) => matchesAccept(f, accept));
+        // U7a: surface the rejected files so callers can show feedback instead
+        // of silently dropping them. Silent when the callback isn't provided.
+        if (onFilesRejected) {
+          const rejected = allDropped
+            .filter((f) => !matchesAccept(f, accept))
+            .map((f) => f.name);
+          if (rejected.length > 0) {
+            onFilesRejected(rejected);
+          }
+        }
         if (files.length > 0) {
           onFilesSelected(files);
         }
       },
-      [disabled, onFilesSelected, accept]
+      [disabled, onFilesSelected, accept, onFilesRejected]
     );
 
     const handleClick = useCallback(() => {

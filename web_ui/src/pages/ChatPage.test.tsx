@@ -59,6 +59,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -71,6 +75,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -83,6 +91,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -97,6 +109,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -115,6 +131,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -133,6 +153,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -152,6 +176,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -179,6 +207,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -214,6 +246,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -245,6 +281,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -268,6 +308,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -299,6 +343,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -323,6 +371,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -349,6 +401,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -383,6 +439,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -417,6 +477,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -435,6 +499,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -463,6 +531,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -481,6 +553,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -503,6 +579,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -532,6 +612,10 @@ describe('ChatPage', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 

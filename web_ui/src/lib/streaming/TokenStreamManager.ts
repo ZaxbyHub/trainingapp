@@ -93,21 +93,37 @@ export class TokenStreamManager {
       this.scheduleFlush();
     }
 
+    // S4: on overflow, flush the buffer DOWN to a safe size via the normal
+    // callback (preserving token order and the consumer's append contract)
+    // instead of splicing the oldest unflushed tokens out of the middle of
+    // displayed+persisted content. The previous splice silently corrupted
+    // content; flushing preserves every token. We leave a small headroom so
+    // the next push doesn't immediately re-trigger.
     if (this.tokenBuffer.length > TokenStreamManager.MAX_BUFFER_SIZE) {
-      const dropped = this.tokenBuffer.length - TokenStreamManager.MAX_BUFFER_SIZE;
-      this.tokenBuffer.splice(0, dropped);
-      console.warn(`[TokenStreamManager] Buffer overflow: dropped ${dropped} oldest tokens (max ${TokenStreamManager.MAX_BUFFER_SIZE})`);
+      this.flushBuffer();
     }
   }
 
   /**
    * Schedule a requestAnimationFrame flush of the token buffer.
+   *
+   * S4: when the document is hidden (tab in background), RAF is suspended and
+   * the buffer would accrue unbounded until the tab refocuses. Use a setTimeout
+   * fallback so tokens still flush in background tabs.
    */
   private scheduleFlush(): void {
-    this.flushTimer = requestAnimationFrame(() => {
-      this.flushTimer = null;
-      this.flushBuffer();
-    });
+    const useTimeoutFallback = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    if (useTimeoutFallback) {
+      this.flushTimer = window.setTimeout(() => {
+        this.flushTimer = null;
+        this.flushBuffer();
+      }, 100) as unknown as number;
+    } else {
+      this.flushTimer = requestAnimationFrame(() => {
+        this.flushTimer = null;
+        this.flushBuffer();
+      });
+    }
   }
 
   /**
@@ -222,8 +238,15 @@ export class TokenStreamManager {
 
   /**
    * Cancel any active stream and clear pending operations.
+   *
+   * S4: FLUSH buffered tokens to the callback BEFORE clearing, so Stop
+   * delivers every token received up to the cancel (previously cancel() nulled
+   * the buffer without flushing, dropping up to a RAF frame of tokens — far
+   * more after a hidden tab). Mirrors the flush-first contract of complete()
+   * and error().
    */
   cancel(): void {
+    if (this.cancelled) return;
     this.cancelled = true;
 
     if (this.activeConsumer) {
@@ -231,16 +254,20 @@ export class TokenStreamManager {
       this.activeConsumer = null;
     }
 
+    // Flush remaining tokens so Stop doesn't drop them, THEN clear.
+    this.flushBuffer();
     this.clearFlushTimer();
-    this.tokenBuffer = [];
   }
 
   /**
-   * Clear any pending RAF flush timer.
+   * Clear any pending flush timer (RAF or setTimeout fallback).
    */
   private clearFlushTimer(): void {
     if (this.flushTimer !== null) {
+      // The timer may be either a RAF handle or a setTimeout handle. Use both
+      // cancellers defensively (each is a no-op for the wrong type).
       cancelAnimationFrame(this.flushTimer);
+      clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
   }

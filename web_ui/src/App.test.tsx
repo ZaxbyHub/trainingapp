@@ -154,7 +154,7 @@ describe('App — AC2: navigating between pages preserves the conversation', () 
     render(<App />);
 
     // Chat is the default page; send a real message through the real ChatPage.
-    const textarea = await screen.findByPlaceholderText('Ask a question...');
+    const textarea = await screen.findByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
     fireEvent.change(textarea, { target: { value: 'Hello from AC2 test' } });
     await act(async () => {
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
@@ -172,7 +172,7 @@ describe('App — AC2: navigating between pages preserves the conversation', () 
       expect(screen.getByTestId('documents-page-marker')).toBeInTheDocument();
     });
     expect(screen.queryByText('Hello from AC2 test')).not.toBeInTheDocument();
-    expect(screen.queryByPlaceholderText('Ask a question...')).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)')).not.toBeInTheDocument();
 
     // Navigate back to Chat — this remounts ChatPage. The regression this
     // test guards: if useConversations() were ever moved back inside
@@ -190,7 +190,7 @@ describe('App — AC2: navigating between pages preserves the conversation', () 
   it('keeps chat messages after navigating Chat -> Settings -> Chat', async () => {
     render(<App />);
 
-    const textarea = await screen.findByPlaceholderText('Ask a question...');
+    const textarea = await screen.findByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
     fireEvent.change(textarea, { target: { value: 'Second round trip' } });
     await act(async () => {
       fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });

@@ -469,7 +469,7 @@ describe('useConversations', () => {
       const { result } = renderHook(() => useConversations());
 
       await act(async () => {
-        await result.current.saveMessages([], 'server', 'test-model');
+        await result.current.saveMessages('conv-1', [], 'server', 'test-model');
       });
 
       expect(mockCreateConversation).not.toHaveBeenCalled();
@@ -488,7 +488,7 @@ describe('useConversations', () => {
       const { result } = renderHook(() => useConversations());
 
       await act(async () => {
-        await result.current.saveMessages(messages, 'server', 'gpt-4');
+        await result.current.saveMessages(undefined, messages, 'server', 'gpt-4');
       });
 
       expect(mockCreateConversation).toHaveBeenCalledWith(
@@ -529,7 +529,7 @@ describe('useConversations', () => {
       mockListConversations.mockResolvedValue([existingConv]);
 
       await act(async () => {
-        await result.current.saveMessages(newMessages, 'wllama', 'llama2');
+        await result.current.saveMessages('existing-conv', newMessages, 'wllama', 'llama2');
       });
 
       expect(mockUpdateConversation).toHaveBeenCalledWith(
@@ -555,7 +555,7 @@ describe('useConversations', () => {
       const { result } = renderHook(() => useConversations());
 
       await act(async () => {
-        await result.current.saveMessages(messages, 'server', 'test-model');
+        await result.current.saveMessages(undefined, messages, 'server', 'test-model');
       });
 
       // Title should be first 50 chars + '...'
@@ -577,7 +577,7 @@ describe('useConversations', () => {
       const { result } = renderHook(() => useConversations());
 
       await act(async () => {
-        await result.current.saveMessages(messages, 'server', 'test-model');
+        await result.current.saveMessages(undefined, messages, 'server', 'test-model');
       });
 
       expect(mockCreateConversation).toHaveBeenCalledWith(
@@ -601,12 +601,159 @@ describe('useConversations', () => {
 
       // Call saveMessages - it should throw and be caught
       act(() => {
-        result.current.saveMessages(messages, 'server', 'test-model');
+        result.current.saveMessages(undefined, messages, 'server', 'test-model');
       });
 
       // The error should be caught and persistenceError should be set
       expect(mockCreateConversation).toHaveBeenCalled();
       expect(result.current.persistenceError).toBe('Failed to save conversation');
+    });
+
+    it('strips isStreaming before persisting (S3 regression)', async () => {
+      // The transient render-only isStreaming flag must NEVER be written to
+      // IndexedDB — it would leave a permanent blinking cursor after reload.
+      const messages: ChatMessage[] = [
+        { id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+        { id: 'msg-2', role: 'assistant', content: 'Hi!', timestamp: Date.now(), isStreaming: true },
+      ];
+
+      mockListConversations.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useConversations());
+
+      await act(async () => {
+        await result.current.saveMessages(undefined, messages, 'server', 'gpt-4');
+      });
+
+      expect(mockCreateConversation).toHaveBeenCalledTimes(1);
+      const persisted = mockCreateConversation.mock.calls[0][0];
+      // No persisted message may carry isStreaming.
+      expect(persisted.messages.every((m: ChatMessage) => m.isStreaming === undefined)).toBe(true);
+      // And the streaming assistant content is still preserved.
+      expect(persisted.messages).toHaveLength(2);
+      expect(persisted.messages[1].content).toBe('Hi!');
+    });
+
+    it('strips isStreaming when updating an existing conversation (S3 regression)', async () => {
+      const existingConv = createMockConversation({
+        id: 'existing-conv',
+        title: 'Existing',
+        messages: [{ id: 'msg-1', role: 'user', content: 'Old', timestamp: Date.now() }],
+      });
+
+      mockListConversations
+        .mockResolvedValueOnce([existingConv])
+        .mockResolvedValueOnce([existingConv]);
+      mockGetConversation.mockResolvedValueOnce(existingConv);
+      mockCountConversations.mockResolvedValueOnce(1);
+
+      const { result } = renderHook(() => useConversations());
+
+      await waitFor(() => {
+        expect(result.current.currentConversationId).toBe('existing-conv');
+      });
+
+      const newMessages: ChatMessage[] = [
+        { id: 'msg-2', role: 'assistant', content: 'Streaming reply', timestamp: Date.now(), isStreaming: true },
+      ];
+
+      mockListConversations.mockResolvedValue([existingConv]);
+
+      await act(async () => {
+        await result.current.saveMessages('existing-conv', newMessages, 'server', 'gpt-4');
+      });
+
+      expect(mockUpdateConversation).toHaveBeenCalledWith(
+        'existing-conv',
+        expect.objectContaining({
+          messages: expect.any(Array),
+        })
+      );
+      const persisted = mockUpdateConversation.mock.calls[0][1].messages;
+      expect(persisted.every((m: ChatMessage) => m.isStreaming === undefined)).toBe(true);
+    });
+
+    it('passes the new conversation id to onCreate when creating', async () => {
+      const messages: ChatMessage[] = [
+        { id: 'msg-1', role: 'user', content: 'Hello', timestamp: Date.now() },
+      ];
+
+      mockListConversations.mockResolvedValue([]);
+
+      const { result } = renderHook(() => useConversations());
+
+      const onCreate = vi.fn();
+      await act(async () => {
+        await result.current.saveMessages(undefined, messages, 'server', 'gpt-4', onCreate);
+      });
+
+      expect(mockCreateConversation).toHaveBeenCalledTimes(1);
+      const newId = mockCreateConversation.mock.calls[0][0].id;
+      expect(onCreate).toHaveBeenCalledTimes(1);
+      expect(onCreate).toHaveBeenCalledWith(newId);
+    });
+
+    it('does not call onCreate when updating an existing conversation', async () => {
+      const existingConv = createMockConversation({
+        id: 'existing-conv',
+        title: 'Existing',
+        messages: [{ id: 'msg-1', role: 'user', content: 'Old', timestamp: Date.now() }],
+      });
+
+      mockListConversations
+        .mockResolvedValueOnce([existingConv])
+        .mockResolvedValueOnce([existingConv]);
+      mockGetConversation.mockResolvedValueOnce(existingConv);
+      mockCountConversations.mockResolvedValueOnce(1);
+
+      const { result } = renderHook(() => useConversations());
+
+      await waitFor(() => {
+        expect(result.current.currentConversationId).toBe('existing-conv');
+      });
+
+      const newMessages: ChatMessage[] = [
+        { id: 'msg-2', role: 'user', content: 'Follow up', timestamp: Date.now() },
+      ];
+      mockListConversations.mockResolvedValue([existingConv]);
+
+      const onCreate = vi.fn();
+      await act(async () => {
+        await result.current.saveMessages('existing-conv', newMessages, 'server', 'gpt-4', onCreate);
+      });
+
+      expect(onCreate).not.toHaveBeenCalled();
+      expect(mockUpdateConversation).toHaveBeenCalled();
+    });
+  });
+
+  describe('setCurrentConversationId', () => {
+    it('exposes setCurrentConversationId as a function', async () => {
+      const { result } = renderHook(() => useConversations());
+
+      await waitFor(() => {
+        expect(mockListConversations).toHaveBeenCalled();
+      });
+
+      expect(typeof result.current.setCurrentConversationId).toBe('function');
+    });
+
+    it('sets the current conversation id (string | undefined)', async () => {
+      const { result } = renderHook(() => useConversations());
+
+      await waitFor(() => {
+        expect(mockListConversations).toHaveBeenCalled();
+      });
+
+      await act(async () => {
+        result.current.setCurrentConversationId('conv-42');
+      });
+      expect(result.current.currentConversationId).toBe('conv-42');
+
+      await act(async () => {
+        result.current.setCurrentConversationId(undefined);
+      });
+      expect(result.current.currentConversationId).toBeUndefined();
     });
   });
 });

@@ -13,9 +13,16 @@ interface ChatMessageBubbleProps {
   message: ChatMessage;
   /** When set, renders a Regenerate action (last assistant message only). */
   onRegenerate?: () => void;
+  /** S8: current timestamp tick from the parent, so relative-time labels
+   *  recompute every 60s instead of freezing at first paint. The prop change
+   *  defeats React.memo so formatRelativeTime re-runs. */
+  now?: number;
 }
 
-export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({ message, onRegenerate }) => {
+export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({ message, onRegenerate, now }) => {
+  // S8: recompute the label whenever `now` changes. Falling back to Date.now()
+  // keeps one-off renders (tests, direct usage) correct.
+  const relativeLabel = formatRelativeTime(message.timestamp, now);
   const [copied, setCopied] = useState(false);
   const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -132,7 +139,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
               ))}
             </div>
           )}
-          <div style={{ ...timeStyle, textAlign: 'right' }}>{formatRelativeTime(message.timestamp)}</div>
+          <div style={{ ...timeStyle, textAlign: 'right' }}>{relativeLabel}</div>
           <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
             <button
               className="bubble-action"
@@ -213,12 +220,53 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
               ? 'Retrieval is degraded (semantic search unavailable) and no relevant passages were found.'
               : 'Insufficient evidence in the knowledge base to answer this question.'}
           </div>
+        ) : message.error ? (
+          // S6: structured error card. The error message is stored on the
+          // dedicated `error` field (NOT injected into content, which would be
+          // parsed as markdown and could linkify/mangle). The Try-again button
+          // only renders when onRegenerate is present (M4) — otherwise the card
+          // just reports the failure.
+          <div
+            role="alert"
+            style={{
+              padding: 'var(--spacing-md)',
+              borderRadius: '8px',
+              backgroundColor: 'rgba(211, 47, 47, 0.08)',
+              border: '1px solid var(--color-danger)',
+              color: 'var(--color-danger)',
+              fontFamily: 'var(--font-family)',
+            }}
+          >
+            <div style={{ fontSize: 'var(--font-size-body)', marginBottom: 'var(--spacing-xs)' }}>
+              Something went wrong while answering.
+            </div>
+            <div style={{ fontSize: 'var(--font-size-caption)', opacity: 0.85, wordBreak: 'break-word' }}>
+              {message.error}
+            </div>
+            {onRegenerate && (
+              <button
+                className="bubble-action"
+                type="button"
+                onClick={onRegenerate}
+                aria-label="Try again"
+                style={{ ...regenerateStyle, marginTop: 'var(--spacing-sm)' }}
+              >
+                ↻ Try again
+              </button>
+            )}
+          </div>
         ) : (
           <>
-            <div style={{ fontFamily: 'var(--font-family)', lineHeight: 'var(--line-height-body)' }}>
-              <MarkdownRenderer content={message.content} />
-              {message.isStreaming && <span style={cursorStyle} aria-hidden="true" />}
-            </div>
+            {/* A7: an empty assistant message (Stop before first token, or a
+                placeholder that never received content) renders only the
+                cursor while streaming, and nothing at all once settled — no
+                bordered box, no Copy button that copies "". */}
+            {message.content === '' && !message.isStreaming ? null : (
+              <div style={{ fontFamily: 'var(--font-family)', lineHeight: 'var(--line-height-body)' }}>
+                <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
+                {message.isStreaming && <span style={cursorStyle} aria-hidden="true" />}
+              </div>
+            )}
             {/* F4: non-blocking indicator when only keyword search was available. */}
             {message.retrievalDegraded && (
               <div
@@ -234,7 +282,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
                 Retrieval is degraded — semantic search unavailable (showing keyword-only results).
               </div>
             )}
-            <div style={{ ...timeStyle, textAlign: 'left' }}>{formatRelativeTime(message.timestamp)}</div>
+            <div style={{ ...timeStyle, textAlign: 'left' }}>{relativeLabel}</div>
             <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
               <button
                 className="bubble-action"

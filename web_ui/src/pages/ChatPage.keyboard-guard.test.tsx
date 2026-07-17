@@ -113,6 +113,10 @@ describe('ChatPage — Ctrl+Enter guard while model-blocked (F-CTRL-ENTER-BYPASS
         onMessagesChange={() => {}}
         onSaveConversation={() => {}}
         onNewChat={() => {}}
+        currentConversationId={undefined}
+
+        setCurrentConversationId={() => {}}
+
         onOpenSettings={() => {}}
       />
     );

@@ -142,6 +142,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -157,6 +161,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -178,6 +186,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={onOpenSettingsSpy}
 />);
 
@@ -192,6 +204,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -218,6 +234,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -253,6 +273,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -291,6 +315,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -313,6 +341,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -351,6 +383,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={() => {}}
 />);
 
@@ -371,6 +407,10 @@ describe('ChatPage Keyboard Shortcuts (Task 8.6)', () => {
   onMessagesChange={() => {}}
   onSaveConversation={() => {}}
   onNewChat={() => {}}
+  currentConversationId={undefined}
+
+  setCurrentConversationId={() => {}}
+
   onOpenSettings={onOpenSettingsSpy}
 />);
 
