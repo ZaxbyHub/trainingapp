@@ -112,24 +112,3 @@ export async function countConversations(): Promise<number> {
     throw error;
   }
 }
-
-/**
- * Update only the title of a conversation.
- *
- * @param conversationId - Target conversation ID
- * @param title - New title string
- */
-export async function updateTitle(
-  conversationId: string,
-  title: string
-): Promise<void> {
-  try {
-    await db.conversations.update(conversationId, {
-      title,
-      updatedAt: Date.now()
-    });
-  } catch (error) {
-    console.error('[conversations] Failed to update title:', error);
-    throw error;
-  }
-}

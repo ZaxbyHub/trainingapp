@@ -565,3 +565,728 @@ describe('ChatPage F1: first-turn fast-complete does not create a duplicate conv
     expect(setCurrentConversationId).toHaveBeenCalledWith('NEW_CONV_1');
   });
 });
+
+// ============================================================================
+// PR #38 — persistence-of-partial-turn regression suite (PRR-001 / 005 / 006a/b)
+//
+// These tests guard the fix that an in-flight assistant turn is NEVER silently
+// dropped when it is interrupted by: a conversation switch (PRR-001), a user
+// Stop (PRR-005), an unmount (PRR-006a), or an engine switch (PRR-006b). In all
+// four cases the finalized (isStreaming stripped) partial content must be
+// persisted to the OWNING conversation id via onSaveConversation.
+//
+// Each test is a TRUE regression test: if the corresponding persist call were
+// removed from ChatPage.tsx, the test would fail.
+//
+// The tests reuse the same hoisted module mocks as the S1/F1 tests above
+// (RAGOrchestrator, llm-factory, inference, readiness-gate, auth). They only
+// re-establish per-describe mock implementations because vi.restoreAllMocks()
+// in the prior describe's afterEach strips the factory implementations.
+// ============================================================================
+
+/**
+ * Shared helpers for the PR #38 persistence-of-partial-turn tests.
+ *
+ * The lifted-view <Harness> pattern (inline in each test) mounts the REAL
+ * ChatPage so the test can flip currentConversationId / messages / browserEngine
+ * to simulate the parent (App) switching conversations or engines mid-stream.
+ *
+ * `flushRafFrames` advances real timers enough for jsdom's requestAnimationFrame
+ * polyfill to fire, so tokens buffered in TokenStreamManager reach the onToken
+ * callback (and thus messagesRef). We use REAL timers (not fake) here because
+ * the persistence assertions must observe messagesRef populated by a real RAF
+ * flush — the production code relies on the RAF flush contract.
+ *
+ * `waitForPartialContent` POLLs the lifted view's messages for a token,
+ * interleaving microtask flushes (advances the async orchestrator loop) with
+ * RAF flushes (delivers buffered tokens to messagesRef). This eliminates the
+ * brittle microtask-count + RAF race: it returns as soon as the partial
+ * assistant content is observable, regardless of how loaded the event loop is.
+ * Bounded iteration count keeps it deterministic (fails fast if the token never
+ * arrives rather than hanging).
+ */
+function flushRafFrames(frames = 3): Promise<void> {
+  // jsdom polyfills requestAnimationFrame via setTimeout(~16ms). Advancing the
+  // event loop with a handful of zero-delay macrotasks lets the queued RAF
+  // callbacks fire. Wrapped so callers can `await flushRafFrames()` inside act.
+  return new Promise<void>((resolve) => {
+    let remaining = frames;
+    const tick = () => {
+      remaining -= 1;
+      if (remaining <= 0) resolve();
+      else setTimeout(tick, 0);
+    };
+    setTimeout(tick, 0);
+  });
+}
+
+/**
+ * Poll `getMessages()` (the lifted view's current messages) until an assistant
+ * message contains `partialToken`, flushing microtasks + RAF each iteration.
+ * Throws after `maxIters` if the token never appears (deterministic failure
+ * rather than a hang). Use this instead of a fixed microtask count so the test
+ * is robust to event-loop load (the orchestrator's async loop + RAF scheduling
+ * race under the default vitest pool).
+ */
+async function waitForPartialContent(
+  getMessages: () => ChatMessage[],
+  partialToken: string,
+  maxIters = 40
+): Promise<void> {
+  for (let i = 0; i < maxIters; i++) {
+    await Promise.resolve();
+    await Promise.resolve();
+    await flushRafFrames(2);
+    const msgs = getMessages();
+    const has = msgs.some(
+      (m) => m.role === 'assistant' && typeof m.content === 'string' && m.content.includes(partialToken)
+    );
+    if (has) return;
+  }
+  throw new Error(
+    `waitForPartialContent: token "${partialToken}" never appeared in messages after ${maxIters} iterations`
+  );
+}
+
+/**
+ * A deferred-gate AsyncGenerator that:
+ *   - yields a token immediately (so partial content is non-empty),
+ *   - PARKS on `gate` (the stream stays open, NOT completed),
+ *   - (the test never resolves the gate — we test the INTERRUPTED case).
+ *
+ * This parks the stream so tokenStreamManagerRef.current stays non-null and
+ * `cancel()` is never invoked by the orchestrator completing — the only way
+ * the partial turn gets persisted is the explicit persist path under test.
+ */
+function makeParkingStream(
+  gate: { promise: Promise<void>; resolve: () => void },
+  token: string
+): () => AsyncGenerator<RAGEvent> {
+  return async function* (): AsyncGenerator<RAGEvent> {
+    yield { type: 'token', data: token };
+    await gate.promise;
+    // Unreachable in the interrupted tests — the gate is never resolved.
+    yield { type: 'complete', data: { answer: token, sources: [], chunks: [] } };
+  };
+}
+
+describe('ChatPage PRR-001: switch mid-stream PERSISTS the partial turn to the owning conversation A', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Re-establish the factory mocks (see F1 describe for rationale).
+    vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn(),
+      supportsImages: vi.fn().mockReturnValue(false),
+    }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isModelReady: true,
+      isServerConnected: true,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    } as unknown as ReturnType<typeof inferenceModule.useInferenceMode>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('a mid-stream switch to B triggers a save targeting OWNING A with the partial assistant content (isStreaming stripped)', async () => {
+    const gate = makeDeferred();
+    const PARTIAL_TOKEN = 'PARTIAL-A-';
+
+    const orchestrator = { query: vi.fn() };
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
+      () => orchestrator as unknown as ragModule.RAGOrchestrator
+    );
+    orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
+
+    const onSaveConversation = vi.fn();
+    const setCurrentConversationId = vi.fn();
+
+    const aUserMsg = makeMessage('user', 'A-QUESTION');
+    const bUserMsg = makeMessage('user', 'B-QUESTION');
+
+    type View = { convId: string; messages: ChatMessage[] };
+    let view: View = { convId: 'A', messages: [aUserMsg] };
+
+    function Harness() {
+      return (
+        <ChatPage
+          messages={view.messages}
+          onMessagesChange={(next) => {
+            view = {
+              ...view,
+              messages:
+                typeof next === 'function'
+                  ? (next as (p: ChatMessage[]) => ChatMessage[])(view.messages)
+                  : next,
+            };
+          }}
+          onSaveConversation={onSaveConversation}
+          currentConversationId={view.convId}
+          setCurrentConversationId={setCurrentConversationId}
+          onNewChat={() => {}}
+          onOpenSettings={() => {}}
+        />
+      );
+    }
+
+    const { rerender } = render(<Harness />);
+
+    // --- Step 1: send a message in A; the stream parks after one token ------
+    const textarea = screen.getByRole('textbox');
+    const sendButton = screen.getByRole('button', { name: /send message/i });
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'A-QUESTION' } });
+      fireEvent.click(sendButton);
+    });
+
+    // Let initialize() resolve and the orchestrator yield the token + park.
+    // POLL for the partial token to reach the lifted view's messages (via the
+    // real RAF flush path) instead of a fixed microtask count — robust to
+    // event-loop load under the vitest pool.
+    await act(async () => {
+      await waitForPartialContent(() => view.messages, PARTIAL_TOKEN);
+    });
+
+    // Clear send-time noise so the SWITCH save is cleanly isolated below.
+    onSaveConversation.mockClear();
+    setCurrentConversationId.mockClear();
+
+    // --- Step 2: switch to B WITHOUT completing the stream ------------------
+    // The PRR-001 switch effect (ChatPage.tsx ~146-174) finalizes the OWNING
+    // conversation's partial turn (read from owningMessagesRef, the send-time
+    // snapshot) and calls onSaveConversation(owningId=A, finalized, ...) before
+    // canceling the stream. This is the PRR-001 fix: previously the switch only
+    // canceled, dropping the partial turn (cancel() never fires onDone/onError).
+    //
+    // Regression proof: if the switch effect's `onSaveConversation(owningId, ...)`
+    // line is removed, this test FAILS (no save targets A) — verified by
+    // temporarily deleting that line. (The unmount-cleanup effect is now
+    // unmount-only via its `[]` dep, so it no longer masks the switch path on a
+    // conversation switch.)
+    await act(async () => {
+      view = { convId: 'B', messages: [bUserMsg] };
+      rerender(<Harness />);
+    });
+    // Flush the switch effect + any tail microtasks/frames.
+    await act(async () => {
+      await flushRafFrames(2);
+      await Promise.resolve();
+    });
+
+    // === PRR-001 ASSERTIONS =================================================
+
+    // (1) A save targeting the OWNING conversation A must have fired. If the
+    //     switch effect's `onSaveConversation(owningId, finalized, ...)` line
+    //     were removed, NO save would target A here (cancel alone never saves).
+    const saveToA = onSaveConversation.mock.calls.filter(([id]) => id === 'A');
+    expect(
+      saveToA.length,
+      'switch mid-stream MUST persist the partial turn to owning conversation A (PRR-001)'
+    ).toBeGreaterThanOrEqual(1);
+
+    // (2) The persisted messages must contain the PARTIAL assistant content
+    //     (the token that streamed before the switch), with isStreaming
+    //     stripped. This proves the partial answer was not lost.
+    const lastSaveToA = saveToA[saveToA.length - 1];
+    const savedMessages = lastSaveToA[1] as ChatMessage[];
+    const assistantMsgs = savedMessages.filter((m) => m.role === 'assistant');
+    expect(assistantMsgs.length, 'an assistant message must be present in the persisted turn').toBeGreaterThanOrEqual(1);
+    const partialAssistant = assistantMsgs.find((m) => m.content.includes(PARTIAL_TOKEN));
+    expect(
+      partialAssistant,
+      `persisted assistant content must include the streamed partial token "${PARTIAL_TOKEN}"`
+    ).toBeDefined();
+    expect(
+      partialAssistant!.isStreaming,
+      'persisted partial assistant message must have isStreaming stripped (no blinking cursor persisted)'
+    ).toBeFalsy();
+
+    // (3) No save may target B (the switched-TO conversation) for the partial
+    //     turn — the partial belongs to A, the conversation that produced it.
+    const saveToB = onSaveConversation.mock.calls.filter(([id]) => id === 'B');
+    expect(
+      saveToB.length,
+      'partial turn from A must NOT be persisted to B (the switched-TO conversation)'
+    ).toBe(0);
+  });
+});
+
+/**
+ * PRR-005 regression: handleCancel must persist the cancel-flushed tail tokens.
+ *
+ * The bug was that handleCancel snapshotted messagesRef BEFORE calling
+ * cancelActiveStream(). TokenStreamManager.cancel() flushes the token buffer
+ * synchronously (S4) via onToken → which appends to messagesRef — so a
+ * pre-cancel snapshot missed every token still buffered at cancel time (up to
+ * a RAF frame, far more in a background tab). The fix reads messagesRef AFTER
+ * cancelActiveStream().
+ *
+ * Timing approach (deterministic, no brittle microtask counts):
+ *   - We use FAKE TIMERS so the RAF that TokenStreamManager.pushToken schedules
+ *     does NOT auto-fire. Tokens therefore stay buffered in tokenBuffer and
+ *     never reach onToken/messagesRef during streaming.
+ *   - We push several tokens (they buffer).
+ *   - We click Stop. handleCancel → cancelActiveStream() →
+ *     TokenStreamManager.cancel() → flushBuffer() → onToken(joined) fires
+ *     SYNCHRONOUSLY, appending ALL buffered tokens to messagesRef. THEN
+ *     handleCancel reads messagesRef.current (post-fix) and persists.
+ *   - If handleCancel still snapshotted before cancel (the bug), the persisted
+ *     content would contain ZERO streamed tokens (the buffer was never flushed
+ *     into messagesRef before cancel ran).
+ *
+ * Fake timers do NOT block Promise microtasks, so the async orchestrator loop
+ * still advances and calls pushToken; only the macrotask-driven RAF is gated.
+ */
+describe('ChatPage PRR-005: handleCancel preserves cancel-flushed tail tokens', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn(),
+      supportsImages: vi.fn().mockReturnValue(false),
+    }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isModelReady: true,
+      isServerConnected: true,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    } as unknown as ReturnType<typeof inferenceModule.useInferenceMode>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('Stop persists the FULL streamed content including tokens that were buffered (unflushed) at cancel time', async () => {
+    vi.useFakeTimers();
+
+    // Three tokens pushed in sequence; all stay buffered (RAF never fires under
+    // fake timers), so messagesRef's assistant content is EMPTY until cancel()
+    // flushes the buffer.
+    const TOKENS = ['T1-', 'T2-', 'T3-TAIL'];
+    const FULL = TOKENS.join('');
+
+    const orchestrator = { query: vi.fn() };
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
+      () => orchestrator as unknown as ragModule.RAGOrchestrator
+    );
+    orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
+      for (const t of TOKENS) {
+        yield { type: 'token', data: t };
+      }
+      // Park forever — the user cancels before completion. The stream is
+      // intentionally never completed so the ONLY persist path is handleCancel.
+      await new Promise<void>(() => {});
+    });
+
+    const onSaveConversation = vi.fn();
+    const setCurrentConversationId = vi.fn();
+
+    const userMsg = makeMessage('user', 'Q');
+    type View = { convId: string; messages: ChatMessage[] };
+    let view: View = { convId: 'A', messages: [userMsg] };
+
+    function Harness() {
+      return (
+        <ChatPage
+          messages={view.messages}
+          onMessagesChange={(next) => {
+            view = {
+              ...view,
+              messages:
+                typeof next === 'function'
+                  ? (next as (p: ChatMessage[]) => ChatMessage[])(view.messages)
+                  : next,
+            };
+          }}
+          onSaveConversation={onSaveConversation}
+          currentConversationId={view.convId}
+          setCurrentConversationId={setCurrentConversationId}
+          onNewChat={() => {}}
+          onOpenSettings={() => {}}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    const textarea = screen.getByRole('textbox');
+    const sendButton = screen.getByRole('button', { name: /send message/i });
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'Q' } });
+      fireEvent.click(sendButton);
+    });
+
+    // Advance microtasks (NOT macrotimers) so initialize() resolves and the
+    // orchestrator yields all three tokens into the TokenStreamManager buffer.
+    // Fake timers do not block Promise microtask resolution, so the for-await
+    // loop advances. We do NOT advance fake timers, so the scheduled RAF never
+    // fires — tokens remain buffered and messagesRef's assistant content is
+    // still empty.
+    await act(async () => {
+      for (let i = 0; i < 12; i++) await Promise.resolve();
+    });
+
+    // Isolate the CANCEL save from the send-time save.
+    onSaveConversation.mockClear();
+
+    // --- Click Stop ----------------------------------------------------------
+    // handleCancel: captures owningId, calls cancelActiveStream() (which calls
+    // TokenStreamManager.cancel() → flushBuffer() → onToken(FULL) synchronously,
+    // appending ALL buffered tokens to messagesRef), THEN reads
+    // messagesRef.current (post-fix) to build `finalized` and persists.
+    const stopButton = screen.getByRole('button', { name: /stop generation/i });
+    await act(async () => {
+      fireEvent.click(stopButton);
+    });
+    // Flush React commit + any trailing microtasks.
+    await act(async () => {
+      for (let i = 0; i < 4; i++) await Promise.resolve();
+    });
+
+    vi.useRealTimers();
+
+    // === PRR-005 ASSERTIONS =================================================
+
+    // (1) handleCancel persisted exactly one save targeting the owning A.
+    const cancelSaves = onSaveConversation.mock.calls.filter(([id]) => id === 'A');
+    expect(
+      cancelSaves.length,
+      'handleCancel must persist the finalized turn to owning A'
+    ).toBeGreaterThanOrEqual(1);
+    const lastCancel = cancelSaves[cancelSaves.length - 1];
+    const persistedMessages = lastCancel[1] as ChatMessage[];
+
+    // (2) The persisted assistant content MUST contain the FULL streamed
+    //     content, INCLUDING the tail token "T3-TAIL" that was buffered
+    //     (unflushed) at cancel time. Under the PRR-005 bug, messagesRef was
+    //     snapshotted BEFORE cancel flushed the buffer, so NONE of the buffered
+    //     tokens (the entire content, since the RAF never fired under fake
+    //     timers) would appear — the assertion would fail.
+    const assistantMsgs = persistedMessages.filter((m) => m.role === 'assistant');
+    expect(assistantMsgs.length, 'an assistant message must be persisted').toBeGreaterThanOrEqual(1);
+    const persistedContent = assistantMsgs.map((m) => m.content).join('');
+    expect(
+      persistedContent,
+      'persisted assistant content must include the cancel-flushed tail token "T3-TAIL" (PRR-005)'
+    ).toContain('T3-TAIL');
+    expect(
+      persistedContent,
+      'persisted assistant content must equal the FULL streamed content (all buffered tokens flushed during cancel)'
+    ).toBe(FULL);
+
+    // (3) The persisted assistant message has isStreaming stripped.
+    expect(
+      assistantMsgs.every((m) => !m.isStreaming),
+      'persisted partial assistant message must have isStreaming stripped'
+    ).toBe(true);
+  });
+});
+
+/**
+ * PRR-006a regression: unmounting ChatPage mid-stream must persist the finalized
+ * partial turn. The unmount-cleanup effect (ChatPage.tsx ~247-271) checks
+ * tokenStreamManagerRef.current !== null, finalizes messagesRef (strips
+ * isStreaming), and persists via persistOnUnmountRef. If that persist branch
+ * were removed, the partial turn would be silently dropped on unmount (e.g.
+ * navigating away mid-generation).
+ */
+describe('ChatPage PRR-006a: unmount mid-stream PERSISTS the finalized partial turn', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn(),
+      supportsImages: vi.fn().mockReturnValue(false),
+    }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isModelReady: true,
+      isServerConnected: true,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    } as unknown as ReturnType<typeof inferenceModule.useInferenceMode>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('unmount triggers an onSaveConversation call with the finalized partial content (isStreaming stripped)', async () => {
+    const gate = makeDeferred();
+    const PARTIAL_TOKEN = 'UNMOUNT-PARTIAL-';
+
+    const orchestrator = { query: vi.fn() };
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
+      () => orchestrator as unknown as ragModule.RAGOrchestrator
+    );
+    orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
+
+    const onSaveConversation = vi.fn();
+    const setCurrentConversationId = vi.fn();
+
+    const userMsg = makeMessage('user', 'Q');
+    type View = { convId: string; messages: ChatMessage[] };
+    let view: View = { convId: 'A', messages: [userMsg] };
+
+    function Harness() {
+      return (
+        <ChatPage
+          messages={view.messages}
+          onMessagesChange={(next) => {
+            view = {
+              ...view,
+              messages:
+                typeof next === 'function'
+                  ? (next as (p: ChatMessage[]) => ChatMessage[])(view.messages)
+                  : next,
+            };
+          }}
+          onSaveConversation={onSaveConversation}
+          currentConversationId={view.convId}
+          setCurrentConversationId={setCurrentConversationId}
+          onNewChat={() => {}}
+          onOpenSettings={() => {}}
+        />
+      );
+    }
+
+    const { unmount } = render(<Harness />);
+
+    // Send + let the token flush into messagesRef, then park.
+    const textarea = screen.getByRole('textbox');
+    const sendButton = screen.getByRole('button', { name: /send message/i });
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'Q' } });
+      fireEvent.click(sendButton);
+    });
+    await act(async () => {
+      await waitForPartialContent(() => view.messages, PARTIAL_TOKEN);
+    });
+
+    // Clear the send-time save so the UNMOUNT save is isolated.
+    onSaveConversation.mockClear();
+
+    // --- Unmount mid-stream -------------------------------------------------
+    await act(async () => {
+      unmount();
+    });
+
+    // === PRR-006a ASSERTIONS ================================================
+
+    // (1) onSaveConversation fired on unmount with finalized content. If the
+    //     unmount-cleanup's persist branch were removed, this would be empty.
+    expect(
+      onSaveConversation.mock.calls.length,
+      'unmount mid-stream MUST persist the finalized partial turn (PRR-006a)'
+    ).toBeGreaterThanOrEqual(1);
+
+    const lastCall = onSaveConversation.mock.calls[onSaveConversation.mock.calls.length - 1];
+    const [unmountId, unmountMessages] = lastCall;
+
+    // (2) The persisted messages contain the partial assistant content (the
+    //     token that streamed before unmount), with isStreaming stripped.
+    const assistantMsgs = (unmountMessages as ChatMessage[]).filter((m) => m.role === 'assistant');
+    expect(assistantMsgs.length, 'an assistant message must be persisted on unmount').toBeGreaterThanOrEqual(1);
+    const partial = assistantMsgs.find((m) => m.content.includes(PARTIAL_TOKEN));
+    expect(
+      partial,
+      `persisted assistant content must include the streamed partial token "${PARTIAL_TOKEN}"`
+    ).toBeDefined();
+    expect(
+      partial!.isStreaming,
+      'persisted partial assistant message must have isStreaming stripped on unmount'
+    ).toBeFalsy();
+
+    // (3) The unmount save targets the owning conversation A.
+    expect(unmountId, 'unmount persist must target the owning conversation A').toBe('A');
+  });
+});
+
+/**
+ * PRR-006b regression: switching the browser engine mid-stream must persist the
+ * finalized partial turn. The engine-switch effect (ChatPage.tsx ~201-228)
+ * detects prev !== browserEngine while a stream is active, finalizes
+ * messagesRef (strips isStreaming), and persists via onSaveConversation. If that
+ * persist branch were removed, the partial turn would be lost on engine switch.
+ */
+describe('ChatPage PRR-006b: engine switch mid-stream PERSISTS the finalized partial turn to the owning conversation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn(),
+      supportsImages: vi.fn().mockReturnValue(false),
+    }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isModelReady: true,
+      isServerConnected: true,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    } as unknown as ReturnType<typeof inferenceModule.useInferenceMode>);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('switching browserEngine to web-llm mid-stream triggers a save with the finalized partial content targeting owning A', async () => {
+    const gate = makeDeferred();
+    const PARTIAL_TOKEN = 'ENGINE-SWITCH-PARTIAL-';
+
+    const orchestrator = { query: vi.fn() };
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
+      () => orchestrator as unknown as ragModule.RAGOrchestrator
+    );
+    orchestrator.query.mockImplementation(makeParkingStream(gate, PARTIAL_TOKEN));
+
+    const onSaveConversation = vi.fn();
+    const setCurrentConversationId = vi.fn();
+
+    const userMsg = makeMessage('user', 'Q');
+    // The lifted view starts in wllama mode; we flip browserEngine to web-llm
+    // below to simulate an engine switch while streaming.
+    type View = { convId: string; messages: ChatMessage[]; engine: 'wllama' | 'web-llm' };
+    let view: View = { convId: 'A', messages: [userMsg], engine: 'wllama' };
+
+    function Harness() {
+      // useInferenceMode is module-mocked, so we override its return value per
+      // render to reflect the lifted engine. This mirrors how the real
+      // InferenceModeContext would surface an engine change to ChatPage.
+      vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+        mode: 'browser-local',
+        browserEngine: view.engine,
+        ragPreset: 'balanced',
+        isModelReady: true,
+        isServerConnected: true,
+        modelLoadingProgress: 0,
+        modeError: null,
+        serverUrl: '',
+        setMode: vi.fn(),
+        setBrowserEngine: vi.fn(),
+        setRagPreset: vi.fn(),
+        setServerUrl: vi.fn(),
+        checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+        setModelReady: vi.fn(),
+        setModelLoadingProgress: vi.fn(),
+      } as unknown as ReturnType<typeof inferenceModule.useInferenceMode>);
+
+      return (
+        <ChatPage
+          messages={view.messages}
+          onMessagesChange={(next) => {
+            view = {
+              ...view,
+              messages:
+                typeof next === 'function'
+                  ? (next as (p: ChatMessage[]) => ChatMessage[])(view.messages)
+                  : next,
+            };
+          }}
+          onSaveConversation={onSaveConversation}
+          currentConversationId={view.convId}
+          setCurrentConversationId={setCurrentConversationId}
+          onNewChat={() => {}}
+          onOpenSettings={() => {}}
+        />
+      );
+    }
+
+    const { rerender } = render(<Harness />);
+
+    // Send + flush token + park.
+    const textarea = screen.getByRole('textbox');
+    const sendButton = screen.getByRole('button', { name: /send message/i });
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'Q' } });
+      fireEvent.click(sendButton);
+    });
+    await act(async () => {
+      await waitForPartialContent(() => view.messages, PARTIAL_TOKEN);
+    });
+
+    // Clear send-time save so the ENGINE-SWITCH save is isolated.
+    onSaveConversation.mockClear();
+
+    // --- Switch the engine to web-llm mid-stream ----------------------------
+    // The engine-switch effect (ChatPage.tsx ~201-228) sees prev='wllama' !==
+    // 'web-llm', finalizes messagesRef, and persists via onSaveConversation.
+    await act(async () => {
+      view = { ...view, engine: 'web-llm' };
+      rerender(<Harness />);
+    });
+    await act(async () => {
+      await flushRafFrames(2);
+      await Promise.resolve();
+    });
+
+    // === PRR-006b ASSERTIONS ================================================
+
+    // (1) A save targeting the owning conversation A fired after the engine
+    //     switch. If the engine-switch effect's persist branch were removed,
+    //     this would be empty (the abort alone never fires onDone).
+    const switchSaves = onSaveConversation.mock.calls.filter(([id]) => id === 'A');
+    expect(
+      switchSaves.length,
+      'engine switch mid-stream MUST persist the finalized partial turn to owning A (PRR-006b)'
+    ).toBeGreaterThanOrEqual(1);
+
+    // (2) The persisted messages contain the partial assistant content with
+    //     isStreaming stripped.
+    const lastSwitch = switchSaves[switchSaves.length - 1];
+    const switchMessages = lastSwitch[1] as ChatMessage[];
+    const assistantMsgs = switchMessages.filter((m) => m.role === 'assistant');
+    expect(assistantMsgs.length, 'an assistant message must be persisted on engine switch').toBeGreaterThanOrEqual(1);
+    const partial = assistantMsgs.find((m) => m.content.includes(PARTIAL_TOKEN));
+    expect(
+      partial,
+      `persisted assistant content must include the streamed partial token "${PARTIAL_TOKEN}"`
+    ).toBeDefined();
+    expect(
+      partial!.isStreaming,
+      'persisted partial assistant message must have isStreaming stripped on engine switch'
+    ).toBeFalsy();
+  });
+});
