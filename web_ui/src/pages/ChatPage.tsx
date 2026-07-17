@@ -478,7 +478,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     }
   }, [mode, serverUrl, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages]);
 
-  const handleSend = useCallback((text: string, attachedImages?: AttachedImage[]) => {
+  const handleSend = useCallback(async (text: string, attachedImages?: AttachedImage[]) => {
     // Prevent overlapping streams
     if (tokenStreamManagerRef.current) return;
 
@@ -522,27 +522,38 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // with no current conversation, create one and adopt its id as the owning
     // id (H4 + F1: prevents a duplicate conversation when onDone later saves).
     //
-    // F1: owningConversationIdRef is set SYNCHRONOUSLY here and updated
-    // synchronously in onCreate, so runGeneration's onDone/onError read the
-    // current owning id (which may have just been created) rather than a stale
-    // closure value.
+    // F1 (corrected): the send-time save is AWAITED so the owning id ref is
+    // set BEFORE runGeneration starts. The prior approach set the ref
+    // synchronously and relied on saveMessages' onCreate callback to update
+    // it — but onCreate fires inside the async saveMessages after two awaits
+    // (a microtask), so on a fast-complete first turn (warm model / zero-doc
+    // abstain) onDone fired before onCreate resolved, read undefined, and
+    // created a duplicate conversation. Awaiting the save guarantees ordering.
     owningConversationIdRef.current = currentConversationId;
-    onSaveConversation(
-      currentConversationId,
-      appended,
-      mode === 'api' ? 'server' : 'wllama',
-      browserEngine,
-      (newId) => {
-        // First-turn creation: adopt the new id as both the owning id (for
-        // this stream's saves, via the ref) and the active conversation.
-        if (currentConversationId === undefined) {
-          owningConversationIdRef.current = newId;
-          setCurrentConversationId(newId);
+    let resolvedOwningId = currentConversationId;
+    try {
+      await onSaveConversation(
+        currentConversationId,
+        appended,
+        mode === 'api' ? 'server' : 'wllama',
+        browserEngine,
+        (newId) => {
+          // First-turn creation: adopt the new id as both the owning id (for
+          // this stream's saves, via the ref) and the active conversation.
+          if (currentConversationId === undefined) {
+            resolvedOwningId = newId;
+          }
         }
-      }
-    );
+      );
+    } catch (err) {
+      console.error('[ChatPage] Send-time persistence failed; streaming will proceed without a guaranteed owning id.', err);
+    }
+    if (resolvedOwningId !== currentConversationId) {
+      owningConversationIdRef.current = resolvedOwningId;
+      setCurrentConversationId(resolvedOwningId);
+    }
 
-    runGeneration(text, attachedImages, assistantMessageId, currentConversationId, appended);
+    runGeneration(text, attachedImages, assistantMessageId, resolvedOwningId, appended);
   }, [runGeneration, onSaveConversation, mode, browserEngine, currentConversationId, setCurrentConversationId]);
 
   // Re-run the most recent user turn, replacing the last assistant response.

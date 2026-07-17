@@ -90,6 +90,7 @@ vi.mock('../lib/api/auth', () => ({
 import { ChatPage } from './ChatPage';
 import * as ragModule from '../lib/rag/rag-orchestrator';
 import * as inferenceModule from '../lib/inference';
+import * as llmFactoryModule from '../lib/llm/llm-factory';
 
 // --- Test helpers -----------------------------------------------------------
 
@@ -327,5 +328,240 @@ describe('ChatPage S1: switch-mid-stream does not corrupt conversation history',
       rePointToA.length,
       'setCurrentConversationId must not re-point back to owning A'
     ).toBe(0);
+  });
+});
+
+/**
+ * F1 regression: first-turn send (currentConversationId=undefined) with a
+ * FAST-COMPLETE stream must NOT create a duplicate conversation.
+ *
+ * The F1 bug (now fixed) was that `handleSend` set
+ * `owningConversationIdRef.current = currentConversationId` synchronously and
+ * relied on `saveMessages`'s `onCreate` callback to update the ref when the
+ * first-turn conversation was created. But `onCreate` fires inside the ASYNC
+ * `saveMessages` after two awaits (a microtask), so on a fast-complete first
+ * turn (warm model / zero-doc abstain that completes synchronously), `onDone`
+ * fired before `onCreate` resolved, read
+ * `owningConversationIdRef.current === undefined`, and created a SECOND
+ * conversation.
+ *
+ * The fix makes `handleSend` `async` and AWAITS the send-time
+ * `onSaveConversation(...)` call, capturing the resolved owning id
+ * (`resolvedOwningId`) via the `onCreate` callback, THEN sets
+ * `owningConversationIdRef.current = resolvedOwningId` and calls
+ * `runGeneration`. This guarantees the ref is set to the created conversation's
+ * id before any stream completion can fire.
+ *
+ * This test simulates the real `saveMessages` create behavior by invoking the
+ * `onCreate` callback (5th arg) synchronously with a fresh id when
+ * `conversationId === undefined`, and uses a fast-completing orchestrator
+ * (yield a token, then immediately `complete` — no gate). The fast completion
+ * would race the `onCreate` callback under the old synchronous-ref code path
+ * and produce a duplicate conversation; under the fix the awaited send ensures
+ * the ref is set first.
+ */
+describe('ChatPage F1: first-turn fast-complete does not create a duplicate conversation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // The S1 describe's afterEach calls vi.restoreAllMocks(), which strips the
+    // mockImplementation set on getLLMService by the hoisted vi.mock() factory.
+    // When this (second) describe runs, getLLMService() would otherwise return
+    // undefined → the orchestrator IIFE throws on llmService.initialize() and
+    // the stream never runs. Re-establish the factory mock here so the F1 test
+    // is self-contained regardless of test ordering.
+    vi.mocked(llmFactoryModule.getLLMService).mockImplementation(() => ({
+      initialize: vi.fn().mockResolvedValue(undefined),
+      interrupt: vi.fn(),
+      supportsImages: vi.fn().mockReturnValue(false),
+    }) as unknown as ReturnType<typeof llmFactoryModule.getLLMService>);
+
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isModelReady: true,
+      isServerConnected: true,
+      modelLoadingProgress: 0,
+      modeError: null,
+      serverUrl: '',
+      setMode: vi.fn(),
+      setBrowserEngine: vi.fn(),
+      setRagPreset: vi.fn(),
+      setServerUrl: vi.fn(),
+      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
+      setModelReady: vi.fn(),
+      setModelLoadingProgress: vi.fn(),
+    } as unknown as ReturnType<typeof inferenceModule.useInferenceMode>);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('completion save targets the just-created conversation id (not undefined) on a fast-complete first turn', async () => {
+    // --- Orchestrator: a FAST-completing stream (token then complete) ----------
+    // No gate / no delay — the stream completes as soon as the orchestrator loop
+    // runs. This is the warm-model / zero-doc-abstain first-turn scenario. Under
+    // the F1 bug, the completion raced saveMessages' onCreate (which fires after
+    // two awaits inside saveMessages) and read owningConversationId===undefined,
+    // creating a duplicate. Under the fix, handleSend AWAITS the send-time save
+    // (with its synchronous onCreate), so the ref is set before runGeneration.
+    const orchestrator = { query: vi.fn() };
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(
+      () => orchestrator as unknown as ragModule.RAGOrchestrator
+    );
+    orchestrator.query.mockImplementation(async function* (): AsyncGenerator<RAGEvent> {
+      yield { type: 'token', data: 'FAST-' };
+      yield {
+        type: 'complete',
+        data: { answer: 'FAST-ANSWER', sources: [], chunks: [] },
+      };
+    });
+
+    // --- onSaveConversation: simulate the REAL saveMessages create behavior ---
+    // The real saveMessages is ASYNC and only fires onCreate INSIDE its async
+    // body after a couple of awaits (microtasks) — this is what produced the F1
+    // race: a fast-complete stream's onDone fired before onCreate resolved, read
+    // the still-undefined owningConversationIdRef, and created a duplicate. We
+    // mirror that timing here by returning a Promise that fires onCreate after a
+    // handful of microtasks. To GUARANTEE the F1 race is observable when the fix
+    // is absent, onCreate is deferred by enough microtasks that a fast-completing
+    // orchestrator (warm model — initialize resolves immediately, then a token
+    // and complete) fires onDone FIRST. Under the fix, handleSend AWAITS this
+    // save, so runGeneration cannot start until onCreate has resolved the ref —
+    // the race is eliminated regardless of relative timing.
+    let createCounter = 0;
+    const calls: Array<{ id: string | undefined; messages: ChatMessage[] }> = [];
+    const onSaveConversation = vi.fn(
+      (id: string | undefined, messages: ChatMessage[], _mode: string, _model: string, onCreate?: (newId: string) => void) => {
+        calls.push({ id, messages });
+        // Return a Promise (the real saveMessages is async) and fire onCreate
+        // from within several microtasks — slower than a fast-complete stream,
+        // reproducing the F1 race when the fix's `await` is removed.
+        return (async () => {
+          for (let i = 0; i < 8; i++) {
+            await Promise.resolve();
+          }
+          if (id === undefined && onCreate) {
+            createCounter += 1;
+            onCreate('NEW_CONV_' + createCounter);
+          }
+        })();
+      }
+    );
+    const setCurrentConversationId = vi.fn();
+
+    // --- Harness: first turn (no current conversation, empty messages) --------
+    type View = { convId: string | undefined; messages: ChatMessage[] };
+    let view: View = { convId: undefined, messages: [] };
+
+    function Harness() {
+      return (
+        <ChatPage
+          messages={view.messages}
+          onMessagesChange={(next) => {
+            view = {
+              ...view,
+              messages:
+                typeof next === 'function'
+                  ? (next as (p: ChatMessage[]) => ChatMessage[])(view.messages)
+                  : next,
+            };
+          }}
+          onSaveConversation={onSaveConversation}
+          currentConversationId={view.convId}
+          setCurrentConversationId={(id: string | undefined) => {
+            setCurrentConversationId(id);
+            // Mirror the parent (App) lifting the new id into state so the
+            // re-render observes it (keeps the test realistic w.r.t. App).
+            view = { ...view, convId: id };
+          }}
+          onNewChat={() => {}}
+          onOpenSettings={() => {}}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    // --- Trigger a send on the first turn (no current conversation) ----------
+    const textarea = screen.getByRole('textbox');
+    const sendButton = screen.getByRole('button', { name: /send message/i });
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'FIRST-TURN-QUESTION' } });
+      fireEvent.click(sendButton);
+    });
+
+    // Flush microtasks so initialize() resolves, the orchestrator loop runs to
+    // completion (token + complete), onDone fires, AND (under the fix) the
+    // send-time save's deferred onCreate resolves before runGeneration starts.
+    // We flush enough microtasks to cover both the fast-complete stream and the
+    // 8-microtask deferral the onSaveConversation mock uses to simulate the
+    // real saveMessages' async onCreate timing.
+    await act(async () => {
+      for (let i = 0; i < 24; i++) {
+        await Promise.resolve();
+      }
+    });
+
+    // === F1 ASSERTIONS =====================================================
+
+    // (1) Exactly ONE create call: exactly one onSaveConversation call had
+    //     conversationId === undefined. Under the F1 bug, onDone would also
+    //     save with undefined (because owningConversationIdRef.current was
+    //     still undefined when onDone fired), producing a SECOND create →
+    //     duplicate conversation. The fix awaits the send-time save so the
+    //     ref is set before onDone, and only ONE create ever happens.
+    const createCalls = calls.filter((c) => c.id === undefined);
+    expect(
+      createCalls.length,
+      'exactly one create (undefined-id) save must happen — a second would be a duplicate conversation'
+    ).toBe(1);
+
+    // (2) The COMPLETION (onDone) save must have a DEFINED conversation id —
+    //     specifically the just-created 'NEW_CONV_1'. This is the CRITICAL F1
+    //     assertion: before the fix it would be undefined (stale owning id
+    //     closure), creating a duplicate conversation. Identify the completion
+    //     save as the one carrying an assistant message with `sources` set.
+    const completionCalls = calls.filter((c) =>
+      c.messages.some((m) => m.role === 'assistant' && Array.isArray(m.sources))
+    );
+    expect(
+      completionCalls.length,
+      'completion (onDone) save must fire after the fast-complete stream'
+    ).toBeGreaterThanOrEqual(1);
+
+    const lastCompletion = completionCalls[completionCalls.length - 1];
+    expect(
+      lastCompletion.id,
+      'completion save must use a DEFINED conversation id (the just-created one), NOT undefined — undefined would create a duplicate conversation (F1 bug)'
+    ).toBeDefined();
+    expect(
+      lastCompletion.id,
+      'completion save must target the just-created NEW_CONV_1, not a later/different id'
+    ).toBe('NEW_CONV_1');
+
+    // (3) Across the WHOLE interaction, exactly ONE create happened (already
+    //     asserted above) and the total number of undefined-id saves is 1.
+    //     Belt-and-braces: re-iterate the duplicate-conversation contract by
+    //     confirming every save AFTER the first create uses a defined id.
+    let sawCreate = false;
+    for (const c of calls) {
+      if (c.id === undefined) {
+        expect(
+          sawCreate,
+          'only one undefined-id (create) save is allowed across the whole interaction'
+        ).toBe(false);
+        sawCreate = true;
+      } else {
+        // Any defined-id save must be the just-created id (no spurious others).
+        expect(c.id).toBe('NEW_CONV_1');
+      }
+    }
+
+    // (4) setCurrentConversationId must have been called with 'NEW_CONV_1' so
+    //     the freshly created conversation becomes the active one (H4 + F1).
+    expect(setCurrentConversationId).toHaveBeenCalledWith('NEW_CONV_1');
   });
 });
