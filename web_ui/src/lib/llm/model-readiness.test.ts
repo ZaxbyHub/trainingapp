@@ -196,6 +196,20 @@ describe('ModelReadinessGate', () => {
       expect(result.requiredBytes).toBe(2_000_000_000);
     });
 
+    test('uses modelId to determine required bytes (gemma-4-e2b-it)', () => {
+      // Gemma 4 E2B-it Q4_K_M (wllama): ~2.9 GB GGUF + ~940 MB mmproj + KV cache.
+      // MODEL_REQUIRED_BYTES budgets conservatively at 4 GB.
+      mockGetMemoryBudget.mockReturnValue({
+        totalMB: 8192,
+        availableMB: 5_000_000_000 / (1024 * 1024), // ~4768MB
+        browserOverheadMB: 1024,
+      });
+
+      const result = gate.checkMemory('gemma-4-e2b-it');
+
+      expect(result.requiredBytes).toBe(4_000_000_000);
+    });
+
     test('uses default 2GB for unknown modelId', () => {
       mockGetMemoryBudget.mockReturnValue({
         totalMB: 8192,

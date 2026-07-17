@@ -32,8 +32,8 @@ public/models/
 │       └── wllama.js
 └── llm/                              # GGUF browser-LLM weights for wllama (optional)
     └── gemma-4-e2b-it/
-        ├── model.gguf               # Google Gemma 4 E2B-it Q4_K_M (~1.5 GB)
-        └── mmproj.gguf              # multimodal vision projector (~150 MB, enables image input)
+        ├── model.gguf               # Google Gemma 4 E2B-it Q4_K_M (~2.9 GB)
+        └── mmproj.gguf              # multimodal vision projector (~940 MB, enables image input)
 ```
 
 ## How files get here

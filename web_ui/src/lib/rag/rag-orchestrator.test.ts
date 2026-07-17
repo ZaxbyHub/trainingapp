@@ -1182,8 +1182,8 @@ describe('RAGOrchestrator', () => {
 
     test('F11: token budget drops overflowing chunks and reports contextTrimmed', async () => {
       const mockEmbedding = createMockEmbedding();
-      // A single chunk far larger than the entire context window (n_ctx=4096 →
-      // ~16k chars total budget). It cannot fit and is dropped, leaving zero
+      // A single chunk far larger than the entire context window (n_ctx=8192 →
+      // ~30k chars total budget). It cannot fit and is dropped, leaving zero
       // chunks → abstention. The LLM is never fed a truncated prompt.
       const huge = 'x'.repeat(1_000_000);
       const fused = [

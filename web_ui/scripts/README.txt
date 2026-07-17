@@ -29,7 +29,7 @@
 ║  WHAT'S INSIDE                                               ║
 ║                                                              ║
 ║  • Full RAG document Q&A app (runs 100% in your browser)     ║
-║  • Google Gemma 4 E2B-it — browser-local multimodal AI      ║
+║  • Google Gemma 4 E2B-it — browser-local multimodal AI       ║
 ║  • BGE embedding model for document search                   ║
 ║  • ONNX Runtime + wllama (WASM inference, no GPU needed)     ║
 ║  • All documents stored locally in your browser              ║

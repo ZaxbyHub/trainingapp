@@ -14,19 +14,20 @@ Ship TWO first-class delivery options:
 - **Browser inference:** BOTH engines, user-selectable —
   - **wllama** (llama.cpp WASM, CPU/SIMD, **no WebGPU required**) — primary, robust on i5/Iris Xe.
   - **WebLLM** (WebGPU/MLC) — optional fast path when WebGPU is usable.
-- **Chat model → multimodal:** `LiquidAI/LFM2.5-VL-1.6B` (vision-language) to enable
-  **screenshot/image upload** for support. Server mode also gains VLM support.
+- **Chat model → multimodal:** `Google Gemma 4 E2B-it` (vision-language) to enable
+  **screenshot/image upload** for support. (Originally `LiquidAI/LFM2.5-VL-450M`;
+  swapped to Gemma 4 E2B-it for a ~5× quality jump — see PR #39.)
 
 ## Feasibility verdict (validated 2026-06-20)
-- LFM2-VL family ships as **GGUF + `mmproj` projector** (Q4_0/Q8_0/F16) and runs in llama.cpp
-  multimodal (`libmtmd`/`llama-mtmd-cli`).
+- The GGUF + `mmproj` projector family (originally LFM2-VL, now Gemma 4 E2B-it) ships as
+  GGUF + mmproj and runs in llama.cpp multimodal (`libmtmd`/`llama-mtmd-cli`).
 - **wllama V3** supports **multimodal via mmproj in-browser**, WASM SIMD, CPU-only (no WebGPU),
   with `loadModelFromUrl` (same-origin / split files), 2 GB/file ArrayBuffer limit (split with
   `llama-gguf-split`), and **OPFS caching**. → Offline, packaged, multimodal browser inference is
   feasible on target hardware.
-- **Risk:** `LFM2.5-VL` (vs `LFM2-VL`) GGUF + mmproj may need packaging-time conversion from
+- **Risk:** GGUF + mmproj may need packaging-time conversion from
   safetensors (`convert_hf_to_gguf` + mmproj). Mitigation: prepare-models pipeline + validation.
-- **Risk:** WebLLM has no guaranteed LFM2-VL MLC build → WebLLM stays a **text** fast-path;
+- **Risk:** WebLLM has no guaranteed multimodal MLC build → WebLLM stays a **text** fast-path;
   multimodal routes through **wllama** or **server**.
 
 ## Ground-truth corrections to the Grok report
@@ -43,7 +44,7 @@ Ship TWO first-class delivery options:
   No runtime downloads for embeddings.
 - **Phase 2 — wllama engine. ✅ DONE.** `LLMService` interface; `WllamaService` (GGUF + mmproj,
   CPU/WASM, no WebGPU); engine factory + persisted `browserEngine` preference; orchestrator
-  injection; packaged wllama runtime + **offline compat build** (no jsdelivr) + LFM2-VL weights;
+  injection; packaged wllama runtime + **offline compat build** (no jsdelivr) + Gemma 4 E2B-it weights;
   pre-load presence probe. Independent review caught + fixed: wasm-path-as-file, CDN compat
   fallback, missing presence check.
 - **Phase 3 — Engine selection + hardware tiering. ✅ DONE.** `detectEngineCapability()`

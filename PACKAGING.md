@@ -137,18 +137,20 @@ running **Google Gemma 4 E2B-it GGUF + mmproj**. Two pieces are packaged:
 
 ```bash
 # (a) obtain Gemma 4 E2B-it GGUF + mmproj from unsloth/gemma-4-E2B-it-GGUF on HuggingFace:
-#       gemma-4-E2B-it-Q4_K_M.gguf  (~1.5 GB) → rename to model.gguf
-#       mmproj (matching projector)  (~150 MB) → rename to mmproj.gguf
+#       gemma-4-E2B-it-Q4_K_M.gguf  (~2.9 GB) → rename to model.gguf
+#       mmproj-F16.gguf              (~940 MB) → rename to mmproj.gguf
 #     then place them at the repo root as:
 #       models/gemma-4-e2b-it/model.gguf
 #       models/gemma-4-e2b-it/mmproj.gguf
 # (b) npm run prepare-models   # copies them to public/models/llm/gemma-4-e2b-it/
 ```
 
-Gemma 4 E2B-it Q4_K_M is ~1.5 GB, under wllama's 2 GB/file `ArrayBuffer`
-limit, so a single `model.gguf` works. ~2.3B effective parameters (~5.1B total
-with Per-Layer Embeddings), 128K context window (capped at 8192 by default for
-RAM headroom on 8 GB target boxes).
+Gemma 4 E2B-it Q4_K_M is ~2.9 GB. This exceeds the historical ~2 GB/file WASM
+`ArrayBuffer` ceiling, but wllama v3+ streams via HTTP range requests (not a
+single ArrayBuffer), so the practical limit is browser RAM, not the 2 GB ceiling.
+Validate on target hardware before packaging. ~2.3B effective parameters (~5.1B
+total with Per-Layer Embeddings), 128K context window (capped at 8192 by default
+for RAM headroom on 8 GB target boxes).
 
 The user picks the engine in Settings (**wllama** default, or **WebLLM** when
 WebGPU is usable); the choice persists and the RAG pipeline routes accordingly.

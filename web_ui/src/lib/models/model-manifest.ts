@@ -109,8 +109,10 @@ export const LLM_MODELS_BASE = `${MODELS_BASE}/llm`;
 export const LLM_MODEL_DIR = 'gemma-4-e2b-it';
 /**
  * GGUF weights URL passed to wllama `loadModelFromUrl`. Gemma 4 E2B-it Q4_K_M is
- * ~1.5 GB — under wllama's 2 GB/file limit, so a single unsplit file is used.
- * ~2.3B effective parameters (~5.1B total with Per-Layer Embeddings), 128K context.
+ * ~2.9 GB. NOTE: this EXCEEDS the historical ~2 GB/file WASM ArrayBuffer ceiling;
+ * wllama v3+ streams via HTTP range requests (not a single ArrayBuffer), so the
+ * practical limit is browser RAM, not the 2 GB ceiling. Validate on target
+ * hardware before packaging. ~2.3B effective params (~5.1B total w/ PLE), 128K ctx.
  */
 export const LLM_GGUF_URL = `${LLM_MODELS_BASE}/${LLM_MODEL_DIR}/model.gguf`;
 /** Multimodal projector (mmproj) URL, passed via wllama ModelSource.mmprojUrl. */
