@@ -19,6 +19,8 @@
  */
 
 import { existsSync, mkdirSync, copyFileSync, readdirSync, statSync, writeFileSync, readFileSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isLfsPointer } from './lib/lfs-detect.mjs';
@@ -33,6 +35,14 @@ const PUBLIC_MODELS = join(WEB_UI, 'public', 'models');
 // readiness gate (checkPackagedModels) does not flag the deliberately-absent
 // browser-LLM runtime + weights as missing.
 const NO_LLM = process.argv.slice(2).includes('--no-llm');
+// `--no-reranker`: build without the cross-encoder reranker weights. Issue #37
+// made the reranker REQUIRED for production packaging (retrieval quality depends
+// on it), but CI builds on a fresh checkout do not stage the q8 ONNX (it is an
+// operator-acquired weight, not in the repo). This flag lets CI produce a
+// typecheck/build artifact without the reranker, while production packaging
+// (which runs with weights staged) omits the flag and hard-fails if the q8
+// ONNX is missing — catching a real packaging defect.
+const NO_RERANKER = process.argv.slice(2).includes('--no-reranker');
 
 let hadError = false;
 
@@ -113,9 +123,12 @@ function prepareEmbeddingModel() {
 }
 
 // ---------------------------------------------------------------------------
-// 1b. Reranker model (OPTIONAL): cross-encoder/ms-marco-MiniLM-L-6-v2.
-//     Reranking degrades gracefully when absent, so a missing source is a warning,
-//     not a build failure.
+// 1b. Reranker model: cross-encoder/ms-marco-MiniLM-L-6-v2.
+//     Issue #37 R1c: the reranker is REQUIRED for retrieval quality. A missing
+//     source is now a HARD FAILURE (matches embedding-model semantics) so CI
+//     cannot silently ship a build with the reranker absent. Runtime fallback
+//     still applies if init fails at load time (the orchestrator's isReady()
+//     gate degrades gracefully), but packaging must not skip it.
 // ---------------------------------------------------------------------------
 function prepareRerankerModel() {
   const srcDir = firstExisting([
@@ -126,25 +139,40 @@ function prepareRerankerModel() {
   const destDir = join(PUBLIC_MODELS, 'reranker', 'ms-marco-MiniLM-L-6-v2');
 
   if (!srcDir) {
-    warn(
-      'reranker model source not found (optional). Cross-encoder reranking will be ' +
-        'disabled in the offline build. See PACKAGING.md to include it.'
+    fail(
+      'reranker model source not found. Expected models/ms-marco-MiniLM-L-6-v2/ ' +
+        'at the repo root (or models/cross-encoder/ms-marco-MiniLM-L-6-v2/). ' +
+        'Issue #37 made the reranker required — retrieval quality depends on it. ' +
+        'See PACKAGING.md for how to stage the q8 ONNX (~23MB).'
     );
     return;
   }
 
-  const onnx = join(srcDir, 'onnx', 'model.onnx');
+  // transformers.js dtype:'q8' resolves to `model_quantized.onnx` (the
+  // DATA_TYPES.q8 -> '_quantized' filename suffix). Stage the q8 ONNX under
+  // that exact name; a non-quantized model.onnx would be silently ignored at
+  // runtime and the reranker init would 404.
+  const onnx = join(srcDir, 'onnx', 'model_quantized.onnx');
   if (!existsSync(onnx) || statSync(onnx).size < 1024) {
-    warn(`reranker ONNX missing or an LFS stub at ${onnx}; skipping (optional).`);
+    fail(
+      `reranker q8 ONNX weights missing or look like an LFS stub: ${onnx} ` +
+        '(size < 1KB). The reranker loads with dtype:\'q8\', which expects ' +
+        'onnx/model_quantized.onnx (NOT model.onnx). Stage the q8 ONNX under ' +
+        'that exact name — see PACKAGING.md.'
+    );
     return;
   }
   if (isLfsPointer(onnx)) {
-    warn(`reranker ONNX is a Git-LFS pointer stub at ${onnx}; skipping (optional). Run \`git lfs pull\`.`);
+    fail(
+      `reranker q8 ONNX weights are a Git-LFS pointer stub (not the real file): ${onnx}. ` +
+        'Run `git lfs pull` (or copy the model from a machine that has the real weights) ' +
+        'before packaging. See PACKAGING.md.'
+    );
     return;
   }
 
   copyTree(srcDir, destDir);
-  log(`reranker (optional) -> ${destDir}`);
+  log(`reranker -> ${destDir}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +301,11 @@ function prepareOnnxRuntimeWasm() {
 // ---------------------------------------------------------------------------
 log(`assembling offline model assets${NO_LLM ? ' (--no-llm: embeddings-only / server mode)' : ''}...`);
 prepareEmbeddingModel();
-prepareRerankerModel();
+if (!NO_RERANKER) {
+  prepareRerankerModel();
+} else {
+  log('--no-reranker: skipping cross-encoder reranker weights (CI build). The orchestrator degrades to fused results without it; production packaging MUST omit this flag.');
+}
 if (!NO_LLM) {
   prepareWllamaRuntime();
   prepareBrowserLLM();
@@ -282,13 +314,19 @@ if (!NO_LLM) {
 }
 prepareOnnxRuntimeWasm();
 
-// When --no-llm is set, record the excluded group so the runtime readiness gate
-// (checkPackagedModels) treats the llm group as "not applicable" rather than
-// "missing". Vite loads `.env.production` for `vite build`, so writing here makes
-// the value reach `import.meta.env.VITE_EXCLUDE_MODEL_GROUPS` at build time.
+// When --no-llm / --no-reranker is set, record the excluded group(s) so the
+// runtime readiness gate (checkPackagedModels) treats the deliberately-absent
+// group(s) as "not applicable" rather than "missing". Vite loads
+// `.env.production` for `vite build`, so writing here makes the value reach
+// `import.meta.env.VITE_EXCLUDE_MODEL_GROUPS` at build time. The env value is a
+// comma-separated list (model-manifest.ts splits on ',').
 const ENV_FILE = join(WEB_UI, '.env.production');
 const MARKER = 'VITE_EXCLUDE_MODEL_GROUPS=';
-const desiredLine = NO_LLM ? `${MARKER}llm` : '';
+const excludedGroups = [
+  ...(NO_LLM ? ['llm'] : []),
+  ...(NO_RERANKER ? ['reranker'] : []),
+];
+const desiredLine = excludedGroups.length > 0 ? `${MARKER}${excludedGroups.join(',')}` : '';
 let envLines = [];
 if (existsSync(ENV_FILE)) {
   envLines = readFileSync(ENV_FILE, 'utf8').split(/\r?\n/).filter((l) => !l.startsWith(MARKER) && l.trim() !== '');
@@ -301,11 +339,55 @@ const newEnvContent = envLines.join('\n').replace(/\n+$/, '\n');
 const oldEnvContent = existsSync(ENV_FILE) ? readFileSync(ENV_FILE, 'utf8') : '';
 if (newEnvContent !== oldEnvContent) {
   writeFileSync(ENV_FILE, newEnvContent || '');
-  if (NO_LLM) log('wrote VITE_EXCLUDE_MODEL_GROUPS=llm to .env.production');
+  if (excludedGroups.length > 0) log(`wrote VITE_EXCLUDE_MODEL_GROUPS=${excludedGroups.join(',')} to .env.production`);
 }
 
 if (hadError) {
   fail('one or more REQUIRED assets are missing. Build is NOT offline-ready.');
   process.exit(1);
 }
+
+// ---------------------------------------------------------------------------
+// Issue #37 P4: record SHA-256 of every staged file into a sidecar
+// `manifest.checksums.json` (read by validate-build.mjs). The checksums live
+// beside manifest.json rather than mutating the source manifest, so the repo's
+// manifest stays stable and the checksums are regenerated per-build (they
+// capture the actual bytes staged THIS run, catching partial copies / wrong
+// quantization swaps). Only files that actually exist in public/models/ are
+// checksummed — `warn()`-skipped optionals are omitted (no false failure).
+// ---------------------------------------------------------------------------
+const MANIFEST_PATH = join(PUBLIC_MODELS, 'manifest.json');
+const CHECKSUMS_PATH = join(PUBLIC_MODELS, 'manifest.checksums.json');
+// Issue #37 P4: streaming SHA-256 — the wllama GGUF is ~2.9 GB, above Node's
+// ~2 GB Buffer cap, so readFileSync would throw RangeError on the LLM weights.
+async function sha256OfFile(filePath) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(filePath)) {
+    hash.update(chunk);
+  }
+  return hash.digest('hex');
+}
+try {
+  const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+  const checksums = { version: manifest.version ?? 2, files: {} };
+  const jobs = [];
+  for (const model of manifest.models ?? []) {
+    for (const f of model.files ?? []) {
+      const staged = join(PUBLIC_MODELS, f.path);
+      if (existsSync(staged) && statSync(staged).size > 0 && !isLfsPointer(staged)) {
+        jobs.push({ path: f.path, staged });
+      }
+    }
+  }
+  // Hash concurrently (small file set; each is streamed to bound memory).
+  const results = await Promise.all(
+    jobs.map(async (job) => ({ path: job.path, hash: await sha256OfFile(job.staged) }))
+  );
+  for (const r of results) checksums.files[r.path] = r.hash;
+  writeFileSync(CHECKSUMS_PATH, JSON.stringify(checksums, null, 2) + '\n');
+  log(`wrote ${results.length} SHA-256 checksum(s) to public/models/manifest.checksums.json`);
+} catch (e) {
+  warn(`could not write checksum sidecar: ${e.message}`);
+}
+
 log('done. public/models/ is ready for an offline build.');

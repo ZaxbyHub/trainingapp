@@ -19,12 +19,13 @@ public/models/
 ├── ort/                              # ONNX Runtime WASM (env.backends.onnx.wasm.wasmPaths)
 │   ├── ort-wasm-simd-threaded.jsep.wasm   # the JSEP build transformers.js v3 actually fetches
 │   └── ort-wasm-simd-threaded.jsep.mjs    # its ESM loader (also fetched same-origin)
-├── reranker/                         # OPTIONAL cross-encoder (app degrades gracefully if absent)
-│   └── ms-marco-MiniLM-L-6-v2/
+├── reranker/                         # REQUIRED cross-encoder reranker (Issue #37)
+│   └── ms-marco-MiniLM-L-6-v2/       # prepare-models fails if absent; --no-reranker opts out for CI
 │       ├── config.json
 │       ├── tokenizer.json
 │       ├── tokenizer_config.json
-│       └── onnx/model.onnx
+│       └── onnx/model_quantized.onnx # q8 ONNX; transformers.js dtype:'q8' resolves to this
+│                                      # exact name (NOT model.onnx — see PACKAGING.md §2)
 ├── wllama/                           # wllama WASM runtime (browser LLM engine)
 │   ├── wasm/wllama.wasm              # passed to wllama as AssetsPathConfig.default
 │   └── compat/                       # offline fallback for browsers w/o JSPI/Mem64

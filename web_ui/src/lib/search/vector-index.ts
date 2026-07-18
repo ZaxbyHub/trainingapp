@@ -112,7 +112,13 @@ export class VectorIndex {
       config.metric = this.config.metric;
       config.ef_construction = this.config.efConstruction;
       config.m = this.config.M;
-      config.ef_search = 50;
+      // ef_search controls HNSW search quality (higher = better recall, slower).
+      // Issue #37 R2: raised from 50 to 128 to support the candidate-multiplier
+      // over-fetch path. quality preset fetches up to topK×mult = 64 candidates;
+      // ef_search should be ≥ 2× the fetch k to avoid HNSW pruning out the
+      // chunks the reranker is meant to consider. edgevec 0.6's search(query,k)
+      // takes no per-call ef, so this is set once at construction.
+      config.ef_search = 128;
       this.index = new EdgeVec(config);
       config.free();
 

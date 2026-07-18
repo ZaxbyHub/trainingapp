@@ -3,6 +3,7 @@ import type { BrowserEngine } from '../types/llm';
 import { getEmbeddingService } from '../lib/embeddings/embedding-service';
 import { getVectorIndex } from '../lib/search/vector-index';
 import { getKeywordIndex } from '../lib/search/keyword-index';
+import { getRerankerService } from '../lib/search/reranker';
 import { type ModelReadinessGate, type ReadinessResult } from '../lib/llm/model-readiness';
 import { WebLLMService } from '../lib/llm/web-llm-service';
 import {
@@ -148,6 +149,15 @@ export const useServiceInitialization: UseServiceInitialization = ({
 
       await keywordIndex.initialize();
       if (!isMountedRef.current) return;
+
+      // Fire-and-forget reranker init (Issue #37 R1a). The reranker is optional
+      // at runtime: the orchestrator's `isReady()` gate gracefully falls back
+      // to fused results if the model is absent or failed to load. We do NOT
+      // await this — boot latency must not depend on a ~23MB reranker load, and
+      // the first few queries before init resolves simply skip reranking.
+      void getRerankerService().initialize().catch((err) => {
+        console.warn('[useServiceInitialization] Reranker init failed (degraded mode):', err);
+      });
 
       setServicesReady(prev => ({
         ...prev,
@@ -300,6 +310,15 @@ export const useServiceInitialization: UseServiceInitialization = ({
           const keywordIndex = getKeywordIndex();
           if (typeof keywordIndex.dispose === 'function') {
             keywordIndex.dispose();
+          }
+        } catch {
+          // Service may not be initialized, ignore
+        }
+
+        try {
+          const rerankerService = getRerankerService();
+          if (typeof rerankerService.dispose === 'function') {
+            rerankerService.dispose();
           }
         } catch {
           // Service may not be initialized, ignore

@@ -42,10 +42,29 @@ This copies into `public/models/`:
 - `ort/ort-wasm-simd-threaded.jsep.wasm` + `ort-wasm-simd-threaded.jsep.mjs` —
   the exact ORT JSEP build + ESM loader Transformers.js v3 fetches, so it never
   reaches for jsdelivr
-- `reranker/ms-marco-MiniLM-L-6-v2/` — **optional** cross-encoder. If the source
-  model isn't present at the repo root the step is skipped (a warning, not an
-  error) and the app simply runs without reranking. To include it, place the
-  model at `models/ms-marco-MiniLM-L-6-v2/` (ONNX + tokenizer) before running.
+- `reranker/ms-marco-MiniLM-L-6-v2/` — **required** cross-encoder reranker
+  (Issue #37 made it mandatory: retrieval quality depends on neural reranking,
+  and without it out-of-corpus questions never abstain). `prepare-models`
+  **fails** if the source weights are absent. The reranker loads with
+  `dtype:'q8'`, which in transformers.js v3.x resolves to the filename
+  `onnx/model_quantized.onnx` (the `DATA_TYPES.q8 → '_quantized'` suffix) — you
+  MUST stage the q8-quantized ONNX under that exact name, NOT `model.onnx`
+  (a non-quantized `model.onnx` would be silently ignored and the loader 404s).
+  Produce it via the optimum CLI:
+
+  ```bash
+  pip install optimum[onnxruntime]
+  optimum-cli export onnx --model cross-encoder/ms-marco-MiniLM-L-6-v2 \
+    --quantize q8 models/ms-marco-MiniLM-L-6-v2/onnx/
+  # → writes models/ms-marco-MiniLM-L-6-v2/onnx/model_quantized.onnx (~23 MB)
+  ```
+
+  Copy the tokenizer/config alongside it, then place the directory at
+  `models/ms-marco-MiniLM-L-6-v2/` before running `prepare-models`.
+
+  For CI / embeddings-only / server-mode builds that deliberately omit the
+  reranker, pass `--no-reranker` (mirrors `--no-llm`); the orchestrator then
+  degrades to fused results at runtime.
 
 ## 3. Build the offline archive
 
