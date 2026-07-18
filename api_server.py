@@ -11,7 +11,7 @@ import socket
 import logging
 import asyncio
 import unicodedata
-from typing import Optional, Set, Tuple, List
+from typing import Optional, Set, Tuple, List, Dict
 from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse, unquote
@@ -181,6 +181,9 @@ class QuestionRequest(BaseModel):
 
     question: str = Field(..., min_length=1, max_length=2000)
     n_results: Optional[int] = Field(default=6, ge=1, le=10)
+    # Issue #37 R6: prior conversation turns for contextualized retrieval +
+    # multi-turn generation. Optional; absent preserves legacy single-turn behavior.
+    history: Optional[List[Dict[str, str]]] = Field(default=None)
 
     @validator("question")
     def validate_question_not_whitespace(cls, v):
@@ -516,7 +519,13 @@ async def ask_question(
         raise HTTPException(status_code=503, detail="No LLM backend available")
 
     try:
-        result = await asyncio.to_thread(engine.query, request.question, n_results=request.n_results)
+        # Issue #37 R6: thread conversation_history through to the engine.
+        result = await asyncio.to_thread(
+            engine.query,
+            request.question,
+            n_results=request.n_results,
+            conversation_history=request.history,
+        )
         return QuestionResponse(
             question=result.question,
             answer=result.answer,
@@ -695,6 +704,7 @@ if HAS_SSE:
                 request.question,
                 n_results=request.n_results,
                 stream_callback=stream_callback,
+                conversation_history=request.history,  # Issue #37 R6
             )
 
             try:

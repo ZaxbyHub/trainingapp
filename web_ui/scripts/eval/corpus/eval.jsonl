@@ -1,0 +1,13 @@
+{"id":"q01","question":"What is the standard reimbursement rate for mileage?","docId":"doc_policy","expectedChunkSubstring":"mileage","outOfCorpus":false}
+{"id":"q02","question":"How many vacation days does a new employee receive?","docId":"doc_handbook","expectedChunkSubstring":"vacation","outOfCorpus":false}
+{"id":"q03","question":"Who do I contact for password reset help?","docId":"doc_it_help","expectedChunkSubstring":"password","outOfCorpus":false}
+{"id":"q04","question":"What is the maximum expense for client dinners?","docId":"doc_expense","expectedChunkSubstring":"dinner","outOfCorpus":false}
+{"id":"q05","question":"Describe the quarterly safety inspection procedure","docId":"doc_safety","expectedChunkSubstring":"inspection","outOfCorpus":false}
+{"id":"q06","question":"What benefits are available to part-time staff?","docId":"doc_handbook","expectedChunkSubstring":"part-time","outOfCorpus":false}
+{"id":"q07","question":"How is overtime pay calculated?","docId":"doc_payroll","expectedChunkSubstring":"overtime","outOfCorpus":false}
+{"id":"q08","question":"What is the data retention policy for customer records?","docId":"doc_compliance","expectedChunkSubstring":"retention","outOfCorpus":false}
+{"id":"q09","question":"When was the company founded?","docId":"doc_about","expectedChunkSubstring":"founded","outOfCorpus":false}
+{"id":"q10","question":"What software is used for inventory tracking?","docId":"doc_ops","expectedChunkSubstring":"inventory","outOfCorpus":false}
+{"id":"q11","question":"What is the capital of France?","outOfCorpus":true}
+{"id":"q12","question":"Tell me about the Mars rover mission timeline","outOfCorpus":true}
+{"id":"q13","question":"How do I bake sourdough bread?","outOfCorpus":true}
