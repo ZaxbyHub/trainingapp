@@ -34,8 +34,9 @@ import {
 } from '../models/model-manifest';
 import { probeAsset } from '../models/probe';
 
-/** Context window. LFM2.5-VL-450M handles long context; 4096 is a safe default for RAM. */
-export const DEFAULT_N_CTX = 4096;
+/** Context window. Gemma 4 E2B-it supports up to 128K; 8192 is a safe default
+ *  that leaves ample RAM for weights + KV cache on 8 GB target boxes. */
+export const DEFAULT_N_CTX = 8192;
 
 function threadCount(): number {
   return navigator.hardwareConcurrency ? Math.min(navigator.hardwareConcurrency, 4) : 2;

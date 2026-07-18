@@ -173,7 +173,7 @@ describe('ChatPage — model-blocked overlay (F-AC7)', () => {
 
   it('renders the alertdialog with the wllama-specific failure headline and the real failure/recommendation text', () => {
     currentReadinessResult = makeReadinessResult({
-      failures: ['This build does not include the packaged model weights (lfm2.5-vl-450m).'],
+      failures: ['This build does not include the packaged model weights (gemma-4-e2b-it).'],
       recommendations: ['Rebuild the app with the model bundled, or contact your administrator.'],
     });
 
@@ -191,7 +191,7 @@ describe('ChatPage — model-blocked overlay (F-AC7)', () => {
 
     // The actual failure/recommendation text is surfaced, not a generic message.
     expect(
-      screen.getByText('This build does not include the packaged model weights (lfm2.5-vl-450m).')
+      screen.getByText('This build does not include the packaged model weights (gemma-4-e2b-it).')
     ).toBeInTheDocument();
     expect(
       screen.getByText('Rebuild the app with the model bundled, or contact your administrator.')

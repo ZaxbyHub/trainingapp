@@ -48,13 +48,13 @@
       ]
     },
     {
-      "id": "lfm2.5-vl-450m",
-      "label": "LiquidAI LFM2.5-VL-450M (browser LLM, multimodal)",
+      "id": "gemma-4-e2b-it",
+      "label": "Google Gemma 4 E2B-it (browser LLM, multimodal)",
       "kind": "llm",
       "group": "llm",
       "files": [
-        { "path": "llm/lfm2.5-vl-450m/model.gguf", "required": true },
-        { "path": "llm/lfm2.5-vl-450m/mmproj.gguf", "required": true }
+        { "path": "llm/gemma-4-e2b-it/model.gguf", "required": true },
+        { "path": "llm/gemma-4-e2b-it/mmproj.gguf", "required": true }
       ]
     }
   ]

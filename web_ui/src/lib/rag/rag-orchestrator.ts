@@ -122,7 +122,7 @@ const MIN_RRF_SCORE = 0.005;
  * Token-budget estimate for keeping the user's question in-prompt under the
  * model context window (F11). No tokenizer is exposed by the LLM service, so a
  * conservative chars-per-token approximation is used with an explicit safety
- * margin. DEFAULT_N_CTX (4096) is sourced from wllama-service — the binding
+ * margin. DEFAULT_N_CTX (8192) is sourced from wllama-service — the binding
  * constraint for the default offline engine.
  */
 const CHARS_PER_TOKEN = 4;
