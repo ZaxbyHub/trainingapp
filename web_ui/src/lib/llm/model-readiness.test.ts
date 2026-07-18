@@ -19,6 +19,15 @@ vi.mock('./web-llm-service', () => ({
   },
 }));
 
+// Mock probeAsset so wllama's packaged-GGUF presence check is deterministic
+// in jsdom (there is no real static-file server). Defaults to "present" so the
+// wllama engine is ready by default; tests that exercise the missing-GGUF
+// failure path override this to reject.
+vi.mock('../models/probe', () => ({
+  probeAsset: vi.fn<(path: string) => Promise<boolean>>().mockResolvedValue(true),
+}));
+import { probeAsset as probeAssetMock } from '../models/probe';
+
 describe('ModelReadinessGate', () => {
   let gate: ModelReadinessGate;
   let mockGpu: { requestAdapter: () => Promise<unknown> } | undefined;
@@ -27,6 +36,10 @@ describe('ModelReadinessGate', () => {
     vi.clearAllMocks();
     gate = new ModelReadinessGate();
     mockGpu = undefined;
+    // Re-establish the probeAsset default (clearAllMocks resets mockResolvedValue
+    // to undefined). Default: packaged weights are present, so wllama is ready
+    // unless a test explicitly mocks probeAsset as rejecting.
+    vi.mocked(probeAssetMock).mockResolvedValue(true);
 
     // Directly set navigator properties
     Object.defineProperty(globalThis, 'navigator', {
@@ -389,9 +402,11 @@ describe('ModelReadinessGate', () => {
       expect(result.recommendations.some(r => r.includes('server API mode'))).toBe(true);
     });
 
-    test('wllama engine: WebGPU unavailable is NOT a hard failure', async () => {
+    test('wllama engine: WebGPU unavailable is NOT a hard failure (model is cached)', async () => {
       mockGpu = undefined; // No WebGPU — but wllama runs on CPU.
 
+      // probeAsset defaults to true (mocked at module top), so the packaged
+      // GGUF is present and wllama readiness reduces to memory + model presence.
       const result = await gate.checkReadiness('SmolLM3-3B-Q4_K_M', 'wllama');
 
       // Memory is sufficient (14336MB), so wllama should be ready without WebGPU.
@@ -450,17 +465,25 @@ describe('ModelReadinessGate', () => {
       expect(result.recommendations.some(r => r.includes('not in the browser cache'))).toBe(true);
     });
 
-    // PRR-006: wllama engine with model not cached shows the packaged-weights
-    // message ("not found in this build"), NOT the webllm CDN download message.
-    test('wllama engine not-cached shows packaged-weights message, not CDN download', async () => {
+    // Issue #37 P6: wllama engine with model not cached is now a HARD FAILURE
+    // (air-gapped builds cannot download the GGUF). Previously it was only a
+    // soft recommendation, which produced an indefinite "Preparing the model…"
+    // overlay alongside wrong "internet connection" advice. Now it pushes to
+    // failures[] with an admin-oriented message, and `ready` is false.
+    test('wllama engine not-cached is a readiness FAILURE with admin message (Issue #37 P6)', async () => {
       mockGpu = undefined; // wllama doesn't need WebGPU.
+      // wllama availability is probed via probeAsset on the packaged GGUF/mmproj.
+      // Mock both as missing to simulate an air-gapped build without the weights.
+      vi.mocked(probeAssetMock).mockResolvedValue(false);
 
       const result = await gate.checkReadiness('SmolLM3-3B-Q4_K_M', 'wllama');
 
       expect(result.checks.modelCached).toBe(false);
-      // The wllama-specific message about packaged weights.
-      expect(result.recommendations.some(r => r.includes('not found in this build'))).toBe(true);
-      // Must NOT show the webllm CDN download message.
+      // Missing packaged GGUF is now a FAILURE, not a recommendation.
+      expect(result.ready).toBe(false);
+      expect(result.failures.some(f => f.includes('missing the packaged browser model'))).toBe(true);
+      expect(result.failures.some(f => f.includes('cannot download'))).toBe(true);
+      // Must NOT show the webllm CDN download message anywhere.
       expect(result.recommendations.some(r => r.includes('CDN'))).toBe(false);
     });
 

@@ -141,7 +141,7 @@ export interface PackagedModelFile {
  * operator intentionally excluded for this build — see
  * {@link EXCLUDED_MODEL_GROUPS}).
  */
-export type PackagedModelGroup = 'core' | 'optional' | 'llm';
+export type PackagedModelGroup = 'core' | 'optional' | 'llm' | 'reranker';
 
 /**
  * Declarative description of one packaged model and the files it needs.
@@ -202,7 +202,7 @@ export const EXCLUDED_MODEL_GROUPS: ReadonlySet<PackagedModelGroup> = new Set(
   ((import.meta.env.VITE_EXCLUDE_MODEL_GROUPS as string | undefined) ?? '')
     .split(',')
     .map((g) => g.trim().toLowerCase())
-    .filter((g): g is PackagedModelGroup => g === 'core' || g === 'optional' || g === 'llm')
+    .filter((g): g is PackagedModelGroup => g === 'core' || g === 'optional' || g === 'llm' || g === 'reranker')
 );
 
 /**

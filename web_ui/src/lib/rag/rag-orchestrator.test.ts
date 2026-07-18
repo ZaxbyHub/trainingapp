@@ -1093,6 +1093,136 @@ describe('RAGOrchestrator', () => {
       expect(mockWebLLMService.generateComplete).not.toHaveBeenCalled();
     });
 
+    test('Issue #37 R2: candidateMultiplier widens the per-leg fetch (over-fetch before rerank)', async () => {
+      // The default mock rrfFuse returns the combined list; we just need to
+      // assert that BOTH legs are asked for topK * candidateMultiplier hits.
+      const mockEmbedding = createMockEmbedding();
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue([]);
+      mockKeywordIndex.search.mockReturnValue([]);
+
+      const orchestrator = new RAGOrchestrator();
+      const topK = 10;
+      const multiplier = 3;
+      for await (const ev of orchestrator.query('q', {
+        streamTokens: false,
+        rerank: false,
+        topK,
+        candidateMultiplier: multiplier,
+      })) {
+        // drain
+        void ev;
+      }
+
+      const expectedFetchK = topK * multiplier;
+      expect(mockVectorIndex.search).toHaveBeenCalledWith(expect.anything(), { k: expectedFetchK });
+      expect(mockKeywordIndex.search).toHaveBeenCalledWith(expect.anything(), { limit: expectedFetchK });
+    });
+
+    test('Issue #37 R2: default candidateMultiplier is 1 (legacy fetch k === topK)', async () => {
+      const mockEmbedding = createMockEmbedding();
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue([]);
+      mockKeywordIndex.search.mockReturnValue([]);
+
+      const orchestrator = new RAGOrchestrator();
+      for await (const ev of orchestrator.query('q', { streamTokens: false, rerank: false, topK: 7 })) {
+        void ev;
+      }
+
+      expect(mockVectorIndex.search).toHaveBeenCalledWith(expect.anything(), { k: 7 });
+      expect(mockKeywordIndex.search).toHaveBeenCalledWith(expect.anything(), { limit: 7 });
+    });
+
+    test('Issue #37 R3: degraded no-rerank path drops vector hits below the cosine floor', async () => {
+      // When rerank is OFF, the orchestrator applies a cosine backstop to
+      // vector hits BEFORE fusion. Weak-cosine hits should be filtered out so
+      // out-of-corpus questions do not fill the context with noise.
+      const mockEmbedding = createMockEmbedding();
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      // One strong hit (0.9) and one weak hit (0.1, below the 0.4 floor).
+      const hits = [
+        { docId: 'd1', chunkIndex: 0, score: 0.9, text: 'relevant' },
+        { docId: 'd2', chunkIndex: 0, score: 0.1, text: 'irrelevant' },
+      ];
+      mockVectorIndex.search.mockResolvedValue(hits);
+      mockKeywordIndex.search.mockReturnValue([]);
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query('q', { streamTokens: false, rerank: false })) {
+        events.push(ev);
+      }
+
+      const retrieved = events.find((e) => e.type === 'retrieved');
+      // The weak hit must be gone before fusion sees it.
+      expect(retrieved.data.vectorResults).toHaveLength(1);
+      expect(retrieved.data.vectorResults[0].docId).toBe('d1');
+    });
+
+    test('Issue #37 acceptance #3: reranker promotes a chunk that ranked below topK in both legs', async () => {
+      // The fused list contains a chunk that RRF ranked below topK. The
+      // reranker mock promotes it to the top. Assert it lands in the final
+      // context passed to the LLM (the buildContext numbering).
+      const mockEmbedding = createMockEmbedding();
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: 'q',
+        dimensions: 384,
+      });
+      // Fused list: 3 chunks, the cross-encoder's favorite is currently at the
+      // BOTTOM (index 2).
+      const fused = [
+        { docId: 'd1', chunkIndex: 0, score: 0.5, text: 'mediocre A' },
+        { docId: 'd2', chunkIndex: 0, score: 0.4, text: 'mediocre B' },
+        { docId: 'd3', chunkIndex: 0, score: 0.3, text: 'actually relevant' },
+      ];
+      mockVectorIndex.search.mockResolvedValue(fused);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(fused);
+      // Reranker reorders: d3 first, then d1, then d2.
+      mockRerankerService.isReady.mockReturnValue(true);
+      mockRerankerService.canRerank.mockReturnValue(true);
+      mockRerankerService.rerank.mockImplementation(async (_q: string, results: SearchResult[], topK?: number) => {
+        const reordered = [
+          { ...results[2], score: 0.95 },
+          { ...results[0], score: 0.6 },
+          { ...results[1], score: 0.55 },
+        ];
+        return topK !== undefined ? reordered.slice(0, topK) : reordered;
+      });
+      mockWebLLMService.generateComplete.mockResolvedValue('answer [1]');
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query('q', { streamTokens: false, rerank: true, topK: 2 })) {
+        events.push(ev);
+      }
+
+      const complete = events.find((e) => e.type === 'complete');
+      // The promoted chunk (d3, "actually relevant") is now chunks[0] — the [1]
+      // citation maps to it.
+      expect(complete.data.chunks[0].docId).toBe('d3');
+      expect(complete.data.chunks[0].text).toBe('actually relevant');
+      // And the reranker WAS actually called with the fused list (over-fetch
+      // promotion requires the full fused set to flow into rerank()).
+      expect(mockRerankerService.rerank).toHaveBeenCalledTimes(1);
+      const rerankArg = mockRerankerService.rerank.mock.calls[0][1] as SearchResult[];
+      expect(rerankArg).toHaveLength(3);
+    });
+
     test('F7: complete.chunks order matches the buildContext numbering order', async () => {
       const mockEmbedding = createMockEmbedding();
       // Distinct texts so we can verify [1]→chunks[0], [2]→chunks[1] mapping.

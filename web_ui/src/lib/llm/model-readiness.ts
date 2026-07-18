@@ -289,10 +289,19 @@ export class ModelReadinessGate {
       );
     }
 
-    // Soft warning: model not cached — engine-aware messaging.
+    // Soft warning / hard failure: model not cached — engine-aware messaging.
+    //
     // wllama weights are packaged same-origin and loaded on first use, NOT
     // downloaded from the internet. webllm weights ARE fetched from a CDN
     // into Cache Storage on first use.
+    //
+    // Issue #37 P6: for the wllama engine (the air-gap default), a missing
+    // packaged GGUF is a HARD FAILURE, not a soft recommendation. An air-gapped
+    // deployment cannot download the missing weights, and the previous behavior
+    // (an indefinite "Preparing the model…" overlay alongside "ensure stable
+    // internet" advice) was actively wrong for the air-gap case. The failure
+    // surfaces through ModelBlockedOverlay with the admin-oriented headline.
+    // WebLLM retains the soft path because it genuinely fetches on first use.
     if (!modelCached) {
       if (webgpuRequired) {
         recommendations.push(
@@ -301,15 +310,16 @@ export class ModelReadinessGate {
           'Ensure a stable internet connection.'
         );
       } else {
-        recommendations.push(
-          `The browser model files ("${modelId}") were not found in this build. ` +
-          'Run "npm run prepare-models" to stage the packaged weights, ' +
-          'or switch to API Server mode in Settings.'
+        failures.push(
+          `This build is missing the packaged browser model ("${modelId}"). ` +
+          'The wllama engine serves weights same-origin and cannot download them. ' +
+          'Contact your administrator, or rebuild with the weights staged ' +
+          '(see PACKAGING.md).'
         );
       }
     }
 
-    const ready = (!webgpuRequired || webgpu) && memory.sufficient;
+    const ready = (!webgpuRequired || webgpu) && memory.sufficient && (webgpuRequired || modelCached);
 
     return {
       ready,

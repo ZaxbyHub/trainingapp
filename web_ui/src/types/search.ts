@@ -39,10 +39,13 @@ export interface VectorIndexConfig {
 
 /**
  * Options for vector search operations.
+ *
+ * Note (Issue #37 R2): edgevec 0.6.0's `search(query, k)` API takes NO per-call
+ * efSearch parameter — the HNSW `ef_search` is fixed at index construction
+ * (see vector-index.ts doInitialize). The previous `efSearch` field here was a
+ * dead declaration (never read by VectorIndex.search) and has been removed.
  */
 export interface VectorSearchOptions {
   /** Number of nearest neighbors to return (default: 10) */
   k?: number;
-  /** HNSW efSearch parameter (higher = better recall, slower search) */
-  efSearch?: number;
 }

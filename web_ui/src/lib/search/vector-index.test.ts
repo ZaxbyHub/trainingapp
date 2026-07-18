@@ -406,10 +406,11 @@ describe('VectorIndex', () => {
       mockEdgeVecInstance.search = vi.fn<(_query: Float32Array, k: number) => Array<{ id: number; score: number }>>()
         .mockReturnValue([]);
 
-      // efSearch is set via EdgeVecConfig at initialization time, not at search time
-      // The search method accepts efSearch in options but the current implementation
-      // does not use it - it was set on EdgeVecConfig during initialize()
-      await instance.search(new Float32Array(384), { k: 5, efSearch: 100 });
+      // efSearch is set via EdgeVecConfig at initialization time, not at search
+      // time. Issue #37 R2 removed the dead `efSearch` field from
+      // VectorSearchOptions (edgevec 0.6's search(query,k) takes no per-call ef);
+      // search now takes only { k }.
+      await instance.search(new Float32Array(384), { k: 5 });
 
       // Verify search was called (efSearch config is applied at init time)
       expect(mockEdgeVecInstance.search).toHaveBeenCalled();

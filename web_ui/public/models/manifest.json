@@ -26,14 +26,14 @@
     },
     {
       "id": "ms-marco-MiniLM-L-6-v2",
-      "label": "cross-encoder/ms-marco-MiniLM-L-6-v2 (reranker, optional)",
+      "label": "cross-encoder/ms-marco-MiniLM-L-6-v2 (reranker)",
       "kind": "reranker",
-      "group": "optional",
+      "group": "core",
       "files": [
-        { "path": "reranker/ms-marco-MiniLM-L-6-v2/onnx/model.onnx", "required": false },
-        { "path": "reranker/ms-marco-MiniLM-L-6-v2/tokenizer.json", "required": false },
-        { "path": "reranker/ms-marco-MiniLM-L-6-v2/config.json", "required": false },
-        { "path": "reranker/ms-marco-MiniLM-L-6-v2/tokenizer_config.json", "required": false }
+        { "path": "reranker/ms-marco-MiniLM-L-6-v2/onnx/model_quantized.onnx", "required": true, "comment": "q8 ONNX — transformers.js dtype:'q8' resolves to model_quantized.onnx (DATA_TYPES.q8 -> '_quantized' suffix). A non-quantized model.onnx would be ignored at runtime." },
+        { "path": "reranker/ms-marco-MiniLM-L-6-v2/tokenizer.json", "required": true },
+        { "path": "reranker/ms-marco-MiniLM-L-6-v2/config.json", "required": true },
+        { "path": "reranker/ms-marco-MiniLM-L-6-v2/tokenizer_config.json", "required": true }
       ]
     },
     {

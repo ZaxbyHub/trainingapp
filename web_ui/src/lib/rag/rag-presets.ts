@@ -13,10 +13,15 @@ export type RAGPreset = 'fast' | 'balanced' | 'quality';
 export const DEFAULT_RAG_PRESET: RAGPreset = 'balanced';
 
 /** Retrieval/generation parameters per preset (merged into query options). */
-export const RAG_PRESETS: Record<RAGPreset, Pick<RAGQueryOptions, 'topK' | 'rerank' | 'maxTokens' | 'temperature'>> = {
-  fast: { topK: 5, rerank: false, maxTokens: 384, temperature: 0.3 },
-  balanced: { topK: 10, rerank: true, maxTokens: 512, temperature: 0.3 },
-  quality: { topK: 16, rerank: true, maxTokens: 1024, temperature: 0.2 },
+export const RAG_PRESETS: Record<RAGPreset, Pick<RAGQueryOptions, 'topK' | 'candidateMultiplier' | 'rerank' | 'maxTokens' | 'temperature'>> = {
+  // fast: no rerank → over-fetching wastes work. candidateMultiplier 1 keeps
+  // both legs at topK.
+  fast: { topK: 5, candidateMultiplier: 1, rerank: false, maxTokens: 384, temperature: 0.3 },
+  // balanced: retrieve 3×topK per leg (30 candidates), rerank down to topK=10.
+  balanced: { topK: 10, candidateMultiplier: 3, rerank: true, maxTokens: 512, temperature: 0.3 },
+  // quality: retrieve 4×topK per leg (64 candidates), rerank down to topK=16.
+  // The reranker caps scoring at RERANK_INPUT_CAP=50 to bound per-query cost.
+  quality: { topK: 16, candidateMultiplier: 4, rerank: true, maxTokens: 1024, temperature: 0.2 },
 };
 
 /** Human-readable description for the settings UI. */
@@ -27,6 +32,6 @@ export const RAG_PRESET_LABELS: Record<RAGPreset, { label: string; description: 
 };
 
 /** Return the query-option overrides for a preset (defaults to balanced). */
-export function presetOptions(preset: RAGPreset | undefined): Pick<RAGQueryOptions, 'topK' | 'rerank' | 'maxTokens' | 'temperature'> {
+export function presetOptions(preset: RAGPreset | undefined): Pick<RAGQueryOptions, 'topK' | 'candidateMultiplier' | 'rerank' | 'maxTokens' | 'temperature'> {
   return RAG_PRESETS[preset ?? DEFAULT_RAG_PRESET];
 }

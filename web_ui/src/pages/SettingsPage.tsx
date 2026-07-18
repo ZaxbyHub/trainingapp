@@ -1031,9 +1031,14 @@ function SettingsPageInner(): React.ReactElement {
                   </span>
                 )}
 
-                {browserEngine === 'wllama' && (
+                {browserEngine === 'wllama' && modelCached && (
                   <p style={descriptionStyle}>
                     Weights are bundled with this build — no download needed. The model loads automatically on first use.
+                  </p>
+                )}
+                {browserEngine === 'wllama' && !modelCached && (
+                  <p style={{ ...descriptionStyle, color: 'var(--color-warning)' }}>
+                    The packaged model is missing from this build. The wllama engine cannot download it. Contact your administrator or rebuild with the weights staged (see PACKAGING.md).
                   </p>
                 )}
               </div>

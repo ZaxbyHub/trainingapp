@@ -42,6 +42,15 @@ export interface RAGImageInput {
 export interface RAGQueryOptions {
   /** Number of top results to retrieve from each index (default: 10) */
   topK?: number;
+  /**
+   * Multiplier on topK controlling how many candidates each retrieval leg
+   * fetches before fusion + rerank (Issue #37 R2). Both legs fetch
+   * `topK * candidateMultiplier` candidates so the cross-encoder can promote a
+   * chunk that ranked below topK in ONE leg but is highly relevant overall.
+   * `fast` uses 1 (no rerank → no point over-fetching); `balanced` 3; `quality` 4.
+   * Default 1 preserves legacy behavior when unset.
+   */
+  candidateMultiplier?: number;
   /** Whether to apply reranking to results (default: true) */
   rerank?: boolean;
   /** Whether to stream tokens as they are generated (default: true) */
@@ -109,14 +118,36 @@ const BGE_QUERY_INSTRUCTION = 'Represent this sentence for searching relevant pa
 
 /**
  * Relevance floors applied AFTER the rerank/slice branch resolves, so the floor
- * must match the score scale contextChunks actually carries (F3).
- *  - When the cross-encoder reran: scores are cosine-ish relevance in ~[0,1],
- *    meaningful hits are well above 0.1.
- *  - When only RRF ran: scores are sums of 1/(60+rank+1); meaningful hits sit
- *    far above 0.005 (a hit at rank 0 in both lists scores ~0.033).
+ * must match the score scale contextChunks actually carries (F3, Issue #37 R3).
+ *  - When the cross-encoder reran: scores are sigmoid of the relevance logit
+ *    for each [query, passage] pair, in (0, 1). ms-marco-MiniLM-L-6-v2
+ *    relevant pairs typically score >0.5; irrelevant pairs <0.1. Floor 0.2
+ *    drops weakly-relevant noise while keeping borderline-but-useful hits.
+ *  - When only RRF ran: scores are sums of 1/(60+rank+1); the minimum POSSIBLE
+ *    fused score is 1/(60+topK) ≈ 0.0132 for topK=16, so 0.005 has never
+ *    dropped anything. {@link MIN_RRF_SCORE} is kept as a literal floor only;
+ *    the real degraded-mode relevance signal is the cosine backstop applied to
+ *    vector hits in the no-rerank path (see applyDegradedFloor).
  */
-const MIN_CROSS_SCORE = 0.1;
+const MIN_CROSS_SCORE = 0.2;
 const MIN_RRF_SCORE = 0.005;
+
+/**
+ * Cosine-similarity floor applied to VECTOR hits in the degraded no-reranker
+ * path (Issue #37 R3). When the reranker did not run (fast preset, or reranker
+ * model absent), RRF scores carry no absolute-relevance signal — edgevec
+ * returns the k nearest regardless of similarity. Dropping vector hits below
+ * this cosine threshold removes low-quality matches before RRF fusion so the
+ * context does not fill with irrelevant chunks on out-of-corpus questions.
+ *
+ * edgevec 0.6 with metric:'cosine' + L2-normalized embeddings returns a
+ * similarity score where higher = more similar (verified via the BQRescored
+ * docstring and the project's own "sorted by score descending" JSDoc). Empirical
+ * range for bge-small-en-v1.5 normalized embeddings: in-corpus pairs typically
+ * >0.5; unrelated pairs <0.35. 0.4 is a conservative floor that preserves
+ * borderline hits while dropping clear non-matches.
+ */
+const DEGRADED_VECTOR_COSINE_FLOOR = 0.4;
 
 /**
  * Token-budget estimate for keeping the user's question in-prompt under the
@@ -166,6 +197,8 @@ export class RAGOrchestrator {
     options: RAGQueryOptions = {}
   ): AsyncGenerator<RAGEvent> {
     const topK = options.topK ?? 10;
+    const candidateMultiplier = Math.max(1, options.candidateMultiplier ?? 1);
+    const fetchK = topK * candidateMultiplier;
     const doRerank = options.rerank ?? true;
     const streamTokens = options.streamTokens ?? true;
     const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
@@ -241,7 +274,7 @@ export class RAGOrchestrator {
     if (queryEmbedding !== null) {
       try {
         if (this.vectorIndex.isReady()) {
-          vectorResults = await this.vectorIndex.search(queryEmbedding, { k: topK });
+          vectorResults = await this.vectorIndex.search(queryEmbedding, { k: fetchK });
         } else {
           console.warn('[RAGOrchestrator] VectorIndex not ready, skipping vector search');
           retrievalDegraded = true;
@@ -262,7 +295,7 @@ export class RAGOrchestrator {
     let keywordResults: SearchResult[] = [];
     try {
       if (this.keywordIndex.isReady()) {
-        keywordResults = this.keywordIndex.search(question, { limit: topK });
+        keywordResults = this.keywordIndex.search(question, { limit: fetchK });
       } else {
         console.warn('[RAGOrchestrator] KeywordIndex not ready, skipping keyword search');
       }
@@ -278,6 +311,26 @@ export class RAGOrchestrator {
     }
 
     // Stage 4: RRF fusion (harmless with a single non-empty list; no special-case).
+    //
+    // Issue #37 R3: when the reranker will NOT run (fast preset, or reranker
+    // model absent at runtime), apply a cosine backstop to vector hits BEFORE
+    // fusion. edgevec returns the k nearest regardless of absolute similarity,
+    // so without this filter an out-of-corpus question fills the context with
+    // irrelevant chunks that then flood RRF. The backstop is only meaningful
+    // when the reranker is off, because the reranker's own sigmoid floor
+    // (MIN_CROSS_SCORE) is the stronger relevance signal when present.
+    if (!doRerank && vectorResults.length > 0) {
+      const before = vectorResults.length;
+      vectorResults = vectorResults.filter((r) => r.score >= DEGRADED_VECTOR_COSINE_FLOOR);
+      if (vectorResults.length < before) {
+        console.info('[RAG] content-gap (degraded vector floor)', {
+          query: question,
+          droppedByFloor: before - vectorResults.length,
+          floor: DEGRADED_VECTOR_COSINE_FLOOR,
+        });
+      }
+    }
+
     try {
       if (vectorResults.length > 0 || keywordResults.length > 0) {
         fusedResults = rrfFuse([vectorResults, keywordResults], 60);

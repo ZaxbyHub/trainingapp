@@ -515,6 +515,10 @@ describe('SettingsPage', () => {
   });
 
   test('wllama engine shows "no download needed" and no download button (issue #24 F3)', async () => {
+    // Issue #37 P6: the "Weights are bundled" copy is now gated on actual
+    // model presence (modelCached). Mock the packaged weights as present.
+    mockModelReadinessGateInstance.checkModelCached.mockResolvedValue(true);
+
     render(<SettingsPage />);
 
     await waitFor(() => {
