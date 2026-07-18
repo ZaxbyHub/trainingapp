@@ -1,0 +1,57 @@
+{
+  "scope": {
+    "base_ref": "master",
+    "head_ref": "fix/web-ui-retrieval-engine-airgap-issue-37-pr2",
+    "pr_commit": "bfdff73",
+    "pr1_merge": "f20f3e3 (PR #42 merged)",
+    "changed_files": 11,
+    "additions": 971,
+    "deletions": 2,
+    "files": [
+      { "path": "api_server.py", "type": "MODIFIED", "additions": 12, "deletions": 2 },
+      { "path": "web_ui/scripts/build-airgap.mjs", "type": "ADDED" },
+      { "path": "web_ui/scripts/eval/README.md", "type": "ADDED" },
+      { "path": "web_ui/scripts/eval/corpus/eval.jsonl", "type": "ADDED" },
+      { "path": "web_ui/scripts/eval/run-eval.mjs", "type": "ADDED" },
+      { "path": "web_ui/scripts/smoke-coop-coep.mjs", "type": "ADDED" },
+      { "path": "web_ui/src/components/IsolationBanner.tsx", "type": "ADDED" },
+      { "path": "web_ui/src/lib/documents/duplicate-guard.ts", "type": "ADDED" },
+      { "path": "web_ui/src/lib/embeddings/embedding.worker.ts", "type": "ADDED" },
+      { "path": "web_ui/src/lib/llm/airgap.ts", "type": "ADDED" },
+      { "path": "web_ui/src/lib/rag/eval-harness.test.ts", "type": "ADDED" }
+    ],
+    "test_files": ["web_ui/src/lib/rag/eval-harness.test.ts"]
+  },
+  "pr_metadata": {
+    "title": "fix(web_ui): chunking, keyword, conversation, budget, embedder worker, air-gap hardening, eval harness (Issue #37 PR-2)",
+    "author": "zaxbysauce",
+    "body_claims": [
+      "R4: keyword search tokenize:full→forward, stopword filter, strict-first+fallback",
+      "R5: chunking — unbounded-chunk fix, overlap 100→32, token-cap governor, PDF struct, XLSX headers, empty-chunk guard, query-time dedup",
+      "R6: conversation context — history turns, contextualized query, browser + server paths",
+      "R7: budget coherence — CHARS_PER_TOKEN 4→3.7, TEMPLATE_OVERHEAD_TOKENS=32, IMAGE_TOKEN_ESTIMATE=512, contextTrimmed UI",
+      "R8: embedder q8 + Web Worker — q8 dtype, VECTOR_INDEX_VERSION 2→3, embedding.worker.ts, thread cap 4→6, dead-code deletion",
+      "P1: CI smoke — smoke-coop-coep.mjs, wired into web-ui.yml",
+      "P2: air-gap build flag — VITE_AIRGAP=1, tree-shakes web-llm, build:airgap, validate-build --airgap",
+      "P3: COOP/COEP banner — IsolationBanner component",
+      "P5: storage hygiene — persist(), Clear Cache updates, duplicate-guard.ts",
+      "§5: eval harness — eval-harness.test.ts, run-eval.mjs, eval.jsonl corpus"
+    ],
+    "linked_issues": ["#37"],
+    "review_comments": [],
+    "review_trail": [
+      "Plan critic: NEEDS_REVISION → all addressed",
+      "Implementation reviewer: NEEDS_REVISION → fixed (JSONL, run-eval README, airgap check, airgap.ts comment, 1 FP about smoke CI wiring)",
+      "Final critic: NEEDS_REVISION → fixed (contextTrimmed onDone, IsolationBanner mount, R6 wiring, build:airgap invoke)"
+    ]
+  },
+  "deterministic_signals": {
+    "typecheck_main": "PASS (tsc --noEmit exit 0)",
+    "typecheck_test": "PASS (tsc --noEmit -p tsconfig.test.json exit 0)",
+    "build_airgap_syntax": "PASS (node --check exit 0)",
+    "smoke_coop_coep_syntax": "PASS (node --check exit 0)",
+    "run_eval_syntax": "PASS (node --check exit 0)",
+    "eval_harness": "3/3 PASS (recall@k, abstention, RRF k=60)",
+    "ci": "PASS (run 29656319249)"
+  }
+}

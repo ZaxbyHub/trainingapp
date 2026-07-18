@@ -1,0 +1,946 @@
+﻿diff --git a/PACKAGING.md b/PACKAGING.md
+index 465565c..0dd504f 100644
+--- a/PACKAGING.md
++++ b/PACKAGING.md
+@@ -122,7 +122,7 @@ would otherwise make a build with zero model files falsely report "ready".
+ ## 5. Browser LLM ΓÇö wllama + LFM2-VL (multimodal)
+ 
+ Browser inference uses **wllama** (llama.cpp in WASM, CPU/SIMD, **no WebGPU**)
+-running **LFM2-VL-1.6B GGUF + mmproj**. Two pieces are packaged:
++running **LiquidAI LFM2.5-VL-450M GGUF + mmproj**. Two pieces are packaged:
+ 
+ 1. **wllama runtime** ΓÇö `npm run prepare-models` copies, from node_modules:
+    - `@wllama/wllama` ΓåÆ `public/models/wllama/wasm/wllama.wasm` (the modern build)
+@@ -136,20 +136,17 @@ running **LFM2-VL-1.6B GGUF + mmproj**. Two pieces are packaged:
+    browser generation, server mode is unaffected):
+ 
+ ```bash
+-# (a) obtain LFM2-VL GGUF + mmproj (e.g. LiquidAI/LFM2-VL-1.6B-GGUF: Q4 weights + mmproj),
++# (a) obtain LFM2.5-VL GGUF + mmproj from LiquidAI/LFM2.5-VL-450M-GGUF on HuggingFace:
++#       LFM2.5-VL-450M-Q4_K_M.gguf     (~229 MB) ΓåÆ rename to model.gguf
++#       mmproj-LFM2.5-VL-450m-Q8_0.gguf (~99 MB)  ΓåÆ rename to mmproj.gguf
+ #     then place them at the repo root as:
+-#       models/lfm2-vl-1.6b/model.gguf
+-#       models/lfm2-vl-1.6b/mmproj.gguf
+-# (b) npm run prepare-models   # copies them to public/models/llm/lfm2-vl-1.6b/
++#       models/lfm2.5-vl-450m/model.gguf
++#       models/lfm2.5-vl-450m/mmproj.gguf
++# (b) npm run prepare-models   # copies them to public/models/llm/lfm2.5-vl-450m/
+ ```
+ 
+-LFM2-VL-1.6B Q4 is ~1 GB, under wllama's 2 GB/file `ArrayBuffer` limit, so a
+-single `model.gguf` works. For a larger quant, split with `llama-gguf-split`
+-(`model-00001-of-000NN.gguf`) and update `LLM_GGUF_URL` to the first shard.
+-
+-If only `LFM2.5-VL` safetensors are available (no prebuilt GGUF), convert at
+-packaging time with llama.cpp's `convert_hf_to_gguf.py` plus the multimodal
+-projector export, then quantize.
++LFM2.5-VL-450M Q4_K_M is ~229 MB, well under wllama's 2 GB/file `ArrayBuffer`
++limit, so a single `model.gguf` works.
+ 
+ The desktop app already runs the same GGUF family via `llama-cpp-python`, so
+ server mode gains VLM support from the same weights.
+diff --git a/web_ui/public/models/README.md b/web_ui/public/models/README.md
+index c4510a2..a35548d 100644
+--- a/web_ui/public/models/README.md
++++ b/web_ui/public/models/README.md
+@@ -31,11 +31,9 @@ public/models/
+ Γöé       Γö£ΓöÇΓöÇ wllama.wasm
+ Γöé       ΓööΓöÇΓöÇ wllama.js
+ ΓööΓöÇΓöÇ llm/                              # GGUF browser-LLM weights for wllama (optional)
+-    ΓööΓöÇΓöÇ lfm2-vl-1.6b/
+-        Γö£ΓöÇΓöÇ model.gguf               # LFM2-VL-1.6B Q4 (~1 GB) ΓÇö single-file variant
+-        Γöé                            #   OR, for a larger quant, split with llama-gguf-split:
+-        Γöé                            #   model-00001-of-000NN.gguf (<2 GB per file)
+-        ΓööΓöÇΓöÇ mmproj.gguf              # multimodal vision projector (enables image input)
++    ΓööΓöÇΓöÇ lfm2.5-vl-450m/
++        Γö£ΓöÇΓöÇ model.gguf               # LiquidAI LFM2.5-VL-450M Q4_K_M (~229 MB)
++        ΓööΓöÇΓöÇ mmproj.gguf              # multimodal vision projector (~99 MB, enables image input)
+ ```
+ 
+ ## How files get here
+diff --git a/web_ui/public/models/manifest.json b/web_ui/public/models/manifest.json
+index 5e7ea96..602c294 100644
+--- a/web_ui/public/models/manifest.json
++++ b/web_ui/public/models/manifest.json
+@@ -48,13 +48,13 @@
+       ]
+     },
+     {
+-      "id": "lfm2-vl-1.6b",
+-      "label": "LiquidAI LFM2-VL-1.6B (browser LLM, multimodal)",
++      "id": "lfm2.5-vl-450m",
++      "label": "LiquidAI LFM2.5-VL-450M (browser LLM, multimodal)",
+       "kind": "llm",
+       "group": "llm",
+       "files": [
+-        { "path": "llm/lfm2-vl-1.6b/model.gguf", "required": true },
+-        { "path": "llm/lfm2-vl-1.6b/mmproj.gguf", "required": true }
++        { "path": "llm/lfm2.5-vl-450m/model.gguf", "required": true },
++        { "path": "llm/lfm2.5-vl-450m/mmproj.gguf", "required": true }
+       ]
+     }
+   ]
+diff --git a/web_ui/scripts/README.txt b/web_ui/scripts/README.txt
+new file mode 100644
+index 0000000..4e7aef0
+--- /dev/null
++++ b/web_ui/scripts/README.txt
+@@ -0,0 +1,56 @@
++ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù
++Γòæ         Document Q&A ΓÇö Offline Edition                       Γòæ
++ΓòáΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòú
++Γòæ                                                              Γòæ
++Γòæ  HOW TO RUN                                                  Γòæ
++Γòæ  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ                                                  Γòæ
++Γòæ                                                              Γòæ
++Γòæ  Windows:  Double-click  start.bat                           Γòæ
++Γòæ  macOS:    Double-click  start.command                       Γòæ
++Γòæ  Linux:    Run  ./start.command                              Γòæ
++Γòæ                                                              Γòæ
++Γòæ  Your browser will open automatically to the app.            Γòæ
++Γòæ  No internet connection required.                            Γòæ
++Γòæ  No software to install ΓÇö everything is included.            Γòæ
++Γòæ                                                              Γòæ
++Γòæ  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ       Γòæ
++Γòæ                                                              Γòæ
++Γòæ  REQUIREMENTS                                                Γòæ
++Γòæ                                                              Γòæ
++Γòæ  ΓÇó Windows 10+ (PowerShell is built in)                      Γòæ
++Γòæ    ΓÇö or ΓÇö                                                    Γòæ
++Γòæ  ΓÇó macOS / Linux with Node.js installed                      Γòæ
++Γòæ    (For Windows: no installation needed at all.)             Γòæ
++Γòæ                                                              Γòæ
++Γòæ  ΓÇó A modern browser (Chrome, Edge, or Firefox)               Γòæ
++Γòæ                                                              Γòæ
++Γòæ  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ               Γòæ
++Γòæ                                                              Γòæ
++Γòæ  WHAT'S INSIDE                                               Γòæ
++Γòæ                                                              Γòæ
++Γòæ  ΓÇó Full RAG document Q&A app (runs 100% in your browser)     Γòæ
++Γòæ  ΓÇó LiquidAI LFM2.5-VL-450M ΓÇö browser-local AI model         Γòæ
++Γòæ  ΓÇó BGE embedding model for document search                   Γòæ
++Γòæ  ΓÇó ONNX Runtime + wllama (WASM inference, no GPU needed)     Γòæ
++Γòæ  ΓÇó All documents stored locally in your browser              Γòæ
++Γòæ  ΓÇó start.bat uses built-in PowerShell ΓÇö nothing to install   Γòæ
++Γòæ                                                              Γòæ
++Γòæ  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ               Γòæ
++Γòæ                                                              Γòæ
++Γòæ  TROUBLESHOOTING                                             Γòæ
++Γòæ                                                              Γòæ
++Γòæ  Q: "ExecutionPolicy" or script error on Windows             Γòæ
++Γòæ  A: start.bat passes -ExecutionPolicy Bypass automatically.  Γòæ
++Γòæ     If it still fails, right-click start.bat ΓåÆ Run as admin. Γòæ
++Γòæ                                                              Γòæ
++Γòæ  Q: The page opens but the model won't load                  Γòæ
++Γòæ  A: Make sure you extracted ALL files from the zip,          Γòæ
++Γòæ     including the dist/ folder (it's ~500 MB).               Γòæ
++Γòæ                                                              Γòæ
++Γòæ  Q: Port 8080 is already in use                              Γòæ
++Γòæ  A: Edit start.ps1 and change $Port = 8080 to another number.Γòæ
++Γòæ                                                              Γòæ
++Γòæ  Q: To stop the server                                      Γòæ
++Γòæ  A: Close the terminal window, or press Ctrl+C.              Γòæ
++Γòæ                                                              Γòæ
++ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥
+diff --git a/web_ui/scripts/prepare-models.mjs b/web_ui/scripts/prepare-models.mjs
+index fabc2a4..86c9b71 100644
+--- a/web_ui/scripts/prepare-models.mjs
++++ b/web_ui/scripts/prepare-models.mjs
+@@ -194,20 +194,20 @@ function prepareWllamaRuntime() {
+ }
+ 
+ // ---------------------------------------------------------------------------
+-// 1d. Browser LLM weights (OPTIONAL): LFM2-VL-1.6B GGUF + mmproj projector.
++// 1d. Browser LLM weights (OPTIONAL): LFM2.5-VL-450M GGUF + mmproj projector.
+ //     Large binaries assembled at packaging time; absence is a warning so an
+ //     embeddings-only / server-mode build still succeeds.
+ // ---------------------------------------------------------------------------
+ function prepareBrowserLLM() {
+   const srcDir = firstExisting([
+-    join(REPO_ROOT, 'models', 'lfm2-vl-1.6b'),
+-    join(WEB_UI, 'models', 'lfm2-vl-1.6b'),
++    join(REPO_ROOT, 'models', 'lfm2.5-vl-450m'),
++    join(WEB_UI, 'models', 'lfm2.5-vl-450m'),
+   ]);
+-  const destDir = join(PUBLIC_MODELS, 'llm', 'lfm2-vl-1.6b');
++  const destDir = join(PUBLIC_MODELS, 'llm', 'lfm2.5-vl-450m');
+ 
+   if (!srcDir) {
+     warn(
+-      'browser LLM (LFM2-VL-1.6B) source not found at models/lfm2-vl-1.6b/ (optional). ' +
++      'browser LLM (LFM2.5-VL-450M) source not found at models/lfm2.5-vl-450m/ (optional). ' +
+         'Browser wllama generation will be unavailable; server mode is unaffected. ' +
+         'See PACKAGING.md to include model.gguf + mmproj.gguf.'
+     );
+@@ -229,7 +229,7 @@ function prepareBrowserLLM() {
+     copyInto(src, join(destDir, name));
+     staged++;
+   }
+-  if (staged === 2) log(`browser LLM (LFM2-VL) -> ${destDir}`);
++  if (staged === 2) log(`browser LLM (LFM2.5-VL-450M) -> ${destDir}`);
+ }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/web_ui/scripts/serve-offline.mjs b/web_ui/scripts/serve-offline.mjs
+new file mode 100644
+index 0000000..8bb8834
+--- /dev/null
++++ b/web_ui/scripts/serve-offline.mjs
+@@ -0,0 +1,131 @@
++#!/usr/bin/env node
++/**
++ * serve-offline.mjs ΓÇö zero-dependency static file server for the offline web UI.
++ *
++ * Serves the dist/ folder with the cross-origin isolation headers required for
++ * SharedArrayBuffer (multi-threaded WASM inference). This is the ONLY way to
++ * run the app from the desktop without a full Python/FastAPI backend ΓÇö browsers
++ * block dynamic import() of WASM/JS modules from file:// URLs.
++ *
++ * Usage:
++ *   node serve-offline.mjs              # serves on http://localhost:8080
++ *   node serve-offline.mjs 9000         # custom port
++ *
++ * The companion start.bat / start.command / start.sh wrapper auto-opens the
++ * browser, so the user just double-clicks.
++ *
++ * Requires only Node.js (no npm install, no dependencies).
++ */
++
++import { createServer } from 'node:http';
++import { readFile, stat } from 'node:fs/promises';
++import { extname, join, normalize } from 'node:path';
++import { fileURLToPath, dirname } from 'node:url';
++import { existsSync } from 'node:fs';
++
++const __dirname = dirname(fileURLToPath(import.meta.url));
++const DIST_DIR = join(__dirname, 'dist');
++const PORT = parseInt(process.argv[2] || '8080', 10);
++
++const MIME_TYPES: Record<string, string> = {
++  '.html': 'text/html; charset=utf-8',
++  '.js': 'text/javascript; charset=utf-8',
++  '.mjs': 'text/javascript; charset=utf-8',
++  '.css': 'text/css; charset=utf-8',
++  '.json': 'application/json; charset=utf-8',
++  '.wasm': 'application/wasm',
++  '.gguf': 'application/octet-stream',
++  '.onnx': 'application/octet-stream',
++  '.woff2': 'font/woff2',
++  '.woff': 'font/woff',
++  '.png': 'image/png',
++  '.jpg': 'image/jpeg',
++  '.jpeg': 'image/jpeg',
++  '.svg': 'image/svg+xml',
++  '.ico': 'image/x-icon',
++  '.map': 'application/json; charset=utf-8',
++};
++
++if (!existsSync(DIST_DIR)) {
++  console.error('Error: dist/ folder not found. Run "npm run build:offline" first.');
++  process.exit(1);
++}
++
++const server = createServer(async (req, res) => {
++  try {
++    // Parse the URL and prevent path traversal.
++    const url = new URL(req.url || '/', `http://localhost:${PORT}`);
++    let pathname = decodeURIComponent(url.pathname);
++    if (pathname === '/') pathname = '/index.html';
++
++    // Normalize and prevent directory traversal.
++    const filePath = normalize(join(DIST_DIR, pathname));
++    if (!filePath.startsWith(DIST_DIR)) {
++      res.writeHead(403);
++      res.end('Forbidden');
++      return;
++    }
++
++    // If the path has no extension and isn't a real file, serve index.html
++    // (SPA fallback ΓÇö but NOT for /models/ or /assets/ which are real files).
++    let resolvedPath = filePath;
++    const ext = extname(filePath);
++    if (!ext && !existsSync(filePath)) {
++      resolvedPath = join(DIST_DIR, 'index.html');
++    }
++
++    // If file doesn't exist, try index.html (SPA routing).
++    if (!existsSync(resolvedPath)) {
++      resolvedPath = join(DIST_DIR, 'index.html');
++    }
++
++    if (!existsSync(resolvedPath)) {
++      res.writeHead(404);
++      res.end('Not found');
++      return;
++    }
++
++    const data = await readFile(resolvedPath);
++    const contentType = MIME_TYPES[extname(resolvedPath)] || 'application/octet-stream';
++
++    res.writeHead(200, {
++      'Content-Type': contentType,
++      // Cross-origin isolation headers ΓÇö required for SharedArrayBuffer,
++      // which enables multi-threaded WASM (ONNX Runtime, wllama).
++      'Cross-Origin-Opener-Policy': 'same-origin',
++      'Cross-Origin-Embedder-Policy': 'require-corp',
++      'Cache-Control': 'no-cache',
++    });
++    res.end(data);
++  } catch (err) {
++    res.writeHead(500);
++    res.end('Internal server error');
++    console.error(err);
++  }
++});
++
++server.listen(PORT, '127.0.0.1', () => {
++  const url = `http://localhost:${PORT}`;
++  console.log('');
++  console.log('  Document Q&A ΓÇö Offline Edition');
++  console.log('  ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ');
++  console.log(`  Open this URL in your browser:`);
++  console.log('');
++  console.log(`    ${url}`);
++  console.log('');
++  console.log('  Press Ctrl+C to stop the server.');
++  console.log('');
++
++  // Auto-open the browser (best-effort, platform-specific).
++  const { exec } = await import('node:child_process');
++  const platform = process.platform;
++  const openCmd =
++    platform === 'win32' ? `start "" "${url}"` :
++    platform === 'darwin' ? `open "${url}"` :
++    `xdg-open "${url}"`;
++  try {
++    exec(openCmd);
++  } catch {
++    // Non-fatal ΓÇö the URL is printed above.
++  }
++});
+diff --git a/web_ui/scripts/start.bat b/web_ui/scripts/start.bat
+new file mode 100644
+index 0000000..89780fc
+--- /dev/null
++++ b/web_ui/scripts/start.bat
+@@ -0,0 +1,5 @@
++@echo off
++title Document Q&A - Offline Server
++cd /d "%~dp0"
++powershell -ExecutionPolicy Bypass -NoProfile -File "%~dp0start.ps1"
++if %ERRORLEVEL% neq 0 pause
+diff --git a/web_ui/scripts/start.command b/web_ui/scripts/start.command
+new file mode 100644
+index 0000000..54d9b4d
+--- /dev/null
++++ b/web_ui/scripts/start.command
+@@ -0,0 +1,18 @@
++#!/bin/bash
++# Launch Document Q&A offline edition (macOS / Linux)
++cd "$(dirname "$0")"
++echo ""
++echo "  Starting Document Q&A offline server..."
++echo ""
++
++if ! command -v node &>/dev/null; then
++    echo "  ERROR: Node.js is not installed."
++    echo ""
++    echo "  Install Node.js from https://nodejs.org (LTS version)"
++    echo "  Then run this file again."
++    echo ""
++    read -p "  Press Enter to exit..."
++    exit 1
++fi
++
++node ./serve-offline.mjs 8080
+diff --git a/web_ui/scripts/start.ps1 b/web_ui/scripts/start.ps1
+new file mode 100644
+index 0000000..dab211d
+--- /dev/null
++++ b/web_ui/scripts/start.ps1
+@@ -0,0 +1,232 @@
++<#
++.SYNOPSIS
++  Document Q&A ΓÇö Offline Edition server (zero dependencies, PowerShell only).
++.DESCRIPTION
++  Serves the dist/ folder with cross-origin isolation headers required for
++  SharedArrayBuffer (multi-threaded WASM inference). Runs entirely on the
++  built-in PowerShell / .NET HttpListener ΓÇö no Node.js, no Python, no npm,
++  no internet. Works on any Windows machine with PowerShell (pre-installed
++  on all modern Windows).
++
++  Key design points:
++  - HEAD requests return headers ONLY (no body) ΓÇö the readiness gate probes
++    model files with HEAD, and reading a 219 MB GGUF into memory for every
++    probe would be catastrophically slow and error-prone.
++  - Large files are streamed (chunked) rather than loaded into memory, so
++    the 219 MB model GGUF doesn't OOM the server.
++  - Range requests are supported so wllama/ONNX can byte-range fetch.
++#>
++
++$ErrorActionPreference = 'Stop'
++
++# dist/ lives next to this script in the distribution package, or one level
++# up (../dist) during development where the script is inside scripts/.
++$DistDir = Join-Path $PSScriptRoot 'dist'
++if (-not (Test-Path $DistDir)) {
++    $DistDir = Join-Path $PSScriptRoot '..\dist'
++    $DistDir = [System.IO.Path]::GetFullPath($DistDir)
++}
++
++if (-not (Test-Path $DistDir)) {
++    Write-Host ''
++    Write-Host '  ERROR: dist/ folder not found.' -ForegroundColor Red
++    Write-Host '  Make sure you extracted ALL files from the zip.' -ForegroundColor Red
++    Write-Host ''
++    Read-Host '  Press Enter to exit'
++    exit 1
++}
++
++$Port = 8080
++
++# ---- MIME type map -----------------------------------------------------------
++$MimeTypes = @{
++    '.html' = 'text/html; charset=utf-8'
++    '.htm'  = 'text/html; charset=utf-8'
++    '.js'   = 'text/javascript; charset=utf-8'
++    '.mjs'  = 'text/javascript; charset=utf-8'
++    '.css'  = 'text/css; charset=utf-8'
++    '.json' = 'application/json; charset=utf-8'
++    '.wasm' = 'application/wasm'
++    '.gguf' = 'application/octet-stream'
++    '.onnx' = 'application/octet-stream'
++    '.woff2' = 'font/woff2'
++    '.woff'  = 'font/woff'
++    '.ttf'   = 'font/ttf'
++    '.png'  = 'image/png'
++    '.jpg'  = 'image/jpeg'
++    '.jpeg' = 'image/jpeg'
++    '.gif'  = 'image/gif'
++    '.svg'  = 'image/svg+xml'
++    '.ico'  = 'image/x-icon'
++    '.map'  = 'application/json; charset=utf-8'
++    '.txt'  = 'text/plain; charset=utf-8'
++}
++
++# ---- Create the listener -----------------------------------------------------
++$Listener = New-Object System.Net.HttpListener
++$Listener.Prefixes.Add("http://127.0.0.1:${Port}/")
++
++try {
++    $Listener.Start()
++} catch {
++    Write-Host ''
++    Write-Host "  ERROR: Cannot start the server on port ${Port}." -ForegroundColor Red
++    Write-Host "  The port may be in use. Close other programs and try again," -ForegroundColor Red
++    Write-Host "  or edit start.ps1 and change the port number." -ForegroundColor Red
++    Write-Host ''
++    Write-Host "  Details: $_" -ForegroundColor DarkGray
++    Write-Host ''
++    Read-Host '  Press Enter to exit'
++    exit 1
++}
++
++$Url = "http://localhost:${Port}"
++Write-Host ''
++Write-Host '  ============================================' -ForegroundColor Cyan
++Write-Host '     Document Q&A ΓÇö Offline Edition' -ForegroundColor White
++Write-Host '  ============================================' -ForegroundColor Cyan
++Write-Host ''
++Write-Host "  Opening your browser to: $Url" -ForegroundColor Green
++Write-Host ''
++Write-Host '  To stop the server: close this window or press Ctrl+C' -ForegroundColor DarkGray
++Write-Host ''
++
++# Auto-open browser
++try {
++    Start-Process $Url
++} catch {
++    # Non-fatal ΓÇö URL is printed above.
++}
++
++# ---- Request loop ------------------------------------------------------------
++while ($Listener.IsListening) {
++    try {
++        $Context = $Listener.GetContext()
++    } catch [System.Net.HttpListenerException] {
++        break
++    }
++
++    $Request  = $Context.Request
++    $Response = $Context.Response
++
++    try {
++        $Path = [System.Uri]::UnescapeDataString($Request.Url.AbsolutePath)
++
++        # Prevent path traversal ΓÇö -match checks for substring, NOT -contains
++        # (which is a scalar equality check and would miss embedded '..').
++        if ($Path -match '\.\.') {
++            $Response.StatusCode = 403
++            $Response.Close()
++            continue
++        }
++
++        # Map to file on disk.
++        $FilePath = Join-Path $DistDir $Path.TrimStart('/\')
++        $FilePath = $FilePath -replace '/', '\'
++
++        # Directory ΓåÆ index.html
++        if ((Test-Path $FilePath -PathType Container)) {
++            $FilePath = Join-Path $FilePath 'index.html'
++        }
++
++        # SPA fallback: if file doesn't exist and has no extension, serve index.html.
++        if (-not (Test-Path $FilePath -PathType Leaf)) {
++            $Ext = [System.IO.Path]::GetExtension($FilePath)
++            if ([string]::IsNullOrEmpty($Ext)) {
++                $FilePath = Join-Path $DistDir 'index.html'
++            }
++        }
++
++        if (-not (Test-Path $FilePath -PathType Leaf)) {
++            $Response.StatusCode = 404
++            $Bytes = [System.Text.Encoding]::UTF8.GetBytes('404 Not Found')
++            $Response.ContentLength64 = $Bytes.Length
++            $Response.OutputStream.Write($Bytes, 0, $Bytes.Length)
++            $Response.Close()
++            continue
++        }
++
++        # Determine content type.
++        $Ext = [System.IO.Path]::GetExtension($FilePath).ToLowerInvariant()
++        $ContentType = if ($MimeTypes.ContainsKey($Ext)) { $MimeTypes[$Ext] } else { 'application/octet-stream' }
++
++        # Cross-origin isolation headers ΓÇö required for SharedArrayBuffer.
++        $Response.Headers.Set('Cross-Origin-Opener-Policy', 'same-origin')
++        $Response.Headers.Set('Cross-Origin-Embedder-Policy', 'require-corp')
++        # CORP header is required under COEP require-corp: without it, the
++        # browser blocks cross-origin subresource loads (ORT workers, WASM),
++        # which breaks cross-origin isolation and SharedArrayBuffer.
++        $Response.Headers.Set('Cross-Origin-Resource-Policy', 'same-origin')
++        $Response.Headers.Set('Cache-Control', 'no-cache')
++        $Response.ContentType = $ContentType
++
++        $FileLen = (Get-Item $FilePath).Length
++
++        # ---- HEAD request: headers only, no body ----
++        # The readiness gate AND wllama's download progress both read the
++        # Content-Length from the HEAD response. We need to return the real
++        # file size, but NOT send the body. HttpListener .NET HttpListenerResponse
++        # suppresses the body for HEAD automatically when ContentLength64 is set
++        # ΓÇö the framework knows HEAD must not have a body. The earlier hang was
++        # caused by a conflicting manual Content-Length header, not by setting
++        # ContentLength64 itself. We set it to the real size here.
++        if ($Request.HttpMethod -eq 'HEAD') {
++            $Response.StatusCode = 200
++            $Response.ContentLength64 = $FileLen
++            $Response.Close()
++            continue
++        }
++
++        # ---- GET request: stream the file ----
++        # Use FileStream + chunked copy so the 219 MB model GGUF doesn't load
++        # entirely into memory. Supports Range requests via the stream offset.
++        $AcceptRanges = $Request.Headers['Range']
++        $Fs = [System.IO.File]::Open($FilePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
++        try {
++            if ($AcceptRanges) {
++                # Parse "bytes=start-end" (end optional).
++                if ($AcceptRanges -match 'bytes=(\d+)-(\d*)') {
++                    $Start = [int64]$Matches[1]
++                    $End = if ($Matches[2]) { [int64]$Matches[2] } else { $FileLen - 1 }
++                    if ($Start -lt $FileLen -and $End -lt $FileLen -and $Start -le $End) {
++                        $Fs.Seek($Start, [System.IO.SeekOrigin]::Begin) | Out-Null
++                        $BytesToWrite = $End - $Start + 1
++                        $Response.StatusCode = 206
++                        $Response.Headers.Set('Content-Range', "bytes $Start-$End/$FileLen")
++                        $Response.ContentLength64 = $BytesToWrite
++                        $Buffer = New-Object byte[] 65536
++                        $Remaining = $BytesToWrite
++                        while ($Remaining -gt 0) {
++                            $ToRead = [Math]::Min($Remaining, $Buffer.Length)
++                            $Read = $Fs.Read($Buffer, 0, $ToRead)
++                            if ($Read -le 0) { break }
++                            $Response.OutputStream.Write($Buffer, 0, $Read)
++                            $Remaining -= $Read
++                        }
++                    } else {
++                        $Response.StatusCode = 416
++                    }
++                } else {
++                    $Response.StatusCode = 416
++                }
++            } else {
++                # Full file ΓÇö stream in chunks.
++                $Response.StatusCode = 200
++                $Response.ContentLength64 = $FileLen
++                $Buffer = New-Object byte[] 65536
++                while ($true) {
++                    $Read = $Fs.Read($Buffer, 0, $Buffer.Length)
++                    if ($Read -le 0) { break }
++                    $Response.OutputStream.Write($Buffer, 0, $Read)
++                }
++            }
++        } finally {
++            $Fs.Close()
++        }
++        $Response.Close()
++    } catch {
++        try { $Response.StatusCode = 500; $Response.Close() } catch {}
++    }
++}
++
++$Listener.Stop()
+diff --git a/web_ui/src/lib/embeddings/embedding-service.test.ts b/web_ui/src/lib/embeddings/embedding-service.test.ts
+index 56c8712..b2a0238 100644
+--- a/web_ui/src/lib/embeddings/embedding-service.test.ts
++++ b/web_ui/src/lib/embeddings/embedding-service.test.ts
+@@ -124,8 +124,12 @@ describe('EmbeddingService', () => {
+       // Models resolved from the locally packaged base (/models); the embedding
+       // pipeline path is `embeddings/bge-small-en-v1.5` relative to this.
+       expect(env.localModelPath).toBe('/models');
+-      // ORT WASM served locally, not from jsdelivr.
+-      expect(env.backends.onnx.wasm?.wasmPaths).toBe('/models/ort/');
++      // ORT WASM served locally, not from jsdelivr. Under vitest (DEV=true),
++      // wasmPaths points at node_modules for Vite dev; in prod it's /models/ort/.
++      const expectedWasmPaths = import.meta.env.DEV
++        ? '/node_modules/onnxruntime-web/dist/'
++        : '/models/ort/';
++      expect(env.backends.onnx.wasm?.wasmPaths).toBe(expectedWasmPaths);
+     });
+   });
+ 
+diff --git a/web_ui/src/lib/llm/model-readiness.test.ts b/web_ui/src/lib/llm/model-readiness.test.ts
+index e214e5b..3d409bf 100644
+--- a/web_ui/src/lib/llm/model-readiness.test.ts
++++ b/web_ui/src/lib/llm/model-readiness.test.ts
+@@ -431,7 +431,9 @@ describe('ModelReadinessGate', () => {
+ 
+       expect(result.ready).toBe(true);
+       expect(result.checks.modelCached).toBe(false);
+-      expect(result.recommendations.some(r => r.includes('not cached'))).toBe(true);
++      // webllm engine (default): recommendation says the model is not in the
++      // browser cache and a CDN download is required.
++      expect(result.recommendations.some(r => r.includes('not in the browser cache'))).toBe(true);
+     });
+ 
+     test('returns ready=true with model cached', async () => {
+diff --git a/web_ui/src/lib/llm/model-readiness.ts b/web_ui/src/lib/llm/model-readiness.ts
+index 6d5cebd..b07002a 100644
+--- a/web_ui/src/lib/llm/model-readiness.ts
++++ b/web_ui/src/lib/llm/model-readiness.ts
+@@ -69,8 +69,8 @@ export interface ReadinessResult {
+ const MODEL_REQUIRED_BYTES: Record<string, number> = {
+   // Llama-3.2-3B (WebLLM): ~1.9 GB weights + ~300 MB working Γëê 2.3 GB.
+   'Llama-3.2-3B-Instruct-q4f16_1-MLC': 2_300_000_000,
+-  // LFM2-VL-1.6B Q4_K_M (wllama): ~1 GB GGUF + ~500 MB WASM/ctx working memory.
+-  'lfm2-vl-1.6b': 1_500_000_000,
++  // LFM2.5-VL-450M Q4_K_M (wllama): ~229 MB GGUF + ~99 MB mmproj + ~270 MB WASM/ctx.
++  'lfm2.5-vl-450m': 600_000_000,
+ };
+ 
+ /**
+@@ -285,12 +285,24 @@ export class ModelReadinessGate {
+       );
+     }
+ 
+-    // Soft warning: model not cached
++    // Soft warning: model not cached ΓÇö engine-aware messaging.
++    // wllama weights are packaged same-origin and loaded on first use, NOT
++    // downloaded from the internet. webllm weights ARE fetched from a CDN
++    // into Cache Storage on first use.
+     if (!modelCached) {
+-      recommendations.push(
+-        `Model "${modelId}" is not cached locally. A download (~2 GB) will be required ` +
+-        'before first inference. Ensure stable internet connection.'
+-      );
++      if (webgpuRequired) {
++        recommendations.push(
++          `Model "${modelId}" is not in the browser cache. A download (~2 GB) ` +
++          'from the WebLLM CDN will be required before first inference. ' +
++          'Ensure a stable internet connection.'
++        );
++      } else {
++        recommendations.push(
++          `The browser model files ("${modelId}") were not found in this build. ` +
++          'Run "npm run prepare-models" to stage the packaged weights, ' +
++          'or rebuild with --no-llm for a server-mode-only archive.'
++        );
++      }
+     }
+ 
+     const ready = (!webgpuRequired || webgpu) && memory.sufficient;
+diff --git a/web_ui/src/lib/llm/wllama-service.test.ts b/web_ui/src/lib/llm/wllama-service.test.ts
+index 46a6569..f2a525c 100644
+--- a/web_ui/src/lib/llm/wllama-service.test.ts
++++ b/web_ui/src/lib/llm/wllama-service.test.ts
+@@ -40,6 +40,9 @@ vi.mock('@wllama/wllama', () => ({
+     supportInputModality = supportInputModality;
+     setCompat = setCompat;
+   },
++  CacheManager: class {
++    constructor() {}
++  },
+ }));
+ 
+ describe('WllamaService', () => {
+@@ -84,8 +87,8 @@ describe('WllamaService', () => {
+     // Loaded GGUF + mmproj from same-origin /models/llm paths.
+     expect(loadModelFromUrl).toHaveBeenCalledWith(
+       expect.objectContaining({
+-        url: '/models/llm/lfm2-vl-1.6b/model.gguf',
+-        mmprojUrl: '/models/llm/lfm2-vl-1.6b/mmproj.gguf',
++        url: '/models/llm/lfm2.5-vl-450m/model.gguf',
++        mmprojUrl: '/models/llm/lfm2.5-vl-450m/mmproj.gguf',
+       }),
+       expect.objectContaining({ useCache: true })
+     );
+diff --git a/web_ui/src/lib/llm/wllama-service.ts b/web_ui/src/lib/llm/wllama-service.ts
+index 8eb9349..2537067 100644
+--- a/web_ui/src/lib/llm/wllama-service.ts
++++ b/web_ui/src/lib/llm/wllama-service.ts
+@@ -15,7 +15,7 @@
+  * WebLLMService behind the engine factory.
+  */
+ 
+-import { Wllama } from '@wllama/wllama';
++import { Wllama, CacheManager } from '@wllama/wllama';
+ import type {
+   LLMService,
+   LLMMessage,
+@@ -34,7 +34,7 @@ import {
+ } from '../models/model-manifest';
+ import { probeAsset } from '../models/probe';
+ 
+-/** Context window. LFM2-VL handles long context; 4096 is a safe default for RAM. */
++/** Context window. LFM2.5-VL-450M handles long context; 4096 is a safe default for RAM. */
+ export const DEFAULT_N_CTX = 4096;
+ 
+ function threadCount(): number {
+@@ -65,6 +65,61 @@ function isPresent(url: string): Promise<boolean> {
+   return probeAsset(url);
+ }
+ 
++/**
++ * In-memory StorageBackend for wllama's CacheManager.
++ *
++ * wllama's default backend (OPFS) writes the full GGUF to the Origin Private
++ * File System via FileSystemSyncAccessHandle. On systems with limited OPFS
++ * quota, this fails with "No space available for this operation" ΓÇö even with
++ * cacheManager.clear() called first, because the write happens AFTER the clear
++ * and the quota is genuinely too small for the 219MB GGUF.
++ *
++ * This backend stores the downloaded blobs in a Map in memory. The tradeoff:
++ * no cross-session persistence (the model re-fetches each page load), but the
++ * same-origin fetch is fast and avoids OPFS entirely. This is acceptable for a
++ * browser-local app where the GGUF is already packaged same-origin.
++ *
++ * write() MUST fully drain the ReadableStream into a Blob ΓÇö it is the sole
++ * consumer of the download response body, and read() must return those bytes
++ * for the model to load.
++ */
++class InMemoryStorageBackend {
++  private store = new Map<string, Blob>();
++
++  isSupported(): boolean {
++    return true;
++  }
++
++  async read(key: string): Promise<Blob | null> {
++    return this.store.get(key) ?? null;
++  }
++
++  async write(key: string, stream: ReadableStream<Uint8Array>): Promise<void> {
++    const reader = stream.getReader();
++    const chunks: Uint8Array[] = [];
++    // eslint-disable-next-line no-constant-condition
++    while (true) {
++      const { done, value } = await reader.read();
++      if (done) break;
++      if (value) chunks.push(value);
++    }
++    this.store.set(key, new Blob(chunks as BlobPart[]));
++  }
++
++  async getSize(key: string): Promise<number> {
++    const blob = this.store.get(key);
++    return blob ? blob.size : -1;
++  }
++
++  async list(): Promise<Array<{ key: string; size: number }>> {
++    return Array.from(this.store.entries()).map(([key, blob]) => ({ key, size: blob.size }));
++  }
++
++  async delete(key: string): Promise<void> {
++    this.store.delete(key);
++  }
++}
++
+ export class WllamaService implements LLMService {
+   private static instance: WllamaService | null = null;
+   private static teardownPromise: Promise<void> | null = null;
+@@ -124,9 +179,15 @@ export class WllamaService implements LLMService {
+ 
+       // wllama uses AssetsPathConfig `default` VERBATIM as the wasm URL, so it
+       // must be the full path to the .wasm file (not a directory).
++      // Use an in-memory CacheManager to avoid OPFS ΓÇö wllama's default backend
++      // writes the full GGUF to OPFS, which fails with "No space available" on
++      // systems with limited OPFS quota. The in-memory backend stores the
++      // downloaded blobs in RAM; the model re-fetches from same-origin each
++      // page load (fast, no persistence needed for a packaged offline app).
+       this.wllama = new Wllama(
+         { default: WLLAMA_WASM_FILE },
+-        { allowOffline: true, parallelDownloads: 3, suppressNativeLog: true }
++        { allowOffline: true, parallelDownloads: 3, suppressNativeLog: true,
++          cacheManager: new CacheManager([new InMemoryStorageBackend()]) }
+       );
+ 
+       // Point the offline-compat fallback (used when the browser lacks
+diff --git a/web_ui/src/lib/models/model-manifest.ts b/web_ui/src/lib/models/model-manifest.ts
+index c3dd433..7a1f9ca 100644
+--- a/web_ui/src/lib/models/model-manifest.ts
++++ b/web_ui/src/lib/models/model-manifest.ts
+@@ -105,12 +105,11 @@ export const WLLAMA_COMPAT_WORKER_URL = `${WLLAMA_COMPAT_BASE}wllama.js`;
+ /** Base directory for packaged GGUF LLM weights (wllama). */
+ export const LLM_MODELS_BASE = `${MODELS_BASE}/llm`;
+ 
+-/** Packaged browser LLM: LFM2-VL (vision-language) for wllama. */
+-export const LLM_MODEL_DIR = 'lfm2-vl-1.6b';
++/** Packaged browser LLM: LFM2.5-VL-450M (vision-language) for wllama. */
++export const LLM_MODEL_DIR = 'lfm2.5-vl-450m';
+ /**
+- * GGUF weights URL passed to wllama `loadModelFromUrl`. LFM2-VL-1.6B Q4 is ~1 GB
+- * (under wllama's 2 GB/file limit) so a single file is used; if a larger quant is
+- * packaged, split with `llama-gguf-split` and point this at the `-00001-of-...` shard.
++ * GGUF weights URL passed to wllama `loadModelFromUrl`. LFM2.5-VL-450M Q4_K_M is
++ * ~229 MB ΓÇö well under wllama's 2 GB/file limit, so a single unsplit file is used.
+  */
+ export const LLM_GGUF_URL = `${LLM_MODELS_BASE}/${LLM_MODEL_DIR}/model.gguf`;
+ /** Multimodal projector (mmproj) URL, passed via wllama ModelSource.mmprojUrl. */
+diff --git a/web_ui/src/lib/models/offline-env.test.ts b/web_ui/src/lib/models/offline-env.test.ts
+index ae10fe8..7e4c622 100644
+--- a/web_ui/src/lib/models/offline-env.test.ts
++++ b/web_ui/src/lib/models/offline-env.test.ts
+@@ -39,7 +39,13 @@ describe('configureOfflineEnv', () => {
+     expect(env.allowRemoteModels).toBe(false);
+     expect(env.allowLocalModels).toBe(true);
+     expect(env.localModelPath).toBe('/models');
+-    expect(env.backends.onnx.wasm?.wasmPaths).toBe('/models/ort/');
++    // Under vitest, import.meta.env.DEV is true (test mode), so wasmPaths
++    // points at node_modules for Vite dev compatibility. In production builds
++    // (DEV=false), it would be ONNX_RUNTIME_WASM_BASE = '/models/ort/'.
++    const expectedWasmPaths = import.meta.env.DEV
++      ? '/node_modules/onnxruntime-web/dist/'
++      : '/models/ort/';
++    expect(env.backends.onnx.wasm?.wasmPaths).toBe(expectedWasmPaths);
+   });
+ 
+   it('stays offline regardless of construction order (embeddings then reranker)', async () => {
+diff --git a/web_ui/src/lib/models/offline-env.ts b/web_ui/src/lib/models/offline-env.ts
+index 55e1ed6..8a9d704 100644
+--- a/web_ui/src/lib/models/offline-env.ts
++++ b/web_ui/src/lib/models/offline-env.ts
+@@ -40,12 +40,31 @@ export function configureOfflineEnv(): void {
+   if (wasm) {
+     // Serve the ONNX Runtime WASM binaries locally rather than the default
+     // jsdelivr CDN ΓÇö otherwise the app is not truly offline.
+-    wasm.wasmPaths = ONNX_RUNTIME_WASM_BASE;
++    //
++    // Dev-mode caveat: Vite serves files in `public/` as static assets only and
++    // blocks dynamic `import()` of JS modules from that path. The ORT `.mjs`
++    // glue file must go through Vite's module pipeline, so in dev we point
++    // wasmPaths at the onnxruntime-web package in node_modules (Vite serves
++    // node_modules files as proper modules). In production builds the files are
++    // copied into dist/models/ort/ and served same-origin, so the packaged
++    // ONNX_RUNTIME_WASM_BASE path is used.
++    if (import.meta.env.DEV) {
++      wasm.wasmPaths = '/node_modules/onnxruntime-web/dist/';
++    } else {
++      wasm.wasmPaths = ONNX_RUNTIME_WASM_BASE;
++    }
+ 
+     // Adaptive thread count for the WASM backend. Guard `navigator` so this
+     // module can be imported in non-browser contexts (SSR, node-env tests).
++    // CRITICAL: ONNX Runtime's multi-threaded proxy worker deadlocks silently
++    // when the page is NOT cross-origin isolated (SharedArrayBuffer unavailable).
++    // The worker spawns but never posts a message, so createInferenceSession
++    // never resolves ΓÇö the app hangs on first document upload with no error.
++    // Force numThreads=1 when crossOriginIsolated is false to avoid the hang.
+     const cores =
+       typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : undefined;
+-    wasm.numThreads = cores ? Math.min(cores, 4) : 2;
++    const isCrossOriginIsolated =
++      typeof globalThis !== 'undefined' && globalThis.crossOriginIsolated === true;
++    wasm.numThreads = isCrossOriginIsolated && cores ? Math.min(cores, 4) : 1;
+   }
+ }
+diff --git a/web_ui/src/lib/models/probe.test.ts b/web_ui/src/lib/models/probe.test.ts
+index 0a70cf4..566762f 100644
+--- a/web_ui/src/lib/models/probe.test.ts
++++ b/web_ui/src/lib/models/probe.test.ts
+@@ -15,7 +15,7 @@ describe('probeAsset', () => {
+       status: 200,
+       contentType: 'application/octet-stream',
+     });
+-    expect(await probeAsset('/models/llm/lfm2-vl-1.6b/model.gguf', fetcher)).toBe(true);
++    expect(await probeAsset('/models/llm/lfm2.5-vl-450m/model.gguf', fetcher)).toBe(true);
+   });
+ 
+   it('reports present for a JSON model config (200 + application/json)', async () => {
+@@ -43,7 +43,7 @@ describe('probeAsset', () => {
+       status: 200,
+       contentType: 'text/html; charset=utf-8',
+     });
+-    expect(await probeAsset('/models/llm/lfm2-vl-1.6b/model.gguf', fetcher)).toBe(false);
++    expect(await probeAsset('/models/llm/lfm2.5-vl-450m/model.gguf', fetcher)).toBe(false);
+   });
+ 
+   it('reports NOT present for XHTML SPA fallback', async () => {
+diff --git a/web_ui/src/pages/ChatPage.overlay.test.tsx b/web_ui/src/pages/ChatPage.overlay.test.tsx
+index 44cb03e..b33b1c3 100644
+--- a/web_ui/src/pages/ChatPage.overlay.test.tsx
++++ b/web_ui/src/pages/ChatPage.overlay.test.tsx
+@@ -169,7 +169,7 @@ describe('ChatPage ΓÇö model-blocked overlay (F-AC7)', () => {
+ 
+   it('renders the alertdialog with the wllama-specific failure headline and the real failure/recommendation text', () => {
+     currentReadinessResult = makeReadinessResult({
+-      failures: ['This build does not include the packaged model weights (lfm2-vl-1.6b).'],
++      failures: ['This build does not include the packaged model weights (lfm2.5-vl-450m).'],
+       recommendations: ['Rebuild the app with the model bundled, or contact your administrator.'],
+     });
+ 
+@@ -187,7 +187,7 @@ describe('ChatPage ΓÇö model-blocked overlay (F-AC7)', () => {
+ 
+     // The actual failure/recommendation text is surfaced, not a generic message.
+     expect(
+-      screen.getByText('This build does not include the packaged model weights (lfm2-vl-1.6b).')
++      screen.getByText('This build does not include the packaged model weights (lfm2.5-vl-450m).')
+     ).toBeInTheDocument();
+     expect(
+       screen.getByText('Rebuild the app with the model bundled, or contact your administrator.')
+diff --git a/web_ui/src/pages/SettingsPage.test.tsx b/web_ui/src/pages/SettingsPage.test.tsx
+index a55ca77..084e539 100644
+--- a/web_ui/src/pages/SettingsPage.test.tsx
++++ b/web_ui/src/pages/SettingsPage.test.tsx
+@@ -71,7 +71,7 @@ import type { PackagedModelsReport } from '../lib/models/model-manifest';
+ const checkPackagedModelsMock = vi.fn((): Promise<PackagedModelsReport | null> => Promise.resolve(null));
+ vi.mock('../lib/models/model-manifest', () => ({
+   checkPackagedModels: (..._args: unknown[]) => checkPackagedModelsMock(),
+-  LLM_MODEL_DIR: 'lfm2-vl-1.6b',
++  LLM_MODEL_DIR: 'lfm2.5-vl-450m',
+ }));
+ 
+ // Mock detectEngineCapability so it doesn't do real WebGPU probes in jsdom.
+@@ -571,9 +571,9 @@ describe('SettingsPage', () => {
+     // First arg is the model id ΓÇö for wllama it's LLM_MODEL_DIR. We use the
+     // explicit literal here because model-manifest is mocked in this test file,
+     // so importing LLM_MODEL_DIR would read the mock (tautological). The real
+-    // value is 'lfm2-vl-1.6b' (model-manifest.ts LLM_MODEL_DIR). If that
++    // value is 'lfm2.5-vl-450m' (model-manifest.ts LLM_MODEL_DIR). If that
+     // constant changes, update this literal AND the mock factory's LLM_MODEL_DIR.
+-    expect(call[0]).toBe('lfm2-vl-1.6b');
++    expect(call[0]).toBe('lfm2.5-vl-450m');
+   });
+ 
+   test('clicking a radio circle changes selection exactly once (no double-fire) (issue #24 F9)', async () => {

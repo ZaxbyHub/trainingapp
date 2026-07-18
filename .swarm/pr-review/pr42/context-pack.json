@@ -1,0 +1,96 @@
+{
+  "scope": {
+    "base_ref": "master",
+    "head_ref": "fix/web-ui-retrieval-engine-airgap-issue-37",
+    "pr_commit": "4e85ac87616e6cd6b844c333fbb60995332c3c07",
+    "merge_base": "a1826d680a192c7734b5ccb0d63ae30a97e706cc",
+    "changed_files": 20,
+    "additions": 1041,
+    "deletions": 323,
+    "files": [
+      { "path": ".github/workflows/web-ui.yml", "type": "MODIFIED" },
+      { "path": "PACKAGING.md", "type": "MODIFIED" },
+      { "path": "web_ui/public/models/README.md", "type": "MODIFIED" },
+      { "path": "web_ui/public/models/manifest.json", "type": "MODIFIED" },
+      { "path": "web_ui/scripts/prepare-models.mjs", "type": "MODIFIED" },
+      { "path": "web_ui/scripts/validate-build.mjs", "type": "MODIFIED" },
+      { "path": "web_ui/src/hooks/useServiceInitialization.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/llm/model-readiness.test.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/llm/model-readiness.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/models/model-manifest.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/rag/rag-orchestrator.test.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/rag/rag-orchestrator.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/rag/rag-presets.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/search/reranker.test.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/search/reranker.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/search/vector-index.test.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/lib/search/vector-index.ts", "type": "MODIFIED" },
+      { "path": "web_ui/src/pages/SettingsPage.test.tsx", "type": "MODIFIED" },
+      { "path": "web_ui/src/pages/SettingsPage.tsx", "type": "MODIFIED" },
+      { "path": "web_ui/src/types/search.ts", "type": "MODIFIED" }
+    ],
+    "test_files": [
+      "web_ui/src/lib/search/reranker.test.ts",
+      "web_ui/src/lib/rag/rag-orchestrator.test.ts",
+      "web_ui/src/lib/llm/model-readiness.test.ts",
+      "web_ui/src/lib/search/vector-index.test.ts",
+      "web_ui/src/pages/SettingsPage.test.tsx"
+    ]
+  },
+  "pr_metadata": {
+    "title": "fix(web_ui): resurrect cross-encoder reranker, over-fetch, abstention floor, packaging integrity (Issue #37 PR-1)",
+    "author": "zaxbysauce",
+    "body_claims": [
+      "R1: Reranker resurrection (a+b+c) — service init, proper scoring, packaged weights",
+      "R2: Over-fetch before rerank — candidateMultiplier on presets, ef_search 50→128",
+      "R3: Abstention floor — MIN_CROSS_SCORE 0.1→0.2, new DEGRADED_VECTOR_COSINE_FLOOR=0.4",
+      "P4: Validate-build integrity — SHA-256 checksums, LFS detection, Vite chunk check",
+      "P6: Missing-model UX — wllama failure is a readiness FAILURE, ModelBlockedOverlay",
+      "CI: --no-reranker flag, PackagedModelGroup 'reranker' type, PACKAGING.md docs"
+    ],
+    "linked_issues": ["#37"],
+    "checkboxes": [],
+    "review_comments": [],
+    "commit_messages": ["fix(web_ui): resurrect cross-encoder reranker, over-fetch, abstention floor, packaging integrity (Issue #37 PR-1)"],
+    "invariant_audit": [
+      "BGE query prefix on queries only (rag-orchestrator.ts:252) — untouched",
+      "L2-normalize at encode + cosine metric — untouched",
+      "CLS pooling end-to-end — untouched",
+      "RRF rank-only fusion, k=60 (rag-orchestrator.ts:336) — untouched",
+      "Zero-chunk abstain path + image guard (rag-orchestrator.ts:439) — preserved; now reachable via R3",
+      "Boot-time index persistence ordering — untouched"
+    ]
+  },
+  "obligations": [
+    "O-001 | PR body | R1a: fire-and-forget getRerankerService().initialize() at boot in useServiceInitialization.ts | useServiceInitialization.ts | UNVERIFIED",
+    "O-002 | PR body | R1b: bypass text-classification pipeline, use AutoTokenizer + AutoModel directly with text_pair + sigmoid | reranker.ts | UNVERIFIED",
+    "O-003 | PR body | R1c: package q8 ONNX, manifest group 'optional'→'core', prepare-models fails() on missing reranker | manifest.json, prepare-models.mjs | UNVERIFIED",
+    "O-004 | PR body | R2: candidateMultiplier on RAGQueryOptions + presets (fast:1, balanced:3, quality:4) | rag-orchestrator.ts, rag-presets.ts, types/search.ts | UNVERIFIED",
+    "O-005 | PR body | R2: ef_search 50→128, delete dead efSearch field from VectorSearchOptions | vector-index.ts | UNVERIFIED",
+    "O-006 | PR body | R3: MIN_CROSS_SCORE 0.1→0.2, DEGRADED_VECTOR_COSINE_FLOOR=0.4 backstop | rag-orchestrator.ts | UNVERIFIED",
+    "O-007 | PR body | P4: SHA-256 checksums, LFS detection, Vite chunk existence check | validate-build.mjs | UNVERIFIED",
+    "O-008 | PR body | P4: Streaming SHA-256 (createReadStream + for await) — not readFileSync | validate-build.mjs | UNVERIFIED",
+    "O-009 | PR body | P6: wllama engine + missing GGUF is a readiness FAILURE | model-readiness.ts | UNVERIFIED",
+    "O-010 | PR body | CI: --no-reranker flag | web-ui.yml, prepare-models.mjs | UNVERIFIED",
+    "O-011 | PR body | CI: VITE_EXCLUDE_MODEL_GROUPS=reranker | prepare-models.mjs | UNVERIFIED",
+    "O-012 | PR body | PackagedModelGroup type extended with 'reranker' | model-manifest.ts | UNVERIFIED",
+    "O-013 | PR body | PACKAGING.md + README.md document q8 staging, optimum CLI, --no-reranker | PACKAGING.md, README.md | UNVERIFIED"
+  ],
+  "deterministic_signals": {
+    "test_files_passing": "27/77 test files pass, 50/77 failing — ALL pre-existing (identical without PR changes)",
+    "tests_total": "600 passed, 294 failed (all pre-existing), 1 skipped",
+    "typecheck_main": "PASS (tsc --noEmit exit 0)",
+    "typecheck_test": "PASS (tsc --noEmit -p tsconfig.test.json exit 0)",
+    "validate_build_syntax": "PASS (node --check exit 0)",
+    "ci_latest": "PASS (run 29651064718: success)",
+    "ci_failures": "2 pre-existing failures from earlier commits (missing --no-reranker flag in older workflow)"
+  },
+  "known_invariants": [
+    "BGE query prefix is query-only (not on passages)",
+    "L2-normalize at encode + cosine similarity metric",
+    "CLS pooling (end-to-end)",
+    "RRF rank-only fusion with k=60",
+    "Zero-chunk abstain path + image guard preserved",
+    "Boot-time index persistence ordering unchanged"
+  ]
+}

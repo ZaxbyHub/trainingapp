@@ -58,6 +58,12 @@ const SKIP_LLM = process.argv.slice(2).includes('--no-llm');
 // the two MUST stay in sync so a CI build that skips staging the reranker
 // also skips validating it. Production packaging omits both flags.
 const SKIP_RERANKER = process.argv.slice(2).includes('--no-reranker');
+// `--airgap` (Issue #37 P2) enables airgap-specific checks: scanning emitted
+// JS chunks for WebLLM symbols (`CreateMLCEngine`, `prebuiltMLCAppConfig`)
+// and chunk names matching /web-?llm/i. A non-airgap build (default) skips
+// this check because it expects WebLLM to be present. Only build-airgap.mjs
+// passes this flag; `npm run build:offline` and `npm run build` do not.
+const AIRGAP_CHECK = process.argv.slice(2).includes('--airgap');
 
 const errors = [];
 function fail(msg) {
@@ -220,6 +226,35 @@ try {
   }
 } catch (e) {
   fail(`could not inspect dist/assets/: ${e.message}`);
+}
+
+// 4. (Issue #37 P2) Airgap-specific check: verify no WebLLM symbols survive
+//    in any emitted chunk when the build was produced under VITE_AIRGAP=1.
+//    Tree-shaking may fail silently (e.g., bundler version change, dead-code
+//    elimination regression), so we assert at the output artifact level.
+if (AIRGAP_CHECK) {
+  try {
+    const assetsDir = join(DIST, 'assets');
+    if (existsSync(assetsDir)) {
+      const entries = readdirSync(assetsDir);
+      const jsChunks = entries.filter((e) => e.endsWith('.js'));
+      for (const chunk of jsChunks) {
+        const content = readFileSync(join(assetsDir, chunk), 'utf8');
+        // Check for WebLLM factory symbols that should have been tree-shaken.
+        if (/CreateMLCEngine|prebuiltMLCAppConfig|web-llm/i.test(content)) {
+          fail(
+            `airgap violation: ${chunk} contains WebLLM code. ` +
+            `Set VITE_AIRGAP=1 before building, or verify Rollup tree-shakes @mlc-ai/web-llm. ` +
+            `Run \`npm run build:airgap\` to reproduce.\n` +
+            `  (hint: grep for "CreateMLCEngine|web-llm" in dist/assets/ after a clean ` +
+            `VITE_AIRGAP=1 build)`
+          );
+        }
+      }
+    }
+  } catch (e) {
+    fail(`airgap scan failed: ${e.message}`);
+  }
 }
 
 if (errors.length > 0) {

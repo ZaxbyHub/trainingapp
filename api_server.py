@@ -183,13 +183,33 @@ class QuestionRequest(BaseModel):
     n_results: Optional[int] = Field(default=6, ge=1, le=10)
     # Issue #37 R6: prior conversation turns for contextualized retrieval +
     # multi-turn generation. Optional; absent preserves legacy single-turn behavior.
-    history: Optional[List[Dict[str, str]]] = Field(default=None)
+    # Bound at 20 turns / 4k chars per value to cap memory and prompt-injection surface.
+    history: Optional[List[Dict[str, str]]] = Field(
+        default=None,
+        max_items=20,
+        description="Prior conversation turns, each with `role` and `content`. "
+                    "At most 20 turns; each `content` value is truncated to 4000 chars.",
+    )
 
     @validator("question")
     def validate_question_not_whitespace(cls, v):
         if not v or not v.strip():
             raise ValueError("Question cannot be empty or whitespace-only")
         return v.strip()
+
+    @validator("history")
+    def validate_history(cls, v):
+        if v is None:
+            return v
+        if len(v) > 20:
+            raise ValueError("History exceeds maximum of 20 turns")
+        for turn in v:
+            if not isinstance(turn, dict):
+                raise ValueError("Each history turn must be a dict with 'role' and 'content'")
+            content = turn.get("content", "")
+            if isinstance(content, str) and len(content) > 4000:
+                turn["content"] = content[:4000]
+        return v
 
 
 class LoginRequest(BaseModel):

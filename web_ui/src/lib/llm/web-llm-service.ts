@@ -16,6 +16,7 @@ import type {
 } from '@/types/llm';
 import { messageContentToText } from '@/types/llm';
 import { WebGPUWatchdog, createRecoveryHandler } from './webgpu-watchdog';
+import { IS_AIRGAP } from './airgap';
 
 // Dynamic import to avoid loading the WebGPU machinery until needed.
 // The API surface we're using:
@@ -183,6 +184,14 @@ export class WebLLMService implements LLMService {
    */
   private async _loadEngineFactory(): Promise<void> {
     if (CreateMLCEngine) return;
+    // Issue #37 P2: in air-gap builds the @mlc-ai/web-llm import is
+    // statically unreachable (IS_AIRGAP === true), so Rollup tree-shakes
+    // the >2 MB WebLLM chunk. At runtime the service is never initialized:
+    // getLLMService returns wllama, and any accidental call to initialize()
+    // hits this guard before the dynamic import.
+    if (IS_AIRGAP) {
+      throw new Error('WebLLM is not available in air-gap builds');
+    }
     const mod = await import('@mlc-ai/web-llm');
     // CreateMLCEngine is the documented factory in v0.2.83+ (API verified and in production use)
     CreateMLCEngine = (mod as unknown as { CreateMLCEngine: CreateMLCEngineFn }).CreateMLCEngine;
