@@ -15,7 +15,7 @@
  * Acceptance #15 (§3 do-not-break list) is partially asserted here at the
  * contract level: the orchestrator is constructed with the default system
  * prompt, RRF k=60 is exercised through the real rrfFuse (NOT mocked here), and
- * the zero-chunk abstain path is reachable for OOC questions. the query
+ * the zero-chunk abstain path is reachable for OOC questions. The query
  * prefix and CLS-pooling invariants live in the embedding service (covered by
  * its own unit tests) and are out of scope for this harness.
  */

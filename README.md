@@ -465,7 +465,7 @@ Automatically fetches adjacent chunks around retrieved results:
 - Improves answer quality for multi-part questions
 
 #### Cross-Encoder Reranking
-MS MARCO TinyBERT reranker (enabled by default):
+ettin-reranker-32m-v1 (ModernBERT, enabled by default):
 - Ranks retrieved chunks by relevance after initial retrieval
 - Higher accuracy than pure hybrid search
 - Lightweight (~85MB) — optimized for minimum-spec hardware

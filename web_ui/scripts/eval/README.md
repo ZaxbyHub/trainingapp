@@ -19,7 +19,7 @@ overlap, so the test is stable across runs AND sensitive to real pipeline
 changes (fusion order, floor thresholds, dedup). This runs in the normal
 `npm test` CI step — no staged weights, no browser.
 
-**Acceptance #15** (§3 do-not-break list) is asserted here: BGE query prefix
+**Acceptance #15** (§3 do-not-break list) is asserted here: the query instruction prefix
 applied to the query only, RRF rank-only fusion k=60, zero-chunk abstain path
 reachable.
 

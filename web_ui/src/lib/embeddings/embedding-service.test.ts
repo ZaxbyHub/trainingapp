@@ -305,22 +305,29 @@ describe('EmbeddingService', () => {
       // The pooling/normalize options live inside embedding.worker.ts which
       // runs in a separate Worker context (not directly mockable here). This
       // test statically asserts the worker source contains the correct pooling
-      // options so a regression (e.g. switching to mean pooling) would fail
-      // the test. This replaces the pre-R8 runtime CLS-pooling assertion that
-      // was deleted when the pipeline moved into the worker.
+      // options at every RUNTIME call site so a regression (e.g. switching one
+      // path to mean pooling) would fail the test. This replaces the pre-R8
+      // runtime CLS-pooling assertion that was deleted when the pipeline moved
+      // into the worker.
       const { readFileSync } = await import('node:fs');
       const { resolve } = await import('node:path');
       const workerSource = readFileSync(
         resolve(process.cwd(), 'src/lib/embeddings/embedding.worker.ts'),
         'utf8'
       );
-      // The worker must pass pooling:'cls' and normalize:true to every
-      // pipeline call. Count occurrences — there should be at least 3
-      // (probe + encode + encodeBatch).
-      const clsPoolingCount = (workerSource.match(/pooling:\s*'cls'/g) ?? []).length;
-      const normalizeCount = (workerSource.match(/normalize:\s*true/g) ?? []).length;
-      expect(clsPoolingCount).toBeGreaterThanOrEqual(3);
-      expect(normalizeCount).toBeGreaterThanOrEqual(3);
+      // Count RUNTIME call sites only — exclude the type declaration line
+      // (`pooling: 'cls';` with a semicolon). Runtime calls use
+      // `pooling: 'cls'` inside an options object (no semicolon, followed by
+      // a comma or closing brace).
+      const runtimeClsCalls = (workerSource.match(/pooling:\s*'cls'(?=[,}\s])/g) ?? [])
+        // Exclude the type-declaration line (has a semicolon after the quote).
+        .filter((m) => !/;$/.test(m));
+      // There are exactly 3 runtime call sites: probe, encode, encodeBatch.
+      expect(runtimeClsCalls.length).toBe(3);
+      // Same for normalize:true — 3 runtime call sites.
+      const runtimeNormalizeCalls = (workerSource.match(/normalize:\s*true(?=[,}\s])/g) ?? [])
+        .filter((m) => !/;$/.test(m));
+      expect(runtimeNormalizeCalls.length).toBe(3);
     });
 
     it('throws error for empty text', async () => {
