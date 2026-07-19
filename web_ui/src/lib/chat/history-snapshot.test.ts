@@ -83,6 +83,34 @@ describe('buildHistorySnapshot (Issue #40 RC1)', () => {
     expect(snap[snap.length - 1].content).toBe('a7');
   });
 
+  test('PRR-001: re-anchors an assistant-first window to user-first', () => {
+    // When the MAX_HISTORY_TURNS cap splits mid-conversation on an odd-length
+    // alternating history, slice(-N) lands on an assistant-first window
+    // (e.g. [u,a,u,a,u,a,u].slice(-6) = [a,u,a,u,a,u]). A leading assistant
+    // turn is orphaned context (no preceding user turn in the window) and,
+    // under the Gemma 4 chat-template override, mis-targets loop.first so a
+    // system_prefix kwarg would be silently dropped. The fix drops the
+    // leading assistant turn so the window always opens user-first.
+    //
+    // 7 prior alternating turns (odd length) + current user + placeholder:
+    //   [u0, a0, u1, a1, u2, a2, u3] + [current, placeholder]
+    // After dropping current + placeholder: [u0,a0,u1,a1,u2,a2,u3] (length 7)
+    // slice(-6) = [a0,u1,a1,u2,a2,u3] → ASSISTANT-FIRST (bug)
+    // After re-anchor: [u1,a1,u2,a2,u3] (length 5, user-first)
+    const msgs: ChatMessage[] = [
+      user('u0'), assistant('a0'),
+      user('u1'), assistant('a1'),
+      user('u2'), assistant('a2'),
+      user('u3'),
+      user('current'), emptyAssistant(),
+    ];
+    const snap = buildHistorySnapshot(msgs);
+    // The leading a0 must be dropped; window starts at u1.
+    expect(snap[0]).toEqual({ role: 'user', content: 'u1' });
+    expect(snap[0].role).toBe('user'); // always user-first
+    expect(snap.map((t) => t.content)).toEqual(['u1', 'a1', 'u2', 'a2', 'u3']);
+  });
+
   test('skips error assistant turns', () => {
     const msgs = [user('q1'), errorAssistant(), user('q2'), emptyAssistant()];
     const snap = buildHistorySnapshot(msgs);

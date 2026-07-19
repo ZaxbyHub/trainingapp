@@ -183,6 +183,20 @@ Validate on target hardware before packaging. ~2.3B effective parameters (~5.1B
 total with Per-Layer Embeddings), 128K context window (capped at 8192 by default
 for RAM headroom on 8 GB target boxes).
 
+**Chat-template override (important):** The `gemma-4-e2b-it` GGUF embeds an
+~18 KB Jinja chat template that uses macros (`format_parameters`,
+`format_argument`, etc.) wllama 3.5.1's Jinja subset cannot evaluate — the
+macros render to empty strings, producing a blank prompt and **empty assistant
+responses** (model emits `<eos>` immediately). The app works around this by
+injecting a macro-free Gemma 4 template override at load time via
+`LoadModelParams.chat_template` + `jinja: true` (see
+`web_ui/src/lib/llm/wllama-service.ts` → `GEMMA4_CHAT_TEMPLATE`). This makes
+the app robust to any Gemma 4 GGUF regardless of its embedded template, so
+operators staging a different quant (e.g. Q5_K_M, Q8_0) from
+`unsloth/gemma-4-E2B-it-GGUF` do not need to verify the template field
+themselves. The override can be removed once wllama ships a Jinja runtime
+with macro support.
+
 The user picks the engine in Settings (**wllama** default, or **WebLLM** when
 WebGPU is usable); the choice persists and the RAG pipeline routes accordingly.
 

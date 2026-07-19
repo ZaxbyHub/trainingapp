@@ -286,4 +286,154 @@ describe('WllamaService', () => {
     expect(await backend.read('test-key')).toBeNull();
     expect(await backend.getSize('test-key')).toBe(-1);
   });
+
+  // --- Gemma 4 chat-template override regression tests ----------------------
+  //
+  // Regression: the gemma-4-e2b-it GGUF embeds an 18 KB Jinja chat template
+  // that uses macros (format_parameters, format_argument, etc.) wllama 3.5.1's
+  // Jinja subset cannot evaluate. The macros render to empty strings, producing
+  // a BLANK prompt — the model emits <eos> immediately, createChatCompletion's
+  // stream yields zero content chunks, and the assistant bubble stays empty
+  // despite retrieval + citations working. The fix injects a macro-free
+  // override template via LoadModelParams.chat_template + jinja: true. These
+  // tests pin the override so the empty-output regression cannot recur.
+
+  it('Gemma 4 chat-template override: injects chat_template + jinja at load time', async () => {
+    // The default model id is gemma-4-e2b-it (LLM_MODEL_DIR), so the override
+    // must be applied on the default initialize() path.
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        chat_template: expect.stringContaining('<|turn>') as string,
+        jinja: true,
+      })
+    );
+    // The override template uses the Gemma 4 turn markers verbatim and folds
+    // the system role into the first user turn via the system_prefix kwarg.
+    // Assert each marker via withCalledWith so we don't index into the mock's
+    // calls tuple (the mock fn is typed as () => undefined, so calls[n][1] is
+    // not statically known to exist).
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ chat_template: expect.stringContaining('<|turn>user') })
+    );
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ chat_template: expect.stringContaining('<|turn>model') })
+    );
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ chat_template: expect.stringContaining('<turn|>') })
+    );
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ chat_template: expect.stringContaining('system_prefix') })
+    );
+  });
+
+  it('Gemma 4 chat-template override: threads system message via chat_template_kwargs.system_prefix', async () => {
+    // When the override is active, the system message is extracted from the
+    // messages array and threaded via chat_template_kwargs.system_prefix (the
+    // override template folds it into the first user turn). Without this, the
+    // override template has no system role handling and the system prompt
+    // would be silently dropped.
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+
+    await svc.generateComplete([
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: 'hi' },
+    ]);
+
+    expect(createChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chat_template_kwargs: { system_prefix: 'You are a helpful assistant.' },
+        // The system message must be STRIPPED from the messages array so the
+        // override template (which has no system branch) never sees it.
+        messages: [{ role: 'user', content: 'hi' }],
+      })
+    );
+  });
+
+  it('Gemma 4 chat-template override: streaming still yields tokens end-to-end', async () => {
+    // The override must not break the streaming protocol. The model generates
+    // (GPU active) but tokens never reached the UI in the bug — this test
+    // pins the full generate() → createChatCompletion → yield path.
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+
+    const tokens: string[] = [];
+    for await (const t of svc.generate([{ role: 'user', content: 'hi' }])) {
+      tokens.push(t);
+    }
+    expect(tokens).toEqual(['Hello', ', ', 'world']);
+    // No system message → no chat_template_kwargs should be threaded.
+    expect(createChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ stream: true })
+    );
+    const lastCall = createChatCompletion.mock.calls.at(-1)?.[0] as {
+      chat_template_kwargs?: unknown;
+    };
+    expect(lastCall.chat_template_kwargs).toBeUndefined();
+  });
+
+  it('PRR-008: streaming generate() also threads system message via chat_template_kwargs.system_prefix', async () => {
+    // The streaming path (generate) is the default UI chat path
+    // (streamTokens ?? true in rag-orchestrator.ts). The shared buildChatArgs
+    // helper is tested via generateComplete above, but generate() has its OWN
+    // chat_template_kwargs spread at the call site (mirrored line). This test
+    // pins that the streaming spread is present, mirroring the Issue #40 RC2
+    // penalty-streaming test pattern. If the streaming-path spread were
+    // dropped, the system prompt would be stripped (by buildChatArgs) but
+    // never threaded → silently lost in the default UI path.
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+
+    const tokens: string[] = [];
+    for await (const t of svc.generate([
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: 'hi' },
+    ])) {
+      tokens.push(t);
+    }
+    expect(tokens).toEqual(['Hello', ', ', 'world']);
+    expect(createChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: true,
+        chat_template_kwargs: { system_prefix: 'You are a helpful assistant.' },
+        // The system message must be STRIPPED from the messages array so the
+        // override template (which has no system branch) never sees it.
+        messages: [{ role: 'user', content: 'hi' }],
+      })
+    );
+  });
+
+  it('PRR-007: non-Gemma model id does NOT get the chat-template override', async () => {
+    // isGemma4Model gates the override on modelId.startsWith('gemma-4'). The
+    // negative branch (override NOT applied) is currently unreachable in
+    // production (LLM_MODEL_DIR is gemma-4-e2b-it and WebLLM uses a separate
+    // service), but a non-Gemma model id must NOT receive chat_template/jinja
+    // keys — those would force a Gemma-specific template onto a different
+    // architecture. This test is cheap insurance for the next model swap.
+    const svc = WllamaService.getInstance();
+    await svc.initialize('lfm2.5-vl-450m');
+
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ chat_template: expect.anything() })
+    );
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ jinja: true })
+    );
+    // The default sampling/context params are still present (the override
+    // absence is a pure removal of chat_template/jinja, not a different load).
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ useCache: true })
+    );
+  });
 });
