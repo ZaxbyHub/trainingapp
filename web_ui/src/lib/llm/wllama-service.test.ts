@@ -379,4 +379,61 @@ describe('WllamaService', () => {
     };
     expect(lastCall.chat_template_kwargs).toBeUndefined();
   });
+
+  it('PRR-008: streaming generate() also threads system message via chat_template_kwargs.system_prefix', async () => {
+    // The streaming path (generate) is the default UI chat path
+    // (streamTokens ?? true in rag-orchestrator.ts). The shared buildChatArgs
+    // helper is tested via generateComplete above, but generate() has its OWN
+    // chat_template_kwargs spread at the call site (mirrored line). This test
+    // pins that the streaming spread is present, mirroring the Issue #40 RC2
+    // penalty-streaming test pattern. If the streaming-path spread were
+    // dropped, the system prompt would be stripped (by buildChatArgs) but
+    // never threaded → silently lost in the default UI path.
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+
+    const tokens: string[] = [];
+    for await (const t of svc.generate([
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: 'hi' },
+    ])) {
+      tokens.push(t);
+    }
+    expect(tokens).toEqual(['Hello', ', ', 'world']);
+    expect(createChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        stream: true,
+        chat_template_kwargs: { system_prefix: 'You are a helpful assistant.' },
+        // The system message must be STRIPPED from the messages array so the
+        // override template (which has no system branch) never sees it.
+        messages: [{ role: 'user', content: 'hi' }],
+      })
+    );
+  });
+
+  it('PRR-007: non-Gemma model id does NOT get the chat-template override', async () => {
+    // isGemma4Model gates the override on modelId.startsWith('gemma-4'). The
+    // negative branch (override NOT applied) is currently unreachable in
+    // production (LLM_MODEL_DIR is gemma-4-e2b-it and WebLLM uses a separate
+    // service), but a non-Gemma model id must NOT receive chat_template/jinja
+    // keys — those would force a Gemma-specific template onto a different
+    // architecture. This test is cheap insurance for the next model swap.
+    const svc = WllamaService.getInstance();
+    await svc.initialize('lfm2.5-vl-450m');
+
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ chat_template: expect.anything() })
+    );
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ jinja: true })
+    );
+    // The default sampling/context params are still present (the override
+    // absence is a pure removal of chat_template/jinja, not a different load).
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ useCache: true })
+    );
+  });
 });

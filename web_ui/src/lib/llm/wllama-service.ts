@@ -54,10 +54,13 @@ export const DEFAULT_N_CTX = 8192;
  *
  * This override is the macro-free equivalent of the embedded template's actual
  * message-rendering loop (extracted byte-for-byte from tokenizer.chat_template
- * in the GGUF). It uses the SAME turn markers (`<|turn>{role}\n` … `<turn|>\n`)
- * the model was trained on, so tokenization matches training. System messages
- * are folded into the first user turn via the `system_prefix` kwarg — Gemma 4
- * has no standalone system role, matching Google's documented prompt structure
+ * in the GGUF). It uses the SAME turn markers the model was trained on —
+ * `<|turn>{role}\n` to open a turn and `<turn|>` to close it (the closing
+ * marker has no trailing newline; the next line's `{%-` strip handles
+ * whitespace separation, and `<turn|>` tokenizes as a single special token
+ * that absorbs surrounding whitespace). System messages are folded into the
+ * first user turn via the `system_prefix` kwarg — Gemma 4 has no standalone
+ * system role, matching Google's documented prompt structure
  * (https://ai.google.dev/gemma/docs/core/prompt-structure) and the embedded
  * template's own behavior.
  *
