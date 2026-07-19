@@ -181,8 +181,9 @@ When CI reports a `unit (ubuntu|macos|windows)` failure:
 
 - **Do not test type definitions.** `expect(event.type === 'foo').toBe(true)` tests TypeScript, not your code.
 - **Do not test framework behavior.** "Zod schema parses valid input" tests Zod, not your schema.
-- **Do not test test utilities.** If it only exists to support other tests, it doesn't need its own test.
+- **Do not test test utilities.** If it only exists to support other tests, it doesn't own test.
 - **Do not mock everything.** If every dependency is mocked, you're testing the mock setup. Prefer real dependencies for pure functions and only mock I/O boundaries (filesystem, network, timers).
+- **Do not mock the shape of a return value when the real implementation is available via npm install.** Mocking return shapes (e.g. mocking `pipeline` to return specific tensor dimensions) creates test theater — tests pass against mocks but fail against the real implementation. Prefer using the real dependency and mocking only at I/O boundaries. When you MUST mock a return shape, include a comment explaining why the real implementation cannot be used.
 - **Do not hardcode version numbers.** Version bumps are automated — a test asserting `version === '6.31.3'` breaks on every release.
 - **Do not use `sleep` or `setTimeout` for synchronization.** Use explicit signals, resolved promises, or `Bun.sleep()` with tight bounds.
 - **Do not spawn `cat /dev/zero`, `yes`, or other infinite-output commands.** Use `sleep 30` for "blocking command" tests.
