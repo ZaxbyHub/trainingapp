@@ -110,19 +110,24 @@ type RAGStage = 'embedding' | 'vector_search' | 'keyword_search' | 'rrf_fusion' 
 const DEFAULT_SYSTEM_PROMPT = 'Answer the question based on the provided context. Cite sources using [1], [2] notation. If the context doesn\'t contain enough information, say so.';
 
 /**
- * BGE retrieval query instruction. BAAI's bge-small-en-v1.5 model card requires
- * this prefix on the QUERY embedding for short-query→long-passage retrieval
- * (F8). Passages are intentionally left UN-prefixed (only the query side).
+ * Retrieval query instruction. Issue #37 R9: the value is UNCHANGED from the
+ * prior BGE configuration. snowflake-arctic-embed-m-v1.5's model card does NOT
+ * require a query prefix (it's a non-instruct model), so keeping the prefix is
+ * harmless — it adds context to the query text without degrading arctic's
+ * retrieval quality. Applied to the QUERY embedding only; passages stay
+ * UN-prefixed (F8).
  */
-const BGE_QUERY_INSTRUCTION = 'Represent this sentence for searching relevant passages: ';
+const QUERY_INSTRUCTION = 'Represent this sentence for searching relevant passages: ';
 
 /**
  * Relevance floors applied AFTER the rerank/slice branch resolves, so the floor
  * must match the score scale contextChunks actually carries (F3, Issue #37 R3).
  *  - When the cross-encoder reran: scores are sigmoid of the relevance logit
- *    for each [query, passage] pair, in (0, 1). ms-marco-MiniLM-L-6-v2
- *    relevant pairs typically score >0.5; irrelevant pairs <0.1. Floor 0.2
- *    drops weakly-relevant noise while keeping borderline-but-useful hits.
+ *    for each [query, passage] pair, in (0, 1). For the prior ms-marco reranker,
+ *    relevant pairs typically scored >0.5; irrelevant <0.1. The current ettin
+ *    reranker (Issue #37 R9) was trained on different data (MTEB-eng-v2); its
+ *    exact score histogram is not yet re-validated against this floor. Floor 0.2
+ *    is kept (changing it is a follow-up); it may need re-tuning on real corpora.
  *  - When only RRF ran: scores are sums of 1/(60+rank+1); the minimum POSSIBLE
  *    fused score is 1/(60+topK) ≈ 0.0132 for topK=16, so 0.005 has never
  *    dropped anything. {@link MIN_RRF_SCORE} is kept as a literal floor only;
@@ -143,7 +148,7 @@ const MIN_RRF_SCORE = 0.005;
  * edgevec 0.6 with metric:'cosine' + L2-normalized embeddings returns a
  * similarity score where higher = more similar (verified via the BQRescored
  * docstring and the project's own "sorted by score descending" JSDoc). Empirical
- * range for bge-small-en-v1.5 normalized embeddings: in-corpus pairs typically
+ * range for arctic-embed-m-v1.5 normalized embeddings: in-corpus pairs typically
  * >0.5; unrelated pairs <0.35. 0.4 is a conservative floor that preserves
  * borderline hits while dropping clear non-matches.
  */
@@ -243,13 +248,13 @@ export class RAGOrchestrator {
     }
 
     // F4 + F8: embed the query ONLY when semantic search is available, and
-    // prepend the BGE retrieval instruction to the query text (passages stay
+    // prepend the retrieval instruction to the query text (passages stay
     // un-prefixed — only the query side changes, F8).
     let queryEmbedding: EmbeddingVector | null = null;
     if (semanticAvailable) {
       try {
         const embeddingResult = await this.embeddingService.encodeWithMetadata(
-          BGE_QUERY_INSTRUCTION + question
+          QUERY_INSTRUCTION + question
         );
         queryEmbedding = embeddingResult.vector;
       } catch (err) {

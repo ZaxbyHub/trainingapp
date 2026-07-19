@@ -1,10 +1,10 @@
 /**
  * Embedding types for vector storage and retrieval.
- * Uses bge-small-en-v1.5 model (384-dimensional embeddings).
+ * Uses snowflake-arctic-embed-m-v1.5 model (768-dimensional embeddings, Issue #37 R9).
  */
 
 /**
- * A 384-dimensional embedding vector from bge-small-en-v1.5.
+ * A 768-dimensional embedding vector from snowflake-arctic-embed-m-v1.5.
  */
 export type EmbeddingVector = Float32Array;
 

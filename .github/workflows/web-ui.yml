@@ -19,9 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Restore the Git-LFS-tracked embedding ONNX so prepare-models succeeds
-          # with real weights in CI. (Reranker/LLM weights are operator-acquired
-          # and absent; validate-build runs with --no-llm for that reason.)
+          # Issue #37 R9: the embedder swapped to snowflake-arctic-embed-m-v1.5
+          # (operator-acquired q8 ONNX, not in the repo). The old bge-small
+          # ONNX is still LFS-tracked but no longer used; lfs:true is kept
+          # harmlessly. prepare-models / validate-build now run with
+          # --no-embedder because CI cannot stage the arctic q8 ONNX.
           lfs: true
 
       - name: Set up Node
@@ -67,8 +69,8 @@ jobs:
       # the flag fails if the q8 ONNX is absent), but CI builds the
       # typecheck/test artifact without it. The orchestrator degrades to fused
       # results at runtime when the reranker group is excluded.
-      - name: Prepare models (real weights via LFS)
-        run: npm run prepare-models -- --no-reranker
+      - name: Prepare models (--no-embedder --no-reranker)
+        run: npm run prepare-models -- --no-embedder --no-reranker
 
       # Rebuild so dist/models/ contains the staged model assets, then validate.
       # (The earlier Build step ran before prepare-models, so its dist/ has no
@@ -76,14 +78,13 @@ jobs:
       - name: Rebuild with staged models
         run: npm run build
 
-      # Packaging validation with --no-llm --no-reranker: the browser-LLM
-      # runtime + Gemma 4 E2B-it weights AND the cross-encoder q8 ONNX are
-      # operator-acquired (multi-GB / not in this repo), so CI enforces the
-      # embeddings + ORT + wllama-WASM core only. Full validation requires
-      # staged weights (see PACKAGING.md). Issue #37 PR-1 added --no-reranker
-      # (the reranker is REQUIRED for production packaging but excluded in CI).
-      - name: Validate build (--no-llm --no-reranker)
-        run: node scripts/validate-build.mjs --no-llm --no-reranker
+      # Packaging validation with --no-llm --no-reranker --no-embedder: the
+      # browser-LLM runtime + Gemma weights, the cross-encoder q8 ONNX, AND the
+      # arctic embedding q8 ONNX are all operator-acquired (not in this repo),
+      # so CI enforces the ORT + wllama-WASM core only. Full validation
+      # requires staged weights (see PACKAGING.md).
+      - name: Validate build (--no-llm --no-reranker --no-embedder)
+        run: node scripts/validate-build.mjs --no-llm --no-reranker --no-embedder
 
       # Regression guard for the --no-llm / --no-reranker runtime exclusions
       # (feedback F1; Issue #37 PR-1 extended to --no-reranker): verify
@@ -95,17 +96,21 @@ jobs:
       # (run in the Test step above), which stub the env var directly and are
       # stable against minification (unlike a bundle grep).
       #
-      # Both flags are passed because CI does not stage the operator-acquired
-      # reranker q8 ONNX or the multi-GB LLM weights (see prepare-models step
-      # above). The grep accepts the comma-separated form (--no-llm --no-reranker
-      # writes "llm,reranker") OR the single-group form.
+      # All three flags are passed because CI does not stage the operator-
+      # acquired embedder arctic q8 ONNX, reranker q8 ONNX, or the multi-GB LLM
+      # weights (see prepare-models step above). The grep accepts the comma-
+      # separated form (--no-llm --no-reranker --no-embedder writes
+      # "llm,reranker,embedding").
       - name: Verify prepare-models writes the exclusion markers
         run: |
-          node scripts/prepare-models.mjs --no-llm --no-reranker
+          node scripts/prepare-models.mjs --no-llm --no-reranker --no-embedder
           grep -q 'VITE_EXCLUDE_MODEL_GROUPS=llm' .env.production || { \
             echo "prepare-models did not write the llm exclusion marker to .env.production"; \
             exit 1; }
           grep -q 'reranker' .env.production || { \
             echo "prepare-models did not write the reranker exclusion marker to .env.production"; \
+            exit 1; }
+          grep -q 'embedding' .env.production || { \
+            echo "prepare-models did not write the embedding exclusion marker to .env.production"; \
             exit 1; }
           rm -f .env.production

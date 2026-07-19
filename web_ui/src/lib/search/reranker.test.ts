@@ -189,9 +189,9 @@ describe('RerankerService', () => {
       await service.initialize();
 
       // The factories must be called with the offline model path and q8 dtype.
-      expect(AutoTokenizerMock.from_pretrained).toHaveBeenCalledWith('reranker/ms-marco-MiniLM-L-6-v2');
+      expect(AutoTokenizerMock.from_pretrained).toHaveBeenCalledWith('reranker/ettin-reranker-32m-v1');
       expect(AutoModelMock.from_pretrained).toHaveBeenCalledWith(
-        'reranker/ms-marco-MiniLM-L-6-v2',
+        'reranker/ettin-reranker-32m-v1',
         expect.objectContaining({ dtype: 'q8', device: 'wasm' })
       );
     });

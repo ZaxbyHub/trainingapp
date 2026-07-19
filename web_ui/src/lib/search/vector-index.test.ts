@@ -303,9 +303,9 @@ describe('VectorIndex', () => {
         .mockReturnValueOnce(13); // Second call after insert (if any)
 
       const entries = [
-        { docId: 'doc1', chunkIndex: 0, vector: new Float32Array(384) },
-        { docId: 'doc2', chunkIndex: 1, vector: new Float32Array(384) },
-        { docId: 'doc3', chunkIndex: 2, vector: new Float32Array(384) },
+        { docId: 'doc1', chunkIndex: 0, vector: new Float32Array(768) },
+        { docId: 'doc2', chunkIndex: 1, vector: new Float32Array(768) },
+        { docId: 'doc3', chunkIndex: 2, vector: new Float32Array(768) },
       ];
 
       await instance.addBatch(entries);
@@ -323,8 +323,8 @@ describe('VectorIndex', () => {
       mockEdgeVecInstance.liveCount = vi.fn<() => number>().mockReturnValue(0);
 
       const entries = [
-        { docId: 'docA', chunkIndex: 0, vector: new Float32Array(384) },
-        { docId: 'docB', chunkIndex: 1, vector: new Float32Array(384) },
+        { docId: 'docA', chunkIndex: 0, vector: new Float32Array(768) },
+        { docId: 'docB', chunkIndex: 1, vector: new Float32Array(768) },
       ];
 
       await instance.addBatch(entries);
@@ -347,7 +347,7 @@ describe('VectorIndex', () => {
       });
 
       const entries = [
-        { docId: 'doc1', chunkIndex: 0, vector: new Float32Array(384) },
+        { docId: 'doc1', chunkIndex: 0, vector: new Float32Array(768) },
       ];
 
       await expect(instance.addBatch(entries)).rejects.toThrow('Index is full');
@@ -371,7 +371,7 @@ describe('VectorIndex', () => {
           { id: 1, score: 0.87 },
         ]);
 
-      const results = await instance.search(new Float32Array(384), { k: 2 });
+      const results = await instance.search(new Float32Array(768), { k: 2 });
 
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({ docId: 'doc-abc', chunkIndex: 5, score: 0.95 });
@@ -389,7 +389,7 @@ describe('VectorIndex', () => {
         ]);
 
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const results = await instance.search(new Float32Array(384), { k: 1 });
+      const results = await instance.search(new Float32Array(768), { k: 1 });
 
       // F11: an unmapped internal id must be SKIPPED, not returned as a
       // fabricated `docId:'unknown'` placeholder. The empty result avoids
@@ -410,7 +410,7 @@ describe('VectorIndex', () => {
       // time. Issue #37 R2 removed the dead `efSearch` field from
       // VectorSearchOptions (edgevec 0.6's search(query,k) takes no per-call ef);
       // search now takes only { k }.
-      await instance.search(new Float32Array(384), { k: 5 });
+      await instance.search(new Float32Array(768), { k: 5 });
 
       // Verify search was called (efSearch config is applied at init time)
       expect(mockEdgeVecInstance.search).toHaveBeenCalled();
@@ -560,7 +560,7 @@ describe('VectorIndex', () => {
       const instance = VectorIndex.getInstance();
       await instance.initialize();
 
-      const vector = new Float32Array(384);
+      const vector = new Float32Array(768);
       mockEdgeVecInstance.insert = vi.fn<(_vector: Float32Array) => number>().mockReturnValue(5);
 
       await instance.addVector(vector, 'test-doc', 3);
@@ -573,7 +573,7 @@ describe('VectorIndex', () => {
       const instance = VectorIndex.getInstance();
       await instance.initialize();
 
-      const vector = new Float32Array(384);
+      const vector = new Float32Array(768);
       mockEdgeVecInstance.insert = vi.fn<(_vector: Float32Array) => number>().mockReturnValue(7);
 
       await instance.addVector(vector, 'doc-1', 2, {
@@ -604,7 +604,7 @@ describe('VectorIndex', () => {
       const instance = VectorIndex.getInstance();
       // Don't initialize
 
-      const vector = new Float32Array(384);
+      const vector = new Float32Array(768);
       await expect(instance.addVector(vector, 'doc', 0)).rejects.toThrow('not initialized');
     });
   });

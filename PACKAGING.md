@@ -24,10 +24,21 @@ cd web_ui
 npm install            # provides ONNX Runtime WASM under node_modules
 ```
 
-You also need the real embedding weights at the repo root:
-`models/bge-small-en-v1.5/onnx/model.onnx`. If that file is ~4 KB it is a Git LFS
-pointer / stub — pull the real weights first (`git lfs pull`, or copy the model
-folder from a machine that has it). `prepare-models` fails fast if it is a stub.
+You also need the real embedding weights at the repo root. Issue #37 R9
+swapped the embedder to snowflake-arctic-embed-m-v1.5 (768-dim, q8 ONNX).
+Stage the q8 ONNX via optimum:
+
+```bash
+pip install optimum[onnxruntime]
+optimum-cli export onnx --model Snowflake/snowflake-arctic-embed-m-v1.5 \
+  --quantize q8 models/snowflake-arctic-embed-m-v1.5/onnx/
+# → writes models/snowflake-arctic-embed-m-v1.5/onnx/model_quantized.onnx (~110 MB)
+```
+
+Copy the tokenizer/config alongside it (`tokenizer.json`, `config.json`,
+`tokenizer_config.json` from the HF repo). `prepare-models` fails fast if the
+q8 ONNX is missing or is an LFS stub. For CI / embeddings-only / server-mode
+builds that deliberately omit the embedder, pass `--no-embedder`.
 
 ## 2. Assemble offline assets
 
@@ -38,29 +49,30 @@ npm run prepare-models
 
 This copies into `public/models/`:
 
-- `embeddings/bge-small-en-v1.5/` — config, tokenizer, and `onnx/model.onnx`
+- `embeddings/snowflake-arctic-embed-m-v1.5/` — config, tokenizer, and
+  `onnx/model_quantized.onnx` (q8, ~110MB). 768-dim (Issue #37 R9 swapped from
+  bge-small 384-dim).
 - `ort/ort-wasm-simd-threaded.jsep.wasm` + `ort-wasm-simd-threaded.jsep.mjs` —
   the exact ORT JSEP build + ESM loader Transformers.js v3 fetches, so it never
   reaches for jsdelivr
-- `reranker/ms-marco-MiniLM-L-6-v2/` — **required** cross-encoder reranker
-  (Issue #37 made it mandatory: retrieval quality depends on neural reranking,
-  and without it out-of-corpus questions never abstain). `prepare-models`
-  **fails** if the source weights are absent. The reranker loads with
-  `dtype:'q8'`, which in transformers.js v3.x resolves to the filename
-  `onnx/model_quantized.onnx` (the `DATA_TYPES.q8 → '_quantized'` suffix) — you
-  MUST stage the q8-quantized ONNX under that exact name, NOT `model.onnx`
-  (a non-quantized `model.onnx` would be silently ignored and the loader 404s).
+- `reranker/ettin-reranker-32m-v1/` — **required** cross-encoder reranker
+  (Issue #37 R9 swapped from ms-marco-MiniLM-L-6-v2 to ettin-reranker-32m-v1,
+  a ModernBERT model: +7 nDCG@10 on MTEB-eng-v2). `prepare-models` **fails**
+  if the source weights are absent. The reranker loads with `dtype:'q8'`, which
+  in transformers.js v3.x resolves to the filename `onnx/model_quantized.onnx`
+  (the `DATA_TYPES.q8 → '_quantized'` suffix) — you MUST stage the q8-quantized
+  ONNX under that exact name, NOT `model.onnx`.
   Produce it via the optimum CLI:
 
   ```bash
   pip install optimum[onnxruntime]
-  optimum-cli export onnx --model cross-encoder/ms-marco-MiniLM-L-6-v2 \
-    --quantize q8 models/ms-marco-MiniLM-L-6-v2/onnx/
-  # → writes models/ms-marco-MiniLM-L-6-v2/onnx/model_quantized.onnx (~23 MB)
+  optimum-cli export onnx --model cross-encoder/ettin-reranker-32m-v1 \
+    --quantize q8 models/ettin-reranker-32m-v1/onnx/
+  # → writes models/ettin-reranker-32m-v1/onnx/model_quantized.onnx (~33-36 MB)
   ```
 
   Copy the tokenizer/config alongside it, then place the directory at
-  `models/ms-marco-MiniLM-L-6-v2/` before running `prepare-models`.
+  `models/ettin-reranker-32m-v1/` before running `prepare-models`.
 
   For CI / embeddings-only / server-mode builds that deliberately omit the
   reranker, pass `--no-reranker` (mirrors `--no-llm`); the orchestrator then

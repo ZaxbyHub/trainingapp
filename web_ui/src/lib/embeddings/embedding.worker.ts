@@ -40,7 +40,10 @@ type FeatureExtractionPipeline = (input: string | string[], options: {
 
 let pipeline: FeatureExtractionPipeline | null = null;
 let modelPath: string | null = null;
-let dimensions = 384;
+// Issue #37 R9: arctic-embed-m-v1.5 is 768-dim (was bge-small 384). The init
+// message overwrites this with EMBEDDING_DIMENSIONS from the service, so the
+// default only matters before init resolves.
+let dimensions = 768;
 
 type InboundMessage =
   | { kind: 'init'; modelPath: string; dimensions: number }
@@ -153,6 +156,12 @@ async function doInit(): Promise<void> {
     device: 'wasm',
   });
   // Verify dimensions with a probe encoding (also primes the WASM session).
+  // PRR46-009: the probe uses a short literal ('init') and validates ONLY the
+  // output dimension — it does not exercise realistic chunk-length truncation
+  // behavior. A tokenizer-config mismatch (different model_max_length) would
+  // surface at query time when real chunks silently truncate, not here. This
+  // is an accepted limitation: staging the correct tokenizer_config.json is an
+  // operator responsibility (documented in PACKAGING.md).
   const probe = await pipeline('init', { pooling: 'cls', normalize: true });
   if (probe.data.length !== dimensions) {
     throw new Error(

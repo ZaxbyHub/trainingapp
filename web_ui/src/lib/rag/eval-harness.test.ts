@@ -15,7 +15,7 @@
  * Acceptance #15 (§3 do-not-break list) is partially asserted here at the
  * contract level: the orchestrator is constructed with the default system
  * prompt, RRF k=60 is exercised through the real rrfFuse (NOT mocked here), and
- * the zero-chunk abstain path is reachable for OOC questions. The BGE query
+ * the zero-chunk abstain path is reachable for OOC questions. The query
  * prefix and CLS-pooling invariants live in the embedding service (covered by
  * its own unit tests) and are out of scope for this harness.
  */
@@ -135,24 +135,24 @@ describe('Issue #37 §5 — retrieval eval harness', () => {
     const mockEmbeddingService = {
       initialize: vi.fn().mockResolvedValue(undefined),
       isReady: vi.fn().mockReturnValue(true),
-      encode: vi.fn().mockResolvedValue(new Float32Array(384).fill(0.1)),
+      encode: vi.fn().mockResolvedValue(new Float32Array(768).fill(0.1)),
       encodeWithMetadata: vi.fn().mockResolvedValue({
-        vector: new Float32Array(384).fill(0.1) as EmbeddingVector,
+        vector: new Float32Array(768).fill(0.1) as EmbeddingVector,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       }),
       dispose: vi.fn(),
     };
     (getEmbeddingService as unknown as ReturnType<typeof vi.fn>).mockReturnValue(mockEmbeddingService);
 
     // Mock vector index: returns docs ranked by overlap with the query. The
-    // orchestrator passes the BGE-prefixed query; we tokenize and score
+    // orchestrator passes the query; we tokenize and score
     // against the fixture texts.
     const mockVectorIndex = {
       initialize: vi.fn().mockResolvedValue(undefined),
       isReady: vi.fn().mockReturnValue(true),
       search: vi.fn(async (query: EmbeddingVector, _opts?: { k?: number }) => {
-        // The orchestrator prepends the BGE instruction; we don't have access
+        // The orchestrator prepends the query instruction; we don't have access
         // to the raw question here, so score by a hash of the query bytes is
         // NOT meaningful. Instead, return ALL fixtures as vector hits with a
         // uniform score; the reranker mock below re-orders by overlap. This

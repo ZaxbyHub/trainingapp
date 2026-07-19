@@ -6,8 +6,9 @@
  * This is required for the fully self-contained, air-gapped / STIG-scannable archive.
  * See PACKAGING.md and scripts/prepare-models.mjs for how the weights are bundled.
  *
- * Uses BAAI/bge-small-en-v1.5 model (384-dim, ~130MB), loaded from
- * `${EMBEDDING_MODELS_BASE}/bge-small-en-v1.5/`.
+ * Uses Snowflake/snowflake-arctic-embed-m-v1.5 model (768-dim, q8 ~110MB),
+ * loaded from `${EMBEDDING_MODELS_BASE}/snowflake-arctic-embed-m-v1.5/`.
+ * Issue #37 R9 swapped from bge-small-en-v1.5 (384-dim, fp32 ~130MB).
  */
 
 import type {
@@ -20,12 +21,13 @@ import { EMBEDDING_MODEL_PATH } from '../models/model-manifest';
 import { configureOfflineEnv } from '../models/offline-env';
 
 // Model configuration.
-// `MODEL_NAME` keeps the canonical id for display/telemetry; `MODEL_PATH` is the
-// path resolved against `env.localModelPath` (= /models), i.e.
-// `embeddings/bge-small-en-v1.5`.
-const MODEL_NAME = 'BAAI/bge-small-en-v1.5';
+// Issue #37 R9: swapped bge-small-en-v1.5 (384-dim) → snowflake-arctic-embed-
+// m-v1.5 (768-dim, +3.5 nDCG@10 on MTEB-v1). `MODEL_NAME` keeps the canonical
+// id for display/telemetry; `MODEL_PATH` is the path resolved against
+// `env.localModelPath` (= /models), i.e. `embeddings/snowflake-arctic-embed-m-v1.5`.
+const MODEL_NAME = 'Snowflake/snowflake-arctic-embed-m-v1.5';
 const MODEL_PATH = EMBEDDING_MODEL_PATH;
-const EMBEDDING_DIMENSIONS = 384;
+const EMBEDDING_DIMENSIONS = 768;
 
 /**
  * Internal type for correlating Worker request/reply pairs.
@@ -229,7 +231,7 @@ export class EmbeddingService {
    * Encode a single text into an embedding vector.
    *
    * @param text - Text to encode
-   * @returns Promise resolving to 384-dimensional Float32Array
+   * @returns Promise resolving to 768-dimensional Float32Array
    * @throws Error if service is not initialized or encoding fails
    */
   async encode(text: string): Promise<EmbeddingVector> {

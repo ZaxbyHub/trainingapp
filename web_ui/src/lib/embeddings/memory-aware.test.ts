@@ -99,8 +99,8 @@ describe('memory-aware', () => {
     test('HIGH tier (>=8GB): rerankingEnabled=true, maxChunkCount=10000', () => {
       const config = selectModelTier(8192);
 
-      expect(config.embeddingModel).toBe('bge-small-en-v1.5');
-      expect(config.embeddingDimension).toBe(384);
+      expect(config.embeddingModel).toBe('snowflake-arctic-embed-m-v1.5');
+      expect(config.embeddingDimension).toBe(768);
       expect(config.rerankingEnabled).toBe(true);
       expect(config.maxChunkCount).toBe(10000);
     });
@@ -115,8 +115,8 @@ describe('memory-aware', () => {
     test('MEDIUM tier (>=4GB, <8GB): rerankingEnabled=false, maxChunkCount=5000', () => {
       const config = selectModelTier(4096);
 
-      expect(config.embeddingModel).toBe('bge-small-en-v1.5');
-      expect(config.embeddingDimension).toBe(384);
+      expect(config.embeddingModel).toBe('snowflake-arctic-embed-m-v1.5');
+      expect(config.embeddingDimension).toBe(768);
       expect(config.rerankingEnabled).toBe(false);
       expect(config.maxChunkCount).toBe(5000);
     });
@@ -131,8 +131,8 @@ describe('memory-aware', () => {
     test('LOW tier (<4GB): rerankingEnabled=false, maxChunkCount=1000', () => {
       const config = selectModelTier(2048);
 
-      expect(config.embeddingModel).toBe('bge-small-en-v1.5');
-      expect(config.embeddingDimension).toBe(384);
+      expect(config.embeddingModel).toBe('snowflake-arctic-embed-m-v1.5');
+      expect(config.embeddingDimension).toBe(768);
       expect(config.rerankingEnabled).toBe(false);
       expect(config.maxChunkCount).toBe(1000);
     });

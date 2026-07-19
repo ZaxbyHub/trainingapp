@@ -29,7 +29,7 @@ export function configureOfflineEnv(): void {
   env.allowRemoteModels = false;
 
   // All models resolve under the same-origin /models base, e.g.
-  // pipeline(task, 'embeddings/bge-small-en-v1.5') -> /models/embeddings/...
+  // pipeline(task, 'embeddings/snowflake-arctic-embed-m-v1.5') -> /models/embeddings/...
   env.localModelPath = MODELS_BASE;
 
   // OPFS/IndexedDB caching is irrelevant once models are local; keep it off so we
