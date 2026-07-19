@@ -11,7 +11,7 @@ Two first-class delivery options share the same offline RAG capabilities:
 
 The browser app is a complete, offline RAG client. See `PACKAGING.md` for the build/bundle steps.
 
-- **Fully offline, packaged models** — embeddings (bge-small ONNX), ONNX Runtime WASM, and the
+- **Fully offline, packaged models** — embeddings (arctic-embed-m ONNX), ONNX Runtime WASM, and the
   browser LLM are served same-origin from `public/models/`; nothing is fetched from a CDN or the
   HuggingFace Hub at runtime. A readiness gate reports "models ready vs missing".
 - **Two user-selectable browser engines** — **wllama** (llama.cpp WASM, CPU/SIMD, **no WebGPU**,
@@ -46,7 +46,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Hybrid Retrieval**: BM25 + Vector search with Reciprocal Rank Fusion (RRF)
 - **Window Expansion**: Automatically fetches adjacent context chunks
 - **Smart Chunking**: Paragraph and sentence boundary aware
-- **Cross-Encoder Reranking**: Optional MS MARCO MiniLM for precise ranking
+- **Cross-Encoder Reranking**: ettin-reranker (ModernBERT) for precise ranking
 
 ### LLM Backend (GGUF-Only)
 The application uses GGUF models via llama-cpp-python for fully offline inference:
@@ -163,11 +163,11 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - **Embedding Batch Normalization**: Consistent batch sizes for predictable memory usage during ingestion
 
 ### Web UI Search Infrastructure (Phase 5)
-- **Transformers.js Embeddings**: Browser-side embedding generation using `bge-small-en-v1.5` ONNX model with OPFS caching for offline use
+- **Transformers.js Embeddings**: Browser-side embedding generation using snowflake-arctic-embed-m-v1.5 ONNX model for offline use
 - **HNSW Vector Index**: `EdgeVec` Rust/WASM-based HNSW index with native IndexedDB persistence for semantic search
 - **FlexSearch Keyword Index**: Full-text keyword search with resolution-based scoring for BM25-style matching
 - **Reciprocal Rank Fusion**: Ported RRF algorithm for hybrid retrieval combining semantic and keyword results
-- **Cross-Encoder Reranking**: `ms-marco-MiniLM-L-6-v2` reranker with memory-aware conditional activation (skipped on low-memory devices)
+- **Cross-Encoder Reranking**: ettin-reranker-32m-v1 (ModernBERT) reranker with conditional activation (skipped on low-memory devices)
 - **Memory-Aware Model Selection**: Device memory detection with tier-based configuration (low/medium/high memory tiers)
 
 ### Browser LLM Inference (Phase 6)
@@ -270,7 +270,7 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 
    **Embedding Model (Required for search)**
    ```powershell
-   # BAAI/bge-small-en-v1.5 is automatically downloaded on first use
+   # Snowflake/snowflake-arctic-embed-m-v1.5 is packaged for offline use
    # Can be manually downloaded if needed for offline installation
    ```
 
@@ -926,12 +926,12 @@ Keyword Index (FlexSearch) ─────────────────�
 
 | Component | File | Description |
 |-----------|------|-------------|
-| Embedding Service | `src/lib/embeddings/embedding-service.ts` | Transformers.js pipeline with bge-small-en-v1.5 ONNX model, OPFS caching |
+| Embedding Service | `src/lib/embeddings/embedding-service.ts` | Transformers.js pipeline with snowflake-arctic-embed-m-v1.5 ONNX (768-dim, q8) |
 | Memory-Aware Selection | `src/lib/embeddings/memory-aware.ts` | Device memory detection, tier-based model configuration |
 | Vector Index | `src/lib/search/vector-index.ts` | EdgeVec HNSW index with IndexedDB persistence |
 | Keyword Index | `src/lib/search/keyword-index.ts` | FlexSearch with resolution-based scoring |
 | RRF Fusion | `src/lib/search/rrf-fusion.ts` | Reciprocal Rank Fusion for hybrid results |
-| Reranker | `src/lib/search/reranker.ts` | Cross-encoder reranker (ms-marco-MiniLM-L-6-v2) |
+| Reranker | `src/lib/search/reranker.ts` | Cross-encoder reranker (ettin-reranker-32m-v1, ModernBERT) |
 | Types | `src/types/embedding.ts` | `EmbeddingDocument`, `EmbeddingResult` interfaces |
 | Types | `src/types/search.ts` | `SearchResult`, `HybridSearchResult` interfaces |
 

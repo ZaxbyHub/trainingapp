@@ -293,14 +293,34 @@ describe('EmbeddingService', () => {
     });
 
     it('returns 768-dimensional Float32Array via Worker', async () => {
-      // R8: encoding now runs inside a Web Worker. The CLS pooling assertion
-      // is covered inside embedding.worker.ts which passes
-      // { pooling: 'cls', normalize: true }.
+      // R8: encoding now runs inside a Web Worker.
       const instance = EmbeddingService.getInstance();
       await instance.initialize();
       const result = await instance.encode('hello world');
       expect(result).toBeInstanceOf(Float32Array);
       expect(result.length).toBe(768);
+    });
+
+    it('PRR46-004: worker applies CLS pooling + normalize (F9 invariant)', async () => {
+      // The pooling/normalize options live inside embedding.worker.ts which
+      // runs in a separate Worker context (not directly mockable here). This
+      // test statically asserts the worker source contains the correct pooling
+      // options so a regression (e.g. switching to mean pooling) would fail
+      // the test. This replaces the pre-R8 runtime CLS-pooling assertion that
+      // was deleted when the pipeline moved into the worker.
+      const { readFileSync } = await import('node:fs');
+      const { resolve } = await import('node:path');
+      const workerSource = readFileSync(
+        resolve(process.cwd(), 'src/lib/embeddings/embedding.worker.ts'),
+        'utf8'
+      );
+      // The worker must pass pooling:'cls' and normalize:true to every
+      // pipeline call. Count occurrences — there should be at least 3
+      // (probe + encode + encodeBatch).
+      const clsPoolingCount = (workerSource.match(/pooling:\s*'cls'/g) ?? []).length;
+      const normalizeCount = (workerSource.match(/normalize:\s*true/g) ?? []).length;
+      expect(clsPoolingCount).toBeGreaterThanOrEqual(3);
+      expect(normalizeCount).toBeGreaterThanOrEqual(3);
     });
 
     it('throws error for empty text', async () => {

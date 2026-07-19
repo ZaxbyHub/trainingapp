@@ -21,7 +21,8 @@
  *      silently dropped a chunk.
  *
  * Group handling (manifest v2 `group` field):
- *   - `core`    — always enforced (embedding + ORT runtime + reranker).
+ *   - `core`    — always enforced (ORT runtime; embedding + reranker now have
+ *                 their own groups, enforced unless their --no-X flag is passed).
  *   - `llm`     — the browser-LLM runtime (wllama WASM/compat) + Gemma 4 E2B-it weights.
  *                  Enforced by default; skipped when `--no-llm` is passed (for
  *                  embeddings-only / server-mode builds where the multi-GB LLM
@@ -38,7 +39,7 @@
  *
  * Exit code is non-zero on any failure so it can gate CI / packaging.
  *
- * Usage:  node scripts/validate-build.mjs [--no-llm]
+ * Usage:  node scripts/validate-build.mjs [--no-llm] [--no-reranker] [--no-embedder] [--airgap]
  */
 
 import { createHash } from 'node:crypto';

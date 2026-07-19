@@ -1251,7 +1251,7 @@ describe('RAGOrchestrator', () => {
       expect(complete.data.chunks[1].text).toBe('BBB second chunk');
     });
 
-    test('F8: query embedding receives the BGE instruction prefix', async () => {
+    test('F8: query embedding receives the query instruction prefix', async () => {
       const mockEmbedding = createMockEmbedding();
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,

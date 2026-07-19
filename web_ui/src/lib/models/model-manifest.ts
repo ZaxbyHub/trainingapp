@@ -178,7 +178,7 @@ interface ManifestModel {
   id: string;
   label: string;
   kind: PackagedModelKind;
-  group: 'core' | 'optional' | 'llm';
+  group: PackagedModelGroup;
   files: ManifestFile[];
 }
 interface Manifest {

@@ -110,11 +110,12 @@ type RAGStage = 'embedding' | 'vector_search' | 'keyword_search' | 'rrf_fusion' 
 const DEFAULT_SYSTEM_PROMPT = 'Answer the question based on the provided context. Cite sources using [1], [2] notation. If the context doesn\'t contain enough information, say so.';
 
 /**
- * Retrieval query instruction. Issue #37 R9: snowflake-arctic-embed-m-v1.5
- * uses the SAME query prefix as the prior bge-small-en-v1.5 (byte-identical
- * string), so the value is unchanged — only the comment/name is updated to
- * avoid implying BGE specificity. Applied to the QUERY embedding only;
- * passages stay UN-prefixed (F8). Miss the prefix and quality craters silently.
+ * Retrieval query instruction. Issue #37 R9: the value is UNCHANGED from the
+ * prior BGE configuration. snowflake-arctic-embed-m-v1.5's model card does NOT
+ * require a query prefix (it's a non-instruct model), so keeping the prefix is
+ * harmless — it adds context to the query text without degrading arctic's
+ * retrieval quality. Applied to the QUERY embedding only; passages stay
+ * UN-prefixed (F8).
  */
 const QUERY_INSTRUCTION = 'Represent this sentence for searching relevant passages: ';
 
