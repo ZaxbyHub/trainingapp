@@ -9,6 +9,7 @@ import { ChatMessageList } from '../components/ChatMessageList';
 import { ChatInput } from '../components/ChatInput';
 import { StreamingIndicator } from '../components/StreamingIndicator';
 import { ModelBlockedOverlay } from '../components/ModelBlockedOverlay';
+import { IsolationBanner } from '../components/IsolationBanner';
 import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
@@ -792,6 +793,12 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           <InferenceModeToggle />
         </div>
       </header>
+
+      {/* Issue #37 P3: COOP/COEP misconfiguration banner.
+          Persistent per-session, dismissible. Shows when !crossOriginIsolated,
+          which causes wllama and ORT to fall back to single-threaded WASM
+          (~3-4x slower decode, minutes of TTFT on the target i5). */}
+      <IsolationBanner />
 
       {/* Model loading blocking overlay.
           Engine-aware: shows the actual readiness failures/recommendations

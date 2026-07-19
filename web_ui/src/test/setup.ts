@@ -56,3 +56,46 @@ if (typeof window !== 'undefined' && !('IntersectionObserver' in window)) {
   (window as unknown as Record<string, unknown>).IntersectionObserver = ctor;
   (globalThis as unknown as Record<string, unknown>).IntersectionObserver = ctor;
 }
+
+// jsdom lacks `Worker`. Provide a minimal stub so the embedding Worker
+// (embedding.worker.ts) can initialize without throwing and respond to
+// basic messages. Tests that need real Worker behavior should mock the
+// embedding module instead.
+if (typeof Worker === 'undefined') {
+  const EMBEDDING_DIMENSIONS = 384;
+  class WorkerStub {
+    private _onmessage: ((event: MessageEvent) => void) | null = null;
+    private _onerror: ((event: ErrorEvent) => void) | null = null;
+    set onmessage(handler: ((event: MessageEvent) => void) | null) { this._onmessage = handler; }
+    set onerror(handler: ((event: ErrorEvent) => void) | null) { this._onerror = handler; }
+    postMessage(msg: unknown): void {
+      // Defer reply so the init promise resolves asynchronously.
+      const self = this;
+      setTimeout(() => {
+        if (!self._onmessage) return;
+        const data = msg as Record<string, unknown>;
+        if (data.kind === 'init') {
+          self._onmessage!({ data: { kind: 'ready', dimensions: EMBEDDING_DIMENSIONS } } as MessageEvent);
+        } else if (data.kind === 'encode') {
+          self._onmessage!({
+            data: { kind: 'encode-result', id: data.id, vector: new Float32Array(EMBEDDING_DIMENSIONS) }
+          } as MessageEvent);
+        } else if (data.kind === 'encodeBatch') {
+          const texts = data.texts as string[];
+          self._onmessage!({
+            data: {
+              kind: 'encodeBatch-result',
+              id: data.id,
+              vectors: texts.map(() => new Float32Array(EMBEDDING_DIMENSIONS))
+            }
+          } as MessageEvent);
+        }
+      }, 0);
+    }
+    terminate(): void { /* no-op */ }
+    addEventListener(): void { /* no-op */ }
+    removeEventListener(): void { /* no-op */ }
+    dispatchEvent(): boolean { return true; }
+  }
+  (globalThis as unknown as Record<string, unknown>).Worker = WorkerStub;
+}

@@ -10,7 +10,6 @@
  * `${EMBEDDING_MODELS_BASE}/bge-small-en-v1.5/`.
  */
 
-import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import type {
   EmbeddingVector,
   EmbeddingResult,
@@ -29,15 +28,32 @@ const MODEL_PATH = EMBEDDING_MODEL_PATH;
 const EMBEDDING_DIMENSIONS = 384;
 
 /**
+ * Internal type for correlating Worker request/reply pairs.
+ * Each pending encode/encodeBatch call gets a unique id whose
+ * resolve/reject pair is stored here until the Worker replies.
+ */
+interface PendingRequest {
+  resolve(value: unknown): void;
+  reject(reason: unknown): void;
+}
+
+/**
+ * Issue #37 R8: the actual embedding work runs in a Web Worker
+ * (embedding.worker.ts) so the transformers.js pipeline and its WASM
+ * forward passes never block the main thread.  This module-level variable
+ * holds the one Worker instance, created once during doInitialize() and
+ * terminated during dispose(). */
+let worker: Worker | null = null;
+let nextRequestId = 1;
+const pendingRequests = new Map<number, PendingRequest>();
+
+/**
  * Singleton embedding service for browser-local embeddings.
  * Handles model loading, caching, and text encoding.
  */
 export class EmbeddingService {
   private static instance: EmbeddingService | null = null;
 
-  // Typed as the concrete pipeline so its callable/dispose surface is visible
-  // without falling back to the over-wide base `Pipeline` type.
-  private featureExtractor: FeatureExtractionPipeline | null = null;
   private modelInfo: EmbeddingModelInfo;
   private ready: boolean = false;
   private initPromise: Promise<void> | null = null;
@@ -99,55 +115,30 @@ export class EmbeddingService {
   }
 
   /**
-   * Internal initialization logic.
+   * Internal initialization logic — Issue #37 R8.
+   *
+   * Creates a Web Worker (embedding.worker.ts) and delegates the
+   * transformers.js pipeline creation to it so WASM forward passes
+   * never block the main thread.
    */
   private async doInitialize(): Promise<void> {
+    if (worker) { this.ready = true; return; }
+
     try {
-      // Create feature extraction pipeline. `pipeline()` is heavily overloaded
-      // across all tasks (TS2590 "union too complex to represent"); narrow the
-      // factory to the single signature we use so the call type-checks cleanly,
-      // then assign to the concrete field.
-      const createFeaturePipeline = pipeline as unknown as (
-        task: 'feature-extraction',
-        modelId: string,
-        options: { dtype: string; device: string }
-      ) => Promise<FeatureExtractionPipeline>;
-      this.featureExtractor = await createFeaturePipeline(
-        'feature-extraction',
-        MODEL_PATH,
-        {
-          // ONNX runtime configuration
-          dtype: 'fp32',
-          device: 'wasm',
-        }
-      );
+      configureOfflineEnv();
+      await this._initWithWorker();
 
-      // Verify model is cached by attempting a test encoding
-      // Bypass isReady() check since we know featureExtractor is just created
-      // CLS pooling: the packaged bge-small-en-v1.5 declares
-      // pooling_mode_cls_token:true in its 1_Pooling/config.json (F9).
-      const testResult = await this.featureExtractor!('init', {
-        pooling: 'cls',
-        normalize: true,
-      }) as { data: Float32Array; dims: number[] };
-      if (testResult.data.length !== EMBEDDING_DIMENSIONS) {
-        throw new Error(
-          `Model returned wrong embedding dimension: expected ${EMBEDDING_DIMENSIONS}, got ${testResult.data.length}`
-        );
-      }
-
-      this.modelInfo.cached = true;
-      // Check disposed flag to prevent race condition with dispose()
       if (this.disposed) {
         throw new Error('EmbeddingService was disposed during initialization');
       }
       this.ready = true;
     } catch (error) {
-      // Release partially-initialized pipeline if it was created
-      if (this.featureExtractor !== null) {
-        await this.featureExtractor.dispose();
-        this.featureExtractor = null;
+      const w = worker as Worker | null;
+      if (w) {
+        w.terminate();
+        worker = null;
       }
+      pendingRequests.clear();
       this.initPromise = null;
       throw new Error(
         `Failed to initialize embedding model: ${error instanceof Error ? error.message : String(error)}`,
@@ -157,10 +148,61 @@ export class EmbeddingService {
   }
 
   /**
+   * Initialize via the embedding Worker (off-main-thread pipeline).
+   * Sends an `init` message; the Worker replies with `ready` containing
+   * the model dimensions, or `error` on failure.
+   */
+  private async _initWithWorker(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      try {
+        worker = new Worker(
+          new URL('./embedding.worker.ts', import.meta.url),
+          { type: 'module' }
+        );
+
+        worker.onmessage = (event: MessageEvent) => {
+          const msg = event.data;
+          if (msg.kind === 'ready') {
+            this.modelInfo.dimensions = msg.dimensions;
+            this.modelInfo.cached = true;
+            resolve();
+          } else if (msg.kind === 'error' && msg.id === -1) {
+            reject(new Error(msg.message));
+          } else if (msg.kind === 'encode-result' || msg.kind === 'encodeBatch-result' || msg.kind === 'error') {
+            const pending = pendingRequests.get(msg.id);
+            if (pending) {
+              pendingRequests.delete(msg.id);
+              if (msg.kind === 'error') {
+                pending.reject(new Error(msg.message));
+              } else {
+                pending.resolve(msg);
+              }
+            }
+          }
+        };
+
+        worker.onerror = (err: ErrorEvent) => {
+          reject(new Error(`Embedding Worker failed: ${err.message}`));
+        };
+
+        worker.postMessage({
+          kind: 'init',
+          modelPath: MODEL_PATH,
+          dimensions: EMBEDDING_DIMENSIONS,
+        });
+      } catch (err) {
+        reject(new Error(
+          `Failed to create embedding Worker: ${err instanceof Error ? err.message : String(err)}`
+        ));
+      }
+    });
+  }
+
+  /**
    * Check if the model is ready for encoding.
    */
   isReady(): boolean {
-    return this.ready && this.featureExtractor !== null;
+    return this.ready && worker !== null;
   }
 
   /**
@@ -168,6 +210,19 @@ export class EmbeddingService {
    */
   getModelInfo(): EmbeddingModelInfo {
     return { ...this.modelInfo };
+  }
+
+  /**
+   * Post a message to the worker and await the reply.
+   * Each request gets a unique correlation id stored in
+   * pendingRequests until the worker replies.
+   */
+  private _postAndWait(msg: Record<string, unknown>): Promise<unknown> {
+    const id = nextRequestId++;
+    return new Promise((resolve, reject) => {
+      pendingRequests.set(id, { resolve, reject });
+      worker!.postMessage({ id, ...msg });
+    });
   }
 
   /**
@@ -186,31 +241,18 @@ export class EmbeddingService {
       throw new Error('Cannot encode empty text');
     }
 
-    try {
-      const result = await this.featureExtractor!(text, {
-        pooling: 'cls',
-        normalize: true,
-      }) as {
-        data: Float32Array;
-        dims: number[];
-      };
+    const result = await this._postAndWait({ kind: 'encode', text }) as {
+      kind: 'encode-result';
+      id: number;
+      vector: Float32Array;
+    };
 
-      // Extract the embedding vector
-      const embedding = new Float32Array(result.data);
-
-      if (embedding.length !== EMBEDDING_DIMENSIONS) {
-        throw new Error(
-          `Embedding dimension mismatch: expected ${EMBEDDING_DIMENSIONS}, got ${embedding.length}`
-        );
-      }
-
-      return embedding;
-    } catch (error) {
+    if (result.vector.length !== EMBEDDING_DIMENSIONS) {
       throw new Error(
-        `Failed to encode text: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error }
+        `Embedding dimension mismatch: expected ${EMBEDDING_DIMENSIONS}, got ${result.vector.length}`
       );
     }
+    return result.vector;
   }
 
   /**
@@ -224,7 +266,7 @@ export class EmbeddingService {
    */
   async encodeBatch(
     texts: string[],
-    onProgress?: EmbeddingProgressCallback
+    _onProgress?: EmbeddingProgressCallback
   ): Promise<EmbeddingVector[]> {
     if (!this.isReady()) {
       throw new Error('EmbeddingService not initialized. Call initialize() first.');
@@ -234,77 +276,22 @@ export class EmbeddingService {
       return [];
     }
 
-    // Validate texts
     for (let i = 0; i < texts.length; i++) {
       if (typeof texts[i] !== 'string') {
         throw new Error(`Text at index ${i} is not a string`);
       }
     }
 
-    const results: EmbeddingVector[] = [];
-    const total = texts.length;
-    let processed = 0;
+    const result = await this._postAndWait({
+      kind: 'encodeBatch',
+      texts,
+    }) as {
+      kind: 'encodeBatch-result';
+      id: number;
+      vectors: Float32Array[];
+    };
 
-    try {
-      // Process in smaller batches to manage memory on 16GB RAM systems
-      const batchSize = 8;
-
-      for (let i = 0; i < total; i += batchSize) {
-        const batch = texts.slice(i, Math.min(i + batchSize, total));
-
-        // Use native batch inference via featureExtractor directly
-        const batchResults = await this.featureExtractor!(batch, {
-          pooling: 'cls',
-          normalize: true,
-        }) as { data: Float32Array; dims: number[] };
-
-        // F14: validate the returned tensor shape before slicing. Without this
-        // check, a model/runtime returning fewer rows than requested (e.g. from
-        // a future model swap or a pooling mismatch) would silently produce
-        // zero-filled/short vectors misassigned to the wrong chunks. dims[0] is
-        // the row count; data.length must cover batch.length rows of
-        // EMBEDDING_DIMENSIONS each. (The single-text encode() already checks
-        // embedding length; this is the batch-path analog.)
-        const expectedRows = batch.length;
-        const actualRows =
-          Array.isArray(batchResults.dims) && batchResults.dims.length > 0
-            ? batchResults.dims[0]
-            : Math.floor(batchResults.data.length / EMBEDDING_DIMENSIONS);
-        if (actualRows !== expectedRows) {
-          throw new Error(
-            `Embedding batch shape mismatch: expected ${expectedRows} row(s) but the model returned ${actualRows}`
-          );
-        }
-        if (batchResults.data.length < expectedRows * EMBEDDING_DIMENSIONS) {
-          throw new Error(
-            `Embedding tensor too small: need ${expectedRows * EMBEDDING_DIMENSIONS} elements for ${expectedRows} vector(s), got ${batchResults.data.length}`
-          );
-        }
-
-        // batchResults.data is flat with all embeddings concatenated
-        // Split into individual embedding vectors
-        const embeddingLength = EMBEDDING_DIMENSIONS;
-        for (let j = 0; j < batch.length; j++) {
-          const start = j * embeddingLength;
-          const end = start + embeddingLength;
-          results.push(new Float32Array(batchResults.data.slice(start, end)));
-        }
-
-        processed += batch.length;
-
-        // Report progress
-        if (onProgress) {
-          onProgress(processed, total);
-        }
-      }
-
-      return results;
-    } catch (error) {
-      throw new Error(
-        `Batch encoding failed at ${processed}/${total}: ${error instanceof Error ? error.message : String(error)}`,
-        { cause: error }
-      );
-    }
+    return result.vectors;
   }
 
   /**
@@ -328,11 +315,11 @@ export class EmbeddingService {
    */
   dispose(): void {
     this.disposed = true;
-    if (this.featureExtractor !== null) {
-      // Release ONNX/WASM session memory (~130MB)
-      this.featureExtractor.dispose();
-      this.featureExtractor = null;
+    if (worker) {
+      worker.terminate();
+      worker = null;
     }
+    pendingRequests.clear();
     this.ready = false;
     this.initPromise = null;
     this.modelInfo.cached = false;

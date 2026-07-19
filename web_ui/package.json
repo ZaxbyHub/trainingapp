@@ -8,6 +8,7 @@
     "prepare-models": "node scripts/prepare-models.mjs",
     "build": "tsc -b && vite build",
     "build:offline": "npm run prepare-models && npm run build && npm run validate-build",
+    "build:airgap": "node scripts/build-airgap.mjs",
     "validate-build": "node scripts/validate-build.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
