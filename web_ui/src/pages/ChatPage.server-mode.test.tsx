@@ -163,7 +163,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
       // Verify the URL
       const [url, body, token] = mockStartSSEStream.mock.calls[0];
       expect(url).toBe('http://localhost:8000/ask/stream');
-      expect(body).toEqual({ question: 'What is AI?' });
+      expect(body).toEqual({ question: 'What is AI?', history: [] });
       expect(token).toBeUndefined();
     });
 
@@ -310,7 +310,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
       });
 
       const [, body] = mockStartSSEStream.mock.calls[0];
-      expect(body).toEqual({ question: 'What is machine learning?' });
+      expect(body).toEqual({ question: 'What is machine learning?', history: [] });
     });
 
     it('handles special characters in question text', async () => {
@@ -343,7 +343,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
       });
 
       const [, body] = mockStartSSEStream.mock.calls[0];
-      expect(body).toEqual({ question: 'What is "artificial intelligence"? & how does it work?' });
+      expect(body).toEqual({ question: 'What is "artificial intelligence"? & how does it work?', history: [] });
     });
   });
 
@@ -544,7 +544,7 @@ describe('ChatPage API Mode (Task 8.4)', () => {
       // Verify startSSEStream was called with correct parameters
       expect(mockStartSSEStream).toHaveBeenCalledWith(
         'http://localhost:8000/ask/stream',
-        { question: 'Test question' },
+        { question: 'Test question', history: [] },
         undefined
       );
 

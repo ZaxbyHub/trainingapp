@@ -45,6 +45,12 @@ type MLCEngineChat = {
       max_tokens?: number;
       temperature?: number;
       top_p?: number;
+      // Issue #40 RC2: WebLLM (MLC) supports OpenAI-style frequency/presence
+      // penalty. It has NO repeat_penalty equivalent — wllama is the primary
+      // offline engine and carries the stronger anti-repetition coverage via
+      // penalty_repeat; on WebLLM only these two apply.
+      frequency_penalty?: number;
+      presence_penalty?: number;
       signal?: AbortSignal;
     }): AsyncIterable<{ choices?: Array<{ delta?: { content?: string } }> }>;
   };
@@ -369,6 +375,11 @@ export class WebLLMService implements LLMService {
         max_tokens: options?.maxTokens,
         temperature: options?.temperature,
         top_p: options?.topP,
+        // Issue #40 RC2: WebLLM (MLC) supports OpenAI-style frequency/presence
+        // penalty. It has NO repeat_penalty equivalent — wllama is the primary
+        // offline engine and carries the stronger anti-repetition coverage.
+        frequency_penalty: options?.frequencyPenalty,
+        presence_penalty: options?.presencePenalty,
         signal,
       });
 
@@ -415,6 +426,9 @@ export class WebLLMService implements LLMService {
       max_tokens: options?.maxTokens,
       temperature: options?.temperature,
       top_p: options?.topP,
+      // Issue #40 RC2: see generate() above.
+      frequency_penalty: options?.frequencyPenalty,
+      presence_penalty: options?.presencePenalty,
       signal: options?.signal,
     });
 

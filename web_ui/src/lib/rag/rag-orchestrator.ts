@@ -39,6 +39,18 @@ export interface RAGImageInput {
   mimeType?: string;
 }
 
+/**
+ * Issue #40 RC1: one turn of prior conversation. `role` matches the LLM
+ * chat-template convention; `content` is the raw message text (history is
+ * text-only — multimodal history is out of scope; only the current turn carries
+ * images). Mirrors the {role, content} subset the server's `history` field
+ * accepts (api_server.py:187).
+ */
+export interface RAGHistoryTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
 export interface RAGQueryOptions {
   /** Number of top results to retrieve from each index (default: 10) */
   topK?: number;
@@ -63,8 +75,19 @@ export interface RAGQueryOptions {
   temperature?: number;
   /** Nucleus sampling probability threshold */
   topP?: number;
+  /** Issue #40 RC2: anti-repetition sampling penalties (forwarded to the engine). */
+  repeatPenalty?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
   /** Images to include with the question (multimodal engines only). */
   images?: RAGImageInput[];
+  /**
+   * Issue #40 RC1: prior conversation turns threaded into the LLM prompt and
+   * used to contextualize the retrieval query (RC3). Caller caps at the last N
+   * turns; the orchestrator charges history to the token budget so it never
+   * starves context. Each turn is plain text.
+   */
+  history?: RAGHistoryTurn[];
   /** AbortSignal for cancelling the in-progress query */
   signal?: AbortSignal;
 }
@@ -105,9 +128,12 @@ export type RAGEvent =
 type RAGStage = 'embedding' | 'vector_search' | 'keyword_search' | 'rrf_fusion' | 'reranking' | 'context' | 'generation';
 
 /**
- * Default system prompt instructing the LLM to cite sources.
+ * Default system prompt. Issue #40 RC1/RC2: enriched beyond the bare citation
+ * instruction to (a) acknowledge the conversation history so the model treats
+ * follow-ups as continuing turns, and (b) reinforce anti-repetition. Kept short
+ * so it consumes minimal context budget.
  */
-const DEFAULT_SYSTEM_PROMPT = 'Answer the question based on the provided context. Cite sources using [1], [2] notation. If the context doesn\'t contain enough information, say so.';
+const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant answering questions about uploaded documents. Use the provided context to answer, and cite sources using [1], [2] notation. The conversation history may provide context for follow-up questions. If the context doesn\'t contain enough information, say so. Do not repeat yourself.';
 
 /**
  * Retrieval query instruction. Issue #37 R9: the value is UNCHANGED from the
@@ -210,6 +236,15 @@ export class RAGOrchestrator {
     const maxTokens = options.maxTokens;
     const temperature = options.temperature;
     const topP = options.topP;
+    // Issue #40 RC2: anti-repetition sampling params. Forwarded to the engine at
+    // the generate() call below — without this forward, the penalty fields added
+    // to presets/LLMGenerateOptions die at the orchestrator→service boundary.
+    const repeatPenalty = options.repeatPenalty;
+    const frequencyPenalty = options.frequencyPenalty;
+    const presencePenalty = options.presencePenalty;
+    // Issue #40 RC1: prior conversation turns. Threaded into the LLM prompt
+    // (buildMessages) and used to contextualize the retrieval query (RC3).
+    const history = options.history ?? [];
     const signal = options.signal;
 
     // Ensure lazy services are initialized before the pipeline runs (FR-002)
@@ -240,6 +275,16 @@ export class RAGOrchestrator {
     // as a non-blocking "retrieval degraded" indicator in the UI (F4).
     let retrievalDegraded = false;
 
+    // Issue #40 RC3: rewrite a pronoun-heavy / short / continuation follow-up
+    // into a self-contained retrieval query using the conversation history.
+    // Deterministic heuristic (Option B per the issue) — microseconds, never
+    // fails, degrades to the raw question when no rewrite applies. Applied to
+    // the EMBEDDING, KEYWORD, and RERANKER inputs (all three consume this
+    // variable). The `retrieving` event still emits the raw `question` for UI
+    // fidelity — the rewrite is an internal retrieval concern, not something to
+    // surface to the user.
+    const retrievalQuery = contextualizeRetrievalQuery(question, history);
+
     // Stage 1: Embed the query
     yield { type: 'retrieving', data: { query: question } };
 
@@ -254,7 +299,7 @@ export class RAGOrchestrator {
     if (semanticAvailable) {
       try {
         const embeddingResult = await this.embeddingService.encodeWithMetadata(
-          QUERY_INSTRUCTION + question
+          QUERY_INSTRUCTION + retrievalQuery
         );
         queryEmbedding = embeddingResult.vector;
       } catch (err) {
@@ -300,7 +345,9 @@ export class RAGOrchestrator {
     let keywordResults: SearchResult[] = [];
     try {
       if (this.keywordIndex.isReady()) {
-        keywordResults = this.keywordIndex.search(question, { limit: fetchK });
+        // Issue #40 RC3: search on the contextualized query so pronoun-heavy
+        // follow-ups carry topical signal into FlexSearch.
+        keywordResults = this.keywordIndex.search(retrievalQuery, { limit: fetchK });
       } else {
         console.warn('[RAGOrchestrator] KeywordIndex not ready, skipping keyword search');
       }
@@ -366,7 +413,9 @@ export class RAGOrchestrator {
         if (this.rerankerService.isReady() && this.rerankerService.canRerank(fusedResults.length)) {
           yield { type: 'reranking', data: { count: fusedResults.length } };
 
-          const rerankedResults = await this.rerankerService.rerank(question, fusedResults, topK);
+          // Issue #40 RC3: rerank on the contextualized query so the
+          // cross-encoder scores against a self-contained question.
+          const rerankedResults = await this.rerankerService.rerank(retrievalQuery, fusedResults, topK);
 
           yield { type: 'reranked', data: { results: rerankedResults } };
           contextChunks = rerankedResults;
@@ -413,9 +462,16 @@ export class RAGOrchestrator {
     // many ranked chunks (highest first) as the remaining budget allows. Drop
     // whole chunks that overflow — never truncate mid-chunk. Applied BEFORE the
     // abstention check so that budget-induced emptiness also abstains.
+    //
+    // Issue #40 RC1: history is also in the prompt (threaded by buildMessages),
+    // so charge it to reservedTokens here. Without this term, history + context
+    // could silently overflow DEFAULT_N_CTX. The caller caps history length; the
+    // safety margin covers chat-template control tokens.
+    const historyText = history.map((t) => t.content).join('\n');
     const reservedTokens =
       estimateTokens(systemPrompt, CHARS_PER_TOKEN) +
       estimateTokens(question, CHARS_PER_TOKEN) +
+      estimateTokens(historyText, CHARS_PER_TOKEN) +
       (maxTokens ?? 512) +
       TOKEN_SAFETY_MARGIN;
     const contextBudgetChars = Math.max(0, (DEFAULT_N_CTX - reservedTokens) * CHARS_PER_TOKEN);
@@ -471,17 +527,24 @@ export class RAGOrchestrator {
 
     // Stage 6: Build context from chunks
     const contextText = this.buildContext(contextChunks);
-    const contextMessages = this.buildMessages(systemPrompt, question, contextText, options.images);
+    // Issue #40 RC1: thread history into the message array (between system and
+    // the current user turn) so the model has conversational continuity.
+    const contextMessages = this.buildMessages(systemPrompt, question, contextText, options.images, history);
 
     yield {
       type: 'generating',
       data: { contextLength: contextText.length, sourceCount: sources.length },
     };
 
-    // Stage 7 & 8: Generate answer with streaming
+    // Stage 7 & 8: Generate answer with streaming.
+    // Issue #40 RC2 (NR1 critical fix): forward repeatPenalty/frequencyPenalty/
+    // presencePenalty here — without this forward, the penalty fields added to
+    // presets/LLMGenerateOptions never cross the orchestrator→service boundary
+    // and the anti-repetition fix is a silent no-op.
+    const generateOptions = { maxTokens, temperature, topP, repeatPenalty, frequencyPenalty, presencePenalty, signal };
     try {
       if (streamTokens) {
-        for await (const token of this.llmService.generate(contextMessages, { maxTokens, temperature, topP, signal })) {
+        for await (const token of this.llmService.generate(contextMessages, generateOptions)) {
           if (signal?.aborted) {
             throw new DOMException('The operation was aborted.', 'AbortError');
           }
@@ -489,7 +552,7 @@ export class RAGOrchestrator {
           yield { type: 'token', data: token };
         }
       } else {
-        fullAnswer = await this.llmService.generateComplete(contextMessages, { maxTokens, temperature, topP, signal });
+        fullAnswer = await this.llmService.generateComplete(contextMessages, generateOptions);
         yield { type: 'token', data: fullAnswer };
       }
     } catch (err) {
@@ -559,12 +622,19 @@ export class RAGOrchestrator {
 
   /**
    * Build message array for LLM generation with system prompt and context.
+   *
+   * Issue #40 RC1: prior conversation turns are threaded between the system
+   * prompt and the current user turn, so the model has conversational continuity
+   * for follow-up questions. History is plain text (multimodal history is out of
+   * scope — only the current turn carries images) and is capped + budgeted by
+   * the caller. The chat-template sequence is: system, [...history], user.
    */
   private buildMessages(
     systemPrompt: string,
     question: string,
     context: string,
-    images?: RAGImageInput[]
+    images?: RAGImageInput[],
+    history?: RAGHistoryTurn[]
   ): LLMMessage[] {
     const userText = `Context:\n${context}\n\nQuestion: ${question}`;
 
@@ -578,10 +648,18 @@ export class RAGOrchestrator {
           ]
         : userText;
 
-    return [
+    const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: userContent },
     ];
+    // Thread prior turns between system and the current turn. Each turn becomes
+    // a plain text message in the role it was spoken in.
+    if (history && history.length > 0) {
+      for (const turn of history) {
+        messages.push({ role: turn.role, content: turn.content });
+      }
+    }
+    messages.push({ role: 'user', content: userContent });
+    return messages;
   }
 
   /**
@@ -602,6 +680,97 @@ export class RAGOrchestrator {
  */
 function estimateTokens(text: string, charsPerToken: number): number {
   return Math.ceil((text?.length ?? 0) / charsPerToken);
+}
+
+/**
+ * Issue #40 RC3: rewrite a pronoun-heavy / short / continuation follow-up into a
+ * self-contained retrieval query using recent conversation history. Deterministic
+ * heuristic (Option B per the issue) — runs in microseconds, never fails, and
+ * degrades to the original question when no rewrite applies. Applied to the
+ * embedding, keyword, and reranker inputs so all three retrieval legs operate on
+ * a query with topical signal.
+ *
+ * Inspired by — but deliberately broader than — the server-side heuristic in
+ * rag_engine.py:420-455 (anaphora + short-non-wh + continuation keywords). The
+ * browser app is the primary surface and benefits from more aggressive
+ * follow-up detection; documented divergences:
+ *  - the anaphora set also covers they/them/their + "the second/first/last";
+ *  - when no prior USER turn exists it falls back to the last ASSISTANT answer's
+ *    first sentence (the server only ever uses last_user_msg).
+ * A self-contained question passes through unchanged (preserves first-turn
+ * recall — acceptance criterion). Exported for unit testing.
+ */
+const ANAPHORIC_RE =
+  /\b(it|this|that|these|those|they|them|their|the above|the previous|the (?:second|first|last))\b/i;
+const FOLLOWUP_WORDS = new Set([
+  'more', 'elaborate', 'detail', 'explain', 'expand', 'further',
+  'also', 'another', 'compare', 'difference', 'versus', 'vs',
+  'similar', 'unlike', 'deeper',
+]);
+const WH_WORDS = new Set(['what', 'who', 'when', 'where', 'which', 'how', 'why']);
+
+/**
+ * Does `question` look like a follow-up that lacks standalone topical signal?
+ * Three patterns (mirroring the server's detection, slightly broader):
+ *  1. anaphora / pronoun reference (it / this / that / they / ...);
+ *  2. very short (<=4 words) AND not starting with a wh-word;
+ *  3. continuation keywords (elaborate / more / compare / ...) — but ONLY when
+ *     the question does NOT start with a wh-word, so a self-contained comparison
+ *     question like "What is X vs Y?" passes through unchanged (a wh-word start
+ *     is a strong signal the question is already self-contained, even if it
+ *     contains a continuation keyword like "vs").
+ */
+function isFollowup(question: string): boolean {
+  const q = question.trim();
+  if (!q) return false;
+  const ql = q.toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+  const first = (ql.split(/\s+/)[0] ?? '').replace(/[^\w]/g, '');
+  const startsWithWh = WH_WORDS.has(first);
+  // Pattern 1: anaphora / pronoun reference.
+  if (ANAPHORIC_RE.test(ql)) return true;
+  // Pattern 2: very short non-wh question.
+  if (words.length <= 4 && !startsWithWh) return true;
+  // Pattern 3: continuation keywords — only when the question does not start
+  // with a wh-word (avoids rewriting self-contained "What is X vs Y?" queries).
+  if (
+    !startsWithWh &&
+    words.some((w) => FOLLOWUP_WORDS.has(w.toLowerCase().replace(/[^\w]/g, '')))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Issue #40 RC3: produce the retrieval query. Returns the original question
+ * unchanged when it is already self-contained or when there is no history to
+ * contextualize with. Otherwise prepends the most recent substantive USER turn
+ * (preferred — it states the topic directly), falling back to the most recent
+ * ASSISTANT answer's first sentence.
+ */
+export function contextualizeRetrievalQuery(
+  question: string,
+  history: RAGHistoryTurn[]
+): string {
+  const q = question.trim();
+  if (!q || history.length === 0 || !isFollowup(q)) return question;
+  // Prefer the most recent substantive USER turn.
+  for (let i = history.length - 1; i >= 0; i--) {
+    const t = history[i];
+    if (t.role === 'user' && t.content.trim()) {
+      return `${t.content.trim()} ${question}`;
+    }
+  }
+  // Fall back to the most recent ASSISTANT answer's first sentence.
+  for (let i = history.length - 1; i >= 0; i--) {
+    const t = history[i];
+    if (t.role === 'assistant' && t.content.trim()) {
+      const firstSentence = t.content.trim().split(/[.!?\n]/)[0];
+      if (firstSentence.trim()) return `${firstSentence.trim()} ${question}`;
+    }
+  }
+  return question;
 }
 
 /**

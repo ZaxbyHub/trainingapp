@@ -14,6 +14,7 @@ import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
+import { buildHistorySnapshot } from '../lib/chat/history-snapshot';
 import { getLLMService } from '../lib/llm/llm-factory';
 import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessCache } from '../lib/llm/readiness-gate';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
@@ -441,7 +442,16 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       // wedging the send pipeline permanently. (issue #21 F5, F9)
       const url = serverUrl ? `${serverUrl.replace(/\/$/, '')}/ask/stream` : '/ask/stream';
       try {
-        streamManager.startSSEStream(url, { question: text }, getToken() ?? undefined);
+        // Issue #40 RC1: thread conversation history into the server request so
+        // server mode benefits from multi-turn memory + retrieval rewriting too.
+        // The server (api_server.py) already accepts + validates `history`
+        // (<=20 turns, content truncated to 4000 chars) — Issue #37 R6 — so this
+        // is a pure client-side addition with ZERO Python changes.
+        streamManager.startSSEStream(
+          url,
+          { question: text, history: buildHistorySnapshot(owningMessages) },
+          getToken() ?? undefined
+        );
       } catch (err) {
         streamManager.error(err instanceof Error ? err.message : String(err));
       }
@@ -480,6 +490,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
             ...presetOptions(ragPreset),
             signal: abortController.signal,
             images: images?.map((img) => ({ data: img.data, mimeType: img.mimeType })),
+            // Issue #40 RC1: thread prior conversation turns for multi-turn
+            // memory + retrieval contextualization (RC3).
+            history: buildHistorySnapshot(owningMessages),
           })) {
             if (abortController.signal.aborted) return;
             if (tokenStreamManagerRef.current !== streamManager) return;

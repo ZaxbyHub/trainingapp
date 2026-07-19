@@ -40,6 +40,23 @@ export type LLMGenerateOptions = {
   temperature?: number;
   /** Nucleus sampling probability threshold. */
   topP?: number;
+  /**
+   * llama.cpp repeat penalty (>1.0 discourages repeating recent tokens).
+   * Issue #40 RC2: anti-repetition. wllama forwards this as `penalty_repeat`.
+   * WebLLM (MLC) has no equivalent — only frequencyPenalty/presencePenalty
+   * apply on that engine.
+   */
+  repeatPenalty?: number;
+  /**
+   * Penalty scaled by how often a token already appears in the output so far.
+   * Issue #40 RC2. wllama: `penalty_freq`; WebLLM: `frequency_penalty`.
+   */
+  frequencyPenalty?: number;
+  /**
+   * Penalty applied once per token already present anywhere in the output.
+   * Issue #40 RC2. wllama: `penalty_present`; WebLLM: `presence_penalty`.
+   */
+  presencePenalty?: number;
   /** Whether to stream tokens as they are generated. */
   stream?: boolean;
 };

@@ -22,4 +22,22 @@ describe('rag-presets', () => {
   it('presetOptions returns the named preset', () => {
     expect(presetOptions('quality')).toEqual(RAG_PRESETS.quality);
   });
+
+  // Issue #40 RC2: every preset sets anti-repetition penalties + a sane topP.
+  it('all presets set repeatPenalty 1.1, topP 0.9, and zero freq/presence penalty', () => {
+    for (const preset of ['fast', 'balanced', 'quality'] as const) {
+      expect(RAG_PRESETS[preset].repeatPenalty).toBe(1.1);
+      expect(RAG_PRESETS[preset].topP).toBe(0.9);
+      expect(RAG_PRESETS[preset].frequencyPenalty).toBe(0.0);
+      expect(RAG_PRESETS[preset].presencePenalty).toBe(0.0);
+    }
+  });
+
+  it('presetOptions surfaces the penalty + topP fields (forwarded into RAGQueryOptions)', () => {
+    const opts = presetOptions('balanced');
+    expect(opts).toHaveProperty('repeatPenalty', 1.1);
+    expect(opts).toHaveProperty('topP', 0.9);
+    expect(opts).toHaveProperty('frequencyPenalty', 0.0);
+    expect(opts).toHaveProperty('presencePenalty', 0.0);
+  });
 });

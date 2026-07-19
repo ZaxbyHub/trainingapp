@@ -180,6 +180,49 @@ describe('WllamaService', () => {
     );
   });
 
+  it('Issue #40 RC2: forwards repeatPenalty/frequencyPenalty/presencePenalty as wllama penalty_* with full-context lookback', async () => {
+    // Critical: wllama's chat path uses penalty_repeat/penalty_freq/penalty_present
+    // (SamplingParams names), NOT repeat_penalty/frequency_penalty. Using the
+    // wrong names silently no-ops the anti-repetition fix.
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+    await svc.generateComplete([{ role: 'user', content: 'hi' }], {
+      repeatPenalty: 1.1,
+      frequencyPenalty: 0.3,
+      presencePenalty: 0.0,
+    });
+    expect(createChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        penalty_repeat: 1.1,
+        penalty_freq: 0.3,
+        penalty_present: 0.0,
+        penalty_last_n: -1,
+      })
+    );
+  });
+
+  it('Issue #40 RC2: omits penalty fields entirely when none are supplied (unchanged default behavior)', async () => {
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+    await svc.generateComplete([{ role: 'user', content: 'hi' }]);
+    const call = (createChatCompletion.mock.calls.at(-1) as Record<string, unknown>[])[0];
+    expect(call).not.toHaveProperty('penalty_repeat');
+    expect(call).not.toHaveProperty('penalty_last_n');
+  });
+
+  it('Issue #40 RC2: streaming generate() also forwards penalty_* params', async () => {
+    const svc = WllamaService.getInstance();
+    await svc.initialize();
+    for await (const _ of svc.generate([{ role: 'user', content: 'hi' }], {
+      repeatPenalty: 1.1,
+    })) {
+      // consume
+    }
+    expect(createChatCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({ penalty_repeat: 1.1, penalty_last_n: -1 })
+    );
+  });
+
   it('supportsImages reflects the model modality', async () => {
     const svc = WllamaService.getInstance();
     await svc.initialize();
