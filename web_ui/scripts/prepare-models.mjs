@@ -7,7 +7,7 @@
  * script copies them into place at packaging time. It is idempotent.
  *
  * Phase 1 scope:
- *   1. Copy the embedding model (bge-small-en-v1.5: ONNX + tokenizer) from the
+ *   1. Copy the embedding model (snowflake-arctic-embed-m-v1.5: q8 ONNX + tokenizer) from the
  *      repo's root `models/` directory into public/models/embeddings/.
  *   2. Copy the ONNX Runtime WASM binaries (shipped inside node_modules) into
  *      public/models/ort/ so Transformers.js never reaches for the jsdelivr CDN.
@@ -43,6 +43,14 @@ const NO_LLM = process.argv.slice(2).includes('--no-llm');
 // (which runs with weights staged) omits the flag and hard-fails if the q8
 // ONNX is missing — catching a real packaging defect.
 const NO_RERANKER = process.argv.slice(2).includes('--no-reranker');
+// `--no-embedder`: build without the embedding model weights. Issue #37 R9
+// swapped the embedder to snowflake-arctic-embed-m-v1.5 (operator-acquired q8
+// ONNX, not in the repo / not under LFS). CI builds on a fresh checkout do not
+// stage the q8 ONNX, so this flag lets CI produce a typecheck/build artifact
+// without the embedder, while production packaging omits the flag and
+// hard-fails if the q8 ONNX is missing. The runtime readiness gate treats the
+// 'embedding' group as excluded via the env marker.
+const NO_EMBEDDER = process.argv.slice(2).includes('--no-embedder');
 
 let hadError = false;
 
@@ -84,34 +92,42 @@ function firstExisting(candidates) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Embedding model: bge-small-en-v1.5 (ONNX + tokenizer)
+// 1. Embedding model: snowflake-arctic-embed-m-v1.5 (768-dim, q8 ONNX + tokenizer)
+//    Issue #37 R9: swapped from bge-small-en-v1.5 (384-dim fp32). Arctic loads
+//    with dtype:'q8' → model_quantized.onnx (same DATA_TYPES.q8 → '_quantized'
+//    rule as the reranker). Stage the q8 ONNX under that exact name.
 // ---------------------------------------------------------------------------
 function prepareEmbeddingModel() {
   const srcDir = firstExisting([
-    join(REPO_ROOT, 'models', 'bge-small-en-v1.5'),
-    join(WEB_UI, 'models', 'bge-small-en-v1.5'),
+    join(REPO_ROOT, 'models', 'snowflake-arctic-embed-m-v1.5'),
+    join(WEB_UI, 'models', 'snowflake-arctic-embed-m-v1.5'),
   ]);
-  const destDir = join(PUBLIC_MODELS, 'embeddings', 'bge-small-en-v1.5');
+  const destDir = join(PUBLIC_MODELS, 'embeddings', 'snowflake-arctic-embed-m-v1.5');
 
   if (!srcDir) {
     fail(
-      'embedding model source not found. Expected models/bge-small-en-v1.5/ at the repo root. ' +
-        'See PACKAGING.md for how to obtain it.'
+      'embedding model source not found. Expected models/snowflake-arctic-embed-m-v1.5/ ' +
+        'at the repo root. See PACKAGING.md for how to stage the q8 ONNX.'
     );
     return;
   }
 
-  const onnx = join(srcDir, 'onnx', 'model.onnx');
+  // Issue #37 R9: the embedder loads with dtype:'q8', which maps to
+  // onnx/model_quantized.onnx (same DATA_TYPES.q8 → '_quantized' rule as the
+  // reranker). Stage the q8 ONNX under that exact name.
+  const onnx = join(srcDir, 'onnx', 'model_quantized.onnx');
   if (!existsSync(onnx) || statSync(onnx).size < 1024) {
     fail(
-      `embedding ONNX weights missing or look like an LFS stub: ${onnx} ` +
-        '(size < 1KB). Pull the real weights before packaging — see PACKAGING.md.'
+      `embedding q8 ONNX weights missing or look like an LFS stub: ${onnx} ` +
+        '(size < 1KB). The embedder loads with dtype:\'q8\', which expects ' +
+        'onnx/model_quantized.onnx (NOT model.onnx). Stage the q8 ONNX under ' +
+        'that exact name — see PACKAGING.md.'
     );
     return;
   }
   if (isLfsPointer(onnx)) {
     fail(
-      `embedding ONNX weights are a Git-LFS pointer stub (not the real file): ${onnx}. ` +
+      `embedding q8 ONNX weights are a Git-LFS pointer stub (not the real file): ${onnx}. ` +
         'Run `git lfs pull` (or copy the model from a machine that has the real weights) ' +
         'before packaging. See PACKAGING.md.'
     );
@@ -119,31 +135,31 @@ function prepareEmbeddingModel() {
   }
 
   copyTree(srcDir, destDir);
-  log(`embeddings -> ${destDir}`);
+  log(`embeddings (arctic q8) -> ${destDir}`);
 }
 
 // ---------------------------------------------------------------------------
-// 1b. Reranker model: cross-encoder/ms-marco-MiniLM-L-6-v2.
-//     Issue #37 R1c: the reranker is REQUIRED for retrieval quality. A missing
-//     source is now a HARD FAILURE (matches embedding-model semantics) so CI
+// 1b. Reranker model: cross-encoder/ettin-reranker-32m-v1 (ModernBERT).
+//     Issue #37 R9: swapped from ms-marco-MiniLM-L-6-v2. The reranker is
+//     REQUIRED for retrieval quality. A missing source is a HARD FAILURE so CI
 //     cannot silently ship a build with the reranker absent. Runtime fallback
 //     still applies if init fails at load time (the orchestrator's isReady()
 //     gate degrades gracefully), but packaging must not skip it.
 // ---------------------------------------------------------------------------
 function prepareRerankerModel() {
   const srcDir = firstExisting([
-    join(REPO_ROOT, 'models', 'ms-marco-MiniLM-L-6-v2'),
-    join(REPO_ROOT, 'models', 'cross-encoder', 'ms-marco-MiniLM-L-6-v2'),
-    join(WEB_UI, 'models', 'ms-marco-MiniLM-L-6-v2'),
+    join(REPO_ROOT, 'models', 'ettin-reranker-32m-v1'),
+    join(REPO_ROOT, 'models', 'cross-encoder', 'ettin-reranker-32m-v1'),
+    join(WEB_UI, 'models', 'ettin-reranker-32m-v1'),
   ]);
-  const destDir = join(PUBLIC_MODELS, 'reranker', 'ms-marco-MiniLM-L-6-v2');
+  const destDir = join(PUBLIC_MODELS, 'reranker', 'ettin-reranker-32m-v1');
 
   if (!srcDir) {
     fail(
-      'reranker model source not found. Expected models/ms-marco-MiniLM-L-6-v2/ ' +
-        'at the repo root (or models/cross-encoder/ms-marco-MiniLM-L-6-v2/). ' +
+      'reranker model source not found. Expected models/ettin-reranker-32m-v1/ ' +
+        'at the repo root (or models/cross-encoder/ettin-reranker-32m-v1/). ' +
         'Issue #37 made the reranker required — retrieval quality depends on it. ' +
-        'See PACKAGING.md for how to stage the q8 ONNX (~23MB).'
+        'See PACKAGING.md for how to stage the q8 ONNX (~33-36MB).'
     );
     return;
   }
@@ -300,7 +316,11 @@ function prepareOnnxRuntimeWasm() {
 
 // ---------------------------------------------------------------------------
 log(`assembling offline model assets${NO_LLM ? ' (--no-llm: embeddings-only / server mode)' : ''}...`);
-prepareEmbeddingModel();
+if (!NO_EMBEDDER) {
+  prepareEmbeddingModel();
+} else {
+  log('--no-embedder: skipping embedding model weights (CI build). Semantic search will be unavailable without it; production packaging MUST omit this flag.');
+}
 if (!NO_RERANKER) {
   prepareRerankerModel();
 } else {
@@ -325,6 +345,7 @@ const MARKER = 'VITE_EXCLUDE_MODEL_GROUPS=';
 const excludedGroups = [
   ...(NO_LLM ? ['llm'] : []),
   ...(NO_RERANKER ? ['reranker'] : []),
+  ...(NO_EMBEDDER ? ['embedding'] : []),
 ];
 const desiredLine = excludedGroups.length > 0 ? `${MARKER}${excludedGroups.join(',')}` : '';
 let envLines = [];

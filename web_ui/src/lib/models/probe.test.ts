@@ -24,7 +24,7 @@ describe('probeAsset', () => {
       status: 200,
       contentType: 'application/json',
     });
-    expect(await probeAsset('/models/embeddings/bge-small-en-v1.5/config.json', fetcher)).toBe(true);
+    expect(await probeAsset('/models/embeddings/snowflake-arctic-embed-m-v1.5/config.json', fetcher)).toBe(true);
   });
 
   it('reports present for a WASM runtime (200 + application/wasm)', async () => {
@@ -71,6 +71,6 @@ describe('probeAsset', () => {
     // A real file on a host that doesn't set Content-Type should still be present;
     // the only reliable SPA-fallback signal is the PRESENCE of text/html.
     const fetcher: AssetFetcher = async () => ({ ok: true, status: 200, contentType: null });
-    expect(await probeAsset('/models/embeddings/bge-small-en-v1.5/onnx/model.onnx', fetcher)).toBe(true);
+    expect(await probeAsset('/models/embeddings/snowflake-arctic-embed-m-v1.5/onnx/model_quantized.onnx', fetcher)).toBe(true);
   });
 });

@@ -135,11 +135,11 @@ describe('Issue #37 §5 — retrieval eval harness', () => {
     const mockEmbeddingService = {
       initialize: vi.fn().mockResolvedValue(undefined),
       isReady: vi.fn().mockReturnValue(true),
-      encode: vi.fn().mockResolvedValue(new Float32Array(384).fill(0.1)),
+      encode: vi.fn().mockResolvedValue(new Float32Array(768).fill(0.1)),
       encodeWithMetadata: vi.fn().mockResolvedValue({
-        vector: new Float32Array(384).fill(0.1) as EmbeddingVector,
+        vector: new Float32Array(768).fill(0.1) as EmbeddingVector,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       }),
       dispose: vi.fn(),
     };

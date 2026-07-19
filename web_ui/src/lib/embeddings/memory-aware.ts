@@ -78,8 +78,8 @@ export function getMemoryBudget(): MemoryBudget {
 export function selectModelTier(memoryMB: number): ModelTierConfig {
   if (memoryMB >= 8192) {
     return {
-      embeddingModel: 'bge-small-en-v1.5',
-      embeddingDimension: 384,
+      embeddingModel: 'snowflake-arctic-embed-m-v1.5',
+      embeddingDimension: 768,
       rerankingEnabled: true,
       maxChunkCount: 10000,
     };
@@ -87,16 +87,16 @@ export function selectModelTier(memoryMB: number): ModelTierConfig {
 
   if (memoryMB >= 4096) {
     return {
-      embeddingModel: 'bge-small-en-v1.5',
-      embeddingDimension: 384,
+      embeddingModel: 'snowflake-arctic-embed-m-v1.5',
+      embeddingDimension: 768,
       rerankingEnabled: false,
       maxChunkCount: 5000,
     };
   }
 
   return {
-    embeddingModel: 'bge-small-en-v1.5',
-    embeddingDimension: 384,
+    embeddingModel: 'snowflake-arctic-embed-m-v1.5',
+    embeddingDimension: 768,
     rerankingEnabled: false,
     maxChunkCount: 1000,
   };

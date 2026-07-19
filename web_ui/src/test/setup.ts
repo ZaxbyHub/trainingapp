@@ -62,7 +62,8 @@ if (typeof window !== 'undefined' && !('IntersectionObserver' in window)) {
 // basic messages. Tests that need real Worker behavior should mock the
 // embedding module instead.
 if (typeof Worker === 'undefined') {
-  const EMBEDDING_DIMENSIONS = 384;
+  // Issue #37 R9: arctic-embed-m-v1.5 is 768-dim (was bge-small 384).
+  const EMBEDDING_DIMENSIONS = 768;
   class WorkerStub {
     private _onmessage: ((event: MessageEvent) => void) | null = null;
     private _onerror: ((event: ErrorEvent) => void) | null = null;

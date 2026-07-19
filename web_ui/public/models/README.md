@@ -11,21 +11,20 @@ self-contained, air-gapped / STIG-scannable archive.
 public/models/
 ├── manifest.json                     # version + checksums of what should be here
 ├── embeddings/
-│   └── bge-small-en-v1.5/            # Transformers.js model, addressed as embeddings/bge-small-en-v1.5
+│   └── snowflake-arctic-embed-m-v1.5/  # Issue #37 R9: 768-dim (was bge-small 384-dim)
 │       ├── config.json
 │       ├── tokenizer.json
 │       ├── tokenizer_config.json
-│       └── onnx/model.onnx
+│       └── onnx/model_quantized.onnx    # q8 ONNX (~110MB); dtype:'q8' resolves to this name
 ├── ort/                              # ONNX Runtime WASM (env.backends.onnx.wasm.wasmPaths)
 │   ├── ort-wasm-simd-threaded.jsep.wasm   # the JSEP build transformers.js v3 actually fetches
 │   └── ort-wasm-simd-threaded.jsep.mjs    # its ESM loader (also fetched same-origin)
 ├── reranker/                         # REQUIRED cross-encoder reranker (Issue #37)
-│   └── ms-marco-MiniLM-L-6-v2/       # prepare-models fails if absent; --no-reranker opts out for CI
-│       ├── config.json
+│   └── ettin-reranker-32m-v1/        # Issue #37 R9: ModernBERT (was ms-marco-MiniLM)
+│       ├── config.json               # prepare-models fails if absent; --no-reranker opts out for CI
 │       ├── tokenizer.json
 │       ├── tokenizer_config.json
-│       └── onnx/model_quantized.onnx # q8 ONNX; transformers.js dtype:'q8' resolves to this
-│                                      # exact name (NOT model.onnx — see PACKAGING.md §2)
+│       └── onnx/model_quantized.onnx # q8 ONNX (~33-36MB); dtype:'q8' resolves to this name
 ├── wllama/                           # wllama WASM runtime (browser LLM engine)
 │   ├── wasm/wllama.wasm              # passed to wllama as AssetsPathConfig.default
 │   └── compat/                       # offline fallback for browsers w/o JSPI/Mem64

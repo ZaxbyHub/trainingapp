@@ -50,8 +50,8 @@ describe('EmbeddingService', () => {
     // Reset the mock callable to default successful state
     mockPipelineCallable.mockReset();
     mockPipelineCallable.mockResolvedValue({
-      data: new Float32Array(384).fill(0.1),
-      dims: [384],
+      data: new Float32Array(768).fill(0.1),
+      dims: [768],
     });
     // Add dispose as a method on the callable itself
     mockPipelineCallable.dispose = mockDispose;
@@ -77,10 +77,10 @@ describe('EmbeddingService', () => {
   });
 
   /**
-   * Helper: Create a valid 384-dim mock embedding
+   * Helper: Create a valid 768-dim mock embedding
    */
   const createMockEmbedding = (): Float32Array => {
-    return new Float32Array(384).fill(0.1);
+    return new Float32Array(768).fill(0.1);
   };
 
   /**
@@ -89,7 +89,7 @@ describe('EmbeddingService', () => {
   const setupPipelineMock = (embedding: Float32Array = createMockEmbedding()) => {
     mockPipelineCallable.mockResolvedValue({
       data: embedding,
-      dims: [384],
+      dims: [768],
     });
   };
 
@@ -122,7 +122,7 @@ describe('EmbeddingService', () => {
       expect(env.allowRemoteModels).toBe(false);
       expect(env.allowLocalModels).toBe(true);
       // Models resolved from the locally packaged base (/models); the embedding
-      // pipeline path is `embeddings/bge-small-en-v1.5` relative to this.
+      // pipeline path is `embeddings/snowflake-arctic-embed-m-v1.5` relative to this.
       expect(env.localModelPath).toBe('/models');
       // ORT WASM served locally, not from jsdelivr. Under vitest (DEV=true),
       // wasmPaths points at node_modules for Vite dev; in prod it's /models/ort/.
@@ -197,8 +197,8 @@ describe('EmbeddingService', () => {
       await instance.initialize();
 
       const info = instance.getModelInfo();
-      expect(info.name).toBe('BAAI/bge-small-en-v1.5');
-      expect(info.dimensions).toBe(384);
+      expect(info.name).toBe('Snowflake/snowflake-arctic-embed-m-v1.5');
+      expect(info.dimensions).toBe(768);
       expect(info.cached).toBe(true);
     });
   });
@@ -269,7 +269,7 @@ describe('EmbeddingService', () => {
         await slowInit;
         return {
           data: createMockEmbedding(),
-          dims: [384],
+          dims: [768],
         };
       });
 
@@ -292,7 +292,7 @@ describe('EmbeddingService', () => {
       await expect(instance.encode('hello')).rejects.toThrow('EmbeddingService not initialized');
     });
 
-    it('returns 384-dimensional Float32Array via Worker', async () => {
+    it('returns 768-dimensional Float32Array via Worker', async () => {
       // R8: encoding now runs inside a Web Worker. The CLS pooling assertion
       // is covered inside embedding.worker.ts which passes
       // { pooling: 'cls', normalize: true }.
@@ -300,7 +300,7 @@ describe('EmbeddingService', () => {
       await instance.initialize();
       const result = await instance.encode('hello world');
       expect(result).toBeInstanceOf(Float32Array);
-      expect(result.length).toBe(384);
+      expect(result.length).toBe(768);
     });
 
     it('throws error for empty text', async () => {
@@ -336,7 +336,7 @@ describe('EmbeddingService', () => {
       expect(result).toEqual([]);
     });
 
-    it('returns array of 384-dim embeddings', async () => {
+    it('returns array of 768-dim embeddings', async () => {
       const embedding = createMockEmbedding();
       setupBatchPipelineMock(embedding);
       const instance = EmbeddingService.getInstance();
@@ -348,7 +348,7 @@ describe('EmbeddingService', () => {
       expect(results).toHaveLength(3);
       for (const result of results) {
         expect(result).toBeInstanceOf(Float32Array);
-        expect(result.length).toBe(384);
+        expect(result.length).toBe(768);
       }
     });
 
@@ -365,7 +365,7 @@ describe('EmbeddingService', () => {
       expect(results).toHaveLength(10);
       results.forEach((v) => {
         expect(v).toBeInstanceOf(Float32Array);
-        expect(v.length).toBe(384);
+        expect(v.length).toBe(768);
       });
     });
 
@@ -419,8 +419,8 @@ describe('EmbeddingService', () => {
     it('returns model info with default cached=false', () => {
       const instance = EmbeddingService.getInstance();
       const info = instance.getModelInfo();
-      expect(info.name).toBe('BAAI/bge-small-en-v1.5');
-      expect(info.dimensions).toBe(384);
+      expect(info.name).toBe('Snowflake/snowflake-arctic-embed-m-v1.5');
+      expect(info.dimensions).toBe(768);
       expect(info.cached).toBe(false);
     });
 

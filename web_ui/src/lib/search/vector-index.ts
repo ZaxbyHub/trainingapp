@@ -1,6 +1,7 @@
 /**
  * HNSW Vector Index using EdgeVec (Rust/WASM) with IndexedDB persistence.
- * Provides efficient approximate k-NN search for 384-dimensional embeddings.
+ * Provides efficient approximate k-NN search for 768-dimensional embeddings
+ * (snowflake-arctic-embed-m-v1.5; was 384-dim bge-small-en-v1.5 pre-R9).
  * Designed for offline-first browser usage on 12th-gen i5 / 16GB RAM.
  */
 
@@ -29,7 +30,11 @@ const INDEX_NAME = DB_NAMES.vector;
  * it is distinct from the IndexedDB open-schema version (the `1` passed to
  * indexedDB.open below), which does not change here.
  */
-export const VECTOR_INDEX_VERSION = 2;
+// Issue #37 R9: bumped 2 → 3 for the snowflake-arctic-embed-m-v1.5 swap (768-
+// dim embedding space, incompatible with the prior bge-small 384-dim vectors).
+// A persisted corpus from version 2 is discarded and the re-index flag set so
+// the UI prompts the user to re-add documents (no production users per issue §4).
+export const VECTOR_INDEX_VERSION = 3;
 /** localStorage flag set when a version mismatch invalidates the stored corpus,
  *  so the UI can show a one-time "re-add your documents" notice. */
 const REINDEX_FLAG_KEY = 'rag-reindex-required';
@@ -38,7 +43,7 @@ const REINDEX_FLAG_KEY = 'rag-reindex-required';
  * Default configuration for the vector index.
  */
 const DEFAULT_CONFIG: VectorIndexConfig = {
-  dimension: 384,
+  dimension: 768,
   metric: 'cosine',
   maxElements: 100000,
   efConstruction: 200,

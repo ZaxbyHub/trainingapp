@@ -1,7 +1,8 @@
 /**
  * Cross-encoder reranking service using Transformers.js.
  * Conditionally activates for small document sets.
- * Uses cross-encoder/ms-marco-MiniLM-L-6-v2 model for relevance scoring.
+ * Uses cross-encoder/ettin-reranker-32m-v1 model (ModernBERT) for relevance scoring.
+ * Issue #37 R9 swapped from ms-marco-MiniLM-L-6-v2 (+7 nDCG@10 on MTEB-eng-v2).
  *
  * Scoring (Issue #37 R1b): the model is a single-logit cross-encoder whose
  * relevance score is `sigmoid(logit)` per its model card. We bypass the
@@ -17,7 +18,7 @@ import { RERANKER_MODEL_PATH } from '../models/model-manifest';
 import { configureOfflineEnv } from '../models/offline-env';
 
 // Cross-encoder reranker is loaded OFFLINE from the locally packaged path
-// (RERANKER_MODEL_PATH -> /models/reranker/ms-marco-MiniLM-L-6-v2).
+// (RERANKER_MODEL_PATH -> /models/reranker/ettin-reranker-32m-v1).
 
 /**
  * Pathological-input safety bound on `canRerank`. The real per-query latency
@@ -31,7 +32,7 @@ const MAX_CHUNK_COUNT = 500;
  * `rerank()` independently of {@link canRerank}. With Issue #37 R2's
  * candidate-multiplier over-fetch, the fused union can reach ~128 candidates on
  * the quality preset; reranking all of them would be ~11 sequential WASM
- * batches of a 6-layer MiniLM (2-5s on the target i5). Capping at 50 keeps
+ * batches of a ~32M-param ModernBERT reranker (2-5s on the target i5). Capping at 50 keeps
  * per-query reranker cost bounded while still covering the post-R2 promotion
  * window (the cross-encoder's top-K lives in the top of the fused list with
  * high probability because both legs already ranked them highly).
@@ -174,9 +175,9 @@ export class RerankerService {
    * the logits, which collapses a single-logit cross-encoder's output to a
    * constant 1.0 for every pair (no discrimination). Calling the model directly
    * lets us apply `sigmoid` to the single relevance logit, which is the scoring
-   * function the model was trained for (per the ms-marco-MiniLM-L-6-v2 model
-   * card). `dtype: 'q8'` ships a ~23MB quantized ONNX suitable for a 6-layer
-   * reranker on CPU WASM.
+   * function the model was trained for (per the ettin-reranker-32m-v1 model
+   * card, num_labels=1). `dtype: 'q8'` ships a ~33-36MB quantized ONNX suitable
+   * for a ~32M-param ModernBERT reranker on CPU WASM.
    *
    * NOTE on the packaged filename: transformers.js maps `dtype:'q8'` to the
    * `model_quantized.onnx` filename (DATA_TYPES.q8 → '_quantized' suffix). The

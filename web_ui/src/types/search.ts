@@ -25,7 +25,7 @@ export interface SearchResult {
  * Configuration for the HNSW vector index.
  */
 export interface VectorIndexConfig {
-  /** Dimensionality of embedding vectors (384 for bge-small-en-v1.5) */
+  /** Dimensionality of embedding vectors (768 for snowflake-arctic-embed-m-v1.5) */
   dimension: number;
   /** Distance metric for similarity search */
   metric: 'cosine' | 'l2';

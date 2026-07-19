@@ -114,7 +114,7 @@ import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../h
 
 // --- Test Data ---
 
-const createMockEmbedding = (): EmbeddingVector => new Float32Array(384).fill(0.1);
+const createMockEmbedding = (): EmbeddingVector => new Float32Array(768).fill(0.1);
 
 const createMockSearchResults = (count: number, startDocId = 1): SearchResult[] =>
   Array.from({ length: count }, (_, i) => ({
@@ -184,7 +184,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
 
     mockVectorIndex.search.mockResolvedValue(vectorResults);
@@ -262,7 +262,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(vectorResults);
     mockKeywordIndex.search.mockReturnValue(keywordResults);
@@ -279,7 +279,7 @@ describe('RAGOrchestrator', () => {
       events.push(event);
     }
 
-    // Verify embedding was called with the BGE retrieval-instruction prefix
+    // Verify embedding was called with the query retrieval-instruction prefix
     // prepended to the query (F8 — query side only; passages stay un-prefixed).
     expect(mockEmbeddingService.encodeWithMetadata).toHaveBeenCalledWith(
       'Represent this sentence for searching relevant passages: ' + question
@@ -319,7 +319,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(vectorResults);
     mockKeywordIndex.search.mockReturnValue(keywordResults);
@@ -348,7 +348,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(vectorResults);
     mockKeywordIndex.search.mockReturnValue(keywordResults);
@@ -382,7 +382,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(vectorResults);
     mockKeywordIndex.search.mockReturnValue(keywordResults);
@@ -418,7 +418,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(vectorResults);
     mockKeywordIndex.search.mockReturnValue(keywordResults);
@@ -452,7 +452,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(vectorResults);
     mockKeywordIndex.search.mockReturnValue(keywordResults);
@@ -525,7 +525,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(chunks);
     mockKeywordIndex.search.mockReturnValue([]);
@@ -565,7 +565,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(chunks);
     mockKeywordIndex.search.mockReturnValue([]);
@@ -608,7 +608,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(chunks);
     mockKeywordIndex.search.mockReturnValue([]);
@@ -647,7 +647,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     // Vector search throws
     mockVectorIndex.search.mockRejectedValue(new Error('Vector search failed'));
@@ -684,7 +684,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(vectorResults);
     // Keyword search throws
@@ -767,7 +767,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(chunks);
     mockKeywordIndex.search.mockReturnValue([]);
@@ -823,7 +823,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(chunks);
     mockKeywordIndex.search.mockReturnValue([]);
@@ -854,7 +854,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.search.mockResolvedValue(chunks);
     mockKeywordIndex.search.mockReturnValue([]);
@@ -889,7 +889,7 @@ describe('RAGOrchestrator', () => {
     mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
       vector: mockEmbedding,
       text: question,
-      dimensions: 384,
+      dimensions: 768,
     });
     mockVectorIndex.isReady.mockReturnValue(false);
     mockKeywordIndex.search.mockReturnValue([]);
@@ -943,7 +943,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: question,
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue(chunks);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -992,7 +992,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: question,
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue(chunks);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1015,7 +1015,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: question,
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue(chunks);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1045,7 +1045,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue([]);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1075,7 +1075,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       const weak = [{ docId: 'd', chunkIndex: 0, score: 0.0001, text: 't' }];
       mockVectorIndex.search.mockResolvedValue(weak);
@@ -1100,7 +1100,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue([]);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1128,7 +1128,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue([]);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1150,7 +1150,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       // One strong hit (0.9) and one weak hit (0.1, below the 0.4 floor).
       const hits = [
@@ -1180,7 +1180,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       // Fused list: 3 chunks, the cross-encoder's favorite is currently at the
       // BOTTOM (index 2).
@@ -1233,7 +1233,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue(fused);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1256,7 +1256,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue([]);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1270,7 +1270,7 @@ describe('RAGOrchestrator', () => {
       );
     });
 
-    test('F8: the BGE prefix lives ONLY in the query path (passages un-prefixed, PRR-007)', async () => {
+    test('F8: the query prefix lives ONLY in the query path (passages un-prefixed, PRR-007)', async () => {
       // The prefix is orchestrator-local: it is prepended at the query
       // encodeWithMetadata call site and NOWHERE else. The passage-ingestion
       // path (DocumentsPage -> EmbeddingService.encodeBatch) must receive raw
@@ -1281,7 +1281,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue([]);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1323,7 +1323,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue(fused);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1348,7 +1348,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue(small);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1383,7 +1383,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       mockVectorIndex.search.mockResolvedValue(fused);
       mockKeywordIndex.search.mockReturnValue([]);
@@ -1434,7 +1434,7 @@ describe('RAGOrchestrator', () => {
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
         vector: mockEmbedding,
         text: 'q',
-        dimensions: 384,
+        dimensions: 768,
       });
       // Empty corpus — the condition that would normally trigger F2 abstention.
       mockVectorIndex.search.mockResolvedValue([]);

@@ -40,7 +40,10 @@ type FeatureExtractionPipeline = (input: string | string[], options: {
 
 let pipeline: FeatureExtractionPipeline | null = null;
 let modelPath: string | null = null;
-let dimensions = 384;
+// Issue #37 R9: arctic-embed-m-v1.5 is 768-dim (was bge-small 384). The init
+// message overwrites this with EMBEDDING_DIMENSIONS from the service, so the
+// default only matters before init resolves.
+let dimensions = 768;
 
 type InboundMessage =
   | { kind: 'init'; modelPath: string; dimensions: number }

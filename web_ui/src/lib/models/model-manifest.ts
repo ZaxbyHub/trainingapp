@@ -50,15 +50,17 @@ function resolveAbsoluteBase(): string {
 /**
  * Absolute same-origin base under which all packaged models live. Also the value
  * of Transformers.js `env.localModelPath`, so every model is addressed by a path
- * RELATIVE to it (e.g. `embeddings/bge-small-en-v1.5`).
+ * RELATIVE to it (e.g. `embeddings/snowflake-arctic-embed-m-v1.5`).
  */
 export const MODELS_BASE = `${resolveAbsoluteBase()}/models`.replace(/\/+/g, '/');
 
 /** Absolute base for embedding model files (used by the readiness gate). */
 export const EMBEDDING_MODELS_BASE = `${MODELS_BASE}/embeddings`;
 
-/** Folder name of the packaged embedding model. */
-export const EMBEDDING_MODEL_DIR = 'bge-small-en-v1.5';
+/** Folder name of the packaged embedding model.
+ *  Issue #37 R9: snowflake-arctic-embed-m-v1.5 (768-dim, +3.5 nDCG@10 over
+ *  bge-small on MTEB-v1). Was 'bge-small-en-v1.5' (384-dim). */
+export const EMBEDDING_MODEL_DIR = 'snowflake-arctic-embed-m-v1.5';
 
 /** Path passed to `pipeline(task, ...)` — relative to `env.localModelPath`. */
 export const EMBEDDING_MODEL_PATH = `embeddings/${EMBEDDING_MODEL_DIR}`;
@@ -66,8 +68,12 @@ export const EMBEDDING_MODEL_PATH = `embeddings/${EMBEDDING_MODEL_DIR}`;
 /** Absolute base for reranker model files (used by the readiness gate). */
 export const RERANKER_MODELS_BASE = `${MODELS_BASE}/reranker`;
 
-/** Folder name of the packaged cross-encoder reranker model. */
-export const RERANKER_MODEL_DIR = 'ms-marco-MiniLM-L-6-v2';
+/** Folder name of the packaged cross-encoder reranker model.
+ *  Issue #37 R9: cross-encoder/ettin-reranker-32m-v1 (ModernBERT, +7 nDCG@10
+ *  over ms-marco-MiniLM-L-6-v2 on MTEB-eng-v2). Was 'ms-marco-MiniLM-L-6-v2'.
+ *  transformers.js 3.8.1 ships ModernBertForSequenceClassification; num_labels=1
+ *  keeps the sigmoid scoring valid. */
+export const RERANKER_MODEL_DIR = 'ettin-reranker-32m-v1';
 
 /** Path passed to `pipeline(task, ...)` — relative to `env.localModelPath`. */
 export const RERANKER_MODEL_PATH = `reranker/${RERANKER_MODEL_DIR}`;
@@ -128,7 +134,7 @@ export type PackagedModelKind = 'embedding' | 'llm' | 'runtime' | 'reranker';
  * `path` is an absolute, same-origin URL path under MODELS_BASE.
  */
 export interface PackagedModelFile {
-  /** Same-origin absolute path, e.g. `/models/embeddings/bge-small-en-v1.5/onnx/model.onnx`. */
+  /** Same-origin absolute path, e.g. `/models/embeddings/snowflake-arctic-embed-m-v1.5/onnx/model.onnx`. */
   path: string;
   /** Whether the model is unusable without this file (vs an optional asset). */
   required: boolean;
@@ -141,7 +147,7 @@ export interface PackagedModelFile {
  * operator intentionally excluded for this build — see
  * {@link EXCLUDED_MODEL_GROUPS}).
  */
-export type PackagedModelGroup = 'core' | 'optional' | 'llm' | 'reranker';
+export type PackagedModelGroup = 'core' | 'optional' | 'llm' | 'reranker' | 'embedding';
 
 /**
  * Declarative description of one packaged model and the files it needs.
@@ -202,7 +208,7 @@ export const EXCLUDED_MODEL_GROUPS: ReadonlySet<PackagedModelGroup> = new Set(
   ((import.meta.env.VITE_EXCLUDE_MODEL_GROUPS as string | undefined) ?? '')
     .split(',')
     .map((g) => g.trim().toLowerCase())
-    .filter((g): g is PackagedModelGroup => g === 'core' || g === 'optional' || g === 'llm' || g === 'reranker')
+    .filter((g): g is PackagedModelGroup => g === 'core' || g === 'optional' || g === 'llm' || g === 'reranker' || g === 'embedding')
 );
 
 /**

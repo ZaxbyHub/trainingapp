@@ -356,7 +356,7 @@ describe('DocumentsPage search index integration', () => {
       mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
       mockEmbeddingService.isReady.mockReturnValue(true);
       mockVectorIndex.isReady.mockReturnValue(true);
-      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
+      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(768).fill(0)]);
 
       const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
@@ -455,7 +455,7 @@ describe('DocumentsPage search index integration', () => {
       mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
       mockEmbeddingService.isReady.mockReturnValue(true);
       mockVectorIndex.isReady.mockReturnValue(true);
-      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
+      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(768).fill(0)]);
 
       const { unmount, container } = render(<ToastProvider><DocumentsPage /></ToastProvider>);
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
@@ -587,7 +587,7 @@ describe('DocumentsPage search index integration', () => {
       mockEmbeddingService.encodeBatch.mockImplementation(
         async (texts: string[]) => {
           encodeCalled = true;
-          return texts.map(() => new Array(384).fill(0));
+          return texts.map(() => new Array(768).fill(0));
         }
       );
       mockVectorIndex.save.mockImplementation(async () => {
@@ -778,7 +778,7 @@ describe('DocumentsPage search index integration', () => {
       mockEmbeddingService.isReady.mockReturnValue(true);
       mockVectorIndex.isReady.mockReturnValue(true);
       mockEnsureEmbeddingServiceReady.mockResolvedValue(true);
-      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(384).fill(0)]);
+      mockEmbeddingService.encodeBatch.mockResolvedValue([new Array(768).fill(0)]);
       mockVectorIndex.addBatch.mockRejectedValueOnce(new Error('vector index write failed'));
 
       const { unmount } = render(<ToastProvider><DocumentsPage /></ToastProvider>);

@@ -58,6 +58,11 @@ const SKIP_LLM = process.argv.slice(2).includes('--no-llm');
 // the two MUST stay in sync so a CI build that skips staging the reranker
 // also skips validating it. Production packaging omits both flags.
 const SKIP_RERANKER = process.argv.slice(2).includes('--no-reranker');
+// `--no-embedder` (Issue #37 R9): skip the embedding model group. The arctic
+// q8 ONNX is operator-acquired (not in the repo); CI builds with this flag
+// skip both staging AND validation of the embedding group. Production
+// packaging omits it.
+const SKIP_EMBEDDER = process.argv.slice(2).includes('--no-embedder');
 // `--airgap` (Issue #37 P2) enables airgap-specific checks: scanning emitted
 // JS chunks for WebLLM symbols (`CreateMLCEngine`, `prebuiltMLCAppConfig`)
 // and chunk names matching /web-?llm/i. A non-airgap build (default) skips
@@ -148,6 +153,9 @@ if (existsSync(MANIFEST)) {
     // the repo); CI builds with --no-reranker skip both staging AND validation
     // of the reranker group. Production packaging (no flag) enforces it.
     if (SKIP_RERANKER && model.kind === 'reranker') continue;
+    // --no-embedder (Issue #37 R9): the arctic q8 ONNX is operator-acquired;
+    // CI skips validation of the embedding group.
+    if (SKIP_EMBEDDER && model.kind === 'embedding') continue;
     // `files` is the v2 schema; fall back to legacy `required` array for safety.
     const files = Array.isArray(model.files)
       ? model.files
@@ -203,6 +211,13 @@ if (existsSync(MANIFEST)) {
     process.stderr.write(
       '[validate-build] WARN: --no-reranker passed — the cross-encoder reranker group was NOT validated. ' +
         'The resulting artifact will degrade to fused results (no neural reranking). ' +
+        'Production packaging MUST omit this flag.\n'
+    );
+  }
+  if (SKIP_EMBEDDER) {
+    process.stderr.write(
+      '[validate-build] WARN: --no-embedder passed — the embedding model group was NOT validated. ' +
+        'The resulting artifact has NO semantic search capability. ' +
         'Production packaging MUST omit this flag.\n'
     );
   }

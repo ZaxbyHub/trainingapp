@@ -3,15 +3,15 @@
   "description": "Single source of truth for the packaged model/runtime assets required for fully-offline operation. Paths are RELATIVE to public/models/ (i.e. to the served /models dir). At runtime, src/lib/models/model-manifest.ts imports this file and prefixes each path with the deploy-aware absolute MODELS_BASE. Weight binaries are assembled at packaging time (see PACKAGING.md); validate-build.mjs reads this same file to gate the produced dist/.",
   "models": [
     {
-      "id": "bge-small-en-v1.5",
-      "label": "BAAI/bge-small-en-v1.5 (embeddings)",
+      "id": "snowflake-arctic-embed-m-v1.5",
+      "label": "Snowflake/snowflake-arctic-embed-m-v1.5 (embeddings, 768-dim)",
       "kind": "embedding",
-      "group": "core",
+      "group": "embedding",
       "files": [
-        { "path": "embeddings/bge-small-en-v1.5/onnx/model.onnx", "required": true },
-        { "path": "embeddings/bge-small-en-v1.5/tokenizer.json", "required": true },
-        { "path": "embeddings/bge-small-en-v1.5/config.json", "required": true },
-        { "path": "embeddings/bge-small-en-v1.5/tokenizer_config.json", "required": true }
+        { "path": "embeddings/snowflake-arctic-embed-m-v1.5/onnx/model_quantized.onnx", "required": true, "comment": "Issue #37 R9: q8 ONNX (~110MB). transformers.js dtype:'q8' resolves to model_quantized.onnx (same DATA_TYPES.q8 -> '_quantized' rule as the reranker). 768-dim (was bge-small 384). +3.5 nDCG@10 over bge-small on MTEB-v1." },
+        { "path": "embeddings/snowflake-arctic-embed-m-v1.5/tokenizer.json", "required": true },
+        { "path": "embeddings/snowflake-arctic-embed-m-v1.5/config.json", "required": true },
+        { "path": "embeddings/snowflake-arctic-embed-m-v1.5/tokenizer_config.json", "required": true }
       ]
     },
     {
@@ -25,15 +25,15 @@
       ]
     },
     {
-      "id": "ms-marco-MiniLM-L-6-v2",
-      "label": "cross-encoder/ms-marco-MiniLM-L-6-v2 (reranker)",
+      "id": "ettin-reranker-32m-v1",
+      "label": "cross-encoder/ettin-reranker-32m-v1 (reranker, ModernBERT)",
       "kind": "reranker",
       "group": "core",
       "files": [
-        { "path": "reranker/ms-marco-MiniLM-L-6-v2/onnx/model_quantized.onnx", "required": true, "comment": "q8 ONNX — transformers.js dtype:'q8' resolves to model_quantized.onnx (DATA_TYPES.q8 -> '_quantized' suffix). A non-quantized model.onnx would be ignored at runtime." },
-        { "path": "reranker/ms-marco-MiniLM-L-6-v2/tokenizer.json", "required": true },
-        { "path": "reranker/ms-marco-MiniLM-L-6-v2/config.json", "required": true },
-        { "path": "reranker/ms-marco-MiniLM-L-6-v2/tokenizer_config.json", "required": true }
+        { "path": "reranker/ettin-reranker-32m-v1/onnx/model_quantized.onnx", "required": true, "comment": "Issue #37 R9: q8 ONNX (~33-36MB). ModernBERT model; transformers.js 3.8.1 dispatches via ModernBertForSequenceClassification. num_labels=1 → sigmoid scoring (unchanged from ms-marco). +7 nDCG@10 over ms-marco-MiniLM on MTEB-eng-v2." },
+        { "path": "reranker/ettin-reranker-32m-v1/tokenizer.json", "required": true },
+        { "path": "reranker/ettin-reranker-32m-v1/config.json", "required": true },
+        { "path": "reranker/ettin-reranker-32m-v1/tokenizer_config.json", "required": true }
       ]
     },
     {
