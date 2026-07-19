@@ -394,6 +394,42 @@ describe('WebLLMService', () => {
     );
   });
 
+  test('Issue #40 RC2: forwards frequencyPenalty/presencePenalty as OpenAI-style penalties (no repeat_penalty — WebLLM lacks it)', async () => {
+    const mockResponse = {
+      choices: [{ message: { content: 'response' } }],
+    };
+
+    const mockEngine = createMockEngine({
+      chat: {
+        completions: {
+          create: vi.fn().mockResolvedValue(mockResponse),
+        },
+      },
+    });
+
+    mockCreateMLCEngine.mockResolvedValue(mockEngine);
+
+    const service = WebLLMService.getInstance();
+    await service.initialize();
+
+    await service.generateComplete([{ role: 'user', content: 'hi' }], {
+      frequencyPenalty: 0.3,
+      presencePenalty: 0.2,
+      repeatPenalty: 1.1, // WebLLM has no repeat_penalty equivalent — must be dropped.
+    });
+
+    expect(mockEngine.chat.completions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        frequency_penalty: 0.3,
+        presence_penalty: 0.2,
+      })
+    );
+    // WebLLM (MLC) has NO repeat_penalty — confirm it is not forwarded.
+    const call = mockEngine.chat.completions.create.mock.calls[0][0] as Record<string, unknown>;
+    expect(call).not.toHaveProperty('repeat_penalty');
+    expect(call).not.toHaveProperty('penalty_repeat');
+  });
+
   // -------------------------------------------------------------------------
   // interrupt() calls engine.interruptGenerate()
   // -------------------------------------------------------------------------

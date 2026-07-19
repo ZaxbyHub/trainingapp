@@ -58,6 +58,45 @@ function toWllamaMessages(
 }
 
 /**
+ * Issue #40 RC2: translate our camelCase LLMGenerateOptions penalty fields into
+ * wllama's SamplingParams names (penalty_*). Returns an empty object when no
+ * penalty is set, so callers that pass no penalties get unchanged default
+ * behavior (no penalty_last_n lookback window applied). When ANY penalty is set,
+ * penalty_last_n: -1 enables full-context lookback — appropriate for this small
+ * model / small context window.
+ *
+ * NOTE: wllama's createChatCompletion uses `penalty_repeat` / `penalty_freq` /
+ * `penalty_present` (from SamplingParams), NOT the OpenAI-style
+ * `repeat_penalty` / `frequency_penalty`. The latter exist only on
+ * RawCompletionParams, which this service does not use. Getting this wrong
+ * silently no-ops the anti-repetition fix.
+ *
+ * The return type is a NARROW record of only the penalty fields (not the whole
+ * ChatCompletionParams) so spreading it into the createChatCompletion literal
+ * does not widen the literal's `stream` property and trigger an overload error.
+ */
+type WllamaPenaltyParams = {
+  penalty_repeat?: number;
+  penalty_freq?: number;
+  penalty_present?: number;
+  penalty_last_n?: number;
+};
+function buildWllamaPenalties(options?: LLMGenerateOptions): WllamaPenaltyParams {
+  const rp = options?.repeatPenalty;
+  const fp = options?.frequencyPenalty;
+  const pp = options?.presencePenalty;
+  if (rp === undefined && fp === undefined && pp === undefined) {
+    return {};
+  }
+  return {
+    penalty_repeat: rp,
+    penalty_freq: fp,
+    penalty_present: pp,
+    penalty_last_n: -1,
+  };
+}
+
+/**
  * HEAD-probe a same-origin asset without downloading it, hardened against the
  * SPA-fallback false positive (Vite dev/preview serve index.html with HTTP 200
  * for any unmatched path). See `src/lib/models/probe.ts`.
@@ -285,6 +324,14 @@ export class WllamaService implements LLMService {
         max_tokens: options?.maxTokens,
         temp: options?.temperature,
         top_p: options?.topP,
+        // Issue #40 RC2: anti-repetition sampling params. wllama's chat path
+        // (createChatCompletion) accepts the SamplingParams names (penalty_*),
+        // NOT the OpenAI-style repeat_penalty/frequency_penalty — using the
+        // wrong names silently no-ops the fix. penalty_last_n: -1 = full-context
+        // lookback (small model, small context — no reason to window). Only set
+        // the lookback when at least one penalty is supplied, so callers that
+        // pass no penalties get unchanged default behavior.
+        ...buildWllamaPenalties(options),
       });
       for await (const chunk of stream) {
         const content = chunk.choices?.[0]?.delta?.content;
@@ -311,6 +358,8 @@ export class WllamaService implements LLMService {
         max_tokens: options?.maxTokens,
         temp: options?.temperature,
         top_p: options?.topP,
+        // Issue #40 RC2: see generate() above.
+        ...buildWllamaPenalties(options),
       });
       return response.choices?.[0]?.message?.content ?? '';
     } finally {

@@ -1488,4 +1488,280 @@ describe('RAGOrchestrator', () => {
       expect(imagePart!.data).toBe(imageData);
     });
   });
+
+  // ========================================================================
+  // Issue #40: conversation memory (RC1), repetition penalty (RC2), query
+  // rewriting (RC3). End-to-end tests at the orchestrator boundary.
+  // ========================================================================
+  describe('Issue #40: conversation memory, repetition penalty, query rewrite', () => {
+    test('RC1: history is threaded into the LLM message array between system and the current user turn', async () => {
+      const question = 'how do I fix it?';
+      const history = [
+        { role: 'user' as const, content: 'How do I order medication in CDP?' },
+        { role: 'assistant' as const, content: 'You cannot order medication without the Order Medications permission.' },
+      ];
+      const mockEmbedding = createMockEmbedding();
+      const chunks = createMockSearchResults(2, 1);
+      const fullAnswer = 'Grant the Order Medications permission.';
+
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: question,
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(chunks);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(chunks);
+
+      let capturedMessages: LLMMessage[] | null = null;
+      mockWebLLMService.generateComplete = vi.fn().mockImplementation(async (messages: LLMMessage[]) => {
+        capturedMessages = messages;
+        return fullAnswer;
+      });
+
+      const orchestrator = new RAGOrchestrator();
+      for await (const _ev of orchestrator.query(question, {
+        history,
+        streamTokens: false,
+        rerank: false,
+      })) {
+        // consume
+      }
+
+      // The message array MUST be: [system, user(history), assistant(history), user(current turn)].
+      expect(capturedMessages).not.toBeNull();
+      expect(capturedMessages!.length).toBe(4);
+      expect(capturedMessages![0].role).toBe('system');
+      expect(capturedMessages![1].role).toBe('user');
+      expect(capturedMessages![1].content).toBe(history[0].content);
+      expect(capturedMessages![2].role).toBe('assistant');
+      expect(capturedMessages![2].content).toBe(history[1].content);
+      expect(capturedMessages![3].role).toBe('user');
+      // The current-turn user message still carries the question + context.
+      const lastUserContent = typeof capturedMessages![3].content === 'string'
+        ? capturedMessages![3].content
+        : '';
+      expect(lastUserContent).toContain(question);
+    });
+
+    test('RC1: without history the message array stays [system, user] (backward compatible)', async () => {
+      const question = 'What is machine learning?';
+      const mockEmbedding = createMockEmbedding();
+      const chunks = createMockSearchResults(2, 1);
+
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: question,
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(chunks);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(chunks);
+
+      let capturedMessages: LLMMessage[] | null = null;
+      mockWebLLMService.generateComplete = vi.fn().mockImplementation(async (messages: LLMMessage[]) => {
+        capturedMessages = messages;
+        return 'answer';
+      });
+
+      const orchestrator = new RAGOrchestrator();
+      for await (const _ev of orchestrator.query(question, { streamTokens: false, rerank: false })) {
+        // consume
+      }
+
+      expect(capturedMessages!.length).toBe(2);
+      expect(capturedMessages![0].role).toBe('system');
+      expect(capturedMessages![1].role).toBe('user');
+    });
+
+    test('RC1 budget: history is charged to reservedTokens (fewer chunks fit when history is present)', async () => {
+      // Two large chunks that would both fit without history. With a long history
+      // consuming budget, the second chunk should be dropped to fit.
+      const question = 'follow up';
+      const longHistory = [
+        { role: 'user' as const, content: 'X'.repeat(20000) },
+        { role: 'assistant' as const, content: 'Y'.repeat(20000) },
+      ];
+      const mockEmbedding = createMockEmbedding();
+      const chunkA: SearchResult = { docId: 'a', chunkIndex: 0, score: 0.9, text: 'A'.repeat(5000) };
+      const chunkB: SearchResult = { docId: 'b', chunkIndex: 0, score: 0.8, text: 'B'.repeat(5000) };
+      const chunks = [chunkA, chunkB];
+
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: question,
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(chunks);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(chunks);
+
+      mockWebLLMService.generateComplete = vi.fn().mockResolvedValue('answer');
+
+      const orchestrator = new RAGOrchestrator();
+      const events: any[] = [];
+      for await (const ev of orchestrator.query(question, {
+        history: longHistory,
+        streamTokens: false,
+        rerank: false,
+        maxTokens: 1024,
+      })) {
+        events.push(ev);
+      }
+
+      const complete = events.find((e) => e.type === 'complete');
+      // With ~40000 chars of history reserved, the context budget shrinks so at
+      // least one of the two 5000-char chunks is dropped (contextTrimmed >= 1).
+      // This proves the history term is in reservedTokens.
+      expect(complete.data.contextTrimmed).toBeGreaterThanOrEqual(1);
+    });
+
+    test('RC2: repeatPenalty/frequencyPenalty/presencePenalty are forwarded to the LLM service (NR1 critical fix)', async () => {
+      const question = 'anti repetition test';
+      const mockEmbedding = createMockEmbedding();
+      const chunks = createMockSearchResults(2, 1);
+
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: question,
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(chunks);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(chunks);
+
+      let capturedOptions: any = null;
+      mockWebLLMService.generateComplete = vi.fn().mockImplementation(async (_messages: LLMMessage[], options?: any) => {
+        capturedOptions = options;
+        return 'answer';
+      });
+
+      const orchestrator = new RAGOrchestrator();
+      for await (const _ev of orchestrator.query(question, {
+        repeatPenalty: 1.1,
+        frequencyPenalty: 0.3,
+        presencePenalty: 0.0,
+        streamTokens: false,
+        rerank: false,
+      })) {
+        // consume
+      }
+
+      // This is the critical assertion: the penalty fields MUST cross the
+      // orchestrator→service boundary. Without the forward (the NR1 fix the
+      // critic caught), these would be absent and the test would fail.
+      expect(capturedOptions).not.toBeNull();
+      expect(capturedOptions.repeatPenalty).toBe(1.1);
+      expect(capturedOptions.frequencyPenalty).toBe(0.3);
+      expect(capturedOptions.presencePenalty).toBe(0.0);
+    });
+
+    test('RC2: streaming generate() also receives penalty options', async () => {
+      const question = 'anti repetition stream test';
+      const mockEmbedding = createMockEmbedding();
+      const chunks = createMockSearchResults(2, 1);
+
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: question,
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(chunks);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(chunks);
+
+      let capturedOptions: any = null;
+      mockWebLLMService.generate = vi.fn().mockImplementation(async function* (_messages: LLMMessage[], options?: any) {
+        capturedOptions = options;
+        yield 'a';
+      });
+
+      const orchestrator = new RAGOrchestrator();
+      for await (const _ev of orchestrator.query(question, {
+        repeatPenalty: 1.1,
+        streamTokens: true,
+        rerank: false,
+      })) {
+        // consume
+      }
+
+      expect(capturedOptions.repeatPenalty).toBe(1.1);
+    });
+
+    test('RC3: a follow-up question is rewritten before embedding/keyword/rerank using history', async () => {
+      const question = 'how do I fix it?';
+      const history = [
+        { role: 'user' as const, content: 'How do I order medication in CDP?' },
+        { role: 'assistant' as const, content: 'You cannot order medication without the Order Medications permission.' },
+      ];
+      const mockEmbedding = createMockEmbedding();
+      const chunks = createMockSearchResults(2, 1);
+
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: question,
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(chunks);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(chunks);
+
+      mockWebLLMService.generateComplete = vi.fn().mockResolvedValue('answer');
+
+      const orchestrator = new RAGOrchestrator();
+      for await (const _ev of orchestrator.query(question, {
+        history,
+        streamTokens: false,
+        rerank: false,
+      })) {
+        // consume
+      }
+
+      // The embedder receives BGE_QUERY_INSTRUCTION + the REWRITTEN query, which
+      // prepends the prior user turn (topical signal). The raw "how do I fix
+      // it?" would never contain "medication".
+      const embedCall = mockEmbeddingService.encodeWithMetadata.mock.calls[0];
+      expect(embedCall[0]).toContain('medication');
+      expect(embedCall[0]).toContain('how do I fix it?');
+
+      // The keyword index receives the rewritten query too.
+      const keywordCall = mockKeywordIndex.search.mock.calls[0];
+      expect(keywordCall[0]).toContain('medication');
+
+      // The `retrieving` event still surfaces the RAW question (UI fidelity).
+      // (Verified implicitly: not asserting the event here; the rewrite is an
+      // internal retrieval concern.)
+    });
+
+    test('RC3: a self-contained first-turn question is NOT rewritten (recall preserved)', async () => {
+      const question = 'What is machine learning?';
+      const mockEmbedding = createMockEmbedding();
+      const chunks = createMockSearchResults(2, 1);
+
+      mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+        vector: mockEmbedding,
+        text: question,
+        dimensions: 384,
+      });
+      mockVectorIndex.search.mockResolvedValue(chunks);
+      mockKeywordIndex.search.mockReturnValue([]);
+      (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(chunks);
+
+      mockWebLLMService.generateComplete = vi.fn().mockResolvedValue('answer');
+
+      // No history → no rewrite possible even if the question looked like a
+      // follow-up. The embedder/keyword index see the raw question.
+      const orchestrator = new RAGOrchestrator();
+      for await (const _ev of orchestrator.query(question, {
+        streamTokens: false,
+        rerank: false,
+      })) {
+        // consume
+      }
+
+      const embedCall = mockEmbeddingService.encodeWithMetadata.mock.calls[0];
+      // The embedder input is BGE_QUERY_INSTRUCTION + the raw question (no prepend).
+      expect(embedCall[0]).toBe('Represent this sentence for searching relevant passages: ' + question);
+    });
+  });
 });
