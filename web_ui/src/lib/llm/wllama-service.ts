@@ -357,7 +357,12 @@ export class WllamaService implements LLMService {
         throw new Error('WllamaService was disposed during initialization');
       }
 
-      this.modelInfo = { modelId, quantization: 'Q4_K_M', sizeBytes: 0, cached: true };
+      // Quantization label reflects the staged GGUF. The Gemma 4 E2B-it weights
+      // are staged as Unsloth's QAT UD-Q4_K_XL (quantization-aware trained,
+      // file_type=Q4_0 with dynamic tensor-precision bumps); see PACKAGING.md.
+      // sizeBytes stays 0 here — actual size is computed by the model-download
+      // layer from the staged file, not hardcoded.
+      this.modelInfo = { modelId, quantization: 'UD-Q4_K_XL (QAT)', sizeBytes: 0, cached: true };
       this.ready = true;
     } catch (error) {
       await this.safeExit();
