@@ -53,16 +53,33 @@ export const DEFAULT_N_CTX = 8192;
  * llama.cpp#22786 all describe Gemma 4 "loads but produces nothing").
  *
  * This override is the macro-free equivalent of the embedded template's actual
- * message-rendering loop (extracted byte-for-byte from tokenizer.chat_template
- * in the GGUF). It uses the SAME turn markers the model was trained on —
- * `<|turn>{role}\n` to open a turn and `<turn|>` to close it (the closing
- * marker has no trailing newline; the next line's `{%-` strip handles
- * whitespace separation, and `<turn|>` tokenizes as a single special token
- * that absorbs surrounding whitespace). System messages are folded into the
- * first user turn via the `system_prefix` kwarg — Gemma 4 has no standalone
- * system role, matching Google's documented prompt structure
- * (https://ai.google.dev/gemma/docs/core/prompt-structure) and the embedded
- * template's own behavior.
+ * message-rendering logic (extracted byte-for-byte from tokenizer.chat_template
+ * in the GGUF at offsets 8185-11200). It produces the EXACT canonical Gemma 4
+ * prompt structure the model was trained on:
+ *
+ *   <bos><|turn>system\n{system content}<turn|>\n
+ *   <|turn>user\n{user content}<turn|>\n
+ *   <|turn>model\n{assistant content}<turn|>\n
+ *   <|turn>model\n   (generation prompt)
+ *
+ * Key structural elements (all verified against the embedded template):
+ *   - `{{- bos_token -}}` at the very start (the embedded template emits this
+ *     unconditionally at offset 8207; wllama substitutes the real BOS token).
+ *   - A dedicated `<|turn>system` turn for the system message (Gemma 4 DOES
+ *     have a system role — confirmed at offset 8255: `{{- '<|turn>system\n' -}}`
+ *     when `messages[0]['role'] in ['system', 'developer']`).
+ *   - Turn markers + newlines emitted via `{{ '<|turn>...\n' }}` string
+ *     literals (the `\n` survives Jinja's whitespace stripping because it is
+ *     inside a string, not template whitespace).
+ *   - `<turn|>\n` closes each turn WITH a trailing newline (offset 11188).
+ *   - `<|turn>model\n` as the generation prompt (offset end).
+ *   - Role mapping: assistant → model (offset 10100); system/user pass through.
+ *
+ * NOTE: PR #48 review (swarm-pr-review run-48 PRR48-001/002) caught that an
+ * earlier commit (ccc97be) claimed to rewrite this template but the edit was
+ * lost — the committed code kept the old system-folding template while
+ * removing the `system_prefix` kwarg threading it relied on, silently dropping
+ * the system prompt. This is the actual canonical rewrite.
  *
  * Multimodal note: image content parts flow through createChatCompletion
  * unchanged; wllama inserts `<|image|>` tokens at the projector boundary.
@@ -70,20 +87,29 @@ export const DEFAULT_N_CTX = 8192;
  * TODO: remove this override once wllama ships a Jinja runtime that supports
  * the macros Gemma 4's embedded template requires.
  */
-const GEMMA4_CHAT_TEMPLATE = `{%- for message in messages -%}
-{%- if message.role == "system" -%}
-{# Gemma 4 has no standalone system turn; fold into first user turn via system_prefix kwarg #}
-{%- elif message.role == "user" -%}
-<|turn>user
-{{ system_prefix if system_prefix and loop.first else "" }}{{ message.content }}<turn|>
-{%- elif message.role == "assistant" -%}
-<|turn>model
-{{ message.content }}<turn|>
-{%- endif -%}
-{%- endfor -%}
-{%- if add_generation_prompt -%}
-<|turn>model
-{%- endif -%}`;
+// The turn markers and their trailing newlines are emitted as Jinja string
+// literals containing the two-character escape sequence `\n` (backslash + n),
+// which Jinja's string parser interprets as a newline at render time. We
+// CANNOT use literal template newlines here because Jinja's `{%- -%}` whitespace
+// stripping would eat them, producing "<|turn>systemYou are..." with no
+// separator. The JS source therefore uses `\\n` (which becomes `\n` —
+// backslash + n — at runtime via JS string escaping), matching how the
+// canonical embedded template emits them (e.g. `{{- '<|turn>system\n' -}}`).
+const GEMMA4_CHAT_TEMPLATE = [
+  '{{- bos_token -}}',
+  '{%- for message in messages -%}',
+  '  {%- if message.role == "system" -%}',
+  '    {{- "<|turn>system\\n" -}}{{ message.content }}{{- "<turn|>\\n" -}}',
+  '  {%- elif message.role == "user" -%}',
+  '    {{- "<|turn>user\\n" -}}{{ message.content }}{{- "<turn|>\\n" -}}',
+  '  {%- elif message.role == "assistant" -%}',
+  '    {{- "<|turn>model\\n" -}}{{ message.content }}{{- "<turn|>\\n" -}}',
+  '  {%- endif -%}',
+  '{%- endfor -%}',
+  '{%- if add_generation_prompt -%}',
+  '  {{- "<|turn>model\\n" -}}',
+  '{%- endif -%}',
+].join('\n');
 
 /**
  * Detect whether a model id refers to a Gemma 4 variant whose embedded chat

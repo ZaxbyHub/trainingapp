@@ -74,10 +74,10 @@ const MODEL_REQUIRED_BYTES: Record<string, number> = {
   // working memory. ~2.3B effective params (~5.1B total w/ PLE), 128K context.
   // QAT (quantization-aware training) replaces the prior post-training Q4_K_M
   // (~2.9 GB) — ~450 MB smaller with comparable-or-better quality. Peak
-  // (without download-blob retention) ~4.3-4.7 GB; budgeted at 4 GB
-  // conservatively (the gate is moot on the 8 GB target box but should not
-  // false-pass on low-RAM boxes).
-  'gemma-4-e2b-it': 4_000_000_000,
+  // (without download-blob retention) ~4.3-4.7 GB; budgeted at 5 GB so the
+  // gate is genuinely conservative (above peak) and rejects low-RAM boxes
+  // that would OOM during generation. The 8 GB target box passes comfortably.
+  'gemma-4-e2b-it': 5_000_000_000,
 };
 
 /**

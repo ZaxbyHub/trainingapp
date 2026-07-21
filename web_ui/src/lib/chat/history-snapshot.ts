@@ -72,10 +72,9 @@ export function buildHistorySnapshot(owningMessages: ChatMessage[]): RAGHistoryT
   // PRR-001: when the cap splits mid-conversation, slice(-N) can land on an
   // assistant-first window (e.g. [u,a,u,a,u,a,u].slice(-6) = [a,u,a,u,a,u]).
   // A leading assistant turn is orphaned context — it has no preceding user
-  // turn in the window — and, under the Gemma 4 chat-template override, it
-  // also mis-targets `loop.first` so a `system_prefix` kwarg would be silently
-  // dropped (the assistant branch has no prefix handling). Drop a leading
-  // assistant turn so the window always opens user-first.
+  // turn in the window, which violates the user/assistant alternation the
+  // chat template expects. Drop a leading assistant turn so the window always
+  // opens user-first.
   while (windowed.length > 1 && windowed[0].role === 'assistant') {
     windowed = windowed.slice(1);
   }

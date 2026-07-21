@@ -298,7 +298,7 @@ describe('WllamaService', () => {
   // override template via LoadModelParams.chat_template + jinja: true. These
   // tests pin the override so the empty-output regression cannot recur.
 
-  it('Gemma 4 chat-template override: injects chat_template + jinja at load time', async () => {
+  it('Gemma 4 chat-template override: injects canonical chat_template + jinja at load time', async () => {
     // The default model id is gemma-4-e2b-it (LLM_MODEL_DIR), so the override
     // must be applied on the default initialize() path.
     const svc = WllamaService.getInstance();
@@ -311,11 +311,19 @@ describe('WllamaService', () => {
         jinja: true,
       })
     );
-    // The override template uses the Gemma 4 turn markers verbatim and folds
-    // the system role into the first user turn via the system_prefix kwarg.
-    // Assert each marker via withCalledWith so we don't index into the mock's
-    // calls tuple (the mock fn is typed as () => undefined, so calls[n][1] is
-    // not statically known to exist).
+    // The override template uses the canonical Gemma 4 prompt structure:
+    // bos_token, dedicated <|turn>system turn, <|turn>user/model turns,
+    // <turn|> turn close with trailing newline, and <|turn>model generation
+    // prompt. Assert each marker via toHaveBeenCalledWith so we don't index
+    // into the mock's calls tuple.
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ chat_template: expect.stringContaining('bos_token') })
+    );
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ chat_template: expect.stringContaining('<|turn>system') })
+    );
     expect(loadModelFromUrl).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ chat_template: expect.stringContaining('<|turn>user') })
@@ -330,7 +338,16 @@ describe('WllamaService', () => {
     );
     expect(loadModelFromUrl).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ chat_template: expect.stringContaining('system_prefix') })
+      expect.objectContaining({ chat_template: expect.stringContaining('add_generation_prompt') })
+    );
+    // PRR48-001 regression guard: the template must NOT reference system_prefix
+    // (the old folding-via-kwarg approach). The canonical template emits a
+    // proper <|turn>system turn instead. Verified via toHaveBeenCalledWith
+    // (the mock fn is typed as () => undefined, so calls[n][1] is not
+    // statically known to exist — toHaveBeenCalledWith matches any call).
+    expect(loadModelFromUrl).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ chat_template: expect.stringContaining('system_prefix') })
     );
   });
 
