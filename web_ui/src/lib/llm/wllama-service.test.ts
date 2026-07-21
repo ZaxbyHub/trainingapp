@@ -334,12 +334,14 @@ describe('WllamaService', () => {
     );
   });
 
-  it('Gemma 4 chat-template override: threads system message via chat_template_kwargs.system_prefix', async () => {
-    // When the override is active, the system message is extracted from the
-    // messages array and threaded via chat_template_kwargs.system_prefix (the
-    // override template folds it into the first user turn). Without this, the
-    // override template has no system role handling and the system prompt
-    // would be silently dropped.
+  it('Gemma 4 chat-template override: system message passes through unchanged (native system turn)', async () => {
+    // The override template emits a proper <|turn>system turn, so the system
+    // message is NOT extracted or threaded via kwargs — it passes through
+    // buildChatArgs unchanged to createChatCompletion, where wllama's Jinja
+    // renders it into the canonical Gemma 4 system turn. This is the key
+    // correctness invariant: if a future change re-introduced system
+    // extraction, the system prompt would be lost (the override template no
+    // longer has a system_prefix kwarg path).
     const svc = WllamaService.getInstance();
     await svc.initialize();
 
@@ -350,12 +352,19 @@ describe('WllamaService', () => {
 
     expect(createChatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
-        chat_template_kwargs: { system_prefix: 'You are a helpful assistant.' },
-        // The system message must be STRIPPED from the messages array so the
-        // override template (which has no system branch) never sees it.
-        messages: [{ role: 'user', content: 'hi' }],
+        // Both messages pass through unchanged — no extraction, no kwargs.
+        messages: [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'hi' },
+        ],
       })
     );
+    // No chat_template_kwargs should be threaded (the template handles system
+    // natively; kwargs are not used).
+    const lastCall = createChatCompletion.mock.calls.at(-1)?.[0] as {
+      chat_template_kwargs?: unknown;
+    };
+    expect(lastCall.chat_template_kwargs).toBeUndefined();
   });
 
   it('Gemma 4 chat-template override: streaming still yields tokens end-to-end', async () => {
@@ -370,25 +379,20 @@ describe('WllamaService', () => {
       tokens.push(t);
     }
     expect(tokens).toEqual(['Hello', ', ', 'world']);
-    // No system message → no chat_template_kwargs should be threaded.
     expect(createChatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({ stream: true })
     );
-    const lastCall = createChatCompletion.mock.calls.at(-1)?.[0] as {
-      chat_template_kwargs?: unknown;
-    };
-    expect(lastCall.chat_template_kwargs).toBeUndefined();
   });
 
-  it('PRR-008: streaming generate() also threads system message via chat_template_kwargs.system_prefix', async () => {
+  it('PRR-008: streaming generate() preserves system message in the messages array', async () => {
     // The streaming path (generate) is the default UI chat path
     // (streamTokens ?? true in rag-orchestrator.ts). The shared buildChatArgs
     // helper is tested via generateComplete above, but generate() has its OWN
-    // chat_template_kwargs spread at the call site (mirrored line). This test
-    // pins that the streaming spread is present, mirroring the Issue #40 RC2
-    // penalty-streaming test pattern. If the streaming-path spread were
-    // dropped, the system prompt would be stripped (by buildChatArgs) but
-    // never threaded → silently lost in the default UI path.
+    // call site. This test pins that the streaming path also passes the
+    // system message through unchanged (mirroring the Issue #40 RC2
+    // penalty-streaming test pattern). If the streaming path were ever
+    // diverged to drop/extract system, the system prompt would be silently
+    // lost in the default UI path.
     const svc = WllamaService.getInstance();
     await svc.initialize();
 
@@ -403,10 +407,11 @@ describe('WllamaService', () => {
     expect(createChatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
         stream: true,
-        chat_template_kwargs: { system_prefix: 'You are a helpful assistant.' },
-        // The system message must be STRIPPED from the messages array so the
-        // override template (which has no system branch) never sees it.
-        messages: [{ role: 'user', content: 'hi' }],
+        // System message passes through unchanged on the streaming path too.
+        messages: [
+          { role: 'system', content: 'You are a helpful assistant.' },
+          { role: 'user', content: 'hi' },
+        ],
       })
     );
   });
