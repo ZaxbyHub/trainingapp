@@ -98,7 +98,7 @@ vi.mock('../../hooks/useServiceInitialization', () => ({
 }));
 
 // Import types and class AFTER mocks are set up
-import { RAGOrchestrator } from './rag-orchestrator';
+import { RAGOrchestrator, capHistoryBudget } from './rag-orchestrator';
 
 // Re-export RAGEvent type for use in tests
 export type { RAGEvent } from './rag-orchestrator';
@@ -879,6 +879,46 @@ describe('RAGOrchestrator', () => {
     expect(capturedMessages[0].content).toBe(customPrompt);
   });
 
+  // PRR48-006: pin the DEFAULT_SYSTEM_PROMPT's key instructions so a regression
+  // that drops the grounding/citation/formatting rules would fail this test.
+  // Non-brittle: asserts key substrings, not the exact string.
+  test('Default system prompt contains grounding, citation, and formatting instructions', async () => {
+    const question = 'default prompt test';
+    const mockEmbedding = createMockEmbedding();
+    const chunks = [{ docId: 'd1', chunkIndex: 0, score: 0.9, text: 'c' }];
+
+    mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
+      vector: mockEmbedding,
+      text: question,
+      dimensions: 768,
+    });
+    mockVectorIndex.search.mockResolvedValue(chunks);
+    mockKeywordIndex.search.mockReturnValue([]);
+    (rrfFuse as ReturnType<typeof vi.fn>).mockReturnValue(chunks);
+
+    let capturedMessages: LLMMessage[] = [];
+    mockWebLLMService.generateComplete = vi.fn().mockImplementation(async (messages: LLMMessage[]) => {
+      capturedMessages = messages;
+      return 'answer';
+    });
+
+    const orchestrator = new RAGOrchestrator();
+    // No custom systemPrompt → uses DEFAULT_SYSTEM_PROMPT
+    for await (const _event of orchestrator.query(question, { streamTokens: false, rerank: false })) {
+      // consume
+    }
+
+    expect(capturedMessages[0].role).toBe('system');
+    const prompt = String(capturedMessages[0].content);
+    // Grounding: must instruct faithful use of context + citation format
+    expect(prompt).toMatch(/\[1\]/); // citation notation — escaped brackets, not char class
+    expect(prompt.toLowerCase()).toMatch(/cite|citation/);
+    // Formatting: must instruct markdown structure (counteracts Gemma 4's
+    // tendency toward terse lowercase output)
+    expect(prompt.toLowerCase()).toMatch(/markdown|format/);
+    expect(prompt).toMatch(/bold|\*\*/); // bold instruction
+  });
+
   // ========================================================================
   // TEST: Graceful handling when indexes are not ready
   // ========================================================================
@@ -1576,15 +1616,22 @@ describe('RAGOrchestrator', () => {
 
     test('RC1 budget: history is charged to reservedTokens (fewer chunks fit when history is present)', async () => {
       // Two large chunks that would both fit without history. With a long history
-      // consuming budget, the second chunk should be dropped to fit.
+      // consuming budget (capped at MAX_HISTORY_BUDGET_TOKENS=2048 → 8192 chars via
+      // capHistoryBudget, which drops oldest WHOLE turns), the second chunk should
+      // be dropped to fit. The JOINED history is 40000 chars; capHistoryBudget
+      // keeps only the most recent turn (20000 chars) since dropping it would
+      // leave zero context. That surviving turn still consumes enough budget to
+      // force at least one chunk drop (PRR48-004).
       const question = 'follow up';
       const longHistory = [
         { role: 'user' as const, content: 'X'.repeat(20000) },
         { role: 'assistant' as const, content: 'Y'.repeat(20000) },
       ];
+      // To force trimming with the cap, use larger chunks that won't both fit
+      // even with the capped history budget.
+      const chunkA: SearchResult = { docId: 'a', chunkIndex: 0, score: 0.9, text: 'A'.repeat(10000) };
+      const chunkB: SearchResult = { docId: 'b', chunkIndex: 0, score: 0.8, text: 'B'.repeat(10000) };
       const mockEmbedding = createMockEmbedding();
-      const chunkA: SearchResult = { docId: 'a', chunkIndex: 0, score: 0.9, text: 'A'.repeat(5000) };
-      const chunkB: SearchResult = { docId: 'b', chunkIndex: 0, score: 0.8, text: 'B'.repeat(5000) };
       const chunks = [chunkA, chunkB];
 
       mockEmbeddingService.encodeWithMetadata.mockResolvedValue({
@@ -1610,9 +1657,10 @@ describe('RAGOrchestrator', () => {
       }
 
       const complete = events.find((e) => e.type === 'complete');
-      // With ~40000 chars of history reserved, the context budget shrinks so at
-      // least one of the two 5000-char chunks is dropped (contextTrimmed >= 1).
-      // This proves the history term is in reservedTokens.
+      // With the capped history budget (~2048 tokens reserved after PRR48-004),
+      // the context budget shrinks enough that at least one of the two 10000-char
+      // chunks is dropped (contextTrimmed >= 1). This proves the history term is
+      // in reservedTokens even after the cap is applied.
       expect(complete.data.contextTrimmed).toBeGreaterThanOrEqual(1);
     });
 
@@ -1763,5 +1811,91 @@ describe('RAGOrchestrator', () => {
       // The embedder input is BGE_QUERY_INSTRUCTION + the raw question (no prepend).
       expect(embedCall[0]).toBe('Represent this sentence for searching relevant passages: ' + question);
     });
+  });
+});
+
+// ============================================================================
+// PRR48-004: capHistoryBudget unit tests (direct, so the cap can't be removed
+// without failing a test — the orchestrator-level RC1 budget test is vacuous
+// w.r.t. the cap because both capped and uncapped paths drop the same chunks).
+// ============================================================================
+describe('capHistoryBudget (PRR48-004)', () => {
+  test('returns history unchanged when under the cap', () => {
+    const history = [
+      { role: 'user' as const, content: 'short' },
+      { role: 'assistant' as const, content: 'reply' },
+    ];
+    expect(capHistoryBudget(history, 100)).toEqual(history);
+  });
+
+  test('drops oldest whole turns until the joined text fits (with user-first re-anchor)', () => {
+    const history = [
+      { role: 'user' as const, content: 'X'.repeat(50) },
+      { role: 'assistant' as const, content: 'Y'.repeat(50) },
+      { role: 'user' as const, content: 'Z'.repeat(10) },
+    ];
+    // joined = 50+1+50+1+10 = 112 chars; cap at 70 → drop oldest turn (user X50).
+    // Remaining: asst Y50 + user Z10 = 61 chars ≤ 70, BUT assistant-first →
+    // re-anchor drops the leading asst Y50 too → only [user Z10] survives.
+    const result = capHistoryBudget(history, 70);
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe('user');
+    expect(result[0].content).toBe('Z'.repeat(10));
+  });
+
+  test('preserves a user-first multi-turn window when it already fits after the drop', () => {
+    const history = [
+      { role: 'user' as const, content: 'X'.repeat(60) },   // large — dropped
+      { role: 'assistant' as const, content: 'Y'.repeat(10) },
+      { role: 'user' as const, content: 'Z'.repeat(10) },
+      { role: 'assistant' as const, content: 'W'.repeat(10) },
+    ];
+    // joined = 60+1+10+1+10+1+10 = 93; cap at 50 → drop X(60). Remaining:
+    // Y10+Z10+W10 = 32 chars, user-first (Y is asst → wait, Y is first and it's
+    // assistant). Re-anchor drops Y. Remaining: Z10+W10 = 21 chars, user-first. ✓
+    const result = capHistoryBudget(history, 50);
+    expect(result[0].role).toBe('user');
+    expect(result).toHaveLength(2);
+    expect(result[0].content).toBe('Z'.repeat(10));
+    expect(result[1].content).toBe('W'.repeat(10));
+  });
+
+  test('re-anchors to user-first when the drop leaves an assistant-first window', () => {
+    const history = [
+      { role: 'user' as const, content: 'X'.repeat(100) },   // large — dropped first
+      { role: 'assistant' as const, content: 'Y'.repeat(10) }, // would be first after drop
+      { role: 'user' as const, content: 'Z'.repeat(10) },
+    ];
+    const result = capHistoryBudget(history, 50);
+    // Drop X(100): remaining = Y(10)+Z(10) = 21 chars. But Y is assistant-first → drop Y too.
+    expect(result[0].role).toBe('user');
+    expect(result).toHaveLength(1);
+    expect(result[0].content).toBe('Z'.repeat(10));
+  });
+
+  test('tail-truncates a single over-cap surviving turn (user-pasted-document case)', () => {
+    const history = [
+      { role: 'user' as const, content: 'A'.repeat(200) },
+    ];
+    const result = capHistoryBudget(history, 50);
+    expect(result).toHaveLength(1);
+    expect(result[0].content.length).toBe(50);
+    // Tail slice — keeps the most recent content (last 50 'A' chars)
+    expect(result[0].content).toBe('A'.repeat(50));
+  });
+
+  test('keeps at least one turn even if all turns exceed the cap individually', () => {
+    const history = [
+      { role: 'user' as const, content: 'X'.repeat(200) },
+      { role: 'assistant' as const, content: 'Y'.repeat(200) },
+    ];
+    const result = capHistoryBudget(history, 50);
+    // Drops oldest until 1 turn left, then tail-truncates that turn to 50.
+    expect(result).toHaveLength(1);
+    expect(result[0].content.length).toBe(50);
+  });
+
+  test('empty history returns empty', () => {
+    expect(capHistoryBudget([], 100)).toEqual([]);
   });
 });

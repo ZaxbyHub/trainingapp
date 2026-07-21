@@ -316,30 +316,44 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
           },
           ul({ children, ...rest }) {
             return (
-              <ul style={{ margin: 'var(--spacing-sm) 0', paddingLeft: 'var(--spacing-xl)' }} {...rest}>
+              <ul style={{ margin: 'var(--spacing-md) 0', paddingLeft: 'var(--spacing-lg)' }} {...rest}>
                 {children}
               </ul>
             );
           },
           ol({ children, ...rest }) {
             return (
-              <ol style={{ margin: 'var(--spacing-sm) 0', paddingLeft: 'var(--spacing-xl)' }} {...rest}>
+              <ol style={{ margin: 'var(--spacing-md) 0', paddingLeft: 'var(--spacing-lg)' }} {...rest}>
                 {children}
               </ol>
             );
           },
           li({ children, ...rest }) {
             return (
-              <li style={{ marginBottom: 'var(--spacing-xs)' }} {...rest}>
+              <li style={{ marginBottom: 'var(--spacing-sm)', lineHeight: 'var(--line-height-body)' }} {...rest}>
                 {children}
               </li>
             );
           },
           p({ children, ...rest }) {
             return (
-              <p style={{ margin: 'var(--spacing-sm) 0' }} {...rest}>
+              <p style={{ margin: 'var(--spacing-sm) 0', lineHeight: 'var(--line-height-body)' }} {...rest}>
                 {children}
               </p>
+            );
+          },
+          strong({ children, ...rest }) {
+            return (
+              <strong style={{ fontWeight: 600 }} {...rest}>
+                {children}
+              </strong>
+            );
+          },
+          em({ children, ...rest }) {
+            return (
+              <em style={{ fontStyle: 'italic' }} {...rest}>
+                {children}
+              </em>
             );
           },
           h1: (props) => <Heading level={1} {...props} />,
