@@ -194,7 +194,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
       <div
         style={{
           width: '100%',
-          padding: 'var(--spacing-md)',
+          padding: 'var(--spacing-md) var(--spacing-lg)',
           backgroundColor: 'var(--color-surface-elevated)',
           border: '1px solid var(--color-bubble-system)',
           borderRadius: 'var(--radius-md)',
