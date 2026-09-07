@@ -55,7 +55,7 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - Set via: `RAG_GGUF_PATH` environment variable or `--gguf-path` CLI option
 - No GPU required
 - No network access required
-- ~5-10 tokens/second on standard CPU
+- Measured decode throughput and first-token latency per model/profile: see [bench/RESULTS.md](bench/RESULTS.md) (issue #52 benchmark harness)
 
 ### Hardware Requirements
 #### Minimum (Intel 11th Gen i5, 16GB RAM)
@@ -64,19 +64,19 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - Intel integrated graphics (present on all 11th gen+ Intel CPUs) — no discrete GPU required
 - 16GB RAM
 - ~4GB free storage for model + app
-- **Performance**: ~5-7 tokens/second
+- **Performance**: measured numbers per model and quantization are recorded in [bench/RESULTS.md](bench/RESULTS.md)
 
 #### Recommended (Intel 12th Gen i7, 32GB RAM)
 - Intel Core i7 12th generation or newer (or equivalent AMD Ryzen 7000+)
 - Intel Iris Xe integrated graphics or discrete GPU
 - 32GB RAM
 - SSD for vector database
-- **Performance**: ~10-15 tokens/second
+- **Performance**: measured numbers per model and quantization are recorded in [bench/RESULTS.md](bench/RESULTS.md)
 
 #### High-Performance (Intel 13th Gen i9, 64GB RAM)
 - High-end CPU (Intel Core i9 or AMD Ryzen 9)
 - 64GB RAM
-- **Performance**: ~15-20 tokens/second (CPU-only with GGUF)
+- **Performance**: measured CPU-only GGUF numbers are recorded in [bench/RESULTS.md](bench/RESULTS.md)
 
 ## 🆕 New Features (Version 2.0.0)
 

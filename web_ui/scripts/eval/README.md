@@ -51,14 +51,12 @@ To add questions, append lines to `eval.jsonl` and (for in-corpus questions)
 add the matching document fixture to `fixtures/` and index it in the runner.
 Keep the in/out ratio roughly 70/30 so abstention recall is exercised.
 
-## Baseline (record after PR-2 merges)
+## Baseline
 
-Record the operator-run real-weight numbers here on a clean main build so
-regressions are visible at PR review:
+**Performance baselines** (decode tok/s, first-token latency, embed/rerank
+cost) live in [`bench/RESULTS.md`](../../../bench/RESULTS.md) — measured per
+machine by the issue #52 benchmark harness; never restate those numbers here.
 
-```
-recall@5:   <fill in>
-recall@10:  <fill in>
-nDCG@10:    <fill in>
-abstention: <fill in> correct / 3 out-of-corpus
-```
+**Retrieval-quality baselines** (recall@k / nDCG / abstention on the labeled
+corpus) are recorded after the tier-0 eval set lands (issue #54, WS-A PR 4/8);
+this file intentionally holds no inline placeholder numbers until then.

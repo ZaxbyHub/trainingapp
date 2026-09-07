@@ -7,21 +7,22 @@ repos:
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=1000']
-  
+
   - repo: https://github.com/psf/black
     rev: 23.12.1
     hooks:
       - id: black
         language_version: python3
-  
+
   - repo: https://github.com/pycqa/isort
     rev: 5.13.2
     hooks:
       - id: isort
         args: ["--profile", "black"]
-  
+
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
     hooks:
       - id: flake8
-        args: ['--max-line-length=100', '--extend-ignore=E203,W503']
+        args: ['--max-line-length=100', '--extend-ignore=E203,W503',
+               '--per-file-ignores=tests/test_low_end_hardware.py:F401,F811,F841,E501,F541 tests/test_rag_pipeline_edge_cases.py:F401,F811,F841 tests/test_vector_store.py:F401,F841,E501 tests/test_rag_performance.py:F401,F841']

@@ -9,24 +9,84 @@ Run with: pytest tests/test_rag_performance.py -v --benchmark
 
 import gc
 import os
-import sys
-import time
-import tempfile
-import threading
 import statistics
-from pathlib import Path
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass, field
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import pytest
 
-# Skip all tests in this file - they require real embedding model
-pytestmark = pytest.mark.skip(reason="Performance tests require real embedding model — incompatible with conftest mock")
+# ---------------------------------------------------------------------------
+# Evidence-conditional gates (issue #52): the real-model scenarios run wherever
+# the stack exists, and SKIP with a reason naming the exact missing artifact
+# otherwise — never a blanket module skip. The weights gate is the
+# sentence-transformers weights form; stage it with
+# `python bench/fetch_models.py --embed-weights`.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_WEIGHTS_PATH = _REPO_ROOT / "models" / "bge-small-en-v1.5" / "model.safetensors"
+
+
+def _importable(name: str) -> bool:
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
+
+
+_HAS_CHROMADB = _importable("chromadb")
+_HAS_SENTENCE_TRANSFORMERS = _importable("sentence_transformers")
+_HAS_WEIGHTS = _WEIGHTS_PATH.is_file()
+
+pytestmark = [
+    pytest.mark.skipif(
+        not _HAS_CHROMADB, reason="chromadb not installed (pip install chromadb)"
+    ),
+    pytest.mark.skipif(
+        not _HAS_SENTENCE_TRANSFORMERS,
+        reason="sentence-transformers not installed (pip install sentence-transformers)",
+    ),
+    pytest.mark.skipif(
+        not _HAS_WEIGHTS,
+        reason=(
+            "embedding weights not staged: "
+            "models/bge-small-en-v1.5/model.safetensors - run "
+            "python bench/fetch_models.py --embed-weights"
+        ),
+    ),
+]
+
+
+def _perf_threshold(
+    metric: str, legacy: float, model: str = "bge-small-en-v1.5", surface: str = "rag"
+):
+    """(value, direction, source) for one perf threshold.
+
+    Reads the machine-tagged floors row from bench/RESULTS.md (via
+    BENCH_FLOORS_MACHINE) when the current machine has one; otherwise falls
+    back to this suite's legacy generous bound so CI stays safe.
+    """
+    try:
+        from bench.floors import threshold
+
+        found = threshold(_REPO_ROOT / "bench" / "RESULTS.md", surface, model, metric)
+    except Exception:
+        found = None
+    if found is None:
+        return legacy, "ceiling", "legacy-bound"
+    value, direction = found
+    return value, direction, "bench/RESULTS.md floors"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Profiling infrastructure
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class BenchmarkResult:
@@ -44,7 +104,9 @@ class BenchmarkResult:
 
     @property
     def median_ms(self) -> float:
-        return statistics.median(self.latencies_ms) if self.latencies_ms else float("nan")
+        return (
+            statistics.median(self.latencies_ms) if self.latencies_ms else float("nan")
+        )
 
     @property
     def p95_ms(self) -> float:
@@ -72,7 +134,9 @@ class BenchmarkResult:
 
     @property
     def stddev_ms(self) -> float:
-        return statistics.stdev(self.latencies_ms) if len(self.latencies_ms) > 1 else 0.0
+        return (
+            statistics.stdev(self.latencies_ms) if len(self.latencies_ms) > 1 else 0.0
+        )
 
     @property
     def peak_memory_mb(self) -> float:
@@ -80,7 +144,11 @@ class BenchmarkResult:
 
     @property
     def mean_memory_mb(self) -> float:
-        return statistics.mean(self.memory_samples_mb) if self.memory_samples_mb else float("nan")
+        return (
+            statistics.mean(self.memory_samples_mb)
+            if self.memory_samples_mb
+            else float("nan")
+        )
 
     @property
     def throughput(self) -> float:
@@ -150,6 +218,7 @@ def _get_rss_mb() -> float:
     """Get current RSS memory in MB."""
     try:
         import psutil
+
         return psutil.Process().memory_info().rss / (1024 * 1024)
     except ImportError:
         return 0.0
@@ -166,6 +235,7 @@ def _time_it(func, *args, **kwargs):
 # ─────────────────────────────────────────────────────────────────────────────
 # Document generation helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _make_text_content(word_count: int, seed: int = 0) -> str:
     """Generate deterministic lorem-ipsum-like text of given word count."""
@@ -195,8 +265,8 @@ def _create_test_pdf(path: Path, text_content: str) -> None:
     """Create a minimal PDF file with text content (no external deps needed)."""
     # Use reportlab if available, otherwise create minimal valid PDF
     try:
-        from reportlab.pdfgen import canvas
         from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen import canvas
 
         c = canvas.Canvas(str(path), pagesize=letter)
         width, height = letter
@@ -212,9 +282,7 @@ def _create_test_pdf(path: Path, text_content: str) -> None:
     except ImportError:
         # Fallback: create a minimal valid PDF
         lines = text_content.split("\n")
-        content_stream = "\n".join(
-            f"({line})" for line in lines if line.strip()
-        )
+        content_stream = "\n".join(f"({line})" for line in lines if line.strip())
         pdf = f"""%PDF-1.4
 1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
@@ -248,12 +316,14 @@ def _create_test_txt(path: Path, text_content: str) -> None:
 # Fixtures
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture(scope="module")
 def chromadb_available():
     """Check if ChromaDB is available for testing."""
     try:
         import chromadb
         import sentence_transformers
+
         return True
     except ImportError:
         pytest.skip("ChromaDB or sentence-transformers not available")
@@ -264,6 +334,7 @@ def psutil_available():
     """Check if psutil is available for memory profiling."""
     try:
         import psutil
+
         return True
     except ImportError:
         return False
@@ -277,6 +348,7 @@ def temp_benchmark_db(tmp_path):
     yield str(db_path)
     # Explicit cleanup
     import shutil
+
     if db_path.exists():
         shutil.rmtree(db_path, ignore_errors=True)
 
@@ -288,6 +360,7 @@ def temp_doc_dir(tmp_path):
     doc_dir.mkdir()
     yield str(doc_dir)
     import shutil
+
     if doc_dir.exists():
         shutil.rmtree(doc_dir, ignore_errors=True)
 
@@ -296,21 +369,22 @@ def temp_doc_dir(tmp_path):
 # Module-level: import once, reuse across tests
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 @pytest.fixture(scope="module", autouse=True)
 def import_rag_modules(chromadb_available):
     """Pre-import heavy modules so warm-up cost doesn't skew per-test timing."""
     gc.collect()
     _get_rss_mb()  # baseline memory
     # These trigger model loading on first use
-    from vector_store import VectorStore, EmbeddingModel  # noqa: F401
     from document_processor import DocumentProcessor  # noqa: F401
+    from vector_store import EmbeddingModel, VectorStore  # noqa: F401
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SCENARIO 1: Document Ingestion Performance
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Requires real embedding model — tests create VectorStore directly, bypassing conftest mock")
+
 class TestDocumentIngestionPerformance:
     """Benchmark document ingestion at various sizes and batch counts."""
 
@@ -331,7 +405,9 @@ class TestDocumentIngestionPerformance:
         from vector_store import VectorStore
 
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         mem_before = _get_rss_mb()
         _, latency_ms = _time_it(processor.process_file, str(doc_path))
@@ -352,10 +428,14 @@ class TestDocumentIngestionPerformance:
 
         # Assertions
         assert len(chunks) >= 1, f"Expected at least 1 chunk, got {len(chunks)}"
-        assert result.p95_ms < 30000, f"Single small doc ingestion too slow: {result.p95_ms:.0f}ms"
+        assert (
+            result.p95_ms < 30000
+        ), f"Single small doc ingestion too slow: {result.p95_ms:.0f}ms"
 
-        print(f"\n[BM] Small doc: {result.total_runs} run, "
-              f"latency={result.mean_ms:.0f}ms, peak_mem={result.peak_memory_mb:.1f}MB")
+        print(
+            f"\n[BM] Small doc: {result.total_runs} run, "
+            f"latency={result.mean_ms:.0f}ms, peak_mem={result.peak_memory_mb:.1f}MB"
+        )
 
     def test_medium_document_ingestion(
         self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available
@@ -373,7 +453,9 @@ class TestDocumentIngestionPerformance:
         from vector_store import VectorStore
 
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         mem_before = _get_rss_mb()
         _, latency_ms = _time_it(processor.process_file, str(doc_path))
@@ -393,11 +475,15 @@ class TestDocumentIngestionPerformance:
         )
 
         assert len(chunks) >= 1
-        assert result.p99_ms < 120000, f"Medium doc ingestion too slow: {result.p99_ms:.0f}ms"
+        assert (
+            result.p99_ms < 120000
+        ), f"Medium doc ingestion too slow: {result.p99_ms:.0f}ms"
 
-        print(f"\n[BM] Medium doc: {result.total_runs} run, "
-              f"latency={result.mean_ms:.0f}ms, peak_mem={result.peak_memory_mb:.1f}MB, "
-              f"chunks={len(chunks)}")
+        print(
+            f"\n[BM] Medium doc: {result.total_runs} run, "
+            f"latency={result.mean_ms:.0f}ms, peak_mem={result.peak_memory_mb:.1f}MB, "
+            f"chunks={len(chunks)}"
+        )
 
     def test_large_document_ingestion(
         self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available
@@ -415,7 +501,9 @@ class TestDocumentIngestionPerformance:
         from vector_store import VectorStore
 
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         mem_before = _get_rss_mb()
         _, latency_ms = _time_it(processor.process_file, str(doc_path))
@@ -436,22 +524,33 @@ class TestDocumentIngestionPerformance:
 
         assert len(chunks) >= 1
         # Large doc should complete within 5 minutes
-        assert result.p99_ms < 300000, f"Large doc ingestion too slow: {result.p99_ms:.0f}ms"
+        assert (
+            result.p99_ms < 300000
+        ), f"Large doc ingestion too slow: {result.p99_ms:.0f}ms"
 
-        print(f"\n[BM] Large doc: {result.total_runs} run, "
-              f"latency={result.mean_ms:.0f}ms, peak_mem={result.peak_memory_mb:.1f}MB, "
-              f"chunks={len(chunks)}")
+        print(
+            f"\n[BM] Large doc: {result.total_runs} run, "
+            f"latency={result.mean_ms:.0f}ms, peak_mem={result.peak_memory_mb:.1f}MB, "
+            f"chunks={len(chunks)}"
+        )
 
     @pytest.mark.parametrize("batch_size", [10, 50, 100])
     def test_batch_ingestion(
-        self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available, batch_size
+        self,
+        temp_benchmark_db,
+        temp_doc_dir,
+        chromadb_available,
+        psutil_available,
+        batch_size,
     ):
         """Batch ingestion of N small documents."""
         from document_processor import DocumentProcessor
         from vector_store import VectorStore
 
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         # Create N small test documents
         doc_paths: List[Path] = []
@@ -479,7 +578,9 @@ class TestDocumentIngestionPerformance:
             sampler.stop()
 
         total_latency_ms = add_latency_ms
-        throughput = (batch_size / total_latency_ms) * 1000 if total_latency_ms > 0 else 0
+        throughput = (
+            (batch_size / total_latency_ms) * 1000 if total_latency_ms > 0 else 0
+        )
 
         result = BenchmarkResult(
             name=f"batch_ingestion_{batch_size}",
@@ -489,16 +590,21 @@ class TestDocumentIngestionPerformance:
         )
 
         assert len(all_chunks) >= batch_size
-        assert result.peak_memory_mb < 2000, f"Batch {batch_size} used too much memory: {result.peak_memory_mb:.0f}MB"
+        assert (
+            result.peak_memory_mb < 2000
+        ), f"Batch {batch_size} used too much memory: {result.peak_memory_mb:.0f}MB"
 
-        print(f"\n[BM] Batch {batch_size}: throughput={throughput:.2f} docs/sec, "
-              f"total_latency={total_latency_ms:.0f}ms, "
-              f"peak_mem={result.peak_memory_mb:.1f}MB, chunks={len(all_chunks)}")
+        print(
+            f"\n[BM] Batch {batch_size}: throughput={throughput:.2f} docs/sec, "
+            f"total_latency={total_latency_ms:.0f}ms, "
+            f"peak_mem={result.peak_memory_mb:.1f}MB, chunks={len(all_chunks)}"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SCENARIO 2: Query Performance
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestQueryPerformance:
     """Benchmark query operations with various complexity levels."""
@@ -510,7 +616,9 @@ class TestQueryPerformance:
         from vector_store import VectorStore
 
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         # Create documents with varied topics
         topics = [
@@ -536,10 +644,12 @@ class TestQueryPerformance:
         [
             ("Python", "single_keyword"),
             ("machine learning algorithms", "multi_keyword"),
-            ("What is natural language processing and how does it relate to embeddings?", "long_sentence"),
+            (
+                "What is natural language processing and how does it relate to embeddings?",
+                "long_sentence",
+            ),
         ],
     )
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_query_latency(
         self, populated_store, chromadb_available, psutil_available, query, query_type
     ):
@@ -563,15 +673,23 @@ class TestQueryPerformance:
             memory_samples_mb=sampler.samples if psutil_available else [],
         )
 
-        # Vector search should be fast
-        assert result.p95_ms < 5000, f"Query {query_type} p95 too slow: {result.p95_ms:.0f}ms"
+        # Vector search should be fast; the ceiling comes from bench/RESULTS.md
+        # floors when the current machine has a recorded row, else the legacy
+        # generous bound (CI-safe).
+        ceiling, direction, source = _perf_threshold("query_p95_ceiling_ms", 5000.0)
+        assert direction == "ceiling"
+        assert result.p95_ms < ceiling, (
+            f"Query {query_type} p95 too slow: {result.p95_ms:.0f}ms "
+            f"(ceiling {ceiling:.0f}ms from {source})"
+        )
 
-        print(f"\n[BM] Query {query_type}: mean={result.mean_ms:.1f}ms, "
-              f"p95={result.p95_ms:.1f}ms, p99={result.p99_ms:.1f}ms, "
-              f"median={result.median_ms:.1f}ms")
+        print(
+            f"\n[BM] Query {query_type}: mean={result.mean_ms:.1f}ms, "
+            f"p95={result.p95_ms:.1f}ms, p99={result.p99_ms:.1f}ms, "
+            f"median={result.median_ms:.1f}ms"
+        )
 
     @pytest.mark.parametrize("concurrent_count", [1, 5, 10])
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_concurrent_queries(
         self, populated_store, chromadb_available, psutil_available, concurrent_count
     ):
@@ -626,16 +744,18 @@ class TestQueryPerformance:
         total_time = sum(latencies)
         qps = (len(latencies) / total_time) * 1000 if total_time > 0 else 0
 
-        print(f"\n[BM] Concurrent x{concurrent_count}: {len(latencies)} queries, "
-              f"qps={qps:.2f}/sec, mean_lat={result.mean_ms:.1f}ms, "
-              f"peak_mem={max(result.memory_samples_mb):.1f}MB")
+        print(
+            f"\n[BM] Concurrent x{concurrent_count}: {len(latencies)} queries, "
+            f"qps={qps:.2f}/sec, mean_lat={result.mean_ms:.1f}ms, "
+            f"peak_mem={max(result.memory_samples_mb):.1f}MB"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SCENARIO 3: Memory Profiling
 # ─────────────────────────────────────────────────────────────────────────────
 
-@pytest.mark.skip(reason="Requires real embedding model — tests create VectorStore directly, bypassing conftest mock")
+
 class TestMemoryProfiling:
     """Detailed memory profiling across operations."""
 
@@ -650,7 +770,9 @@ class TestMemoryProfiling:
         from vector_store import VectorStore
 
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         # Create a 10K-word document
         text = _make_text_content(10000)
@@ -672,9 +794,11 @@ class TestMemoryProfiling:
 
         assert delta < 1500, f"Memory spike too large during ingestion: {delta:.0f}MB"
 
-        print(f"\n[BM] Peak memory during ingestion: {peak:.1f}MB "
-              f"(delta={delta:.1f}MB over baseline {baseline:.1f}MB), "
-              f"chunks={len(chunks)}")
+        print(
+            f"\n[BM] Peak memory during ingestion: {peak:.1f}MB "
+            f"(delta={delta:.1f}MB over baseline {baseline:.1f}MB), "
+            f"chunks={len(chunks)}"
+        )
 
     def test_memory_per_chunk_stored(
         self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available
@@ -695,7 +819,9 @@ class TestMemoryProfiling:
         for count in chunk_counts:
             db_path = temp_benchmark_db + f"_mp{count}"
             os.makedirs(db_path, exist_ok=True)
-            store = VectorStore(db_path=db_path, embedding_model="BAAI/bge-small-en-v1.5")
+            store = VectorStore(
+                db_path=db_path, embedding_model="BAAI/bge-small-en-v1.5"
+            )
 
             chunks = []
             for i in range(count):
@@ -718,10 +844,14 @@ class TestMemoryProfiling:
             d1, d2 = mem_deltas[0], mem_deltas[-1]
             if n2 != n1:
                 per_chunk_mb = (d2 - d1) / (n2 - n1)
-                print(f"\n[BM] Estimated memory per chunk: {per_chunk_mb * 1024:.1f}KB "
-                      f"(delta per additional chunk)")
+                print(
+                    f"\n[BM] Estimated memory per chunk: {per_chunk_mb * 1024:.1f}KB "
+                    f"(delta per additional chunk)"
+                )
                 # Sanity check: each chunk should not consume > 1MB
-                assert per_chunk_mb < 1.0, f"Per-chunk memory too high: {per_chunk_mb:.2f}MB"
+                assert (
+                    per_chunk_mb < 1.0
+                ), f"Per-chunk memory too high: {per_chunk_mb:.2f}MB"
 
     def test_memory_during_query_operations(
         self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available
@@ -734,7 +864,9 @@ class TestMemoryProfiling:
         from vector_store import VectorStore
 
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         # Populate
         for i in range(5):
@@ -760,18 +892,29 @@ class TestMemoryProfiling:
         mem_delta = peak - baseline
 
         # Memory should not grow significantly during repeated queries
-        assert mem_delta < 500, f"Memory grew too much during queries: {mem_delta:.0f}MB"
+        assert (
+            mem_delta < 500
+        ), f"Memory grew too much during queries: {mem_delta:.0f}MB"
 
-        print(f"\n[BM] Memory during 50 queries: baseline={baseline:.1f}MB, "
-              f"peak={peak:.1f}MB, final={final:.1f}MB, delta={mem_delta:.1f}MB")
+        print(
+            f"\n[BM] Memory during 50 queries: baseline={baseline:.1f}MB, "
+            f"peak={peak:.1f}MB, final={final:.1f}MB, delta={mem_delta:.1f}MB"
+        )
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
-    @pytest.mark.parametrize("embedding_model", [
-        "BAAI/bge-small-en-v1.5",  # Small model
-        # "BAAI/bge-base-en-v1.5",  # Larger model (commented - slow in CI)
-    ])
+    @pytest.mark.parametrize(
+        "embedding_model",
+        [
+            "BAAI/bge-small-en-v1.5",  # Small model
+            # "BAAI/bge-base-en-v1.5",  # Larger model (commented - slow in CI)
+        ],
+    )
     def test_memory_with_different_embedding_models(
-        self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available, embedding_model
+        self,
+        temp_benchmark_db,
+        temp_doc_dir,
+        chromadb_available,
+        psutil_available,
+        embedding_model,
     ):
         """Compare memory usage with different embedding model sizes."""
         if not psutil_available:
@@ -795,19 +938,21 @@ class TestMemoryProfiling:
         after = _get_rss_mb()
         delta = after - baseline
 
-        print(f"\n[BM] Embedding model {embedding_model}: "
-              f"baseline={baseline:.1f}MB, after={after:.1f}MB, delta={delta:.1f}MB, "
-              f"chunks={len(chunks)}")
+        print(
+            f"\n[BM] Embedding model {embedding_model}: "
+            f"baseline={baseline:.1f}MB, after={after:.1f}MB, delta={delta:.1f}MB, "
+            f"chunks={len(chunks)}"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SCENARIO 4: Resource Constraint Simulation
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestResourceConstraints:
     """Simulate resource-constrained environments."""
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
     def test_small_batch_ingestion_under_memory_pressure(
         self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available
     ):
@@ -838,7 +983,9 @@ class TestResourceConstraints:
 
         for i in range(0, len(doc_paths), batch_size):
             batch = doc_paths[i : i + batch_size]
-            store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+            store = VectorStore(
+                db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+            )
 
             chunks = []
             for p in batch:
@@ -858,18 +1005,22 @@ class TestResourceConstraints:
         total_latency = sum(all_latencies)
         total_mem_delta = peak_mem - baseline
 
-        print(f"\n[BM] Small-batch ingestion: {len(doc_paths)} docs in {len(all_latencies)} batches, "
-              f"total_lat={total_latency:.0f}ms, peak_mem={peak_mem:.1f}MB, "
-              f"delta={total_mem_delta:.1f}MB")
+        print(
+            f"\n[BM] Small-batch ingestion: {len(doc_paths)} docs in {len(all_latencies)} batches, "
+            f"total_lat={total_latency:.0f}ms, peak_mem={peak_mem:.1f}MB, "
+            f"delta={total_mem_delta:.1f}MB"
+        )
 
-        assert total_mem_delta < 2000, f"Small-batch ingestion used too much memory: {total_mem_delta:.0f}MB"
+        assert (
+            total_mem_delta < 2000
+        ), f"Small-batch ingestion used too much memory: {total_mem_delta:.0f}MB"
 
     def test_bm25_index_rebuild_performance(
         self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available
     ):
         """Measure BM25 index rebuild time as corpus grows."""
         from document_processor import DocumentProcessor
-        from vector_store import VectorStore, BM25Index
+        from vector_store import BM25Index, VectorStore
 
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
 
@@ -900,9 +1051,10 @@ class TestResourceConstraints:
                 # Time should grow roughly linearly (O(n log n)) not quadratically
                 ratio = (t2 / t1) / ((n2 / n1) ** 1.5)
                 print(f"[BM] BM25 scaling ratio: {ratio:.2f} (expected < 2.0)")
-                assert ratio < 5.0, f"BM25 rebuild time scaling unexpectedly: ratio={ratio:.2f}"
+                assert (
+                    ratio < 5.0
+                ), f"BM25 rebuild time scaling unexpectedly: ratio={ratio:.2f}"
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock (EmbeddingModel returns early when local model path exists)")
     def test_chroma_batch_size_performance(
         self, temp_benchmark_db, temp_doc_dir, chromadb_available, psutil_available
     ):
@@ -925,16 +1077,20 @@ class TestResourceConstraints:
         for bs in batch_sizes:
             db_path = temp_benchmark_db + f"_bs{bs}"
             os.makedirs(db_path, exist_ok=True)
-            store = VectorStore(db_path=db_path, embedding_model="BAAI/bge-small-en-v1.5")
+            store = VectorStore(
+                db_path=db_path, embedding_model="BAAI/bge-small-en-v1.5"
+            )
 
             gc.collect()
-            _, add_ms = _time_it(store.add_chunks, all_chunks, batch_size=bs)
+            _, add_ms = _time_it(store.add_chunks, all_chunks, chunk_batch_size=bs)
             times_per_batch[bs] = add_ms
 
             del store
             gc.collect()
 
-            print(f"\n[BM] add_chunks batch_size={bs}: {add_ms:.1f}ms for {len(all_chunks)} chunks")
+            print(
+                f"\n[BM] add_chunks batch_size={bs}: {add_ms:.1f}ms for {len(all_chunks)} chunks"
+            )
 
         # Best batch size should be fastest
         best_bs = min(times_per_batch, key=times_per_batch.get)
@@ -947,6 +1103,7 @@ class TestResourceConstraints:
 # Full RAG pipeline benchmark (without LLM - uses vector store search only)
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestFullRAGPipelinePerformance:
     """End-to-end pipeline benchmarks excluding LLM inference."""
 
@@ -954,8 +1111,8 @@ class TestFullRAGPipelinePerformance:
     def rag_pipeline(self, temp_benchmark_db, temp_doc_dir, chromadb_available):
         """Set up a full RAG pipeline with documents."""
         from document_processor import DocumentProcessor
+        from rag_engine import RAGConfig, RAGEngine
         from vector_store import VectorStore
-        from rag_engine import RAGEngine, RAGConfig
 
         config = RAGConfig(
             db_path=temp_benchmark_db,
@@ -967,7 +1124,9 @@ class TestFullRAGPipelinePerformance:
 
         # Note: RAGEngine.__init__ may fail without LLM - test only the retrieval path
         processor = DocumentProcessor(chunk_size=512, chunk_overlap=50)
-        store = VectorStore(db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=temp_benchmark_db, embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         # Populate with varied content
         topics = [
@@ -987,7 +1146,6 @@ class TestFullRAGPipelinePerformance:
 
         yield {"store": store, "processor": processor, "chunks": len(all_chunks)}
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
     def test_retrieval_only_pipeline(
         self, rag_pipeline, chromadb_available, psutil_available
     ):
@@ -1005,7 +1163,9 @@ class TestFullRAGPipelinePerformance:
         latencies: List[float] = []
         for _ in range(10):
             for q in queries:
-                _, lat_ms = _time_it(store.get_context, q, n_results=3, hybrid_search=True)
+                _, lat_ms = _time_it(
+                    store.get_context, q, n_results=3, hybrid_search=True
+                )
                 latencies.append(lat_ms)
 
         result = BenchmarkResult(
@@ -1015,16 +1175,21 @@ class TestFullRAGPipelinePerformance:
             memory_samples_mb=[],
         )
 
-        assert result.p95_ms < 10000, f"Retrieval pipeline p95 too slow: {result.p95_ms:.0f}ms"
+        assert (
+            result.p95_ms < 10000
+        ), f"Retrieval pipeline p95 too slow: {result.p95_ms:.0f}ms"
 
-        print(f"\n[BM] Retrieval pipeline: mean={result.mean_ms:.1f}ms, "
-              f"median={result.median_ms:.1f}ms, p95={result.p95_ms:.1f}ms, "
-              f"p99={result.p99_ms:.1f}ms, runs={result.total_runs}")
+        print(
+            f"\n[BM] Retrieval pipeline: mean={result.mean_ms:.1f}ms, "
+            f"median={result.median_ms:.1f}ms, p95={result.p95_ms:.1f}ms, "
+            f"p99={result.p99_ms:.1f}ms, runs={result.total_runs}"
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Benchmark report summary
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 @pytest.fixture(scope="session", autouse=True)
 def benchmark_summary(request):

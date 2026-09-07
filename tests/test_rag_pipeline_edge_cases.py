@@ -14,19 +14,21 @@ Tests all edge cases, error conditions, and failure scenarios across:
 Import convention: all mocks at module level BEFORE any imports
 """
 
-import pytest
+import importlib.util
+import inspect
+import io
+import json
 import os
+import re
+import shutil
 import sys
 import tempfile
-import shutil
-import json
-import re
-import inspect
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, mock_open
-from dataclasses import dataclass
 import zipfile
-import io
+from dataclasses import dataclass
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, mock_open, patch
+
+import pytest
 
 # Ensure project root on path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -42,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # =============================================================================
 # TEST GROUP 1: Document Edge Cases
 # =============================================================================
+
 
 class TestDocumentEdgeCases:
     """Document processing edge cases: empty, oversized, binary, corrupted."""
@@ -245,9 +248,7 @@ class TestDocumentEdgeCases:
         from document_processor import DocumentProcessor
 
         cjk_content = (
-            "第一章：Python编程入门。\n"
-            "第二節：変数の基本概念。\n"
-            "Chapter 3: Data Types and Operations."
+            "第一章：Python编程入门。\n" "第二節：変数の基本概念。\n" "Chapter 3: Data Types and Operations."
         )
         cjk_path = tmp_path / "cjk.txt"
         cjk_path.write_text(cjk_content, encoding="utf-8")
@@ -345,6 +346,7 @@ class TestDocumentEdgeCases:
 # =============================================================================
 # TEST GROUP 2: Query Edge Cases - Injection and Special Characters
 # =============================================================================
+
 
 class TestQueryInjectionEdgeCases:
     """Query injection attempts and special character handling."""
@@ -445,8 +447,9 @@ class TestQueryInjectionEdgeCases:
 
     def test_very_long_query_2001_chars_rejected(self):
         """Query exceeding max length (2001) should be rejected."""
-        from api_server import QuestionRequest
         import pydantic
+
+        from api_server import QuestionRequest
 
         long_query = "a" * 2001
         with pytest.raises(Exception):  # Pydantic ValidationError
@@ -456,11 +459,7 @@ class TestQueryInjectionEdgeCases:
         """Mixed Unicode scripts should be handled."""
         from api_server import QuestionRequest
 
-        mixed_query = (
-            "Hello 你好 مرحبا שלום "
-            "Γειά σου 🌍🚀 "
-            "Привет สวัสดี"
-        )
+        mixed_query = "Hello 你好 مرحبا שלום " "Γειά σου 🌍🚀 " "Привет สวัสดี"
         req = QuestionRequest(question=mixed_query, n_results=3)
         assert isinstance(req.question, str)
 
@@ -491,8 +490,9 @@ class TestQueryInjectionEdgeCases:
 
     def test_search_query_501_chars_rejected(self):
         """Search query exceeding max length (501) should be rejected."""
-        from api_server import SearchRequest
         import pydantic
+
+        from api_server import SearchRequest
 
         over_query = "a" * 501
         with pytest.raises(Exception):
@@ -503,12 +503,13 @@ class TestQueryInjectionEdgeCases:
 # TEST GROUP 3: Configuration Edge Cases
 # =============================================================================
 
+
 class TestConfigBoundaryValues:
     """Configuration boundary value testing."""
 
     def test_chunk_size_at_minimum_boundary(self):
         """chunk_size=128 (MIN_CHUNK_SIZE) should be valid."""
-        from config import RAGSettings, MIN_CHUNK_SIZE
+        from config import MIN_CHUNK_SIZE, RAGSettings
 
         assert MIN_CHUNK_SIZE == 128
         # This is a boundary check - the constant exists and is used in validation
@@ -534,16 +535,19 @@ class TestConfigBoundaryValues:
 
     def test_chunk_overlap_zero_valid(self):
         """chunk_overlap=0 should be valid (zero overlap)."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_CHUNK_OVERLAP"] = "0"
         os.environ["RAG_CHUNK_SIZE"] = "512"
         try:
             import config
+
             importlib.reload(config)
             from config import RAGSettings
+
             s = RAGSettings()
             assert s.rag_chunk_overlap == 0
         finally:
@@ -553,15 +557,18 @@ class TestConfigBoundaryValues:
 
     def test_context_truncation_boundary(self):
         """context_truncation must be positive (> 0)."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_CONTEXT_TRUNCATION"] = "1"
         try:
             import config
+
             importlib.reload(config)
             from config import RAGSettings
+
             s = RAGSettings()
             assert s.rag_context_truncation == 1
         finally:
@@ -570,15 +577,18 @@ class TestConfigBoundaryValues:
 
     def test_context_truncation_zero_rejected(self):
         """context_truncation=0 should be rejected."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_CONTEXT_TRUNCATION"] = "0"
         try:
             import config
+
             importlib.reload(config)
             from config import RAGSettings
+
             with pytest.raises(ValueError, match="positive"):
                 RAGSettings()
         finally:
@@ -587,15 +597,18 @@ class TestConfigBoundaryValues:
 
     def test_invalid_env_var_non_numeric_chunk_size(self):
         """Non-numeric chunk_size env var should raise ValueError."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_CHUNK_SIZE"] = "not_a_number"
         try:
             import config
+
             importlib.reload(config)
             from config import RAGSettings
+
             with pytest.raises((ValueError, TypeError)):
                 RAGSettings()
         finally:
@@ -604,15 +617,18 @@ class TestConfigBoundaryValues:
 
     def test_similarity_exactly_zero(self):
         """min_similarity=0.0 should be valid."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_MIN_SIMILARITY"] = "0.0"
         try:
             import config
+
             importlib.reload(config)
             from config import RAGSettings
+
             s = RAGSettings()
             assert s.rag_min_similarity == 0.0
         finally:
@@ -621,15 +637,18 @@ class TestConfigBoundaryValues:
 
     def test_similarity_exactly_one(self):
         """min_similarity=1.0 should be valid."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_MIN_SIMILARITY"] = "1.0"
         try:
             import config
+
             importlib.reload(config)
             from config import RAGSettings
+
             s = RAGSettings()
             assert s.rag_min_similarity == 1.0
         finally:
@@ -638,15 +657,18 @@ class TestConfigBoundaryValues:
 
     def test_temperature_exactly_zero(self):
         """temperature=0.0 should be valid (deterministic)."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_TEMPERATURE"] = "0.0"
         try:
             import config
+
             importlib.reload(config)
             from config import RAGSettings
+
             s = RAGSettings()
             assert s.rag_temperature == 0.0
         finally:
@@ -655,15 +677,18 @@ class TestConfigBoundaryValues:
 
     def test_temperature_exactly_two(self):
         """temperature=2.0 should be valid (maximum)."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_TEMPERATURE"] = "2.0"
         try:
             import config
+
             importlib.reload(config)
             from config import RAGSettings
+
             s = RAGSettings()
             assert s.rag_temperature == 2.0
         finally:
@@ -675,23 +700,15 @@ class TestConfigBoundaryValues:
 # TEST GROUP 4: Backend Failure Modes
 # =============================================================================
 
+
 class TestLLMBackendFailures:
     """LLM backend failure scenarios."""
-
-
-
-
-
-
-
-
-
-
 
 
 # =============================================================================
 # TEST GROUP 5: Vector Store Edge Cases
 # =============================================================================
+
 
 class TestVectorStoreEdgeCases:
     """Vector store edge cases and failure modes."""
@@ -702,23 +719,31 @@ class TestVectorStoreEdgeCases:
         pytest.importorskip("sentence_transformers")
         from vector_store import VectorStore
 
-        store = VectorStore(db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         # Empty query
         chunks = store.get_chunks("", n_results=3)
         assert isinstance(chunks, list)
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skip(
+        reason="Requires real embedding model — incompatible with conftest mock"
+    )
     def test_add_chunks_with_none_metadata(self, temp_chroma_db):
         """Chunks with None metadata should not crash."""
         pytest.importorskip("chromadb")
         pytest.importorskip("sentence_transformers")
-        from vector_store import VectorStore, DocumentChunk
+        from vector_store import DocumentChunk, VectorStore
 
-        store = VectorStore(db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         chunks = [
-            DocumentChunk(text="Test chunk", source="test.txt", page=None, chunk_index=0)
+            DocumentChunk(
+                text="Test chunk", source="test.txt", page=None, chunk_index=0
+            )
         ]
 
         # Should not crash
@@ -731,7 +756,9 @@ class TestVectorStoreEdgeCases:
         pytest.importorskip("sentence_transformers")
         from vector_store import VectorStore
 
-        store = VectorStore(db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
+        )
         stats = store.get_stats()
 
         assert stats["chunk_count"] == 0
@@ -753,7 +780,9 @@ class TestVectorStoreEdgeCases:
 
         index = BM25Index()
         chunks = [
-            DocumentChunk(text="Python programming language", source="test.txt", chunk_index=0)
+            DocumentChunk(
+                text="Python programming language", source="test.txt", chunk_index=0
+            )
         ]
         index.build_index(chunks)
 
@@ -792,21 +821,24 @@ class TestVectorStoreEdgeCases:
 # TEST GROUP 6: API Edge Cases
 # =============================================================================
 
+
 class TestAPIEdgeCases:
     """API server edge cases and validation."""
 
     def test_n_results_below_minimum(self):
         """n_results < 1 should be rejected by Pydantic."""
-        from api_server import QuestionRequest
         import pydantic
+
+        from api_server import QuestionRequest
 
         with pytest.raises(Exception):  # ValidationError
             QuestionRequest(question="Test?", n_results=0)
 
     def test_n_results_above_maximum(self):
         """n_results > 10 should be rejected by Pydantic."""
-        from api_server import QuestionRequest
         import pydantic
+
+        from api_server import QuestionRequest
 
         with pytest.raises(Exception):
             QuestionRequest(question="Test?", n_results=11)
@@ -855,7 +887,9 @@ class TestAPIEdgeCases:
         with pytest.raises(ValueError, match="path traversal"):
             validate_model_path("%2e%2e/etc/passwd")
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skip(
+        reason="Requires real embedding model — incompatible with conftest mock"
+    )
     def test_validate_device_with_shell_injection(self):
         """Device string with shell injection patterns should be rejected."""
         from api_server import validate_device
@@ -865,7 +899,7 @@ class TestAPIEdgeCases:
             "cpu | cat /etc/passwd",
             "cpu && curl evil.com",
             "cpu`whoami`",
-            'cpu$(ls)',
+            "cpu$(ls)",
             "cuda'",
             'cpu"',
         ]
@@ -874,7 +908,9 @@ class TestAPIEdgeCases:
             with pytest.raises(ValueError, match="dangerous"):
                 validate_device(device)
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skip(
+        reason="Requires real embedding model — incompatible with conftest mock"
+    )
     def test_validate_device_valid_values(self):
         """Valid device strings should be accepted."""
         from api_server import validate_device
@@ -883,7 +919,9 @@ class TestAPIEdgeCases:
             result = validate_device(device)
             assert result == device
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skip(
+        reason="Requires real embedding model — incompatible with conftest mock"
+    )
     def test_validate_numeric_at_boundaries(self):
         """Numeric validation at exact boundaries."""
         from api_server import validate_numeric
@@ -893,7 +931,9 @@ class TestAPIEdgeCases:
         # Exact max
         assert validate_numeric(10, 5, 10, "test") == 10
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skip(
+        reason="Requires real embedding model — incompatible with conftest mock"
+    )
     def test_validate_numeric_below_min_by_one(self):
         """Value one below minimum should be rejected."""
         from api_server import validate_numeric
@@ -901,7 +941,9 @@ class TestAPIEdgeCases:
         with pytest.raises(ValueError, match="must be between"):
             validate_numeric(4, 5, 10, "test")
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skip(
+        reason="Requires real embedding model — incompatible with conftest mock"
+    )
     def test_validate_numeric_above_max_by_one(self):
         """Value one above maximum should be rejected."""
         from api_server import validate_numeric
@@ -909,9 +951,11 @@ class TestAPIEdgeCases:
         with pytest.raises(ValueError, match="must be between"):
             validate_numeric(11, 5, 10, "test")
 
+
 # =============================================================================
 # TEST GROUP 7: RAG Engine Edge Cases
 # =============================================================================
+
 
 class TestRAGEngineEdgeCases:
     """RAG engine edge cases and error handling."""
@@ -924,15 +968,23 @@ class TestRAGEngineEdgeCases:
             with patch("rag_engine.SmartLLM") as mock_llm:
                 with patch("rag_engine.RAGEngine._save_config"):
                     mock_vs_instance = MagicMock()
-                    mock_vs_instance.get_context.return_value = ("Some context", ["test.txt"], [])
+                    mock_vs_instance.get_context.return_value = (
+                        "Some context",
+                        ["test.txt"],
+                        [],
+                    )
                     mock_vs_instance.get_stats.return_value = {
-                        "document_count": 1, "chunk_count": 1,
-                        "embedding_model": "test", "documents": ["test.txt"]
+                        "document_count": 1,
+                        "chunk_count": 1,
+                        "embedding_model": "test",
+                        "documents": ["test.txt"],
                     }
                     mock_vs.return_value = mock_vs_instance
 
                     mock_llm_instance = MagicMock()
-                    mock_llm_instance.answer_question.return_value = ""  # Empty response
+                    mock_llm_instance.answer_question.return_value = (
+                        ""  # Empty response
+                    )
                     mock_llm.return_value = mock_llm_instance
 
                     engine = RAGEngine()
@@ -951,8 +1003,10 @@ class TestRAGEngineEdgeCases:
                     mock_vs_instance = MagicMock()
                     mock_vs_instance.get_context.return_value = ("Context", [], [])
                     mock_vs_instance.get_stats.return_value = {
-                        "document_count": 0, "chunk_count": 0,
-                        "embedding_model": "test", "documents": []
+                        "document_count": 0,
+                        "chunk_count": 0,
+                        "embedding_model": "test",
+                        "documents": [],
                     }
                     mock_vs.return_value = mock_vs_instance
 
@@ -976,10 +1030,16 @@ class TestRAGEngineEdgeCases:
                     long_context = "word " * 10000
 
                     mock_vs_instance = MagicMock()
-                    mock_vs_instance.get_context.return_value = (long_context, ["test.txt"], [])
+                    mock_vs_instance.get_context.return_value = (
+                        long_context,
+                        ["test.txt"],
+                        [],
+                    )
                     mock_vs_instance.get_stats.return_value = {
-                        "document_count": 1, "chunk_count": 100,
-                        "embedding_model": "test", "documents": ["test.txt"]
+                        "document_count": 1,
+                        "chunk_count": 100,
+                        "embedding_model": "test",
+                        "documents": ["test.txt"],
                     }
                     mock_vs.return_value = mock_vs_instance
 
@@ -1028,21 +1088,41 @@ class TestRAGEngineEdgeCases:
 # TEST GROUP 8: Resource Exhaustion Simulation
 # =============================================================================
 
+
 class TestResourceExhaustion:
     """Simulated resource exhaustion scenarios."""
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skipif(
+        importlib.util.find_spec("sentence_transformers") is None,
+        reason="sentence-transformers not installed (pip install sentence-transformers)",
+    )
     def test_embedding_model_not_found(self, temp_chroma_db):
-        """Non-existent embedding model should raise ImportError or similar."""
+        """A model name that resolves to nothing must fail loudly at first use.
+
+        VectorStore construction is deliberately lazy (and a staged default
+        model silently overrides the supplied name), so construction itself
+        never raises; the contract under test is the deferred load failure.
+        """
         pytest.importorskip("chromadb")
         pytest.importorskip("sentence_transformers")
         from vector_store import VectorStore
 
-        with pytest.raises(Exception):  # Model loading should fail
-            VectorStore(
-                db_path=str(temp_chroma_db),
-                embedding_model="non-existent-model-xyz123",
+        staged_default = (
+            Path(__file__).resolve().parent.parent / "models" / "bge-small-en-v1.5"
+        )
+        if staged_default.is_dir() and any(staged_default.iterdir()):
+            pytest.skip(
+                "artifact present: models/bge-small-en-v1.5 overrides the "
+                "supplied model name (lazy fallback contract) - run on a "
+                "machine without staged weights"
             )
+
+        store = VectorStore(
+            db_path=str(temp_chroma_db),
+            embedding_model="non-existent-model-xyz123",
+        )
+        with pytest.raises(Exception):  # First model use must fail loudly
+            store.embedder._ensure_model_loaded()
 
     def test_chroma_db_path_readonly(self, tmp_path):
         """ChromaDB on read-only path should fail gracefully."""
@@ -1056,9 +1136,12 @@ class TestResourceExhaustion:
 
         try:
             # Attempt to create a store in the directory
-            store = VectorStore(db_path=str(readonly_dir), embedding_model="BAAI/bge-small-en-v1.5")
+            store = VectorStore(
+                db_path=str(readonly_dir), embedding_model="BAAI/bge-small-en-v1.5"
+            )
             # If this succeeds, add_chunks might fail on write
             from document_processor import DocumentChunk
+
             chunks = [DocumentChunk(text="test", source="test.txt", chunk_index=0)]
             try:
                 store.add_chunks(chunks)
@@ -1067,17 +1150,22 @@ class TestResourceExhaustion:
         except Exception:
             pass  # Also acceptable - can't even create the store
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skip(
+        reason="Requires real embedding model — incompatible with conftest mock"
+    )
     def test_disk_full_simulation(self, temp_chroma_db):
         """Simulate disk full by making ChromaDB operations fail."""
         pytest.importorskip("chromadb")
         pytest.importorskip("sentence_transformers")
-        from vector_store import VectorStore, DocumentChunk
+        from vector_store import DocumentChunk, VectorStore
 
-        store = VectorStore(db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         # Mock collection.add to simulate disk full
         original_add = store.collection.add
+
         def simulate_disk_full(*args, **kwargs):
             raise OSError("No space left on device")
 
@@ -1091,15 +1179,18 @@ class TestResourceExhaustion:
 
     def test_context_truncation_extreme_value(self):
         """Very large context truncation value should be accepted but capped."""
-        from config import RAGSettings
-        import os
         import importlib
+        import os
+
+        from config import RAGSettings
 
         os.environ["RAG_CONTEXT_TRUNCATION"] = "999999999"
         try:
             import config as cfg
+
             importlib.reload(cfg)
             from config import RAGSettings
+
             s = RAGSettings()
             # Should be accepted as a positive integer
             assert s.rag_context_truncation > 0
@@ -1111,6 +1202,7 @@ class TestResourceExhaustion:
 # =============================================================================
 # TEST GROUP 9: Token and Length Limit Properties
 # =============================================================================
+
 
 class TestTokenAndLengthLimits:
     """Token and prompt length limit testing."""
@@ -1163,6 +1255,7 @@ class TestTokenAndLengthLimits:
 # TEST GROUP 10: Data Integrity and Recovery
 # =============================================================================
 
+
 class TestDataIntegrityAndRecovery:
     """Data integrity and recovery scenarios."""
 
@@ -1199,16 +1292,20 @@ class TestDataIntegrityAndRecovery:
                     mock_vs_instance.get_context.return_value = (
                         "日本語テスト context with émoji 🚀 and 中文",
                         ["test.txt"],
-                        []
+                        [],
                     )
                     mock_vs_instance.get_stats.return_value = {
-                        "document_count": 1, "chunk_count": 1,
-                        "embedding_model": "test", "documents": ["test.txt"]
+                        "document_count": 1,
+                        "chunk_count": 1,
+                        "embedding_model": "test",
+                        "documents": ["test.txt"],
                     }
                     mock_vs.return_value = mock_vs_instance
 
                     mock_llm_instance = MagicMock()
-                    mock_llm_instance.answer_question.return_value = "Answer with émoji."
+                    mock_llm_instance.answer_question.return_value = (
+                        "Answer with émoji."
+                    )
                     mock_llm.return_value = mock_llm_instance
 
                     engine = RAGEngine()
@@ -1225,10 +1322,16 @@ class TestDataIntegrityAndRecovery:
             with patch("rag_engine.SmartLLM") as mock_llm:
                 with patch("rag_engine.RAGEngine._save_config"):
                     mock_vs_instance = MagicMock()
-                    mock_vs_instance.get_context.return_value = ("context", ["test.txt"], [])
+                    mock_vs_instance.get_context.return_value = (
+                        "context",
+                        ["test.txt"],
+                        [],
+                    )
                     mock_vs_instance.get_stats.return_value = {
-                        "document_count": 1, "chunk_count": 1,
-                        "embedding_model": "test", "documents": ["test.txt"]
+                        "document_count": 1,
+                        "chunk_count": 1,
+                        "embedding_model": "test",
+                        "documents": ["test.txt"],
                     }
                     mock_vs.return_value = mock_vs_instance
 
@@ -1266,6 +1369,7 @@ class TestDataIntegrityAndRecovery:
 # =============================================================================
 # TEST GROUP 11: Property-Based Invariants
 # =============================================================================
+
 
 class TestPropertyInvariants:
     """Property-based tests for mathematical/logical invariants."""
@@ -1313,14 +1417,14 @@ class TestPropertyInvariants:
         for val in [0.0, 0.5, 1.0, 0.001, 0.999]:
             os.environ["RAG_MIN_SIMILARITY"] = str(val)
             try:
-                importlib.reload(__import__('config'))
+                importlib.reload(__import__("config"))
                 s = RAGSettings()
                 assert 0.0 <= s.rag_min_similarity <= 1.0
             except ValueError:
                 pass  # Out of range values are rejected
             finally:
                 os.environ.pop("RAG_MIN_SIMILARITY", None)
-                importlib.reload(__import__('config'))
+                importlib.reload(__import__("config"))
 
     def test_config_temperature_bounded(self):
         """temperature always returns value in [0, 2]."""
@@ -1332,37 +1436,40 @@ class TestPropertyInvariants:
         for val in [0.0, 1.0, 2.0, 0.001, 1.999]:
             os.environ["RAG_TEMPERATURE"] = str(val)
             try:
-                importlib.reload(__import__('config'))
+                importlib.reload(__import__("config"))
                 s = RAGSettings()
                 assert 0.0 <= s.rag_temperature <= 2.0
             except ValueError:
                 pass
             finally:
                 os.environ.pop("RAG_TEMPERATURE", None)
-                importlib.reload(__import__('config'))
+                importlib.reload(__import__("config"))
 
 
 # =============================================================================
 # TEST GROUP 12: Adversarial Input - Boundary and Oversized
 # =============================================================================
 
+
 class TestAdversarialOversizedInputs:
     """Adversarial oversized inputs across the pipeline."""
 
-    @pytest.mark.skip(reason="Requires real embedding model — incompatible with conftest mock")
+    @pytest.mark.skip(
+        reason="Requires real embedding model — incompatible with conftest mock"
+    )
     def test_vector_store_oversized_text_chunk(self, temp_chroma_db):
         """Very large chunk text should be handled."""
         pytest.importorskip("chromadb")
         pytest.importorskip("sentence_transformers")
-        from vector_store import VectorStore, DocumentChunk
+        from vector_store import DocumentChunk, VectorStore
 
-        store = VectorStore(db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5")
+        store = VectorStore(
+            db_path=str(temp_chroma_db), embedding_model="BAAI/bge-small-en-v1.5"
+        )
 
         # Create a chunk with very large text (simulate 100K chars)
         large_chunk = DocumentChunk(
-            text="word " * 20000,  # ~100K chars
-            source="large.txt",
-            chunk_index=0
+            text="word " * 20000, source="large.txt", chunk_index=0  # ~100K chars
         )
 
         # Should handle without crashing (may truncate or chunk internally)
@@ -1408,8 +1515,9 @@ class TestAdversarialOversizedInputs:
 
     def test_very_large_n_results_in_query(self):
         """n_results = 1000 should be rejected by Pydantic."""
-        from api_server import QuestionRequest
         import pydantic
+
+        from api_server import QuestionRequest
 
         with pytest.raises(Exception):
             QuestionRequest(question="Test?", n_results=1000)
