@@ -53,8 +53,9 @@ from config import (
 )
 from theme import FONT_FAMILY, ColorTokens, Spacing, TypeScale
 
-# Dynamic default (all CPUs up to 8), evaluated at import so the presets below
-# always match the config default on the machine running the app.
+# Dynamic default (all CPUs up to 8), evaluated at import so the Fast and
+# Balanced presets below always match the config default on the machine
+# running the app. Quality intentionally pins the 8-thread cap (issue #53).
 _DEFAULT_GGUF_THREADS = default_gguf_threads()
 
 # Canonical default values for UI presets (minimum-hardware safe)
@@ -320,11 +321,8 @@ def _classify_error(err: Exception, operation: str) -> str:
         if "Insufficient RAM" in msg:
             # A backend IS configured; the machine refused the load. Relay the
             # real numbers instead of the misdirecting "configure a backend".
-            return (
-                "Not enough free memory to load the model. "
-                + msg
-                + " Close other applications, or set RAG_FAST_PROFILE_PATH to a smaller model."
-            )
+            # msg itself ends with the remediation advice, so nothing appended.
+            return "Not enough free memory to load the model. " + msg
         if "timeout" in msg.lower():
             return "Request timed out. Try reducing Max Tokens in Settings."
         if "token" in msg.lower() and (

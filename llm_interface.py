@@ -493,7 +493,16 @@ class SmartLLM:
         # Requirement = model file (mmap'd weights) + KV cache + runtime
         # overhead; the old flat 4x-file-size factor refused the bundled
         # ~3.1 GB model on 16 GB laptops with 8-11 GB free.
-        file_size = Path(model_path).stat().st_size
+        try:
+            file_size = Path(model_path).stat().st_size
+        except OSError as e:
+            # stat() can race with an external delete/move; wrap it like any
+            # other load failure so no raw OS error text reaches the user.
+            raise RuntimeError(
+                f"No GGUF backend available: loading GGUF model "
+                f"'{os.path.basename(model_path)}' failed: "
+                f"{_sanitize_error(str(e))}"
+            ) from e
         required = estimate_required_memory(file_size, n_ctx)
         available = psutil.virtual_memory().available
         if available < required:
@@ -515,9 +524,13 @@ class SmartLLM:
                 verbose=verbose,
             )
         except Exception as e:
+            # Sanitize the cause: backend constructors can embed absolute
+            # paths/username in their messages, and this text is relayed
+            # verbatim into GUI errors and API 503 details.
             raise RuntimeError(
                 f"No GGUF backend available: loading GGUF model "
-                f"'{os.path.basename(model_path)}' failed: {e}"
+                f"'{os.path.basename(model_path)}' failed: "
+                f"{_sanitize_error(str(e))}"
             ) from e
 
     def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:

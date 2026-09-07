@@ -52,6 +52,11 @@ PATTERNS = [
         r"gguf_n_threads_entry\.get\(\)\s*or\s*4\b",
         "hardcoded blank-field fallback",
     ),
+    (
+        "app_gui.py",
+        r'\(\s*"gguf_n_threads",\s*4\b',
+        "hardcoded settings-dialog tuple-literal default",
+    ),
 ]
 
 

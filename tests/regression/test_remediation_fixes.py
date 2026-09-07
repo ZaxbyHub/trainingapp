@@ -556,14 +556,21 @@ class TestFix8MinimumHardwareDefaults:
         # Issue #53 superseded the fixed minimum-hardware default of 4: the
         # default is now min(os.cpu_count() or 4, 8) so 8-thread-capable CPUs
         # use all of them while min-spec 4-core hardware keeps the old value.
-        import os
+        # cpu_count is pinned both above and below the cap so the assertion
+        # discriminates on any host: a regressed hardcoded 4 fails the
+        # 16-core pin, a hardcoded 8 fails the 4-core pin.
+        from unittest.mock import patch
 
         from rag_engine import RAGConfig
 
-        c = RAGConfig()
-        assert c.gguf_n_threads == min(
-            os.cpu_count() or 4, 8
-        ), "gguf_n_threads must default to min(os.cpu_count() or 4, 8)"
+        with patch("os.cpu_count", return_value=16):
+            assert (
+                RAGConfig().gguf_n_threads == 8
+            ), "cpu_count above the cap must clamp the default to 8"
+        with patch("os.cpu_count", return_value=4):
+            assert (
+                RAGConfig().gguf_n_threads == 4
+            ), "4-core pin must keep the min-spec default of 4"
 
     def test_ragconfig_gguf_fields_in_to_dict(self):
         from rag_engine import RAGConfig

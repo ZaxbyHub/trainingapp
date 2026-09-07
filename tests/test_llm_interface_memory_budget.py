@@ -24,6 +24,10 @@ GIB = 1024**3
 BUNDLED_MODEL_PATH = "models/gemma-4-E2B-it-Q5_K_M.gguf"
 # Documented size of the bundled Gemma 4 E2B Q5_K_M GGUF (~3.1 GB, decimal GB)
 BUNDLED_MODEL_SIZE = int(3.1 * 1e9)
+# Fast-profile class model (the RAG_FAST_PROFILE_PATH target): ~1.5 GB
+# Qwen2.5-1.5B per CONFIGURATION.md's model-selection list
+FAST_MODEL_PATH = "models/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+FAST_MODEL_SIZE = int(1.5 * 1e9)
 
 
 class MockVirtualMemory:
@@ -94,6 +98,28 @@ class TestBundledModelScenarios:
             total_bytes=max(free_gib, 16) * GIB,
             gguf_path=BUNDLED_MODEL_PATH,
             gguf_file_size=BUNDLED_MODEL_SIZE,
+        )
+        assert llm.backend is not None
+
+    @pytest.mark.parametrize("free_gib", [8, 16, 32])
+    @patch("llm_interface.GGUFBackend")
+    @patch("psutil.virtual_memory")
+    def test_fast_profile_model_loads_on_target_hardware(
+        self, mock_vm, mock_gguf_backend, free_gib
+    ):
+        """8/16/32 GB free must also load the ~1.5 GB fast-profile class.
+
+        Issue #53 exit gate requires the budget sweep to cover TWO models;
+        the fast-profile class (Qwen2.5-1.5B per CONFIGURATION.md) is the
+        model RAG_FAST_PROFILE_PATH would point at.
+        """
+        llm = _make_smart_llm_with_mocked_deps(
+            mock_vm,
+            mock_gguf_backend,
+            available_bytes=free_gib * GIB,
+            total_bytes=max(free_gib, 16) * GIB,
+            gguf_path=FAST_MODEL_PATH,
+            gguf_file_size=FAST_MODEL_SIZE,
         )
         assert llm.backend is not None
 
