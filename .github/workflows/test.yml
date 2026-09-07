@@ -95,3 +95,49 @@ jobs:
 
       - name: Run API contract conformance suite
         run: python contracts/tests/run_conformance.py --asgi api_server:app
+
+  # Issue #54: informational tier-0 eval run against a deterministic no-weights
+  # backend. NEVER gates merge (continue-on-error); the artifact records that
+  # the harness executes and the metrics populate on every PR.
+  eval-report:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      RUN_EVAL_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-eval-report-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-eval-report-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install httpx
+
+      - name: Run tier-0 eval harness against the deterministic backend
+        continue-on-error: true
+        run: python eval/ci_serve.py --port 8091 --eval-report eval-report/REPORT.md --eval-json eval-report/report.json
+
+      - name: Eval harness integration test (runner over real HTTP)
+        continue-on-error: true
+        run: python -m pytest tests/test_eval_harness_integration.py -q
+
+      - name: Upload eval report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report/
+          if-no-files-found: warn

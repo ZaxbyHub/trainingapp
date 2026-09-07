@@ -229,9 +229,14 @@ class RAGEngine:
             self.llm = None
 
     def _ensure_llm(self):
-        """Lazily initialize LLM on first use."""
+        """Lazily initialize LLM on first use.
+
+        Double-checked under the init lock so concurrent first queries (two
+        /ask requests racing a cold engine) load the model exactly once."""
         if self.llm is None:
-            self._init_llm(self.gguf_path)
+            with self._init_lock:
+                if self.llm is None:
+                    self._init_llm(self.gguf_path)
 
     def _ensure_query_transformer(self):
         """Lazily initialize QueryTransformer once."""

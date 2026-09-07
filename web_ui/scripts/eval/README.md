@@ -57,6 +57,8 @@ Keep the in/out ratio roughly 70/30 so abstention recall is exercised.
 cost) live in [`bench/RESULTS.md`](../../../bench/RESULTS.md) — measured per
 machine by the issue #52 benchmark harness; never restate those numbers here.
 
-**Retrieval-quality baselines** (recall@k / nDCG / abstention on the labeled
-corpus) are recorded after the tier-0 eval set lands (issue #54, WS-A PR 4/8);
-this file intentionally holds no inline placeholder numbers until then.
+**Retrieval-quality baselines** (recall@k / MRR / abstention against a
+frozen-contract backend) are owned by the root
+[`eval/` harness](../../../eval/README.md) (issue #54): it ships the tier-0
+question set, a backend-agnostic runner, and recorded samples under
+`eval/samples/`. This file intentionally holds no inline quality numbers.

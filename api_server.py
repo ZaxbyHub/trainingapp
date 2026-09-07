@@ -546,6 +546,14 @@ async def ask_question(request: QuestionRequest, auth: dict = Security(require_a
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
+    if not engine.llm and hasattr(engine, "_ensure_llm"):
+        # The engine defers LLM loading to first use; without this attempt the
+        # lazy init inside engine.query() is unreachable (this handler 503s
+        # first), so a configured GGUF model could never load via the API.
+        # A failed load records engine.llm_init_error, which the 503 below
+        # then surfaces as the real diagnostic (issue #53 behavior).
+        await asyncio.to_thread(engine._ensure_llm)
+
     if not engine.llm:
         # Surface the recorded load diagnostic (RAM numbers, model name) so
         # clients see WHY no LLM is available instead of a bare generic string.
@@ -724,6 +732,12 @@ if HAS_SSE:
         """Ask a question with SSE streaming response."""
         if not engine:
             raise HTTPException(status_code=503, detail="Engine not initialized")
+
+        if not engine.llm and hasattr(engine, "_ensure_llm"):
+            # Same lazy-load attempt as /ask: without it the lazy init inside
+            # engine.query() is unreachable and a configured GGUF model could
+            # never load via the streaming route.
+            await asyncio.to_thread(engine._ensure_llm)
 
         if not engine.llm:
             raise HTTPException(
