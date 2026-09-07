@@ -6,12 +6,28 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# Cancel superseded PR runs (force-push iterations replace stale 2.4h runs);
+# never cancel mainline pushes so master signal is always preserved.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: windows-latest
+    timeout-minutes: 180
     strategy:
+      # A failing leg must not cancel the others: in a ~2.5h suite, fail-fast
+      # destroys two legs of diagnostics (and their --durations output) while
+      # still billing the runner hours.
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
+        include:
+          # Coverage on one leg only (~1.2x overhead measured on that leg);
+          # the other two legs run without the tracer.
+          - python-version: '3.11'
+            with-cov: true
 
     steps:
       - uses: actions/checkout@v4
@@ -33,12 +49,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest pytest-cov pytest-asyncio
+          pip install pytest pytest-cov pytest-asyncio pytest-timeout
 
       - name: Run tests
-        run: pytest tests/ -v --cov=. --cov-report=xml --tb=short
+        # -q + -ra: quiet output with a skip/fail summary (full -v logs of a
+        # ~2800-test suite are unreadable and slower). --durations=25 names
+        # the true per-test stragglers so optimization is data-driven.
+        # pytest-timeout caps a hung test at 10 minutes instead of a
+        # cancelled leg; thread method is required on Windows (no SIGALRM).
+        run: pytest tests/ -q --tb=short -ra --durations=25 --timeout=600 --timeout-method=thread ${{ matrix.with-cov && '--cov=. --cov-report=xml' || '' }}
 
       - name: Upload coverage
+        if: matrix.with-cov == true
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
