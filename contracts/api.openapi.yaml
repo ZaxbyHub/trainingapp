@@ -105,7 +105,7 @@ paths:
         "500":
           description: Processing error
         "503":
-          description: Engine not initialized / no LLM backend
+          description: Engine not initialized / no LLM backend (detail carries the model-load diagnostic when available)
   /ask/stream:
     post:
       tags: [ask]
@@ -137,7 +137,7 @@ paths:
         "422":
           description: Request validation failed
         "503":
-          description: Engine not initialized / no LLM backend
+          description: Engine not initialized / no LLM backend (detail carries the model-load diagnostic when available)
   /ingest:
     post:
       tags: [ingest]

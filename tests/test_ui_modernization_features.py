@@ -11,8 +11,10 @@ Verifies:
 - Retrieved chunks expandable preview
 """
 
-import pytest
 import inspect
+import re
+
+import pytest
 
 
 class TestNavigationRail:
@@ -26,7 +28,7 @@ class TestNavigationRail:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
-        assert 'nav_rail' in source, "Navigation rail variable not found"
+        assert "nav_rail" in source, "Navigation rail variable not found"
 
     def test_four_nav_buttons_exist(self):
         """Must have buttons for Chat, Documents, Settings, Help."""
@@ -37,10 +39,10 @@ class TestNavigationRail:
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
         # Check for icon buttons with text labels
-        assert '💬' in source or 'Chat' in source, "Chat button not found"
-        assert '📄' in source or 'Documents' in source, "Documents button not found"
-        assert '⚙' in source or 'Settings' in source, "Settings button not found"
-        assert '?' in source or 'Help' in source, "Help button not found"
+        assert "💬" in source or "Chat" in source, "Chat button not found"
+        assert "📄" in source or "Documents" in source, "Documents button not found"
+        assert "⚙" in source or "Settings" in source, "Settings button not found"
+        assert "?" in source or "Help" in source, "Help button not found"
 
 
 class TestDocumentsPage:
@@ -54,8 +56,10 @@ class TestDocumentsPage:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
-        assert '_create_documents_page' in source, "Documents page creation method not called"
-        assert hasattr(app_gui.DocumentQAApp, '_create_documents_page')
+        assert (
+            "_create_documents_page" in source
+        ), "Documents page creation method not called"
+        assert hasattr(app_gui.DocumentQAApp, "_create_documents_page")
 
     def test_delete_document_method_exists(self):
         """_delete_document method must exist."""
@@ -64,8 +68,9 @@ class TestDocumentsPage:
         except ImportError:
             pytest.skip("customtkinter not installed")
 
-        assert hasattr(app_gui.DocumentQAApp, '_delete_document'), \
-            "_delete_document method must exist"
+        assert hasattr(
+            app_gui.DocumentQAApp, "_delete_document"
+        ), "_delete_document method must exist"
 
     def test_delete_requires_confirmation(self):
         """Document deletion must require user confirmation."""
@@ -75,8 +80,9 @@ class TestDocumentsPage:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._delete_document)
-        assert 'askyesno' in source or 'confirm' in source.lower(), \
-            "Delete must require confirmation"
+        assert (
+            "askyesno" in source or "confirm" in source.lower()
+        ), "Delete must require confirmation"
 
     def test_documents_frame_created(self):
         """Documents list frame must be created in documents page."""
@@ -86,7 +92,7 @@ class TestDocumentsPage:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_documents_page)
-        assert 'self.documents_frame' in source, "documents_frame not created"
+        assert "self.documents_frame" in source, "documents_frame not created"
 
 
 class TestSettingsPage:
@@ -100,8 +106,8 @@ class TestSettingsPage:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
-        assert '_create_settings_page' in source, "Settings page creation not called"
-        assert hasattr(app_gui.DocumentQAApp, '_create_settings_page')
+        assert "_create_settings_page" in source, "Settings page creation not called"
+        assert hasattr(app_gui.DocumentQAApp, "_create_settings_page")
 
     def test_advanced_settings_present(self):
         """Advanced Settings section must be present in settings page."""
@@ -111,9 +117,9 @@ class TestSettingsPage:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_settings_page)
-        assert 'advanced' in source.lower() or 'retrieval' in source.lower(), (
-            "Advanced/retrieval settings must be in _create_settings_page"
-        )
+        assert (
+            "advanced" in source.lower() or "retrieval" in source.lower()
+        ), "Advanced/retrieval settings must be in _create_settings_page"
 
     def test_settings_fields_present(self):
         """All canonical settings fields must be present."""
@@ -123,8 +129,14 @@ class TestSettingsPage:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_settings_page)
-        required_fields = ['chunk_size', 'n_results', 'max_tokens', 'temperature',
-                           'reranking_enabled', 'retrieval_window']
+        required_fields = [
+            "chunk_size",
+            "n_results",
+            "max_tokens",
+            "temperature",
+            "reranking_enabled",
+            "retrieval_window",
+        ]
         for field in required_fields:
             assert field in source.lower(), f"Settings field '{field}' not found"
 
@@ -140,8 +152,8 @@ class TestHelpPage:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
-        assert '_create_help_page' in source, "Help page creation not called"
-        assert hasattr(app_gui.DocumentQAApp, '_create_help_page')
+        assert "_create_help_page" in source, "Help page creation not called"
+        assert hasattr(app_gui.DocumentQAApp, "_create_help_page")
 
     def test_help_page_method_exists(self):
         """_create_help_page method must exist."""
@@ -150,8 +162,9 @@ class TestHelpPage:
         except ImportError:
             pytest.skip("customtkinter not installed")
 
-        assert hasattr(app_gui.DocumentQAApp, '_create_help_page'), \
-            "_create_help_page method must exist"
+        assert hasattr(
+            app_gui.DocumentQAApp, "_create_help_page"
+        ), "_create_help_page method must exist"
 
     def test_help_contains_keyboard_shortcuts(self):
         """Help page must document keyboard shortcuts."""
@@ -161,9 +174,10 @@ class TestHelpPage:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_help_page)
-        assert 'Keyboard Shortcuts' in source or 'Ctrl+' in source, \
-            "Help page must include keyboard shortcuts"
-        assert 'Ctrl+Enter' in source, "Ctrl+Enter shortcut must be documented"
+        assert (
+            "Keyboard Shortcuts" in source or "Ctrl+" in source
+        ), "Help page must include keyboard shortcuts"
+        assert "Ctrl+Enter" in source, "Ctrl+Enter shortcut must be documented"
 
 
 class TestCopyButton:
@@ -177,7 +191,7 @@ class TestCopyButton:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._add_message)
-        assert 'copy' in source.lower(), "Copy button implementation not found"
+        assert "copy" in source.lower(), "Copy button implementation not found"
 
     def test_add_message_has_copy_button_logic(self):
         """_add_message must have logic for copy button."""
@@ -187,7 +201,7 @@ class TestCopyButton:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._add_message)
-        assert '_make_button' in source, "Copy button must be created with _make_button"
+        assert "_make_button" in source, "Copy button must be created with _make_button"
 
 
 class TestRetrievedChunksExpander:
@@ -200,8 +214,9 @@ class TestRetrievedChunksExpander:
         except ImportError:
             pytest.skip("customtkinter not installed")
 
-        assert hasattr(app_gui.DocumentQAApp, '_create_retrieved_chunks_expander'), \
-            "_create_retrieved_chunks_expander method must exist"
+        assert hasattr(
+            app_gui.DocumentQAApp, "_create_retrieved_chunks_expander"
+        ), "_create_retrieved_chunks_expander method must exist"
 
     def test_add_message_creates_chunks_expander(self):
         """_add_message must call _create_retrieved_chunks_expander when chunks present."""
@@ -211,9 +226,10 @@ class TestRetrievedChunksExpander:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._add_message)
-        assert 'retrieved_chunks' in source, "retrieved_chunks parameter not used"
-        assert '_create_retrieved_chunks_expander' in source, \
-            "Must call _create_retrieved_chunks_expander for chunks"
+        assert "retrieved_chunks" in source, "retrieved_chunks parameter not used"
+        assert (
+            "_create_retrieved_chunks_expander" in source
+        ), "Must call _create_retrieved_chunks_expander for chunks"
 
 
 class TestPageSwitching:
@@ -226,10 +242,12 @@ class TestPageSwitching:
         except ImportError:
             pytest.skip("customtkinter not installed")
 
-        assert hasattr(app_gui.DocumentQAApp, '_switch_page'), \
-            "_switch_page method must exist"
-        assert hasattr(app_gui.DocumentQAApp, '_show_page'), \
-            "_show_page method must exist"
+        assert hasattr(
+            app_gui.DocumentQAApp, "_switch_page"
+        ), "_switch_page method must exist"
+        assert hasattr(
+            app_gui.DocumentQAApp, "_show_page"
+        ), "_show_page method must exist"
 
     def test_current_page_tracking(self):
         """App must track current page."""
@@ -239,7 +257,7 @@ class TestPageSwitching:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._switch_page)
-        assert '_current_page' in source, "Must track current page with _current_page"
+        assert "_current_page" in source, "Must track current page with _current_page"
 
 
 class TestMultilineComposer:
@@ -253,9 +271,10 @@ class TestMultilineComposer:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
-        assert 'CTkTextbox' in source, "Must use CTkTextbox for multiline input"
-        assert 'self.question_entry = CTkTextbox' in source, \
-            "question_entry must be a CTkTextbox"
+        assert "CTkTextbox" in source, "Must use CTkTextbox for multiline input"
+        assert (
+            "self.question_entry = CTkTextbox" in source
+        ), "question_entry must be a CTkTextbox"
 
     def test_ctrl_enter_submits_in_multiline(self):
         """Ctrl+Enter must submit in multiline mode."""
@@ -265,8 +284,12 @@ class TestMultilineComposer:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
-        assert 'bind("<Control-Return>"' in source, "Ctrl+Return binding required"
-        assert '_ask_question' in source, "Ctrl+Return must call _ask_question"
+        # black may wrap bind(...) across lines; match the call open plus the
+        # sequence with any whitespace between them.
+        assert re.search(
+            r'bind\(\s*"<Control-Return>"', source
+        ), "Ctrl+Return binding required"
+        assert "_ask_question" in source, "Ctrl+Return must call _ask_question"
 
     def test_enter_allows_newline(self):
         """Regular Enter must allow newlines (not submit)."""
@@ -276,6 +299,6 @@ class TestMultilineComposer:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_chat_page)
-        assert 'bind("<Return>"' in source, "Return key binding required"
+        assert re.search(r'bind\(\s*"<Return>"', source), "Return key binding required"
         # Should NOT call _ask_question for regular Return
-        assert 'lambda e: None' in source, "Return should not submit"
+        assert "lambda e: None" in source, "Return should not submit"

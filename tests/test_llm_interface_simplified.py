@@ -8,11 +8,10 @@ These tests verify:
 4. SmartLLM delegates to backend correctly
 """
 
-import pytest
 import inspect
-import sys
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 class TestRemovedClasses:
@@ -21,29 +20,37 @@ class TestRemovedClasses:
     def test_openvinollm_not_in_module(self):
         """OpenVINOLLM class must NOT exist in llm_interface module."""
         import llm_interface as mod
-        assert not hasattr(mod, "OpenVINOLLM"), \
-            "OpenVINOLLM still exists in llm_interface — it must be removed"
+
+        assert not hasattr(
+            mod, "OpenVINOLLM"
+        ), "OpenVINOLLM still exists in llm_interface — it must be removed"
 
     def test_ollamallm_not_in_module(self):
         """OllamaLLM class must NOT exist in llm_interface module."""
         import llm_interface as mod
-        assert not hasattr(mod, "OllamaLLM"), \
-            "OllamaLLM still exists in llm_interface — it must be removed"
+
+        assert not hasattr(
+            mod, "OllamaLLM"
+        ), "OllamaLLM still exists in llm_interface — it must be removed"
 
     def test_openaicompatibllm_not_in_module(self):
         """OpenAICompatibleLLM class must NOT exist in llm_interface module."""
         import llm_interface as mod
-        assert not hasattr(mod, "OpenAICompatibleLLM"), \
-            "OpenAICompatibleLLM still exists in llm_interface — it must be removed"
+
+        assert not hasattr(
+            mod, "OpenAICompatibleLLM"
+        ), "OpenAICompatibleLLM still exists in llm_interface — it must be removed"
 
     def test_import_raises_no_nameerror_for_smartllm(self):
         """SmartLLM must still be importable after removals."""
         from llm_interface import SmartLLM
+
         assert callable(SmartLLM)
 
     def test_import_raises_no_nameerror_for_ggufbackend(self):
         """GGUFBackend must still be importable after removals."""
         from llm_interface import GGUFBackend
+
         assert callable(GGUFBackend)
 
 
@@ -53,72 +60,88 @@ class TestSmartLLMSignature:
     def test_no_ollama_model_param(self):
         """SmartLLM.__init__ must NOT have ollama_model parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "ollama_model" not in sig.parameters, \
-            "SmartLLM still has ollama_model parameter — remove it"
+        assert (
+            "ollama_model" not in sig.parameters
+        ), "SmartLLM still has ollama_model parameter — remove it"
 
     def test_no_ollama_url_param(self):
         """SmartLLM.__init__ must NOT have ollama_url parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "ollama_url" not in sig.parameters, \
-            "SmartLLM still has ollama_url parameter — remove it"
+        assert (
+            "ollama_url" not in sig.parameters
+        ), "SmartLLM still has ollama_url parameter — remove it"
 
     def test_no_api_url_param(self):
         """SmartLLM.__init__ must NOT have api_url parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "api_url" not in sig.parameters, \
-            "SmartLLM still has api_url parameter — remove it"
+        assert (
+            "api_url" not in sig.parameters
+        ), "SmartLLM still has api_url parameter — remove it"
 
     def test_no_api_model_param(self):
         """SmartLLM.__init__ must NOT have api_model parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "api_model" not in sig.parameters, \
-            "SmartLLM still has api_model parameter — remove it"
+        assert (
+            "api_model" not in sig.parameters
+        ), "SmartLLM still has api_model parameter — remove it"
 
     def test_no_device_param(self):
         """SmartLLM.__init__ must NOT have device parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "device" not in sig.parameters, \
-            "SmartLLM still has device parameter — remove it"
+        assert (
+            "device" not in sig.parameters
+        ), "SmartLLM still has device parameter — remove it"
 
     def test_no_model_path_param(self):
         """SmartLLM.__init__ must NOT have model_path parameter (old OpenVINO path)."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "model_path" not in sig.parameters, \
-            "SmartLLM still has model_path parameter — remove it"
+        assert (
+            "model_path" not in sig.parameters
+        ), "SmartLLM still has model_path parameter — remove it"
 
     def test_has_gguf_path_param(self):
         """SmartLLM.__init__ must have gguf_path parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "gguf_path" in sig.parameters, \
-            "SmartLLM missing gguf_path parameter"
+        assert "gguf_path" in sig.parameters, "SmartLLM missing gguf_path parameter"
 
     def test_has_gguf_n_ctx_param(self):
         """SmartLLM.__init__ must have gguf_n_ctx parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "gguf_n_ctx" in sig.parameters, \
-            "SmartLLM missing gguf_n_ctx parameter"
+        assert "gguf_n_ctx" in sig.parameters, "SmartLLM missing gguf_n_ctx parameter"
 
     def test_has_gguf_n_threads_param(self):
         """SmartLLM.__init__ must have gguf_n_threads parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "gguf_n_threads" in sig.parameters, \
-            "SmartLLM missing gguf_n_threads parameter"
+        assert (
+            "gguf_n_threads" in sig.parameters
+        ), "SmartLLM missing gguf_n_threads parameter"
 
     def test_has_gguf_verbose_param(self):
         """SmartLLM.__init__ must have gguf_verbose parameter."""
         from llm_interface import SmartLLM
+
         sig = inspect.signature(SmartLLM.__init__)
-        assert "gguf_verbose" in sig.parameters, \
-            "SmartLLM missing gguf_verbose parameter"
+        assert (
+            "gguf_verbose" in sig.parameters
+        ), "SmartLLM missing gguf_verbose parameter"
 
 
 class TestSmartLLMInit:
@@ -132,6 +155,7 @@ class TestSmartLLMInit:
         with patch("llm_interface.GGUFBackend") as mock_backend_cls:
             mock_backend_cls.return_value = MagicMock()
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
 
             mock_backend_cls.assert_called_once_with(
@@ -150,6 +174,7 @@ class TestSmartLLMInit:
 
         with patch("llm_interface.GGUFBackend"):
             from llm_interface import SmartLLM
+
             with pytest.raises(RuntimeError, match="No GGUF backend available"):
                 SmartLLM(gguf_path=str(bad_path))
 
@@ -157,6 +182,7 @@ class TestSmartLLMInit:
         """SmartLLM init with None gguf_path raises RuntimeError."""
         with patch("llm_interface.GGUFBackend"):
             from llm_interface import SmartLLM
+
             with pytest.raises(RuntimeError, match="No GGUF backend available"):
                 SmartLLM(gguf_path=None)
 
@@ -164,6 +190,7 @@ class TestSmartLLMInit:
         """SmartLLM init with empty string gguf_path raises RuntimeError."""
         with patch("llm_interface.GGUFBackend"):
             from llm_interface import SmartLLM
+
             with pytest.raises(RuntimeError, match="No GGUF backend available"):
                 SmartLLM(gguf_path="")
 
@@ -175,6 +202,7 @@ class TestSmartLLMInit:
         with patch("llm_interface.GGUFBackend") as mock_backend_cls:
             mock_backend_cls.side_effect = RuntimeError("GGUF init failed")
             from llm_interface import SmartLLM
+
             with pytest.raises(RuntimeError, match="No GGUF backend available"):
                 SmartLLM(gguf_path=str(gguf_path))
 
@@ -186,12 +214,14 @@ class TestSmartLLMInit:
         with patch("llm_interface.GGUFBackend") as mock_backend_cls:
             mock_backend_cls.return_value = MagicMock()
             from llm_interface import SmartLLM
+
             llm = SmartLLM(
                 gguf_path=str(gguf_path),
                 gguf_n_ctx=4096,
                 gguf_n_threads=4,
                 gguf_verbose=True,
             )
+            assert llm.backend is not None
 
             mock_backend_cls.assert_called_once_with(
                 gguf_path=str(gguf_path),
@@ -214,6 +244,7 @@ class TestSmartLLMGenerate:
 
         with patch("llm_interface.GGUFBackend", return_value=mock_backend):
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
 
             result = llm.generate("Hello, model!")
@@ -233,6 +264,7 @@ class TestSmartLLMGenerate:
 
         with patch("llm_interface.GGUFBackend", return_value=mock_backend):
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
             config = InferenceConfig(max_tokens=512, temperature=0.3)
 
@@ -250,6 +282,7 @@ class TestSmartLLMGenerate:
         mock_backend = MagicMock()
         with patch("llm_interface.GGUFBackend", return_value=mock_backend):
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
 
             oversized = "x" * 200000  # Exceeds MAX_PROMPT_LENGTH (100000)
@@ -270,6 +303,7 @@ class TestSmartLLMAnswerQuestion:
 
         with patch("llm_interface.GGUFBackend", return_value=mock_backend):
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
 
             result = llm.answer_question(
@@ -295,6 +329,7 @@ class TestSmartLLMAnswerQuestion:
 
         with patch("llm_interface.GGUFBackend", return_value=mock_backend):
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
 
             result = llm.answer_question(
@@ -317,6 +352,7 @@ class TestSmartLLMAnswerQuestion:
 
         with patch("llm_interface.GGUFBackend", return_value=mock_backend):
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
 
             history = [
@@ -359,6 +395,7 @@ class TestSmartLLMGetInfo:
 
         with patch("llm_interface.GGUFBackend", return_value=mock_backend):
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
 
             info = llm.get_info()
@@ -378,15 +415,25 @@ class TestNoMultiBackendFallbackChain:
         with patch("llm_interface.GGUFBackend") as mock_backend_cls:
             mock_backend_cls.return_value = MagicMock()
             from llm_interface import SmartLLM
+
             llm = SmartLLM(gguf_path=str(gguf_path))
 
             assert hasattr(llm, "backend")
-            assert not hasattr(llm, "backends") or llm.backends is None, \
-                "SmartLLM should not have self.backends — fallback chain is removed"
+            assert (
+                not hasattr(llm, "backends") or llm.backends is None
+            ), "SmartLLM should not have self.backends — fallback chain is removed"
 
     def test_no_fallback_loop_in_init_source(self):
-        """Source code of SmartLLM.__init__ must not contain a loop over backends."""
+        """Source code of SmartLLM.__init__ must not contain a loop over backends.
+
+        Issue #53 mandates a SINGLE fast-profile retry when the primary model
+        fails the RAM gate (fast_profile_path), so a bare 'fallback' word is no
+        longer forbidden by itself; what stays forbidden is any multi-backend
+        fallback CHAIN (looping over backends, plural backend stores, generic
+        while-loops in the initializer).
+        """
         from llm_interface import SmartLLM
+
         source = inspect.getsource(SmartLLM.__init__)
 
         # These patterns would indicate a fallback chain
@@ -394,21 +441,27 @@ class TestNoMultiBackendFallbackChain:
             "for backend in",
             "while ",
             "self.backends",
-            "fallback",
         ]
         for pattern in forbidden:
-            assert pattern not in source, \
-                f"SmartLLM.__init__ contains forbidden pattern '{pattern}' — fallback chain detected"
+            assert (
+                pattern not in source
+            ), f"SmartLLM.__init__ contains forbidden pattern '{pattern}' — fallback chain detected"
+
+        # The fast-profile retry must be a single named attempt, not a loop.
+        assert "fast_profile_path" in source
+        assert "_load_backend" in source
 
     def test_no_openvino_openvinollm_in_smartllm_source(self):
         """SmartLLM source must not reference removed classes."""
         from llm_interface import SmartLLM
+
         source = inspect.getsource(SmartLLM)
 
         forbidden = ["OpenVINOLLM", "OllamaLLM", "OpenAICompatibleLLM"]
         for cls_name in forbidden:
-            assert cls_name not in source, \
-                f"SmartLLM source contains '{cls_name}' — class must be removed"
+            assert (
+                cls_name not in source
+            ), f"SmartLLM source contains '{cls_name}' — class must be removed"
 
 
 if __name__ == "__main__":

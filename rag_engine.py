@@ -3,27 +3,27 @@ RAG Engine Module
 Combines document processing, vector store, and LLM for question answering.
 """
 
-import os
-import sys
 import json
-import time
-import threading
-from typing import Optional, List, Dict, Any, Tuple, Callable
-from pathlib import Path
-from dataclasses import dataclass
-import app_paths
 import logging
+import os
 import re
-from llm_interface import QueryCancelled
+import sys
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import app_paths
+from config import default_gguf_threads
+from document_processor import DocumentProcessor
+from llm_interface import InferenceConfig, QueryCancelled, SmartLLM
+from vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
 # Maximum characters of context to pass to LLM (~1 500 tokens within GGUF n_ctx budget)
 # Configurable via RAG_CONTEXT_TRUNCATION environment variable, defaults to 6000
-
-from document_processor import DocumentProcessor
-from vector_store import VectorStore
-from llm_interface import SmartLLM, InferenceConfig
 
 
 def _truncate_at_sentence(text: str, max_chars: int) -> str:
@@ -32,12 +32,12 @@ def _truncate_at_sentence(text: str, max_chars: int) -> str:
         return text
     # Scan backwards from cutoff for sentence boundary
     for i in range(max_chars - 1, max(0, max_chars - 300), -1):
-        if text[i] in {'.', '!', '?'}:
-            if i + 1 >= len(text) or text[i + 1] in {' ', '\n', '\t'}:
-                return text[:i + 1].strip()
+        if text[i] in {".", "!", "?"}:
+            if i + 1 >= len(text) or text[i + 1] in {" ", "\n", "\t"}:
+                return text[: i + 1].strip()
     # Fallback: word boundary
     for i in range(max_chars - 1, max(0, max_chars - 100), -1):
-        if text[i] == ' ':
+        if text[i] == " ":
             return text[:i].strip()
     return text[:max_chars].strip()
 
@@ -77,9 +77,12 @@ class RAGConfig:
         rerank_top_k: int = 4,
         context_truncation: int = 20000,
         gguf_n_ctx: int = 4096,
-        gguf_n_threads: int = 4,
+        gguf_n_threads: Optional[int] = None,
+        fast_profile_path: Optional[str] = None,
     ):
-        self.db_path = db_path if db_path is not None else str(app_paths.get_vector_db_path())
+        self.db_path = (
+            db_path if db_path is not None else str(app_paths.get_vector_db_path())
+        )
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.n_results = n_results
@@ -96,7 +99,10 @@ class RAGConfig:
         self.rerank_top_k = rerank_top_k
         self.context_truncation = context_truncation
         self.gguf_n_ctx = gguf_n_ctx
-        self.gguf_n_threads = gguf_n_threads
+        self.gguf_n_threads = (
+            gguf_n_threads if gguf_n_threads is not None else default_gguf_threads()
+        )
+        self.fast_profile_path = fast_profile_path
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -118,6 +124,7 @@ class RAGConfig:
             "context_truncation": self.context_truncation,
             "gguf_n_ctx": self.gguf_n_ctx,
             "gguf_n_threads": self.gguf_n_threads,
+            "fast_profile_path": self.fast_profile_path,
         }
 
     @classmethod
@@ -145,7 +152,8 @@ class RAGConfig:
             rerank_top_k=data.get("rerank_top_k", 4),
             context_truncation=data.get("context_truncation", 20000),
             gguf_n_ctx=data.get("gguf_n_ctx", 4096),
-            gguf_n_threads=data.get("gguf_n_threads", 4),
+            gguf_n_threads=data.get("gguf_n_threads", default_gguf_threads()),
+            fast_profile_path=data.get("fast_profile_path"),
         )
 
 
@@ -184,6 +192,9 @@ class RAGEngine:
         )
 
         self.llm: Optional[SmartLLM] = None
+        # Diagnostic from the most recent failed lazy LLM init; surfaced to the
+        # GUI and the API 503 detail instead of a generic "not initialized".
+        self.llm_init_error: Optional[str] = None
         # LLM will be lazily initialized on first query() call
 
         # Lazy-init reranker only when reranking is enabled
@@ -201,9 +212,18 @@ class RAGEngine:
         """Initialize LLM with GGUF model only."""
         try:
             # Use root SmartLLM which auto-detects GGUF model
-            self.llm = SmartLLM(gguf_path=gguf_path, gguf_n_ctx=self.config.gguf_n_ctx, gguf_n_threads=self.config.gguf_n_threads)
+            self.llm = SmartLLM(
+                gguf_path=gguf_path,
+                gguf_n_ctx=self.config.gguf_n_ctx,
+                gguf_n_threads=self.config.gguf_n_threads,
+                fast_profile_path=getattr(self.config, "fast_profile_path", None),
+            )
+            self.llm_init_error = None
             logger.info("[OK] LLM initialized: %s", self.llm.get_info()["backend"])
         except Exception as e:
+            # Retain the real failure (RAM numbers, model name) for the GUI
+            # error message and the API 503 detail instead of discarding it.
+            self.llm_init_error = str(e)
             logger.warning("[WARN] LLM not available: %s", e)
             logger.info("  RAG engine will work for document ingestion only.")
             self.llm = None
@@ -215,15 +235,26 @@ class RAGEngine:
 
     def _ensure_query_transformer(self):
         """Lazily initialize QueryTransformer once."""
-        if self._query_transformer is None and not self._query_transformer_failed and self.config.query_transformation_enabled and self.llm:
+        if (
+            self._query_transformer is None
+            and not self._query_transformer_failed
+            and self.config.query_transformation_enabled
+            and self.llm
+        ):
             with self._init_lock:
-                if self._query_transformer is None and not self._query_transformer_failed:  # Double-check
+                if (
+                    self._query_transformer is None
+                    and not self._query_transformer_failed
+                ):  # Double-check
                     try:
                         from query_transformer import QueryTransformer
+
                         self._query_transformer = QueryTransformer(self.llm)
                     except Exception as e:
                         logger.warning("QueryTransformer init failed: %s", e)
-                        self._query_transformer_failed = True  # Mark as failed to avoid retry
+                        self._query_transformer_failed = (
+                            True  # Mark as failed to avoid retry
+                        )
 
     def _save_config(self):
         """Save configuration to database directory."""
@@ -232,7 +263,9 @@ class RAGEngine:
             with open(config_path, "w") as f:
                 json.dump(self.config.to_dict(), f, indent=2)
         except Exception as e:
-            logger.error("Failed to save configuration to %s: %s", self.config.db_path, e)
+            logger.error(
+                "Failed to save configuration to %s: %s", self.config.db_path, e
+            )
 
     def ingest_directory(self, directory: str, callback=None) -> Dict[str, Any]:
         """
@@ -335,8 +368,12 @@ class RAGEngine:
         """
         # Lazily initialize LLM on first query
         self._ensure_llm()
-        
+
         if not self.llm:
+            # Surface the real load diagnostic (RAM numbers, model name) that
+            # _init_llm recorded instead of a bare "not initialized" message.
+            if self.llm_init_error:
+                raise RuntimeError(f"LLM not initialized: {self.llm_init_error}")
             raise RuntimeError("LLM not initialized. Cannot answer questions.")
 
         start_time = time.time()
@@ -364,7 +401,9 @@ class RAGEngine:
             try:
                 retrieval_query = self._query_transformer.transform_step_back(question)
             except Exception as e:
-                logger.warning("Query transformation failed, using original query: %s", e)
+                logger.warning(
+                    "Query transformation failed, using original query: %s", e
+                )
                 retrieval_query = question
         else:
             retrieval_query = question
@@ -390,7 +429,10 @@ class RAGEngine:
                     question,
                     "",
                     [],
-                    config=InferenceConfig(max_tokens=self.config.max_tokens, temperature=self.config.temperature),
+                    config=InferenceConfig(
+                        max_tokens=self.config.max_tokens,
+                        temperature=self.config.temperature,
+                    ),
                     conversation_history=conversation_history,
                     stream_callback=stream_callback,
                     cancellation_event=cancellation_event,
@@ -422,7 +464,9 @@ class RAGEngine:
                 (
                     m.get("content", "")
                     for m in reversed(conversation_history)
-                    if isinstance(m, dict) and m.get("role") == "user" and m.get("content", "").strip()
+                    if isinstance(m, dict)
+                    and m.get("role") == "user"
+                    and m.get("content", "").strip()
                 ),
                 None,
             )
@@ -431,28 +475,46 @@ class RAGEngine:
                 should_combine = False
 
                 # Pattern 1: Pronoun/anaphora references
-                anaphora_pattern = r'\b(it|this|that|these|those|the above|the previous)\b'
+                anaphora_pattern = (
+                    r"\b(it|this|that|these|those|the above|the previous)\b"
+                )
                 if re.search(anaphora_pattern, question_lower):
                     should_combine = True
 
                 # Pattern 2: Very short non-wh questions
                 if len(question.split()) <= 4:
-                    wh_words = {'what', 'who', 'when', 'where', 'which', 'how', 'why'}
+                    wh_words = {"what", "who", "when", "where", "which", "how", "why"}
                     if not any(question_lower.startswith(w) for w in wh_words):
                         should_combine = True
 
                 # Pattern 3: Continuation keywords
                 followup_words = {
-                    'more', 'elaborate', 'detail', 'explain', 'expand', 'further',
-                    'also', 'another', 'compare', 'difference', 'versus', 'vs',
-                    'similar', 'unlike', 'elaborate', 'deeper',
+                    "more",
+                    "elaborate",
+                    "detail",
+                    "explain",
+                    "expand",
+                    "further",
+                    "also",
+                    "another",
+                    "compare",
+                    "difference",
+                    "versus",
+                    "vs",
+                    "similar",
+                    "unlike",
+                    "elaborate",
+                    "deeper",
                 }
                 if any(w in question_lower.split() for w in followup_words):
                     should_combine = True
 
                 if should_combine:
                     retrieval_query = f"{last_user_msg} {question}"
-                    logger.info("Follow-up detected — retrieval query: '%s'", retrieval_query[:80])
+                    logger.info(
+                        "Follow-up detected — retrieval query: '%s'",
+                        retrieval_query[:80],
+                    )
 
         # Will be populated by whichever retrieval path runs
         final_chunks_with_scores: List[Tuple[Any, Optional[float]]] = []
@@ -477,7 +539,9 @@ class RAGEngine:
                 inference_time=time.time() - start_time,
                 chunks_retrieved=0,
             )
-        effective_top_k = n_results if n_results is not None else self.config.rerank_top_k
+        effective_top_k = (
+            n_results if n_results is not None else self.config.rerank_top_k
+        )
 
         # Guard against effective_top_k <= 0
         if effective_top_k <= 0:
@@ -495,6 +559,7 @@ class RAGEngine:
             if self.reranker is None:
                 try:
                     from reranking import CrossEncoderReranker
+
                     self.reranker = CrossEncoderReranker(self.config.reranker_model)
                 except Exception as e:
                     logger.warning("Reranker initialization failed: %s", e)
@@ -505,22 +570,30 @@ class RAGEngine:
             reranked = None
             if rerank_chunks and self.reranker is not None:
                 try:
-                    reranked = self.reranker.rerank(question, rerank_chunks, top_k=effective_top_k)
+                    reranked = self.reranker.rerank(
+                        question, rerank_chunks, top_k=effective_top_k
+                    )
                 except Exception as rerank_err:
-                    logger.warning("Reranking failed, falling back to top-k: %s", rerank_err)
+                    logger.warning(
+                        "Reranking failed, falling back to top-k: %s", rerank_err
+                    )
                     reranked = None
 
             if reranked is not None:
                 # Reranker ran — if it returned nothing, build scored fallback with 0.0
                 if not reranked:
-                    reranked = [(chunk, 0.0) for chunk in rerank_chunks[:effective_top_k]]
+                    reranked = [
+                        (chunk, 0.0) for chunk in rerank_chunks[:effective_top_k]
+                    ]
                 context = "\n\n---\n\n".join(chunk.text for chunk, _ in reranked)
                 sources = list(dict.fromkeys(chunk.source for chunk, _ in reranked))
                 chunks_retrieved = len(reranked)
                 final_chunks_with_scores = [(chunk, score) for chunk, score in reranked]
             else:
                 # Reranker unavailable (init/rerank failed) or no chunks — top-k fallback
-                fallback_top_k = n_results if n_results is not None else self.config.n_results
+                fallback_top_k = (
+                    n_results if n_results is not None else self.config.n_results
+                )
                 if fallback_top_k <= 0:
                     fallback_top_k = 1
                 fallback = rerank_chunks[:fallback_top_k]
@@ -529,7 +602,6 @@ class RAGEngine:
                     sources = list(dict.fromkeys(chunk.source for chunk in fallback))
                 chunks_retrieved = len(fallback)
                 final_chunks_with_scores = [(chunk, None) for chunk in fallback]
-
 
         else:
             # Non-reranking path: truncate to n_results or config.n_results
@@ -577,7 +649,10 @@ class RAGEngine:
                 )
             return QueryResult(
                 question=question,
-                answer="I couldn't find any relevant information in the documents to answer your question.",
+                answer=(
+                    "I couldn't find any relevant information in the "
+                    "documents to answer your question."
+                ),
                 sources=[],
                 context_length=0,
                 inference_time=time.time() - start_time,
@@ -605,7 +680,10 @@ class RAGEngine:
                 question=question,
                 context=safe_context,
                 sources=sources,
-                config=InferenceConfig(max_tokens=self.config.max_tokens, temperature=self.config.temperature),
+                config=InferenceConfig(
+                    max_tokens=self.config.max_tokens,
+                    temperature=self.config.temperature,
+                ),
                 conversation_history=conversation_history,
                 stream_callback=stream_callback,
                 cancellation_event=cancellation_event,
@@ -623,8 +701,9 @@ class RAGEngine:
                 )
             raise
 
+        # Post-process: if the LLM says it can't find information but chunks
+        # were retrieved, provide a helpful fallback
 
-        # Post-process: if LLM says it can't find information but we retrieved chunks, provide helpful fallback
         fallback_phrases = [
             "i could not find this information",
             "i couldn't find any relevant information",
@@ -640,9 +719,12 @@ class RAGEngine:
             chunk_count = stats.get("chunk_count", 0)
 
             answer = (
-                f"I retrieved {len(sources)} relevant document(s) but couldn't find specific information to answer '{question}'. "
-                f"The database contains {doc_count} documents with {chunk_count} chunks total. "
-                f"Try asking a more specific question about the content of these documents: {', '.join(sources[:3])}"
+                f"I retrieved {len(sources)} relevant document(s) but couldn't "
+                f"find specific information to answer '{question}'. "
+                f"The database contains {doc_count} documents with "
+                f"{chunk_count} chunks total. "
+                f"Try asking a more specific question about the content "
+                f"of these documents: {', '.join(sources[:3])}"
             )
 
         chunk_details = [
@@ -720,8 +802,6 @@ class RAGEngine:
 
 
 if __name__ == "__main__":
-    import sys
-
     engine = RAGEngine()
 
     if len(sys.argv) > 1:

@@ -5,11 +5,11 @@ Provides centralized configuration management with validation,
 type coercion, and environment variable support.
 """
 
+import os
 import threading
 
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 # Chunk size constraints
 MIN_CHUNK_SIZE = 128
@@ -19,7 +19,18 @@ DEFAULT_CHUNK_SIZE = 512
 # Max tokens constraints
 MIN_MAX_TOKENS = 256
 MAX_MAX_TOKENS = 4096
-DEFAULT_MAX_TOKENS = 512  # matches RAGConfig/RAGSettings defaults for minimum-hardware targets
+DEFAULT_MAX_TOKENS = (
+    512  # matches RAGConfig/RAGSettings defaults for minimum-hardware targets
+)
+
+
+def default_gguf_threads() -> int:
+    """Default GGUF inference threads: all CPUs up to a sane cap of 8.
+
+    Single source of truth for every thread-default site (config, RAGConfig,
+    GUI presets, engine_factory) so they cannot drift apart.
+    """
+    return min(os.cpu_count() or 4, 8)
 
 
 class RAGSettings(BaseSettings):
@@ -29,35 +40,63 @@ class RAGSettings(BaseSettings):
     rag_db_path: str = Field(default="./doc_qa_db", validation_alias="RAG_DB_PATH")
 
     # Chunking settings
-    rag_chunk_size: int = Field(default=DEFAULT_CHUNK_SIZE, validation_alias="RAG_CHUNK_SIZE")
+    rag_chunk_size: int = Field(
+        default=DEFAULT_CHUNK_SIZE, validation_alias="RAG_CHUNK_SIZE"
+    )
     rag_chunk_overlap: int = Field(default=100, validation_alias="RAG_CHUNK_OVERLAP")
 
     # Retrieval settings
     rag_n_results: int = Field(default=4, validation_alias="RAG_N_RESULTS")
-    rag_min_similarity: float = Field(default=0.3, validation_alias="RAG_MIN_SIMILARITY")
-    rag_retrieval_window: int = Field(default=1, validation_alias="RAG_RETRIEVAL_WINDOW")
+    rag_min_similarity: float = Field(
+        default=0.3, validation_alias="RAG_MIN_SIMILARITY"
+    )
+    rag_retrieval_window: int = Field(
+        default=1, validation_alias="RAG_RETRIEVAL_WINDOW"
+    )
 
     # LLM settings
     rag_max_tokens: int = Field(default=512, validation_alias="RAG_MAX_TOKENS")
     rag_temperature: float = Field(default=0.3, validation_alias="RAG_TEMPERATURE")
 
     # Model settings
-    rag_embedding_model: str = Field(default="BAAI/bge-small-en-v1.5", validation_alias="RAG_EMBEDDING_MODEL")
+    rag_embedding_model: str = Field(
+        default="BAAI/bge-small-en-v1.5", validation_alias="RAG_EMBEDDING_MODEL"
+    )
     rag_hybrid_search: bool = Field(default=True, validation_alias="RAG_HYBRID_SEARCH")
-    rag_reranking_enabled: bool = Field(default=False, validation_alias="RAG_RERANKING_ENABLED")
-    rag_reranker_model: str = Field(default="cross-encoder/ms-marco-MiniLM-L6-v2", validation_alias="RAG_RERANKER_MODEL")
+    rag_reranking_enabled: bool = Field(
+        default=False, validation_alias="RAG_RERANKING_ENABLED"
+    )
+    rag_reranker_model: str = Field(
+        default="cross-encoder/ms-marco-MiniLM-L6-v2",
+        validation_alias="RAG_RERANKER_MODEL",
+    )
 
     # Context truncation settings
-    rag_context_truncation: int = Field(default=20000, validation_alias="RAG_CONTEXT_TRUNCATION")
-    rag_initial_retrieval_top_k: int = Field(default=12, validation_alias="RAG_INITIAL_RETRIEVAL_TOP_K")
+    rag_context_truncation: int = Field(
+        default=20000, validation_alias="RAG_CONTEXT_TRUNCATION"
+    )
+    rag_initial_retrieval_top_k: int = Field(
+        default=12, validation_alias="RAG_INITIAL_RETRIEVAL_TOP_K"
+    )
     rag_rerank_top_k: int = Field(default=4, validation_alias="RAG_RERANK_TOP_K")
 
     # GGUF model settings
-    rag_gguf_n_ctx: int = Field(default=4096, validation_alias=AliasChoices("rag_gguf_n_ctx", "RAG_GGUF_N_CTX"))
-    rag_gguf_n_threads: int = Field(default=4, validation_alias=AliasChoices("rag_gguf_n_threads", "RAG_GGUF_N_THREADS"))
+    rag_gguf_n_ctx: int = Field(
+        default=4096, validation_alias=AliasChoices("rag_gguf_n_ctx", "RAG_GGUF_N_CTX")
+    )
+    rag_gguf_n_threads: int = Field(
+        default_factory=default_gguf_threads,
+        validation_alias=AliasChoices("rag_gguf_n_threads", "RAG_GGUF_N_THREADS"),
+    )
+    rag_fast_profile_path: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("rag_fast_profile_path", "RAG_FAST_PROFILE_PATH"),
+    )
 
     # CORS settings
-    rag_cors_origins: str = Field(default="http://localhost,http://127.0.0.1", validation_alias="RAG_CORS_ORIGINS")
+    rag_cors_origins: str = Field(
+        default="http://localhost,http://127.0.0.1", validation_alias="RAG_CORS_ORIGINS"
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="RAG_",
@@ -78,7 +117,9 @@ class RAGSettings(BaseSettings):
     def validate_chunk_size(cls, v):
         """Validate chunk_size is within valid range."""
         if not MIN_CHUNK_SIZE <= v <= MAX_CHUNK_SIZE:
-            raise ValueError(f"RAG_CHUNK_SIZE must be between {MIN_CHUNK_SIZE} and {MAX_CHUNK_SIZE}, got {v}")
+            raise ValueError(
+                f"RAG_CHUNK_SIZE must be between {MIN_CHUNK_SIZE} and {MAX_CHUNK_SIZE}, got {v}"
+            )
         return v
 
     @field_validator("rag_chunk_overlap")
@@ -99,7 +140,9 @@ class RAGSettings(BaseSettings):
     def validate_max_tokens(cls, v):
         """Validate max_tokens is within valid range."""
         if not MIN_MAX_TOKENS <= v <= MAX_MAX_TOKENS:
-            raise ValueError(f"RAG_MAX_TOKENS must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}, got {v}")
+            raise ValueError(
+                f"RAG_MAX_TOKENS must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}, got {v}"
+            )
         return v
 
     @field_validator("rag_temperature")
@@ -130,7 +173,7 @@ _settings_lock = threading.RLock()
 
 def get_settings() -> RAGSettings:
     """Lazily get or create the global settings instance with thread-safe initialization.
-    
+
     Uses RLock for reentrancy safety - single thread can acquire lock multiple times.
     """
     global _settings
@@ -155,7 +198,7 @@ class _SettingsProxy:
 
     def __setattr__(self, name, value):
         # Private attrs (starting with '_') are set on the proxy itself
-        if name.startswith('_'):
+        if name.startswith("_"):
             object.__setattr__(self, name, value)
         else:
             setattr(get_settings(), name, value)

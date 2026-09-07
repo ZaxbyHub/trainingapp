@@ -3,27 +3,31 @@ Document Q&A Assistant - GUI Application
 A user-friendly interface for the RAG-based document question answering system.
 """
 
-import os
-import sys
 import json
 import logging
-import threading
+import os
 import queue
+import sys
+import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
 
 from engine_factory import create_engine_from_settings
 
 try:
     import customtkinter as ctk
-    from customtkinter import CTk, CTkFrame, CTkLabel, CTkButton, CTkEntry, CTkTextbox
     from customtkinter import (
+        CTk,
+        CTkButton,
+        CTkEntry,
+        CTkFrame,
+        CTkLabel,
         CTkProgressBar,
-        CTkOptionMenu,
         CTkScrollableFrame,
-        CTkToplevel,
         CTkSwitch,
+        CTkTextbox,
+        CTkToplevel,
     )
 
     GUI_AVAILABLE = True
@@ -32,42 +36,79 @@ except ImportError:
     print("customtkinter not installed. Run: pip install customtkinter")
 
 try:
-    from tkinter import filedialog, messagebox
     import tkinter as tk
+    from tkinter import filedialog, messagebox
 except ImportError:
     pass
 
 import app_paths
-from config import MIN_CHUNK_SIZE, MAX_CHUNK_SIZE, DEFAULT_CHUNK_SIZE, MIN_MAX_TOKENS, MAX_MAX_TOKENS, DEFAULT_MAX_TOKENS
-from theme import ColorTokens, TypeScale, FONT_FAMILY, Spacing
+from config import (
+    DEFAULT_CHUNK_SIZE,
+    DEFAULT_MAX_TOKENS,
+    MAX_CHUNK_SIZE,
+    MAX_MAX_TOKENS,
+    MIN_CHUNK_SIZE,
+    MIN_MAX_TOKENS,
+    default_gguf_threads,
+)
+from theme import FONT_FAMILY, ColorTokens, Spacing, TypeScale
+
+# Dynamic default (all CPUs up to 8), evaluated at import so the Fast and
+# Balanced presets below always match the config default on the machine
+# running the app. Quality intentionally pins the 8-thread cap (issue #53).
+_DEFAULT_GGUF_THREADS = default_gguf_threads()
 
 # Canonical default values for UI presets (minimum-hardware safe)
 _PRESET_FAST = {
-    "chunk_size": 512, "chunk_overlap": 50, "n_results": 3,
+    "chunk_size": 512,
+    "chunk_overlap": 50,
+    "n_results": 3,
     "min_similarity": 0.35,
-    "max_tokens": 256, "temperature": 0.2, "hybrid_search": False,
-    "reranking_enabled": False, "retrieval_window": 1,
-    "initial_retrieval_top_k": 6, "rerank_top_k": 3,
-    "context_truncation": 10000, "query_transformation_enabled": False,
-    "gguf_n_ctx": 2048, "gguf_n_threads": 4,
+    "max_tokens": 256,
+    "temperature": 0.2,
+    "hybrid_search": False,
+    "reranking_enabled": False,
+    "retrieval_window": 1,
+    "initial_retrieval_top_k": 6,
+    "rerank_top_k": 3,
+    "context_truncation": 10000,
+    "query_transformation_enabled": False,
+    "gguf_n_ctx": 2048,
+    "gguf_n_threads": _DEFAULT_GGUF_THREADS,
 }
 _PRESET_BALANCED = {
-    "chunk_size": 512, "chunk_overlap": 100, "n_results": 4,
+    "chunk_size": 512,
+    "chunk_overlap": 100,
+    "n_results": 4,
     "min_similarity": 0.3,
-    "max_tokens": 512, "temperature": 0.3, "hybrid_search": True,
-    "reranking_enabled": False, "retrieval_window": 1,
-    "initial_retrieval_top_k": 12, "rerank_top_k": 4,
-    "context_truncation": 20000, "query_transformation_enabled": False,
-    "gguf_n_ctx": 4096, "gguf_n_threads": 4,
+    "max_tokens": 512,
+    "temperature": 0.3,
+    "hybrid_search": True,
+    "reranking_enabled": False,
+    "retrieval_window": 1,
+    "initial_retrieval_top_k": 12,
+    "rerank_top_k": 4,
+    "context_truncation": 20000,
+    "query_transformation_enabled": False,
+    "gguf_n_ctx": 4096,
+    "gguf_n_threads": _DEFAULT_GGUF_THREADS,
 }
 _PRESET_QUALITY = {
-    "chunk_size": 512, "chunk_overlap": 100, "n_results": 6,
+    "chunk_size": 512,
+    "chunk_overlap": 100,
+    "n_results": 6,
     "min_similarity": 0.25,
-    "max_tokens": 1024, "temperature": 0.3, "hybrid_search": True,
-    "reranking_enabled": True, "retrieval_window": 2,
-    "initial_retrieval_top_k": 20, "rerank_top_k": 6,
-    "context_truncation": 30000, "query_transformation_enabled": True,
-    "gguf_n_ctx": 4096, "gguf_n_threads": 8,
+    "max_tokens": 1024,
+    "temperature": 0.3,
+    "hybrid_search": True,
+    "reranking_enabled": True,
+    "retrieval_window": 2,
+    "initial_retrieval_top_k": 20,
+    "rerank_top_k": 6,
+    "context_truncation": 30000,
+    "query_transformation_enabled": True,
+    "gguf_n_ctx": 4096,
+    "gguf_n_threads": 8,
 }
 
 logger = logging.getLogger(__name__)
@@ -83,6 +124,7 @@ _LEGACY_KEY_MAP = {
     "model_path": "gguf_path",  # already handled, but include for completeness
 }
 
+
 def normalize_settings(settings: dict) -> dict:
     """Migrate legacy rag_*-prefixed keys to canonical equivalents.
 
@@ -97,8 +139,11 @@ def normalize_settings(settings: dict) -> dict:
                 del result[legacy]  # canonical present, drop legacy
     return result
 
+
 # FR-708: Minimum button height for WCAG 2.5.5 compliance
-DEFAULT_BUTTON_HEIGHT = 36  # 36px visual height meets 44px touch target with default CTkButton padding
+DEFAULT_BUTTON_HEIGHT = (
+    36  # 36px visual height meets 44px touch target with default CTkButton padding
+)
 
 # === CTkTooltip CLASS (add before SettingsDialog class) ===
 
@@ -239,6 +284,7 @@ def attach_field_tooltip(
         return None
     return CTkTooltip(parent=parent, widget=widget, text=hint)
 
+
 # === SOURCE PILL CONSTANTS ===
 _SOURCE_PILL_MAX_CHARS = 30
 _SOURCE_PILL_CORNER_RADIUS = 12
@@ -261,20 +307,29 @@ def _classify_error(err: Exception, operation: str) -> str:
     msg = str(err)
     if operation == "ingest":
         if isinstance(err, (ConnectionError, OSError)) and "connect" in msg.lower():
-            return "Could not load the model. Make sure the GGUF model path in Settings is correct and the file exists."
+            return "Could not load the model. Make sure the GGUF model path in Settings is correct and the file exists."  # noqa: E501
         if isinstance(err, FileNotFoundError):
             return f"File not found: {err}. Check the GGUF model path in Settings."
-        if "token" in msg.lower() and ("limit" in msg.lower() or "exceed" in msg.lower()):
-            return "Token limit exceeded. Try reducing Chunk Size or Results to Retrieve in Settings."
+        if "token" in msg.lower() and (
+            "limit" in msg.lower() or "exceed" in msg.lower()
+        ):
+            return "Token limit exceeded. Try reducing Chunk Size or Results to Retrieve in Settings."  # noqa: E501
         return f"Ingestion failed. Check the document directory and try again.\n\nError: {err}"
     else:  # query
         if isinstance(err, (ConnectionError, TimeoutError)):
-            return "Could not load the LLM. Make sure the GGUF model file exists and the path in Settings is correct."
+            return "Could not load the LLM. Make sure the GGUF model file exists and the path in Settings is correct."  # noqa: E501
+        if "Insufficient RAM" in msg:
+            # A backend IS configured; the machine refused the load. Relay the
+            # real numbers instead of the misdirecting "configure a backend".
+            # msg itself ends with the remediation advice, so nothing appended.
+            return "Not enough free memory to load the model. " + msg
         if "timeout" in msg.lower():
             return "Request timed out. Try reducing Max Tokens in Settings."
-        if "token" in msg.lower() and ("limit" in msg.lower() or "exceed" in msg.lower()):
+        if "token" in msg.lower() and (
+            "limit" in msg.lower() or "exceed" in msg.lower()
+        ):
             return "Token limit exceeded. Try reducing Max Tokens in Settings."
-        return f"Query failed. Make sure at least one LLM backend is configured in Settings.\n\nError: {err}"
+        return f"Query failed. Make sure at least one LLM backend is configured in Settings.\n\nError: {err}"  # noqa: E501
 
 
 def get_resource_path(relative_path: str) -> str:
@@ -317,7 +372,9 @@ class SettingsDialog(CTkToplevel):
         CTkLabel(main_frame, text="GGUF Model Path:").pack(anchor="w")
         model_frame = CTkFrame(main_frame)
         model_frame.pack(fill="x", pady=(0, Spacing.LG))
-        self.model_path_entry = CTkEntry(model_frame, width=350, placeholder_text="./model.gguf")
+        self.model_path_entry = CTkEntry(
+            model_frame, width=350, placeholder_text="./model.gguf"
+        )
         self.model_path_entry.pack(side="left", padx=(0, Spacing.SM))
         _make_button(
             model_frame, text="Browse", command=self._browse_model, width=70
@@ -326,14 +383,20 @@ class SettingsDialog(CTkToplevel):
         # Embedding Model (read-only)
         CTkLabel(main_frame, text="Embedding Model:").pack(anchor="w")
         self.embedding_model_label = CTkLabel(
-            main_frame, text="", font=TypeScale.body(), text_color=ColorTokens.text_muted()
+            main_frame,
+            text="",
+            font=TypeScale.body(),
+            text_color=ColorTokens.text_muted(),
         )
         self.embedding_model_label.pack(anchor="w", pady=(0, Spacing.LG))
 
         # Reranker Model (read-only)
         CTkLabel(main_frame, text="Reranker Model:").pack(anchor="w")
         self.reranker_model_label = CTkLabel(
-            main_frame, text="", font=TypeScale.body(), text_color=ColorTokens.text_muted()
+            main_frame,
+            text="",
+            font=TypeScale.body(),
+            text_color=ColorTokens.text_muted(),
         )
         self.reranker_model_label.pack(anchor="w", pady=(0, Spacing.LG))
 
@@ -348,7 +411,9 @@ class SettingsDialog(CTkToplevel):
         CTkLabel(settings_frame, text="Chunk Size:").grid(
             row=0, column=0, sticky="w", pady=Spacing.SM
         )
-        self.chunk_size_entry = CTkEntry(settings_frame, width=100, placeholder_text="512")
+        self.chunk_size_entry = CTkEntry(
+            settings_frame, width=100, placeholder_text="512"
+        )
         self.chunk_size_entry.grid(row=0, column=1, padx=Spacing.LG, pady=Spacing.SM)
         attach_field_tooltip(settings_frame, self.chunk_size_entry, "chunk_size")
 
@@ -362,14 +427,18 @@ class SettingsDialog(CTkToplevel):
         CTkLabel(settings_frame, text="Max Tokens:").grid(
             row=2, column=0, sticky="w", pady=Spacing.SM
         )
-        self.max_tokens_entry = CTkEntry(settings_frame, width=100, placeholder_text=str(DEFAULT_MAX_TOKENS))
+        self.max_tokens_entry = CTkEntry(
+            settings_frame, width=100, placeholder_text=str(DEFAULT_MAX_TOKENS)
+        )
         self.max_tokens_entry.grid(row=2, column=1, padx=Spacing.LG, pady=Spacing.SM)
         attach_field_tooltip(settings_frame, self.max_tokens_entry, "max_tokens")
 
         CTkLabel(settings_frame, text="Temperature:").grid(
             row=3, column=0, sticky="w", pady=Spacing.SM
         )
-        self.temperature_entry = CTkEntry(settings_frame, width=100, placeholder_text="0.3")
+        self.temperature_entry = CTkEntry(
+            settings_frame, width=100, placeholder_text="0.3"
+        )
         self.temperature_entry.grid(row=3, column=1, padx=Spacing.LG, pady=Spacing.SM)
         attach_field_tooltip(settings_frame, self.temperature_entry, "temperature")
 
@@ -377,7 +446,9 @@ class SettingsDialog(CTkToplevel):
         CTkLabel(settings_frame, text="Chunk Overlap:").grid(
             row=4, column=0, sticky="w", pady=Spacing.SM
         )
-        self.chunk_overlap_entry = CTkEntry(settings_frame, width=100, placeholder_text="0")
+        self.chunk_overlap_entry = CTkEntry(
+            settings_frame, width=100, placeholder_text="0"
+        )
         self.chunk_overlap_entry.grid(row=4, column=1, padx=Spacing.LG, pady=Spacing.SM)
         attach_field_tooltip(settings_frame, self.chunk_overlap_entry, "chunk_overlap")
 
@@ -385,9 +456,15 @@ class SettingsDialog(CTkToplevel):
         CTkLabel(settings_frame, text="Min Similarity:").grid(
             row=5, column=0, sticky="w", pady=Spacing.SM
         )
-        self.min_similarity_entry = CTkEntry(settings_frame, width=100, placeholder_text="0.5")
-        self.min_similarity_entry.grid(row=5, column=1, padx=Spacing.LG, pady=Spacing.SM)
-        attach_field_tooltip(settings_frame, self.min_similarity_entry, "min_similarity")
+        self.min_similarity_entry = CTkEntry(
+            settings_frame, width=100, placeholder_text="0.5"
+        )
+        self.min_similarity_entry.grid(
+            row=5, column=1, padx=Spacing.LG, pady=Spacing.SM
+        )
+        attach_field_tooltip(
+            settings_frame, self.min_similarity_entry, "min_similarity"
+        )
 
         # Advanced RAG Settings
         CTkLabel(main_frame, text="Advanced RAG Settings", font=TypeScale.h2()).pack(
@@ -408,16 +485,24 @@ class SettingsDialog(CTkToplevel):
             onvalue="on",
             offvalue="off",
         )
-        self.hybrid_switch.grid(row=0, column=0, columnspan=2, sticky="w", pady=Spacing.SM)
+        self.hybrid_switch.grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=Spacing.SM
+        )
         attach_field_tooltip(advanced_frame, self.hybrid_switch, "hybrid_search")
 
         # Window Expansion
         CTkLabel(advanced_frame, text="Window Expansion (chunks):").grid(
             row=1, column=0, sticky="w", pady=Spacing.SM
         )
-        self.retrieval_window_entry = CTkEntry(advanced_frame, width=100, placeholder_text="2")
-        self.retrieval_window_entry.grid(row=1, column=1, padx=Spacing.LG, pady=Spacing.SM)
-        attach_field_tooltip(advanced_frame, self.retrieval_window_entry, "retrieval_window")
+        self.retrieval_window_entry = CTkEntry(
+            advanced_frame, width=100, placeholder_text="2"
+        )
+        self.retrieval_window_entry.grid(
+            row=1, column=1, padx=Spacing.LG, pady=Spacing.SM
+        )
+        attach_field_tooltip(
+            advanced_frame, self.retrieval_window_entry, "retrieval_window"
+        )
 
         # Reranking toggle
         self.reranking_var = tk.StringVar(
@@ -430,22 +515,32 @@ class SettingsDialog(CTkToplevel):
             onvalue="on",
             offvalue="off",
         )
-        self.reranking_switch.grid(row=2, column=0, columnspan=2, sticky="w", pady=Spacing.SM)
+        self.reranking_switch.grid(
+            row=2, column=0, columnspan=2, sticky="w", pady=Spacing.SM
+        )
         attach_field_tooltip(advanced_frame, self.reranking_switch, "reranking")
 
         # Initial Retrieval Top-K
         CTkLabel(advanced_frame, text="Initial Retrieval Top-K:").grid(
             row=3, column=0, sticky="w", pady=Spacing.SM
         )
-        self.initial_retrieval_top_k_entry = CTkEntry(advanced_frame, width=100, placeholder_text="30")
-        self.initial_retrieval_top_k_entry.grid(row=3, column=1, padx=Spacing.LG, pady=Spacing.SM)
-        attach_field_tooltip(advanced_frame, self.initial_retrieval_top_k_entry, "initial_top_k")
+        self.initial_retrieval_top_k_entry = CTkEntry(
+            advanced_frame, width=100, placeholder_text="30"
+        )
+        self.initial_retrieval_top_k_entry.grid(
+            row=3, column=1, padx=Spacing.LG, pady=Spacing.SM
+        )
+        attach_field_tooltip(
+            advanced_frame, self.initial_retrieval_top_k_entry, "initial_top_k"
+        )
 
         # Rerank Top-K
         CTkLabel(advanced_frame, text="Rerank Top-K:").grid(
             row=4, column=0, sticky="w", pady=Spacing.SM
         )
-        self.rerank_top_k_entry = CTkEntry(advanced_frame, width=100, placeholder_text="6")
+        self.rerank_top_k_entry = CTkEntry(
+            advanced_frame, width=100, placeholder_text="6"
+        )
         self.rerank_top_k_entry.grid(row=4, column=1, padx=Spacing.LG, pady=Spacing.SM)
         attach_field_tooltip(advanced_frame, self.rerank_top_k_entry, "rerank_top_k")
 
@@ -453,9 +548,15 @@ class SettingsDialog(CTkToplevel):
         CTkLabel(advanced_frame, text="Context Truncation:").grid(
             row=5, column=0, sticky="w", pady=Spacing.SM
         )
-        self.context_truncation_entry = CTkEntry(advanced_frame, width=100, placeholder_text="20000")
-        self.context_truncation_entry.grid(row=5, column=1, padx=Spacing.LG, pady=Spacing.SM)
-        attach_field_tooltip(advanced_frame, self.context_truncation_entry, "context_truncation")
+        self.context_truncation_entry = CTkEntry(
+            advanced_frame, width=100, placeholder_text="20000"
+        )
+        self.context_truncation_entry.grid(
+            row=5, column=1, padx=Spacing.LG, pady=Spacing.SM
+        )
+        attach_field_tooltip(
+            advanced_frame, self.context_truncation_entry, "context_truncation"
+        )
 
         # Database Settings
         CTkLabel(main_frame, text="Database", font=TypeScale.h2()).pack(
@@ -465,8 +566,12 @@ class SettingsDialog(CTkToplevel):
         db_frame = CTkFrame(main_frame)
         db_frame.pack(fill="x")
 
-        CTkLabel(db_frame, text="Database Path:").grid(row=0, column=0, sticky="w", pady=Spacing.SM)
-        self.db_path_entry = CTkEntry(db_frame, width=350, placeholder_text="./doc_qa_db")
+        CTkLabel(db_frame, text="Database Path:").grid(
+            row=0, column=0, sticky="w", pady=Spacing.SM
+        )
+        self.db_path_entry = CTkEntry(
+            db_frame, width=350, placeholder_text="./doc_qa_db"
+        )
         self.db_path_entry.grid(row=0, column=1, padx=Spacing.LG, pady=Spacing.SM)
         attach_field_tooltip(main_frame, self.db_path_entry, "db_path")
         _make_button(
@@ -477,14 +582,23 @@ class SettingsDialog(CTkToplevel):
         button_frame = CTkFrame(main_frame)
         button_frame.pack(fill="x", pady=(Spacing.XXL, 0))
 
-        _make_button(button_frame, "Cancel", self.destroy,
-                    fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover(), text_color=ColorTokens.text_on_secondary()).pack(
-            side="right", padx=Spacing.SM
-        )
-        _make_button(button_frame, "Save", self._save,
-                    fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover(), text_color=ColorTokens.text_on_primary(), border_width=1).pack(
-            side="right", padx=Spacing.SM
-        )
+        _make_button(
+            button_frame,
+            "Cancel",
+            self.destroy,
+            fg_color=ColorTokens.secondary(),
+            hover_color=ColorTokens.secondary_hover(),
+            text_color=ColorTokens.text_on_secondary(),
+        ).pack(side="right", padx=Spacing.SM)
+        _make_button(
+            button_frame,
+            "Save",
+            self._save,
+            fg_color=ColorTokens.primary(),
+            hover_color=ColorTokens.primary_hover(),
+            text_color=ColorTokens.text_on_primary(),
+            border_width=1,
+        ).pack(side="right", padx=Spacing.SM)
 
     def _browse_model(self):
         path = filedialog.askopenfilename(
@@ -503,7 +617,9 @@ class SettingsDialog(CTkToplevel):
     def _populate_fields(self):
         gguf = self.settings.get("gguf_path") or self.settings.get("model_path", "")
         self.model_path_entry.insert(0, gguf)
-        self.chunk_size_entry.insert(0, str(self.settings.get("chunk_size", DEFAULT_CHUNK_SIZE)))
+        self.chunk_size_entry.insert(
+            0, str(self.settings.get("chunk_size", DEFAULT_CHUNK_SIZE))
+        )
         self.n_results_entry.insert(0, str(self.settings.get("n_results", 4)))
         self.max_tokens_entry.insert(0, str(self.settings.get("max_tokens", 512)))
         self.temperature_entry.insert(0, str(self.settings.get("temperature", 0.3)))
@@ -516,7 +632,9 @@ class SettingsDialog(CTkToplevel):
         self.reranking_var.set(
             "on" if self.settings.get("reranking_enabled", False) else "off"
         )
-        self.initial_retrieval_top_k_entry.insert(0, str(self.settings.get("initial_retrieval_top_k", 12)))
+        self.initial_retrieval_top_k_entry.insert(
+            0, str(self.settings.get("initial_retrieval_top_k", 12))
+        )
         self.rerank_top_k_entry.insert(0, str(self.settings.get("rerank_top_k", 4)))
 
         # Read-only model info
@@ -527,8 +645,12 @@ class SettingsDialog(CTkToplevel):
 
         # New fields
         self.chunk_overlap_entry.insert(0, str(self.settings.get("chunk_overlap", 100)))
-        self.min_similarity_entry.insert(0, str(self.settings.get("min_similarity", 0.3)))
-        self.context_truncation_entry.insert(0, str(self.settings.get("context_truncation", 20000)))
+        self.min_similarity_entry.insert(
+            0, str(self.settings.get("min_similarity", 0.3))
+        )
+        self.context_truncation_entry.insert(
+            0, str(self.settings.get("context_truncation", 20000))
+        )
         self.db_path_entry.insert(0, str(self.settings.get("db_path", "./doc_qa_db")))
 
     def _save(self):
@@ -538,40 +660,46 @@ class SettingsDialog(CTkToplevel):
         try:
             chunk_size = int(self.chunk_size_entry.get() or DEFAULT_CHUNK_SIZE)
             if not (MIN_CHUNK_SIZE <= chunk_size <= MAX_CHUNK_SIZE):
-                errors.append(f"Chunk Size must be between {MIN_CHUNK_SIZE} and {MAX_CHUNK_SIZE}")
+                errors.append(
+                    f"Chunk Size must be between {MIN_CHUNK_SIZE} and {MAX_CHUNK_SIZE}"
+                )
         except ValueError:
             errors.append("Chunk Size must be a valid integer")
 
         try:
             n_results = int(self.n_results_entry.get() or 4)
             if not (1 <= n_results <= 20):
-                errors.append(f"Results to Retrieve must be between 1 and 20")
+                errors.append("Results to Retrieve must be between 1 and 20")
         except ValueError:
             errors.append("Results to Retrieve must be a valid integer")
 
         try:
             max_tokens = int(self.max_tokens_entry.get() or 512)
             if not (MIN_MAX_TOKENS <= max_tokens <= MAX_MAX_TOKENS):
-                errors.append(f"Max Tokens must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}")
+                errors.append(
+                    f"Max Tokens must be between {MIN_MAX_TOKENS} and {MAX_MAX_TOKENS}"
+                )
         except ValueError:
             errors.append("Max Tokens must be a valid integer")
 
         try:
             temperature = float(self.temperature_entry.get() or 0.3)
             if not (0.0 <= temperature <= 2.0):
-                errors.append(f"Temperature must be between 0.0 and 2.0")
+                errors.append("Temperature must be between 0.0 and 2.0")
         except ValueError:
             errors.append("Temperature must be a valid number")
 
         try:
             retrieval_window = int(self.retrieval_window_entry.get() or 1)
             if not (0 <= retrieval_window <= 5):
-                errors.append(f"Window Expansion must be between 0 and 5")
+                errors.append("Window Expansion must be between 0 and 5")
         except ValueError:
             errors.append("Window Expansion must be a valid integer")
 
         try:
-            initial_retrieval_top_k = int(self.initial_retrieval_top_k_entry.get() or 12)
+            initial_retrieval_top_k = int(
+                self.initial_retrieval_top_k_entry.get() or 12
+            )
             if not (1 <= initial_retrieval_top_k <= 100):
                 errors.append("Initial Retrieval Top-K must be between 1 and 100")
         except ValueError:
@@ -600,7 +728,7 @@ class SettingsDialog(CTkToplevel):
             messagebox.showerror(
                 "Invalid Settings",
                 f"Chunk overlap ({chunk_overlap}) must be less than chunk size ({chunk_size}).",
-                parent=self
+                parent=self,
             )
             return
 
@@ -698,7 +826,7 @@ class DocumentQAApp(CTk):
         bundled_model = ""
         if not os.path.exists(settings_path):
             bundled_models = [
-                Path("models") / "gemma-4-E2B-it-Q5_K-M.gguf",
+                Path("models") / "gemma-4-E2B-it-Q5_K_M.gguf",
             ]
             for model_file in bundled_models:
                 if model_file.is_file():
@@ -717,6 +845,12 @@ class DocumentQAApp(CTk):
             "min_similarity": 0.3,
             "context_truncation": 20000,
         }
+        # Issue #53: honor RAG_FAST_PROFILE_PATH on the desktop entry point so
+        # the fast-profile fallback advised in load errors is actionable here
+        # too (engine_factory.create_engine_from_settings reads this key).
+        env_fast_profile = os.environ.get("RAG_FAST_PROFILE_PATH")
+        if env_fast_profile:
+            default_settings["fast_profile_path"] = env_fast_profile
 
         try:
             if os.path.exists(settings_path):
@@ -758,40 +892,58 @@ class DocumentQAApp(CTk):
         nav_btn_hover = ColorTokens.secondary_hover()
 
         self.nav_chat_btn = _make_button(
-            nav_rail, "💬\nChat", lambda: self._switch_page("chat"),
-            width=nav_width, height=nav_width,
-            fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover(),
+            nav_rail,
+            "💬\nChat",
+            lambda: self._switch_page("chat"),
+            width=nav_width,
+            height=nav_width,
+            fg_color=ColorTokens.primary(),
+            hover_color=ColorTokens.primary_hover(),
             text_color=ColorTokens.text_on_primary(),
         )
         self.nav_chat_btn.pack(pady=Spacing.SM, padx=Spacing.SM)
 
         self.nav_docs_btn = _make_button(
-            nav_rail, "📄\nDocuments", lambda: self._switch_page("documents"),
-            width=nav_width, height=nav_width,
-            fg_color=nav_btn_color, hover_color=nav_btn_hover,
+            nav_rail,
+            "📄\nDocuments",
+            lambda: self._switch_page("documents"),
+            width=nav_width,
+            height=nav_width,
+            fg_color=nav_btn_color,
+            hover_color=nav_btn_hover,
             text_color=ColorTokens.text_on_secondary(),
         )
         self.nav_docs_btn.pack(pady=Spacing.SM, padx=Spacing.SM)
 
         self.nav_settings_btn = _make_button(
-            nav_rail, "⚙\nSettings", lambda: self._switch_page("settings"),
-            width=nav_width, height=nav_width,
-            fg_color=nav_btn_color, hover_color=nav_btn_hover,
+            nav_rail,
+            "⚙\nSettings",
+            lambda: self._switch_page("settings"),
+            width=nav_width,
+            height=nav_width,
+            fg_color=nav_btn_color,
+            hover_color=nav_btn_hover,
             text_color=ColorTokens.text_on_secondary(),
         )
         self.nav_settings_btn.pack(pady=Spacing.SM, padx=Spacing.SM)
 
         self.nav_help_btn = _make_button(
-            nav_rail, "?\nHelp", lambda: self._switch_page("help"),
-            width=nav_width, height=nav_width,
-            fg_color=nav_btn_color, hover_color=nav_btn_hover,
+            nav_rail,
+            "?\nHelp",
+            lambda: self._switch_page("help"),
+            width=nav_width,
+            height=nav_width,
+            fg_color=nav_btn_color,
+            hover_color=nav_btn_hover,
             text_color=ColorTokens.text_on_secondary(),
         )
         self.nav_help_btn.pack(pady=Spacing.SM, padx=Spacing.SM)
 
         # Content area
         self.content_frame = CTkFrame(main_container)
-        self.content_frame.pack(side="right", fill="both", expand=True, padx=Spacing.LG, pady=Spacing.LG)
+        self.content_frame.pack(
+            side="right", fill="both", expand=True, padx=Spacing.LG, pady=Spacing.LG
+        )
 
         # Initialize cancellation event before page creation (pages may reference it)
         self._operation_cancelled = threading.Event()
@@ -824,7 +976,9 @@ class DocumentQAApp(CTk):
         middle_frame = CTkFrame(top_bar)
         middle_frame.pack(side="left", expand=True, fill="x")
 
-        self.model_label = CTkLabel(middle_frame, text="Model: None", font=TypeScale.small())
+        self.model_label = CTkLabel(
+            middle_frame, text="Model: None", font=TypeScale.small()
+        )
         self.model_label.pack(side="left", padx=Spacing.XXL)
 
         self.doc_count_label = CTkLabel(
@@ -841,14 +995,20 @@ class DocumentQAApp(CTk):
 
         # Progress label — also hidden when idle
         self.progress_label = CTkLabel(
-            self.chat_page, text="", font=TypeScale.caption(), text_color=ColorTokens.text_muted()
+            self.chat_page,
+            text="",
+            font=TypeScale.caption(),
+            text_color=ColorTokens.text_muted(),
         )
         # progress_label NOT packed at startup
 
         # Cancel button
         self.cancel_button = _make_button(
-            self.chat_page, "Cancel", command=self._cancel_operation,
-            width=60, height=24,
+            self.chat_page,
+            "Cancel",
+            command=self._cancel_operation,
+            width=60,
+            height=24,
             font=TypeScale.small(),
             fg_color=ColorTokens.danger(),
             hover_color=ColorTokens.danger_hover(),
@@ -864,9 +1024,13 @@ class DocumentQAApp(CTk):
         self._clear_confirm_pending = False
         self._empty_state_visible = False
         self._empty_state_frame = None
-        self._streaming_message_ref: Optional[CTkLabel] = None  # Reference to streaming message content label
-        self._streaming_message_frame: Optional[CTkFrame] = None  # Reference to streaming message frame
-        self._streaming_finalized: bool = False  # Guard: prevents tokens arriving after finalization from being processed
+        self._streaming_message_ref: Optional[
+            CTkLabel
+        ] = None  # Reference to streaming message content label
+        self._streaming_message_frame: Optional[
+            CTkFrame
+        ] = None  # Reference to streaming message frame
+        self._streaming_finalized: bool = False  # Guard: prevents tokens arriving after finalization from being processed  # noqa: E501
 
         # Start surface (shown when no messages; sibling of chat_frame, NOT inside it)
         self._chat_area_frame = CTkFrame(self.chat_page, fg_color="transparent")
@@ -886,33 +1050,49 @@ class DocumentQAApp(CTk):
         input_frame.pack(fill="x", pady=(0, 0))
 
         # Multiline textbox for question input
-        self.question_entry = CTkTextbox(
-            input_frame, height=80, wrap="word"
+        self.question_entry = CTkTextbox(input_frame, height=80, wrap="word")
+        self.question_entry.pack(
+            side="left",
+            fill="both",
+            expand=True,
+            padx=(0, Spacing.LG),
+            pady=(Spacing.LG, 0),
         )
-        self.question_entry.pack(side="left", fill="both", expand=True, padx=(0, Spacing.LG), pady=(Spacing.LG, 0))
 
         # Keyboard bindings for multiline textbox
-        self.question_entry.bind("<Control-Return>", lambda e: self._ask_question() or "break")
+        self.question_entry.bind(
+            "<Control-Return>", lambda e: self._ask_question() or "break"
+        )
         self.question_entry.bind("<Escape>", lambda e: self._handle_escape_key())
-        self.question_entry.bind("<Return>", lambda e: None)  # Allow normal Enter for newline
+        self.question_entry.bind(
+            "<Return>", lambda e: None
+        )  # Allow normal Enter for newline
 
         # Button frame
         button_frame = CTkFrame(input_frame, fg_color="transparent")
         button_frame.pack(side="left", fill="y", padx=(0, 0), pady=(Spacing.LG, 0))
 
         self.ask_button = _make_button(
-            button_frame, text="Ask", command=self._ask_question,
-            width=70, height=40, fg_color=ColorTokens.primary(),
+            button_frame,
+            text="Ask",
+            command=self._ask_question,
+            width=70,
+            height=40,
+            fg_color=ColorTokens.primary(),
             hover_color=ColorTokens.primary_hover(),
-            text_color=ColorTokens.text_on_primary()
+            text_color=ColorTokens.text_on_primary(),
         )
         self.ask_button.pack(pady=(0, Spacing.SM))
 
         self.clear_button = _make_button(
-            button_frame, text="Clear", command=self._confirm_clear_chat,
-            width=70, height=40, fg_color=ColorTokens.secondary(),
+            button_frame,
+            text="Clear",
+            command=self._confirm_clear_chat,
+            width=70,
+            height=40,
+            fg_color=ColorTokens.secondary(),
             hover_color=ColorTokens.secondary_hover(),
-            text_color=ColorTokens.text_on_secondary()
+            text_color=ColorTokens.text_on_secondary(),
         )
         self.clear_button.pack(pady=(0, 0))
 
@@ -935,15 +1115,30 @@ class DocumentQAApp(CTk):
         # Command row
         cmd_row = CTkFrame(self.documents_page, fg_color="transparent")
         cmd_row.pack(fill="x", pady=(0, Spacing.LG))
-        _make_button(cmd_row, text="Add Folder", command=self._add_folder,
-                     fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover(),
-                     text_color=ColorTokens.text_on_primary()).pack(side="left", padx=(0, Spacing.SM))
-        _make_button(cmd_row, text="Add Files", command=self._ingest_documents,
-                     fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover(),
-                     text_color=ColorTokens.text_on_primary()).pack(side="left", padx=(0, Spacing.SM))
-        _make_button(cmd_row, text="Clear All", command=self._clear_all_documents,
-                     fg_color=ColorTokens.danger(), hover_color=ColorTokens.danger_hover(),
-                     text_color="#ffffff").pack(side="left")
+        _make_button(
+            cmd_row,
+            text="Add Folder",
+            command=self._add_folder,
+            fg_color=ColorTokens.primary(),
+            hover_color=ColorTokens.primary_hover(),
+            text_color=ColorTokens.text_on_primary(),
+        ).pack(side="left", padx=(0, Spacing.SM))
+        _make_button(
+            cmd_row,
+            text="Add Files",
+            command=self._ingest_documents,
+            fg_color=ColorTokens.primary(),
+            hover_color=ColorTokens.primary_hover(),
+            text_color=ColorTokens.text_on_primary(),
+        ).pack(side="left", padx=(0, Spacing.SM))
+        _make_button(
+            cmd_row,
+            text="Clear All",
+            command=self._clear_all_documents,
+            fg_color=ColorTokens.danger(),
+            hover_color=ColorTokens.danger_hover(),
+            text_color="#ffffff",
+        ).pack(side="left")
 
         # Documents list area
         self.documents_frame = CTkScrollableFrame(self.documents_page)
@@ -960,53 +1155,96 @@ class DocumentQAApp(CTk):
         # --- Preset buttons ---
         preset_row = CTkFrame(self.settings_page, fg_color="transparent")
         preset_row.pack(fill="x", pady=(0, Spacing.LG))
-        CTkLabel(preset_row, text="Preset:", font=TypeScale.body()).pack(side="left", padx=(0, Spacing.SM))
-        _make_button(preset_row, text="Fast", width=70,
-                     command=lambda: self._apply_settings_preset(_PRESET_FAST),
-                     fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover(),
-                     text_color=ColorTokens.text_on_secondary()).pack(side="left", padx=Spacing.SM)
-        _make_button(preset_row, text="Balanced", width=80,
-                     command=lambda: self._apply_settings_preset(_PRESET_BALANCED),
-                     fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover(),
-                     text_color=ColorTokens.text_on_secondary()).pack(side="left", padx=Spacing.SM)
-        _make_button(preset_row, text="Quality", width=80,
-                     command=lambda: self._apply_settings_preset(_PRESET_QUALITY),
-                     fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover(),
-                     text_color=ColorTokens.text_on_secondary()).pack(side="left", padx=Spacing.SM)
+        CTkLabel(preset_row, text="Preset:", font=TypeScale.body()).pack(
+            side="left", padx=(0, Spacing.SM)
+        )
+        _make_button(
+            preset_row,
+            text="Fast",
+            width=70,
+            command=lambda: self._apply_settings_preset(_PRESET_FAST),
+            fg_color=ColorTokens.secondary(),
+            hover_color=ColorTokens.secondary_hover(),
+            text_color=ColorTokens.text_on_secondary(),
+        ).pack(side="left", padx=Spacing.SM)
+        _make_button(
+            preset_row,
+            text="Balanced",
+            width=80,
+            command=lambda: self._apply_settings_preset(_PRESET_BALANCED),
+            fg_color=ColorTokens.secondary(),
+            hover_color=ColorTokens.secondary_hover(),
+            text_color=ColorTokens.text_on_secondary(),
+        ).pack(side="left", padx=Spacing.SM)
+        _make_button(
+            preset_row,
+            text="Quality",
+            width=80,
+            command=lambda: self._apply_settings_preset(_PRESET_QUALITY),
+            fg_color=ColorTokens.secondary(),
+            hover_color=ColorTokens.secondary_hover(),
+            text_color=ColorTokens.text_on_secondary(),
+        ).pack(side="left", padx=Spacing.SM)
 
         # ── Model & Storage ────────────────────────────────────────────────
-        CTkLabel(self.settings_page, text="Model & Storage", font=TypeScale.h3()).pack(anchor="w", pady=(0, Spacing.SM))
+        CTkLabel(self.settings_page, text="Model & Storage", font=TypeScale.h3()).pack(
+            anchor="w", pady=(0, Spacing.SM)
+        )
         model_store_frame = CTkFrame(self.settings_page)
         model_store_frame.pack(fill="x", pady=(0, Spacing.LG))
 
         CTkLabel(model_store_frame, text="GGUF Model Path:").pack(anchor="w")
         model_path_row = CTkFrame(model_store_frame, fg_color="transparent")
         model_path_row.pack(fill="x", pady=(0, Spacing.MD))
-        self.settings_model_entry = CTkEntry(model_path_row, placeholder_text="./model.gguf")
-        self.settings_model_entry.pack(side="left", fill="x", expand=True, padx=(0, Spacing.SM))
-        _make_button(model_path_row, text="Browse", command=self._browse_settings_model, width=70).pack(side="left")
+        self.settings_model_entry = CTkEntry(
+            model_path_row, placeholder_text="./model.gguf"
+        )
+        self.settings_model_entry.pack(
+            side="left", fill="x", expand=True, padx=(0, Spacing.SM)
+        )
+        _make_button(
+            model_path_row, text="Browse", command=self._browse_settings_model, width=70
+        ).pack(side="left")
 
         CTkLabel(model_store_frame, text="Database Path:").pack(anchor="w")
         db_path_row = CTkFrame(model_store_frame, fg_color="transparent")
         db_path_row.pack(fill="x", pady=(0, Spacing.MD))
-        self.settings_db_path_entry = CTkEntry(db_path_row, placeholder_text="./chroma_db")
-        self.settings_db_path_entry.pack(side="left", fill="x", expand=True, padx=(0, Spacing.SM))
-        _make_button(db_path_row, text="Browse", command=self._browse_settings_db_path, width=70).pack(side="left")
+        self.settings_db_path_entry = CTkEntry(
+            db_path_row, placeholder_text="./chroma_db"
+        )
+        self.settings_db_path_entry.pack(
+            side="left", fill="x", expand=True, padx=(0, Spacing.SM)
+        )
+        _make_button(
+            db_path_row, text="Browse", command=self._browse_settings_db_path, width=70
+        ).pack(side="left")
 
-        CTkLabel(model_store_frame, text="Embedding Model (read-only):").pack(anchor="w")
+        CTkLabel(model_store_frame, text="Embedding Model (read-only):").pack(
+            anchor="w"
+        )
         self.settings_embedding_model_label = CTkLabel(
-            model_store_frame, text="—", font=TypeScale.body(), text_color=ColorTokens.text_muted(), anchor="w"
+            model_store_frame,
+            text="—",
+            font=TypeScale.body(),
+            text_color=ColorTokens.text_muted(),
+            anchor="w",
         )
         self.settings_embedding_model_label.pack(anchor="w", pady=(0, Spacing.MD))
 
         CTkLabel(model_store_frame, text="Reranker Model (read-only):").pack(anchor="w")
         self.settings_reranker_model_label = CTkLabel(
-            model_store_frame, text="—", font=TypeScale.body(), text_color=ColorTokens.text_muted(), anchor="w"
+            model_store_frame,
+            text="—",
+            font=TypeScale.body(),
+            text_color=ColorTokens.text_muted(),
+            anchor="w",
         )
         self.settings_reranker_model_label.pack(anchor="w", pady=(0, Spacing.SM))
 
         # ── Basic RAG Parameters ───────────────────────────────────────────
-        CTkLabel(self.settings_page, text="RAG Parameters", font=TypeScale.h3()).pack(anchor="w", pady=(Spacing.LG, Spacing.SM))
+        CTkLabel(self.settings_page, text="RAG Parameters", font=TypeScale.h3()).pack(
+            anchor="w", pady=(Spacing.LG, Spacing.SM)
+        )
         rag_frame = CTkFrame(self.settings_page)
         rag_frame.pack(fill="x", pady=(0, Spacing.LG))
 
@@ -1023,7 +1261,9 @@ class DocumentQAApp(CTk):
             setattr(self, attr, entry)
 
         # ── LLM Parameters ─────────────────────────────────────────────────
-        CTkLabel(self.settings_page, text="LLM Parameters", font=TypeScale.h3()).pack(anchor="w", pady=(Spacing.LG, Spacing.SM))
+        CTkLabel(self.settings_page, text="LLM Parameters", font=TypeScale.h3()).pack(
+            anchor="w", pady=(Spacing.LG, Spacing.SM)
+        )
         llm_frame = CTkFrame(self.settings_page)
         llm_frame.pack(fill="x", pady=(0, Spacing.LG))
 
@@ -1031,7 +1271,11 @@ class DocumentQAApp(CTk):
             ("Max Tokens:", "settings_max_tokens_entry", "512"),
             ("Temperature (0.0–2.0):", "settings_temperature_entry", "0.3"),
             ("GGUF Context Window (n_ctx):", "settings_gguf_n_ctx_entry", "4096"),
-            ("GGUF Threads (n_threads):", "settings_gguf_n_threads_entry", "4"),
+            (
+                "GGUF Threads (n_threads):",
+                "settings_gguf_n_threads_entry",
+                str(_DEFAULT_GGUF_THREADS),
+            ),
         ]:
             CTkLabel(llm_frame, text=label).pack(anchor="w")
             entry = CTkEntry(llm_frame, placeholder_text=placeholder)
@@ -1039,14 +1283,20 @@ class DocumentQAApp(CTk):
             setattr(self, attr, entry)
 
         # ── Advanced Retrieval ─────────────────────────────────────────────
-        CTkLabel(self.settings_page, text="Advanced Retrieval", font=TypeScale.h3()).pack(anchor="w", pady=(Spacing.LG, Spacing.SM))
+        CTkLabel(
+            self.settings_page, text="Advanced Retrieval", font=TypeScale.h3()
+        ).pack(anchor="w", pady=(Spacing.LG, Spacing.SM))
         adv_frame = CTkFrame(self.settings_page)
         adv_frame.pack(fill="x", pady=(0, Spacing.LG))
 
         for label, attr, placeholder in [
             ("Initial Retrieval Top-K:", "settings_initial_top_k_entry", "12"),
             ("Rerank Top-K:", "settings_rerank_top_k_entry", "4"),
-            ("Context Truncation (chars):", "settings_context_truncation_entry", "20000"),
+            (
+                "Context Truncation (chars):",
+                "settings_context_truncation_entry",
+                "20000",
+            ),
         ]:
             CTkLabel(adv_frame, text=label).pack(anchor="w")
             entry = CTkEntry(adv_frame, placeholder_text=placeholder)
@@ -1054,53 +1304,115 @@ class DocumentQAApp(CTk):
             setattr(self, attr, entry)
 
         # Toggle switches
-        self.settings_hybrid_var = tk.StringVar(value="on" if self.settings.get("hybrid_search", True) else "off")
-        CTkSwitch(adv_frame, text="Enable Hybrid Search",
-                  variable=self.settings_hybrid_var, onvalue="on", offvalue="off").pack(anchor="w", pady=Spacing.SM)
+        self.settings_hybrid_var = tk.StringVar(
+            value="on" if self.settings.get("hybrid_search", True) else "off"
+        )
+        CTkSwitch(
+            adv_frame,
+            text="Enable Hybrid Search",
+            variable=self.settings_hybrid_var,
+            onvalue="on",
+            offvalue="off",
+        ).pack(anchor="w", pady=Spacing.SM)
 
         # Reranking default is False (minimum-hardware safe)
-        self.settings_reranking_var = tk.StringVar(value="on" if self.settings.get("reranking_enabled", False) else "off")
-        CTkSwitch(adv_frame, text="Enable Reranking",
-                  variable=self.settings_reranking_var, onvalue="on", offvalue="off").pack(anchor="w", pady=Spacing.SM)
+        self.settings_reranking_var = tk.StringVar(
+            value="on" if self.settings.get("reranking_enabled", False) else "off"
+        )
+        CTkSwitch(
+            adv_frame,
+            text="Enable Reranking",
+            variable=self.settings_reranking_var,
+            onvalue="on",
+            offvalue="off",
+        ).pack(anchor="w", pady=Spacing.SM)
 
-        self.settings_query_transform_var = tk.StringVar(value="on" if self.settings.get("query_transformation_enabled", False) else "off")
-        CTkSwitch(adv_frame, text="Enable Query Transformation",
-                  variable=self.settings_query_transform_var, onvalue="on", offvalue="off").pack(anchor="w", pady=Spacing.SM)
+        self.settings_query_transform_var = tk.StringVar(
+            value="on"
+            if self.settings.get("query_transformation_enabled", False)
+            else "off"
+        )
+        CTkSwitch(
+            adv_frame,
+            text="Enable Query Transformation",
+            variable=self.settings_query_transform_var,
+            onvalue="on",
+            offvalue="off",
+        ).pack(anchor="w", pady=Spacing.SM)
 
         # ── Action buttons ─────────────────────────────────────────────────
         action_row = CTkFrame(self.settings_page, fg_color="transparent")
         action_row.pack(fill="x", pady=(Spacing.LG, Spacing.XXXL))
-        _make_button(action_row, text="Save Settings",
-                     command=self._save_settings_inline,
-                     fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover(),
-                     text_color=ColorTokens.text_on_primary()).pack(side="left", padx=(0, Spacing.SM))
+        _make_button(
+            action_row,
+            text="Save Settings",
+            command=self._save_settings_inline,
+            fg_color=ColorTokens.primary(),
+            hover_color=ColorTokens.primary_hover(),
+            text_color=ColorTokens.text_on_primary(),
+        ).pack(side="left", padx=(0, Spacing.SM))
 
     def _create_help_page(self):
         """Create the help/about page with runtime status and keyboard shortcuts."""
         self.help_page = CTkScrollableFrame(self.content_frame)
 
-        CTkLabel(self.help_page, text="Help & About", font=TypeScale.h2()).pack(anchor="w", pady=(0, Spacing.LG))
+        CTkLabel(self.help_page, text="Help & About", font=TypeScale.h2()).pack(
+            anchor="w", pady=(0, Spacing.LG)
+        )
 
         # Runtime Status section — labels updated dynamically in _refresh_help_status
-        CTkLabel(self.help_page, text="Runtime Status", font=TypeScale.h3()).pack(anchor="w", pady=(0, Spacing.SM))
+        CTkLabel(self.help_page, text="Runtime Status", font=TypeScale.h3()).pack(
+            anchor="w", pady=(0, Spacing.SM)
+        )
         status_frame = CTkFrame(self.help_page)
         status_frame.pack(fill="x", pady=(0, Spacing.LG))
 
-        self._help_version_label = CTkLabel(status_frame, text=f"Version: {self.VERSION}", font=TypeScale.body(), anchor="w")
+        self._help_version_label = CTkLabel(
+            status_frame,
+            text=f"Version: {self.VERSION}",
+            font=TypeScale.body(),
+            anchor="w",
+        )
         self._help_version_label.pack(anchor="w", padx=Spacing.LG, pady=Spacing.SM)
-        self._help_model_label = CTkLabel(status_frame, text="Model: —", font=TypeScale.body(), anchor="w")
+        self._help_model_label = CTkLabel(
+            status_frame, text="Model: —", font=TypeScale.body(), anchor="w"
+        )
         self._help_model_label.pack(anchor="w", padx=Spacing.LG)
-        self._help_gguf_path_label = CTkLabel(status_frame, text="GGUF Path: not configured", font=TypeScale.body(), anchor="w", text_color=ColorTokens.text_muted())
+        self._help_gguf_path_label = CTkLabel(
+            status_frame,
+            text="GGUF Path: not configured",
+            font=TypeScale.body(),
+            anchor="w",
+            text_color=ColorTokens.text_muted(),
+        )
         self._help_gguf_path_label.pack(anchor="w", padx=Spacing.LG)
-        self._help_db_path_label = CTkLabel(status_frame, text="Database: —", font=TypeScale.body(), anchor="w", text_color=ColorTokens.text_muted())
+        self._help_db_path_label = CTkLabel(
+            status_frame,
+            text="Database: —",
+            font=TypeScale.body(),
+            anchor="w",
+            text_color=ColorTokens.text_muted(),
+        )
         self._help_db_path_label.pack(anchor="w", padx=Spacing.LG)
-        self._help_log_path_label = CTkLabel(status_frame, text="Log: —", font=TypeScale.body(), anchor="w", text_color=ColorTokens.text_muted())
+        self._help_log_path_label = CTkLabel(
+            status_frame,
+            text="Log: —",
+            font=TypeScale.body(),
+            anchor="w",
+            text_color=ColorTokens.text_muted(),
+        )
         self._help_log_path_label.pack(anchor="w", padx=Spacing.LG)
-        self._help_doc_count_label = CTkLabel(status_frame, text="Documents: 0", font=TypeScale.body(), anchor="w")
-        self._help_doc_count_label.pack(anchor="w", padx=Spacing.LG, pady=(0, Spacing.SM))
+        self._help_doc_count_label = CTkLabel(
+            status_frame, text="Documents: 0", font=TypeScale.body(), anchor="w"
+        )
+        self._help_doc_count_label.pack(
+            anchor="w", padx=Spacing.LG, pady=(0, Spacing.SM)
+        )
 
         # Keyboard Shortcuts
-        CTkLabel(self.help_page, text="Keyboard Shortcuts", font=TypeScale.h3()).pack(anchor="w", pady=(0, Spacing.SM))
+        CTkLabel(self.help_page, text="Keyboard Shortcuts", font=TypeScale.h3()).pack(
+            anchor="w", pady=(0, Spacing.SM)
+        )
         shortcuts_frame = CTkFrame(self.help_page)
         shortcuts_frame.pack(fill="x", pady=(0, Spacing.LG))
         shortcuts = [
@@ -1112,12 +1424,23 @@ class DocumentQAApp(CTk):
         for key, desc in shortcuts:
             row = CTkFrame(shortcuts_frame, fg_color="transparent")
             row.pack(fill="x", padx=Spacing.LG, pady=Spacing.SM)
-            CTkLabel(row, text=key, font=TypeScale.body(), width=120, anchor="w",
-                     fg_color=ColorTokens.source_pill_bg(), corner_radius=4).pack(side="left", padx=(0, Spacing.MD))
-            CTkLabel(row, text=desc, font=TypeScale.body(), anchor="w").pack(side="left")
+            CTkLabel(
+                row,
+                text=key,
+                font=TypeScale.body(),
+                width=120,
+                anchor="w",
+                fg_color=ColorTokens.source_pill_bg(),
+                corner_radius=4,
+            ).pack(side="left", padx=(0, Spacing.MD))
+            CTkLabel(row, text=desc, font=TypeScale.body(), anchor="w").pack(
+                side="left"
+            )
 
         # Workflow
-        CTkLabel(self.help_page, text="Getting Started", font=TypeScale.h3()).pack(anchor="w", pady=(0, Spacing.SM))
+        CTkLabel(self.help_page, text="Getting Started", font=TypeScale.h3()).pack(
+            anchor="w", pady=(0, Spacing.SM)
+        )
         workflow_frame = CTkFrame(self.help_page)
         workflow_frame.pack(fill="x", pady=(0, Spacing.LG))
         steps = [
@@ -1127,8 +1450,13 @@ class DocumentQAApp(CTk):
             "4. Adjust Settings presets (Fast/Balanced/Quality) to tune performance",
         ]
         for step in steps:
-            CTkLabel(workflow_frame, text=step, font=TypeScale.body(), anchor="w",
-                     justify="left").pack(anchor="w", padx=Spacing.LG, pady=Spacing.SM)
+            CTkLabel(
+                workflow_frame,
+                text=step,
+                font=TypeScale.body(),
+                anchor="w",
+                justify="left",
+            ).pack(anchor="w", padx=Spacing.LG, pady=Spacing.SM)
 
     def _refresh_help_status(self):
         """Update runtime status labels on the Help page."""
@@ -1163,40 +1491,84 @@ class DocumentQAApp(CTk):
             self.documents_page.pack_forget()
             self.settings_page.pack_forget()
             self.help_page.pack_forget()
-            self.nav_chat_btn.configure(fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover())
-            self.nav_docs_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_settings_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_help_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
+            self.nav_chat_btn.configure(
+                fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover()
+            )
+            self.nav_docs_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_settings_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_help_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
         elif page_name == "documents":
             self.chat_page.pack_forget()
             self.documents_page.pack(fill="both", expand=True)
             self.settings_page.pack_forget()
             self.help_page.pack_forget()
             self._refresh_documents_list()
-            self.nav_chat_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_docs_btn.configure(fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover())
-            self.nav_settings_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_help_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
+            self.nav_chat_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_docs_btn.configure(
+                fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover()
+            )
+            self.nav_settings_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_help_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
         elif page_name == "settings":
             self.chat_page.pack_forget()
             self.documents_page.pack_forget()
             self.settings_page.pack(fill="both", expand=True)
             self.help_page.pack_forget()
             self._load_settings_into_form()
-            self.nav_chat_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_docs_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_settings_btn.configure(fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover())
-            self.nav_help_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
+            self.nav_chat_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_docs_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_settings_btn.configure(
+                fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover()
+            )
+            self.nav_help_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
         elif page_name == "help":
             self.chat_page.pack_forget()
             self.documents_page.pack_forget()
             self.settings_page.pack_forget()
             self.help_page.pack(fill="both", expand=True)
             self._refresh_help_status()
-            self.nav_chat_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_docs_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_settings_btn.configure(fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover())
-            self.nav_help_btn.configure(fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover())
+            self.nav_chat_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_docs_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_settings_btn.configure(
+                fg_color=ColorTokens.secondary(),
+                hover_color=ColorTokens.secondary_hover(),
+            )
+            self.nav_help_btn.configure(
+                fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover()
+            )
 
     def _load_settings_into_form(self):
         """Load current settings into the inline settings form (all canonical fields)."""
@@ -1204,31 +1576,49 @@ class DocumentQAApp(CTk):
         entry_map = {
             self.settings_model_entry: s.get("gguf_path", ""),
             self.settings_db_path_entry: s.get("db_path", ""),
-            self.settings_chunk_size_entry: str(s.get("chunk_size", DEFAULT_CHUNK_SIZE)),
+            self.settings_chunk_size_entry: str(
+                s.get("chunk_size", DEFAULT_CHUNK_SIZE)
+            ),
             self.settings_chunk_overlap_entry: str(s.get("chunk_overlap", 100)),
             self.settings_n_results_entry: str(s.get("n_results", 4)),
             self.settings_min_similarity_entry: str(s.get("min_similarity", 0.3)),
             self.settings_retrieval_window_entry: str(s.get("retrieval_window", 1)),
-            self.settings_max_tokens_entry: str(s.get("max_tokens", DEFAULT_MAX_TOKENS)),
+            self.settings_max_tokens_entry: str(
+                s.get("max_tokens", DEFAULT_MAX_TOKENS)
+            ),
             self.settings_temperature_entry: str(s.get("temperature", 0.3)),
             self.settings_gguf_n_ctx_entry: str(s.get("gguf_n_ctx", 4096)),
-            self.settings_gguf_n_threads_entry: str(s.get("gguf_n_threads", 4)),
-            self.settings_initial_top_k_entry: str(s.get("initial_retrieval_top_k", 12)),
+            self.settings_gguf_n_threads_entry: str(
+                s.get("gguf_n_threads", _DEFAULT_GGUF_THREADS)
+            ),
+            self.settings_initial_top_k_entry: str(
+                s.get("initial_retrieval_top_k", 12)
+            ),
             self.settings_rerank_top_k_entry: str(s.get("rerank_top_k", 4)),
-            self.settings_context_truncation_entry: str(s.get("context_truncation", 20000)),
+            self.settings_context_truncation_entry: str(
+                s.get("context_truncation", 20000)
+            ),
         }
         for entry, value in entry_map.items():
             entry.delete(0, "end")
             entry.insert(0, value)
 
         # Read-only labels
-        self.settings_embedding_model_label.configure(text=s.get("embedding_model", "default"))
-        self.settings_reranker_model_label.configure(text=s.get("reranker_model", "default"))
+        self.settings_embedding_model_label.configure(
+            text=s.get("embedding_model", "default")
+        )
+        self.settings_reranker_model_label.configure(
+            text=s.get("reranker_model", "default")
+        )
 
         # Toggle switches — reranking defaults to False (minimum-hardware safe)
         self.settings_hybrid_var.set("on" if s.get("hybrid_search", True) else "off")
-        self.settings_reranking_var.set("on" if s.get("reranking_enabled", False) else "off")
-        self.settings_query_transform_var.set("on" if s.get("query_transformation_enabled", False) else "off")
+        self.settings_reranking_var.set(
+            "on" if s.get("reranking_enabled", False) else "off"
+        )
+        self.settings_query_transform_var.set(
+            "on" if s.get("query_transformation_enabled", False) else "off"
+        )
 
     def _browse_settings_model(self):
         """Browse for GGUF model in inline settings."""
@@ -1243,25 +1633,39 @@ class DocumentQAApp(CTk):
         """Populate settings form fields from a preset dict (does not save)."""
         s = preset
         entry_map = {
-            self.settings_chunk_size_entry: str(s.get("chunk_size", DEFAULT_CHUNK_SIZE)),
+            self.settings_chunk_size_entry: str(
+                s.get("chunk_size", DEFAULT_CHUNK_SIZE)
+            ),
             self.settings_chunk_overlap_entry: str(s.get("chunk_overlap", 100)),
             self.settings_n_results_entry: str(s.get("n_results", 4)),
             self.settings_min_similarity_entry: str(s.get("min_similarity", 0.3)),
             self.settings_retrieval_window_entry: str(s.get("retrieval_window", 1)),
-            self.settings_max_tokens_entry: str(s.get("max_tokens", DEFAULT_MAX_TOKENS)),
+            self.settings_max_tokens_entry: str(
+                s.get("max_tokens", DEFAULT_MAX_TOKENS)
+            ),
             self.settings_temperature_entry: str(s.get("temperature", 0.3)),
             self.settings_gguf_n_ctx_entry: str(s.get("gguf_n_ctx", 4096)),
-            self.settings_gguf_n_threads_entry: str(s.get("gguf_n_threads", 4)),
-            self.settings_initial_top_k_entry: str(s.get("initial_retrieval_top_k", 12)),
+            self.settings_gguf_n_threads_entry: str(
+                s.get("gguf_n_threads", _DEFAULT_GGUF_THREADS)
+            ),
+            self.settings_initial_top_k_entry: str(
+                s.get("initial_retrieval_top_k", 12)
+            ),
             self.settings_rerank_top_k_entry: str(s.get("rerank_top_k", 4)),
-            self.settings_context_truncation_entry: str(s.get("context_truncation", 20000)),
+            self.settings_context_truncation_entry: str(
+                s.get("context_truncation", 20000)
+            ),
         }
         for entry, value in entry_map.items():
             entry.delete(0, "end")
             entry.insert(0, value)
         self.settings_hybrid_var.set("on" if s.get("hybrid_search", False) else "off")
-        self.settings_reranking_var.set("on" if s.get("reranking_enabled", False) else "off")
-        self.settings_query_transform_var.set("on" if s.get("query_transformation_enabled", False) else "off")
+        self.settings_reranking_var.set(
+            "on" if s.get("reranking_enabled", False) else "off"
+        )
+        self.settings_query_transform_var.set(
+            "on" if s.get("query_transformation_enabled", False) else "off"
+        )
 
     def _browse_settings_db_path(self):
         """Browse for ChromaDB directory in inline settings."""
@@ -1281,10 +1685,14 @@ class DocumentQAApp(CTk):
             max_tokens = int(self.settings_max_tokens_entry.get() or DEFAULT_MAX_TOKENS)
             temperature = float(self.settings_temperature_entry.get() or 0.3)
             gguf_n_ctx = int(self.settings_gguf_n_ctx_entry.get() or 4096)
-            gguf_n_threads = int(self.settings_gguf_n_threads_entry.get() or 4)
+            gguf_n_threads = int(
+                self.settings_gguf_n_threads_entry.get() or _DEFAULT_GGUF_THREADS
+            )
             initial_top_k = int(self.settings_initial_top_k_entry.get() or 12)
             rerank_top_k = int(self.settings_rerank_top_k_entry.get() or 4)
-            context_truncation = int(self.settings_context_truncation_entry.get() or 20000)
+            context_truncation = int(
+                self.settings_context_truncation_entry.get() or 20000
+            )
         except ValueError as e:
             messagebox.showerror("Validation Error", f"Invalid numeric value: {e}")
             return
@@ -1318,32 +1726,39 @@ class DocumentQAApp(CTk):
             errors.append("Context Truncation must be 1000–500000")
 
         if errors:
-            messagebox.showerror("Validation Errors", "\n".join(f"• {e}" for e in errors))
+            messagebox.showerror(
+                "Validation Errors", "\n".join(f"• {e}" for e in errors)
+            )
             return
 
         prev_settings = dict(self.settings)
-        self.settings.update({
-            "gguf_path": self.settings_model_entry.get(),
-            "db_path": self.settings_db_path_entry.get(),
-            "chunk_size": chunk_size,
-            "chunk_overlap": chunk_overlap,
-            "n_results": n_results,
-            "min_similarity": min_similarity,
-            "retrieval_window": retrieval_window,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "hybrid_search": self.settings_hybrid_var.get() == "on",
-            "reranking_enabled": self.settings_reranking_var.get() == "on",
-            "query_transformation_enabled": self.settings_query_transform_var.get() == "on",
-            "gguf_n_ctx": gguf_n_ctx,
-            "gguf_n_threads": gguf_n_threads,
-            "initial_retrieval_top_k": initial_top_k,
-            "rerank_top_k": rerank_top_k,
-            "context_truncation": context_truncation,
-        })
+        self.settings.update(
+            {
+                "gguf_path": self.settings_model_entry.get(),
+                "db_path": self.settings_db_path_entry.get(),
+                "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap,
+                "n_results": n_results,
+                "min_similarity": min_similarity,
+                "retrieval_window": retrieval_window,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+                "hybrid_search": self.settings_hybrid_var.get() == "on",
+                "reranking_enabled": self.settings_reranking_var.get() == "on",
+                "query_transformation_enabled": self.settings_query_transform_var.get()
+                == "on",
+                "gguf_n_ctx": gguf_n_ctx,
+                "gguf_n_threads": gguf_n_threads,
+                "initial_retrieval_top_k": initial_top_k,
+                "rerank_top_k": rerank_top_k,
+                "context_truncation": context_truncation,
+            }
+        )
         self._save_settings()
 
-        if messagebox.askyesno("Restart Required", "Settings changed. Restart the engine now?"):
+        if messagebox.askyesno(
+            "Restart Required", "Settings changed. Restart the engine now?"
+        ):
             self._prev_settings = prev_settings
             self._initialize_engine()
 
@@ -1355,8 +1770,9 @@ class DocumentQAApp(CTk):
 
         if not self.engine:
             CTkLabel(
-                self.documents_frame, text="Engine not initialized",
-                text_color=ColorTokens.text_muted()
+                self.documents_frame,
+                text="Engine not initialized",
+                text_color=ColorTokens.text_muted(),
             ).pack(pady=Spacing.LG)
             return
 
@@ -1364,8 +1780,9 @@ class DocumentQAApp(CTk):
             docs = self.engine.get_all_documents()
             if not docs:
                 CTkLabel(
-                    self.documents_frame, text="No documents loaded. Use 'Ingest Documents' to add files.",
-                    text_color=ColorTokens.text_muted()
+                    self.documents_frame,
+                    text="No documents loaded. Use 'Ingest Documents' to add files.",
+                    text_color=ColorTokens.text_muted(),
                 ).pack(pady=Spacing.LG)
                 return
 
@@ -1376,17 +1793,23 @@ class DocumentQAApp(CTk):
                 chunk_count = doc.get("chunk_count", doc.get("chunks", 0))
                 added_at = doc.get("added_at", "Unknown")
                 # Derive extension/type from source_path
-                ext = Path(source_path).suffix.upper().lstrip(".") if source_path else "?"
+                ext = (
+                    Path(source_path).suffix.upper().lstrip(".") if source_path else "?"
+                )
 
-                doc_frame = CTkFrame(self.documents_frame, fg_color=ColorTokens.bubble_system())
+                doc_frame = CTkFrame(
+                    self.documents_frame, fg_color=ColorTokens.bubble_system()
+                )
                 doc_frame.pack(fill="x", pady=Spacing.SM)
 
                 doc_info_frame = CTkFrame(doc_frame, fg_color="transparent")
                 doc_info_frame.pack(fill="x", padx=Spacing.LG, pady=(Spacing.SM, 0))
 
                 CTkLabel(
-                    doc_info_frame, text=f"📄  {display_name}",
-                    font=TypeScale.h3(), anchor="w"
+                    doc_info_frame,
+                    text=f"📄  {display_name}",
+                    font=TypeScale.h3(),
+                    anchor="w",
                 ).pack(anchor="w")
 
                 meta_parts = [f"{ext}", f"{chunk_count} chunks"]
@@ -1395,40 +1818,54 @@ class DocumentQAApp(CTk):
                 CTkLabel(
                     doc_info_frame,
                     text="  ·  ".join(meta_parts),
-                    font=TypeScale.small(), text_color=ColorTokens.text_muted()
+                    font=TypeScale.small(),
+                    text_color=ColorTokens.text_muted(),
                 ).pack(anchor="w")
 
                 if source_path:
                     CTkLabel(
-                        doc_info_frame, text=source_path,
-                        font=TypeScale.small(), text_color=ColorTokens.text_muted(), anchor="w"
+                        doc_info_frame,
+                        text=source_path,
+                        font=TypeScale.small(),
+                        text_color=ColorTokens.text_muted(),
+                        anchor="w",
                     ).pack(anchor="w", pady=(0, Spacing.SM))
 
                 action_row = CTkFrame(doc_info_frame, fg_color="transparent")
                 action_row.pack(anchor="w", pady=(Spacing.SM, Spacing.SM))
                 _make_button(
-                    action_row, text="Details", width=70,
-                    command=lambda dn=display_name, sp=source_path, cc=chunk_count, aa=added_at:
-                        messagebox.showinfo("Document Details",
-                            f"Name: {dn}\nPath: {sp}\nChunks: {cc}\nIndexed: {aa}"),
-                    fg_color=ColorTokens.secondary(), hover_color=ColorTokens.secondary_hover(),
-                    text_color=ColorTokens.text_on_secondary()
+                    action_row,
+                    text="Details",
+                    width=70,
+                    command=lambda dn=display_name, sp=source_path, cc=chunk_count, aa=added_at: messagebox.showinfo(  # noqa: E501
+                        "Document Details",
+                        f"Name: {dn}\nPath: {sp}\nChunks: {cc}\nIndexed: {aa}",
+                    ),
+                    fg_color=ColorTokens.secondary(),
+                    hover_color=ColorTokens.secondary_hover(),
+                    text_color=ColorTokens.text_on_secondary(),
                 ).pack(side="left", padx=(0, Spacing.SM))
                 _make_button(
-                    action_row, text="Delete", width=70,
-                    fg_color=ColorTokens.danger(), hover_color=ColorTokens.danger_hover(),
+                    action_row,
+                    text="Delete",
+                    width=70,
+                    fg_color=ColorTokens.danger(),
+                    hover_color=ColorTokens.danger_hover(),
                     text_color="#ffffff",
-                    command=lambda did=doc_id: self._delete_document(did)
+                    command=lambda did=doc_id: self._delete_document(did),
                 ).pack(side="left")
         except Exception as e:
             CTkLabel(
-                self.documents_frame, text=f"Error loading documents: {e}",
-                text_color=ColorTokens.danger()
+                self.documents_frame,
+                text=f"Error loading documents: {e}",
+                text_color=ColorTokens.danger(),
             ).pack(pady=Spacing.LG)
 
     def _delete_document(self, doc_id: str):
         """Delete a document from the database."""
-        if not messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this document?"):
+        if not messagebox.askyesno(
+            "Confirm Delete", "Are you sure you want to delete this document?"
+        ):
             return
 
         if not self.engine:
@@ -1465,6 +1902,7 @@ class DocumentQAApp(CTk):
 
         def ingest():
             try:
+
                 def callback(msg, progress):
                     self.message_queue.put(("status", msg))
                     self.message_queue.put(("progress_show", progress))
@@ -1474,11 +1912,19 @@ class DocumentQAApp(CTk):
                 docs = result.get("documents", 0)
                 chunks = result.get("chunks_total", 0)
                 t = result.get("time_seconds", 0)
-                self.message_queue.put(("message", "system", f"✓ Ingested {docs} files ({chunks} chunks) in {t:.1f}s from {folder}"))
+                self.message_queue.put(
+                    (
+                        "message",
+                        "system",
+                        f"✓ Ingested {docs} files ({chunks} chunks) in {t:.1f}s from {folder}",
+                    )
+                )
                 stats = self.engine.get_stats()
                 self.message_queue.put(("doc_count", stats.get("document_count", 0)))
             except Exception as e:
-                self.message_queue.put(("message", "system", f"✗ Folder ingest failed: {e}"))
+                self.message_queue.put(
+                    ("message", "system", f"✗ Folder ingest failed: {e}")
+                )
             finally:
                 self._is_operation_active = False
                 self.message_queue.put(("cancel_button_hide",))
@@ -1489,8 +1935,10 @@ class DocumentQAApp(CTk):
 
     def _clear_all_documents(self):
         """Clear all documents from the database."""
-        if not messagebox.askyesno("Clear All Documents",
-                                   "This will delete ALL documents from the database. Continue?"):
+        if not messagebox.askyesno(
+            "Clear All Documents",
+            "This will delete ALL documents from the database. Continue?",
+        ):
             return
         if not self.engine:
             messagebox.showerror("Error", "Engine not initialized")
@@ -1499,11 +1947,15 @@ class DocumentQAApp(CTk):
             self.engine.clear_documents()
             self._refresh_documents_list()
             self.message_queue.put(("doc_count", 0))
-            messagebox.showinfo("Cleared", "All documents have been removed from the database.")
+            messagebox.showinfo(
+                "Cleared", "All documents have been removed from the database."
+            )
         except Exception as e:
             messagebox.showerror("Error", f"Failed to clear documents: {e}")
 
-    def _truncate_filename(self, filename: str, max_chars: int = _SOURCE_PILL_MAX_CHARS) -> str:
+    def _truncate_filename(
+        self, filename: str, max_chars: int = _SOURCE_PILL_MAX_CHARS
+    ) -> str:
         """Truncate filename to max_chars with ellipsis."""
         if len(filename) <= max_chars:
             return filename
@@ -1644,7 +2096,14 @@ class DocumentQAApp(CTk):
 
             self._expanded_pills[pill_key] = True
 
-    def _add_message(self, role: str, content: str, sources: list = None, timestamp: str = None, retrieved_chunks: list = None):
+    def _add_message(
+        self,
+        role: str,
+        content: str,
+        sources: list = None,
+        timestamp: str = None,
+        retrieved_chunks: list = None,
+    ):
         """Add a message to the chat area with role header and timestamp."""
         msg_frame = CTkFrame(self.chat_frame)
         msg_frame.pack(fill="x", pady=Spacing.SM, padx=Spacing.SM)
@@ -1687,11 +2146,13 @@ class DocumentQAApp(CTk):
         # Copy button for assistant messages
         if role == "assistant":
             copy_btn = _make_button(
-                msg_frame, text="Copy", width=60,
+                msg_frame,
+                text="Copy",
+                width=60,
                 command=lambda: self._copy_to_clipboard(content),
                 fg_color=ColorTokens.secondary(),
                 hover_color=ColorTokens.secondary_hover(),
-                text_color=ColorTokens.text_on_secondary()
+                text_color=ColorTokens.text_on_secondary(),
             )
             copy_btn.pack(anchor="w", padx=Spacing.LG, pady=(0, Spacing.SM))
 
@@ -1728,18 +2189,23 @@ class DocumentQAApp(CTk):
                 expanded_state[0] = True
 
         expander_label = CTkLabel(
-            expander_frame, text="Show Retrieved Chunks",
+            expander_frame,
+            text="Show Retrieved Chunks",
             font=TypeScale.small(),
             text_color=ColorTokens.primary(),
-            cursor="hand2"
+            cursor="hand2",
         )
         expander_label.pack(anchor="w")
         expander_label.bind("<Button-1>", lambda e: toggle_expander())
 
-        chunks_frame = CTkFrame(parent, fg_color=ColorTokens.bubble_system(), corner_radius=Spacing.SM)
+        chunks_frame = CTkFrame(
+            parent, fg_color=ColorTokens.bubble_system(), corner_radius=Spacing.SM
+        )
 
         for i, chunk in enumerate(chunks[:5], 1):  # Show first 5 chunks
-            chunk_text = chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
+            chunk_text = (
+                chunk.get("text", "") if isinstance(chunk, dict) else str(chunk)
+            )
             CTkLabel(
                 chunks_frame,
                 text=f"Chunk {i}: {chunk_text[:100]}...",
@@ -1747,7 +2213,7 @@ class DocumentQAApp(CTk):
                 text_color=ColorTokens.text_muted(),
                 justify="left",
                 anchor="w",
-                wraplength=400
+                wraplength=400,
             ).pack(fill="x", padx=Spacing.LG, pady=Spacing.SM)
 
     def _copy_to_clipboard(self, text: str):
@@ -1786,25 +2252,35 @@ class DocumentQAApp(CTk):
         center.place(relx=0.5, rely=0.5, anchor="center")
 
         CTkLabel(center, text="📄", font=(FONT_FAMILY, 48)).pack(pady=(0, Spacing.MD))
-        CTkLabel(center, text="No documents yet", font=TypeScale.h2()).pack(pady=(0, Spacing.SM))
+        CTkLabel(center, text="No documents yet", font=TypeScale.h2()).pack(
+            pady=(0, Spacing.SM)
+        )
         CTkLabel(
             center,
             text="Get started by adding documents, then ask questions about their content.",
-            font=TypeScale.body(), text_color=ColorTokens.text_muted(),
-            justify="center", wraplength=400,
+            font=TypeScale.body(),
+            text_color=ColorTokens.text_muted(),
+            justify="center",
+            wraplength=400,
         ).pack(pady=(0, Spacing.XXL))
 
         _make_button(
-            center, text="📂  Add Documents",
+            center,
+            text="📂  Add Documents",
             command=self._ingest_documents,
-            fg_color=ColorTokens.primary(), hover_color=ColorTokens.primary_hover(),
-            text_color=ColorTokens.text_on_primary(), width=200,
+            fg_color=ColorTokens.primary(),
+            hover_color=ColorTokens.primary_hover(),
+            text_color=ColorTokens.text_on_primary(),
+            width=200,
         ).pack(pady=(0, Spacing.SM))
         _make_button(
-            center, text="Open Documents Page",
+            center,
+            text="Open Documents Page",
             command=lambda: self._switch_page("documents"),
-            fg_color="transparent", text_color=ColorTokens.primary(),
-            hover_color=ColorTokens.bubble_system(), width=200,
+            fg_color="transparent",
+            text_color=ColorTokens.primary(),
+            hover_color=ColorTokens.bubble_system(),
+            width=200,
         ).pack()
 
     def _create_empty_state(self):
@@ -1865,9 +2341,7 @@ class DocumentQAApp(CTk):
             hover_color=ColorTokens.danger_hover(),
             text_color="#ffffff",
         )
-        self._clear_confirm_timer = self.after(
-            3000, self._revert_clear_button
-        )
+        self._clear_confirm_timer = self.after(3000, self._revert_clear_button)
 
     def _revert_clear_button(self):
         """Revert clear button from confirm-pending back to normal state."""
@@ -1933,9 +2407,15 @@ class DocumentQAApp(CTk):
                 while not self._message_processor_shutdown:
                     # DD-004: Validate message tuple structure before processing
                     msg = self.message_queue.get_nowait()
-                    if not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str):
+                    if (
+                        not isinstance(msg, tuple)
+                        or len(msg) < 1
+                        or not isinstance(msg[0], str)
+                    ):
                         # Log and skip malformed messages to prevent crashes
-                        logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+                        logging.getLogger("app_gui").warning(
+                            f"Skipping malformed message: {type(msg).__name__}"
+                        )
                         continue
                     if msg[0] == "status":
                         if self.winfo_exists() and hasattr(self, "status_label"):
@@ -1956,15 +2436,17 @@ class DocumentQAApp(CTk):
                         if self.winfo_exists():
                             self._hide_progress()
                     elif msg[0] == "progress_clear_delayed":
-                        # Clears the progress indicator after a short delay so the user briefly sees the final state. Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).
+                        # Clears the progress indicator after a short delay so the user briefly sees the final state. Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).  # noqa: E501
                         if self.winfo_exists():
                             self.after(3000, lambda: self._hide_progress())
                     elif msg[0] == "cancel_button_show":
-                        # Shows the cancel button (packs it) so the user can interrupt an in-progress operation. Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).
+                        # Shows the cancel button (packs it) so the user can interrupt an in-progress operation. Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).  # noqa: E501
                         if self.winfo_exists() and hasattr(self, "cancel_button"):
-                            self.cancel_button.pack(fill="x", padx=Spacing.LG, pady=(0, Spacing.SM))
+                            self.cancel_button.pack(
+                                fill="x", padx=Spacing.LG, pady=(0, Spacing.SM)
+                            )
                     elif msg[0] == "cancel_button_hide":
-                        # Hides the cancel button (pack_forget) once the operation completes or is no longer cancellable. Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).
+                        # Hides the cancel button (pack_forget) once the operation completes or is no longer cancellable. Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).  # noqa: E501
                         if self.winfo_exists() and hasattr(self, "cancel_button"):
                             self.cancel_button.pack_forget()
                     elif msg[0] == "assistant_token":
@@ -1995,15 +2477,19 @@ class DocumentQAApp(CTk):
                             if hasattr(self, "question_entry"):
                                 self.question_entry.configure(state="normal")
                     elif msg[0] == "hide_typing":
-                        # Hides the typing-indicator animation when a response finishes or is cancelled. Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).
+                        # Hides the typing-indicator animation when a response finishes or is cancelled. Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).  # noqa: E501
                         if self.winfo_exists():
                             self._hide_typing_indicator()
                     elif msg[0] == "stream_end":
-                        self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
+                        self._finalize_streaming_message(
+                            self._get_streaming_text(), destroy_frame=True
+                        )
                     elif msg[0] == "stream_destroy":
-                        self._finalize_streaming_message(self._get_streaming_text(), destroy_frame=True)
+                        self._finalize_streaming_message(
+                            self._get_streaming_text(), destroy_frame=True
+                        )
                     elif msg[0] == "model_label":
-                        # Updates the model status label text (e.g. loaded model name/size). Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).
+                        # Updates the model status label text (e.g. loaded model name/size). Runs on the main thread via the message queue — safe to call Tk/widget APIs here (not from worker threads).  # noqa: E501
                         if self.winfo_exists() and hasattr(self, "model_label"):
                             self.model_label.configure(text=msg[1])
             except queue.Empty:
@@ -2022,12 +2508,19 @@ class DocumentQAApp(CTk):
                 logging.getLogger("app_gui").debug(f"Failed to get streaming text: {e}")
         return ""
 
-    def _finalize_streaming_message(self, accumulated_text: str, destroy_frame: bool = True) -> None:
+    def _finalize_streaming_message(
+        self, accumulated_text: str, destroy_frame: bool = True
+    ) -> None:
         """Finalize and persist a streaming assistant message, then optionally destroy the frame."""
         if not accumulated_text:
             return
         try:
-            self._add_message("assistant", accumulated_text, sources=None, timestamp=datetime.now().strftime("%H:%M"))
+            self._add_message(
+                "assistant",
+                accumulated_text,
+                sources=None,
+                timestamp=datetime.now().strftime("%H:%M"),
+            )
         except Exception as e:
             logging.getLogger("app_gui").error(f"Failed to add message to chat: {e}")
         if destroy_frame and self._streaming_message_frame is not None:
@@ -2035,7 +2528,9 @@ class DocumentQAApp(CTk):
                 if self._streaming_message_frame.winfo_exists():
                     self._streaming_message_frame.destroy()
             except Exception as e:
-                logging.getLogger("app_gui").debug(f"Failed to destroy streaming frame: {e}")
+                logging.getLogger("app_gui").debug(
+                    f"Failed to destroy streaming frame: {e}"
+                )
             self._streaming_message_ref = None
             self._streaming_message_frame = None
         self._streaming_finalized = True
@@ -2050,14 +2545,21 @@ class DocumentQAApp(CTk):
             try:
                 self.message_queue.put(("status", "Initializing RAG engine..."))
                 self.message_queue.put(("progress", 20))
-                self.message_queue.put(("progress_label", "20% — Initializing RAG engine..."))
+                self.message_queue.put(
+                    ("progress_label", "20% — Initializing RAG engine...")
+                )
 
-                if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+                if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
                     torch_lib = os.path.join(sys._MEIPASS, "torch", "lib")
-                    logger.debug("Frozen mode detected, torch_lib exists=%s", os.path.isdir(torch_lib))
+                    logger.debug(
+                        "Frozen mode detected, torch_lib exists=%s",
+                        os.path.isdir(torch_lib),
+                    )
                     if os.path.isdir(torch_lib):
                         os.add_dll_directory(torch_lib)
-                        os.environ["PATH"] = torch_lib + os.pathsep + os.environ.get("PATH", "")
+                        os.environ["PATH"] = (
+                            torch_lib + os.pathsep + os.environ.get("PATH", "")
+                        )
                         logger.debug("torch DLL directory added to search path")
 
                 if self._operation_cancelled.is_set():
@@ -2072,20 +2574,26 @@ class DocumentQAApp(CTk):
                 except Exception as engine_error:
                     logger.error("Failed to initialize RAG engine: %s", engine_error)
                     # Rollback to previous settings if available
-                    if hasattr(self, "_prev_settings") and self._prev_settings is not None:
+                    if (
+                        hasattr(self, "_prev_settings")
+                        and self._prev_settings is not None
+                    ):
                         self.settings = self._prev_settings
                         self._prev_settings = None
                         self._save_settings()
                     self.message_queue.put(("status", "Engine initialization failed"))
-                    self.message_queue.put((
-                        "message", "system",
-                        f"Failed to initialize RAG engine: {engine_error}\n\n"
-                        "Please check:\n"
-                        "1. GGUF model path is correct in Settings\n\n"
-                        "Go to Settings to configure.",
-                        None,
-                        datetime.now().strftime("%H:%M"),
-                    ))
+                    self.message_queue.put(
+                        (
+                            "message",
+                            "system",
+                            f"Failed to initialize RAG engine: {engine_error}\n\n"
+                            "Please check:\n"
+                            "1. GGUF model path is correct in Settings\n\n"
+                            "Go to Settings to configure.",
+                            None,
+                            datetime.now().strftime("%H:%M"),
+                        )
+                    )
                     self._operation_cancelled.clear()
                     self._is_operation_active = False
                     self.message_queue.put(("cancel_button_hide",))
@@ -2097,7 +2605,9 @@ class DocumentQAApp(CTk):
 
                 self.message_queue.put(("doc_count", doc_count))
                 self.message_queue.put(("progress", 100))
-                self.message_queue.put(("progress_label", "80% — Engine ready, loading stats..."))
+                self.message_queue.put(
+                    ("progress_label", "80% — Engine ready, loading stats...")
+                )
 
                 backend = "No LLM"
                 model_name = ""
@@ -2107,7 +2617,9 @@ class DocumentQAApp(CTk):
                     model_name = info.get("model", "")
 
                 if model_name:
-                    self.message_queue.put(("status", f"Ready ({backend} / {model_name})"))
+                    self.message_queue.put(
+                        ("status", f"Ready ({backend} / {model_name})")
+                    )
                 else:
                     self.message_queue.put(("status", f"Ready ({backend})"))
                 self.message_queue.put(("progress_label", "100% — Ready"))
@@ -2124,7 +2636,9 @@ class DocumentQAApp(CTk):
                         file_size = os.path.getsize(gguf_path)
                         size_mb = file_size / (1024 * 1024)
                         filename = os.path.basename(gguf_path)
-                        self.message_queue.put(("model_label", f"Model: {filename} ({size_mb:.1f}MB)"))
+                        self.message_queue.put(
+                            ("model_label", f"Model: {filename} ({size_mb:.1f}MB)")
+                        )
                     except Exception as e:
                         logger.warning(
                             "Could not read model file info for %s: %s", gguf_path, e
@@ -2162,7 +2676,9 @@ class DocumentQAApp(CTk):
             return
         self._hide_typing_indicator()
 
-        self._typing_frame = CTkFrame(self.chat_frame, fg_color=ColorTokens.bubble_system())
+        self._typing_frame = CTkFrame(
+            self.chat_frame, fg_color=ColorTokens.bubble_system()
+        )
         self._typing_frame.pack(fill="x", pady=Spacing.SM, padx=Spacing.SM)
 
         self._typing_label = CTkLabel(
@@ -2190,7 +2706,10 @@ class DocumentQAApp(CTk):
 
     def _hide_typing_indicator(self):
         """Hide inline typing indicator and destroy its frame."""
-        if hasattr(self, "_typing_animation_id") and self._typing_animation_id is not None:
+        if (
+            hasattr(self, "_typing_animation_id")
+            and self._typing_animation_id is not None
+        ):
             self.after_cancel(self._typing_animation_id)
             self._typing_animation_id = None
         if hasattr(self, "_typing_frame") and self._typing_frame.winfo_exists():
@@ -2202,11 +2721,11 @@ class DocumentQAApp(CTk):
 
     def _handle_streaming_token(self, token: str):
         """Handle a streaming token from the LLM.
-        
+
         Creates a new assistant message on first token, then appends subsequent
         tokens to the message content label. All UI updates happen on the main
         thread via this method being called from the message processor.
-        
+
         Args:
             token: The token text to append to the current message.
         """
@@ -2215,11 +2734,13 @@ class DocumentQAApp(CTk):
             return
         if self._streaming_finalized:
             return
-        
+
         if self._streaming_message_ref is None:
             # First token — create the assistant message structure
             self._streaming_message_frame = CTkFrame(self.chat_frame)
-            self._streaming_message_frame.pack(fill="x", pady=Spacing.SM, padx=Spacing.SM)
+            self._streaming_message_frame.pack(
+                fill="x", pady=Spacing.SM, padx=Spacing.SM
+            )
 
             bg_color = ColorTokens.bubble_assistant()
             self._streaming_message_frame.configure(fg_color=bg_color)
@@ -2263,7 +2784,7 @@ class DocumentQAApp(CTk):
         if self._is_operation_active:
             if not messagebox.askyesno(
                 "Confirm Close",
-                "An operation is still running. Are you sure you want to close?"
+                "An operation is still running. Are you sure you want to close?",
             ):
                 return
         self._cancel_clear_confirm()
@@ -2347,28 +2868,62 @@ class DocumentQAApp(CTk):
                     self.message_queue.put(("progress_label", f"{progress}% — {msg}"))
 
                 for i, file_path in enumerate(files, 1):
-                    callback(f"Processing file {i} of {len(files)}: {os.path.basename(file_path)}", int((i / len(files)) * 100))
+                    callback(
+                        f"Processing file {i} of {len(files)}: {os.path.basename(file_path)}",
+                        int((i / len(files)) * 100),
+                    )
 
                     try:
                         source_name = os.path.basename(file_path)
-                        file_stats = self.engine.ingest_file(file_path, source_name=source_name)
+                        file_stats = self.engine.ingest_file(
+                            file_path, source_name=source_name
+                        )
                         if file_stats.get("success"):
                             total_documents += 1
                             total_chunks_added += file_stats.get("chunks_added", 0)
                             total_time_seconds += file_stats.get("time_seconds", 0)
                         else:
-                            failed_files.append((file_path, ValueError(file_stats.get("message", "No content extracted"))))
+                            failed_files.append(
+                                (
+                                    file_path,
+                                    ValueError(
+                                        file_stats.get(
+                                            "message", "No content extracted"
+                                        )
+                                    ),
+                                )
+                            )
                             self.message_queue.put(
-                                ("message", "system", f"Failed to ingest {os.path.basename(file_path)}: {file_stats.get('message', 'No content extracted')}", None, datetime.now().strftime("%H:%M"))
+                                (
+                                    "message",
+                                    "system",
+                                    f"Failed to ingest {os.path.basename(file_path)}: {file_stats.get('message', 'No content extracted')}",  # noqa: E501
+                                    None,
+                                    datetime.now().strftime("%H:%M"),
+                                )
                             )
                     except Exception as file_error:
                         failed_files.append((file_path, file_error))
                         self.message_queue.put(
-                            ("message", "system", f"Failed to ingest {os.path.basename(file_path)}: {file_error}", None, datetime.now().strftime("%H:%M"))
+                            (
+                                "message",
+                                "system",
+                                f"Failed to ingest {os.path.basename(file_path)}: {file_error}",
+                                None,
+                                datetime.now().strftime("%H:%M"),
+                            )
                         )
 
                     if self._operation_cancelled.is_set():
-                        self.message_queue.put(("message", "system", "Ingest cancelled by user.", None, datetime.now().strftime("%H:%M")))
+                        self.message_queue.put(
+                            (
+                                "message",
+                                "system",
+                                "Ingest cancelled by user.",
+                                None,
+                                datetime.now().strftime("%H:%M"),
+                            )
+                        )
                         self.message_queue.put(("progress_clear",))
                         self._operation_cancelled.clear()
                         self._is_operation_active = False
@@ -2421,7 +2976,15 @@ class DocumentQAApp(CTk):
 
             except Exception as e:
                 self.message_queue.put(("status", f"Error: {e}"))
-                self.message_queue.put(("message", "system", _classify_error(e, "ingest"), None, datetime.now().strftime("%H:%M")))
+                self.message_queue.put(
+                    (
+                        "message",
+                        "system",
+                        _classify_error(e, "ingest"),
+                        None,
+                        datetime.now().strftime("%H:%M"),
+                    )
+                )
                 self.message_queue.put(("enable_input", True))
                 self._operation_cancelled.clear()
                 self._is_operation_active = False
@@ -2461,8 +3024,21 @@ class DocumentQAApp(CTk):
                 # Initialize LLM in background thread to avoid freezing GUI
                 self.engine._ensure_llm()
                 if not self.engine.llm:
-                    # Queue error to run on main thread
-                    self.message_queue.put(("message", "system", "No LLM backend available. Check Settings.", None, datetime.now().strftime("%H:%M")))
+                    # Surface the real load diagnostic through the classifier
+                    # instead of a hardcoded "Check Settings" misdirection.
+                    err = RuntimeError(
+                        getattr(self.engine, "llm_init_error", None)
+                        or "LLM not initialized."
+                    )
+                    self.message_queue.put(
+                        (
+                            "message",
+                            "system",
+                            _classify_error(err, "query"),
+                            None,
+                            datetime.now().strftime("%H:%M"),
+                        )
+                    )
                     self.message_queue.put(("enable_input", True))
                     self.message_queue.put(("hide_typing",))
                     return
@@ -2472,7 +3048,7 @@ class DocumentQAApp(CTk):
                     question,
                     conversation_history=self.conversation_history,
                     stream_callback=on_token,
-                    cancellation_event=self._operation_cancelled
+                    cancellation_event=self._operation_cancelled,
                 )
 
                 if self._operation_cancelled.is_set():
@@ -2491,14 +3067,15 @@ class DocumentQAApp(CTk):
                 if self._streaming_message_ref is not None:
                     self.message_queue.put(("stream_end",))
 
-                # FR-002.3: Only append to conversation_history on successful (non-cancelled, non-empty) query result
+                # FR-002.3: Only append to conversation_history on successful (non-cancelled, non-empty) query result  # noqa: E501
                 if result.answer and result.answer != "[Cancelled]":
-                    self.conversation_history.append({"role": "user", "content": question})
+                    self.conversation_history.append(
+                        {"role": "user", "content": question}
+                    )
                     self.conversation_history.append(
                         {"role": "assistant", "content": result.answer}
                     )
                     self.conversation_history = self.conversation_history[-20:]
-
 
                 self.message_queue.put(
                     ("status", f"Ready ({result.inference_time:.1f}s)")
@@ -2510,10 +3087,18 @@ class DocumentQAApp(CTk):
                 self.message_queue.put(("hide_typing",))
 
             except Exception as e:
-                # Queue stream_destroy to run on main thread — preserves partial content via _add_message
+                # Queue stream_destroy to run on main thread — preserves partial content via _add_message  # noqa: E501
                 self.message_queue.put(("stream_destroy",))
                 self.message_queue.put(("status", f"Error: {e}"))
-                self.message_queue.put(("message", "system", _classify_error(e, "query"), None, datetime.now().strftime("%H:%M")))
+                self.message_queue.put(
+                    (
+                        "message",
+                        "system",
+                        _classify_error(e, "query"),
+                        None,
+                        datetime.now().strftime("%H:%M"),
+                    )
+                )
                 self.message_queue.put(("enable_input", True))
                 self._operation_cancelled.clear()
                 self._is_operation_active = False

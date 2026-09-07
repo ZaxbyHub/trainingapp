@@ -13,13 +13,14 @@ but app_gui._ask_question() passes stream_callback=on_token to query().
 This causes a TypeError: query() got an unexpected keyword argument 'stream_callback'.
 """
 
-import pytest
 import inspect
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Criterion 1: stream_callback puts tokens into message_queue
 # ---------------------------------------------------------------------------
+
 
 class TestStreamCallbackPutsTokensIntoQueue:
     """Task 4.2 Criterion 1: on_token closure puts tokens into message_queue."""
@@ -39,7 +40,7 @@ class TestStreamCallbackPutsTokensIntoQueue:
         # The on_token function must put ("assistant_token", token) into message_queue
         assert 'message_queue.put(("assistant_token", token))' in source, (
             "on_token callback must put ('assistant_token', token) tuple into message_queue. "
-            "Found: " + source[source.find("on_token"):source.find("on_token")+200]
+            "Found: " + source[source.find("on_token") : source.find("on_token") + 200]
         )
 
     def test_on_token_closure_uses_message_queue_put(self):
@@ -69,14 +70,15 @@ class TestStreamCallbackPutsTokensIntoQueue:
                         break
 
         on_token_body = "\n".join(on_token_lines)
-        assert "message_queue.put" in on_token_body, (
-            f"on_token callback must call message_queue.put(). Body found:\n{on_token_body}"
-        )
+        assert (
+            "message_queue.put" in on_token_body
+        ), f"on_token callback must call message_queue.put(). Body found:\n{on_token_body}"
 
 
 # ---------------------------------------------------------------------------
 # Criterion 2: message_processor handles "assistant_token"
 # ---------------------------------------------------------------------------
+
 
 class TestMessageProcessorHandlesAssistantToken:
     """Task 4.2 Criterion 2: message_processor dispatches 'assistant_token' to _handle_streaming_token."""
@@ -106,9 +108,9 @@ class TestMessageProcessorHandlesAssistantToken:
         )
 
         # Must extract token from msg[1]
-        assert "msg[1]" in source, (
-            "_start_message_processor must pass msg[1] (the token) to _handle_streaming_token."
-        )
+        assert (
+            "msg[1]" in source
+        ), "_start_message_processor must pass msg[1] (the token) to _handle_streaming_token."
 
     def test_assistant_token_branch_winxinfo_check(self):
         """
@@ -127,16 +129,17 @@ class TestMessageProcessorHandlesAssistantToken:
             assistant_token_idx = source.find("'assistant_token'")
 
         # Get the next ~200 chars after assistant_token check
-        chunk = source[assistant_token_idx:assistant_token_idx+300]
+        chunk = source[assistant_token_idx : assistant_token_idx + 300]
 
-        assert "winfo_exists()" in chunk, (
-            "assistant_token handler must check winfo_exists() before updating UI widgets."
-        )
+        assert (
+            "winfo_exists()" in chunk
+        ), "assistant_token handler must check winfo_exists() before updating UI widgets."
 
 
 # ---------------------------------------------------------------------------
 # Criterion 3: streaming message created when first token arrives
 # ---------------------------------------------------------------------------
+
 
 class TestStreamingMessageCreatedOnFirstToken:
     """Task 4.2 Criterion 3: _handle_streaming_token creates message frame on first token."""
@@ -154,7 +157,10 @@ class TestStreamingMessageCreatedOnFirstToken:
         source = inspect.getsource(app_gui.DocumentQAApp._handle_streaming_token)
 
         # Must check _streaming_message_ref is None
-        assert "_streaming_message_ref is None" in source or "_streaming_message_ref == None" in source, (
+        assert (
+            "_streaming_message_ref is None" in source
+            or "_streaming_message_ref == None" in source
+        ), (
             "_handle_streaming_token must check 'self._streaming_message_ref is None' "
             "to detect first token arrival. Found:\n" + source[:300]
         )
@@ -172,14 +178,14 @@ class TestStreamingMessageCreatedOnFirstToken:
         source = inspect.getsource(app_gui.DocumentQAApp._handle_streaming_token)
 
         # First token path must create _streaming_message_frame
-        assert "_streaming_message_frame" in source, (
-            "_handle_streaming_token must create _streaming_message_frame on first token."
-        )
+        assert (
+            "_streaming_message_frame" in source
+        ), "_handle_streaming_token must create _streaming_message_frame on first token."
 
         # First token path must create _streaming_message_ref (the text label)
-        assert "_streaming_message_ref" in source, (
-            "_handle_streaming_token must assign _streaming_message_ref on first token."
-        )
+        assert (
+            "_streaming_message_ref" in source
+        ), "_handle_streaming_token must assign _streaming_message_ref on first token."
 
     def test_subsequent_tokens_append_to_existing(self):
         """
@@ -194,14 +200,14 @@ class TestStreamingMessageCreatedOnFirstToken:
         source = inspect.getsource(app_gui.DocumentQAApp._handle_streaming_token)
 
         # Must have else branch for subsequent tokens
-        assert "else:" in source, (
-            "_handle_streaming_token must have an else branch for subsequent tokens."
-        )
+        assert (
+            "else:" in source
+        ), "_handle_streaming_token must have an else branch for subsequent tokens."
 
         # Subsequent tokens must get current text and append
-        assert "cget(\"text\")" in source or "cget('text')" in source, (
-            "Subsequent tokens must read current text via cget('text') and append token."
-        )
+        assert (
+            'cget("text")' in source or "cget('text')" in source
+        ), "Subsequent tokens must read current text via cget('text') and append token."
 
     def test_scroll_to_bottom_on_each_token(self):
         """
@@ -225,6 +231,7 @@ class TestStreamingMessageCreatedOnFirstToken:
 # ---------------------------------------------------------------------------
 # Criterion 4: typing indicator shown during streaming
 # ---------------------------------------------------------------------------
+
 
 class TestTypingIndicatorShownDuringStreaming:
     """Task 4.2 Criterion 4: cancel_button_show sent when worker starts (typing indicator shown)."""
@@ -277,9 +284,9 @@ class TestTypingIndicatorShownDuringStreaming:
         source = inspect.getsource(app_gui.DocumentQAApp._ask_question)
 
         # Must hide typing indicator on completion
-        assert "hide_typing" in source, (
-            "_ask_question must queue 'hide_typing' when streaming completes."
-        )
+        assert (
+            "hide_typing" in source
+        ), "_ask_question must queue 'hide_typing' when streaming completes."
 
     def test_hide_typing_in_message_processor(self):
         """
@@ -292,19 +299,22 @@ class TestTypingIndicatorShownDuringStreaming:
 
         source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
 
-        assert '"hide_typing"' in source or "'hide_typing'" in source, (
-            "_start_message_processor must handle 'hide_typing' message to hide typing indicator."
-        )
+        assert (
+            '"hide_typing"' in source or "'hide_typing'" in source
+        ), "_start_message_processor must handle 'hide_typing' message to hide typing indicator."
 
 
 # ---------------------------------------------------------------------------
 # Criterion 5: streaming finalized when "message" tuple arrives
 # ---------------------------------------------------------------------------
 
+
 class TestStreamingFinalizedWhenMessageArrives:
     """Task 4.2 Criterion 5: streaming message refs cleared when final message tuple arrives."""
 
-    @pytest.mark.skip(reason="Attribute cleared via message queue in UI modernization (PR #10), not directly in _ask_question")
+    @pytest.mark.skip(
+        reason="Attribute cleared via message queue in UI modernization (PR #10), not directly in _ask_question"
+    )
     def test_query_clears_streaming_ref_on_completion(self):
         """
         In _ask_question, after engine.query() returns, the query() inner function
@@ -324,9 +334,9 @@ class TestStreamingFinalizedWhenMessageArrives:
         )
 
         # Must clear _streaming_message_frame too
-        assert "_streaming_message_frame = None" in source, (
-            "_ask_question must set _streaming_message_frame = None after streaming completes."
-        )
+        assert (
+            "_streaming_message_frame = None" in source
+        ), "_ask_question must set _streaming_message_frame = None after streaming completes."
 
     def test_streaming_ref_cleared_only_if_not_none(self):
         """
@@ -347,7 +357,9 @@ class TestStreamingFinalizedWhenMessageArrives:
             "before clearing streaming refs (guards against double-clear / non-streaming path)."
         )
 
-    @pytest.mark.skip(reason="Attribute cleared via message queue in UI modernization (PR #10), not directly in _ask_question")
+    @pytest.mark.skip(
+        reason="Attribute cleared via message queue in UI modernization (PR #10), not directly in _ask_question"
+    )
     def test_query_thread_clears_on_cancellation(self):
         """
         When query is cancelled, _streaming_message_ref and _streaming_message_frame
@@ -365,7 +377,7 @@ class TestStreamingFinalizedWhenMessageArrives:
         if "_operation_cancelled.is_set()" in source:
             # Extract ~500 chars around the cancellation check
             cancel_idx = source.find("_operation_cancelled.is_set()")
-            chunk = source[cancel_idx:cancel_idx+500]
+            chunk = source[cancel_idx : cancel_idx + 500]
 
             assert "_streaming_message_ref" in chunk and "None" in chunk, (
                 "Cancellation path must also clear _streaming_message_ref to avoid "
@@ -376,6 +388,7 @@ class TestStreamingFinalizedWhenMessageArrives:
 # ---------------------------------------------------------------------------
 # CRITICAL BUG TEST: stream_callback is NOT wired through rag_engine.query()
 # ---------------------------------------------------------------------------
+
 
 class TestStreamCallbackWiringBug:
     """
@@ -420,9 +433,9 @@ class TestStreamCallbackWiringBug:
         source = inspect.getsource(app_gui.DocumentQAApp._ask_question)
 
         # Verify that stream_callback IS passed to query
-        assert "stream_callback=on_token" in source, (
-            "app_gui._ask_question() must pass stream_callback=on_token to query()."
-        )
+        assert (
+            "stream_callback=on_token" in source
+        ), "app_gui._ask_question() must pass stream_callback=on_token to query()."
 
     def test_rag_engine_query_passes_stream_callback_to_answer_question(self):
         """
@@ -435,23 +448,26 @@ class TestStreamCallbackWiringBug:
 
         source = inspect.getsource(rag_engine.RAGEngine.query)
 
-        # Find the answer_question call
+        # Find the answer_question call. The window spans enough continuation
+        # lines to cover black-wrapped multi-line argument lists (the
+        # InferenceConfig(...) block alone spans 4 lines).
         if "answer_question" in source:
             # Get the answer_question call lines
             lines = source.split("\n")
             for i, line in enumerate(lines):
                 if "answer_question" in line and "self.llm" in line:
-                    # Get surrounding 3 lines
-                    call_chunk = "\n".join(lines[max(0,i-1):i+8])
-                    assert "stream_callback" in call_chunk, (
-                        f"BUG: answer_question call missing stream_callback:\n{call_chunk}"
-                    )
+                    # Get surrounding lines
+                    call_chunk = "\n".join(lines[max(0, i - 1) : i + 14])
+                    assert (
+                        "stream_callback" in call_chunk
+                    ), f"BUG: answer_question call missing stream_callback:\n{call_chunk}"
                     break
 
 
 # ---------------------------------------------------------------------------
 # Sanity checks: required instance variables exist
 # ---------------------------------------------------------------------------
+
 
 class TestRequiredInstanceVariables:
     """Verify DocumentQAApp has all required instance variables for streaming."""
@@ -464,11 +480,13 @@ class TestRequiredInstanceVariables:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp.__init__)
-        assert "message_queue = queue.Queue()" in source, (
-            "__init__ must initialize self.message_queue = queue.Queue()"
-        )
+        assert (
+            "message_queue = queue.Queue()" in source
+        ), "__init__ must initialize self.message_queue = queue.Queue()"
 
-    @pytest.mark.skip(reason="Attribute initialized in __init__, not _create_widgets, in UI modernization (PR #10)")
+    @pytest.mark.skip(
+        reason="Attribute initialized in __init__, not _create_widgets, in UI modernization (PR #10)"
+    )
     def test_has_streaming_message_ref(self):
         """
         DocumentQAApp must initialize _streaming_message_ref as None.
@@ -480,11 +498,13 @@ class TestRequiredInstanceVariables:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
-        assert "_streaming_message_ref" in source, (
-            "_create_widgets must initialize _streaming_message_ref = None"
-        )
+        assert (
+            "_streaming_message_ref" in source
+        ), "_create_widgets must initialize _streaming_message_ref = None"
 
-    @pytest.mark.skip(reason="Attribute initialized in __init__, not _create_widgets, in UI modernization (PR #10)")
+    @pytest.mark.skip(
+        reason="Attribute initialized in __init__, not _create_widgets, in UI modernization (PR #10)"
+    )
     def test_has_streaming_message_frame(self):
         """
         DocumentQAApp must initialize _streaming_message_frame as None.
@@ -496,9 +516,9 @@ class TestRequiredInstanceVariables:
             pytest.skip("customtkinter not installed")
 
         source = inspect.getsource(app_gui.DocumentQAApp._create_widgets)
-        assert "_streaming_message_frame" in source, (
-            "_create_widgets must initialize _streaming_message_frame = None"
-        )
+        assert (
+            "_streaming_message_frame" in source
+        ), "_create_widgets must initialize _streaming_message_frame = None"
 
 
 if __name__ == "__main__":

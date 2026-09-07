@@ -14,6 +14,7 @@ _SOURCE_FILE = _SOURCE_FILE.replace("\\", "/")  # Normalize to forward slashes
 
 # Platform-agnostic resolution for Windows
 import os as _os
+
 _SOURCE_FILE = _os.path.normpath(
     _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", "app_gui.py")
 )
@@ -26,14 +27,17 @@ def _read_source() -> str:
 
 def _extract_function_body(source: str, func_name: str) -> str:
     """Extract the body of a method from the source code."""
+    # DOTALL: black may wrap the signature across lines
+    # (def f(\n    self, ...\n) -> None:), so the parameter list may contain
+    # newlines between the parens.
     pattern = rf"(?m)^\s+def {re.escape(func_name)}\(.*?\)\s*(?:->\s*\w+)?\s*:\n"
-    match = re.search(pattern, source)
+    match = re.search(pattern, source, re.DOTALL)
     if not match:
         raise ValueError(f"Function '{func_name}' not found in source")
     start = match.end()
 
     # Count leading whitespace of first line
-    first_line_match = re.search(r"(?m)^(\s+)", source[match.start():match.end()])
+    first_line_match = re.search(r"(?m)^(\s+)", source[match.start() : match.end()])
     base_indent = len(first_line_match.group(1)) if first_line_match else 0
 
     # Find end of function (next def/class at same or lower indent, or dedent)
@@ -44,7 +48,9 @@ def _extract_function_body(source: str, func_name: str) -> str:
             body_lines.append(line)
             continue
         indent = len(line) - len(line.lstrip())
-        if indent <= base_indent and (line.strip().startswith("def ") or line.strip().startswith("class ")):
+        if indent <= base_indent and (
+            line.strip().startswith("def ") or line.strip().startswith("class ")
+        ):
             break
         body_lines.append(line)
 
@@ -63,9 +69,9 @@ class TestStreamingExceptionLoggingFix:
         has_logger_call = bool(
             re.search(r'logging\.getLogger\(["\']app_gui["\']\)', body)
         )
-        assert has_logger_call, (
-            "_get_streaming_text: missing `logging.getLogger('app_gui')` call in exception handler"
-        )
+        assert (
+            has_logger_call
+        ), "_get_streaming_text: missing `logging.getLogger('app_gui')` call in exception handler"
 
         # Must call .debug() on that logger
         has_debug = bool(
@@ -78,8 +84,7 @@ class TestStreamingExceptionLoggingFix:
 
         # Must NOT contain silent `pass`
         silent_pass_pattern = re.compile(
-            r"except\s+Exception\s+as\s+\w+:\s+pass",
-            re.DOTALL
+            r"except\s+Exception\s+as\s+\w+:\s+pass", re.DOTALL
         )
         has_silent_pass = bool(silent_pass_pattern.search(body))
         assert not has_silent_pass, (
@@ -97,7 +102,7 @@ class TestStreamingExceptionLoggingFix:
         # then the except line capturing the handler body.
         add_message_exc_pattern = re.compile(
             r"try:\n\s+self\._add_message.*?\n\s+except\s+Exception\s+as\s+(\w+):\n((?:\s+.+\n)+)",
-            re.DOTALL
+            re.DOTALL,
         )
         match = re.search(add_message_exc_pattern, body)
         assert match, (
@@ -152,7 +157,7 @@ class TestStreamingExceptionLoggingFix:
         # then the except line capturing the handler body.
         destroy_exc_pattern = re.compile(
             r"try:\n\s+.*?\.destroy\(\).*?\n\s+except\s+Exception\s+as\s+(\w+):\n((?:\s+.+\n)+)",
-            re.DOTALL
+            re.DOTALL,
         )
         match = re.search(destroy_exc_pattern, body)
         assert match, (
@@ -236,7 +241,7 @@ class TestLoggerNameConsistency:
         # Extract all logging.getLogger calls from both functions
         logger_calls = re.findall(
             r'logging\.getLogger\(["\']([^"\']+)["\']\)',
-            body_finalize + "\n" + body_get
+            body_finalize + "\n" + body_get,
         )
 
         # All must be 'app_gui'

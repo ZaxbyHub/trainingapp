@@ -11,15 +11,17 @@ KEY BEHAVIORS TESTED:
 - Valid tuple messages → processed normally (no log, routed correctly)
 """
 
-import pytest
 import inspect
 import logging
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, call, patch
+
+import pytest
 
 
 def _import_app_gui():
     try:
         import app_gui
+
         return app_gui
     except ImportError:
         pytest.skip("customtkinter not installed")
@@ -28,6 +30,7 @@ def _import_app_gui():
 # ---------------------------------------------------------------------------
 # Test 1: Source code presence of validation guard
 # ---------------------------------------------------------------------------
+
 
 class TestValidationGuardPresence:
     """Verify the validation guard exists in process() source code."""
@@ -46,15 +49,15 @@ class TestValidationGuardPresence:
         source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
 
         # The three-part guard must be present
-        assert "isinstance(msg, tuple)" in source, (
-            "process() must check isinstance(msg, tuple)"
-        )
-        assert "len(msg) < 1" in source or "not msg" in source, (
-            "process() must check len(msg) < 1 or not msg (empty tuple guard)"
-        )
-        assert "isinstance(msg[0], str)" in source, (
-            "process() must check isinstance(msg[0], str)"
-        )
+        assert (
+            "isinstance(msg, tuple)" in source
+        ), "process() must check isinstance(msg, tuple)"
+        assert (
+            "len(msg) < 1" in source or "not msg" in source
+        ), "process() must check len(msg) < 1 or not msg (empty tuple guard)"
+        assert (
+            "isinstance(msg[0], str)" in source
+        ), "process() must check isinstance(msg[0], str)"
 
     def test_guard_uses_continue(self):
         """
@@ -65,9 +68,9 @@ class TestValidationGuardPresence:
         source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
 
         # After the guard check, must skip with `continue`
-        assert "continue" in source, (
-            "process() must use `continue` to skip malformed messages"
-        )
+        assert (
+            "continue" in source
+        ), "process() must use `continue` to skip malformed messages"
 
     def test_guard_logs_a_warning(self):
         """
@@ -77,12 +80,12 @@ class TestValidationGuardPresence:
         app_gui = _import_app_gui()
         source = inspect.getsource(app_gui.DocumentQAApp._start_message_processor)
 
-        assert ".warning(" in source or 'logging.warning' in source, (
-            "process() must call logger.warning() when skipping a malformed message"
-        )
-        assert "Skipping malformed message" in source, (
-            "The warning message must contain 'Skipping malformed message'"
-        )
+        assert (
+            ".warning(" in source or "logging.warning" in source
+        ), "process() must call logger.warning() when skipping a malformed message"
+        assert (
+            "Skipping malformed message" in source
+        ), "The warning message must contain 'Skipping malformed message'"
 
     def test_guard_order_not_tuple_first(self):
         """
@@ -101,23 +104,38 @@ class TestValidationGuardPresence:
                 guard_line_idx = i
                 break
 
-        assert guard_line_idx is not None, (
-            "Guard must check isinstance(msg, tuple)"
-        )
+        assert guard_line_idx is not None, "Guard must check isinstance(msg, tuple)"
 
-        # The guard line must contain the tuple check as a top-level conjunct
-        guard_line = source.splitlines()[guard_line_idx]
-        # Strip leading whitespace for clean check
-        guard_line_stripped = guard_line.strip()
-        assert guard_line_stripped.startswith("if not isinstance(msg, tuple)"), (
-            f"Guard check must start with 'not isinstance(msg, tuple)' "
-            f"(not e.g. len(msg) < 1 first), but found: {guard_line_stripped}"
+        # The guard must check the tuple type before anything that subscripts
+        # msg. black may wrap the condition across lines, and the
+        # isinstance-conjunct line may not be the `if` line itself, so walk
+        # back to the statement start, join through the terminating colon,
+        # and compare whitespace-insensitively.
+        raw_lines = source.splitlines()
+        stmt_start = guard_line_idx
+        for back in range(guard_line_idx, max(guard_line_idx - 5, -1), -1):
+            if raw_lines[back].strip().startswith("if"):
+                stmt_start = back
+                break
+        joined = ""
+        for line in raw_lines[stmt_start:]:
+            joined += " " + line.strip()
+            if line.rstrip().endswith(":"):
+                break
+        compact = "".join(joined.split())
+        starts_with_tuple_check = compact.startswith(
+            "if(notisinstance(msg,tuple)"
+        ) or compact.startswith("ifnotisinstance(msg,tuple)")
+        assert starts_with_tuple_check, (
+            f"Guard check must test 'not isinstance(msg, tuple)' first "
+            f"(not e.g. len(msg) < 1 first), but found: {joined.strip()}"
         )
 
 
 # ---------------------------------------------------------------------------
 # Test 2: Guard logic — standalone unit test of the guard condition
 # ---------------------------------------------------------------------------
+
 
 class TestValidationGuardLogic:
     """
@@ -132,8 +150,14 @@ class TestValidationGuardLogic:
         Returns the guard condition as a callable bool(msg) → True means SKIP.
         Mirrors:  if not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str): skip
         """
+
         def should_skip(msg):
-            return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+            return (
+                not isinstance(msg, tuple)
+                or len(msg) < 1
+                or not isinstance(msg[0], str)
+            )
+
         return should_skip
 
     # --- Non-tuple types → must be skipped ---
@@ -205,6 +229,7 @@ class TestValidationGuardLogic:
 # Test 3: Integration — process() handles each malformed type without crashing
 # ---------------------------------------------------------------------------
 
+
 class TestProcessSkipsMalformedMessages:
     """
     Test that the process() loop inside _start_message_processor
@@ -228,13 +253,16 @@ class TestProcessSkipsMalformedMessages:
         Returns True if the message was skipped (malformed), False if processed.
         """
         import queue
+
         mock_app.message_queue.get_nowait.side_effect = [msg, queue.Empty()]
 
         skipped = False
         try:
             m = mock_app.message_queue.get_nowait()
             if not isinstance(m, tuple) or len(m) < 1 or not isinstance(m[0], str):
-                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(m).__name__}")
+                logging.getLogger("app_gui").warning(
+                    f"Skipping malformed message: {type(m).__name__}"
+                )
                 skipped = True
             else:
                 # Would route normally; simulate by calling the appropriate handler
@@ -284,16 +312,25 @@ class TestProcessSkipsMalformedMessages:
 # Test 4: Logging output — each malformed type generates a warning
 # ---------------------------------------------------------------------------
 
+
 class TestValidationLogsWarning:
     """Verify that each malformed message type triggers a logger.warning call."""
 
     def test_string_message_logs_warning(self, caplog):
         with caplog.at_level(logging.WARNING, logger="app_gui"):
+
             def should_skip(msg):
-                return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+                return (
+                    not isinstance(msg, tuple)
+                    or len(msg) < 1
+                    or not isinstance(msg[0], str)
+                )
+
             msg = "status:ready"
             if should_skip(msg):
-                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+                logging.getLogger("app_gui").warning(
+                    f"Skipping malformed message: {type(msg).__name__}"
+                )
 
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.WARNING
@@ -302,11 +339,19 @@ class TestValidationLogsWarning:
 
     def test_int_message_logs_warning(self, caplog):
         with caplog.at_level(logging.WARNING, logger="app_gui"):
+
             def should_skip(msg):
-                return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+                return (
+                    not isinstance(msg, tuple)
+                    or len(msg) < 1
+                    or not isinstance(msg[0], str)
+                )
+
             msg = 42
             if should_skip(msg):
-                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+                logging.getLogger("app_gui").warning(
+                    f"Skipping malformed message: {type(msg).__name__}"
+                )
 
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.WARNING
@@ -315,11 +360,19 @@ class TestValidationLogsWarning:
 
     def test_empty_tuple_logs_warning(self, caplog):
         with caplog.at_level(logging.WARNING, logger="app_gui"):
+
             def should_skip(msg):
-                return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+                return (
+                    not isinstance(msg, tuple)
+                    or len(msg) < 1
+                    or not isinstance(msg[0], str)
+                )
+
             msg = ()
             if should_skip(msg):
-                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+                logging.getLogger("app_gui").warning(
+                    f"Skipping malformed message: {type(msg).__name__}"
+                )
 
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.WARNING
@@ -328,11 +381,19 @@ class TestValidationLogsWarning:
 
     def test_tuple_with_int_first_element_logs_warning(self, caplog):
         with caplog.at_level(logging.WARNING, logger="app_gui"):
+
             def should_skip(msg):
-                return not isinstance(msg, tuple) or len(msg) < 1 or not isinstance(msg[0], str)
+                return (
+                    not isinstance(msg, tuple)
+                    or len(msg) < 1
+                    or not isinstance(msg[0], str)
+                )
+
             msg = (42, "payload")
             if should_skip(msg):
-                logging.getLogger("app_gui").warning(f"Skipping malformed message: {type(msg).__name__}")
+                logging.getLogger("app_gui").warning(
+                    f"Skipping malformed message: {type(msg).__name__}"
+                )
 
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == logging.WARNING

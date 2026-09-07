@@ -1,13 +1,12 @@
 """Unified engine factory for consistent RAGEngine construction across all entry points."""
 
-from typing import Optional, Dict, Any, TYPE_CHECKING
-from pathlib import Path
-from config import DEFAULT_MAX_TOKENS
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from app_paths import get_bundled_model_path
+from config import default_gguf_threads
 
 if TYPE_CHECKING:
-    from rag_engine import RAGEngine, RAGConfig
+    from rag_engine import RAGConfig, RAGEngine
 
 
 # Cache for lazy-loaded RAGEngine and RAGConfig classes
@@ -18,7 +17,8 @@ def _get_rag_classes():
     """Lazy import RAGEngine and RAGConfig with caching to avoid circular dependencies."""
     global _rag_classes_cache
     if _rag_classes_cache is None:
-        from rag_engine import RAGEngine, RAGConfig
+        from rag_engine import RAGConfig, RAGEngine
+
         _rag_classes_cache = (RAGEngine, RAGConfig)
     return _rag_classes_cache
 
@@ -138,7 +138,8 @@ def create_engine_from_settings(settings: Dict[str, Any]) -> "RAGEngine":
         context_truncation=_get("context_truncation", 20000),
         query_transformation_enabled=_get("query_transformation_enabled", False),
         gguf_n_ctx=_get("gguf_n_ctx", 4096),
-        gguf_n_threads=_get("gguf_n_threads", 4),
+        gguf_n_threads=_get("gguf_n_threads", default_gguf_threads()),
+        fast_profile_path=_get("fast_profile_path"),
     )
 
     return create_engine(
@@ -173,6 +174,7 @@ def create_engine_from_env() -> "RAGEngine":
         Configured RAGEngine instance
     """
     import os
+
     RAGEngine, RAGConfig = _get_rag_classes()
 
     # Helper function to parse boolean from env var
@@ -198,10 +200,13 @@ def create_engine_from_env() -> "RAGEngine":
         reranking_enabled=settings.rag_reranking_enabled,
         initial_retrieval_top_k=getattr(settings, "rag_initial_retrieval_top_k", 12),
         rerank_top_k=getattr(settings, "rag_rerank_top_k", 4),
-        reranker_model=getattr(settings, "rag_reranker_model", "cross-encoder/ms-marco-MiniLM-L6-v2"),
+        reranker_model=getattr(
+            settings, "rag_reranker_model", "cross-encoder/ms-marco-MiniLM-L6-v2"
+        ),
         context_truncation=settings.rag_context_truncation,
         gguf_n_ctx=getattr(settings, "rag_gguf_n_ctx", 4096),
-        gguf_n_threads=getattr(settings, "rag_gguf_n_threads", 4),
+        gguf_n_threads=getattr(settings, "rag_gguf_n_threads", default_gguf_threads()),
+        fast_profile_path=getattr(settings, "rag_fast_profile_path", None),
     )
 
     # Get GGUF path from env var or bundled model

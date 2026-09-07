@@ -3,16 +3,16 @@ LLM Interface Module
 Provides unified interface for LLM inference using GGUF models only.
 """
 
+import logging
 import os
 import re
-import json
-import logging
-import psutil
 import threading
-from typing import Optional, Dict, Any, List, Callable
-from dataclasses import dataclass
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+import psutil
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +20,33 @@ logger = logging.getLogger(__name__)
 MAX_RESPONSE_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_PROMPT_LENGTH = 24000  # was 16384; safe for 8192-token models with max_tokens=1024
 
+# Memory-budget constants (issue #53). The old flat "4x file size" heuristic
+# refused the bundled ~3.1 GB GGUF on 16 GB laptops with 8-11 GB free; the
+# realistic load requirement is the model file plus KV cache plus runtime
+# overhead. kv_estimate is a conservative constant pending measured
+# per-architecture numbers from the #52 benchmark harness.
+GGUF_KV_CACHE_ESTIMATE_BYTES = 1024**3  # 1 GiB conservative KV-cache allowance
+GGUF_LOAD_OVERHEAD_BYTES = 1024**3  # 1 GiB allocator/runtime overhead
+
+
+def kv_estimate(n_ctx: int) -> int:
+    """Estimate KV-cache memory for a context window.
+
+    Conservative constant for now; n_ctx is part of the signature so a
+    per-architecture formula can replace the constant without changing
+    callers.
+    """
+    return GGUF_KV_CACHE_ESTIMATE_BYTES
+
+
+def estimate_required_memory(file_size: int, n_ctx: int) -> int:
+    """Estimate free RAM needed to load a GGUF model of the given file size."""
+    return file_size + kv_estimate(n_ctx) + GGUF_LOAD_OVERHEAD_BYTES
+
 
 class QueryCancelled(Exception):
     """Raised when a user cancels an ongoing query."""
+
     pass
 
 
@@ -148,12 +172,19 @@ class GGUFBackend(BaseLLM):
         # Detect Qwen3 model for /no_think suppression and chat template use
         self.is_qwen3 = "qwen3" in self.model_path.name.lower()
         if self.is_qwen3:
-            logger.info("[OK] Qwen3 model detected — thinking mode suppressed via /no_think")
+            logger.info(
+                "[OK] Qwen3 model detected — thinking mode suppressed via /no_think"
+            )
 
         # Detect Gemma 4 model for <|think|> stop token suppression
-        self.is_gemma4 = "gemma-4" in self.model_path.name.lower() or "gemma_4" in self.model_path.name.lower()
+        self.is_gemma4 = (
+            "gemma-4" in self.model_path.name.lower()
+            or "gemma_4" in self.model_path.name.lower()
+        )
         if self.is_gemma4:
-            logger.info("[OK] Gemma 4 model detected — thinking mode suppressed via stop token")
+            logger.info(
+                "[OK] Gemma 4 model detected — thinking mode suppressed via stop token"
+            )
 
     def generate(
         self,
@@ -328,7 +359,9 @@ class GGUFBackend(BaseLLM):
                 message = choices[0].get("message") or {}
                 raw = message.get("content", "") or ""
                 # Strip think-tag blocks that Qwen3 may emit despite /no_think
-                cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                cleaned = re.sub(
+                    r"<think>.*?</think>", "", raw, flags=re.DOTALL
+                ).strip()
                 return cleaned
         except Exception as e:
             # Preserve cancellation exceptions without wrapping
@@ -355,11 +388,14 @@ class RAGPromptBuilder:
         "You are a precise document assistant. "
         "Answer using ONLY the context supplied. "
         "If the context lacks the answer, respond exactly: "
-        '"I don\'t have enough information to answer that question based on the available documents." '
+        "\"I don't have enough information to answer that question "
+        'based on the available documents." '
         "Rules: "
         "(1) No speculation or information from outside the provided context. "
-        "(2) Include ALL relevant steps and details from the context — do not truncate or abbreviate. "
-        "(3) Use numbered lists for multi-step procedures; use bullet points for feature or option lists. "
+        "(2) Include ALL relevant steps and details from the context "
+        "— do not truncate or abbreviate. "
+        "(3) Use numbered lists for multi-step procedures; "
+        "use bullet points for feature or option lists. "
         "(4) Cite the source filename in brackets after relevant statements, e.g. [report.pdf]. "
         "(5) If multiple documents contain conflicting information, present all perspectives. "
         "(6) If the context contains a partial procedure, present all visible steps and note "
@@ -393,35 +429,109 @@ class SmartLLM:
         gguf_n_ctx: int = 8192,
         gguf_n_threads: Optional[int] = None,
         gguf_verbose: bool = False,
+        fast_profile_path: Optional[str] = None,
     ):
         self.backend: GGUFBackend = None
         self.prompt_builder = RAGPromptBuilder()
 
         if gguf_path and Path(gguf_path).exists():
-            # Memory budget check: verify sufficient RAM before attempting load
-            # GGUF/llama.cpp models need ~2x file size (weights + KV cache); use 4x safety factor for large context windows
-            file_size = Path(gguf_path).stat().st_size
-            required = int(file_size * 4)
-            available = psutil.virtual_memory().available
-            if available < required:
-                raise RuntimeError(
-                    f"Insufficient RAM to load GGUF model: need ~{required / (1024**3):.1f}GB "
-                    f"({required / file_size:.1f}x model file size for weights, KV cache, and overhead), "
-                    f"but only {available / (1024**3):.1f}GB available. "
-                    f"Close other applications or use a smaller model."
-                )
             try:
-                self.backend = GGUFBackend(
-                    gguf_path=gguf_path,
-                    n_ctx=gguf_n_ctx,
-                    n_threads=gguf_n_threads,
-                    verbose=gguf_verbose,
+                self.backend = self._load_backend(
+                    gguf_path, gguf_n_ctx, gguf_n_threads, gguf_verbose
                 )
-            except Exception as e:
-                logger.warning("GGUF backend initialization failed: %s", e)
+            except RuntimeError as primary_error:
+                # Only a RAM-gate refusal can be answered by a smaller
+                # fast-profile model; other load failures (corrupt file,
+                # missing llama-cpp) propagate immediately.
+                is_gate_refusal = "Insufficient RAM" in str(primary_error)
+                if not (is_gate_refusal and fast_profile_path):
+                    raise
+                if Path(fast_profile_path).exists():
+                    logger.info(
+                        "[WARN] Primary model refused by RAM gate; trying "
+                        "fast-profile fallback: %s",
+                        fast_profile_path,
+                    )
+                    try:
+                        self.backend = self._load_backend(
+                            fast_profile_path,
+                            gguf_n_ctx,
+                            gguf_n_threads,
+                            gguf_verbose,
+                        )
+                    except RuntimeError as fallback_error:
+                        raise RuntimeError(
+                            f"{primary_error} Fast-profile fallback "
+                            f"'{os.path.basename(fast_profile_path)}' also "
+                            f"failed: {fallback_error}"
+                        ) from fallback_error
+                else:
+                    logger.warning(
+                        "[WARN] Fast-profile model not found: %s",
+                        fast_profile_path,
+                    )
+                    raise
 
         if not self.backend:
             raise RuntimeError("No GGUF backend available. Provide a valid gguf_path.")
+
+    @staticmethod
+    def _load_backend(
+        model_path: str,
+        n_ctx: int,
+        n_threads: Optional[int],
+        verbose: bool,
+    ) -> GGUFBackend:
+        """Run the RAM gate for one model file, then construct its backend.
+
+        Raises RuntimeError naming the model file, the required and available
+        memory when the gate refuses; backend construction failures are
+        wrapped (keeping the established "No GGUF backend available" marker)
+        instead of being silently swallowed.
+        """
+        # Memory budget check: verify sufficient RAM before attempting load.
+        # Requirement = model file (mmap'd weights) + KV cache + runtime
+        # overhead; the old flat 4x-file-size factor refused the bundled
+        # ~3.1 GB model on 16 GB laptops with 8-11 GB free.
+        try:
+            file_size = Path(model_path).stat().st_size
+        except OSError as e:
+            # stat() can race with an external delete/move; wrap it like any
+            # other load failure so no raw OS error text reaches the user.
+            raise RuntimeError(
+                f"No GGUF backend available: loading GGUF model "
+                f"'{os.path.basename(model_path)}' failed: "
+                f"{_sanitize_error(str(e))}"
+            ) from e
+        required = estimate_required_memory(file_size, n_ctx)
+        available = psutil.virtual_memory().available
+        if available < required:
+            raise RuntimeError(
+                f"Insufficient RAM to load GGUF model "
+                f"'{os.path.basename(model_path)}': "
+                f"need ~{required / (1024**3):.1f}GB "
+                f"(model file + ~{GGUF_KV_CACHE_ESTIMATE_BYTES / (1024**3):.0f}GB "
+                f"KV cache + ~{GGUF_LOAD_OVERHEAD_BYTES / (1024**3):.0f}GB overhead), "
+                f"but only {available / (1024**3):.1f}GB available. "
+                f"Close other applications, use a smaller model, or set "
+                f"RAG_FAST_PROFILE_PATH to a smaller model."
+            )
+        try:
+            return GGUFBackend(
+                gguf_path=model_path,
+                n_ctx=n_ctx,
+                n_threads=n_threads,
+                verbose=verbose,
+            )
+        except Exception as e:
+            # Sanitize the cause: backend constructors can embed absolute
+            # paths/username in their messages, and this text is relayed
+            # verbatim into GUI errors and API 503 details.
+            raise RuntimeError(
+                f"No GGUF backend available: loading GGUF model "
+                f"'{os.path.basename(model_path)}' failed: "
+                f"{_sanitize_error(str(e))}"
+            ) from e
 
     def generate(self, prompt: str, config: Optional[InferenceConfig] = None) -> str:
         """Generate a response using the GGUF backend."""
@@ -510,7 +620,12 @@ class SmartLLM:
                 raise
             # Fall back to generate() — no history_prefix since it was already in chat_complete
             prompt = self.prompt_builder.build_prompt(question, context, sources)
-            return self.backend.generate(prompt, config, stream_callback=stream_callback, cancellation_event=cancellation_event)
+            return self.backend.generate(
+                prompt,
+                config,
+                stream_callback=stream_callback,
+                cancellation_event=cancellation_event,
+            )
 
     def get_info(self) -> Dict[str, Any]:
         """Get backend information."""

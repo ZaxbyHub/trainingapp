@@ -277,6 +277,9 @@ INLINE_ALLOWLIST = {
     "test_full_council_adversarial.py": _inline_entry(
         "Source code inspection test — bare CTkButton found in _create_widgets", 1
     ),
+    "test_llm_load_api_diagnostic.py": _inline_entry(
+        "/ask/stream route not registered (no sse-starlette)", 1
+    ),
     "test_gguf_path_wiring_final.py": _inline_entry("ChromaDB KeyError ", 2),
     "test_phase1_adversarial.py": _inline_entry(
         "Windows 8.3 short name path mismatch on CI — temp path case differs", 2
