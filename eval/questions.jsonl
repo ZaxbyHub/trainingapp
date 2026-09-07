@@ -1,0 +1,74 @@
+# Tier-0 eval question set (issue #54, WS-A PR 4/8).
+#
+# Schema: one JSON object per line (comment lines start with '#'):
+#   id                        unique stable identifier (string)
+#   question                  natural-language question (must not begin with a greeting
+#                             keyword - the engine's greeting bypass skips retrieval)
+#   expected_doc_id           filename of the corpus document that answers the question
+#                             (eval/corpus/<expected_doc_id>); null for out-of-corpus rows
+#   expected_page             null for .md-sourced corpora (no page concept); populated
+#                             once pdf/pptx fixtures land
+#   expected_training_slide_id  STAYS null until the Storyline extractor (D1, issue #77)
+#                             exists - follow-up note: populate slide ids only after #77
+#                             ships doc-to-slide links (see issue #54 required scope)
+#   category                  taxonomy value documented in eval/README.md
+#
+# Out-of-corpus rows (expected_doc_id null, category "out-of-corpus") measure abstain
+# accuracy: the backend SHOULD decline to answer them. Keep at least 5 such rows and keep
+# the in-corpus/out-of-corpus ratio roughly 90/10 for this tier-0 set.
+{"id": "q01", "question": "What is the mileage rate for using a personal car on business travel?", "expected_doc_id": "travel-policy.md", "expected_page": null, "expected_training_slide_id": null, "category": "policy"}
+{"id": "q02", "question": "How far before departure should domestic flights be booked?", "expected_doc_id": "travel-policy.md", "expected_page": null, "expected_training_slide_id": null, "category": "policy"}
+{"id": "q03", "question": "What is the hotel rate cap per night in domestic markets?", "expected_doc_id": "travel-policy.md", "expected_page": null, "expected_training_slide_id": null, "category": "policy"}
+{"id": "q04", "question": "Which cabin class is the standard for a flight under six hours?", "expected_doc_id": "travel-policy.md", "expected_page": null, "expected_training_slide_id": null, "category": "policy"}
+{"id": "q05", "question": "What daily per diem applies to international assignments?", "expected_doc_id": "travel-policy.md", "expected_page": null, "expected_training_slide_id": null, "category": "policy"}
+{"id": "q06", "question": "Do I need a receipt for a single 30 dollar expense?", "expected_doc_id": "travel-policy.md", "expected_page": null, "expected_training_slide_id": null, "category": "policy"}
+{"id": "q07", "question": "Who has to approve a business class booking?", "expected_doc_id": "travel-policy.md", "expected_page": null, "expected_training_slide_id": null, "category": "policy"}
+{"id": "q08", "question": "How many vacation days does a new employee get each year?", "expected_doc_id": "employee-handbook.md", "expected_page": null, "expected_training_slide_id": null, "category": "benefits"}
+{"id": "q09", "question": "When does the vacation allowance grow, and by how many days?", "expected_doc_id": "employee-handbook.md", "expected_page": null, "expected_training_slide_id": null, "category": "benefits"}
+{"id": "q10", "question": "How many weeks of paid leave do birthing parents receive?", "expected_doc_id": "employee-handbook.md", "expected_page": null, "expected_training_slide_id": null, "category": "benefits"}
+{"id": "q11", "question": "What are the core collaboration hours?", "expected_doc_id": "employee-handbook.md", "expected_page": null, "expected_training_slide_id": null, "category": "benefits"}
+{"id": "q12", "question": "How long does the probation period last?", "expected_doc_id": "employee-handbook.md", "expected_page": null, "expected_training_slide_id": null, "category": "benefits"}
+{"id": "q13", "question": "How many performance reviews happen per year?", "expected_doc_id": "employee-handbook.md", "expected_page": null, "expected_training_slide_id": null, "category": "benefits"}
+{"id": "q14", "question": "How many days a week can someone work from home?", "expected_doc_id": "employee-handbook.md", "expected_page": null, "expected_training_slide_id": null, "category": "benefits"}
+{"id": "q15", "question": "What is the self-service way to reset my password?", "expected_doc_id": "it-helpdesk.md", "expected_page": null, "expected_training_slide_id": null, "category": "it-support"}
+{"id": "q16", "question": "What happens to my account after five failed login attempts?", "expected_doc_id": "it-helpdesk.md", "expected_page": null, "expected_training_slide_id": null, "category": "it-support"}
+{"id": "q17", "question": "What is the name of the corporate VPN profile?", "expected_doc_id": "it-helpdesk.md", "expected_page": null, "expected_training_slide_id": null, "category": "it-support"}
+{"id": "q18", "question": "How frequently are laptops replaced?", "expected_doc_id": "it-helpdesk.md", "expected_page": null, "expected_training_slide_id": null, "category": "it-support"}
+{"id": "q19", "question": "Where do I pick up a docking station or keyboard?", "expected_doc_id": "it-helpdesk.md", "expected_page": null, "expected_training_slide_id": null, "category": "it-support"}
+{"id": "q20", "question": "Which wifi network should a visitor connect to?", "expected_doc_id": "it-helpdesk.md", "expected_page": null, "expected_training_slide_id": null, "category": "it-support"}
+{"id": "q21", "question": "What is the minimum password length required?", "expected_doc_id": "security-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "security"}
+{"id": "q22", "question": "How fast should a possible phishing click be reported?", "expected_doc_id": "security-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "security"}
+{"id": "q23", "question": "How many data classification tiers are there?", "expected_doc_id": "security-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "security"}
+{"id": "q24", "question": "Which classification tier covers customer records and payment data?", "expected_doc_id": "security-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "security"}
+{"id": "q25", "question": "Is disk encryption mandatory for company laptops?", "expected_doc_id": "security-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "security"}
+{"id": "q26", "question": "Is it acceptable to follow someone through a badge door?", "expected_doc_id": "security-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "security"}
+{"id": "q27", "question": "How often do simulated phishing exercises take place?", "expected_doc_id": "security-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "security"}
+{"id": "q28", "question": "What is the inspection schedule for fire extinguishers?", "expected_doc_id": "workplace-safety.md", "expected_page": null, "expected_training_slide_id": null, "category": "safety"}
+{"id": "q29", "question": "Where is the defibrillator in the office?", "expected_doc_id": "workplace-safety.md", "expected_page": null, "expected_training_slide_id": null, "category": "safety"}
+{"id": "q30", "question": "Within what time window must a workplace accident be reported?", "expected_doc_id": "workplace-safety.md", "expected_page": null, "expected_training_slide_id": null, "category": "safety"}
+{"id": "q31", "question": "How often are fire evacuation drills run?", "expected_doc_id": "workplace-safety.md", "expected_page": null, "expected_training_slide_id": null, "category": "safety"}
+{"id": "q32", "question": "Are space heaters permitted at workstations?", "expected_doc_id": "workplace-safety.md", "expected_page": null, "expected_training_slide_id": null, "category": "safety"}
+{"id": "q33", "question": "How can I identify the floor warden during an evacuation?", "expected_doc_id": "workplace-safety.md", "expected_page": null, "expected_training_slide_id": null, "category": "safety"}
+{"id": "q34", "question": "Which two modules make up the Atlas CRM product?", "expected_doc_id": "product-training.md", "expected_page": null, "expected_training_slide_id": null, "category": "training-content"}
+{"id": "q35", "question": "How often does Atlas CRM ship releases?", "expected_doc_id": "product-training.md", "expected_page": null, "expected_training_slide_id": null, "category": "training-content"}
+{"id": "q36", "question": "What certification levels does the Atlas CRM program offer?", "expected_doc_id": "product-training.md", "expected_page": null, "expected_training_slide_id": null, "category": "training-content"}
+{"id": "q37", "question": "How long does one certification exam take?", "expected_doc_id": "product-training.md", "expected_page": null, "expected_training_slide_id": null, "category": "training-content"}
+{"id": "q38", "question": "When can a failed certification exam be retaken?", "expected_doc_id": "product-training.md", "expected_page": null, "expected_training_slide_id": null, "category": "training-content"}
+{"id": "q39", "question": "How often do sandbox tenants refresh their data?", "expected_doc_id": "product-training.md", "expected_page": null, "expected_training_slide_id": null, "category": "training-content"}
+{"id": "q40", "question": "Where do new sales hires complete their first CRM curriculum?", "expected_doc_id": "product-training.md", "expected_page": null, "expected_training_slide_id": null, "category": "training-content"}
+{"id": "q41", "question": "By what date must annual compliance training be finished?", "expected_doc_id": "compliance-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "compliance"}
+{"id": "q42", "question": "Above what gift value must a vendor gift be registered?", "expected_doc_id": "compliance-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "compliance"}
+{"id": "q43", "question": "How many years are business records kept?", "expected_doc_id": "compliance-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "compliance"}
+{"id": "q44", "question": "Can the whistleblower hotline be used anonymously?", "expected_doc_id": "compliance-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "compliance"}
+{"id": "q45", "question": "Are facilitation payments permitted anywhere?", "expected_doc_id": "compliance-basics.md", "expected_page": null, "expected_training_slide_id": null, "category": "compliance"}
+{"id": "q46", "question": "What is the monthly deadline for submitting expense reports?", "expected_doc_id": "expenses-guide.md", "expected_page": null, "expected_training_slide_id": null, "category": "expenses"}
+{"id": "q47", "question": "What is the daily meal limit while traveling domestically?", "expected_doc_id": "expenses-guide.md", "expected_page": null, "expected_training_slide_id": null, "category": "expenses"}
+{"id": "q48", "question": "Can alcohol be claimed on an expense report?", "expected_doc_id": "expenses-guide.md", "expected_page": null, "expected_training_slide_id": null, "category": "expenses"}
+{"id": "q49", "question": "What client entertainment amount needs a director's pre-approval?", "expected_doc_id": "expenses-guide.md", "expected_page": null, "expected_training_slide_id": null, "category": "expenses"}
+{"id": "q50", "question": "Name some travel costs that are never reimbursed.", "expected_doc_id": "expenses-guide.md", "expected_page": null, "expected_training_slide_id": null, "category": "expenses"}
+{"id": "q51", "question": "What is the company's retirement plan matching percentage?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}
+{"id": "q52", "question": "How do I get company sponsorship for an immigration visa?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}
+{"id": "q53", "question": "Does the company subsidize a gym membership?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}
+{"id": "q54", "question": "Is there a pet adoption benefit available to staff?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}
+{"id": "q55", "question": "Which foreign language courses can employees take?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}
+{"id": "q56", "question": "How do I request a salary advance before payday?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}

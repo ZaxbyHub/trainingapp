@@ -1,0 +1,867 @@
+{
+  "schema": "eval-report/1",
+  "base_url": "http://127.0.0.1:8478",
+  "timestamp": "2026-09-07T16:13:07+00:00",
+  "label": "deterministic-stub",
+  "question_count": 56,
+  "in_corpus_count": 50,
+  "out_of_corpus_count": 6,
+  "error_count": 0,
+  "fallback_count": 0,
+  "backend_stats": {
+    "embedding_model": "models\\bge-small-en-v1.5",
+    "llm_backend": "scripted-eval-stub",
+    "document_count": 8,
+    "chunk_count": 8
+  },
+  "metrics": {
+    "recall_at_k": {
+      "1": 0.6,
+      "3": 0.8,
+      "5": 0.8
+    },
+    "mrr": 0.6966666666666665,
+    "abstain_accuracy": 0.6666666666666666,
+    "abstain_total": 6,
+    "abstain_hits": 4,
+    "latency_ms": {
+      "p50": 4.2,
+      "p95": 5.7,
+      "mean": 4.3
+    }
+  },
+  "per_category": {
+    "policy": {
+      "count": 7,
+      "recall_at_3": 1.0,
+      "mrr": 0.42857142857142855
+    },
+    "benefits": {
+      "count": 7,
+      "recall_at_3": 1.0,
+      "mrr": 0.8571428571428571
+    },
+    "it-support": {
+      "count": 6,
+      "recall_at_3": 1.0,
+      "mrr": 0.5
+    },
+    "security": {
+      "count": 7,
+      "recall_at_3": 1.0,
+      "mrr": 0.7142857142857143
+    },
+    "safety": {
+      "count": 6,
+      "recall_at_3": 1.0,
+      "mrr": 0.5
+    },
+    "training-content": {
+      "count": 7,
+      "recall_at_3": 1.0,
+      "mrr": 0.9047619047619048
+    },
+    "compliance": {
+      "count": 5,
+      "recall_at_3": 1.0,
+      "mrr": 0.8
+    },
+    "expenses": {
+      "count": 5,
+      "recall_at_3": 1.0,
+      "mrr": 0.9
+    }
+  },
+  "results": [
+    {
+      "id": "q01",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 6.5,
+      "error": null,
+      "sources": [
+        "expenses-guide.md",
+        "travel-policy.md"
+      ],
+      "answer": "# Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks. ## Monthly cycle Expense reports are due by the 15th of the following month. # Business Travel Policy This policy covers all work-related travel booked by employees.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q02",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 4.9,
+      "error": null,
+      "sources": [
+        "expenses-guide.md",
+        "travel-policy.md"
+      ],
+      "answer": "# Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks. ## Monthly cycle Expense reports are due by the 15th of the following month. # Business Travel Policy This policy covers all work-related travel booked by employees.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q03",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 4.6,
+      "error": null,
+      "sources": [
+        "expenses-guide.md",
+        "travel-policy.md"
+      ],
+      "answer": "# Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks. ## Monthly cycle Expense reports are due by the 15th of the following month. # Business Travel Policy This policy covers all work-related travel booked by employees.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q04",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 4.1,
+      "error": null,
+      "sources": [
+        "travel-policy.md"
+      ],
+      "answer": "# Business Travel Policy This policy covers all work-related travel booked by employees. All travel must be arranged\nthrough the corporate travel portal.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q05",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 3.4,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q06",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 4.6,
+      "error": null,
+      "sources": [
+        "expenses-guide.md",
+        "travel-policy.md"
+      ],
+      "answer": "# Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks. ## Monthly cycle Expense reports are due by the 15th of the following month. # Business Travel Policy This policy covers all work-related travel booked by employees.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q07",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 3.1,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q08",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 4.5,
+      "error": null,
+      "sources": [
+        "employee-handbook.md",
+        "travel-policy.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff. # Business Travel Policy This policy covers all work-related travel booked by employees.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q09",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 3.7,
+      "error": null,
+      "sources": [
+        "employee-handbook.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q10",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 3.6,
+      "error": null,
+      "sources": [
+        "employee-handbook.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q11",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 5.6,
+      "error": null,
+      "sources": [
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff. # Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q12",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 3.2,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q13",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 5.4,
+      "error": null,
+      "sources": [
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff. # Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q14",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 3.6,
+      "error": null,
+      "sources": [
+        "employee-handbook.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q15",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 4.2,
+      "error": null,
+      "sources": [
+        "it-helpdesk.md",
+        "security-basics.md"
+      ],
+      "answer": "# IT Helpdesk Guide The IT helpdesk is the single entry point for hardware, software, and account support. ## Accounts and passwords Password resets are self-service through the helpdesk portal; click \"Reset password\" and\nfollow the emailed link. # Security Basics Security is everyone's responsibility.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q16",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 4.0,
+      "error": null,
+      "sources": [
+        "it-helpdesk.md"
+      ],
+      "answer": "# IT Helpdesk Guide The IT helpdesk is the single entry point for hardware, software, and account support. ## Accounts and passwords Password resets are self-service through the helpdesk portal; click \"Reset password\" and\nfollow the emailed link.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q17",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 3.1,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q18",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 3.0,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q19",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 4.5,
+      "error": null,
+      "sources": [
+        "it-helpdesk.md",
+        "workplace-safety.md"
+      ],
+      "answer": "# IT Helpdesk Guide The IT helpdesk is the single entry point for hardware, software, and account support. ## Accounts and passwords Password resets are self-service through the helpdesk portal; click \"Reset password\" and\nfollow the emailed link. # Workplace Safety Manual This manual describes the safety program for all office locations.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q20",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 4.1,
+      "error": null,
+      "sources": [
+        "employee-handbook.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q21",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 4.7,
+      "error": null,
+      "sources": [
+        "security-basics.md"
+      ],
+      "answer": "# Security Basics Security is everyone's responsibility. This guide covers the practices every employee must\nfollow on day one.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q22",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 4.1,
+      "error": null,
+      "sources": [
+        "security-basics.md"
+      ],
+      "answer": "# Security Basics Security is everyone's responsibility. This guide covers the practices every employee must\nfollow on day one.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q23",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 3.7,
+      "error": null,
+      "sources": [
+        "security-basics.md"
+      ],
+      "answer": "# Security Basics Security is everyone's responsibility. This guide covers the practices every employee must\nfollow on day one.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q24",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 4.5,
+      "error": null,
+      "sources": [
+        "product-training.md",
+        "security-basics.md"
+      ],
+      "answer": "# Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum. Atlas CRM is the customer\nrelationship platform used by the sales and success teams. # Security Basics Security is everyone's responsibility.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q25",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 3.6,
+      "error": null,
+      "sources": [
+        "security-basics.md"
+      ],
+      "answer": "# Security Basics Security is everyone's responsibility. This guide covers the practices every employee must\nfollow on day one.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q26",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 5.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "security-basics.md"
+      ],
+      "answer": "# Compliance Essentials This document summarizes the compliance obligations that apply to every employee. ## Annual training and attestations Annual compliance training must be completed by December 31 each year. # Security Basics Security is everyone's responsibility.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q27",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 3.3,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q28",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 4.9,
+      "error": null,
+      "sources": [
+        "workplace-safety.md"
+      ],
+      "answer": "# Workplace Safety Manual This manual describes the safety program for all office locations. ## Emergency procedures Emergency exit maps are posted next to every elevator and stairwell door.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q29",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 3.3,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q30",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 4.3,
+      "error": null,
+      "sources": [
+        "employee-handbook.md",
+        "workplace-safety.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff. # Workplace Safety Manual This manual describes the safety program for all office locations.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q31",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 4.7,
+      "error": null,
+      "sources": [
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "# Business Travel Policy This policy covers all work-related travel booked by employees. All travel must be arranged\nthrough the corporate travel portal. # Workplace Safety Manual This manual describes the safety program for all office locations.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q32",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 3.4,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q33",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 4.2,
+      "error": null,
+      "sources": [
+        "workplace-safety.md"
+      ],
+      "answer": "# Workplace Safety Manual This manual describes the safety program for all office locations. ## Emergency procedures Emergency exit maps are posted next to every elevator and stairwell door.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q34",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 4.2,
+      "error": null,
+      "sources": [
+        "product-training.md"
+      ],
+      "answer": "# Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum. Atlas CRM is the customer\nrelationship platform used by the sales and success teams.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q35",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 4.8,
+      "error": null,
+      "sources": [
+        "product-training.md",
+        "travel-policy.md"
+      ],
+      "answer": "# Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum. Atlas CRM is the customer\nrelationship platform used by the sales and success teams. # Business Travel Policy This policy covers all work-related travel booked by employees.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q36",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 3.8,
+      "error": null,
+      "sources": [
+        "product-training.md"
+      ],
+      "answer": "# Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum. Atlas CRM is the customer\nrelationship platform used by the sales and success teams.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q37",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 4.5,
+      "error": null,
+      "sources": [
+        "product-training.md",
+        "security-basics.md"
+      ],
+      "answer": "# Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum. Atlas CRM is the customer\nrelationship platform used by the sales and success teams. # Security Basics Security is everyone's responsibility.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q38",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 3.9,
+      "error": null,
+      "sources": [
+        "product-training.md"
+      ],
+      "answer": "# Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum. Atlas CRM is the customer\nrelationship platform used by the sales and success teams.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q39",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 3.8,
+      "error": null,
+      "sources": [
+        "product-training.md"
+      ],
+      "answer": "# Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum. Atlas CRM is the customer\nrelationship platform used by the sales and success teams.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q40",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 4.9,
+      "error": null,
+      "sources": [
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "product-training.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff. # Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 3
+    },
+    {
+      "id": "q41",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 4.6,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "product-training.md"
+      ],
+      "answer": "# Compliance Essentials This document summarizes the compliance obligations that apply to every employee. ## Annual training and attestations Annual compliance training must be completed by December 31 each year. # Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q42",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 5.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md"
+      ],
+      "answer": "# Compliance Essentials This document summarizes the compliance obligations that apply to every employee. ## Annual training and attestations Annual compliance training must be completed by December 31 each year.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q43",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 4.7,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md"
+      ],
+      "answer": "# Compliance Essentials This document summarizes the compliance obligations that apply to every employee. ## Annual training and attestations Annual compliance training must be completed by December 31 each year. # Employee Handbook Welcome to the company.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q44",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 5.1,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "security-basics.md"
+      ],
+      "answer": "# Compliance Essentials This document summarizes the compliance obligations that apply to every employee. ## Annual training and attestations Annual compliance training must be completed by December 31 each year. # Security Basics Security is everyone's responsibility.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q45",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 3.8,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": 0
+    },
+    {
+      "id": "q46",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 5.9,
+      "error": null,
+      "sources": [
+        "expenses-guide.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "# Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks. ## Monthly cycle Expense reports are due by the 15th of the following month. # Business Travel Policy This policy covers all work-related travel booked by employees.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q47",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 4.3,
+      "error": null,
+      "sources": [
+        "expenses-guide.md"
+      ],
+      "answer": "# Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks. ## Monthly cycle Expense reports are due by the 15th of the following month.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q48",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 6.6,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "expenses-guide.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "# Compliance Essentials This document summarizes the compliance obligations that apply to every employee. ## Annual training and attestations Annual compliance training must be completed by December 31 each year. # Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q49",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 5.3,
+      "error": null,
+      "sources": [
+        "expenses-guide.md",
+        "product-training.md"
+      ],
+      "answer": "# Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks. ## Monthly cycle Expense reports are due by the 15th of the following month. # Atlas CRM Product Training Guide This guide supports the Atlas CRM training curriculum.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q50",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 5.6,
+      "error": null,
+      "sources": [
+        "expenses-guide.md",
+        "security-basics.md",
+        "travel-policy.md"
+      ],
+      "answer": "# Expense Reimbursement Guide How to get expenses reimbursed quickly, and what the finance team checks. ## Monthly cycle Expense reports are due by the 15th of the following month. # Security Basics Security is everyone's responsibility.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q51",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 3.8,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q52",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 3.7,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q53",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 4.1,
+      "error": null,
+      "sources": [
+        "employee-handbook.md"
+      ],
+      "answer": "# Employee Handbook Welcome to the company. This handbook summarizes the employment terms that apply to all\nfull-time staff.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q54",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 4.2,
+      "error": null,
+      "sources": [
+        "workplace-safety.md"
+      ],
+      "answer": "# Workplace Safety Manual This manual describes the safety program for all office locations. ## Emergency procedures Emergency exit maps are posted next to every elevator and stairwell door.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q55",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 3.7,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q56",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 3.4,
+      "error": null,
+      "sources": [],
+      "answer": "I couldn't find any relevant information in the documents to answer your question.",
+      "abstained": true,
+      "fallback_phrase": false,
+      "rank": null
+    }
+  ]
+}

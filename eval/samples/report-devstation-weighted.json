@@ -1,0 +1,1233 @@
+{
+  "schema": "eval-report/1",
+  "base_url": "http://127.0.0.1:8125",
+  "timestamp": "2026-09-07T16:28:01+00:00",
+  "label": "devstation-weighted-bge-small-ettin-lfm2.5",
+  "question_count": 56,
+  "in_corpus_count": 50,
+  "out_of_corpus_count": 6,
+  "error_count": 0,
+  "fallback_count": 0,
+  "backend_stats": {
+    "embedding_model": "models\\bge-small-en-v1.5",
+    "llm_backend": null,
+    "document_count": 8,
+    "chunk_count": 8
+  },
+  "metrics": {
+    "recall_at_k": {
+      "1": 0.1,
+      "3": 0.34,
+      "5": 0.64
+    },
+    "mrr": 0.32366666666666666,
+    "abstain_accuracy": 0.0,
+    "abstain_total": 6,
+    "abstain_hits": 0,
+    "latency_ms": {
+      "p50": 2885.7,
+      "p95": 4877.6,
+      "mean": 3069.6
+    }
+  },
+  "per_category": {
+    "policy": {
+      "count": 7,
+      "recall_at_3": 0.0,
+      "mrr": 0.1496598639455782
+    },
+    "benefits": {
+      "count": 7,
+      "recall_at_3": 1.0,
+      "mrr": 0.5
+    },
+    "it-support": {
+      "count": 6,
+      "recall_at_3": 0.0,
+      "mrr": 0.25
+    },
+    "security": {
+      "count": 7,
+      "recall_at_3": 0.0,
+      "mrr": 0.1761904761904762
+    },
+    "safety": {
+      "count": 6,
+      "recall_at_3": 0.0,
+      "mrr": 0.13095238095238096
+    },
+    "training-content": {
+      "count": 7,
+      "recall_at_3": 0.0,
+      "mrr": 0.20714285714285713
+    },
+    "compliance": {
+      "count": 5,
+      "recall_at_3": 1.0,
+      "mrr": 1.0
+    },
+    "expenses": {
+      "count": 5,
+      "recall_at_3": 1.0,
+      "mrr": 0.3333333333333333
+    }
+  },
+  "results": [
+    {
+      "id": "q01",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 2944.3,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The mileage rate for using a personal car on business travel is 0.655 dollars per mile.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 6
+    },
+    {
+      "id": "q02",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 2523.1,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Domestic flights should be booked at least **14 days** before departure.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 7
+    },
+    {
+      "id": "q03",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 2553.5,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The hotel rate cap per night in domestic markets is 180 dollars.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 7
+    },
+    {
+      "id": "q04",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 2190.3,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The standard cabin class for a flight under six hours is economy class.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 6
+    },
+    {
+      "id": "q05",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 2644.3,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The daily per diem for international assignments is 85 dollars.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 7
+    },
+    {
+      "id": "q06",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 2832.5,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "No, you do not need a receipt for a single 30 dollar expense. The document states that the meal cap is 40 dollars per day for domestic travel and alcohol is not reimbursable.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 7
+    },
+    {
+      "id": "q07",
+      "category": "policy",
+      "expected_doc_id": "travel-policy.md",
+      "latency_ms": 2892.3,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The employee handbook states that the **vice president** must approve a business class booking.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 7
+    },
+    {
+      "id": "q08",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 2517.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md"
+      ],
+      "answer": "A new employee receives 15 days of paid vacation per year.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q09",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 2636.7,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md"
+      ],
+      "answer": "The vacation allowance grows by 5 additional days each year.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q10",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 3098.9,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Birthing parents receive 16 weeks of paid leave.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q11",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 2843.2,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The core collaboration hours are 10:00 to 16:00 in your local time zone.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q12",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 3165.1,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The probation period lasts for 90 days.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q13",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 2471.3,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The document states that performance reviews run twice a year.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q14",
+      "category": "benefits",
+      "expected_doc_id": "employee-handbook.md",
+      "latency_ms": 2793.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "According to the Employee Handbook, full-time staff are allowed 15 days of paid vacation per year. This means that a person can work from home for up to **15 days** per week.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 2
+    },
+    {
+      "id": "q15",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 3575.5,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The self-service way to reset your password is:\n\n1. Go to the helpdesk portal.\n2. Click \"Reset password.\"\n3. Follow the emailed link provided in the helpdesk portal.\n4. The link expires after 30 minutes.\n5. After 15 minutes, you will be prompted to click \"Reset password\" and follow the instructions on the page.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 4
+    },
+    {
+      "id": "q16",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 4436.8,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "After five failed login attempts, your account will be locked automatically.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 4
+    },
+    {
+      "id": "q17",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 5070.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The corporate VPN profile is named CORP-SECURE.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 4
+    },
+    {
+      "id": "q18",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 3411.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Laptops are replaced every 3 years.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 4
+    },
+    {
+      "id": "q19",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 3211.9,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "To pick up a docking station or keyboard, you can use the IT Helpdesk Guide. The guide provides step-by-step instructions on how to access and utilize these resources for hardware and software support.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 4
+    },
+    {
+      "id": "q20",
+      "category": "it-support",
+      "expected_doc_id": "it-helpdesk.md",
+      "latency_ms": 3354.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The wifi network for a visitor should be the CORP-SECURE network.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 4
+    },
+    {
+      "id": "q21",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 3241.3,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The minimum password length required is 12 characters.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 6
+    },
+    {
+      "id": "q22",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 3374.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The document states that a possible phishing click should be reported with the \"Report phishing\" button in the mail client, or forwarded to the security team mailbox. It emphasizes that reporting suspicious emails within one hour is the single most effective containment step and is never punished.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 6
+    },
+    {
+      "id": "q23",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 2663.7,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md"
+      ],
+      "answer": "There are four data classification tiers: public, internal, confidential, and restricted.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 6
+    },
+    {
+      "id": "q24",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 3692.6,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The classification tier that covers customer records and payment data is **Confidential**.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 6
+    },
+    {
+      "id": "q25",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 3758.7,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Yes, disk encryption is mandatory for company laptops. This requirement ensures the security of sensitive data stored on the devices and helps protect against unauthorized access or theft.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 5
+    },
+    {
+      "id": "q26",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 3042.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "No, it is not acceptable to follow someone through a badge door. If you forget your badge or sign in at the reception desk, you should immediately sign in and hand over the badge to the response team for further assistance.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 5
+    },
+    {
+      "id": "q27",
+      "category": "security",
+      "expected_doc_id": "security-basics.md",
+      "latency_ms": 2488.2,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Simulated phishing exercises take place quarterly.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 6
+    },
+    {
+      "id": "q28",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 2813.6,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The inspection schedule for fire extinguishers is as follows:\n\n- Monthly inspections are conducted on a monthly basis.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 8
+    },
+    {
+      "id": "q29",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 2950.3,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The defibrillator (AED) is located next to the reception desk on floor 1.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 8
+    },
+    {
+      "id": "q30",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 3180.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "A workplace accident must be reported within 24 hours.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 7
+    },
+    {
+      "id": "q31",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 2907.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Fire evacuation drills are run quarterly.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 7
+    },
+    {
+      "id": "q32",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 3497.2,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "No, space heaters are not permitted at workstations. The policy explicitly states that \"Space heaters are not permitted at desks; the only approved heating devices are the ones facilities installed.\"",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 8
+    },
+    {
+      "id": "q33",
+      "category": "safety",
+      "expected_doc_id": "workplace-safety.md",
+      "latency_ms": 5758.1,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "To identify the floor warden during an evacuation, follow these steps:\n\n1. **Locate the Floor Warden**:\n   - In the emergency exit map next to every elevator and stairwell door.\n   - The floor warden is typically located near the entrance of the building or at a designated spot in the hallway leading to the exits.\n\n2. **Check for Signage**:\n   - Look for signs indicating the presence of the floor warden, such as \"Floor Warden\" or \"Emergency Exit Floor Warden.\" These are often placed near emergency exit doors or on walls marked with a specific color (e.g., red).\n\n3. **Use the Emergency Exit Map**:\n   - If available, use the emergency exit map to locate the floor warden by following the labeled exit routes and signs.\n\n4. **Check for Physical Indicators**:\n   - In some cases, you may need to physically inspect the area near the floor warden or look for a specific object (e.g., a red flag) that indicates their presence.\n\nBy following these steps, you can quickly identify the floor warden during an evacuation and ensure proper safety procedures are followed.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 8
+    },
+    {
+      "id": "q34",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 2972.7,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The Atlas CRM product is made up of two core modules:\n\n1. Sales Pulse manages pipeline stages, quotes, and deal forecasting.\n2. Insight Board renders dashboards for win rate, cycle time, and churn risk using the same underlying data.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 5
+    },
+    {
+      "id": "q35",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 2506.1,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Atlas CRM ships releases on a quarterly cadence.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 5
+    },
+    {
+      "id": "q36",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 2716.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The Atlas CRM program offers two certification levels:\n\n1. Associate level covers navigation, record management, and reporting basics.\n2. Professional level adds workflow automation, quota forecasting, and admin configuration.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 5
+    },
+    {
+      "id": "q37",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 2509.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The certification exam takes 60 minutes.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 5
+    },
+    {
+      "id": "q38",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 2494.9,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "A failed certification exam can be retaken after 7 days.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 5
+    },
+    {
+      "id": "q39",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 2223.6,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md"
+      ],
+      "answer": "The sandbox tenants refresh their data every Sunday.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 5
+    },
+    {
+      "id": "q40",
+      "category": "training-content",
+      "expected_doc_id": "product-training.md",
+      "latency_ms": 2390.8,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "New sales hires complete their first CRM curriculum during their onboarding weeks.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 4
+    },
+    {
+      "id": "q41",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 2554.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The annual compliance training must be completed by December 31 each year.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q42",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 3334.2,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The gift register requires that a vendor's gift is registered for **50 dollars** per person per year. This means the total amount of gifts must not exceed 50 dollars to be considered eligible for registration in the gift register.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q43",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 2032.1,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md",
+        "travel-policy.md"
+      ],
+      "answer": "The document states that business records are retained for 7 years unless a records-hold notice says otherwise.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q44",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 2879.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The whistleblower hotline is available around the clock and accepts anonymous reports.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q45",
+      "category": "compliance",
+      "expected_doc_id": "compliance-basics.md",
+      "latency_ms": 2832.6,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "No, facilitation payments are not permitted anywhere.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 1
+    },
+    {
+      "id": "q46",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 2750.8,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The monthly deadline for submitting expense reports is the 15th of the following month.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 3
+    },
+    {
+      "id": "q47",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 2551.9,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The daily meal limit while traveling domestically is 40 dollars per day.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 3
+    },
+    {
+      "id": "q48",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 2914.5,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Based on the provided document, alcohol is not reimbursable for expenses. The expense report guidelines explicitly state that alcohol is **not** reimbursed under any circumstances. This means employees cannot claim an expense for alcoholic beverages during a transaction or at a meeting. \n\nThe document further clarifies this by noting: \"Alcohol is not reimbursable.\"",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 3
+    },
+    {
+      "id": "q49",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 2139.1,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md"
+      ],
+      "answer": "The client entertainment amount that needs a director's pre-approval is above 200 dollars.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 3
+    },
+    {
+      "id": "q50",
+      "category": "expenses",
+      "expected_doc_id": "expenses-guide.md",
+      "latency_ms": 2529.3,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The travel costs that are never reimbursed include:\n\n- Minibar charges\n- Traffic and parking fines\n- Airline club memberships\n- Seat upgrades\n- Personal entertainment during travel",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": 3
+    },
+    {
+      "id": "q51",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 2613.6,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "The company's retirement plan matching percentage is 5%.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q52",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 4992.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "To get company sponsorship for an immigration visa, follow these steps:\n\n1. **Review the Visa Application**: Ensure you have all necessary documents and information ready, including your passport, proof of financial means, and a completed application form.\n2. **Contact the Immigration Office**: Reach out to the appropriate immigration office or contact their customer service department for guidance on sponsorship processes.\n3. **Prepare Sponsorship Details**: Provide them with detailed information about your business, including its mission, products/services, target market, and financial requirements.\n4. **Submit Your Application**: Submit your application along with the required documents to the immigration office or contact their customer service team.\n5. **Follow Up**: After submitting your application, follow up with the immigration office if there are any delays or questions.\n\nIf you need further assistance, consider consulting a lawyer specializing in immigration law for guidance on sponsorship processes.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q53",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 4150.0,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Based on the provided context, there is no information indicating that the company subsidizes a gym membership. The relevant document mentions:\n\n\"Gyms are not permitted at desks; the only approved heating devices are the ones facilities installed.\"\n\nThis suggests that gym memberships or fitness-related activities may be subject to cost-sharing or other financial arrangements by the company, but it does not specify whether such subsidies exist for gym memberships.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q54",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 3292.4,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Based on the provided documents, there is no explicit mention of a pet adoption benefit available to staff. The document titled \"Employee Handbook Welcome to the company\" does not discuss any benefits for employees regarding pets or adoptions.\n\nThe other sections cover various aspects of workplace policies and procedures, including compliance requirements, employee handbooks, expense reimbursement guidelines, IT helpdesk guidance, security basics, business travel policy, workplace safety manual, and workplace health and safety manual. There is no mention of pet adoption benefits in any of these documents.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q55",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 3147.5,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "Based on the provided context, employees can take **English** and **Spanish** as foreign language courses. The document mentions that \"Courses in English are available for all employees.\" Additionally, it states:\n\n- **Spanish** is a course offered by the company.\n- There is no mention of other languages being available (e.g., French, German, Japanese). \n\n\nThe context does not explicitly list any other foreign language courses.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": null
+    },
+    {
+      "id": "q56",
+      "category": "out-of-corpus",
+      "expected_doc_id": null,
+      "latency_ms": 4839.5,
+      "error": null,
+      "sources": [
+        "compliance-basics.md",
+        "employee-handbook.md",
+        "expenses-guide.md",
+        "it-helpdesk.md",
+        "product-training.md",
+        "security-basics.md",
+        "travel-policy.md",
+        "workplace-safety.md"
+      ],
+      "answer": "To request a salary advance before payday, follow these steps:\n\n1. **Prepare Your Request**:\n   - Gather your financial records and documentation.\n   - Write down the amount you want to receive as an advance.\n   - Include any supporting documents (e.g., bank statements, proof of income).\n\n2. **Contact HR or Payroll Department**:\n   - Schedule a meeting with your supervisor or payroll department.\n   - Explain the purpose of the request and provide all necessary documentation.\n\n3. **Provide Documentation**:\n   - Ensure you have all required documents ready for the interview.\n\n4. **Prepare Your Presentation**:\n   - Be prepared to explain why you need a salary advance before payday.\n   - Be honest about your financial situation, but also be open to negotiation.\n\n5. **Follow Up**:\n   - After the meeting, follow up with HR or payroll department if there is no response within the specified timeframe (usually 7 days).\n\n6. **Confirm Payment**:\n   - Once you receive the salary advance, confirm it and ensure payment is processed accordingly.\n\nBy following these steps, you can effectively request a salary advance before payday while ensuring all necessary documentation is prepared.",
+      "abstained": false,
+      "fallback_phrase": false,
+      "rank": null
+    }
+  ]
+}
