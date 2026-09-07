@@ -847,6 +847,12 @@ class DocumentQAApp(CTk):
             "min_similarity": 0.3,
             "context_truncation": 20000,
         }
+        # Issue #53: honor RAG_FAST_PROFILE_PATH on the desktop entry point so
+        # the fast-profile fallback advised in load errors is actionable here
+        # too (engine_factory.create_engine_from_settings reads this key).
+        env_fast_profile = os.environ.get("RAG_FAST_PROFILE_PATH")
+        if env_fast_profile:
+            default_settings["fast_profile_path"] = env_fast_profile
 
         try:
             if os.path.exists(settings_path):
@@ -3020,12 +3026,17 @@ class DocumentQAApp(CTk):
                 # Initialize LLM in background thread to avoid freezing GUI
                 self.engine._ensure_llm()
                 if not self.engine.llm:
-                    # Queue error to run on main thread
+                    # Surface the real load diagnostic through the classifier
+                    # instead of a hardcoded "Check Settings" misdirection.
+                    err = RuntimeError(
+                        getattr(self.engine, "llm_init_error", None)
+                        or "LLM not initialized."
+                    )
                     self.message_queue.put(
                         (
                             "message",
                             "system",
-                            "No LLM backend available. Check Settings.",
+                            _classify_error(err, "query"),
                             None,
                             datetime.now().strftime("%H:%M"),
                         )
