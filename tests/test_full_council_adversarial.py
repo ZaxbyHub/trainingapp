@@ -1188,18 +1188,33 @@ def test_ask_question_no_llm_uses_message_queue_thread_safe():
 
     query_body = "\n".join(lines[query_def_line:query_end_line])
 
-    # After checking `if not self.engine.llm:`, error must use message_queue.put()
-    assert (
-        "message_queue.put" in query_body
-    ), "Error handling for llm=None must use message_queue.put() for thread-safety"
+    # The assertion must bind to the no-LLM branch itself, not the whole
+    # query() body: the generic except handler also calls
+    # message_queue.put(_classify_error(...)), which would otherwise satisfy
+    # the regex even if this branch regressed to a direct tkinter call.
+    branch_start = -1
+    for i in range(query_def_line, query_end_line):
+        if "if not self.engine.llm" in lines[i]:
+            branch_start = i
+            break
+    assert branch_start >= 0, "query() must guard on `if not self.engine.llm`"
+    branch_end = query_end_line
+    for i in range(branch_start, query_end_line):
+        if re.match(r"\s*return\b", lines[i]):
+            branch_end = i + 1
+            break
+    no_llm_branch = "\n".join(lines[branch_start:branch_end])
 
-    # The "No LLM" error must be sent via message_queue.put(), either as a
-    # literal "No LLM..." message or routed through _classify_error (issue
-    # #53 relays the real load diagnostic through the classifier). A direct
-    # messagebox.showerror() call remains forbidden (not thread-safe on
-    # Windows).
+    # Inside the no-LLM branch, the error must be queued via
+    # message_queue.put(), either as a literal "No LLM..." message or routed
+    # through _classify_error (issue #53 relays the real load diagnostic).
+    # A direct messagebox.showerror() call remains forbidden (not thread-safe
+    # on Windows).
+    assert (
+        "message_queue.put" in no_llm_branch
+    ), "Error handling for llm=None must use message_queue.put() for thread-safety"
     assert re.search(
-        r'message_queue\.put\([^)]*("No LLM[^"]*"|_classify_error\()', query_body
+        r'message_queue\.put\([^)]*("No LLM[^"]*"|_classify_error\()', no_llm_branch
     ), (
         "The 'No LLM backend available' error must be sent via message_queue.put(), "
         "not messagebox.showerror() (which is not thread-safe on Windows)"

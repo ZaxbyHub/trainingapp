@@ -54,19 +54,34 @@ def test_load_settings_without_env_has_no_fast_profile_key(tmp_path):
 def test_chat_worker_routes_no_llm_error_through_classifier():
     """The llm=None guard must classify the real diagnostic and queue it.
 
-    The guard reads ``llm_init_error`` (issue #53's diagnostic relay), builds
-    the error, routes it through ``_classify_error(err, "query")``, and hands
-    the result to ``message_queue.put`` — the worker thread never touches
-    tkinter directly.
+    The assertion is scoped to the ``if not self.engine.llm:`` branch itself:
+    the generic except handler also calls message_queue.put with a classified
+    error, which would otherwise satisfy the check even if this branch
+    regressed to a direct tkinter call.
     """
     from app_gui import DocumentQAApp
 
     source = inspect.getsource(DocumentQAApp._ask_question)
+    lines = source.split("\n")
 
-    assert (
-        "llm_init_error" in source
-    ), "chat worker must surface the real load diagnostic (llm_init_error)"
-    assert re.search(r"message_queue\.put\([^)]*_classify_error\(", source), (
-        "the classified error must be queued via message_queue.put (worker "
-        "threads must not call tkinter directly)"
+    branch_start = -1
+    for i, line in enumerate(lines):
+        if "if not self.engine.llm" in line:
+            branch_start = i
+            break
+    assert branch_start >= 0, "query() must guard on `if not self.engine.llm`"
+    branch_end = len(lines)
+    for i in range(branch_start, len(lines)):
+        if re.match(r"\s*return\b", lines[i]):
+            branch_end = i + 1
+            break
+    branch = "\n".join(lines[branch_start:branch_end])
+
+    assert "llm_init_error" in branch, (
+        "the no-LLM branch must surface the real load diagnostic "
+        "(llm_init_error), not a generic message"
+    )
+    assert re.search(r"message_queue\.put\([^)]*_classify_error\(", branch), (
+        "the classified error must be queued via message_queue.put inside the "
+        "no-LLM branch (worker threads must not call tkinter directly)"
     )
