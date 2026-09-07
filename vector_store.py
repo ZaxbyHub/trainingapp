@@ -3,14 +3,13 @@ Vector Store Module
 Manages document embeddings and similarity search using ChromaDB.
 """
 
+import json
 import os
 import re
 import sys
-import json
 import threading
-from typing import List, Tuple, Optional, Dict, Any, Set
 from pathlib import Path
-
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 try:
     import chromadb
@@ -31,6 +30,7 @@ except ImportError:
 # (added in sentence-transformers >= 2.2.0)
 try:
     import sentence_transformers as _st
+
     _st_version = tuple(int(x) for x in _st.__version__.split(".")[:2])
     _ST_SUPPORTS_LOCAL_FILES_ONLY = _st_version >= (2, 2)
 except Exception:
@@ -43,11 +43,11 @@ try:
 except ImportError:
     BM25_AVAILABLE = False
 
-from document_processor import DocumentChunk
-from utils import rrf_fuse
-from query_transformer import STOP_WORDS
-
 import logging
+
+from document_processor import DocumentChunk
+from query_transformer import STOP_WORDS
+from utils import rrf_fuse
 
 logger = logging.getLogger(__name__)
 
@@ -85,25 +85,33 @@ class EmbeddingModel:
                 logger.info("Loading embedding model from bundle: %s", self.model_name)
             else:
                 # No bundled model - try local fallback
-                logger.warning("Bundled embedding model not found, checking local fallback...")
+                logger.warning(
+                    "Bundled embedding model not found, checking local fallback..."
+                )
                 if local_model_path.exists() and any(local_model_path.iterdir()):
                     # Use local fallback with local_files_only to prevent download
                     self.model_name = str(local_model_path)
-                    logger.info("Loading embedding model from local fallback: %s", self.model_name)
+                    logger.info(
+                        "Loading embedding model from local fallback: %s",
+                        self.model_name,
+                    )
                 else:
                     # Model not found anywhere - raise clear error
                     expected_path = local_model_path.resolve()
                     raise FileNotFoundError(
                         f"Embedding model not found.\n"
                         f"  Expected path: {expected_path}\n"
-                        f"  Install instructions: Download BAAI/bge-small-en-v1.5 to {expected_path}"
+                        f"  Install instructions: Download BAAI/bge-small-en-v1.5 "
+                        f"to {expected_path}"
                     )
         else:
             # Running in development mode
             if local_model_path.exists() and any(local_model_path.iterdir()):
                 # Use local model with local_files_only to prevent download
                 self.model_name = str(local_model_path)
-                logger.info("Loading embedding model from local path: %s", self.model_name)
+                logger.info(
+                    "Loading embedding model from local path: %s", self.model_name
+                )
             else:
                 # Try HuggingFace cache with local_files_only=True to prevent download
                 logger.info("Loading embedding model: %s (cache-only)", self.model_name)
@@ -127,25 +135,35 @@ class EmbeddingModel:
                     self.model = SentenceTransformer(name)
                 else:
                     raise
+
         if self.model is None:
             local_model_path = Path("./models/bge-small-en-v1.5/")
 
             if getattr(sys, "frozen", False):
                 # Running in PyInstaller bundle
-                bundle_path = Path(sys._MEIPASS) / "bundled_models" / "bge-small-en-v1.5"
+                bundle_path = (
+                    Path(sys._MEIPASS) / "bundled_models" / "bge-small-en-v1.5"
+                )
                 if bundle_path.exists() and any(bundle_path.iterdir()):
                     # Bundle has model files - use them
                     self.model_name = str(bundle_path)
-                    logger.info("Loading embedding model from bundle: %s", self.model_name)
+                    logger.info(
+                        "Loading embedding model from bundle: %s", self.model_name
+                    )
                     _try_load(self.model_name)
                     logger.info("[OK] Embedding model loaded")
                 else:
                     # No bundled model - try local fallback
-                    logger.warning("Bundled embedding model not found, checking local fallback...")
+                    logger.warning(
+                        "Bundled embedding model not found, checking local fallback..."
+                    )
                     if local_model_path.exists() and any(local_model_path.iterdir()):
                         # Use local fallback with local_files_only to prevent download
                         self.model_name = str(local_model_path)
-                        logger.info("Loading embedding model from local fallback: %s", self.model_name)
+                        logger.info(
+                            "Loading embedding model from local fallback: %s",
+                            self.model_name,
+                        )
                         _try_load(self.model_name)
                         logger.info("[OK] Embedding model loaded")
                     else:
@@ -154,18 +172,23 @@ class EmbeddingModel:
                         raise FileNotFoundError(
                             f"Embedding model not found.\n"
                             f"  Expected path: {expected_path}\n"
-                            f"  Install instructions: Download BAAI/bge-small-en-v1.5 to {expected_path}"
+                            f"  Install instructions: Download BAAI/bge-small-en-v1.5 "
+                            f"to {expected_path}"
                         )
             else:
                 # Running in development mode
                 if local_model_path.exists() and any(local_model_path.iterdir()):
                     # Use local model with local_files_only to prevent download
-                    logger.info("Loading embedding model from local path: %s", self.model_name)
+                    logger.info(
+                        "Loading embedding model from local path: %s", self.model_name
+                    )
                     _try_load(self.model_name)
                     logger.info("[OK] Embedding model loaded")
                 else:
                     # Try HuggingFace cache with local_files_only=True to prevent download
-                    logger.info("Loading embedding model: %s (cache-only)", self.model_name)
+                    logger.info(
+                        "Loading embedding model: %s (cache-only)", self.model_name
+                    )
                     try:
                         _try_load(self.model_name)
                         logger.info("[OK] Embedding model loaded")
@@ -176,10 +199,13 @@ class EmbeddingModel:
                             f"Embedding model not found in HuggingFace cache.\n"
                             f"  Model name: {self.model_name}\n"
                             f"  Expected local path: {expected_path}\n"
-                            f"  Install instructions: Download BAAI/bge-small-en-v1.5 to {expected_path}"
+                            f"  Install instructions: Download BAAI/bge-small-en-v1.5 "
+                            f"to {expected_path}"
                         ) from e
 
-    def encode(self, texts: List[str], batch_size: Optional[int] = None) -> List[List[float]]:
+    def encode(
+        self, texts: List[str], batch_size: Optional[int] = None
+    ) -> List[List[float]]:
         """Encode texts to embeddings."""
         if batch_size is not None and batch_size <= 0:
             raise ValueError(f"batch_size must be positive, got {batch_size}")
@@ -201,7 +227,7 @@ class EmbeddingModel:
 
 class BM25Index:
     """BM25 indexing and search functionality with incremental updates.
-    
+
     This implementation supports O(k) updates for k new chunks, avoiding full
     corpus rebuilds on each addition. Maintains:
     - self.chunks: list of all chunks
@@ -223,13 +249,14 @@ class BM25Index:
         self.bm25_index = None  # Kept for backward compatibility
 
     def _tokenize(self, text: str) -> List[str]:
-        """Tokenize text for BM25: lowercase, strip punctuation via regex, remove stop words, filter short tokens."""
+        """Tokenize text for BM25: lowercase, strip punctuation via regex,
+        remove stop words, filter short tokens."""
         tokens = re.findall(r"[a-zA-Z0-9]+", text.lower())
         return [t for t in tokens if t not in STOP_WORDS and len(t) > 2]
 
     def _update_doc_frequencies(self, new_tokenized: List[List[str]]):
         """Incrementally update document frequencies with new chunks.
-        
+
         Args:
             new_tokenized: List of tokenized new chunks.
         """
@@ -241,24 +268,24 @@ class BM25Index:
 
     def _compute_idf(self) -> Dict[str, float]:
         """Compute IDF values from document frequencies.
-        
+
         Returns:
             Dict mapping terms to their IDF values.
         """
         N = len(self.chunks)
         if N == 0:
             return {}
-        
+
         idf_cache = {}
         for term, df in self._doc_freqs.items():
             # Standard BM25 IDF formula
             idf_cache[term] = (N - df + 0.5) / (df + 0.5)
-        
+
         return idf_cache
 
     def rebuild(self):
         """Explicit full rebuild of the index from all chunks.
-        
+
         Use this when you need to rebuild from scratch (e.g., after deletions).
         """
         if not self.chunks:
@@ -267,28 +294,28 @@ class BM25Index:
             self._avgdl = 0.0
             self._idf_cache = None
             return
-        
+
         # Rebuild everything from scratch
         # Handle both DocumentChunk objects and raw strings (for backward compat)
         self._tokenized = [
-            self._tokenize(chunk.text if hasattr(chunk, 'text') else str(chunk))
+            self._tokenize(chunk.text if hasattr(chunk, "text") else str(chunk))
             for chunk in self.chunks
         ]
         self._doc_freqs = {}
-        
+
         # Compute document frequencies
         for tokens in self._tokenized:
             unique_terms = set(tokens)
             for term in unique_terms:
                 self._doc_freqs[term] = self._doc_freqs.get(term, 0) + 1
-        
+
         # Compute average document length
         total_len = sum(len(tokens) for tokens in self._tokenized)
         self._avgdl = total_len / len(self.chunks)
-        
+
         # Invalidate IDF cache (will be computed lazily on first search)
         self._idf_cache = None
-        
+
         # Also rebuild the legacy BM25Okapi index for backward compatibility
         if BM25_AVAILABLE and self._tokenized:
             self.bm25_index = BM25Okapi(self._tokenized)
@@ -302,7 +329,7 @@ class BM25Index:
 
     def build_index(self, chunks: List[DocumentChunk]):
         """Build BM25 index from chunks (full rebuild).
-        
+
         Args:
             chunks: List of DocumentChunk objects to index.
         """
@@ -341,7 +368,6 @@ class BM25Index:
         self.chunks.extend(chunks)
 
         # Step 2: Tokenize only the NEW chunks
-        start_idx = len(self._tokenized)
         new_tokenized = [self._tokenize(chunk.text) for chunk in chunks]
         self._tokenized.extend(new_tokenized)
 
@@ -388,44 +414,42 @@ class BM25Index:
 
     def search(self, query: str, top_k: int = 10) -> List[Tuple[int, float]]:
         """Search for top_k results based on BM25 scores.
-        
+
         Uses incremental score computation with cached IDF values.
         Thread-safe: acquires self._lock to prevent race conditions with add_chunks.
-        
+
         Args:
             query: Search query string.
             top_k: Maximum number of results to return.
-            
+
         Returns:
             List of (chunk_index, score) tuples sorted by score descending.
         """
         with self._lock:
             if not self._doc_freqs:
                 return []
-            
+
             tokenized_query = self._tokenize(query)
             if not tokenized_query:
                 return []
-            
+
             # Compute IDF lazily if needed
             if self._idf_cache is None:
                 self._idf_cache = self._compute_idf()
-            
-            N = len(self.chunks)
+
             avgdl = self._avgdl
             k1 = 1.5
             b = 0.75
-            
+
             # Pre-compute doc lengths
             doc_lens = [len(t) for t in self._tokenized]
-            
+
             scores = []
             for i, tokens in enumerate(self._tokenized):
                 score = 0.0
                 doc_len = doc_lens[i]
                 for term in tokenized_query:
                     if term in self._doc_freqs:
-                        df = self._doc_freqs[term]
                         idf = self._idf_cache.get(term, 0)
                         tf = tokens.count(term)
                         numerator = idf * tf * (k1 + 1)
@@ -433,7 +457,7 @@ class BM25Index:
                         score += numerator / denominator if denominator > 0 else 0
                 if score > 0:
                     scores.append((i, score))
-            
+
             scores.sort(key=lambda x: x[1], reverse=True)
             return scores[:top_k]
 
@@ -537,7 +561,8 @@ class VectorStore:
                             self.bm25_index = BM25Index()
                             self.bm25_index.build_index(all_chunks)
                             logger.info(
-                                "[OK] BM25 index rebuilt on first search: %d chunks", len(all_chunks)
+                                "[OK] BM25 index rebuilt on first search: %d chunks",
+                                len(all_chunks),
                             )
                 except Exception as e:
                     logger.warning("BM25 index rebuild failed on first search: %s", e)
@@ -590,7 +615,9 @@ class VectorStore:
                           If False (default), only update incremental BM25 structures.
         """
         if chunk_batch_size <= 0:
-            raise ValueError(f"chunk_batch_size must be positive, got {chunk_batch_size}")
+            raise ValueError(
+                f"chunk_batch_size must be positive, got {chunk_batch_size}"
+            )
         if not chunks:
             return 0
 
@@ -610,7 +637,8 @@ class VectorStore:
                         "chunk_index": chunk.chunk_index,
                         "page": chunk.page if chunk.page is not None else -1,
                         "doc_id": getattr(chunk, "doc_id", None) or chunk.source,
-                        "source_path": getattr(chunk, "source_path", None) or chunk.source,
+                        "source_path": getattr(chunk, "source_path", None)
+                        or chunk.source,
                     }
                     for chunk in batch
                 ]
@@ -633,25 +661,28 @@ class VectorStore:
             if len(embeddings) == 1 and len(texts) > 1:
                 embeddings = [embeddings[0] for _ in texts]
             all_embeddings.extend(embeddings)
-        
+
         # Phase 3: Write to ChromaDB + BM25 INSIDE _chroma_lock (atomic)
         added = 0
         added_chunks: List[DocumentChunk] = []
         embedding_idx = 0
 
         with _chroma_lock:
-
             # All ChromaDB and BM25 operations inside _chroma_lock
             with self._lock:
                 for batch_idx, (texts, ids, metadatas) in enumerate(batch_data):
-                    batch_embeddings = all_embeddings[embedding_idx : embedding_idx + len(texts)]
+                    batch_embeddings = all_embeddings[
+                        embedding_idx : embedding_idx + len(texts)
+                    ]
                     embedding_idx += len(texts)
 
                     # Check for existing IDs
                     existing_ids = set()
                     try:
                         existing = self.collection.get(ids=ids)
-                        existing_ids = set(existing["ids"]) if existing["ids"] else set()
+                        existing_ids = (
+                            set(existing["ids"]) if existing["ids"] else set()
+                        )
                     except Exception as e:
                         logger.warning(
                             "Could not check for existing IDs, proceeding without dedup: %s",
@@ -671,7 +702,10 @@ class VectorStore:
                         )
                         added += len(new_indices)
                         # Map back to original DocumentChunk objects
-                        batch_chunks = chunks[batch_idx * chunk_batch_size : batch_idx * chunk_batch_size + len(texts)]
+                        batch_chunks = chunks[
+                            batch_idx * chunk_batch_size : batch_idx * chunk_batch_size
+                            + len(texts)
+                        ]
                         added_chunks.extend([batch_chunks[j] for j in new_indices])
 
                     logger.info(
@@ -684,16 +718,19 @@ class VectorStore:
                 if added > 0:
                     if not self.bm25_index:
                         self.bm25_index = BM25Index()
-                    self.bm25_index.add_documents(added_chunks, rebuild_index=rebuild_index)
+                    self.bm25_index.add_documents(
+                        added_chunks, rebuild_index=rebuild_index
+                    )
 
                 # Update metadata with doc_id-aware entries
                 for chunk in chunks:
-                    meta_key = getattr(chunk, 'doc_id', None) or chunk.source
+                    meta_key = getattr(chunk, "doc_id", None) or chunk.source
                     if meta_key not in self.metadata["documents"]:
                         self.metadata["documents"][meta_key] = {
-                            "doc_id": getattr(chunk, 'doc_id', None) or chunk.source,
+                            "doc_id": getattr(chunk, "doc_id", None) or chunk.source,
                             "source_display": chunk.source,
-                            "source_path": getattr(chunk, "source_path", None) or chunk.source,
+                            "source_path": getattr(chunk, "source_path", None)
+                            or chunk.source,
                             "chunks": 0,
                             "added_at": str(
                                 Path(chunk.source).stat().st_mtime
@@ -780,7 +817,10 @@ class VectorStore:
             # Add to ChromaDB collection
             with self._lock:
                 self.collection.add(
-                    ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas
+                    ids=ids,
+                    documents=documents,
+                    embeddings=embeddings,
+                    metadatas=metadatas,
                 )
 
                 # Update BM25 index with new chunks (single rebuild)
@@ -801,19 +841,24 @@ class VectorStore:
                     if chunk_id and text
                 ]
                 if new_chunks:
-                    self.bm25_index.add_documents(new_chunks, rebuild_index=rebuild_index)
+                    self.bm25_index.add_documents(
+                        new_chunks, rebuild_index=rebuild_index
+                    )
 
     def search(
-        self, query: str, n_results: int = 5, query_embedding: Optional[List[float]] = None
+        self,
+        query: str,
+        n_results: int = 5,
+        query_embedding: Optional[List[float]] = None,
     ) -> List[Tuple[str, Dict[str, Any], float]]:
         """Search for similar documents.
-        
+
         Args:
             query: Search query text.
             n_results: Maximum number of results to return.
             query_embedding: Pre-computed query embedding. If None, will be computed inside.
                             Providing this allows encoding to happen outside the lock.
-        
+
         Returns:
             List of (document, metadata, similarity) tuples.
         """
@@ -848,15 +893,15 @@ class VectorStore:
         self, query: str, n_results: int = 3, min_similarity: float = 0.3
     ) -> List[DocumentChunk]:
         """Get document chunks for RAG without combining context.
-        
+
         Note: This method does NOT acquire the lock. It calls search() which
         handles its own locking. Encoding happens outside any lock.
-        
+
         Args:
             query: Search query text.
             n_results: Maximum number of results to return.
             min_similarity: Minimum similarity threshold (default 0.3).
-        
+
         Returns:
             List of DocumentChunk objects matching the query.
         """
@@ -866,9 +911,11 @@ class VectorStore:
 
         # Encode OUTSIDE any lock
         query_embedding = self.embedder.encode_single(query)
-        
+
         # Call search with pre-computed embedding (no encoding inside)
-        matches = self.search(query, n_results=n_results, query_embedding=query_embedding)
+        matches = self.search(
+            query, n_results=n_results, query_embedding=query_embedding
+        )
 
         # Filter by similarity (pure Python, no lock needed)
         filtered = [
@@ -885,7 +932,10 @@ class VectorStore:
             page = meta.get("page", None)
 
             chunk = DocumentChunk(
-                text=doc, source=source, chunk_index=chunk_index, page=page,
+                text=doc,
+                source=source,
+                chunk_index=chunk_index,
+                page=page,
                 doc_id=meta.get("doc_id"),
                 source_path=meta.get("source_path"),
             )
@@ -893,7 +943,9 @@ class VectorStore:
 
         return chunks
 
-    def get_chunks_by_source(self, source: str, indices: List[int] = None) -> List[DocumentChunk]:
+    def get_chunks_by_source(
+        self, source: str, indices: List[int] = None
+    ) -> List[DocumentChunk]:
         """Get all chunks from a specific source document, optionally filtered by indices."""
         with _chroma_lock:
             try:
@@ -904,7 +956,9 @@ class VectorStore:
                     chunks = []
 
                     if all_data.get("documents"):
-                        for doc, meta in zip(all_data["documents"], all_data["metadatas"]):
+                        for doc, meta in zip(
+                            all_data["documents"], all_data["metadatas"]
+                        ):
                             chunk_index = meta.get("chunk_index", -1)
                             # Filter by indices if provided
                             if indices is not None and chunk_index not in indices:
@@ -926,7 +980,8 @@ class VectorStore:
                 return []
 
     def get_chunks_by_doc_id(self, doc_id: str) -> List[DocumentChunk]:
-        """Get all chunks for a document by doc_id (collision-safe alternative to get_chunks_by_source)."""
+        """Get all chunks for a document by doc_id
+        (collision-safe alternative to get_chunks_by_source)."""
         with self._lock:
             try:
                 all_data = self.collection.get(
@@ -982,7 +1037,9 @@ class VectorStore:
                     return False
 
                 # Capture removed_chunks for fallback chunk count calculation
-                removed_chunks = entry.get("chunks", 0) if isinstance(entry, dict) else 0
+                removed_chunks = (
+                    entry.get("chunks", 0) if isinstance(entry, dict) else 0
+                )
 
                 # Delete from Chroma: use doc_id metadata field if available, else source
             try:
@@ -996,24 +1053,33 @@ class VectorStore:
                 else:
                     # Legacy or simple source-keyed entry
                     source_display = (
-                        entry.get("source_display", doc_id) if isinstance(entry, dict) else doc_id
+                        entry.get("source_display", doc_id)
+                        if isinstance(entry, dict)
+                        else doc_id
                     )
                     self.collection.delete(where={"source": source_display})
             except Exception as e:
-                logger.warning("delete_document: Chroma deletion failed for %r: %s", doc_id, e)
+                logger.warning(
+                    "delete_document: Chroma deletion failed for %r: %s", doc_id, e
+                )
                 return False
 
             # Remove from BM25 index if present (doc_id-aware, inside double-lock)
             if self.bm25_index and self.bm25_index.chunks:
                 source_display = (
-                    entry.get("source_display", doc_id) if isinstance(entry, dict) else doc_id
+                    entry.get("source_display", doc_id)
+                    if isinstance(entry, dict)
+                    else doc_id
                 )
                 remaining = [
                     c
                     for c in self.bm25_index.chunks
                     if not (
                         getattr(c, "doc_id", None) == doc_id  # primary: match by doc_id
-                        or (not getattr(c, "doc_id", None) and c.source == source_display)  # fallback: no doc_id, match by source
+                        or (
+                            not getattr(c, "doc_id", None)
+                            and c.source == source_display
+                        )  # fallback: no doc_id, match by source
                     )
                 ]
                 if remaining:
@@ -1061,19 +1127,23 @@ class VectorStore:
 
         # Group chunks by source to minimize ChromaDB calls
         from collections import defaultdict
+
         chunks_by_source: Dict[str, List[DocumentChunk]] = defaultdict(list)
         for chunk in chunks:
             chunks_by_source[chunk.source].append(chunk)
 
-        # Compute needed index ranges per source
-        indices_by_source: Dict[str, List[int]] = defaultdict(list)
+        # Compute needed index ranges per source. The window is clamped so an
+        # absurd value (e.g. 999999) cannot turn expansion into a
+        # millions-of-iterations index-gathering loop — no real source has
+        # that many neighbors and user-facing windows are single digits. Set
+        # membership replaces the former O(n) list scan.
+        window = min(window, 1000)
+        indices_by_source: Dict[str, Set[int]] = defaultdict(set)
         for source, source_chunks in chunks_by_source.items():
             for chunk in source_chunks:
                 start_idx = max(0, chunk.chunk_index - window)
                 end_idx = chunk.chunk_index + window
-                for idx in range(start_idx, end_idx + 1):
-                    if idx not in indices_by_source[source]:
-                        indices_by_source[source].append(idx)
+                indices_by_source[source].update(range(start_idx, end_idx + 1))
 
         # Fetch each source's chunks once, filter to needed indices
         expanded: List[DocumentChunk] = []
@@ -1081,7 +1151,9 @@ class VectorStore:
 
         for source, needed_indices in indices_by_source.items():
             # Fetch all chunks from this source once, filtered by needed indices
-            source_chunks = self.get_chunks_by_source(source, indices=needed_indices)
+            source_chunks = self.get_chunks_by_source(
+                source, indices=sorted(needed_indices)
+            )
             if not source_chunks:
                 continue
 
@@ -1109,49 +1181,57 @@ class VectorStore:
         retrieval_window: int = 0,
     ) -> Tuple[str, List[str], List["DocumentChunk"]]:
         """Get context for RAG from similar documents.
-        
+
         Note: Encoding happens OUTSIDE the lock. The lock is only held during
         ChromaDB and BM25 operations, not during the CPU-intensive embedding computation.
-        
+
         Args:
             query: Search query text.
             n_results: Maximum number of results to return.
             min_similarity: Minimum similarity threshold for filtering.
             hybrid_search: If True, combine vector and BM25 results using RRF.
             retrieval_window: Number of neighboring chunks to include (±window).
-        
+
         Returns:
             Tuple of (context_string, list_of_sources, list_of_document_chunks).
         """
         # Handle empty query - no lock needed
         if not query or not query.strip():
             return "", [], []
-        
+
         # Encode OUTSIDE lock
         query_embedding = self.embedder.encode_single(query)
-        
+
         if hybrid_search:
             self._rebuild_bm25_if_needed()
             if self.bm25_index is None:
                 # BM25 rebuild failed or not available — fall back to vector-only
                 hybrid_search = False
             else:
-                vector_results = self.search(query, n_results=n_results * 2, query_embedding=query_embedding)
+                vector_results = self.search(
+                    query, n_results=n_results * 2, query_embedding=query_embedding
+                )
                 bm25_results = self.bm25_index.search(query, top_k=n_results * 2)
 
                 # --- Namespace-safe RRF ---
-                OFFSET = 1_000_000  # large enough to avoid any collision with vector indices
+                OFFSET = (
+                    1_000_000  # large enough to avoid any collision with vector indices
+                )
 
-                vector_ranked = [(i, score) for i, (_, _, score) in enumerate(vector_results)]
-                bm25_ranked = [(corpus_idx + OFFSET, score) for corpus_idx, score in bm25_results]
+                vector_ranked = [
+                    (i, score) for i, (_, _, score) in enumerate(vector_results)
+                ]
+                bm25_ranked = [
+                    (corpus_idx + OFFSET, score) for corpus_idx, score in bm25_results
+                ]
 
                 fused = rrf_fuse([vector_ranked, bm25_ranked])
 
                 context_parts = []
-                per_chunk_sources = []   # one source per chunk, NOT deduplicated
+                per_chunk_sources = []  # one source per chunk, NOT deduplicated
                 per_chunk_pages = []
                 per_chunk_indices = []
-                sources = []             # deduplicated for display
+                sources = []  # deduplicated for display
                 seen_keys = set()
 
                 for fused_id, _ in fused[:n_results]:
@@ -1201,7 +1281,9 @@ class VectorStore:
                         )
                         for i, text in enumerate(context_parts)
                     ]
-                    expanded = self._expand_chunks_with_neighbors(hybrid_chunks, retrieval_window)
+                    expanded = self._expand_chunks_with_neighbors(
+                        hybrid_chunks, retrieval_window
+                    )
                     if not expanded:
                         expanded = hybrid_chunks
                     context_parts = [c.text for c in expanded]
@@ -1214,7 +1296,10 @@ class VectorStore:
                 result_chunks = [
                     DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
                     for text, src, idx, pg in zip(
-                        context_parts, per_chunk_sources, per_chunk_indices, per_chunk_pages
+                        context_parts,
+                        per_chunk_sources,
+                        per_chunk_indices,
+                        per_chunk_pages,
                     )
                 ]
 
@@ -1226,9 +1311,7 @@ class VectorStore:
             matches = self.search(query, n_results=n_results)
 
             filtered = [
-                (doc, meta, sim)
-                for doc, meta, sim in matches
-                if sim >= min_similarity
+                (doc, meta, sim) for doc, meta, sim in matches if sim >= min_similarity
             ]
 
             if not filtered:
@@ -1268,7 +1351,9 @@ class VectorStore:
                     )
                     for i, (doc, meta, sim) in enumerate(filtered)
                 ]
-                expanded = self._expand_chunks_with_neighbors(filtered_chunks, retrieval_window)
+                expanded = self._expand_chunks_with_neighbors(
+                    filtered_chunks, retrieval_window
+                )
                 if not expanded:
                     expanded = filtered_chunks
                 context_parts = [c.text for c in expanded]
@@ -1276,18 +1361,28 @@ class VectorStore:
                 per_chunk_pages = [c.page for c in expanded]
                 per_chunk_indices = [c.chunk_index for c in expanded]
                 per_chunk_doc_ids = [getattr(c, "doc_id", None) for c in expanded]
-                per_chunk_source_paths = [getattr(c, "source_path", None) for c in expanded]
+                per_chunk_source_paths = [
+                    getattr(c, "source_path", None) for c in expanded
+                ]
                 sources = list(dict.fromkeys(c.source for c in expanded))
 
             # Build result chunks
             result_chunks = [
                 DocumentChunk(
-                    text=text, source=src, chunk_index=idx, page=pg,
-                    doc_id=did, source_path=sp,
+                    text=text,
+                    source=src,
+                    chunk_index=idx,
+                    page=pg,
+                    doc_id=did,
+                    source_path=sp,
                 )
                 for text, src, idx, pg, did, sp in zip(
-                    context_parts, per_chunk_sources, per_chunk_indices,
-                    per_chunk_pages, per_chunk_doc_ids, per_chunk_source_paths,
+                    context_parts,
+                    per_chunk_sources,
+                    per_chunk_indices,
+                    per_chunk_pages,
+                    per_chunk_doc_ids,
+                    per_chunk_source_paths,
                 )
             ]
 
@@ -1316,7 +1411,9 @@ class VectorStore:
                     "chunk_count": self.collection.count(),
                     "embedding_model": self.embedder.model_name,
                     "documents": [
-                        entry.get("source_display", key) if isinstance(entry, dict) else key
+                        entry.get("source_display", key)
+                        if isinstance(entry, dict)
+                        else key
                         for key, entry in self.metadata.get("documents", {}).items()
                     ],
                 }
@@ -1331,22 +1428,26 @@ class VectorStore:
             result = []
             for key, entry in self.metadata.get("documents", {}).items():
                 if isinstance(entry, dict):
-                    result.append({
-                        "id": entry.get("doc_id", key),
-                        "source_display": entry.get("source_display", key),
-                        "source_path": entry.get("source_path", key),
-                        "chunks": entry.get("chunks", 0),
-                        "added_at": entry.get("added_at", ""),
-                    })
+                    result.append(
+                        {
+                            "id": entry.get("doc_id", key),
+                            "source_display": entry.get("source_display", key),
+                            "source_path": entry.get("source_path", key),
+                            "chunks": entry.get("chunks", 0),
+                            "added_at": entry.get("added_at", ""),
+                        }
+                    )
                 else:
                     # Legacy scalar value — shouldn't happen, but be defensive
-                    result.append({
-                        "id": key,
-                        "source_display": key,
-                        "source_path": key,
-                        "chunks": 0,
-                        "added_at": "",
-                    })
+                    result.append(
+                        {
+                            "id": key,
+                            "source_display": key,
+                            "source_path": key,
+                            "chunks": 0,
+                            "added_at": "",
+                        }
+                    )
             return result
 
 
