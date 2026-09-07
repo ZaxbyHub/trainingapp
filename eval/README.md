@@ -131,9 +131,9 @@ strip environment from background jobs):
 # 1. start a real backend with staged weights (Windows paths, repo cwd):
 RAG_DB_PATH=.agents/tmp/eval-weighted-db RAG_GGUF_PATH=models/lfm2.5-vl-450m/model.gguf API_PORT=8123 python api_server.py
 
-# 2. ingest the tier-0 corpus (multipart upload of every corpus doc):
-python -c "import httpx,glob,sys; c=httpx.Client(timeout=120); [c.post('http://127.0.0.1:8123/ingest/file', files={'file':(p.split('/')[-1].split('\\\\')[-1], open(p,'rb').read(),'text/markdown')}) for p in glob.glob('eval/corpus/*.md')]"
-
+# 2. ingest the tier-0 corpus (multipart upload of every corpus doc; os.path.basename
+#    keeps the upload filename = the doc id on every OS):
+python -c "import httpx,glob,os; c=httpx.Client(timeout=120); [c.post('http://127.0.0.1:8123/ingest/file', files={'file':(os.path.basename(p), open(p,'rb').read(),'text/markdown')}) for p in glob.glob('eval/corpus/*.md')]"
 # 3. run the harness with a provenance label:
 python eval/runner.py --base-url http://127.0.0.1:8123 \
     --report eval/samples/REPORT-<machine>-weighted.md \
@@ -143,7 +143,10 @@ python eval/runner.py --base-url http://127.0.0.1:8123 \
 
 Since this harness landed, `/ask` and `/ask/stream` lazily load the
 configured GGUF model on the first question (the RAM gate runs there); a
-failed load surfaces its real diagnostic in the 503 detail.
+failed load surfaces its real diagnostic in the 503 detail. Expect a slow
+first request on a cold engine (the model load happens inside the first
+question, and concurrent cold-start requests serialize on the init lock) —
+raise `--timeout` for larger models.
 
 Commit the resulting sample under `eval/samples/` — one pair per label.
 

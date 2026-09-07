@@ -232,9 +232,16 @@ class RAGEngine:
         """Lazily initialize LLM on first use.
 
         Double-checked under the init lock so concurrent first queries (two
-        /ask requests racing a cold engine) load the model exactly once."""
+        /ask requests racing a cold engine) load the model exactly once.
+        Engines assembled without __init__ (test doubles) may lack the lock;
+        they fall back to lock-free init, which is safe for single-threaded
+        test use."""
         if self.llm is None:
-            with self._init_lock:
+            lock = getattr(self, "_init_lock", None)
+            if lock is None:
+                self._init_llm(self.gguf_path)
+                return
+            with lock:
                 if self.llm is None:
                     self._init_llm(self.gguf_path)
 

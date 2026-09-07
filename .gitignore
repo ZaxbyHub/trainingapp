@@ -46,3 +46,7 @@ htmlcov/
 
 # Agent working state (issue traces, session artifacts — not committed)
 .zcode/
+# eval harness local outputs (issue #54)
+eval/REPORT.md
+eval/report.json
+eval-report/

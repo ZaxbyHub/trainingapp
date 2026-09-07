@@ -179,7 +179,7 @@ def ask_one(
     """POST one question to /ask. Returns (result_dict, latency_ms, error_or_None)."""
     payload = {
         "question": question,
-        "n_results": min(n_results, CONTRACT_MAX_N_RESULTS),
+        "n_results": max(1, min(n_results, CONTRACT_MAX_N_RESULTS)),
     }
     start = time.perf_counter()
     try:

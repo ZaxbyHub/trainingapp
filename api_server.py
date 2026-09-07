@@ -551,8 +551,13 @@ async def ask_question(request: QuestionRequest, auth: dict = Security(require_a
         # lazy init inside engine.query() is unreachable (this handler 503s
         # first), so a configured GGUF model could never load via the API.
         # A failed load records engine.llm_init_error, which the 503 below
-        # then surfaces as the real diagnostic (issue #53 behavior).
-        await asyncio.to_thread(engine._ensure_llm)
+        # then surfaces as the real diagnostic (issue #53 behavior). Any
+        # unexpected error here falls through to the same 503 path instead of
+        # a generic 500.
+        try:
+            await asyncio.to_thread(engine._ensure_llm)
+        except Exception:
+            logger.exception("Lazy LLM load failed inside /ask")
 
     if not engine.llm:
         # Surface the recorded load diagnostic (RAM numbers, model name) so
@@ -736,8 +741,12 @@ if HAS_SSE:
         if not engine.llm and hasattr(engine, "_ensure_llm"):
             # Same lazy-load attempt as /ask: without it the lazy init inside
             # engine.query() is unreachable and a configured GGUF model could
-            # never load via the streaming route.
-            await asyncio.to_thread(engine._ensure_llm)
+            # never load via the streaming route. Errors fall through to the
+            # 503 below instead of a generic 500.
+            try:
+                await asyncio.to_thread(engine._ensure_llm)
+            except Exception:
+                logger.exception("Lazy LLM load failed inside /ask/stream")
 
         if not engine.llm:
             raise HTTPException(
