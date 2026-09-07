@@ -294,7 +294,7 @@ def run_eval(
         per_category[category] = {
             "count": len(subset),
             "recall_at_3": (
-                sum(1 for r in subset if r["rank"] is not None and r["rank"] <= 3)
+                sum(1 for r in subset if r["rank"] is not None and 0 < r["rank"] <= 3)
                 / len(subset)
             ),
             "mrr": sum(1.0 / r["rank"] for r in subset if r["rank"]) / len(subset),

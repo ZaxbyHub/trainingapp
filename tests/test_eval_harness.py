@@ -265,3 +265,211 @@ class TestStubEmbedder:
         a = ci_serve._hash_vector("keyboard")
         b = ci_serve._hash_vector("keyboards")
         assert float(a @ b) == pytest.approx(1.0)
+
+
+class _FakeResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _FakeClient:
+    """Scripted httpx.Client stand-in driving runner.run_eval deterministically."""
+
+    def __init__(self, scripted):
+        self._scripted = scripted  # question text -> (status, payload)
+
+    def get(self, path, timeout=None):
+        if path.endswith("/health"):
+            return _FakeResponse(200, {"status": "ok", "engine_ready": True})
+        if path.endswith("/stats"):
+            return _FakeResponse(200, {"embedding_model": "fake-embed"})
+        raise AssertionError(f"unexpected GET {path}")
+
+    def post(self, path, json=None, timeout=None):
+        status, payload = self._scripted[json["question"]]
+        return _FakeResponse(status, payload)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class TestRunEvalMetricMath:
+    """Drives runner.run_eval end to end with scripted responses and asserts
+    the EXACT metric values, so any regression in the recall@k / MRR /
+    abstain-accuracy formulas (e.g. an off-by-one denominator) fails here."""
+
+    @pytest.fixture()
+    def report(self, monkeypatch):
+        questions = [
+            {
+                "id": "q1",
+                "question": "q1 text",
+                "expected_doc_id": "docA.md",
+                "expected_page": None,
+                "expected_training_slide_id": None,
+                "category": "policy",
+            },
+            {
+                "id": "q2",
+                "question": "q2 text",
+                "expected_doc_id": "docB.md",
+                "expected_page": None,
+                "expected_training_slide_id": None,
+                "category": "policy",
+            },
+            {
+                "id": "q3",
+                "question": "q3 text",
+                "expected_doc_id": "docA.md",
+                "expected_page": None,
+                "expected_training_slide_id": None,
+                "category": "policy",
+            },
+            {
+                "id": "q4",
+                "question": "q4 text",
+                "expected_doc_id": None,
+                "expected_page": None,
+                "expected_training_slide_id": None,
+                "category": "out-of-corpus",
+            },
+            {
+                "id": "q5",
+                "question": "q5 text",
+                "expected_doc_id": None,
+                "expected_page": None,
+                "expected_training_slide_id": None,
+                "category": "out-of-corpus",
+            },
+            {
+                "id": "q6",
+                "question": "q6 text",
+                "expected_doc_id": "docC.md",
+                "expected_page": None,
+                "expected_training_slide_id": None,
+                "category": "policy",
+            },
+        ]
+        # Hand-computed expectations:
+        #   q1: rank 2 (hit for k>=2)   q2: rank 1 (hit)   q3: rank 0 (miss;
+        #   fallback-phrase answer with non-empty sources -> fallback_count)
+        #   q4: sources [] -> abstain HIT   q5: retrieved noise -> abstain MISS
+        #   q6: HTTP 500 -> error row, excluded from every denominator
+        # recall@1 = 1/3, recall@3 = 2/3, recall@5 = 2/3
+        # MRR = (0.5 + 1.0 + 0.0) / 3 = 0.5 ; abstain = 1/2
+        scripted = {
+            "q1 text": (
+                200,
+                {
+                    "question": "q1 text",
+                    "answer": "ans1",
+                    "sources": ["docB.md", "docA.md"],
+                    "context_length": 10,
+                    "inference_time": 0.1,
+                },
+            ),
+            "q2 text": (
+                200,
+                {
+                    "question": "q2 text",
+                    "answer": "ans2",
+                    "sources": ["docB.md", "docC.md"],
+                    "context_length": 10,
+                    "inference_time": 0.1,
+                },
+            ),
+            "q3 text": (
+                200,
+                {
+                    "question": "q3 text",
+                    "answer": "I couldn't find any relevant "
+                    "information in the documents.",
+                    "sources": ["docC.md", "docB.md"],
+                    "context_length": 10,
+                    "inference_time": 0.1,
+                },
+            ),
+            "q4 text": (
+                200,
+                {
+                    "question": "q4 text",
+                    "answer": "I couldn't find any relevant "
+                    "information in the documents.",
+                    "sources": [],
+                    "context_length": 0,
+                    "inference_time": 0.1,
+                },
+            ),
+            "q5 text": (
+                200,
+                {
+                    "question": "q5 text",
+                    "answer": "noise answer",
+                    "sources": ["docA.md"],
+                    "context_length": 10,
+                    "inference_time": 0.1,
+                },
+            ),
+            "q6 text": (500, {"detail": "boom"}),
+        }
+
+        def fake_client():
+            return _FakeClient(scripted)
+
+        monkeypatch.setattr(runner.httpx, "Client", fake_client)
+        return runner.run_eval(
+            base_url="http://fake",
+            questions=questions,
+            n_results=10,
+            timeout=5.0,
+            label="unit-test",
+        )
+
+    def test_recall_at_k_exact(self, report):
+        assert report["metrics"]["recall_at_k"] == {
+            "1": pytest.approx(1 / 3),
+            "3": pytest.approx(2 / 3),
+            "5": pytest.approx(2 / 3),
+        }
+
+    def test_mrr_exact(self, report):
+        assert report["metrics"]["mrr"] == pytest.approx(0.5)
+
+    def test_abstain_exact(self, report):
+        assert report["metrics"]["abstain_total"] == 2
+        assert report["metrics"]["abstain_hits"] == 1
+        assert report["metrics"]["abstain_accuracy"] == pytest.approx(0.5)
+
+    def test_error_rows_excluded_and_counted(self, report):
+        assert report["error_count"] == 1
+        assert report["in_corpus_count"] == 4  # q6 is in-corpus but errored
+        # denominators exclude the error row: 3 successful in-corpus rows
+        assert report["metrics"]["recall_at_k"]["1"] == pytest.approx(1 / 3)
+
+    def test_fallback_counted_separately_from_abstain(self, report):
+        # q3 retrieved (sources non-empty) with a fallback-phrase answer
+        assert report["fallback_count"] == 1
+        # and it did NOT inflate abstain accuracy: q4 is the only abstain hit
+        assert report["metrics"]["abstain_hits"] == 1
+
+    def test_per_category_math(self, report):
+        # policy = q1 (rank 2), q2 (rank 1), q3 (miss); q6 errored -> excluded
+        policy = report["per_category"]["policy"]
+        assert policy["count"] == 3
+        assert policy["recall_at_3"] == pytest.approx(2 / 3)
+        assert policy["mrr"] == pytest.approx(0.5)
+
+    def test_backend_stats_recorded(self, report):
+        assert report["backend_stats"]["embedding_model"] == "fake-embed"
+        assert report["label"] == "unit-test"
