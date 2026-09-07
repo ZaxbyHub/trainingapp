@@ -124,6 +124,9 @@ class TestPostAsk:
         """Test asking question when no LLM backend available."""
         with patch("api_server.engine") as mock_engine:
             mock_engine.llm = None
+            # No load diagnostic recorded -> the generic detail is expected
+            # (a bare MagicMock would auto-create a truthy llm_init_error).
+            mock_engine.llm_init_error = None
             mock_engine.query.side_effect = RuntimeError("LLM not initialized")
 
             request = QuestionRequest(question="Test question")

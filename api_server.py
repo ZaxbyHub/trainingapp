@@ -390,6 +390,7 @@ async def lifespan(app: FastAPI):
             context_truncation=settings.rag_context_truncation,
             gguf_n_ctx=settings.rag_gguf_n_ctx,
             gguf_n_threads=settings.rag_gguf_n_threads,
+            fast_profile_path=settings.rag_fast_profile_path,
         )
 
         engine = RAGEngine(
@@ -546,7 +547,13 @@ async def ask_question(request: QuestionRequest, auth: dict = Security(require_a
         raise HTTPException(status_code=503, detail="Engine not initialized")
 
     if not engine.llm:
-        raise HTTPException(status_code=503, detail="No LLM backend available")
+        # Surface the recorded load diagnostic (RAM numbers, model name) so
+        # clients see WHY no LLM is available instead of a bare generic string.
+        raise HTTPException(
+            status_code=503,
+            detail=getattr(engine, "llm_init_error", None)
+            or "No LLM backend available",
+        )
 
     try:
         # Issue #37 R6: thread conversation_history through to the engine.
@@ -719,7 +726,11 @@ if HAS_SSE:
             raise HTTPException(status_code=503, detail="Engine not initialized")
 
         if not engine.llm:
-            raise HTTPException(status_code=503, detail="No LLM backend available")
+            raise HTTPException(
+                status_code=503,
+                detail=getattr(engine, "llm_init_error", None)
+                or "No LLM backend available",
+            )
 
         async def event_generator():
             queue: asyncio.Queue = asyncio.Queue()

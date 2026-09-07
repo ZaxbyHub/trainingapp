@@ -147,6 +147,9 @@ class TestAskStreamEndpoint:
         """Test /ask/stream returns 503 when LLM backend is not available."""
         with patch("api_server.engine") as mock_engine:
             mock_engine.llm = None
+            # No load diagnostic recorded -> the generic detail is expected
+            # (a bare MagicMock would auto-create a truthy llm_init_error).
+            mock_engine.llm_init_error = None
 
             response = client.post("/ask/stream", json={"question": "What is Python?"})
 

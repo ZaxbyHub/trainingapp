@@ -7,10 +7,10 @@ Verifies that:
 4. rag_context_truncation is NOT passed (RAGConfig has no such parameter).
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,10 +22,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # FIXTURES
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def reset_settings_cache():
     """Reset the settings cache before each test."""
     import config
+
     config._settings = None
     yield
     config._settings = None
@@ -70,6 +72,7 @@ def mock_settings():
 # ASYNC HELPER: actually enter the lifespan and capture RAGConfig call args
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def _build_ragconfig_via_lifespan_async(mock_settings_instance):
     """Actually enter the async lifespan context and capture RAGConfig kwargs."""
@@ -86,8 +89,9 @@ async def _build_ragconfig_via_lifespan_async(mock_settings_instance):
             with patch("api_server.RAGConfig") as mock_config_cls:
                 mock_config_cls.side_effect = capture_ragconfig
 
-                from api_server import lifespan
                 from fastapi import FastAPI
+
+                from api_server import lifespan
 
                 app = FastAPI()
                 ctx = lifespan(app)
@@ -104,6 +108,7 @@ async def _build_ragconfig_via_lifespan_async(mock_settings_instance):
 # ---------------------------------------------------------------------------
 # TEST: All 15 RAGConfig fields are wired correctly
 # ---------------------------------------------------------------------------
+
 
 class TestRAGConfigFieldWiring:
     """Every RAGConfig field is correctly populated from settings in lifespan."""
@@ -203,6 +208,7 @@ class TestRAGConfigFieldWiring:
 # TEST: No settings fields are silently dropped
 # ---------------------------------------------------------------------------
 
+
 class TestNoFieldsDropped:
     """Every field that appears in settings appears in the RAGConfig call."""
 
@@ -213,10 +219,20 @@ class TestNoFieldsDropped:
 
         # The 14 fields that come from settings (all except query_transformation_enabled)
         settings_fields = [
-            "db_path", "chunk_size", "n_results", "max_tokens", "temperature",
-            "embedding_model", "chunk_overlap", "min_similarity", "retrieval_window",
-            "hybrid_search", "reranking_enabled", "reranker_model",
-            "initial_retrieval_top_k", "rerank_top_k",
+            "db_path",
+            "chunk_size",
+            "n_results",
+            "max_tokens",
+            "temperature",
+            "embedding_model",
+            "chunk_overlap",
+            "min_similarity",
+            "retrieval_window",
+            "hybrid_search",
+            "reranking_enabled",
+            "reranker_model",
+            "initial_retrieval_top_k",
+            "rerank_top_k",
         ]
         for field in settings_fields:
             assert field in kwargs, f"Field '{field}' is missing from RAGConfig call"
@@ -226,13 +242,27 @@ class TestNoFieldsDropped:
         """All RAGConfig constructor parameters are passed (now 18 fields after fixes 2 and 8)."""
         kwargs = await _build_ragconfig_via_lifespan_async(mock_settings)
 
-        # Core 15 original fields plus 3 added in remediation (context_truncation, gguf_n_ctx, gguf_n_threads)
+        # Core 15 original fields plus 3 remediation additions
+        # (context_truncation, gguf_n_ctx, gguf_n_threads)
         required = {
-            "db_path", "chunk_size", "n_results", "max_tokens", "temperature",
-            "embedding_model", "chunk_overlap", "min_similarity", "retrieval_window",
-            "hybrid_search", "reranking_enabled", "reranker_model",
-            "query_transformation_enabled", "initial_retrieval_top_k", "rerank_top_k",
-            "context_truncation", "gguf_n_ctx", "gguf_n_threads",
+            "db_path",
+            "chunk_size",
+            "n_results",
+            "max_tokens",
+            "temperature",
+            "embedding_model",
+            "chunk_overlap",
+            "min_similarity",
+            "retrieval_window",
+            "hybrid_search",
+            "reranking_enabled",
+            "reranker_model",
+            "query_transformation_enabled",
+            "initial_retrieval_top_k",
+            "rerank_top_k",
+            "context_truncation",
+            "gguf_n_ctx",
+            "gguf_n_threads",
         }
         missing = required - set(kwargs.keys())
         assert not missing, f"Missing RAGConfig fields: {missing}"
@@ -242,12 +272,14 @@ class TestNoFieldsDropped:
 # TEST: rag_context_truncation NOT wired (RAGConfig has no such parameter)
 # ---------------------------------------------------------------------------
 
+
 class TestContextTruncationWired:
     """context_truncation is now a RAGConfig field — verify it is present and defaults correctly."""
 
     def test_rag_settings_has_rag_context_truncation(self):
         """Sanity check: RAGSettings does have rag_context_truncation."""
         from config import RAGSettings
+
         s = RAGSettings()
         assert hasattr(s, "rag_context_truncation")
         assert s.rag_context_truncation == 20000
@@ -255,23 +287,27 @@ class TestContextTruncationWired:
     def test_ragconfig_has_context_truncation_param(self):
         """RAGConfig.__init__ now has context_truncation parameter (fix 2)."""
         import inspect
+
         from rag_engine import RAGConfig
+
         sig = inspect.signature(RAGConfig.__init__)
         params = set(sig.parameters.keys())
-        assert "context_truncation" in params, (
-            "context_truncation must be a RAGConfig parameter — it was added in fix 2"
-        )
+        assert (
+            "context_truncation" in params
+        ), "context_truncation must be a RAGConfig parameter — it was added in fix 2"
         assert "rag_context_truncation" not in params
 
     def test_ragconfig_context_truncation_default(self):
         """RAGConfig.context_truncation defaults to 20000."""
         from rag_engine import RAGConfig
+
         c = RAGConfig()
         assert c.context_truncation == 20000
 
     def test_ragconfig_context_truncation_roundtrip(self):
         """context_truncation survives to_dict/from_dict roundtrip."""
         from rag_engine import RAGConfig
+
         c = RAGConfig(context_truncation=15000)
         d = c.to_dict()
         assert d["context_truncation"] == 15000
@@ -282,6 +318,7 @@ class TestContextTruncationWired:
 # ---------------------------------------------------------------------------
 # TEST: Default values flow through when settings are at defaults
 # ---------------------------------------------------------------------------
+
 
 class TestDefaultValuesFlowThrough:
     """When settings are at their defaults, RAGConfig receives correct default values."""
@@ -309,6 +346,9 @@ class TestDefaultValuesFlowThrough:
         mock.rag_rerank_top_k = 6
         mock.rag_gguf_n_ctx = 4096
         mock.rag_gguf_n_threads = 4
+        mock.rag_fast_profile_path = (
+            None  # issue #53 knob; not exercised by these tests
+        )
 
         kwargs = await _build_ragconfig_via_lifespan_async(mock)
 
@@ -332,6 +372,7 @@ class TestDefaultValuesFlowThrough:
 # ---------------------------------------------------------------------------
 # TEST: RAGConfig is used to instantiate RAGEngine
 # ---------------------------------------------------------------------------
+
 
 class TestRAGEngineReceivesRAGConfig:
     """The RAGConfig created in lifespan is passed to RAGEngine."""
@@ -359,6 +400,9 @@ class TestRAGEngineReceivesRAGConfig:
         mock.rag_rerank_top_k = 6
         mock.rag_gguf_n_ctx = 4096
         mock.rag_gguf_n_threads = 4
+        mock.rag_fast_profile_path = (
+            None  # issue #53 knob; not exercised by these tests
+        )
 
         captured_engine_calls = []
 
@@ -371,8 +415,9 @@ class TestRAGEngineReceivesRAGConfig:
                 with patch("api_server.RAGConfig") as mock_config_cls:
                     mock_config_cls.return_value = MagicMock()
 
-                    from api_server import lifespan
                     from fastapi import FastAPI
+
+                    from api_server import lifespan
 
                     app = FastAPI()
                     ctx = lifespan(app)
@@ -391,14 +436,16 @@ class TestRAGEngineReceivesRAGConfig:
 # TEST: GGUF path validation respects environment variable
 # ---------------------------------------------------------------------------
 
+
 class TestGGUFPathValidation:
     """GGUF path is validated when RAG_GGUF_PATH env var is set."""
 
     @pytest.mark.asyncio
     async def test_gguf_path_set_and_valid(self):
         """When RAG_GGUF_PATH is set to a valid path, it is passed to RAGEngine."""
-        from config import RAGSettings
         import tempfile
+
+        from config import RAGSettings
 
         mock = MagicMock(spec=RAGSettings)
         mock.rag_db_path = "./doc_qa_db"
@@ -418,6 +465,9 @@ class TestGGUFPathValidation:
         mock.rag_rerank_top_k = 6
         mock.rag_gguf_n_ctx = 4096
         mock.rag_gguf_n_threads = 4
+        mock.rag_fast_profile_path = (
+            None  # issue #53 knob; not exercised by these tests
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_gguf = os.path.join(tmpdir, "model.gguf")
@@ -435,8 +485,9 @@ class TestGGUFPathValidation:
                         with patch("api_server.RAGConfig") as mock_config_cls:
                             mock_config_cls.return_value = MagicMock()
 
-                            from api_server import lifespan
                             from fastapi import FastAPI
+
+                            from api_server import lifespan
 
                             app = FastAPI()
                             ctx = lifespan(app)
@@ -473,13 +524,17 @@ class TestGGUFPathValidation:
         mock.rag_rerank_top_k = 6
         mock.rag_gguf_n_ctx = 4096
         mock.rag_gguf_n_threads = 4
+        mock.rag_fast_profile_path = (
+            None  # issue #53 knob; not exercised by these tests
+        )
 
         with patch.dict(os.environ, {"RAG_GGUF_PATH": "/nonexistent/path/model.gguf"}):
             with patch("api_server.settings", mock):
                 with patch("api_server.RAGEngine"):
                     with patch("api_server.RAGConfig"):
-                        from api_server import lifespan
                         from fastapi import FastAPI
+
+                        from api_server import lifespan
 
                         app = FastAPI()
                         ctx = lifespan(app)

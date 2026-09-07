@@ -47,6 +47,7 @@ Set environment variables before running the application or in your system's env
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
 | `RAG_GGUF_PATH` | Path to GGUF model file | Bundled Gemma 4 E2B | No |
+| `RAG_FAST_PROFILE_PATH` | Optional smaller fallback GGUF loaded when the primary model fails the RAM gate | None (fallback disabled) | No |
 
 ### Performance Variables
 
@@ -269,9 +270,18 @@ Only GGUF models are supported through the GUI Settings dialog. The application 
 
 **Parameters**:
 ```
-n_ctx=8192        # Context window size
-n_threads=4       # CPU threads
+n_ctx=4096                       # Context window size
+n_threads=min(os.cpu_count(), 8) # CPU threads (default: all CPUs, capped at 8)
 ```
+
+**Model Load RAM Gate**:
+Before loading a GGUF model the app estimates the free RAM requirement as
+`model file size + ~1 GB KV cache + ~1 GB runtime overhead` (about 5-6 GB for
+the bundled ~3.1 GB Gemma 4 E2B model). If the estimate exceeds available
+RAM the load is refused with a diagnostic naming the model, the required and
+available memory. When `RAG_FAST_PROFILE_PATH` points to a smaller GGUF, that
+fast-profile model is loaded instead; without it the diagnostic is surfaced
+through the GUI error message and the API 503 `detail`.
 
 **Model Selection**:
 - Gemma 4 2B (2GB, recommended - bundled)
