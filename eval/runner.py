@@ -418,6 +418,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if not args.label.strip():
+        parser.error("--label must be a non-empty provenance label")
+
     questions = load_questions(args.questions)
     report = run_eval(
         base_url=args.base_url.rstrip("/"),
