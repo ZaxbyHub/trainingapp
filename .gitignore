@@ -44,6 +44,12 @@ Thumbs.db
 .coverage
 htmlcov/
 
+# Node / desktop shell (issue #59)
+node_modules/
+desktop/renderer/
+desktop/release/
+desktop/desktop-release/
+
 # Agent working state (issue traces, session artifacts — not committed)
 .zcode/
 # eval harness local outputs (issue #54)

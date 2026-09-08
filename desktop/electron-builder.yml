@@ -1,0 +1,33 @@
+# electron-builder configuration for the TrainingApp desktop shell (issue #59).
+# Unsigned NSIS x64 installer; code signing arrives with Workstream E5 (#88).
+appId: com.zaxbyhub.trainingapp
+productName: TrainingApp
+directories:
+  # NOT "release": a same-name output dir can stay file-locked on Windows dev
+  # machines by editor/workspace indexers that scanned a previous build's
+  # win-unpacked\resources\app.asar (observed with ZCode's indexer), which
+  # makes electron-builder's cleanup unlink fail with EBUSY. Fresh dir = no
+  # stale handles; CI artifact glob matches this path.
+  output: desktop-release
+files:
+  - dist/**/*
+  - package.json
+# The desktop:build script copies web_ui/dist into renderer/ before packaging;
+# the main process serves it from <resourcesPath>/web_ui via the app:// protocol.
+extraResources:
+  - from: renderer
+    to: web_ui
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: true
+  perMachine: false
+  artifactName: ${productName}-Setup-${version}.${ext}
+  # Keep false until a deliberate uninstall-data policy exists (#84): true
+  # would silently wipe %APPDATA%/TrainingApp on uninstall.
+  deleteAppDataOnUninstall: false
+npmRebuild: false
+compression: normal
