@@ -249,4 +249,47 @@ describe('b3-server: preflight and settings guards', () => {
     });
     expect(token.status).toBe(503);
   });
+
+  it('boundary validation: 2001-char question, n_results 11 and 0 all 422', async () => {
+    const longQuestion = await fetch(url('/ask'), {
+      method: 'POST',
+      headers: guardedHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ question: 'x'.repeat(2001) }),
+    });
+    expect(longQuestion.status).toBe(422);
+    const tooMany = await fetch(url('/ask'), {
+      method: 'POST',
+      headers: guardedHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ question: 'ok', n_results: 11 }),
+    });
+    expect(tooMany.status).toBe(422);
+    const zero = await fetch(url('/ask'), {
+      method: 'POST',
+      headers: guardedHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ question: 'ok', n_results: 0 }),
+    });
+    expect(zero.status).toBe(422);
+  });
+
+  it('oversized JSON body over the 1MB cap gets an OBSERVABLE 413 (not a connection reset)', async () => {
+    const response = await fetch(url('/ask'), {
+      method: 'POST',
+      headers: guardedHeaders({ 'content-type': 'application/json' }),
+      body: 'x'.repeat(1024 * 1024 + 1),
+    });
+    expect(response.status).toBe(413);
+  });
+
+  it('prototype-named setting keys are rejected as unknown (no validation bypass)', async () => {
+    for (const key of ['toString', 'constructor', 'hasOwnProperty']) {
+      const response = await fetch(url('/settings'), {
+        method: 'PUT',
+        headers: guardedHeaders({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ [key]: 1 }),
+      });
+      expect(response.status, `key "${key}" must be rejected`).toBe(422);
+      const body = (await response.json()) as { errors: string[] };
+      expect(body.errors.join('; ')).toContain(`${key}: unknown setting`);
+    }
+  });
 });

@@ -2,7 +2,7 @@
 // see — bootstrap() must start the backend host behind the B2 guard, expose
 // the desktop:get-backend IPC (port discovery for B9), and stop the host on
 // will-quit (no orphan listener). Runs against the electron stub.
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { app, ipcMain, __resetElectronStub } from 'electron';
 import { bootstrap } from '../../main/index';
 import { __resetTransportSecurityForTests } from '../../main/security/index';
@@ -27,6 +27,15 @@ async function getRegisteredHandler(channel: string): Promise<(...args: unknown[
 beforeEach(() => {
   __resetElectronStub();
   __resetTransportSecurityForTests();
+});
+
+afterEach(async () => {
+  // Stop THIS test's host: the next beforeEach wipes the will-quit listener
+  // (stub emitter reset) WITHOUT firing it, so an un-stopped host here would
+  // hold its port until process exit — previously only the LAST host in the
+  // file was ever stopped (afterAll).
+  app.emit('will-quit');
+  await new Promise((resolve) => setTimeout(resolve, 50));
 });
 
 afterAll(async () => {

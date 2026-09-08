@@ -99,9 +99,16 @@ function readBody(req: IncomingMessage, capBytes: number): Promise<Buffer | null
     req.on('data', (chunk: Buffer) => {
       total += chunk.length;
       if (total > capBytes) {
-        capped = true;
-        req.destroy();
-        resolve(null);
+        // Stop buffering and resolve — do NOT destroy() the request here.
+        // Killing the socket before the route's 413 flushed made the
+        // documented 413 response unobservable (clients saw a connection
+        // reset). The route replies 413; Node then closes the connection
+        // because the request was never fully read.
+        if (!capped) {
+          capped = true;
+          chunks.length = 0;
+          resolve(null);
+        }
         return;
       }
       chunks.push(chunk);

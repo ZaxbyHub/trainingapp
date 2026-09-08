@@ -103,6 +103,7 @@ export class StubEngine implements EngineSurface {
     return { documents: [], total: 0 };
   }
 
+  // STUB: the document store (and clearing it) arrives with B6 (#64).
   async clearDocuments(): Promise<void> {}
 
   async getStats(): Promise<{ document_count: number; chunk_count: number; embedding_model: string; llm_backend: string | null; documents: string[] }> {
@@ -123,7 +124,12 @@ export class StubEngine implements EngineSurface {
     const errors: string[] = [];
     const applied: Record<string, number | string | boolean> = {};
     for (const [key, value] of Object.entries(patch)) {
-      const bounds = (SETTING_BOUNDS as Record<string, { min?: number; max?: number; type?: string }> | undefined)?.[key];
+      // OWN-PROPERTY lookup only: an unguarded index resolves inherited keys
+      // ("toString", "constructor", ...) to truthy built-ins and would skip
+      // the unknown-setting rejection entirely, letting a request that must
+      // 422 silently mutate the settings store instead.
+      const boundsTable = SETTING_BOUNDS as Record<string, { min?: number; max?: number; type?: string }>;
+      const bounds = Object.prototype.hasOwnProperty.call(boundsTable, key) ? boundsTable[key] : undefined;
       if (!bounds) {
         errors.push(`${key}: unknown setting`);
         continue;
@@ -191,6 +197,10 @@ export class StubEngine implements EngineSurface {
     };
   }
 
+  // STUB: multipart batch parsing/persistence arrives with B6 (#64). The
+  // route passes count=0 until real parsing exists — the frozen
+  // BatchIngestResponse shape has no not-implemented slot, so honesty here is
+  // bounded until B6 lands.
   async ingestBatch(count: number): Promise<{ total_files: number; successful: number; failed: number; results: Array<{ filename: string; success: boolean; chunks_added?: number; error?: string }> }> {
     return {
       total_files: count,

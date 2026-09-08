@@ -21,6 +21,8 @@ export interface BackendHost {
   stop(): Promise<void>;
 }
 
+/** FROZEN IPC shape (desktop:get-backend): address only — never add token or
+ *  secret fields here; credentials travel exclusively via desktopApi.getAuthToken(). */
 export interface BackendHandle {
   mode: BackendMode;
   port: number;
@@ -49,6 +51,10 @@ export interface BackendHostConfig {
   sidecar?: Partial<SidecarLaunchConfig> & { port?: number };
   /** Env override for mode resolution (tests); defaults to process.env. */
   env?: Record<string, string | undefined>;
+  /** Surfacing seam (sidecar mode): called once when the restart budget is
+   *  exhausted. Bootstrap wires it to a fail-loud user-visible notice; B9
+   *  owns any richer UX. Requests keep getting contract-safe 502s. */
+  onGiveUp?: (attempts: number) => void;
 }
 
 /**

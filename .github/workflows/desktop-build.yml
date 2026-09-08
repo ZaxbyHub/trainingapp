@@ -6,11 +6,13 @@ on:
     paths:
       - 'desktop/**'
       - 'web_ui/**'
+      - 'contracts/**'
       - '.github/workflows/desktop-build.yml'
   pull_request:
     paths:
       - 'desktop/**'
       - 'web_ui/**'
+      - 'contracts/**'
       - '.github/workflows/desktop-build.yml'
 
 jobs:
@@ -58,6 +60,9 @@ jobs:
   backend-conformance:
     name: Electron backend host vs frozen API contract (issue #61)
     runs-on: windows-latest
+    # Hard backstop: the harness fails fast on its own error paths; this
+    # bounds anything that slips through (runner hangs, child not reaped).
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -82,8 +87,8 @@ jobs:
       - name: Install desktop dependencies
         run: npm --prefix desktop ci --no-audit --no-fund
 
-      - name: Acceptance tests (vitest, stubbed electron)
-        run: npm --prefix desktop test
+      # (vitest acceptance tests run in the desktop-build job above — same
+      # triggers; running them twice here duplicated minutes, not coverage.)
 
       - name: Compile backend host
         run: npm --prefix desktop run compile

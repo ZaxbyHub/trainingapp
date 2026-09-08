@@ -118,6 +118,33 @@ describe('b3-sidecar-lifecycle (C4): bounded restart, give-up, no orphan', () =>
     expect(records.length).toBe(countAtGiveUp); // stop() cleared pending timers
   }, 10000);
 
+  it('a FAILED start() leaves no scheduled respawn behind (no orphaned restart chain)', async () => {
+    const records: FakeChild[] = [];
+    const spawnFn: NonNullable<SidecarManagerOptions['spawnFn']> = () => {
+      const child = makeCrashyChild(3000 + records.length, 10);
+      records.push(child);
+      return child;
+    };
+    const manager = new SidecarManager({
+      command: 'stub',
+      port: 39012,
+      spawnFn,
+      pingFn: async () => false, // never healthy
+      retryIntervalMs: 5,
+      maxWaitMs: 40,
+      restartBackoffMs: 20,
+      maxRestarts: 5,
+      stopGraceMs: 20,
+    });
+    await expect(manager.start()).rejects.toThrow(/did not become healthy/);
+    // start() must FULLY stop (stopping flag + cleared timers): the killed
+    // child's exit event must not arm a restart now that the caller believes
+    // startup failed and may have dropped its reference to the manager.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(records.length).toBe(1); // exactly the initial spawn; NO respawn chain
+    await manager.stop();
+  }, 5000);
+
   it('stop() during shutdown leaves no running child (no orphan)', async () => {
     const records: FakeChild[] = [];
     const manager = lifecycleManager(records, { restartBackoffMs: 5000 });

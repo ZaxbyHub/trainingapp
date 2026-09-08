@@ -119,11 +119,16 @@ the contract above as follows:
   is requested from the OS (`listen(0)`), never hard-coded. The headless
   entry `desktop/main/backend/dev-server.ts` (compiled to
   `desktop/dist/main/backend/dev-server.js`) writes the bound port to a
-  `--port-file` for harness synchronization and exits when stdin closes.
+  `--port-file` for harness synchronization, stops the host when stdin closes
+  or on SIGINT/SIGTERM, and stops the host before exiting if the port file
+  cannot be written. In sidecar mode the child's port is reserved first
+  (`listen(0)` then close); the brief bind-close window before the child
+  binds it is an accepted race — this sentence is its authoritative note.
 - **Guard mounting.** `createBackendServer` has ONE guard call site before any
   routing; every request — including `/health`, `/auth/*`, and CORS-preflight
-  OPTIONS (answered only AFTER the origin/host gates) — traverses
-  `getLoopbackGuard()`. The request adapter builds the ABSOLUTE URL the guard
+  OPTIONS (answered only AFTER the origin/host gates) — traverses the B2
+  guard instance constructed at bootstrap (`initializeTransportSecurity()`).
+  The request adapter builds the ABSOLUTE URL the guard
   requires (`http://<Host header><path>`) and folds header case through the
   fetch `Headers` implementation. A vitest guard-spy spec pins that every
   request crosses the gate exactly once before any handler.
@@ -140,11 +145,20 @@ the contract above as follows:
   `--host 127.0.0.1 --port <port>` style args for uvicorn-style launchers —
   with a configurable **working directory** (`sidecar.cwd`), bounded
   readiness polling of `GET /health` with retry/backoff, bounded-retry
-  restart on unexpected exit (exponential backoff, loud give-up), and a
-  graceful-then-kill shutdown (`SIGTERM`, grace window, `SIGKILL`; on Windows
-  both signals map to TerminateProcess — the sequence is POSIX-meaningful and
-  Windows-harmless). All lifecycle timers are cleared on stop, so an app quit
-  leaves no orphan child; bootstrap registers a `will-quit` stop.
+  restart on unexpected exit (exponential backoff, loud give-up; the budget
+  is a ROLLING window — `restartWindowMs`, default 60 s — not a lifetime
+  cap), and a graceful-then-kill shutdown (`SIGTERM`, grace window,
+  `SIGKILL`; on Windows both signals map to TerminateProcess — the sequence
+  is POSIX-meaningful and Windows-harmless). All lifecycle timers are cleared
+  on stop, so an app quit leaves no orphan child; a FAILED start() also stops
+  everything (no scheduled respawn behind a thrown start), and bootstrap
+  holds `will-quit` until the stop completes. Bind enforcement is by launch
+  CONTRACT: the host passes the loopback configuration but does not verify
+  the child's actual bind address — a compliant sidecar MUST bind 127.0.0.1
+  (health probing proves function, not bind address; real sidecar lands B4).
+  When the restart budget is exhausted the host keeps answering with
+  contract-safe 502s and bootstrap surfaces the give-up via
+  `config.onGiveUp` (fail-loud dialog + console in the Electron entry).
 - **Proxy hygiene (sidecar mode).** The guarded proxy STRIPS the transport
   token header before forwarding (the sidecar never sees it) and FORWARDS the
   reserved `X-Profile-Id` header unchanged (the B6 profile slot must survive
@@ -160,11 +174,15 @@ the contract above as follows:
   first 200 `GET /health` against a 15 s bound, and runs
   `contracts/tests/run_conformance.py --base-url <proxy> --destructive`.
   The harness runs the suite via an ASYNC spawn: a synchronous spawn would
-  block the harness event loop and stall the in-process proxy.
+  block the harness event loop and stall the in-process proxy. The harness
+  passes the run token to the headless host via `--token` ARGV (visible in
+  local process listings) — dev/CI-only: the production path mints the token
+  in-process and never places it on a command line.
 - **Reserved profile slot.** `X-Profile-Id`
   (`RESERVED_PROFILE_HEADER_NAME`, `desktop/main/backend/types.ts`) is
   accepted on every route and ignored until B6 (#64) gives it meaning, so
-  profile-scoped storage cannot change the wire contract later.
+  profile-scoped storage cannot change the wire contract later. B6 also owns
+  validating its size/charset when it becomes meaningful.
 - **Renderer discovery.** The backend address reaches the renderer ONLY via
   `ipcMain.handle('desktop:get-backend')` →
   `desktopApi.getBackendInfo()` (B9 consumes it) — never web storage, never a

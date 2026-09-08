@@ -38,8 +38,10 @@ export interface SidecarManagerOptions {
   retryIntervalMs?: number;
   /** Multiplier applied per failed probe (backoff). */
   retryBackoffMultiplier?: number;
-  /** Max restarts after unexpected exits within the window. */
+  /** Max restarts after unexpected exits within the rolling restart window. */
   maxRestarts?: number;
+  /** Rolling window (ms) the restart budget is counted over (default 60000). */
+  restartWindowMs?: number;
   /** Base delay before a restart attempt (ms; grows exponentially). */
   restartBackoffMs?: number;
   /** Grace period between the graceful signal and the kill (ms). */
@@ -54,10 +56,16 @@ type MinimalChild = Pick<ChildProcess, 'pid' | 'killed' | 'kill' | 'on'> & {
 
 export class SidecarManager extends EventEmitter {
   readonly healthUrl: string;
-  private readonly options: Required<Pick<SidecarManagerOptions, 'maxWaitMs' | 'retryIntervalMs' | 'retryBackoffMultiplier' | 'maxRestarts' | 'restartBackoffMs' | 'stopGraceMs'>>;
+  private readonly options: Required<Pick<SidecarManagerOptions, 'maxWaitMs' | 'retryIntervalMs' | 'retryBackoffMultiplier' | 'maxRestarts' | 'restartWindowMs' | 'restartBackoffMs' | 'stopGraceMs'>>;
   private readonly launch: Pick<SidecarManagerOptions, 'command' | 'args' | 'cwd' | 'env' | 'port' | 'spawnFn' | 'pingFn'>;
   private child: MinimalChild | null = null;
-  private restarts = 0;
+  /** True while start() is in flight: a child exit during the boot/health
+   *  wait is a FAILED BOOT (the start() error path handles cleanup), not an
+   *  unexpected-exit-to-restart — scheduling one there armed respawns behind
+   *  a start() that had already thrown. */
+  private starting = false;
+  /** Timestamps of recent restarts; the budget counts only those inside the rolling window. */
+  private restartTimes: number[] = [];
   private stopping = false;
   private restartTimer: NodeJS.Timeout | null = null;
   private killTimer: NodeJS.Timeout | null = null;
@@ -72,6 +80,7 @@ export class SidecarManager extends EventEmitter {
       retryIntervalMs: options.retryIntervalMs ?? 250,
       retryBackoffMultiplier: options.retryBackoffMultiplier ?? 1.5,
       maxRestarts: options.maxRestarts ?? 5,
+      restartWindowMs: options.restartWindowMs ?? 60000,
       restartBackoffMs: options.restartBackoffMs ?? 500,
       stopGraceMs: options.stopGraceMs ?? 1000,
     };
@@ -89,11 +98,22 @@ export class SidecarManager extends EventEmitter {
   /** Spawn the child and wait (bounded) for GET /health to answer. */
   async start(): Promise<void> {
     this.stopping = false;
-    this.spawnChild();
-    const ready = await this.waitUntilHealthy();
-    if (!ready) {
-      await this.stopChildOnly();
-      throw new Error(`sidecar did not become healthy at ${this.healthUrl} within ${this.options.maxWaitMs}ms`);
+    this.starting = true;
+    try {
+      this.spawnChild();
+      const ready = await this.waitUntilHealthy();
+      if (!ready) {
+        // Full stop(), not just stopChildOnly(): the killed child's exit event
+        // must NOT arm a restart, and any restart timer armed by an exit during
+        // the health wait must be cleared. A bare stopChildOnly() left a
+        // scheduled respawn chain running behind a start() that already threw
+        // (the caller has usually dropped its reference to this manager —
+        // un-stoppable background children).
+        await this.stop();
+        throw new Error(`sidecar did not become healthy at ${this.healthUrl} within ${this.options.maxWaitMs}ms`);
+      }
+    } finally {
+      this.starting = false;
     }
   }
 
@@ -117,11 +137,14 @@ export class SidecarManager extends EventEmitter {
       ((command, args, opts) => nodeSpawn(command, args, opts));
     const env: NodeJS.ProcessEnv = {
       ...process.env,
+      ...this.launch.env,
       // Loopback bind configuration for api_server-style launchers; the
       // caller passes --host/--port args itself for uvicorn-style launchers.
+      // Spread AFTER caller env: these two keys are the manager's contract
+      // with the child (the health probe derives its URL from the same port)
+      // and must never be silently overridable via sidecar.env.
       API_HOST: '127.0.0.1',
       API_PORT: String(this.launch.port),
-      ...this.launch.env,
     };
     const child = spawnFn(this.launch.command, this.launch.args ?? [], {
       cwd: this.launch.cwd,
@@ -130,30 +153,36 @@ export class SidecarManager extends EventEmitter {
     });
     // DRAIN the child's pipes: unread pipes fill their ~64KB buffer and BLOCK
     // the child mid-boot (a chatty backend printing model-load logs would
-    // never finish binding). Forward to the manager's own console at debug
-    // volume; never echo the child's env/args.
+    // never finish binding). Output is intentionally DROPPED, not forwarded —
+    // it can contain local paths and model details; never echo the child's
+    // env/args either. An opt-in diagnostics channel is B9 scope.
     child.stdout?.on('data', () => { /* drained */ });
     child.stderr?.on('data', () => { /* drained */ });
     this.child = child as MinimalChild;
     child.on?.('exit', (code, signal) => {
       this.child = null;
       this.emit('exit', code, signal);
-      if (!this.stopping) this.scheduleRestart();
+      if (!this.stopping && !this.starting) this.scheduleRestart();
     });
   }
 
   private scheduleRestart(): void {
     if (this.stopping) return;
-    if (this.restarts >= this.options.maxRestarts) {
-      this.emit('gave-up', this.restarts);
+    // Rolling-window budget: only restarts INSIDE the window count, so a
+    // long-lived sidecar that flapped long ago is not permanently penalized
+    // (a lifetime counter exhausted the budget on unrelated later crashes).
+    const now = Date.now();
+    this.restartTimes = this.restartTimes.filter((t) => now - t < this.options.restartWindowMs);
+    if (this.restartTimes.length >= this.options.maxRestarts) {
+      this.emit('gave-up', this.restartTimes.length);
       return;
     }
-    const delay = this.options.restartBackoffMs * 2 ** this.restarts;
-    this.restarts += 1;
+    this.restartTimes.push(now);
+    const delay = this.options.restartBackoffMs * 2 ** (this.restartTimes.length - 1);
     this.restartTimer = setTimeout(() => {
       this.restartTimer = null;
       if (this.stopping) return;
-      this.emit('restart', this.restarts, delay);
+      this.emit('restart', this.restartTimes.length, delay);
       this.spawnChild();
     }, delay);
   }
@@ -164,18 +193,23 @@ export class SidecarManager extends EventEmitter {
     let interval = this.options.retryIntervalMs;
     return new Promise((resolve) => {
       const attempt = (): void => {
-        void ping(this.healthUrl).then((ok) => {
-          if (ok) {
-            resolve(true);
-            return;
-          }
-          if (Date.now() - started >= this.options.maxWaitMs) {
-            resolve(false);
-            return;
-          }
-          setTimeout(attempt, interval).unref();
-          interval *= this.options.retryBackoffMultiplier;
-        });
+        // A REJECTED probe (a pingFn violating its Promise<boolean> contract)
+        // counts as a failed probe — never an unhandled rejection, and the
+        // bounded retry loop keeps running.
+        void ping(this.healthUrl)
+          .then((ok) => ok, () => false)
+          .then((ok) => {
+            if (ok) {
+              resolve(true);
+              return;
+            }
+            if (Date.now() - started >= this.options.maxWaitMs) {
+              resolve(false);
+              return;
+            }
+            setTimeout(attempt, interval).unref();
+            interval *= this.options.retryBackoffMultiplier;
+          });
       };
       attempt();
     });

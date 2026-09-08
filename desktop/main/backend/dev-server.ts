@@ -76,12 +76,23 @@ async function main(): Promise<void> {
       : undefined,
   });
   const handle = await host.start();
-  writeFileSync(args.portFile, String(handle.port), 'utf8');
-  // Keep running until stdin closes (checks/CI hold it open; killing the
-  // parent closes it). Then stop the host so no listener is orphaned.
-  process.stdin.on('end', () => {
+  try {
+    writeFileSync(args.portFile, String(handle.port), 'utf8');
+  } catch (err) {
+    // No orphan: if the port file is unwritable (sidecar mode has a spawned
+    // child running), stop the host BEFORE the error exits the process.
+    await host.stop();
+    throw err;
+  }
+  const stopAndExit = (): void => {
     void host.stop().finally(() => process.exit(0));
-  });
+  };
+  // Keep running until stdin closes (checks/CI hold it open; killing the
+  // parent closes it). Signals get the same no-orphan treatment — a bare
+  // Ctrl+C used to exit without stopping the host, orphaning a sidecar child.
+  process.stdin.on('end', stopAndExit);
+  process.on('SIGINT', stopAndExit);
+  process.on('SIGTERM', stopAndExit);
   process.stdin.resume();
 }
 

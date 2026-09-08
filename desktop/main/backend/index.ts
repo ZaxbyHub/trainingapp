@@ -56,7 +56,7 @@ export class NodeBackendHost implements BackendHost {
 
   async start(): Promise<BackendHandle> {
     if (this.handle) return this.handle;
-    this.server = createBackendServer({
+    const server = createBackendServer({
       guard: createLoopbackGuard({
         token: this.config.token,
         tokenHeaderName: this.config.tokenHeaderName,
@@ -66,9 +66,17 @@ export class NodeBackendHost implements BackendHost {
       allowedOrigins: this.config.allowedOrigins,
       engine: this.engine,
     });
-    const port = await listenOnRandomPort(this.server);
-    this.handle = { mode: this.mode, port, url: `http://127.0.0.1:${port}` };
-    return this.handle;
+    try {
+      const port = await listenOnRandomPort(server);
+      this.server = server;
+      this.handle = { mode: this.mode, port, url: `http://127.0.0.1:${port}` };
+      return this.handle;
+    } catch (err) {
+      // Partial-init cleanup: a failed bind must not leak the listener into
+      // the next start() retry.
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      throw err;
+    }
   }
 
   async stop(): Promise<void> {
@@ -112,10 +120,10 @@ export class SidecarBackendHost implements BackendHost {
     });
     manager.on('gave-up', (attempts) => {
       console.error(`[trainingapp-backend] sidecar restart bound exceeded after ${attempts} restarts; giving up`);
+      this.config.onGiveUp?.(attempts);
     });
     await manager.start();
-    this.manager = manager;
-    this.server = createBackendServer({
+    const server = createBackendServer({
       guard: createLoopbackGuard({
         token: this.config.token,
         tokenHeaderName: this.config.tokenHeaderName,
@@ -125,9 +133,19 @@ export class SidecarBackendHost implements BackendHost {
       allowedOrigins: this.config.allowedOrigins,
       upstreamPort,
     });
-    const port = await listenOnRandomPort(this.server);
-    this.handle = { mode: this.mode, port, url: `http://127.0.0.1:${port}` };
-    return this.handle;
+    try {
+      const port = await listenOnRandomPort(server);
+      this.manager = manager;
+      this.server = server;
+      this.handle = { mode: this.mode, port, url: `http://127.0.0.1:${port}` };
+      return this.handle;
+    } catch (err) {
+      // Partial-init cleanup: a failed listener bind must leave NEITHER a
+      // leaked server NOR an orphaned, untracked sidecar child.
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await manager.stop();
+      throw err;
+    }
   }
 
   async stop(): Promise<void> {

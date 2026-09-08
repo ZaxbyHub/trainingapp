@@ -195,7 +195,9 @@ async function main() {
   }
   if (suiteCode !== 0 || !suiteStdout.includes('CONFORMANCE: PASS')) {
     console.error(`run-conformance-host: FAILED (suite exit ${suiteCode})`);
-    process.exit(suiteCode);
+    // Exit NON-ZERO even when the suite exited 0 without the sentinel: a bare
+    // process.exit(suiteCode) reported a sentinel-less failure as green.
+    process.exit(suiteCode !== 0 ? suiteCode : 1);
   }
   console.log(`run-conformance-host: OK — conformance PASS against the Electron-hosted backend; cold start ${coldStartMs}ms (machine tag for bench/RESULTS.md: devstation)`);
   // The in-process proxy listen handle keeps the event loop alive; exit
@@ -205,5 +207,9 @@ async function main() {
 
 main().catch((err) => {
   console.error(`run-conformance-host: ${err.message}`);
-  process.exitCode = 1;
+  // Exit NOW: process.exitCode = 1 alone left the in-process proxy listen
+  // handle and the piped host child holding the event loop open, hanging the
+  // CI job until the runner timeout instead of failing fast. (The synchronous
+  // 'exit' cleanup handler still runs on this path.)
+  process.exit(1);
 });
