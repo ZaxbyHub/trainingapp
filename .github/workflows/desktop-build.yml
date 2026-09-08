@@ -42,9 +42,15 @@ jobs:
       - name: Build installer (unsigned NSIS x64)
         run: npm --prefix desktop run desktop:build
 
+      - name: Verify preload is CommonJS (sandbox requirement)
+        run: node desktop/scripts/verify-preload-format.mjs
+
+      - name: Runtime preload smoke (real Electron, sandboxed bridge attach)
+        run: npx --prefix desktop electron desktop/scripts/preload-runtime-smoke.cjs
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: trainingapp-desktop-windows-installer
-          path: desktop/release/*.exe
+          path: desktop/desktop-release/*.exe
           if-no-files-found: error

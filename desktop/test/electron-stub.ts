@@ -37,8 +37,11 @@ export const app = {
 export class BrowserWindow {
   static readonly windows: BrowserWindow[] = [];
   readonly webPreferences: Record<string, unknown> | undefined;
-  loadURL = vi.fn();
-  loadFile = vi.fn();
+  // Real Electron loadURL/loadFile return promises; the production seam
+  // attaches a .catch to surface failures via did-fail-load, so the stub
+  // must return a resolved promise (PRR95-003 stub-fidelity AMEND).
+  loadURL = vi.fn((): Promise<void> => Promise.resolve());
+  loadFile = vi.fn((): Promise<void> => Promise.resolve());
   on = vi.fn();
   once = vi.fn();
   focus = vi.fn();

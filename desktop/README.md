@@ -28,7 +28,7 @@ desktop/
   repro/check.sh         acceptance-check driver (C1..C6)
   electron-builder.yml   unsigned NSIS x64 packaging (appId com.zaxbyhub.trainingapp)
   renderer/              build-time staging of web_ui/dist (gitignored)
-  release/               electron-builder output (gitignored)
+  desktop-release/       electron-builder output (gitignored)
 ```
 
 ## Scripts
@@ -37,7 +37,7 @@ desktop/
 |---|---|
 | `npm run compile` | tsc -> `dist/` (main + preload, ESM, nodenext) |
 | `npm test` | all three acceptance spec files (vitest) |
-| `npm run dev` | compile + launch Electron against the vite dev server (`--dev`) |
+| `npm run dev` | compile + launch Electron with `--dev` (expects the vite dev server already running — use `desktop:dev` to start both) |
 | `npm run desktop:dev` | vite dev (web_ui) + Electron with reload, via `concurrently` |
 | `npm run desktop:build` | build web_ui, copy `web_ui/dist` -> `renderer/`, compile, run electron-builder (NSIS x64, unsigned) |
 | `npm run test:secure-defaults` / `test:single-instance` / `test:app-protocol` | one spec file each |

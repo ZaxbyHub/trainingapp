@@ -6,7 +6,7 @@
   "type": "module",
   "main": "dist/main/index.js",
   "scripts": {
-    "compile": "tsc -p tsconfig.json",
+    "compile": "tsc -p tsconfig.json && tsc -p tsconfig.preload.json && node -e \"require('fs').renameSync('dist/preload/index.js', 'dist/preload/index.cjs')\"",
     "test": "vitest run",
     "test:secure-defaults": "vitest run src/__tests__/secure-defaults.test.ts",
     "test:single-instance": "vitest run src/__tests__/single-instance.test.ts",
@@ -17,6 +17,7 @@
     "desktop:build": "npm --prefix ../web_ui run build && node -e \"require('fs').cpSync('../web_ui/dist', 'renderer', { recursive: true })\" && npm run compile && electron-builder --win nsis --x64"
   },
   "devDependencies": {
+    "@types/node": "^24.9.0",
     "concurrently": "^10.0.5",
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",

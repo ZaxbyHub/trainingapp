@@ -117,7 +117,13 @@ export function createAppFileHandler(opts: { root: string }) {
       }
       const data = await fsp.readFile(real);
       return new Response(new Uint8Array(data), {
-        headers: { 'content-type': mimeTypeFor(real) },
+        headers: {
+          'content-type': mimeTypeFor(real),
+          // Baseline response hygiene for the custom scheme (CSP itself is
+          // Workstream B2 / issue #60).
+          'x-content-type-options': 'nosniff',
+          'cache-control': 'no-cache',
+        },
       });
     } catch {
       return notFound();

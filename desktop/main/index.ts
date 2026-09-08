@@ -58,12 +58,22 @@ export function createMainWindow(): BrowserWindow {
       sandbox: true,
       nodeIntegration: false,
       webviewTag: false,
-      preload: path.join(moduleDir(), '..', 'preload', 'index.js'),
+      // .cjs: sandboxed renderers only load CommonJS preloads (ESM preloads
+      // require sandbox:false), and the .cjs extension is unambiguous under
+      // this package's "type": "module".
+      preload: path.join(moduleDir(), '..', 'preload', 'index.cjs'),
     },
   });
   win.once('ready-to-show', () => win.show());
+  // Surface load failures instead of leaving a silent blank/hidden window
+  // (e.g. dev server down, renderer resources incomplete).
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    console.error(`[trainingapp-desktop] failed to load ${validatedURL || '(no url)'}: ${errorDescription} (${errorCode})`);
+    win.show();
+  });
   const url = devStartUrl() ?? 'app://index.html';
-  void win.loadURL(url);
+  win.loadURL(url).catch(() => { /* failure surfaced via did-fail-load above */ });
   mainWindow = win;
   return win;
 }
@@ -113,6 +123,9 @@ export function bootstrap(): void {
       registerAppProtocol({ root });
     }
     createMainWindow();
+  }).catch((err: unknown) => {
+    console.error('[trainingapp-desktop] startup failure:', err);
+    app.quit();
   });
 
   app.on('window-all-closed', () => {

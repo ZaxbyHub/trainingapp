@@ -48,6 +48,7 @@ htmlcov/
 node_modules/
 desktop/renderer/
 desktop/release/
+desktop/desktop-release/
 
 # Agent working state (issue traces, session artifacts — not committed)
 .zcode/

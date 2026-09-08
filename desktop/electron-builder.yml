@@ -3,7 +3,12 @@
 appId: com.zaxbyhub.trainingapp
 productName: TrainingApp
 directories:
-  output: release
+  # NOT "release": a same-name output dir can stay file-locked on Windows dev
+  # machines by editor/workspace indexers that scanned a previous build's
+  # win-unpacked\resources\app.asar (observed with ZCode's indexer), which
+  # makes electron-builder's cleanup unlink fail with EBUSY. Fresh dir = no
+  # stale handles; CI artifact glob matches this path.
+  output: desktop-release
 files:
   - dist/**/*
   - package.json
@@ -21,6 +26,8 @@ nsis:
   oneClick: true
   perMachine: false
   artifactName: ${productName}-Setup-${version}.${ext}
-  deleteAppDataOnUninstall: true
+  # Keep false until a deliberate uninstall-data policy exists (#84): true
+  # would silently wipe %APPDATA%/TrainingApp on uninstall.
+  deleteAppDataOnUninstall: false
 npmRebuild: false
 compression: normal
