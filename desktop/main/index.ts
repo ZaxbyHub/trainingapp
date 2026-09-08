@@ -9,8 +9,15 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
+import {
+  getLoopbackGuard,
+  getLaunchToken,
+  initializeLaunchToken,
+  initializeTransportSecurity,
+  resolveSecurityConfig,
+} from './security/index.js';
 
 const DEV_URL = 'http://localhost:5173';
 
@@ -23,6 +30,23 @@ function isDevArgv(): boolean {
 function devStartUrl(): string | undefined {
   const envUrl = process.env.ELECTRON_START_URL;
   return envUrl !== undefined && envUrl.length > 0 ? envUrl : isDevArgv() ? DEV_URL : undefined;
+}
+
+/**
+ * Navigation allow-list (issue #60): the renderer may only navigate itself to
+ * app:// targets; in dev mode the dev server origin is additionally allowed
+ * so vite's full-page reloads keep working. Everything else — remote http(s),
+ * file://, even loopback http in production — is denied.
+ */
+function isAllowedNavigationTarget(url: string): boolean {
+  if (url.startsWith('app://')) return true;
+  const dev = devStartUrl();
+  if (dev === undefined) return false;
+  try {
+    return new URL(url).origin === new URL(dev).origin;
+  } catch {
+    return false;
+  }
 }
 
 /** Directory of the compiled module (dist/main), valid under ESM. */
@@ -65,6 +89,18 @@ export function createMainWindow(): BrowserWindow {
     },
   });
   win.once('ready-to-show', () => win.show());
+  // Navigation lockdown (issue #60, AC4): the only renderer-initiated
+  // navigations are app:// targets (plus the dev server origin in dev mode);
+  // window.open is denied outright — no popups, no new windows, ever.
+  // NOTE: the window-open handler lives on webContents (the only surface that
+  // exists in Electron >= 44 typings AND at runtime — verified by probe:
+  // win.setWindowOpenHandler is undefined); will-navigate is webContents-native.
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isAllowedNavigationTarget(url)) {
+      event.preventDefault();
+    }
+  });
+  win.webContents.setWindowOpenHandler((): { action: 'deny' } => ({ action: 'deny' }));
   // Surface load failures instead of leaving a silent blank/hidden window
   // (e.g. dev server down, renderer resources incomplete).
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
@@ -111,6 +147,24 @@ export function bootstrap(): void {
   registerSecondInstanceHandler();
 
   app.whenReady().then(() => {
+    // Transport security (issue #60, B2): resolve config, mint the per-launch
+    // token (main-process memory only), serve it to the renderer ONLY through
+    // this IPC handler, and construct the loopback gate that B3's backend
+    // host MUST mount in front of every route (docs/security/desktop.md).
+    const securityConfig = resolveSecurityConfig();
+    initializeLaunchToken();
+    ipcMain.handle('desktop:get-token', () => getLaunchToken());
+    initializeTransportSecurity({
+      token: getLaunchToken(),
+      tokenHeaderName: securityConfig.tokenHeaderName,
+      allowedOrigins: securityConfig.allowedOrigins,
+    });
+    if (getLoopbackGuard() === null) {
+      // Fail fast and audibly rather than booting an unguarded transport.
+      console.error('[trainingapp-desktop] transport security failed to initialize; refusing to start');
+      app.quit();
+      return;
+    }
     // Dev mode loads the vite dev server and needs no packaged renderer.
     if (devStartUrl() === undefined) {
       const root = resolveRendererRoot();

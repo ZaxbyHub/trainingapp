@@ -1,0 +1,4 @@
+# CSP pin stability (issue #60): desktop/main/security/csp.ts hash-pins the inline
+# theme-bootstrap script of this file, so its served bytes must be identical on
+# every checkout regardless of core.autocrlf. LF everywhere, no exceptions.
+web_ui/index.html text eol=lf
