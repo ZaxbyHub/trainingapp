@@ -34,3 +34,11 @@ export function getLaunchToken(): string {
   }
   return launchToken;
 }
+
+/**
+ * Test hook: clear the holder so a fresh test can exercise initialization.
+ * Never call from production code (bootstrap initializes exactly once).
+ */
+export function __resetLaunchTokenForTests(): void {
+  launchToken = null;
+}

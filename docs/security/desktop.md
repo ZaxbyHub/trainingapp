@@ -88,12 +88,22 @@ When the backend host lands (#61, per ADR-0003), it MUST:
 2. Mount `getLoopbackGuard()` (constructed at bootstrap and surfaced by
    `desktop/main/security/index.ts`) in front of EVERY request route, before
    any backend logic: `const verdict = guard(req); if (verdict) return verdict;`
-3. Read the header name from `resolveSecurityConfig().tokenHeaderName`
+3. **Adapt the request shape correctly.** The guard requires:
+   - `url` as an ABSOLUTE URL — a Node `http.IncomingMessage.url` is a bare
+     path and fails closed (403); build it explicitly, e.g.
+     `url: \`http://127.0.0.1:${port}${req.url}\``.
+   - Case-insensitive header lookup. Real `fetch`/`Headers` fold case; a
+     hand-rolled adapter must too (or lowercase names before lookup) — the
+     guard folds names itself as defense-in-depth, but do not rely on that.
+   - `method` (optional, reserved for #61): a CORS-preflight `OPTIONS` may be
+     answered by the adapter, but ONLY after the guard's origin/host gates
+     pass — never exempt preflight requests before the guard.
+4. Read the token header name from `resolveSecurityConfig().tokenHeaderName`
    (default `X-Desktop-Token`) — do not hard-code it, and do not switch the
    desktop transport to `Authorization: Bearer` (the web_ui ApiClient reserves
    that header for its server-mode JWT flow; B9 renders the desktop token via
    the `desktopApi.getAuthToken()` bridge instead of `auth.ts` storage).
-4. Never log the token, the raw `Authorization`-equivalent header, or full
+5. Never log the token, the raw `Authorization`-equivalent header, or full
    request URLs at info level.
 
 The bootstrap fails fast (`app.quit()`) if the guard was not constructed, so

@@ -165,6 +165,10 @@ export function bootstrap(): void {
       app.quit();
       return;
     }
+    // NOTE: in dev mode the app:// handler is intentionally NOT registered
+    // (the vite dev server serves the renderer), so an app:// target allowed
+    // by the navigation policy below would fail to load in dev. Production
+    // mode registers both, so policy and handler are always consistent there.
     // Dev mode loads the vite dev server and needs no packaged renderer.
     if (devStartUrl() === undefined) {
       const root = resolveRendererRoot();

@@ -27,8 +27,16 @@
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from './config.js';
 
 export interface LoopbackGuardRequest {
+  // MUST be an ABSOLUTE URL (e.g. 'http://127.0.0.1:<port>/api' or
+  // 'app://index.html'). A Node http server's req.url is a BARE path and will
+  // fail closed here (403) — B3 adapters must build the absolute form, e.g.
+  // `http://127.0.0.1:${port}${req.url}`.
   url: string;
   headers: { get(name: string): string | null };
+  // Reserved for B3 CORS-preflight handling (issue #61): if provided, an
+  // adapter MAY exempt OPTIONS — but only AFTER the origin/host gates below,
+  // never before them. Unset requests are treated as non-preflight.
+  method?: string;
 }
 
 export type LoopbackGuard = (request: LoopbackGuardRequest) => Response | null;
@@ -85,8 +93,13 @@ export function createLoopbackGuard(opts: CreateLoopbackGuardOptions): LoopbackG
   const allowedOrigins = opts.allowedOrigins ?? DEFAULT_ALLOWED_ORIGINS;
 
   return (request: LoopbackGuardRequest): Response | null => {
+    // Case-insensitive lookup wrapper: real fetch/Headers implementations fold
+    // case, but the type contract cannot force a custom B3 adapter to — so the
+    // guard folds the lookup itself and adapters stay safe by construction.
+    const getHeader = (name: string): string | null => request.headers.get(name.toLowerCase());
+
     // R2 ORIGIN (fail closed on present-but-empty).
-    const origin = request.headers.get('origin');
+    const origin = getHeader('origin');
     if (origin !== null && !originAllowed(origin, allowedOrigins)) {
       return fail(403, 'Forbidden');
     }
@@ -99,17 +112,21 @@ export function createLoopbackGuard(opts: CreateLoopbackGuardOptions): LoopbackG
       scheme = parsed.protocol.replace(':', '');
       urlHost = parsed.host;
     } catch {
-      return fail(403, 'Forbidden'); // unparseable URL: fail closed
+      return fail(403, 'Forbidden'); // unparseable/bare-path URL: fail closed
     }
     if (scheme === 'http' || scheme === 'https') {
-      const effectiveHost = request.headers.get('host') ?? urlHost ?? '';
+      const effectiveHost = getHeader('host') ?? urlHost ?? '';
       if (!isLoopbackHost(effectiveHost)) {
         return fail(403, 'Forbidden');
       }
     }
 
-    // R1 TOKEN (constant-time enough: equality over hex, rejection body static).
-    const supplied = request.headers.get(tokenHeaderName);
+    // R1 TOKEN. Plain string equality: NOT constant-time, but the token is a
+    // 256-bit per-launch CSPRNG secret served only over loopback and rotated
+    // every launch, so timing sampling of a never-reused secret is not a
+    // practical attack here. Revisit only if the transport ever leaves
+    // loopback.
+    const supplied = getHeader(tokenHeaderName);
     if (supplied !== opts.token) {
       return fail(401, 'Unauthorized');
     }

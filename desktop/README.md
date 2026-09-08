@@ -30,7 +30,9 @@ desktop/
                          `desktopApi.getAuthToken` (B2 token bridge, IPC-only)
   src/__tests__/         frozen acceptance specs (vitest, stubbed electron)
   test/electron-stub.ts  in-memory electron for the specs
-  repro/check.sh         acceptance-check driver (C1..C6)
+  repro/check.sh         acceptance-check driver for issue #59 (C1..C6)
+  repro/check-b2.sh      acceptance-check driver for issue #60 (B2 specs)
+  scripts/               preload format guard + runtime smoke (CI)
   electron-builder.yml   unsigned NSIS x64 packaging (appId com.zaxbyhub.trainingapp)
   renderer/              build-time staging of web_ui/dist (gitignored)
   desktop-release/       electron-builder output (gitignored)
@@ -40,8 +42,8 @@ desktop/
 
 | Script | What it does |
 |---|---|
-| `npm run compile` | tsc -> `dist/` (main + preload, ESM, nodenext) |
-| `npm test` | all three acceptance spec files (vitest) |
+| `npm run compile` | tsc -> `dist/` (main as ESM/nodenext; preload as CommonJS, renamed .cjs) |
+| `npm test` | all acceptance spec files (vitest; B1 + B2 suites) |
 | `npm run dev` | compile + launch Electron with `--dev` (expects the vite dev server already running — use `desktop:dev` to start both) |
 | `npm run desktop:dev` | vite dev (web_ui) + Electron with reload, via `concurrently` |
 | `npm run desktop:build` | build web_ui, copy `web_ui/dist` -> `renderer/`, compile, run electron-builder (NSIS x64, unsigned) |
@@ -51,6 +53,9 @@ Dev mode: Electron loads `http://localhost:5173` when `--dev` is in argv, or
 whatever URL `ELECTRON_START_URL` points at. Production: `app://index.html`
 served from `<resourcesPath>/web_ui`. Note the packaged binary does not start a
 vite server — `--dev` on an installed app shows nothing; use `desktop:dev`.
+In dev mode the `app://` protocol handler is intentionally not registered (the
+vite server serves the renderer), so an `app://` navigation — allowed by the
+navigation policy — fails to load; that combination is production-only.
 
 ## Security posture (baseline, per issue #59)
 

@@ -4,10 +4,11 @@
 // in desktop/ must thread through these exports rather than rolling its own
 // policy (invariant documented in desktop/README.md "Security posture").
 export { resolveSecurityConfig, DEFAULT_TOKEN_HEADER_NAME, DEFAULT_ALLOWED_ORIGINS, DEV_ORIGINS_ENV, type SecurityConfig } from './config.js';
-export { mintLaunchToken, initializeLaunchToken, getLaunchToken } from './token.js';
+export { mintLaunchToken, initializeLaunchToken, getLaunchToken, __resetLaunchTokenForTests } from './token.js';
 export { createLoopbackGuard, originAllowed, type LoopbackGuard, type LoopbackGuardRequest, type CreateLoopbackGuardOptions } from './loopback-guard.js';
 export { buildCspPolicy, INLINE_THEME_BOOTSTRAP_SHA256 } from './csp.js';
 import { createLoopbackGuard, type CreateLoopbackGuardOptions, type LoopbackGuard } from './loopback-guard.js';
+import { __resetLaunchTokenForTests } from './token.js';
 
 let activeGuard: LoopbackGuard | null = null;
 
@@ -28,4 +29,14 @@ export function initializeTransportSecurity(opts: CreateLoopbackGuardOptions): L
 /** The active per-launch gate, or null before bootstrap initialization. */
 export function getLoopbackGuard(): LoopbackGuard | null {
   return activeGuard;
+}
+
+/**
+ * Test hook: clear the transport-security singletons (guard holder + launch
+ * token) so a fresh test can exercise initialization from scratch. Never call
+ * from production code.
+ */
+export function __resetTransportSecurityForTests(): void {
+  activeGuard = null;
+  __resetLaunchTokenForTests();
 }

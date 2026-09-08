@@ -13,7 +13,7 @@
 //     plain JS eval() stays blocked.
 //   - script-src 'sha256-<PIN>': the ONE legitimate inline script, the theme
 //     pre-paint bootstrap in web_ui/index.html (vited verbatim into dist).
-//     web_ui/src/__tests__/ b2-csp-pin.test.ts pins this constant to the
+//     desktop/src/__tests__/b2-csp-pin.test.ts pins this constant to the
 //     actual hash of that script so a renderer change that adds or edits an
 //     inline script fails CI until the pin is consciously updated. Any other
 //     inline script — i.e. every injected one — is blocked.
@@ -50,6 +50,9 @@ export function buildCspPolicy(): string {
     "font-src 'self' app:",
     "connect-src 'self' app: http://127.0.0.1:* http://[::1]:*",
     "worker-src 'self' app: blob:",
+    // Explicit (rather than inherited from default-src) to pin the framing
+    // posture independently of future default-src edits. PRR96-008.
+    "frame-src 'self' app:",
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
