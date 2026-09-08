@@ -6,11 +6,13 @@ on:
     paths:
       - 'desktop/**'
       - 'web_ui/**'
+      - 'contracts/**'
       - '.github/workflows/desktop-build.yml'
   pull_request:
     paths:
       - 'desktop/**'
       - 'web_ui/**'
+      - 'contracts/**'
       - '.github/workflows/desktop-build.yml'
 
 jobs:
@@ -54,3 +56,47 @@ jobs:
           name: trainingapp-desktop-windows-installer
           path: desktop/desktop-release/*.exe
           if-no-files-found: error
+
+  backend-conformance:
+    name: Electron backend host vs frozen API contract (issue #61)
+    runs-on: windows-latest
+    # Hard backstop: the harness fails fast on its own error paths; this
+    # bounds anything that slips through (runner hangs, child not reaped).
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-backend-conformance-${{ hashFiles('contracts/tests/run_conformance.py') }}
+          restore-keys: |
+            ${{ runner.os }}-backend-conformance-
+
+      - name: Install desktop dependencies
+        run: npm --prefix desktop ci --no-audit --no-fund
+
+      # (vitest acceptance tests run in the desktop-build job above — same
+      # triggers; running them twice here duplicated minutes, not coverage.)
+
+      - name: Compile backend host
+        run: npm --prefix desktop run compile
+
+      - name: Install conformance suite dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install httpx
+
+      - name: Run API contract conformance against the Electron-hosted backend
+        run: node desktop/scripts/run-conformance-host.mjs

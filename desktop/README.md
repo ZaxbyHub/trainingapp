@@ -90,6 +90,41 @@ navigation policy — fails to load; that combination is production-only.
 - The installer is unsigned at this stage; signing/updates are Workstream E5
   (#88).
 
+## Backend host (B3, issue #61)
+
+`desktop/main/backend/` hosts the guarded loopback backend that answers the
+frozen API contract (`contracts/api.openapi.yaml`). B4-B9 import ONLY
+`desktop/main/backend/index.ts` (`createBackendHost`, `resolveBackendMode`).
+
+- **Modes**: `backend.mode` selects `"node"` (default while ADR-0003 #57 is
+  open; guarded listener + in-memory stub engine — real inference arrives with
+  B4 #62, ingestion B6 #64, retrieval B7 #65) or `"sidecar"` (the same guarded
+  listener fronting a loopback proxy to a spawned backend child managed by
+  `SidecarManager`). Env override: `TRAININGAPP_DESKTOP_BACKEND_MODE`.
+- **Security**: binds `127.0.0.1` on a random free port; the B2 loopback guard
+  sits in front of EVERY route (see `docs/security/desktop.md`, "B3
+  integration contract"); the reserved `X-Profile-Id` header is accepted on
+  all routes for B6.
+- **Renderer discovery**: `ipcMain.handle('desktop:get-backend')` exposed to
+  the renderer as `desktopApi.getBackendInfo()` -> `{mode, port, url}`.
+- **Headless entry** (tests/CI): `desktop/dist/main/backend/dev-server.js
+  --port-file <p> --mode node --token <t>` (compiles from
+  `desktop/main/backend/dev-server.ts`; exits when stdin closes).
+
+Commands:
+
+```bash
+npm --prefix desktop run compile          # tsc -> dist (includes the backend)
+npm --prefix desktop test                 # vitest incl. the six b3-* specs
+node desktop/scripts/run-conformance-host.mjs   # conformance vs this host
+#   (needs: pip install httpx; starts host + token-injecting harness proxy,
+#    runs contracts/tests/run_conformance.py --base-url ... --destructive)
+```
+
+CI: the `backend-conformance` job in `.github/workflows/desktop-build.yml`
+runs the conformance suite against the Electron-hosted backend on every
+desktop change.
+
 ## Reserved namespaces
 
 - `app://training/<packId>/` is RESERVED for Workstream D5 (#81, embedded

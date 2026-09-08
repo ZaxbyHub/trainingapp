@@ -9,8 +9,9 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
+import { createBackendHost, resolveBackendMode, type BackendHandle, type BackendHost } from './backend/index.js';
 import {
   getLoopbackGuard,
   getLaunchToken,
@@ -146,7 +147,7 @@ export function bootstrap(): void {
   if (!acquireSingleInstanceLock()) return;
   registerSecondInstanceHandler();
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // Transport security (issue #60, B2): resolve config, mint the per-launch
     // token (main-process memory only), serve it to the renderer ONLY through
     // this IPC handler, and construct the loopback gate that B3's backend
@@ -165,6 +166,48 @@ export function bootstrap(): void {
       app.quit();
       return;
     }
+    // Backend host (issue #61, B3): start the guarded loopback listener behind
+    // the B2 guard, selected by backend.mode (node default; ADR-0003 #57).
+    // B4-B9 import ONLY desktop/main/backend/index.js — never this wiring.
+    let backendHost: BackendHost | null = null;
+    let backendHandle: BackendHandle | null = null;
+    try {
+      backendHost = createBackendHost({
+        token: getLaunchToken(),
+        tokenHeaderName: securityConfig.tokenHeaderName,
+        allowedOrigins: securityConfig.allowedOrigins,
+        mode: resolveBackendMode({ env: process.env }),
+        // Fail-loud surfacing when the sidecar exhausts its restart budget
+        // (console.error alone is invisible in a packaged Electron app).
+        onGiveUp: (attempts) => {
+          console.error(`[trainingapp-desktop] backend sidecar exhausted its restart budget (${attempts}); requests will fail until restart`);
+          dialog.showErrorBox(
+            'TrainingApp backend stopped',
+            `The local answer engine exited repeatedly (${attempts} restarts) and gave up. Restart the app to try again.`,
+          );
+        },
+      });
+      backendHandle = await backendHost.start();
+    } catch (err) {
+      console.error('[trainingapp-desktop] backend host failed to start:', err instanceof Error ? err.message : err);
+      app.quit();
+      return;
+    }
+    // Port discovery for B9 (renderer integration): the ONLY channel the
+    // backend address takes to the renderer — never web storage, never a URL.
+    ipcMain.handle('desktop:get-backend', () => backendHandle);
+    let quitting = false;
+    app.on('will-quit', (event) => {
+      if (quitting || backendHost === null) return;
+      // HOLD the quit until backend shutdown completes: stop() runs the
+      // sidecar graceful-then-kill sequence (grace windows are real time),
+      // and an unawaited stop let Electron exit mid-cleanup, orphaning the
+      // child. preventDefault + app.quit() after stop() resumes the quit;
+      // the re-entrant will-quit passes through via `quitting`.
+      quitting = true;
+      event?.preventDefault();
+      void backendHost.stop().finally(() => app.quit());
+    });
     // NOTE: in dev mode the app:// handler is intentionally NOT registered
     // (the vite dev server serves the renderer), so an app:// target allowed
     // by the navigation policy below would fail to load in dev. Production

@@ -122,6 +122,10 @@ export const shell = {
   openExternal: vi.fn(),
 };
 
+export const dialog = {
+  showErrorBox: vi.fn(),
+};
+
 /** Reset all stub state; call from beforeEach in every spec. */
 export function __resetElectronStub(): void {
   app.requestSingleInstanceLock.mockClear();
@@ -144,4 +148,5 @@ export function __resetElectronStub(): void {
   ipcMain.on.mockClear();
   ipcMain.once.mockClear();
   ipcMain.removeHandler.mockClear();
+  dialog.showErrorBox.mockClear();
 }

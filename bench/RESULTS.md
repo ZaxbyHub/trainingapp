@@ -5,10 +5,15 @@ latency, and embed/rerank cost for the candidate models, per machine.
 
 **Provenance rules**
 
-1. Every number in the tables below comes from a recorded driver run
+1. Every number in the tables below comes from a recorded run merged via one
+   of the registered channels: the model-bench drivers
    (`bench/llama_bench_driver.py`, `bench/wllama_bench_driver.mjs`,
-   `bench/onnx_bench_driver.py`) merged via `bench/append_results.py`.
-   No number is hand-patched; a value without a corresponding run is PENDING.
+   `bench/onnx_bench_driver.py`) merged via `bench/append_results.py`, OR —
+   for desktop-host telemetry (issue #61) —
+   `desktop/scripts/run-conformance-host.mjs`, which prints its own
+   machine-tagged measurement line on every run (CI and local) and whose
+   cold-start section below quotes those lines. No number is hand-patched; a
+   value without a corresponding run is PENDING.
 2. Rows are **machine-tagged**. A row's `machine` cell names the hardware the
    measurement came from. Dev-station numbers must never be read as
    reference-laptop numbers (or vice versa); evidence is invalidated when the
@@ -117,6 +122,19 @@ Thread count: 4 (mirrors the desktop `n_threads` default, config.py:57).
 | date | artifact | size | notes |
 |---|---|---|---|
 | 2026-09-07 | TrainingApp-Setup-0.1.0.exe | 112.7 MB | unsigned NSIS x64, empty Electron shell (renderer only, no models/packs - #84 packages those); electron-builder 26, measured on the dev workstation from the C4 acceptance-check build |
+
+## Desktop backend host cold start (issue #61)
+
+`GET /health` -> 200 from process spawn, headless node-mode host. Provenance
+channel: `desktop/scripts/run-conformance-host.mjs` stdout (it prints
+`run-conformance-host: OK — ... cold start <N>ms (machine tag for
+bench/RESULTS.md: devstation)` on every run, CI included). N bound per issue
+#61 acceptance: 15000 ms.
+
+| date | machine | mode | cold_start_ms | bound_ms | notes |
+|---|---|---|---|---|---|
+| 2026-09-08 | devstation | node (stub engine) | 135 | 15000 | run-conformance-host.mjs stdout; conformance PASS 10/10 same run |
+| 2026-09-08 | devstation | node (stub engine) | 132 | 15000 | earlier harness run (same channel); CI windows-latest prints its own row |
 
 ## Reproducing on the reference laptop
 

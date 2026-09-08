@@ -19,4 +19,9 @@ contextBridge.exposeInMainWorld('trainingapp', {});
 
 contextBridge.exposeInMainWorld('desktopApi', {
   getAuthToken: () => ipcRenderer.invoke('desktop:get-token'),
+  // Backend port discovery (issue #61, B3): the renderer learns the guarded
+  // loopback backend address ONLY through this IPC (never web storage, never
+  // a URL). B9 consumes it; the token still travels via getAuthToken and is
+  // sent under the X-Desktop-Token header, not Authorization.
+  getBackendInfo: () => ipcRenderer.invoke('desktop:get-backend'),
 });
