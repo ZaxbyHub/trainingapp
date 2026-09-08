@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
+import { createBackendHost, resolveBackendMode, type BackendHandle, type BackendHost } from './backend/index.js';
 import {
   getLoopbackGuard,
   getLaunchToken,
@@ -146,7 +147,7 @@ export function bootstrap(): void {
   if (!acquireSingleInstanceLock()) return;
   registerSecondInstanceHandler();
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // Transport security (issue #60, B2): resolve config, mint the per-launch
     // token (main-process memory only), serve it to the renderer ONLY through
     // this IPC handler, and construct the loopback gate that B3's backend
@@ -165,6 +166,31 @@ export function bootstrap(): void {
       app.quit();
       return;
     }
+    // Backend host (issue #61, B3): start the guarded loopback listener behind
+    // the B2 guard, selected by backend.mode (node default; ADR-0003 #57).
+    // B4-B9 import ONLY desktop/main/backend/index.js — never this wiring.
+    let backendHost: BackendHost | null = null;
+    let backendHandle: BackendHandle | null = null;
+    try {
+      backendHost = createBackendHost({
+        token: getLaunchToken(),
+        tokenHeaderName: securityConfig.tokenHeaderName,
+        allowedOrigins: securityConfig.allowedOrigins,
+        mode: resolveBackendMode({ env: process.env }),
+      });
+      backendHandle = await backendHost.start();
+    } catch (err) {
+      console.error('[trainingapp-desktop] backend host failed to start:', err instanceof Error ? err.message : err);
+      app.quit();
+      return;
+    }
+    // Port discovery for B9 (renderer integration): the ONLY channel the
+    // backend address takes to the renderer — never web storage, never a URL.
+    ipcMain.handle('desktop:get-backend', () => backendHandle);
+    app.on('will-quit', () => {
+      // Idempotent; also the sidecar-manager's no-orphan guarantee on quit.
+      void backendHost?.stop();
+    });
     // NOTE: in dev mode the app:// handler is intentionally NOT registered
     // (the vite dev server serves the renderer), so an app:// target allowed
     // by the navigation policy below would fail to load in dev. Production

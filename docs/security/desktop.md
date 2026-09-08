@@ -109,6 +109,68 @@ When the backend host lands (#61, per ADR-0003), it MUST:
 The bootstrap fails fast (`app.quit()`) if the guard was not constructed, so
 a regression that drops the initialization cannot ship silently.
 
+## B3 backend host (issue #61, implemented)
+
+The backend host lives in `desktop/main/backend/` (single import seam:
+`desktop/main/backend/index.ts`; B4-B9 import ONLY that module). It satisfies
+the contract above as follows:
+
+- **Binding.** The host binds `127.0.0.1` on a **random free port** — the port
+  is requested from the OS (`listen(0)`), never hard-coded. The headless
+  entry `desktop/main/backend/dev-server.ts` (compiled to
+  `desktop/dist/main/backend/dev-server.js`) writes the bound port to a
+  `--port-file` for harness synchronization and exits when stdin closes.
+- **Guard mounting.** `createBackendServer` has ONE guard call site before any
+  routing; every request — including `/health`, `/auth/*`, and CORS-preflight
+  OPTIONS (answered only AFTER the origin/host gates) — traverses
+  `getLoopbackGuard()`. The request adapter builds the ABSOLUTE URL the guard
+  requires (`http://<Host header><path>`) and folds header case through the
+  fetch `Headers` implementation. A vitest guard-spy spec pins that every
+  request crosses the gate exactly once before any handler.
+- **Mode selection.** `backend.mode` (`"node" | "sidecar"`, env
+  `TRAININGAPP_DESKTOP_BACKEND_MODE`, default `"node"` while ADR-0003 #57 is
+  open) selects between two implementations of the ONE `BackendHost`
+  interface: the node host (guarded listener + local stub engine) or the
+  sidecar host (the SAME guarded listener fronting a loopback proxy to the
+  spawned backend child). Flipping the ADR decision is a one-line default
+  change.
+- **Sidecar spawn contract.** `SidecarManager` spawns the configured backend
+  executable with a loopback bind configuration — env `API_HOST=127.0.0.1`
+  and `API_PORT=<reserved free port>` for `api_server`-style launchers;
+  `--host 127.0.0.1 --port <port>` style args for uvicorn-style launchers —
+  with a configurable **working directory** (`sidecar.cwd`), bounded
+  readiness polling of `GET /health` with retry/backoff, bounded-retry
+  restart on unexpected exit (exponential backoff, loud give-up), and a
+  graceful-then-kill shutdown (`SIGTERM`, grace window, `SIGKILL`; on Windows
+  both signals map to TerminateProcess — the sequence is POSIX-meaningful and
+  Windows-harmless). All lifecycle timers are cleared on stop, so an app quit
+  leaves no orphan child; bootstrap registers a `will-quit` stop.
+- **Proxy hygiene (sidecar mode).** The guarded proxy STRIPS the transport
+  token header before forwarding (the sidecar never sees it) and FORWARDS the
+  reserved `X-Profile-Id` header unchanged (the B6 profile slot must survive
+  end-to-end). Upstream errors mid-response tear the client socket down after
+  a best-effort terminal write — no half-open hangs.
+- **Conformance testing.** CI job `backend-conformance` (in
+  `.github/workflows/desktop-build.yml`) runs
+  `desktop/scripts/run-conformance-host.mjs`: it boots the compiled headless
+  host with a random run token, starts a HARNESS-ONLY loopback proxy that
+  injects the token into every forwarded request (so the frozen conformance
+  suite traverses the REAL guarded listener — the guard is never bypassed,
+  weakened, or shipped in any production path), measures cold start to the
+  first 200 `GET /health` against a 15 s bound, and runs
+  `contracts/tests/run_conformance.py --base-url <proxy> --destructive`.
+  The harness runs the suite via an ASYNC spawn: a synchronous spawn would
+  block the harness event loop and stall the in-process proxy.
+- **Reserved profile slot.** `X-Profile-Id`
+  (`RESERVED_PROFILE_HEADER_NAME`, `desktop/main/backend/types.ts`) is
+  accepted on every route and ignored until B6 (#64) gives it meaning, so
+  profile-scoped storage cannot change the wire contract later.
+- **Renderer discovery.** The backend address reaches the renderer ONLY via
+  `ipcMain.handle('desktop:get-backend')` →
+  `desktopApi.getBackendInfo()` (B9 consumes it) — never web storage, never a
+  URL. The token still travels via `desktopApi.getAuthToken()` and is sent
+  under the configured token header, not `Authorization: Bearer`.
+
 ## Known limits (explicit, not silent)
 
 - Rate limiting beyond origin+token and TLS are out of scope for B2 per the

@@ -24,7 +24,7 @@
 //   R4 PASS: every check passes -> null (caller proceeds to its backend).
 //   R5 ISOLATION: the guard never touches the network and never calls a
 //      backend; composition is the caller's job.
-import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from './config.js';
+import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from './defaults.js';
 
 export interface LoopbackGuardRequest {
   // MUST be an ABSOLUTE URL (e.g. 'http://127.0.0.1:<port>/api' or

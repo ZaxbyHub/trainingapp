@@ -118,6 +118,17 @@ Thread count: 4 (mirrors the desktop `n_threads` default, config.py:57).
 |---|---|---|---|
 | 2026-09-07 | TrainingApp-Setup-0.1.0.exe | 112.7 MB | unsigned NSIS x64, empty Electron shell (renderer only, no models/packs - #84 packages those); electron-builder 26, measured on the dev workstation from the C4 acceptance-check build |
 
+## Desktop backend host cold start (issue #61)
+
+`GET /health` -> 200 from process spawn, headless node-mode host
+(`desktop/scripts/run-conformance-host.mjs` prints the same measurement every
+CI run). N bound per issue #61 acceptance: 15000 ms.
+
+| date | machine | mode | cold_start_ms | bound_ms | notes |
+|---|---|---|---|---|---|
+| 2026-09-08 | devstation | node (stub engine) | 135 | 15000 | run-conformance-host.mjs; conformance PASS 10/10 same run |
+| 2026-09-08 | devstation | node (stub engine) | 132 | 15000 | earlier harness run; CI windows-latest prints its own row |
+
 ## Reproducing on the reference laptop
 
 ```
