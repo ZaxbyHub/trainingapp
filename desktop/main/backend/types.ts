@@ -112,7 +112,6 @@ export interface EngineSurface {
   listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
   clearDocuments(): Promise<void>;
   getStats(): Promise<{ document_count: number; chunk_count: number; embedding_model: string; llm_backend: string | null; documents: string[] }>;
-  getSettingsSnapshot(): Record<string, number | string | boolean>;
   applySettingsPatch(patch: Record<string, unknown>): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
   responseSettings(): Record<string, unknown>;
   ingestDirectory(directory: string): Promise<{ success: boolean; documents: number; chunks_added: number; message: string | null }>;

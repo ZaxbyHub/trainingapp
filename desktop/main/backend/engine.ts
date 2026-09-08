@@ -115,10 +115,6 @@ export class StubEngine implements EngineSurface {
     };
   }
 
-  getSettingsSnapshot(): Record<string, number | string | boolean> {
-    return { ...this.settings };
-  }
-
   /**
    * Apply a rag_* patch with the frozen bounds. Returns the 400 message for
    * the cross-field rule (overlap >= size), mirroring api_server.py:1088.

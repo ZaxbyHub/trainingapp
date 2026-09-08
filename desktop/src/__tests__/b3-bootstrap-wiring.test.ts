@@ -73,14 +73,21 @@ describe('b3-bootstrap-wiring: the real runtime path (issue #61)', () => {
     const getBackend = await getRegisteredHandler('desktop:get-backend');
     const handle = (await getBackend()) as { port: number };
     app.emit('will-quit');
-    await waitFor(
-      () => {
-        // Synchronous probe via net: connection refused once the listener closed.
-        return netProbeClosed(handle.port);
-      },
-      'backend port to close',
-      5000,
-    );
+    // AWAIT the probe inside the loop and ASSERT the terminal state: the
+    // port must actually close. (Final-critic fix: the previous version
+    // returned a Promise object — always non-null — from the waitFor
+    // callback, so the boolean was never awaited or asserted and the test
+    // passed even with the will-quit handler removed.)
+    const deadline = Date.now() + 5000;
+    let closed = false;
+    while (Date.now() < deadline) {
+      if (await netProbeClosed(handle.port)) {
+        closed = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(closed).toBe(true);
   });
 });
 
