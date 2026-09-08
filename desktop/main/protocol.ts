@@ -11,6 +11,7 @@
 import { promises as fsp, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { protocol } from 'electron';
+import { buildCspPolicy } from './security/csp.js';
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -41,12 +42,32 @@ function mimeTypeFor(filePath: string): string {
   return MIME_TYPES[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream';
 }
 
+/**
+ * Attach the B2 transport-security headers to a response. Applied to EVERY
+ * response this handler constructs — success and error alike — matching the
+ * "every response, including errors" header discipline of the airgapped
+ * server (web_ui/scripts/start.ps1):
+ *   - Content-Security-Policy: the strict policy from security/csp.ts
+ *     (relaxations documented inline there).
+ *   - COOP/COEP/CORP: cross-origin isolation for the renderer, which is what
+ *     makes crossOriginIsolated true under app:// so onnxruntime-web may use
+ *     wasm.numThreads > 1 (web_ui/src/lib/models/offline-env.ts) — parity
+ *     with start.ps1's SharedArrayBuffer setup.
+ */
+function withSecurityHeaders(response: Response): Response {
+  response.headers.set('content-security-policy', buildCspPolicy());
+  response.headers.set('cross-origin-opener-policy', 'same-origin');
+  response.headers.set('cross-origin-embedder-policy', 'require-corp');
+  response.headers.set('cross-origin-resource-policy', 'same-origin');
+  return response;
+}
+
 function forbidden(): Response {
-  return new Response('Forbidden', { status: 403 });
+  return withSecurityHeaders(new Response('Forbidden', { status: 403 }));
 }
 
 function notFound(): Response {
-  return new Response('Not Found', { status: 404 });
+  return withSecurityHeaders(new Response('Not Found', { status: 404 }));
 }
 
 /**
@@ -116,15 +137,13 @@ export function createAppFileHandler(opts: { root: string }) {
         return forbidden();
       }
       const data = await fsp.readFile(real);
-      return new Response(new Uint8Array(data), {
+      return withSecurityHeaders(new Response(new Uint8Array(data), {
         headers: {
           'content-type': mimeTypeFor(real),
-          // Baseline response hygiene for the custom scheme (CSP itself is
-          // Workstream B2 / issue #60).
           'x-content-type-options': 'nosniff',
           'cache-control': 'no-cache',
         },
-      });
+      }));
     } catch {
       return notFound();
     }

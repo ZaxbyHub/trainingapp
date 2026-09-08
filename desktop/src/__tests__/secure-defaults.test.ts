@@ -71,18 +71,24 @@ describe('AC3 secure defaults', () => {
     expect(win.loadFile).not.toHaveBeenCalled();
   });
 
-  it('preload exposes exactly one namespace, `trainingapp`, with a plain-object API', async () => {
+  it('preload exposes the legacy `trainingapp` namespace and the B2 `desktopApi` token bridge', async () => {
     // Imported dynamically here so the module's contextBridge side effect runs
     // AFTER the beforeEach stub reset (the ESM registry caches it; vitest
     // isolates registries per test file, so it fires exactly once for this spec).
+    // Issue #60 (B2) extended the B1 single-namespace contract: `desktopApi`
+    // carries the per-launch token bridge; `trainingapp` stays for compat.
     await import('../../preload/index');
-    expect(contextBridge.exposeInMainWorld).toHaveBeenCalledTimes(1);
-    const [name, api] = contextBridge.exposeInMainWorld.mock.calls[0] as [
+    const calls = contextBridge.exposeInMainWorld.mock.calls as unknown as [
       string,
-      unknown,
-    ];
-    expect(name).toBe('trainingapp');
-    expect(api).toBeTypeOf('object');
-    expect(api).not.toBeNull();
+      Record<string, unknown>,
+    ][];
+    const trainingapp = calls.find(([name]) => name === 'trainingapp');
+    const desktopApi = calls.find(([name]) => name === 'desktopApi');
+    expect(trainingapp, 'legacy trainingapp namespace must remain exposed').toBeDefined();
+    expect(trainingapp?.[1]).toBeTypeOf('object');
+    expect(trainingapp?.[1]).not.toBeNull();
+    expect(desktopApi, 'desktopApi token-bridge namespace must be exposed').toBeDefined();
+    expect(desktopApi?.[1]).toBeTypeOf('object');
+    expect(typeof desktopApi?.[1].getAuthToken, 'desktopApi.getAuthToken must be a function').toBe('function');
   });
 });
