@@ -1,0 +1,50 @@
+name: Desktop Build
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'desktop/**'
+      - 'web_ui/**'
+      - '.github/workflows/desktop-build.yml'
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - 'web_ui/**'
+      - '.github/workflows/desktop-build.yml'
+
+jobs:
+  desktop-build:
+    name: Electron shell (unsigned NSIS x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: |
+            web_ui/package-lock.json
+            desktop/package-lock.json
+
+      - name: Build renderer (web_ui)
+        run: |
+          npm --prefix web_ui ci --no-audit --no-fund
+          npm --prefix web_ui run build
+
+      - name: Install desktop dependencies
+        run: npm --prefix desktop ci --no-audit --no-fund
+
+      - name: Acceptance tests (vitest, stubbed electron)
+        run: npm --prefix desktop test
+
+      - name: Build installer (unsigned NSIS x64)
+        run: npm --prefix desktop run desktop:build
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trainingapp-desktop-windows-installer
+          path: desktop/release/*.exe
+          if-no-files-found: error

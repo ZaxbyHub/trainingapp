@@ -1,0 +1,26 @@
+{
+  "name": "trainingapp-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Electron shell for the TrainingApp web_ui renderer (issue #59 acceptance checks)",
+  "type": "module",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:secure-defaults": "vitest run src/__tests__/secure-defaults.test.ts",
+    "test:single-instance": "vitest run src/__tests__/single-instance.test.ts",
+    "test:app-protocol": "vitest run src/__tests__/app-protocol.test.ts",
+    "dev": "npm run compile && electron . --dev",
+    "desktop:dev": "concurrently -k -n vite,electron \"npm --prefix ../web_ui run dev\" \"npm run compile && electron . --dev\"",
+    "build": "npm run compile && electron-builder --win nsis --x64",
+    "desktop:build": "npm --prefix ../web_ui run build && node -e \"require('fs').cpSync('../web_ui/dist', 'renderer', { recursive: true })\" && npm run compile && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5",
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  }
+}

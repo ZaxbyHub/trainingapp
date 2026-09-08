@@ -1,0 +1,26 @@
+# electron-builder configuration for the TrainingApp desktop shell (issue #59).
+# Unsigned NSIS x64 installer; code signing arrives with Workstream E5 (#88).
+appId: com.zaxbyhub.trainingapp
+productName: TrainingApp
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+# The desktop:build script copies web_ui/dist into renderer/ before packaging;
+# the main process serves it from <resourcesPath>/web_ui via the app:// protocol.
+extraResources:
+  - from: renderer
+    to: web_ui
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: true
+  perMachine: false
+  artifactName: ${productName}-Setup-${version}.${ext}
+  deleteAppDataOnUninstall: true
+npmRebuild: false
+compression: normal

@@ -112,6 +112,12 @@ Thread count: 4 (mirrors the desktop `n_threads` default, config.py:57).
 | reference-i5 | ettin-reranker-32m-v1 | PENDING | PENDING | PENDING |
 | devstation | ettin-reranker-32m-v1 | 2.66 | 2.67 | pass |
 
+## Desktop installer size (Electron shell, issue #59)
+
+| date | artifact | size | notes |
+|---|---|---|---|
+| 2026-09-07 | TrainingApp-Setup-0.1.0.exe | 112.7 MB | unsigned NSIS x64, empty Electron shell (renderer only, no models/packs - #84 packages those); electron-builder 26, measured on the dev workstation from the C4 acceptance-check build |
+
 ## Reproducing on the reference laptop
 
 ```
