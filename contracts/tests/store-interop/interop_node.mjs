@@ -112,7 +112,15 @@ function queryEvidence(db, fixture) {
   const ftsHits = db
     .prepare('SELECT chunk_id FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts)')
     .all(fixture.query_fts);
+  // COMPUTE this side's own content hashes from the fixture with THIS
+  // runtime's normalization implementation (never read the other writer's
+  // stored values — that would make cross-runtime divergence invisible).
+  const contentHashes = fixture.chunks.map((chunk) => [
+    chunk.id,
+    sha256Hex(normalized(chunk.text)),
+  ]);
   return {
+    content_hashes: contentHashes,
     docs_rows: db.prepare('SELECT COUNT(*) AS n FROM docs').get().n,
     chunks_rows: db.prepare('SELECT COUNT(*) AS n FROM chunks').get().n,
     embeddings_rows: db.prepare('SELECT COUNT(*) AS n FROM embeddings').get().n,

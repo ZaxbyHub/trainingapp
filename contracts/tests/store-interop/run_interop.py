@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -57,8 +58,11 @@ INSERT_CHUNK_SQL = (
 
 
 def normalized(text: str) -> str:
-    # Must match interop_node.mjs exactly.
-    return text.replace("\r\n", "\n")
+    # Must match interop_node.mjs and the schema's normalization definition
+    # exactly: line endings normalized to \n, trailing horizontal whitespace
+    # stripped. Any divergence here yields different content_hash values
+    # across runtimes (caught by the hashes_match verdict field).
+    return re.sub(r"[ \t]+$", "", text.replace("\r\n", "\n"), flags=re.MULTILINE)
 
 
 def sha256_hex(text: str) -> str:
@@ -142,7 +146,17 @@ def query_evidence(conn: sqlite3.Connection, fixture: dict) -> dict:
         "SELECT chunk_id FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts)",
         (fixture["query_fts"],),
     ).fetchall()
+    # COMPUTE each side's own content hashes from the fixture with THIS
+    # runtime's normalization implementation (never read the other writer's
+    # stored values — that would make cross-runtime divergence invisible).
+    # A normalization divergence between the two reference writers therefore
+    # fails the driver's hashes_match comparison.
+    content_hashes = [
+        [chunk["id"], sha256_hex(normalized(chunk["text"]))]
+        for chunk in fixture["chunks"]
+    ]
     return {
+        "content_hashes": content_hashes,
         "docs_rows": conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0],
         "chunks_rows": conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0],
         "embeddings_rows": conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[
@@ -290,6 +304,11 @@ def main() -> int:
             )
         )
         fts_match = writer.get("fts_hits") == o_fts and reader.get("fts_hits") == o_fts
+        # Cross-runtime content-hash identity: both writers must derive the
+        # SAME content_hash for every chunk from the frozen normalization rule.
+        hashes_match = bool(writer.get("content_hashes")) and writer.get(
+            "content_hashes"
+        ) == reader.get("content_hashes")
 
         verdict = {
             "check": check,
@@ -333,12 +352,14 @@ def main() -> int:
             "rows_match": rows_match,
             "topk_match": topk_match,
             "fts_match": fts_match,
+            "hashes_match": hashes_match,
         }
 
-        if not (rows_match and topk_match and fts_match):
+        if not (rows_match and topk_match and fts_match and hashes_match):
             log(
                 f"verdict mismatch: rows_match={rows_match} "
-                f"topk_match={topk_match} fts_match={fts_match}"
+                f"topk_match={topk_match} fts_match={fts_match} "
+                f"hashes_match={hashes_match}"
             )
             log(f"oracle topk ids={o_ids} distances={o_distances}")
             log(f"oracle fts hits={o_fts}")
