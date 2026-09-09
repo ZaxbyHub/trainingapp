@@ -11,7 +11,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
-import { createBackendHost, resolveBackendMode, resolveNodeEngine, type BackendHandle, type BackendHost } from './backend/index.js';
+import {
+  createBackendHost,
+  NodeBackendHost,
+  resolveBackendMode,
+  resolveNodeEngine,
+  type BackendHandle,
+  type BackendHost,
+} from './backend/index.js';
+import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
 import {
   getLoopbackGuard,
   getLaunchToken,
@@ -171,6 +179,21 @@ export function bootstrap(): void {
     // B4-B9 import ONLY desktop/main/backend/index.js — never this wiring.
     let backendHost: BackendHost | null = null;
     let backendHandle: BackendHandle | null = null;
+    // B6 (issue #64): profile-scoped store layout per ADR-0006 —
+    // <userData>/profiles/default/store.sqlite by default; legacy B5 stores
+    // under <userData>/store/store.db are migrated (atomic rename) on first
+    // B6 launch. Backups live under <userData>/backups.
+    const userDataPath = app.getPath('userData');
+    let storePath: string;
+    try {
+      migrateLegacyStoreLayout(userDataPath);
+      storePath = resolveProfileLayout({ userDataPath }).storePath;
+    } catch (err) {
+      console.error('[trainingapp-desktop] profile resolution failed:', err instanceof Error ? err.message : err);
+      app.quit();
+      return;
+    }
+    const backupsDir = path.join(userDataPath, 'backups');
     try {
       backendHost = createBackendHost({
         token: getLaunchToken(),
@@ -179,10 +202,30 @@ export function bootstrap(): void {
         mode: resolveBackendMode({ env: process.env }),
         // B4 (issue #62): when backend.mode is "node", serve real llama.cpp
         // inference with the model dir defaulting to <userData>/models.
-        engine: resolveNodeEngine(process.env, { userDataPath: app.getPath('userData') }),
-        // B5 (issue #63): open the per-profile SQLite store under userData on
-        // the production start path (failure-isolated in the host).
-        storePath: path.join(app.getPath('userData'), 'store', 'store.db'),
+        engine: resolveNodeEngine(process.env, { userDataPath }),
+        // B6 (issue #64): open the per-profile SQLite store (ADR-0006 layout).
+        storePath,
+        storeBackupsDir: backupsDir,
+        // B6: forward ingest progress to the renderer (B9 owns the bar UI).
+        onIngestProgress: (event) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send('ingest:progress', event);
+          }
+        },
+        // B6: corruption prompt — modal by design (ADR-0006): a store failing
+        // integrity cannot be served, so startup blocks on the user's choice.
+        onStoreCorruption: async (info) => {
+          const choice = await dialog.showMessageBox({
+            type: 'error',
+            title: 'TrainingApp store corrupted',
+            message: 'Your local knowledge store is corrupted.',
+            detail: info.message,
+            buttons: ['Restore from backup', 'Start fresh'],
+            defaultId: 0,
+            cancelId: 1,
+          });
+          return choice.response === 0 ? 'restore' : 'fresh';
+        },
         // Fail-loud surfacing when the sidecar exhausts its restart budget
         // (console.error alone is invisible in a packaged Electron app).
         onGiveUp: (attempts) => {
@@ -202,6 +245,15 @@ export function bootstrap(): void {
     // Port discovery for B9 (renderer integration): the ONLY channel the
     // backend address takes to the renderer — never web storage, never a URL.
     ipcMain.handle('desktop:get-backend', () => backendHandle);
+    // B6 (issue #64): manual backup entry point (renderer-reachable; B9 adds
+    // UI). Uses the same validated backup path as automatic recovery.
+    ipcMain.handle('desktop:store-backup', async () => {
+      const nodeHost = backendHost as NodeBackendHost | null;
+      if (nodeHost === null || typeof nodeHost.createStoreBackup !== 'function') {
+        return { ok: false as const, detail: 'backend host is not the node backend' };
+      }
+      return nodeHost.createStoreBackup(backupsDir);
+    });
     let quitting = false;
     app.on('will-quit', (event) => {
       if (quitting || backendHost === null) return;

@@ -58,6 +58,8 @@ export interface StoreOptions {
 
 export interface StoreHandle {
   db: BetterSqlite3Db;
+  /** Absolute path of the store file (backup/restore and recovery need it). */
+  dbPath: string;
   dims: number;
   schemaVersion: number;
   close(): void;
@@ -154,6 +156,7 @@ export function openStore(options: StoreOptions): StoreHandle {
     const schemaVersion = migrate(db);
     return {
       db,
+      dbPath: options.dbPath,
       dims,
       schemaVersion,
       close: () => db.close(),

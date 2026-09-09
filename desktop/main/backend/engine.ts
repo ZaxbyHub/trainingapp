@@ -5,7 +5,14 @@
 // (#64), shared store schema B5 (#63). Every capability below is a STUB that
 // mirrors the response SHAPES of api_server.py (the conformance reference)
 // with deterministic, model-free data. Each stub names its owning issue.
-import type { EngineQueryOptions, EngineQueryResult, EngineSurface } from './types.js';
+import type {
+  BatchIngestResult,
+  EngineQueryOptions,
+  EngineQueryResult,
+  EngineSurface,
+  IngestFileInput,
+  IngestResult,
+} from './types.js';
 
 // Settings defaults mirror config.py's RAGSettings field defaults so the
 // desktop settings surface stays number-compatible with the Python reference.
@@ -183,7 +190,7 @@ export class StubEngine implements EngineSurface {
 
   // STUB: directory ingestion is B6 (#64). Honest stub: reports failure with
   // the owning issue in the message rather than pretending success.
-  async ingestDirectory(_directory: string): Promise<{ success: boolean; documents: number; chunks_added: number; message: string | null }> {
+  async ingestDirectory(_directory: string): Promise<IngestResult> {
     return {
       success: false,
       documents: 0,
@@ -192,7 +199,7 @@ export class StubEngine implements EngineSurface {
     };
   }
 
-  async ingestFile(): Promise<{ success: boolean; documents: number; chunks_added: number; message: string | null }> {
+  async ingestFile(_input?: IngestFileInput): Promise<IngestResult> {
     return {
       success: false,
       documents: 0,
@@ -202,10 +209,11 @@ export class StubEngine implements EngineSurface {
   }
 
   // STUB: multipart batch parsing/persistence arrives with B6 (#64). The
-  // route passes count=0 until real parsing exists — the frozen
-  // BatchIngestResponse shape has no not-implemented slot, so honesty here is
-  // bounded until B6 lands.
-  async ingestBatch(count: number): Promise<{ total_files: number; successful: number; failed: number; results: Array<{ filename: string; success: boolean; chunks_added?: number; error?: string }> }> {
+  // frozen BatchIngestResponse shape has no not-implemented slot, so honesty
+  // here is bounded: every provided file counts as failed with no per-file
+  // results until a real store-backed surface is attached.
+  async ingestBatch(inputs?: IngestFileInput[]): Promise<BatchIngestResult> {
+    const count = inputs?.length ?? 0;
     return {
       total_files: count,
       successful: 0,

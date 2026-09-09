@@ -42,6 +42,51 @@ export interface SidecarLaunchConfig {
   healthTimeoutMs?: number;
 }
 
+/** Uploaded-file ingest input (B6, issue #64): /ingest/file + /ingest/batch. */
+export interface IngestFileInput {
+  name: string;
+  data: Uint8Array;
+}
+
+export interface IngestResult {
+  success: boolean;
+  documents: number;
+  chunks_added: number;
+  message: string | null;
+}
+
+export interface BatchIngestResult {
+  total_files: number;
+  successful: number;
+  failed: number;
+  results: Array<{ filename: string; success: boolean; chunks_added?: number; error?: string }>;
+}
+
+/**
+ * The B6 document/store surface an engine can be handed at runtime (host ->).
+ * Structural — the concrete implementation lives in store/document-surface.ts
+ * and is attached via EngineSurface.attachDocumentSurface (defined here so the
+ * CONTRACT module never depends on the implementation).
+ */
+export interface DocumentSurface {
+  listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
+  clearDocuments(): Promise<void>;
+  ingestDirectory(directory: string): Promise<IngestResult>;
+  ingestFile(input?: IngestFileInput): Promise<IngestResult>;
+  ingestBatch(inputs?: IngestFileInput[]): Promise<BatchIngestResult>;
+  readonly embedderModelId: string;
+}
+
+/** Corruption-recovery choice callback (B6): restore from backup or start fresh. */
+export type StoreCorruptionChoice = 'restore' | 'fresh';
+
+/** Ingest progress event shape (B6): `ingest:progress` for B9's bar. */
+export interface IngestProgressEvent {
+  docId: string;
+  phase: string;
+  percent: number;
+}
+
 export interface BackendHostConfig {
   mode?: BackendMode;
   /** Per-launch transport token (from security/token.ts, or a test token). */
@@ -67,6 +112,17 @@ export interface BackendHostConfig {
    *  the current Python embedder) until ADR-0001 (#55) decides the
    *  production value. */
   storeEmbeddingDims?: number;
+  /** Node mode only (B6, issue #64): directory for store backups created by
+   *  the recovery/backup surfaces. Defaults to <storeDir>/backups. */
+  storeBackupsDir?: string;
+  /** Node mode only (B6): ingest progress sink. The Electron bootstrap
+   *  forwards these to the renderer as `ingest:progress` IPC events. */
+  onIngestProgress?: (event: IngestProgressEvent) => void;
+  /** Node mode only (B6): corruption prompt seam. When the store file fails
+   *  the startup integrity check, the host asks the embedder of this callback
+   *  whether to restore from the latest backup or start fresh; when unset,
+   *  the host auto-recovers (restore when a backup exists, else fresh). */
+  onStoreCorruption?: (info: { dbPath: string; message: string }) => Promise<StoreCorruptionChoice>;
   /** Surfacing seam (sidecar mode): called once when the restart budget is
    *  exhausted. Bootstrap wires it to a fail-loud user-visible notice; B9
    *  owns any richer UX. Requests keep getting contract-safe 502s. */
@@ -158,7 +214,17 @@ export interface EngineSurface {
   getStats(): Promise<{ document_count: number; chunk_count: number; embedding_model: string; llm_backend: string | null; documents: string[] }>;
   applySettingsPatch(patch: Record<string, unknown>): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
   responseSettings(): Record<string, unknown>;
-  ingestDirectory(directory: string): Promise<{ success: boolean; documents: number; chunks_added: number; message: string | null }>;
-  ingestFile(): Promise<{ success: boolean; documents: number; chunks_added: number; message: string | null }>;
-  ingestBatch(count: number): Promise<{ total_files: number; successful: number; failed: number; results: Array<{ filename: string; success: boolean; chunks_added?: number; error?: string }> }>;
+  ingestDirectory(directory: string): Promise<IngestResult>;
+  /** B6 (issue #64): input carries the uploaded file; the no-input form is
+   *  kept so pre-B6 callers/test doubles stay source-compatible (the stub
+   *  answers the honest not-implemented payload). */
+  ingestFile(input?: IngestFileInput): Promise<IngestResult>;
+  ingestBatch(inputs?: IngestFileInput[]): Promise<BatchIngestResult>;
+  /**
+   * B6 (issue #64): late-bound store/document surface. The HOST opens the
+   * store (its lifecycle) and attaches the surface after start(); engines
+   * that support it delegate document methods there, falling back to their
+   * stub otherwise. Attaching null detaches (host stop).
+   */
+  attachDocumentSurface?(surface: DocumentSurface | null): void;
 }
