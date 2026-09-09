@@ -210,7 +210,9 @@ describe('b6 supplementary (critic R2): Office extractor fixtures (real bytes)',
     expect(extracted.text).toContain('Hello DOCX fixture');
   });
 
-  // PRODUCTION BUG (reported, not fixed here — test-surface work only):
+  // History: this fixture originally caught extractXlsxFile calling
+  // workbook.utils.sheet_to_csv (SheetJS keeps `utils` on the module) —
+  // the production call is fixed to XLSX.utils.sheet_to_csv; this test pins it.
   itReal('a minimal .xlsx written via the xlsx package extracts its cell text', async () => {
     const root = makeTempDir('b6s-xlsx-');
     const workbook = XLSX.utils.book_new();
