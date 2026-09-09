@@ -193,16 +193,25 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
 }
 
 /** Engine selection for the node backend host (B4). */
-export function resolveNodeEngine(env: Record<string, string | undefined> = process.env): EngineSurface {
+export function resolveNodeEngine(
+  env: Record<string, string | undefined> = process.env,
+  overrides?: { userDataPath?: string },
+): EngineSurface {
   if (env.TRAININGAPP_DESKTOP_ENGINE === 'stub') {
     // Explicit dev/CI fixture: transport/conformance testing without weights.
     return new StubEngine();
   }
   const threadsEnv = env.TRAININGAPP_DESKTOP_INFERENCE_THREADS;
   const parsedThreads = threadsEnv !== undefined && threadsEnv !== '' ? Number.parseInt(threadsEnv, 10) : NaN;
+  const profileEnv = env.TRAININGAPP_DESKTOP_INFERENCE_PROFILE;
+  const profile =
+    profileEnv === 'quality' || profileEnv === 'fast' || profileEnv === 'auto'
+      ? (profileEnv as ProfileSetting)
+      : undefined;
   return new LlamaEngine({
     modelDir: env.TRAININGAPP_INFERENCE_MODEL_DIR,
-    profile: env.TRAININGAPP_DESKTOP_INFERENCE_PROFILE as ProfileSetting | undefined,
+    userDataPath: overrides?.userDataPath,
+    profile,
     ...(Number.isFinite(parsedThreads) ? { threads: parsedThreads } : {}),
   });
 }
@@ -211,8 +220,6 @@ interface ResidentEntry {
   backend: LlamaEngineBackend;
   profile: InferenceProfileName;
   inFlight: number;
-  drainedPromise: Promise<void> | null;
-  notifyDrained: (() => void) | null;
 }
 
 export class LlamaEngine implements EngineSurface {
@@ -298,8 +305,9 @@ export class LlamaEngine implements EngineSurface {
     const old = this.resident;
     if (old !== null) {
       this.resident = null;
-      // Profile switch defers to post-request: wait for in-flight generations.
-      if (old.drainedPromise !== null) await old.drainedPromise;
+      // Profile switch defers to post-request: the per-engine queue means the
+      // caller only reaches this point after prior generations completed, so
+      // the old backend is idle and safe to dispose synchronously.
       await old.backend.dispose().catch(() => {});
     }
     const threads = this.effectiveThreads();
@@ -319,7 +327,7 @@ export class LlamaEngine implements EngineSurface {
       );
     }
     this.loads += 1;
-    const entry: ResidentEntry = { backend, profile, inFlight: 0, drainedPromise: null, notifyDrained: null };
+    const entry: ResidentEntry = { backend, profile, inFlight: 0 };
     this.resident = entry;
     return entry;
   }
@@ -331,7 +339,6 @@ export class LlamaEngine implements EngineSurface {
     const run = this.queue.then(async () => {
       const entry = await this.ensureResident(profile, modelPath);
       entry.inFlight += 1;
-      entry.drainedPromise = null;
       try {
         const result = await entry.backend.generate(question, {
           history: opts.history,
@@ -348,7 +355,6 @@ export class LlamaEngine implements EngineSurface {
         return out;
       } finally {
         entry.inFlight -= 1;
-        if (entry.inFlight === 0) entry.notifyDrained?.();
       }
     });
     this.queue = run.catch(() => {});
@@ -497,7 +503,6 @@ export class LlamaEngine implements EngineSurface {
     const resident = this.resident;
     this.resident = null;
     if (resident !== null) {
-      if (resident.drainedPromise !== null) await resident.drainedPromise;
       await resident.backend.dispose().catch(() => {});
     }
   }

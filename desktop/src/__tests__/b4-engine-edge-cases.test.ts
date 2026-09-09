@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
   LlamaEngine,
   ModelNotConfiguredError,
+  resolveNodeEngine,
   type LlamaEngineBackend,
 } from '../../main/backend/inference/llama-engine';
 
@@ -152,5 +153,48 @@ describe('b4-engine-edge-cases', () => {
       const result = engine.applySettingsPatch({ [key]: 1 });
       expect(result.ok, `key ${key} must be rejected`).toBe(false);
     }
+  });
+
+  it('resolveNodeEngine pins the Electron model-dir default to <userData>/models', async () => {
+    const userData = path.join('base', 'userdata');
+    const engine = resolveNodeEngine(
+      { TRAININGAPP_DESKTOP_INFERENCE_PROFILE: 'fast' },
+      { userDataPath: userData },
+    );
+    expect(engine).toBeInstanceOf(LlamaEngine);
+    // With no weights staged, preflight() fails pointing at the exact
+    // location the Electron default resolved to.
+    const native = engine as LlamaEngine;
+    const error = await native.preflight().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ModelNotConfiguredError);
+    expect((error as Error).message).toContain(path.join(userData, 'models'));
+  });
+
+  it('resolveNodeEngine: TRAININGAPP_INFERENCE_MODEL_DIR wins over userDataPath', async () => {
+    const modelDir = path.join('custom', 'model-dir');
+    const engine = resolveNodeEngine(
+      {
+        TRAININGAPP_INFERENCE_MODEL_DIR: modelDir,
+        TRAININGAPP_DESKTOP_INFERENCE_PROFILE: 'fast',
+      },
+      { userDataPath: path.join('base', 'userdata') },
+    );
+    const native = engine as LlamaEngine;
+    const error = await native.preflight().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ModelNotConfiguredError);
+    expect((error as Error).message).toContain(modelDir);
+    expect((error as Error).message).not.toContain(path.join('base', 'userdata'));
+  });
+
+  it('resolveNodeEngine tolerates an invalid TRAININGAPP_DESKTOP_INFERENCE_PROFILE (falls back to auto)', () => {
+    expect(() =>
+      resolveNodeEngine({ TRAININGAPP_DESKTOP_INFERENCE_PROFILE: 'turbo' }),
+    ).not.toThrow();
   });
 });

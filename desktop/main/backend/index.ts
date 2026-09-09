@@ -25,7 +25,7 @@ import {
 } from './types.js';
 
 export type { BackendHandle, BackendHost, BackendHostConfig, BackendMode };
-export { resolveBackendMode };
+export { resolveBackendMode, resolveNodeEngine };
 
 /**
  * Reserve a free loopback port for a child process: bind port 0, read the

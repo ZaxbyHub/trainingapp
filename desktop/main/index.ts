@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
-import { createBackendHost, resolveBackendMode, type BackendHandle, type BackendHost } from './backend/index.js';
+import { createBackendHost, resolveBackendMode, resolveNodeEngine, type BackendHandle, type BackendHost } from './backend/index.js';
 import {
   getLoopbackGuard,
   getLaunchToken,
@@ -177,6 +177,9 @@ export function bootstrap(): void {
         tokenHeaderName: securityConfig.tokenHeaderName,
         allowedOrigins: securityConfig.allowedOrigins,
         mode: resolveBackendMode({ env: process.env }),
+        // B4 (issue #62): when backend.mode is "node", serve real llama.cpp
+        // inference with the model dir defaulting to <userData>/models.
+        engine: resolveNodeEngine(process.env, { userDataPath: app.getPath('userData') }),
         // Fail-loud surfacing when the sidecar exhausts its restart budget
         // (console.error alone is invisible in a packaged Electron app).
         onGiveUp: (attempts) => {
