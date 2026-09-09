@@ -119,24 +119,31 @@ describe('b6 supplementary (critic R2): embedder contract enforcement', () => {
 });
 
 describe('b6 supplementary (critic R2): per-file failure isolation', () => {
-  itReal('directory ingest: a corrupt .pdf fails alone; the good file still lands', async () => {
-    const root = makeTempDir('b6s-dir-');
-    const docsDir = path.join(root, 'docs');
-    fs.mkdirSync(docsDir);
-    fs.writeFileSync(path.join(docsDir, 'good.txt'), `${words(60, 'good')} file\n`, 'utf8');
-    fs.writeFileSync(path.join(docsDir, 'bad.pdf'), 'not a pdf', 'utf8');
-    const { store, pipeline } = makePipeline(root, 8, new HashEmbedder({ dims: 8 }));
-    try {
-      const res = await pipeline.ingestDirectory(docsDir);
-      expect(res.success).toBe(true);
-      expect(res.documents).toBe(1);
-      expect(typeof res.message).toBe('string');
-      expect(res.message).toContain('bad.pdf');
-      expect(countRows(store, 'docs')).toBe(1);
-    } finally {
-      store.close();
-    }
-  });
+  // The corrupt-PDF path lazily imports pdfjs-dist's legacy ESM build — a
+  // multi-second cold import on a loaded CI runner — so the default 5s test
+  // timeout flakes (seen once on windows-latest). Give it headroom.
+  itReal(
+    'directory ingest: a corrupt .pdf fails alone; the good file still lands',
+    async () => {
+      const root = makeTempDir('b6s-dir-');
+      const docsDir = path.join(root, 'docs');
+      fs.mkdirSync(docsDir);
+      fs.writeFileSync(path.join(docsDir, 'good.txt'), `${words(60, 'good')} file\n`, 'utf8');
+      fs.writeFileSync(path.join(docsDir, 'bad.pdf'), 'not a pdf', 'utf8');
+      const { store, pipeline } = makePipeline(root, 8, new HashEmbedder({ dims: 8 }));
+      try {
+        const res = await pipeline.ingestDirectory(docsDir);
+        expect(res.success).toBe(true);
+        expect(res.documents).toBe(1);
+        expect(typeof res.message).toBe('string');
+        expect(res.message).toContain('bad.pdf');
+        expect(countRows(store, 'docs')).toBe(1);
+      } finally {
+        store.close();
+      }
+    },
+    20_000,
+  );
 
   itReal('batch ingest: the corrupt file is reported per-result; its sibling succeeds', async () => {
     const root = makeTempDir('b6s-batch-');
