@@ -98,6 +98,10 @@ export class StubEngine implements EngineSurface {
     return [{ text: `Stub retrieval result for "${query}" (B7, issue #65).`, source: 'desktop-stub', similarity: 0.5 }];
   }
 
+  // B4 (issue #62): the stub is always ready — real engines use this hook to
+  // surface a missing model BEFORE any response byte is written.
+  async preflight(): Promise<void> {}
+
   // STUB: the document store arrives with B5/B6 (#63/#64).
   async listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }> {
     return { documents: [], total: 0 };

@@ -136,9 +136,19 @@ async function main() {
   }
   const token = crypto.randomBytes(24).toString('hex');
   const portFile = path.join(os.tmpdir(), `conformance-host-port-${process.pid}.txt`);
+  // Engine under test (B4, issue #62): the conformance suite validates the
+  // TRANSPORT against the frozen contract, which CI can only do with the
+  // deterministic stub fixture (no weights on runners) — hence the explicit
+  // `--engine stub`. Set TRAININGAPP_CONFORMANCE_ENGINE=llama (+ optionally
+  // TRAININGAPP_INFERENCE_MODEL_DIR / TRAININGAPP_DESKTOP_INFERENCE_PROFILE)
+  // to run the SAME suite against REAL inference on a weights-staged machine;
+  // the env is inherited by the child and consumed by resolveNodeEngine.
+  const engineArg = process.env.TRAININGAPP_CONFORMANCE_ENGINE === 'llama'
+    ? ['--engine', 'auto']
+    : ['--engine', 'stub'];
   const host = spawn(
     process.execPath,
-    [hostEntry, '--port-file', portFile, '--mode', args.mode, '--token', token],
+    [hostEntry, '--port-file', portFile, '--mode', args.mode, '--token', token, ...engineArg],
     { cwd: repoRoot, stdio: ['pipe', 'inherit', 'inherit'] },
   );
   children.push(host);

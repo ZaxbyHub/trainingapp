@@ -73,6 +73,10 @@ cells are appended per recorded run.
 | devstation | lfm2.5-vl-450m | Q4_K_M | 8 | 1024 | 80.15 | 1311.9 | 497.3 | llama-cpp-python | pass |
 | devstation | gemma-4-e2b-it | Q4_K_M | 4 | 1024 | 3.65 | 36813 | 2761.2 | llama-cpp-python | pass |
 | devstation | gemma-4-e2b-it | Q4_K_M | 8 | 1024 | 2.12 | 17575.1 | 2761.4 | llama-cpp-python | pass |
+| devstation | gemma-4-e2b-it | Q4_K_M | 8 | 64 | 0.91 | 6558.9 | 2819 | node-llama-cpp | pass |
+| devstation | gemma-4-e2b-it | Q4_K_M | 4 | 64 | 0.61 | 9860.1 | 2818 | node-llama-cpp | pass |
+| devstation | lfm2.5-vl-450m | Q4_K_M | 8 | 64 | 37.12 | 969.2 | 619 | node-llama-cpp | pass |
+| devstation | lfm2.5-vl-450m | Q4_K_M | 4 | 64 | 22.72 | 1343.1 | 617 | node-llama-cpp | pass |
 
 ## Vulkan attempt
 
