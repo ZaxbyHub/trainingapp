@@ -61,7 +61,12 @@
 ## Consequences
 
 - First B6 launch silently migrates B5 layouts; a downgrade back to B5 code
-  requires the documented reverse rename (no code path does it).
+  requires the documented reverse rename (no code path does it). Without that
+  reverse rename, a pre-B6 build recreates an empty store at the legacy path,
+  so the migrated data stays invisible until the rename is undone. A failed
+  migration (source locked, ACL denial) intentionally aborts launch — the
+  same-volume rename is atomic, so nothing is half-migrated; resolve the lock
+  and relaunch.
 - Profile selection is env-driven; a profile-picker UI is out of B6 scope and
   would layer on `resolveProfileLayout` unchanged.
 - Interactive corruption recovery means an unattended Electron launch CAN

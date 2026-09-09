@@ -25,7 +25,7 @@ import path from 'node:path';
 import type { StoreHandle } from '../store/sqlite-store.js';
 import { isSupportedFile, extractDocumentFromFile, type ExtractionPage } from './extractors.js';
 import type { EmbeddingSurface } from './embedder.js';
-import type { IngestConfig } from './config.js';
+import type { IngestConfig, IngestLimits } from './config.js';
 import { TextChunker } from './text-chunker.js';
 
 export interface IngestFileInput {
@@ -59,6 +59,8 @@ export interface IngestPipelineOptions {
   store: StoreHandle;
   embedder: EmbeddingSurface;
   config: IngestConfig;
+  /** Extraction resource caps; omit for none (direct test constructions). */
+  limits?: IngestLimits;
   onProgress?: (event: IngestProgress) => void;
 }
 
@@ -200,6 +202,17 @@ export class IngestPipeline {
    * per phase. Returns success:false (never throws) for per-file failures.
    */
   private async ingestOne(input: IngestFileInput): Promise<IngestResult> {
+    const limits = this.opts.limits;
+    const maxFileBytes = limits?.maxFileBytes;
+    if (maxFileBytes !== undefined && input.data.length > maxFileBytes) {
+      return {
+        success: false,
+        documents: 0,
+        chunks_added: 0,
+        message: `file too large (${input.data.length} bytes; per-file cap ${maxFileBytes})`,
+      };
+    }
+
     const docId = sha256Hex(Buffer.from(input.data));
     this.emit(docId, 'extract', 5);
 
@@ -221,6 +234,15 @@ export class IngestPipeline {
 
     if (extracted.text.trim().length === 0) {
       return { success: false, documents: 0, chunks_added: 0, message: 'no extractable text' };
+    }
+    const maxTextChars = limits?.maxTextChars;
+    if (maxTextChars !== undefined && extracted.text.length > maxTextChars) {
+      return {
+        success: false,
+        documents: 0,
+        chunks_added: 0,
+        message: `extracted text (${extracted.text.length} chars) exceeds the per-document cap (${maxTextChars} chars)`,
+      };
     }
 
     this.emit(docId, 'chunk', 30);
@@ -277,7 +299,8 @@ export class IngestPipeline {
     try {
       tempFile = path.join(tempDir, `source${extension || '.bin'}`);
       fs.writeFileSync(tempFile, data);
-      return await extractDocumentFromFile(tempFile);
+      const maxZipBytes = this.opts.limits?.maxZipBytes;
+      return await extractDocumentFromFile(tempFile, maxZipBytes === undefined ? {} : { maxZipBytes });
     } finally {
       try {
         if (tempFile !== null) fs.rmSync(tempFile, { force: true });
@@ -349,10 +372,14 @@ export class IngestPipeline {
 
       if (!this.modelIdRecorded) {
         stmt(db, "UPDATE meta SET value = ? WHERE key = 'embedding_model_id'").run(this.opts.embedder.modelId);
-        this.modelIdRecorded = true;
       }
 
       db.exec('COMMIT');
+      // Only mark the meta write as durable AFTER COMMIT succeeds: a failed
+      // transaction must leave the flag unset so the next write retries it
+      // (PRR-004: the flag used to be set pre-COMMIT and a rollback left
+      // meta.embedding_model_id empty for the pipeline's lifetime).
+      this.modelIdRecorded = true;
       return { success: true, documents: 1, chunks_added: chunks.length, message: null };
     } catch (err) {
       try {

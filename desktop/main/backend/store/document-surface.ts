@@ -24,7 +24,7 @@ import {
   type IngestResult,
 } from '../ingest/pipeline.js';
 import type { EmbeddingSurface } from '../ingest/embedder.js';
-import type { IngestConfig } from '../ingest/config.js';
+import type { IngestConfig, IngestLimits } from '../ingest/config.js';
 
 export interface DocumentSurface {
   listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
@@ -42,6 +42,8 @@ export interface StoreDocumentSurfaceOptions {
   setStore: (handle: StoreHandle | null) => void;
   embedder: EmbeddingSurface;
   config: IngestConfig;
+  /** Extraction resource caps; omitted limits disable the caps. */
+  limits?: IngestLimits;
   /** Schema root for re-initialization; discovered when omitted. */
   repoRoot?: string;
   onProgress?: (event: IngestProgress) => void;
@@ -62,6 +64,7 @@ export class StoreDocumentSurface implements DocumentSurface {
         store,
         embedder: this.opts.embedder,
         config: this.opts.config,
+        ...(this.opts.limits ? { limits: this.opts.limits } : {}),
         onProgress: this.opts.onProgress,
       });
     }
@@ -99,8 +102,13 @@ export class StoreDocumentSurface implements DocumentSurface {
     for (const suffix of ['', '-wal', '-shm']) {
       try {
         fs.rmSync(`${store.dbPath}${suffix}`, { force: true });
-      } catch {
-        // Re-init below fails loud if deletion genuinely failed.
+      } catch (err) {
+        // openStore does NOT validate sidecar absence, so a failed removal
+        // here would leave stale bytes a reopened store could pick up —
+        // make it loud instead of silent (PRR-016).
+        console.error(
+          `[trainingapp-store] clear-cache: failed to remove ${store.dbPath}${suffix}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
     const fresh = openStore({

@@ -21,7 +21,7 @@ import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
 import { StoreDocumentSurface } from './store/document-surface.js';
 import { resolveEmbedder } from './ingest/embedder.js';
-import { resolveIngestConfig } from './ingest/config.js';
+import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
 import {
   resolveBackendMode,
   type BackendHandle,
@@ -301,6 +301,7 @@ function attachStoreSurface(
       setStore: accessors.set,
       embedder,
       config: resolveIngestConfig(env),
+      limits: resolveIngestLimits(env),
       onProgress: config.onIngestProgress,
     });
     if (typeof (engine as { attachDocumentSurface?: unknown }).attachDocumentSurface === 'function') {

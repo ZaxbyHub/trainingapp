@@ -27,6 +27,26 @@ export const INGEST_MAX_CONCURRENT_FILES_ENV = 'TRAININGAPP_INGEST_MAX_CONCURREN
 export const INGEST_CHUNK_WORD_COUNT_ENV = 'TRAININGAPP_INGEST_CHUNK_WORD_COUNT';
 export const INGEST_CHUNK_OVERLAP_WORDS_ENV = 'TRAININGAPP_INGEST_CHUNK_OVERLAP_WORDS';
 
+/** Resource caps for one ingest operation (extraction-bomb defense). */
+export interface IngestLimits {
+  /** Refuse files larger than this many bytes, in EVERY ingest mode. */
+  maxFileBytes: number;
+  /** Refuse zip-based docs (docx/xlsx/pptx) whose declared entries decompress beyond this. */
+  maxZipBytes: number;
+  /** Refuse documents whose extracted text exceeds this many characters. */
+  maxTextChars: number;
+}
+
+export const DEFAULT_INGEST_LIMITS: Readonly<IngestLimits> = Object.freeze({
+  maxFileBytes: 60 * 1024 * 1024,
+  maxZipBytes: 512 * 1024 * 1024,
+  maxTextChars: 8_000_000,
+});
+
+export const INGEST_MAX_FILE_BYTES_ENV = 'TRAININGAPP_INGEST_MAX_FILE_BYTES';
+export const INGEST_MAX_ZIP_BYTES_ENV = 'TRAININGAPP_INGEST_MAX_ZIP_BYTES';
+export const INGEST_MAX_TEXT_CHARS_ENV = 'TRAININGAPP_INGEST_MAX_TEXT_CHARS';
+
 /** Parse one positive-integer env value; anything else is rejected (not clamped). */
 function positiveInt(raw: string | undefined): number | undefined {
   if (raw === undefined || raw === '' || !/^\d+$/.test(raw)) return undefined;
@@ -50,4 +70,18 @@ export function resolveIngestConfig(env: Record<string, string | undefined> = pr
   }
   if (maxConcurrentFiles < 1) maxConcurrentFiles = DEFAULT_INGEST_CONFIG.maxConcurrentFiles;
   return { maxConcurrentFiles, chunkWordCount, chunkOverlapWords };
+}
+
+/**
+ * Resolve the extraction resource caps. Deliberately SEPARATE from
+ * resolveIngestConfig: the frozen acceptance pin expects that resolver to
+ * return exactly the three documented ingest.* keys, and the caps are a
+ * review-hardening surface (PRR-005) with their own env overrides.
+ */
+export function resolveIngestLimits(env: Record<string, string | undefined> = process.env): IngestLimits {
+  return {
+    maxFileBytes: positiveInt(env[INGEST_MAX_FILE_BYTES_ENV]) ?? DEFAULT_INGEST_LIMITS.maxFileBytes,
+    maxZipBytes: positiveInt(env[INGEST_MAX_ZIP_BYTES_ENV]) ?? DEFAULT_INGEST_LIMITS.maxZipBytes,
+    maxTextChars: positiveInt(env[INGEST_MAX_TEXT_CHARS_ENV]) ?? DEFAULT_INGEST_LIMITS.maxTextChars,
+  };
 }

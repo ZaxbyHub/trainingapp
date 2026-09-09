@@ -61,7 +61,21 @@ export function createBackup(store: { dbPath: string; db: { prepare(sql: string)
     target = path.join(backupsDir, timestampDirName(backupSequence), 'store.sqlite');
   } while (fs.existsSync(target));
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.copyFileSync(store.dbPath, target);
+  // Stage-then-publish (PRR-002): a crash mid-copy leaves only an invisible
+  // .part sibling — latestBackup() selects store.sqlite only, so a partial
+  // copy can never be picked for restore.
+  const staging = `${target}.part`;
+  try {
+    fs.copyFileSync(store.dbPath, staging);
+    fs.renameSync(staging, target);
+  } catch (err) {
+    try {
+      fs.rmSync(staging, { force: true });
+    } catch {
+      // Best effort; a leftover .part is never selected for restore.
+    }
+    throw err;
+  }
   return { path: target, bytes: fs.statSync(target).size };
 }
 

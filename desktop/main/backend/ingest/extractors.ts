@@ -183,16 +183,47 @@ const EXTRACTORS: Record<string, (filePath: string) => Promise<ExtractionResultN
   '.pptx': extractPptxFile,
 };
 
+/** Zip containers whose declared decompressed size the cap guard sums. */
+const ZIP_EXTENSIONS: ReadonlySet<string> = new Set(['.docx', '.xlsx', '.pptx']);
+
+/**
+ * Extraction-bomb defense: refuse zip-based documents whose entries DECLARE
+ * more decompressed bytes than the cap. Reads only the central directory
+ * (JSZip decompresses entries lazily). Sizes come from JSZip's internal
+ * _data metadata; an entry whose size is unavailable is skipped from the sum
+ * (fail-open — the per-file input cap still bounds it).
+ */
+async function assertZipWithinCap(filePath: string, capBytes: number): Promise<void> {
+  const JSZip = (await import('jszip')).default;
+  const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
+  let declared = 0;
+  zip.forEach((_relativePath, entry) => {
+    const size = (entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize;
+    if (typeof size === 'number') declared += size;
+  });
+  if (declared > capBytes) {
+    throw new Error(
+      `zip content declares ${declared} decompressed bytes, exceeding the ${capBytes}-byte extraction cap; refusing`,
+    );
+  }
+}
+
 /**
  * Extract text (and, when the format exposes it, per-page text) from a file.
  * Throws for unsupported extensions and for unreadable/corrupt sources —
  * the pipeline turns per-file errors into isolated failures.
  */
-export async function extractDocumentFromFile(filePath: string): Promise<ExtractionResultNode> {
+export async function extractDocumentFromFile(
+  filePath: string,
+  opts?: { maxZipBytes?: number },
+): Promise<ExtractionResultNode> {
   const extension = extensionOf(filePath);
   const extractor = extension ? EXTRACTORS[extension] : undefined;
   if (!extractor) {
     throw new Error(`Unsupported file extension: ${extension || '(none)'}`);
+  }
+  if (opts?.maxZipBytes !== undefined && ZIP_EXTENSIONS.has(extension)) {
+    await assertZipWithinCap(filePath, opts.maxZipBytes);
   }
   return extractor(filePath);
 }
