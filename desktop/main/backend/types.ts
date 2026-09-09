@@ -111,6 +111,21 @@ export interface EngineQueryResult {
 }
 
 /**
+ * Thrown when inference is requested but no usable model is staged/loadable.
+ * Lives in the CONTRACT module (not any engine implementation) so the
+ * transport maps it to the 503 `detail` without depending on a concrete
+ * engine — every EngineSurface implementation raises this same type.
+ */
+export class ModelNotConfiguredError extends Error {
+  readonly detail: string;
+  constructor(detail: string) {
+    super(detail);
+    this.name = 'ModelNotConfiguredError';
+    this.detail = detail;
+  }
+}
+
+/**
  * The backend surface the routes need. StubEngine implements it with
  * documented stubs; B4-B7 will provide the real implementation.
  */

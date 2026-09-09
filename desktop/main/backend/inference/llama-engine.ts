@@ -26,6 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ChatHistoryItem } from 'node-llama-cpp';
 import { StubEngine } from '../engine.js';
+import { ModelNotConfiguredError } from '../types.js';
 import type { CancellationFlag, EngineQueryOptions, EngineQueryResult, EngineSurface } from '../types.js';
 import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
 import {
@@ -40,15 +41,10 @@ export const QUALITY_MODEL_SUBPATH = 'gemma-4-e2b-it/model.gguf';
 /** Fast-profile GGUF, relative to the model dir (assumption A2, per ADR-0002 #56 pending). */
 export const FAST_MODEL_SUBPATH = 'lfm2.5-vl-450m/model.gguf';
 
-/** Thrown when inference is requested but no usable model is staged/loadable. */
-export class ModelNotConfiguredError extends Error {
-  readonly detail: string;
-  constructor(detail: string) {
-    super(detail);
-    this.name = 'ModelNotConfiguredError';
-    this.detail = detail;
-  }
-}
+// The error class itself lives in ../types.js (the EngineSurface contract
+// module) so the transport never depends on a concrete engine; re-exported
+// here for the established import path.
+export { ModelNotConfiguredError };
 
 /** The loaded-model surface LlamaEngine drives; the injectable test seam. */
 export interface LlamaEngineBackend {

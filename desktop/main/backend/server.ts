@@ -19,8 +19,7 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { originAllowed, type LoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from '../security/defaults.js';
-import { RESERVED_PROFILE_HEADER_NAME, type EngineSurface } from './types.js';
-import { ModelNotConfiguredError } from './inference/llama-engine.js';
+import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type EngineSurface } from './types.js';
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)

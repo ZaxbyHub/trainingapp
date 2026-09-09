@@ -11,7 +11,6 @@
 // Electron-free: safe to import from the headless dev-server entry and CI.
 import net from 'node:net';
 import { createLoopbackGuard } from '../security/loopback-guard.js';
-import { StubEngine } from './engine.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
 import { createBackendServer, listenOnRandomPort } from './server.js';
