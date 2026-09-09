@@ -12,6 +12,7 @@
 import net from 'node:net';
 import { createLoopbackGuard } from '../security/loopback-guard.js';
 import { StubEngine } from './engine.js';
+import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
 import { createBackendServer, listenOnRandomPort } from './server.js';
 import {
@@ -20,6 +21,7 @@ import {
   type BackendHost,
   type BackendHostConfig,
   type BackendMode,
+  type EngineSurface,
 } from './types.js';
 
 export type { BackendHandle, BackendHost, BackendHostConfig, BackendMode };
@@ -46,13 +48,20 @@ function reserveFreePort(): Promise<number> {
   });
 }
 
-/** Node-mode host: guarded listener + local stub engine. */
+/**
+ * Node-mode host: guarded listener + the B4 real inference engine
+ * (resolveNodeEngine: LlamaEngine by default; the B3 StubEngine survives only
+ * as the explicit TRAININGAPP_DESKTOP_ENGINE=stub dev/CI fixture).
+ */
 export class NodeBackendHost implements BackendHost {
   readonly mode: BackendMode = 'node';
   private server: ReturnType<typeof createBackendServer> | null = null;
   private handle: BackendHandle | null = null;
 
-  constructor(private readonly config: BackendHostConfig, private readonly engine: StubEngine = new StubEngine()) {}
+  constructor(
+    private readonly config: BackendHostConfig,
+    private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(process.env),
+  ) {}
 
   async start(): Promise<BackendHandle> {
     if (this.handle) return this.handle;

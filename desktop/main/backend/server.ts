@@ -20,6 +20,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { originAllowed, type LoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from '../security/defaults.js';
 import { RESERVED_PROFILE_HEADER_NAME, type EngineSurface } from './types.js';
+import { ModelNotConfiguredError } from './inference/llama-engine.js';
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)
@@ -394,10 +395,21 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               return;
             }
             if (path === '/ask') {
-              const result = await engine.query(parsed.value.question, {
-                nResults: parsed.value.n_results,
-                history: parsed.value.history,
-              });
+              let result;
+              try {
+                result = await engine.query(parsed.value.question, {
+                  nResults: parsed.value.n_results,
+                  history: parsed.value.history,
+                });
+              } catch (err) {
+                // B4 (issue #62): no staged model is the contract's 503
+                // "engine not initialized" response with a load diagnostic.
+                if (err instanceof ModelNotConfiguredError) {
+                  sendJson(res, 503, { detail: err.detail }, cors);
+                  return;
+                }
+                throw err;
+              }
               sendJson(
                 res,
                 200,
@@ -411,6 +423,18 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 cors,
               );
             } else {
+              // B4 (issue #62): preflight BEFORE runAskStream writes any
+              // header, so a missing model still answers 503 JSON instead of
+              // a mid-stream error event after `200 text/event-stream`.
+              try {
+                await engine.preflight?.();
+              } catch (err) {
+                if (err instanceof ModelNotConfiguredError) {
+                  sendJson(res, 503, { detail: err.detail }, cors);
+                  return;
+                }
+                throw err;
+              }
               await runAskStream(res, engine, parsed.value.question, {
                 n_results: parsed.value.n_results,
                 history: parsed.value.history,

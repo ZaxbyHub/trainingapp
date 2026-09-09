@@ -12,6 +12,7 @@
 // host) when stdin closes — the checks' orphan-prevention backstop.
 import { writeFileSync } from 'node:fs';
 import { createBackendHost, resolveBackendMode } from './index.js';
+import { resolveNodeEngine } from './inference/llama-engine.js';
 import type { BackendMode } from './types.js';
 
 interface DevServerArgs {
@@ -19,6 +20,10 @@ interface DevServerArgs {
   mode?: BackendMode;
   token: string;
   sidecar?: { command?: string; args: string[]; cwd?: string; port?: number };
+  /** B4 (issue #62): 'auto' (default) honors TRAININGAPP_* env; 'stub' forces the B3 fixture. */
+  engine?: 'auto' | 'stub';
+  /** B4 (issue #62): override TRAININGAPP_INFERENCE_MODEL_DIR for this run. */
+  modelDir?: string;
 }
 
 function parseArgs(argv: string[]): DevServerArgs {
@@ -56,6 +61,12 @@ function parseArgs(argv: string[]): DevServerArgs {
         // otherwise the manager probes a port the child never binds.
         args.sidecar = { ...(args.sidecar ?? { args: [] }), port: Number.parseInt(value(), 10) };
         break;
+      case '--engine':
+        args.engine = value() === 'stub' ? 'stub' : 'auto';
+        break;
+      case '--model-dir':
+        args.modelDir = value();
+        break;
       default:
         throw new Error(`unknown argument: ${argv[i]}`);
     }
@@ -68,9 +79,17 @@ function parseArgs(argv: string[]): DevServerArgs {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const sidecar = args.sidecar;
+  // B4 (issue #62): node-mode engine selection. 'auto' (the default) resolves
+  // through resolveNodeEngine(env) — TRAININGAPP_DESKTOP_ENGINE /
+  // TRAININGAPP_INFERENCE_MODEL_DIR / TRAININGAPP_DESKTOP_INFERENCE_* — so the
+  // conformance harness can run REAL inference purely via inherited env.
+  const engineEnv = { ...process.env };
+  if (args.modelDir !== undefined) engineEnv.TRAININGAPP_INFERENCE_MODEL_DIR = args.modelDir;
+  const engine = resolveNodeEngine(args.engine === 'stub' ? { ...engineEnv, TRAININGAPP_DESKTOP_ENGINE: 'stub' } : engineEnv);
   const host = createBackendHost({
     token: args.token,
     mode: resolveBackendMode({ mode: args.mode }),
+    engine,
     sidecar: sidecar?.command
       ? { command: sidecar.command, args: sidecar.args, cwd: sidecar.cwd, port: sidecar.port }
       : undefined,

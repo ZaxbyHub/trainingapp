@@ -51,6 +51,8 @@ export interface BackendHostConfig {
   sidecar?: Partial<SidecarLaunchConfig> & { port?: number };
   /** Env override for mode resolution (tests); defaults to process.env. */
   env?: Record<string, string | undefined>;
+  /** Node mode only: an explicit engine (B4); defaults to resolveNodeEngine(env). */
+  engine?: EngineSurface;
   /** Surfacing seam (sidecar mode): called once when the restart budget is
    *  exhausted. Bootstrap wires it to a fail-loud user-visible notice; B9
    *  owns any richer UX. Requests keep getting contract-safe 502s. */
@@ -114,6 +116,13 @@ export interface EngineQueryResult {
  */
 export interface EngineSurface {
   query(question: string, opts?: EngineQueryOptions): Promise<EngineQueryResult>;
+  /**
+   * B4 (issue #62): best-effort readiness check that throws BEFORE any
+   * response byte is written — ModelNotConfiguredError when no model is
+   * staged, so the stream route can still answer the contract's 503.
+   * Optional: StubEngine no-ops; callers must tolerate its absence.
+   */
+  preflight?(): Promise<void>;
   search(query: string, nResults?: number): Promise<Array<{ text: string; source: string; similarity: number }>>;
   listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
   clearDocuments(): Promise<void>;
