@@ -217,3 +217,15 @@ Floor rows are added per machine after that machine's runs are recorded
 `BENCH_FLOORS_MACHINE` selects the machine; a machine with no rows falls back
 to the suites' legacy generous bounds. This block is parsed by
 `bench/floors.py` — do not change its fence marker or JSON shape.
+
+## Desktop ingest (B6)
+
+End-to-end desktop ingest pipeline (issue #64): pdf extract -> chunk -> embed
+(`bge-small-en-v1.5` via transformers.js + onnxruntime-node) -> sqlite-vec
+store write, measured by `bench/ingest_bench_driver.mjs` over a deterministic
+synthetic N-page PDF generated in-process. Budget: 200 pages in < 60 s
+(issue #64 acceptance).
+
+| machine | model | pages | chunks | total_s | embeddings_per_second | outcome |
+|---|---|---|---|---|---|---|
+| devstation | bge-small-en-v1.5 | 200 | 200 | 7.7 | 26 | pass |

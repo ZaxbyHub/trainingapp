@@ -27,7 +27,16 @@ import path from 'node:path';
 import type { ChatHistoryItem } from 'node-llama-cpp';
 import { StubEngine } from '../engine.js';
 import { ModelNotConfiguredError } from '../types.js';
-import type { CancellationFlag, EngineQueryOptions, EngineQueryResult, EngineSurface } from '../types.js';
+import type {
+  BatchIngestResult,
+  CancellationFlag,
+  DocumentSurface,
+  EngineQueryOptions,
+  EngineQueryResult,
+  EngineSurface,
+  IngestFileInput,
+  IngestResult,
+} from '../types.js';
 import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
 import {
   defaultThreadCount,
@@ -405,8 +414,10 @@ export class LlamaEngine implements EngineSurface {
     const stubStats = await this.stub.getStats();
     return {
       ...stubStats,
-      // embedding_model stays the stub's value ON PURPOSE: embeddings are
-      // still stubbed until B5 (#63); llm_backend is what went real in B4.
+      // B6 (issue #64): when a store surface is attached, the real embedder id
+      // (also what meta.embedding_model_id records) replaces the stub value.
+      embedding_model:
+        this.documents !== null ? this.documents.embedderModelId : stubStats.embedding_model,
       llm_backend: `llama.cpp (node-llama-cpp) profile=${profile} model=${path.basename(this.modelPathFor(profile))}`,
     };
   }
@@ -506,29 +517,36 @@ export class LlamaEngine implements EngineSurface {
     return this.stub.search(query, nResults);
   }
 
+  /**
+   * B6 (issue #64): the host attaches the store-backed document surface after
+   * it opens the store. While no surface is attached, document methods keep
+   * the stub's honest not-implemented behavior (the B3 conformance mode).
+   */
+  attachDocumentSurface(surface: DocumentSurface | null): void {
+    this.documents = surface;
+  }
+
+  private documents: DocumentSurface | null = null;
+
   async listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }> {
-    return this.stub.listDocuments();
+    return this.documents !== null ? this.documents.listDocuments() : this.stub.listDocuments();
   }
 
   async clearDocuments(): Promise<void> {
+    if (this.documents !== null) return this.documents.clearDocuments();
     return this.stub.clearDocuments();
   }
 
-  async ingestDirectory(directory: string): Promise<{ success: boolean; documents: number; chunks_added: number; message: string | null }> {
-    return this.stub.ingestDirectory(directory);
+  async ingestDirectory(directory: string): Promise<IngestResult> {
+    return this.documents !== null ? this.documents.ingestDirectory(directory) : this.stub.ingestDirectory(directory);
   }
 
-  async ingestFile(): Promise<{ success: boolean; documents: number; chunks_added: number; message: string | null }> {
-    return this.stub.ingestFile();
+  async ingestFile(input?: IngestFileInput): Promise<IngestResult> {
+    return this.documents !== null ? this.documents.ingestFile(input) : this.stub.ingestFile(input);
   }
 
-  async ingestBatch(count: number): Promise<{
-    total_files: number;
-    successful: number;
-    failed: number;
-    results: Array<{ filename: string; success: boolean; chunks_added?: number; error?: string }>;
-  }> {
-    return this.stub.ingestBatch(count);
+  async ingestBatch(inputs?: IngestFileInput[]): Promise<BatchIngestResult> {
+    return this.documents !== null ? this.documents.ingestBatch(inputs) : this.stub.ingestBatch(inputs);
   }
 
   /** Best-effort teardown of the resident backend (tests, host shutdown). */

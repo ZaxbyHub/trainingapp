@@ -19,7 +19,7 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { originAllowed, type LoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from '../security/defaults.js';
-import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type EngineSurface } from './types.js';
+import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type EngineSurface, type IngestFileInput } from './types.js';
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)
@@ -463,25 +463,71 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
             return;
           }
           case 'POST /ingest/file': {
-            await readBody(req, MULTIPART_BODY_CAP_BYTES).then((body) => {
-              if (body === null) {
-                sendJson(res, 413, { detail: 'File too large. Maximum size is 50MB.' }, cors);
-                return;
+            // B6 (issue #64): real multipart parsing via the fetch Request
+            // implementation (undici formData()). Contract: field `file`,
+            // 50MB cap enforced by the body reader above.
+            const body = await readBody(req, MULTIPART_BODY_CAP_BYTES);
+            if (body === null) {
+              sendJson(res, 413, { detail: 'File too large. Maximum size is 50MB.' }, cors);
+              return;
+            }
+            let input: IngestFileInput | undefined;
+            try {
+              const form = await new Request('http://127.0.0.1/', {
+                method: 'POST',
+                headers: { 'content-type': req.headers['content-type'] ?? 'multipart/form-data' },
+                body: new Uint8Array(body),
+              }).formData();
+              const file = form.get('file');
+              if (file instanceof File && file.size > 0) {
+                input = { name: file.name || 'upload', data: new Uint8Array(await file.arrayBuffer()) };
               }
-              // STUB: multipart parsing/persistence arrives with B6 (#64).
-              return engine.ingestFile().then((result) => sendJson(res, 200, result, cors));
-            });
+            } catch {
+              // Malformed multipart falls through to the 400 below.
+            }
+            if (input === undefined) {
+              sendJson(res, 400, { detail: 'Missing/invalid file part (multipart field "file")' }, cors);
+              return;
+            }
+            sendJson(res, 200, await engine.ingestFile(input), cors);
             return;
           }
           case 'POST /ingest/batch': {
-            await readBody(req, MULTIPART_BODY_CAP_BYTES).then((body) => {
-              if (body === null) {
-                sendJson(res, 413, { detail: 'Request body too large' }, cors);
-                return;
+            // B6 (issue #64): real multipart batch parsing. Contract: field
+            // `files` (array, max 20 — over is a 400).
+            const body = await readBody(req, MULTIPART_BODY_CAP_BYTES);
+            if (body === null) {
+              sendJson(res, 413, { detail: 'Request body too large' }, cors);
+              return;
+            }
+            let inputs: IngestFileInput[] = [];
+            try {
+              const form = await new Request('http://127.0.0.1/', {
+                method: 'POST',
+                headers: { 'content-type': req.headers['content-type'] ?? 'multipart/form-data' },
+                body: new Uint8Array(body),
+              }).formData();
+              const entries = form.getAll('files');
+              for (const entry of entries) {
+                if (entry instanceof File && entry.size > 0) {
+                  inputs.push({
+                    name: entry.name || 'upload',
+                    data: new Uint8Array(await entry.arrayBuffer()),
+                  });
+                }
               }
-              // STUB: multipart parsing/persistence arrives with B6 (#64).
-              return engine.ingestBatch(0).then((result) => sendJson(res, 200, result, cors));
-            });
+            } catch {
+              // Malformed multipart falls through to the 400 below.
+            }
+            if (inputs.length === 0) {
+              sendJson(res, 400, { detail: 'Missing/invalid files part (multipart field "files")' }, cors);
+              return;
+            }
+            if (inputs.length > 20) {
+              sendJson(res, 400, { detail: 'Too many files: batch ingest accepts at most 20 files' }, cors);
+              return;
+            }
+            sendJson(res, 200, await engine.ingestBatch(inputs), cors);
             return;
           }
           case 'GET /documents':

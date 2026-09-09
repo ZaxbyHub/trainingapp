@@ -465,6 +465,10 @@ export class TextChunker {
    * Generate a document ID from a source path using SHA-256.
    * Uses Web Crypto API for browser compatibility.
    *
+   * @deprecated MUST NOT be used for store identity: path-derived identity
+   * caused the stale-chunk defect; content-hash ids are the contract
+   * (desktop/main/backend/ingest/pipeline.ts).
+   *
    * @param sourcePath - The file path to hash
    * @returns Promise resolving to 16-character hex string
    */

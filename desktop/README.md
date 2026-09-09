@@ -196,3 +196,40 @@ sqlite-vec 0.1.9 (`better-sqlite3` + `sqlite-vec` in `desktop/package.json`);
 Node↔Python interop proof: `contracts/tests/store-interop/` (ADR-0005). The
 Electron-packaged native-addon path remains #84/E1. Browser IndexedDB storage
 (`web_ui`) is unchanged by B5.
+
+## Ingestion, profiles, backup and recovery (B6, issue #64)
+
+Design decisions are frozen in ADR-0006 (`docs/adr/0006-profile-model.md`).
+
+- **Profiles**: one OS-user-scoped profile by default at
+  `<userData>/profiles/default/store.sqlite`. Named profiles are opt-in:
+  `TRAININGAPP_PROFILE_MODE=named` + `TRAININGAPP_PROFILE_NAME` (required in
+  named mode; allowlist `[a-z0-9-]{1,64}` — names become directory names, so
+  traversal is structurally impossible). B5's interim `<userData>/store/store.db`
+  migrates to the default profile (atomic same-volume rename) on first B6
+  launch; rollback is the reverse rename.
+- **Ingest env keys** (invalid values fall back per-key; an overlap >= words
+  pair falls back to both defaults): `TRAININGAPP_INGEST_MAX_CONCURRENT_FILES`
+  (default 2, coordinated with B8 #66), `TRAININGAPP_INGEST_CHUNK_WORD_COUNT`
+  (256), `TRAININGAPP_INGEST_CHUNK_OVERLAP_WORDS` (100). Ingest identity is
+  content-derived (doc id = sha256 of file bytes; chunk id = sha256 over
+  doc + index + normalized text) — never path-derived.
+- **Embeddings**: `bge-small-en-v1.5` (384-dim) via transformers.js +
+  onnxruntime-node, pinned pending ADR-0001 (#55). Weights must be staged at
+  `models/bge-small-en-v1.5/onnx/model.onnx` (repo, or `<userData>/models`);
+  `TRAININGAPP_EMBEDDING_MODEL_DIR` overrides the location. Without weights,
+  dev/CI selects the deterministic fixture via `TRAININGAPP_DESKTOP_EMBEDDER=hash`
+  (never a production default). Embedding width is validated against the
+  store's `meta.embedding_dims` on every write.
+- **Backup/restore**: `desktop:store-backup` IPC handler and automatic
+  recovery write snapshots to `<userData>/backups/<UTC-timestamp>/store.sqlite`
+  (WAL checkpointed first). Restore validates `schema_version` and
+  `embedding_dims` BEFORE replacing the active store.
+- **Corruption recovery**: startup runs `PRAGMA integrity_check`; a store
+  failing integrity cannot be served, so the Electron prompt (Restore from
+  backup / Start fresh) intentionally BLOCKS host start. Headless hosts
+  auto-recover (latest backup, else fresh). Clear Cache targets the ACTIVE
+  profile's store only.
+- **`ingest:progress`**: IPC channel emitting `{docId, phase, percent}`
+  (phase: extract | chunk | embed | write | done) per document; the renderer
+  consumer lands with B9 (#67).

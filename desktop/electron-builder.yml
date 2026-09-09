@@ -31,3 +31,9 @@ nsis:
   deleteAppDataOnUninstall: false
 npmRebuild: false
 compression: normal
+# Native addons and wasm/worker assets cannot load from inside the asar
+# archive: unpack the inference/embedding/extraction runtimes (B4/B6).
+asarUnpack:
+  - '**/node_modules/@huggingface/transformers/**'
+  - '**/node_modules/onnxruntime*/**'
+  - '**/node_modules/pdfjs-dist/**'

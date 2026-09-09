@@ -10,11 +10,18 @@
 //
 // Electron-free: safe to import from the headless dev-server entry and CI.
 import net from 'node:net';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createLoopbackGuard } from '../security/loopback-guard.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
 import { createBackendServer, listenOnRandomPort } from './server.js';
 import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js';
+import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
+import { createBackup } from './store/backup.js';
+import { StoreDocumentSurface } from './store/document-surface.js';
+import { resolveEmbedder } from './ingest/embedder.js';
+import { resolveIngestConfig } from './ingest/config.js';
 import {
   resolveBackendMode,
   type BackendHandle,
@@ -58,10 +65,30 @@ export class NodeBackendHost implements BackendHost {
   private server: ReturnType<typeof createBackendServer> | null = null;
   private handle: BackendHandle | null = null;
   private store: StoreHandle | null = null;
+  private surface: StoreDocumentSurface | null = null;
+
+  /**
+   * B6 (issue #64): snapshot the open store into <backupsDir>/<timestamp>/
+   * (WAL-flushed; restore validates schema+dims). Own property BY DESIGN: the
+   * b3 duck-type pin requires both host prototypes to expose exactly
+   * start/stop — node-only capabilities must stay off the prototype.
+   */
+  createStoreBackup = async (
+    backupsDir: string,
+  ): Promise<{ ok: true; path: string; bytes: number } | { ok: false; detail: string }> => {
+    const store = this.store;
+    if (store === null) return { ok: false, detail: 'no store is open (store disabled or recovery in progress)' };
+    try {
+      const result = createBackup(store, backupsDir);
+      return { ok: true, path: result.path, bytes: result.bytes };
+    } catch (err) {
+      return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+    }
+  };
 
   constructor(
     private readonly config: BackendHostConfig,
-    private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(process.env),
+    private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(config.env ?? process.env),
   ) {}
 
   async start(): Promise<BackendHandle> {
@@ -80,11 +107,11 @@ export class NodeBackendHost implements BackendHost {
       const port = await listenOnRandomPort(server);
       this.server = server;
       this.handle = { mode: this.mode, port, url: `http://127.0.0.1:${port}` };
-      // B5 store (issue #63): initialize the per-profile SQLite store on the
-      // production start path when a path is configured. Failure-isolated on
-      // purpose: the store is not load-bearing until B6, so a native-addon or
-      // schema failure must degrade the host, not kill it. Sidecar mode
-      // (SidecarBackendHost) intentionally never opens the store.
+      // B6 store (issue #64): the store is now load-bearing for ingestion.
+      // Corruption is recovered BEFORE serving (integrity check + restore/
+      // fresh policy via config.onStoreCorruption; auto restore-else-fresh
+      // when no prompt seam is wired — the headless/CI case). Any OTHER open
+      // failure keeps the B5 degradation: log-and-continue without a store.
       if (this.config.storePath) {
         try {
           this.store = openStore({
@@ -92,13 +119,15 @@ export class NodeBackendHost implements BackendHost {
             dims: this.config.storeEmbeddingDims,
           });
         } catch (err) {
-          // NOTE: this degradation is sticky for the host's lifetime — the
-          // cached handle makes later start() calls return without retrying
-          // the store. stop()/start() (or a process restart) resets it.
-          console.error(
-            `[trainingapp-backend] store init failed (continuing without store until B6): ${err instanceof Error ? err.message : String(err)}`,
-          );
-          this.store = null;
+          this.store = await recoverOrDegradeStore(this.config, err);
+        }
+        if (this.store !== null) {
+          this.surface = attachStoreSurface(this.config, this.engine, this.store, {
+            get: () => this.store,
+            set: (handle: StoreHandle | null) => {
+              this.store = handle;
+            },
+          });
         }
       }
       return this.handle;
@@ -110,10 +139,16 @@ export class NodeBackendHost implements BackendHost {
     }
   }
 
+
+
   async stop(): Promise<void> {
     const server = this.server;
     this.server = null;
     this.handle = null;
+    if (this.surface !== null && typeof this.engine.attachDocumentSurface === 'function') {
+      this.engine.attachDocumentSurface(null);
+      this.surface = null;
+    }
     const store = this.store;
     this.store = null;
     try {
@@ -123,6 +158,8 @@ export class NodeBackendHost implements BackendHost {
       if (server !== null) await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   }
+
+
 }
 
 /** Sidecar-mode host: guarded listener + proxy fronting the spawned child. */
@@ -193,6 +230,90 @@ export class SidecarBackendHost implements BackendHost {
     this.handle = null;
     if (manager !== null) await manager.stop();
     if (server !== null) await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+
+/**
+ * Recovery-first store-open failure handling (B6): when the file is corrupt,
+ * run the recovery policy (interactive prompt or auto) and reopen; the host
+ * only degrades (null store) when recovery is impossible or the failure is
+ * not corruption (e.g. a dims mismatch — the b5 test pins log-and-continue).
+ * Module-level BY DESIGN: the b3 duck-type pin requires both host prototypes
+ * to expose exactly start/stop, so node-only helpers stay off the prototype.
+ */
+async function recoverOrDegradeStore(
+  config: BackendHostConfig,
+  openError: unknown,
+): Promise<StoreHandle | null> {
+  const dbPath = config.storePath as string;
+  // Degradation (not recovery) applies when the file was never created or the
+  // failure is not integrity corruption (dims mismatch, locked file...).
+  if (!fs.existsSync(dbPath) || checkStoreIntegrity(dbPath).ok) {
+    console.error(
+      `[trainingapp-backend] store init failed (continuing without store): ${openError instanceof Error ? openError.message : String(openError)}`,
+    );
+    return null;
+  }
+  try {
+    const backupsDir = config.storeBackupsDir ?? path.join(path.dirname(dbPath), 'backups');
+    const outcome = await recoverStore({
+      dbPath,
+      backupsDir,
+      dims: config.storeEmbeddingDims ?? 0,
+      choose: config.onStoreCorruption
+        ? (info) => config.onStoreCorruption?.(info) ?? Promise.resolve('fresh')
+        : undefined,
+    });
+    console.error(
+      `[trainingapp-backend] store recovered (action=${outcome.action}${outcome.restoredFrom ? ` from ${outcome.restoredFrom}` : ''})`,
+    );
+    return openStore({ dbPath, dims: config.storeEmbeddingDims });
+  } catch (recoverErr) {
+    console.error(
+      `[trainingapp-backend] store init failed (continuing without store): recovery could not restore the corrupt store: ${recoverErr instanceof Error ? recoverErr.message : String(recoverErr)}`,
+    );
+    return null;
+  }
+}
+
+interface StoreAccessors {
+  get: () => StoreHandle | null;
+  set: (handle: StoreHandle | null) => void;
+}
+
+/** Build the B6 document surface (embedder + pipeline) and hand it to the engine. */
+function attachStoreSurface(
+  config: BackendHostConfig,
+  engine: EngineSurface,
+  store: StoreHandle,
+  accessors: StoreAccessors,
+): StoreDocumentSurface | null {
+  try {
+    const env = config.env ?? process.env;
+    const embedder = resolveEmbedder({
+      env,
+      dims: store.dims,
+      repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
+    });
+    const surface = new StoreDocumentSurface({
+      getStore: accessors.get,
+      setStore: accessors.set,
+      embedder,
+      config: resolveIngestConfig(env),
+      onProgress: config.onIngestProgress,
+    });
+    if (typeof (engine as { attachDocumentSurface?: unknown }).attachDocumentSurface === 'function') {
+      engine.attachDocumentSurface?.(surface);
+    }
+    return surface;
+  } catch (err) {
+    // No usable embedder (weights not staged, bad env): ingestion reports the
+    // staging diagnostic per request; the rest of the host serves.
+    console.error(
+      `[trainingapp-backend] ingest surface unavailable (documents stay stubbed): ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
   }
 }
 

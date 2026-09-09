@@ -36,6 +36,7 @@ SECTION_HEADINGS = {
     "wllama": "## wllama (browser WASM) results",
     "onnx-embed": "## ONNX embed/rerank cost",
     "onnx-rerank": "## ONNX embed/rerank cost",
+    "desktop-ingest": "## Desktop ingest (B6)",
 }
 
 # surface -> header cells of the table that accepts the surface's rows. The
@@ -67,6 +68,15 @@ HEADER_CELLS = {
     ],
     "onnx-embed": ["machine", "model", "encode_ms", "embeddings_per_second", "outcome"],
     "onnx-rerank": ["machine", "model", "top15_ms", "top30_ms", "outcome"],
+    "desktop-ingest": [
+        "machine",
+        "model",
+        "pages",
+        "chunks",
+        "total_s",
+        "embeddings_per_second",
+        "outcome",
+    ],
 }
 
 # surface -> keys a recorded PASS row must carry. Fail rows carry the crash,
@@ -104,6 +114,15 @@ REQUIRED_KEYS = {
         "outcome",
     ),
     "onnx-rerank": ("surface", "model", "top15_ms", "top30_ms", "machine", "outcome"),
+    "desktop-ingest": (
+        "surface",
+        "machine",
+        "model",
+        "pages",
+        "chunks",
+        "total_s",
+        "outcome",
+    ),
 }
 
 # Provenance keys every row (pass or fail) must carry.
@@ -119,6 +138,7 @@ IDENTITY_CELLS = {
     "wllama": (0, 1, 2, 3, 4),  # machine, model, mode, threads, prompt_tokens
     "onnx-embed": (0, 1),  # machine, model
     "onnx-rerank": (0, 1),  # machine, model
+    "desktop-ingest": (0, 1),  # machine, model (mirrors onnx-embed)
 }
 
 REGISTRY_HEADING = "## Machine registry"
@@ -160,6 +180,16 @@ def row_cells(row: dict) -> list:
             row.get("model", ""),
             fmt(row.get("top15_ms")),
             fmt(row.get("top30_ms")),
+            row.get("outcome", ""),
+        ]
+    elif row.get("surface") == "desktop-ingest":
+        cells = [
+            row.get("machine", ""),
+            row.get("model", ""),
+            fmt(row.get("pages")),
+            fmt(row.get("chunks")),
+            fmt(row.get("total_s")),
+            fmt(row.get("embeddings_per_second")),
             row.get("outcome", ""),
         ]
     elif row.get("surface") == "wllama":

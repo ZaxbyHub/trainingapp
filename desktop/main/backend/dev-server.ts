@@ -11,6 +11,7 @@
 // port to --port-file after the listener is up, and exits (stopping the
 // host) when stdin closes — the checks' orphan-prevention backstop.
 import { writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { createBackendHost, resolveBackendMode } from './index.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import type { BackendMode } from './types.js';
@@ -98,6 +99,15 @@ async function main(): Promise<void> {
     mode: resolveBackendMode({ mode: args.mode }),
     engine,
     storePath: args.storePath ?? process.env.TRAININGAPP_DESKTOP_STORE_PATH,
+    // B6 (issue #64): backups default next to the store; corruption without a
+    // prompt seam auto-recovers (restore from the latest backup, else fresh).
+    storeBackupsDir:
+      args.storePath !== undefined || process.env.TRAININGAPP_DESKTOP_STORE_PATH !== undefined
+        ? path.join(
+            path.dirname(args.storePath ?? process.env.TRAININGAPP_DESKTOP_STORE_PATH ?? '.'),
+            'backups',
+          )
+        : undefined,
     sidecar: sidecar?.command
       ? { command: sidecar.command, args: sidecar.args, cwd: sidecar.cwd, port: sidecar.port }
       : undefined,
