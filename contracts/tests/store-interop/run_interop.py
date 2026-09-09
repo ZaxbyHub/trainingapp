@@ -37,9 +37,10 @@ FIXTURE_LITERAL = "contracts/tests/store-interop/fixture.json"
 SCHEMA_LITERAL = "contracts/store.schema.sql"
 # sqlite-vec computes L2 distances in float32, so returned values differ from
 # a pure-float64 oracle by up to ~1e-6 absolute (measured: 1.3e-9 on the
-# fixture). Cross-runtime agreement is what the AC demands — writer and
-# reader distances must be bit-identical — and that is asserted separately;
-# the oracle comparison only needs f32 quantization headroom.
+# fixture). Writer-vs-reader distances are compared with this same
+# DISTANCE_TOLERANCE; bit-identity across runtimes is an observed property,
+# not an assertion. Ids, hit order, row counts, and content hashes are
+# compared exactly.
 DISTANCE_TOLERANCE = 1e-6
 
 

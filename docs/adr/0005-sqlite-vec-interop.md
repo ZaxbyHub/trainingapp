@@ -20,8 +20,9 @@
   `contracts/tests/store-interop/run_interop.py`, directions
   `node->python` and `python->node`) builds a deterministic 2-doc/6-chunk
   fixture DB through one runtime and opens it with the other, asserting
-  identical row counts, **bit-identical** vector top-k (ids and distances) for
-  a fixed query vector, and identical FTS5 bm25 hit order for a fixed query —
+  identical row counts, identical vector top-k ids for a fixed query vector
+  (distances agreeing within the 1e-6 f32 tolerance), and identical FTS5
+  bm25 hit order for a fixed query —
   both directions green on Windows x64. CI re-runs both directions on every
   `contracts/**` or `desktop/**` change (`store-interop` job in
   `.github/workflows/desktop-build.yml`).
