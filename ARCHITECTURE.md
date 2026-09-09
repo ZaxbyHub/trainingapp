@@ -44,6 +44,13 @@ User Question → Query Processing → Retrieval → Context Assembly → LLM Ge
 | GUI | CustomTkinter | User interface |
 | API | FastAPI | REST interface |
 
+> **Per-profile store (B5, issue #63):** the desktop backend and the Python
+> sidecar share ONE SQLite store file per profile — schema frozen at
+> `contracts/store.schema.sql` (docs/chunks/embeddings via sqlite-vec 0.1.9/
+> FTS5/packs/links/meta), proven Node↔Python interoperable by
+> `contracts/tests/store-interop/` (ADR-0005). ChromaDB remains the live
+> ingestion pipeline until B6 (#64) wires the store.
+
 ## Component Architecture
 
 ### Module Structure

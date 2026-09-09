@@ -10,6 +10,11 @@ sentence-transformers>=2.2.0,<3.0.0
 chromadb>=0.4.0,<1.0.0
 rank_bm25>=0.2.2,<1.0.0
 
+# Shared per-profile SQLite store (B5, issue #63) — exact pin on purpose:
+# sqlite-vec is pre-1.0 and the Node<->Python interop contract (ADR-0005,
+# contracts/store.schema.sql) requires both runtimes on the SAME version.
+sqlite-vec==0.1.9
+
 # GGUF LLM inference (CPU-only)
 llama-cpp-python>=0.2.72,<1.0.0
 

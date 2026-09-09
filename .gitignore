@@ -56,3 +56,6 @@ desktop/desktop-release/
 eval/REPORT.md
 eval/report.json
 eval-report/
+
+# B5 runtime store artifacts (issue #63) - never track databases
+desktop/store/

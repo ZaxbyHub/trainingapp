@@ -14,6 +14,7 @@ import { createLoopbackGuard } from '../security/loopback-guard.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
 import { createBackendServer, listenOnRandomPort } from './server.js';
+import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js';
 import {
   resolveBackendMode,
   type BackendHandle,
@@ -56,6 +57,7 @@ export class NodeBackendHost implements BackendHost {
   readonly mode: BackendMode = 'node';
   private server: ReturnType<typeof createBackendServer> | null = null;
   private handle: BackendHandle | null = null;
+  private store: StoreHandle | null = null;
 
   constructor(
     private readonly config: BackendHostConfig,
@@ -78,6 +80,27 @@ export class NodeBackendHost implements BackendHost {
       const port = await listenOnRandomPort(server);
       this.server = server;
       this.handle = { mode: this.mode, port, url: `http://127.0.0.1:${port}` };
+      // B5 store (issue #63): initialize the per-profile SQLite store on the
+      // production start path when a path is configured. Failure-isolated on
+      // purpose: the store is not load-bearing until B6, so a native-addon or
+      // schema failure must degrade the host, not kill it. Sidecar mode
+      // (SidecarBackendHost) intentionally never opens the store.
+      if (this.config.storePath) {
+        try {
+          this.store = openStore({
+            dbPath: this.config.storePath,
+            dims: this.config.storeEmbeddingDims,
+          });
+        } catch (err) {
+          // NOTE: this degradation is sticky for the host's lifetime — the
+          // cached handle makes later start() calls return without retrying
+          // the store. stop()/start() (or a process restart) resets it.
+          console.error(
+            `[trainingapp-backend] store init failed (continuing without store until B6): ${err instanceof Error ? err.message : String(err)}`,
+          );
+          this.store = null;
+        }
+      }
       return this.handle;
     } catch (err) {
       // Partial-init cleanup: a failed bind must not leak the listener into
@@ -91,8 +114,14 @@ export class NodeBackendHost implements BackendHost {
     const server = this.server;
     this.server = null;
     this.handle = null;
-    if (server === null) return;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    const store = this.store;
+    this.store = null;
+    try {
+      if (store !== null) closeStore(store);
+    } finally {
+      // The listener must close even if the store close throws.
+      if (server !== null) await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   }
 }
 

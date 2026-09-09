@@ -25,6 +25,8 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "node-llama-cpp": "^3.20.0"
+    "better-sqlite3": "13.0.3",
+    "node-llama-cpp": "^3.20.0",
+    "sqlite-vec": "0.1.9"
   }
 }

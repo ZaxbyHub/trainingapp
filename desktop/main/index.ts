@@ -180,6 +180,9 @@ export function bootstrap(): void {
         // B4 (issue #62): when backend.mode is "node", serve real llama.cpp
         // inference with the model dir defaulting to <userData>/models.
         engine: resolveNodeEngine(process.env, { userDataPath: app.getPath('userData') }),
+        // B5 (issue #63): open the per-profile SQLite store under userData on
+        // the production start path (failure-isolated in the host).
+        storePath: path.join(app.getPath('userData'), 'store', 'store.db'),
         // Fail-loud surfacing when the sidecar exhausts its restart budget
         // (console.error alone is invisible in a packaged Electron app).
         onGiveUp: (attempts) => {
