@@ -94,7 +94,8 @@ navigation policy — fails to load; that combination is production-only.
 
 `desktop/main/backend/` hosts the guarded loopback backend that answers the
 frozen API contract (`contracts/api.openapi.yaml`). B4-B9 import ONLY
-`desktop/main/backend/index.ts` (`createBackendHost`, `resolveBackendMode`).
+`desktop/main/backend/index.ts` (`createBackendHost`, `resolveBackendMode`,
+`resolveNodeEngine`).
 
 - **Modes**: `backend.mode` selects `"node"` (default while ADR-0003 #57 is
   open; guarded listener + in-memory stub engine — real inference arrives with
@@ -115,8 +116,9 @@ frozen API contract (`contracts/api.openapi.yaml`). B4-B9 import ONLY
 
 The node-mode default engine is `LlamaEngine`
 (`desktop/main/backend/inference/`): REAL llama.cpp inference via
-`node-llama-cpp` (prebuilt binaries ship in the npm package; assumption A2
-pending ADR-0003 #57), with Quality/Fast profile auto-selection.
+`node-llama-cpp` (prebuilt binaries ship in the npm package; the library
+choice is recorded as an assumption pending ADR-0003 #57), with Quality/Fast
+profile auto-selection.
 
 - **Profiles**: `auto` (default) picks Quality when free RAM >=
   `inference.profileThresholdGb` (default 6 GiB, inclusive), else Fast.
@@ -138,6 +140,16 @@ pending ADR-0003 #57), with Quality/Fast profile auto-selection.
 - **Settings**: `inference.profile` | `inference.profileThresholdGb` |
   `inference.threads` (1..64) | `inference.vulkan` via PUT /settings; the
   rag_* keys still round-trip (owned by the composed stub until B5/B6).
+  Headless env equivalents: `TRAININGAPP_DESKTOP_INFERENCE_PROFILE`
+  (quality|fast|auto; invalid values fall back to auto) and
+  `TRAININGAPP_DESKTOP_INFERENCE_THREADS` (same 1..64 integer gate as the
+  settings key; invalid values fall back to the min(cores, 8) default).
+- **Packaged installs**: the installer does NOT yet unpack node-llama-cpp's
+  native addon from the asar archive — packaged inference lands with #84
+  (E1). Dev runs and the headless dev-server are unaffected.
+- **History**: contract-supplied history is capped to the last 12 turns
+  before seeding the model, so an oversized array cannot overflow the 8192
+  context (the browser client already caps at 6).
 - **Stub fixture**: `TRAININGAPP_DESKTOP_ENGINE=stub` (or dev-server
   `--engine stub`) restores the B3 deterministic engine for dev/CI transport
   conformance without weights. The CI conformance job does exactly this;

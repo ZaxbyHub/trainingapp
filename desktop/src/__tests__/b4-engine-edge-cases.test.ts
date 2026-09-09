@@ -8,6 +8,9 @@ import path from 'node:path';
 import {
   LlamaEngine,
   ModelNotConfiguredError,
+  buildGenerationParams,
+  historyToChatHistory,
+  parseEnvThreads,
   resolveNodeEngine,
   type LlamaEngineBackend,
 } from '../../main/backend/inference/llama-engine';
@@ -196,5 +199,94 @@ describe('b4-engine-edge-cases', () => {
     expect(() =>
       resolveNodeEngine({ TRAININGAPP_DESKTOP_INFERENCE_PROFILE: 'turbo' }),
     ).not.toThrow();
+  });
+
+  it('parseEnvThreads applies the same 1..64 gate as PUT /settings (PRR-001)', () => {
+    expect(parseEnvThreads(undefined)).toBeUndefined();
+    expect(parseEnvThreads('')).toBeUndefined();
+    expect(parseEnvThreads('0')).toBeUndefined();
+    expect(parseEnvThreads('-1')).toBeUndefined();
+    expect(parseEnvThreads('0x8')).toBeUndefined();
+    expect(parseEnvThreads('8.9')).toBeUndefined();
+    expect(parseEnvThreads('999999')).toBeUndefined();
+    expect(parseEnvThreads('65')).toBeUndefined();
+    expect(parseEnvThreads('1')).toBe(1);
+    expect(parseEnvThreads('8')).toBe(8);
+    expect(parseEnvThreads('64')).toBe(64);
+  });
+
+  it('buildGenerationParams pins the sampler shape that reaches session.prompt (PRR-011)', () => {
+    expect(buildGenerationParams('quality')).toEqual({ maxTokens: 1024, temperature: 0.2, topP: 0.9 });
+    expect(buildGenerationParams('fast')).toEqual({ maxTokens: 384, temperature: 0.3, topP: 0.9 });
+    const penalties = { penalty: 1.1, lastTokens: 8192, frequencyPenalty: 0, presencePenalty: 0 };
+    expect(buildGenerationParams('fast', penalties)).toEqual({
+      maxTokens: 384,
+      temperature: 0.3,
+      topP: 0.9,
+      repeatPenalty: penalties,
+    });
+    expect(buildGenerationParams('fast', {})).not.toHaveProperty('repeatPenalty');
+  });
+
+  it('historyToChatHistory keeps only the last 12 valid turns (PRR-005 overflow cap)', () => {
+    const turns = Array.from({ length: 30 }, (_, i) => ({
+      role: i % 2 === 0 ? 'user' : 'assistant',
+      content: `t${i}`,
+    }));
+    const mapped = historyToChatHistory(turns);
+    expect(mapped).toHaveLength(12);
+    expect(mapped[0]).toEqual({ type: 'user', text: 't18' });
+    expect(mapped[mapped.length - 1]).toEqual({ type: 'model', response: ['t29'] });
+  });
+
+  it('historyToChatHistory drops malformed entries and tolerates a missing array (PRR-005)', () => {
+    const mapped = historyToChatHistory([
+      { role: 'user', content: 42 },
+      'not-an-object',
+      null,
+      { role: 'system', content: 'ignored role' },
+      { role: 'user', content: 'kept' },
+    ]);
+    expect(mapped).toEqual([{ type: 'user', text: 'kept' }]);
+    expect(historyToChatHistory(undefined)).toEqual([]);
+  });
+
+  it('the factory receives the effective profile, updated by settings patches (PRR-011)', async () => {
+    const models = stageDummyModels();
+    cleanups.push(() => fs.rmSync(path.dirname(models.quality), { recursive: true, force: true }));
+    const factoryProfiles: string[] = [];
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models,
+      llamaFactory: async (opts) => {
+        factoryProfiles.push(opts.profile);
+        return new FakeBackend();
+      },
+    });
+    await engine.query('first');
+    engine.applySettingsPatch({ 'inference.profile': 'quality' });
+    await engine.query('second');
+    expect(factoryProfiles).toEqual(['fast', 'quality']);
+  });
+
+  it('query after dispose() recreates the backend rather than throwing (PRR-016)', async () => {
+    const { engine, backends } = makeEngine();
+    await engine.query('before');
+    await engine.dispose();
+    const result = await engine.query('after');
+    expect(result.cancelled ?? false).toBe(false);
+    expect(engine.getLoadCount()).toBe(2);
+    expect(backends).toHaveLength(2);
+    expect(backends[0]!.disposed).toBe(true);
+    expect(backends[1]!.disposed).toBe(false);
+  });
+
+  it('inference.profileThresholdGb rejects Infinity (PRR-017 boundary)', () => {
+    const { engine } = makeEngine();
+    const result = engine.applySettingsPatch({ 'inference.profileThresholdGb': Infinity });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(422);
   });
 });

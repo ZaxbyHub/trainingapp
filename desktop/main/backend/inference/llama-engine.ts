@@ -99,12 +99,20 @@ const SAMPLER_TOP_P = 0.9;
 const SAMPLER_REPEAT_PENALTY = 1.1;
 const CONTEXT_SIZE = 8192; // DEFAULT_N_CTX parity (web_ui/src/lib/llm/wllama-service.ts:39)
 const CANCEL_POLL_MS = 20;
+// Bounds shared by the PUT /settings gate and the env-var ingress so neither
+// path can reach createContext() with an unvalidated thread count.
+export const INFERENCE_THREADS_MIN = 1;
+export const INFERENCE_THREADS_MAX = 64;
+// Carry at most this many history turns: the browser client caps at 6
+// (buildHistorySnapshot), but the contract accepts unbounded arrays and an
+// oversized history would overflow CONTEXT_SIZE on the resident model.
+const MAX_HISTORY_TURNS = 12;
 
 const SYSTEM_PROMPT =
   "You are TrainingApp's local assistant. Answer the user's question directly and concisely.";
 
 /** Map contract history turns ({role, content}) to library chat history. */
-function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
+export function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
   if (!Array.isArray(history)) return [];
   const items: ChatHistoryItem[] = [];
   for (const turn of history) {
@@ -115,7 +123,25 @@ function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
     if (role === 'user') items.push({ type: 'user', text: content });
     else if (role === 'assistant') items.push({ type: 'model', response: [content] });
   }
-  return items;
+  return items.slice(-MAX_HISTORY_TURNS);
+}
+
+/**
+ * Prompt sampler options for a profile (PRR-011): the single place the
+ * PROFILE_GENERATION/topP/penalties mapping is derived, exported so tests can
+ * pin the shape that reaches session.prompt().
+ */
+export function buildGenerationParams(
+  profile: InferenceProfileName,
+  penalties: object = {},
+): Record<string, unknown> {
+  const generation = PROFILE_GENERATION[profile];
+  return {
+    maxTokens: generation.maxTokens,
+    temperature: generation.temperature,
+    topP: SAMPLER_TOP_P,
+    ...(Object.keys(penalties).length > 0 ? { repeatPenalty: penalties } : {}),
+  };
 }
 
 /** The production backend: node-llama-cpp over one resident loaded model. */
@@ -141,7 +167,6 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         return { answer: '', cancelled: true };
       }
       const penalties = buildPenalties({ repeatPenalty: SAMPLER_REPEAT_PENALTY } satisfies PenaltyOptions, PENALTY_FULL_CONTEXT_TOKENS);
-      const generation = PROFILE_GENERATION[opts.profile];
       const abort = new AbortController();
       // Cancel bridge: the CancellationFlag polls at 20ms and aborts the
       // library prompt (stopOnAbortSignal) — emission stops far inside 200ms.
@@ -162,10 +187,7 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
           },
           signal: abort.signal,
           stopOnAbortSignal: true,
-          maxTokens: generation.maxTokens,
-          temperature: generation.temperature,
-          topP: SAMPLER_TOP_P,
-          ...(Object.keys(penalties).length > 0 ? { repeatPenalty: penalties } : {}),
+          ...buildGenerationParams(opts.profile, penalties),
         });
         return { answer, cancelled: genOpts.cancellationEvent?.isSet() ?? false };
       } finally {
@@ -192,6 +214,17 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
   };
 }
 
+/**
+ * Env ingress for the thread count — the SAME 1..64 gate the PUT /settings
+ * path enforces, so an operator env var cannot bypass settings validation
+ * (PRR-001: "0", "999999", "0x8", "8.9" all resolve to the default).
+ */
+export function parseEnvThreads(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '' || !/^\d+$/.test(raw)) return undefined;
+  const value = Number.parseInt(raw, 10);
+  return value >= INFERENCE_THREADS_MIN && value <= INFERENCE_THREADS_MAX ? value : undefined;
+}
+
 /** Engine selection for the node backend host (B4). */
 export function resolveNodeEngine(
   env: Record<string, string | undefined> = process.env,
@@ -201,8 +234,7 @@ export function resolveNodeEngine(
     // Explicit dev/CI fixture: transport/conformance testing without weights.
     return new StubEngine();
   }
-  const threadsEnv = env.TRAININGAPP_DESKTOP_INFERENCE_THREADS;
-  const parsedThreads = threadsEnv !== undefined && threadsEnv !== '' ? Number.parseInt(threadsEnv, 10) : NaN;
+  const threads = parseEnvThreads(env.TRAININGAPP_DESKTOP_INFERENCE_THREADS);
   const profileEnv = env.TRAININGAPP_DESKTOP_INFERENCE_PROFILE;
   const profile =
     profileEnv === 'quality' || profileEnv === 'fast' || profileEnv === 'auto'
@@ -212,7 +244,7 @@ export function resolveNodeEngine(
     modelDir: env.TRAININGAPP_INFERENCE_MODEL_DIR,
     userDataPath: overrides?.userDataPath,
     profile,
-    ...(Number.isFinite(parsedThreads) ? { threads: parsedThreads } : {}),
+    ...(threads !== undefined ? { threads } : {}),
   });
 }
 
@@ -412,8 +444,13 @@ export class LlamaEngine implements EngineSurface {
           }
           break;
         case 'inference.threads':
-          if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > 64) {
-            errors.push(`${key}: expected an integer between 1 and 64`);
+          if (
+            typeof value !== 'number' ||
+            !Number.isInteger(value) ||
+            value < INFERENCE_THREADS_MIN ||
+            value > INFERENCE_THREADS_MAX
+          ) {
+            errors.push(`${key}: expected an integer between ${INFERENCE_THREADS_MIN} and ${INFERENCE_THREADS_MAX}`);
           } else {
             threads = value;
           }
