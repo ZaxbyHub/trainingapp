@@ -100,3 +100,42 @@ jobs:
 
       - name: Run API contract conformance against the Electron-hosted backend
         run: node desktop/scripts/run-conformance-host.mjs
+
+  store-interop:
+    name: Node/Python sqlite-vec store interop (issue #63)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-store-interop-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-store-interop-
+
+      - name: Install desktop dependencies (better-sqlite3 + sqlite-vec)
+        run: npm --prefix desktop ci --no-audit --no-fund
+
+      - name: Install sqlite-vec (Python side, exact pin from requirements.txt)
+        run: |
+          python -m pip install --upgrade pip
+          pip install "sqlite-vec==0.1.9"
+
+      - name: Interop — Node writes, Python reads
+        run: python contracts/tests/store-interop/run_interop.py --direction "node->python"
+
+      - name: Interop — Python writes, Node reads
+        run: python contracts/tests/store-interop/run_interop.py --direction "python->node"

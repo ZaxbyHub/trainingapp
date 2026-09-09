@@ -24,6 +24,10 @@ interface DevServerArgs {
   engine?: 'auto' | 'stub';
   /** B4 (issue #62): override TRAININGAPP_INFERENCE_MODEL_DIR for this run. */
   modelDir?: string;
+  /** B5 (issue #63): open the per-profile SQLite store at this path. Falls
+   *  back to TRAININGAPP_DESKTOP_STORE_PATH; when neither is set no store is
+   *  opened (node mode only). */
+  storePath?: string;
 }
 
 function parseArgs(argv: string[]): DevServerArgs {
@@ -67,6 +71,9 @@ function parseArgs(argv: string[]): DevServerArgs {
       case '--model-dir':
         args.modelDir = value();
         break;
+      case '--store-path':
+        args.storePath = value();
+        break;
       default:
         throw new Error(`unknown argument: ${argv[i]}`);
     }
@@ -90,6 +97,7 @@ async function main(): Promise<void> {
     token: args.token,
     mode: resolveBackendMode({ mode: args.mode }),
     engine,
+    storePath: args.storePath ?? process.env.TRAININGAPP_DESKTOP_STORE_PATH,
     sidecar: sidecar?.command
       ? { command: sidecar.command, args: sidecar.args, cwd: sidecar.cwd, port: sidecar.port }
       : undefined,

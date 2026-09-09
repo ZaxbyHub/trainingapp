@@ -184,3 +184,15 @@ decides Node-main vs Electron-hosted Python sidecar, #61 adds backend hosting
 in its own module — this bootstrap does not need to change shape. If the ADR
 adds a sidecar executable, re-verify `electron-builder.yml` `extraResources`
 against it (per the issue's invalidation clause).
+
+## B5 store (issue #63)
+
+The Node host opens the per-profile SQLite store (`contracts/store.schema.sql`,
+schema v1) on the `NodeBackendHost` start path when a store path is configured
+(Electron bootstrap: `<userData>/store/store.db`; dev-server:
+`--store-path` or `TRAININGAPP_DESKTOP_STORE_PATH`). Init is
+failure-isolated — the store is not load-bearing until B6 (#64). Pinned
+sqlite-vec 0.1.9 (`better-sqlite3` + `sqlite-vec` in `desktop/package.json`);
+Node↔Python interop proof: `contracts/tests/store-interop/` (ADR-0005). The
+Electron-packaged native-addon path remains #84/E1. Browser IndexedDB storage
+(`web_ui`) is unchanged by B5.

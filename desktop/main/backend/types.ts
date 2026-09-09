@@ -53,6 +53,20 @@ export interface BackendHostConfig {
   env?: Record<string, string | undefined>;
   /** Node mode only: an explicit engine (B4); defaults to resolveNodeEngine(env). */
   engine?: EngineSurface;
+  /** Node mode only (B5, issue #63): absolute path of the per-profile SQLite
+   *  store file. When set, start() opens and applies the authoritative
+   *  schema (contracts/store.schema.sql) through backend/store/sqlite-store.ts,
+   *  failure-isolated: a store error logs via console.error and the host
+   *  continues (the store is not load-bearing until B6). When unset, no
+   *  store is opened. The Electron bootstrap passes <userData>/store/store.db;
+   *  the headless dev-server honors TRAININGAPP_DESKTOP_STORE_PATH.
+   *  Sidecar mode never opens the store. */
+  storePath?: string;
+  /** Node mode only (B5): embedding width recorded in meta.embedding_dims
+   *  and used for the vec0 table; defaults to DEFAULT_EMBEDDING_DIMS (384,
+   *  the current Python embedder) until ADR-0001 (#55) decides the
+   *  production value. */
+  storeEmbeddingDims?: number;
   /** Surfacing seam (sidecar mode): called once when the restart budget is
    *  exhausted. Bootstrap wires it to a fail-loud user-visible notice; B9
    *  owns any richer UX. Requests keep getting contract-safe 502s. */
