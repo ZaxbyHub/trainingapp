@@ -120,7 +120,36 @@ export function openStore(options: StoreOptions): StoreHandle {
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'")
       .get() as { name: string } | undefined;
     if (existing === undefined) {
-      db.exec(schemaSql);
+      // Transactional apply: SQLite auto-commits each DDL statement outside a
+      // transaction, so a mid-script failure (e.g. vec0 rejecting the dims
+      // width after the plain tables committed) would leave a poisoned file —
+      // the meta probe below would then re-apply on every launch and fail
+      // forever with "table docs already exists".
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        db.exec(schemaSql);
+        db.exec('COMMIT');
+      } catch (applyErr) {
+        try {
+          db.exec('ROLLBACK');
+        } catch {
+          // Connection is closed in the outer catch anyway.
+        }
+        throw applyErr;
+      }
+    } else {
+      // Re-open: fail loud when the requested width contradicts the physical
+      // vec0 table width recorded at creation time.
+      const storedDims = db
+        .prepare("SELECT value FROM meta WHERE key = 'embedding_dims'")
+        .get() as { value: unknown } | undefined;
+      const stored = storedDims === undefined ? undefined : Number(storedDims.value);
+      if (stored !== undefined && stored !== dims) {
+        throw new Error(
+          `store was created with embedding_dims=${String(storedDims?.value)} but opened with dims=${dims}; ` +
+            'delete the store file or reopen with the original embedding width',
+        );
+      }
     }
     const schemaVersion = migrate(db);
     return {

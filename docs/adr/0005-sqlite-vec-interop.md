@@ -30,10 +30,11 @@
 
 - sqlite-vec 0.1.9 `vec0` stores vectors as float32 and computes L2 distances
   in float32; returned distances from the Node and Python builds are
-  **bit-identical** for identical files, while a pure-float64 oracle differs
-  by ~1.3e-9 on the fixture (measured). Interop comparisons use exact
-  cross-runtime equality; oracle comparisons carry a 1e-6 tolerance to absorb
-  f32 quantization.
+  **bit-identical** for identical files (observed on the fixture), while a
+  pure-float64 oracle differs by ~1.3e-9 (measured). The interop driver
+  compares writer-vs-reader and oracle distances with a 1e-6 tolerance that
+  absorbs this f32 quantization; top-k ids, FTS5 hit order, row counts, and
+  content hashes are compared exactly.
 - FTS5 bm25 `rank`/`bm25()` is the NEGATED bm25 score: more negative is a
   better match; hit order is compared as `ORDER BY bm25(table)` ascending.
 - `vec0` supports TEXT primary keys (used for `embeddings.chunk_id` →

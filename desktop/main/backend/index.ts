@@ -92,6 +92,9 @@ export class NodeBackendHost implements BackendHost {
             dims: this.config.storeEmbeddingDims,
           });
         } catch (err) {
+          // NOTE: this degradation is sticky for the host's lifetime — the
+          // cached handle makes later start() calls return without retrying
+          // the store. stop()/start() (or a process restart) resets it.
           console.error(
             `[trainingapp-backend] store init failed (continuing without store until B6): ${err instanceof Error ? err.message : String(err)}`,
           );
@@ -111,12 +114,14 @@ export class NodeBackendHost implements BackendHost {
     const server = this.server;
     this.server = null;
     this.handle = null;
-    if (this.store !== null) {
-      closeStore(this.store);
-      this.store = null;
+    const store = this.store;
+    this.store = null;
+    try {
+      if (store !== null) closeStore(store);
+    } finally {
+      // The listener must close even if the store close throws.
+      if (server !== null) await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-    if (server === null) return;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 }
 

@@ -9,13 +9,23 @@
 // (better-sqlite3 is a native addon): those cases skip with an inline,
 // artifact-guarded note — matching the itReal convention in b4 tests and the
 // CI job that always has the deps installed.
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+/** Temp dirs created by the current test; removed in afterEach. */
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir !== undefined) fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 /** Repo-root discovery via the established contracts marker (b4 convention). */
 function findRepoRoot(dir: string): string {
@@ -37,7 +47,9 @@ const itWithDeps = NATIVE_DEPS_PRESENT ? it : it.skip;
 const itReal = itWithDeps;
 
 function makeTempDbPath(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'b5-store-')), 'store.db');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'b5-store-'));
+  tempDirs.push(dir);
+  return path.join(dir, 'store.db');
 }
 
 async function loadStoreModule() {
@@ -107,6 +119,33 @@ describe('b5 store schema application', () => {
     }
   });
 
+  itReal('fails loud when re-opening with a different embedding width than the store was created with', async () => {
+    const { openStore } = await loadStoreModule();
+    const dbPath = makeTempDbPath();
+    const first = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
+    first.close();
+    expect(() => openStore({ dbPath, dims: 16, repoRoot: REPO_ROOT })).toThrowError(/embedding_dims=8/);
+    // The original store is untouched by the failed mismatched open.
+    const probe = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
+    try {
+      expect(probe.schemaVersion).toBe(1);
+    } finally {
+      probe.close();
+    }
+  });
+
+  itReal('applies the schema via the production repo-root discovery (findRepoRoot fallback)', async () => {
+    const { openStore } = await loadStoreModule();
+    // No repoRoot option: findRepoRoot must walk up from the module location
+    // (desktop/src/__tests__ under vitest) to the repo root on its own.
+    const store = openStore({ dbPath: makeTempDbPath(), dims: 8 });
+    try {
+      expect(store.schemaVersion).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+
   itReal('fails loud when the schema file is missing (repo root without contracts/)', async () => {
     const { openStore } = await loadStoreModule();
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'b5-norepo-'));
@@ -120,7 +159,7 @@ describe('b5 store production wiring', () => {
   itReal('NodeBackendHost start() opens and stop() closes the configured store', async () => {
     const { NodeBackendHost } = await import('../../main/backend/index.js');
     const dbPath = makeTempDbPath();
-    const host = new NodeBackendHost({ token: 'test-token', storePath: dbPath });
+    const host = new NodeBackendHost({ token: 'test-token', storePath: dbPath, storeEmbeddingDims: 8 });
     const handle = await host.start();
     try {
       expect(handle.mode).toBe('node');
@@ -138,10 +177,29 @@ describe('b5 store production wiring', () => {
     }
   });
 
-  it('never opens a store when storePath is unset (and sidecar mode never does)', async () => {
-    // Contract note (types.ts BackendHostConfig.storePath): the store is
-    // opt-in per host config; absence must not create files. Asserted by the
-    // absence of any store side effect we can observe: no throw + no file.
+  itReal('host survives store init failure (failure isolation, sticky until restart)', async () => {
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      // dims=0 makes openStore throw inside the host's failure-isolated block.
+      const host = new NodeBackendHost({ token: 'test-token', storePath: makeTempDbPath(), storeEmbeddingDims: 0 });
+      const handle = await host.start();
+      try {
+        // The host degraded instead of failing: the frozen B3 contract holds.
+        expect(handle.mode).toBe('node');
+      } finally {
+        await host.stop();
+      }
+      expect(errorSpy.mock.calls.some((args) => String(args[0]).includes('store init failed'))).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('never opens a store when storePath is unset', async () => {
+    // Asserted scope: start() resolves with the node handle. (No store file
+    // can be created because no store path is configured; the store handle
+    // is private, so absence is enforced by construction in index.ts.)
     const { NodeBackendHost } = await import('../../main/backend/index.js');
     const host = new NodeBackendHost({ token: 'test-token' });
     const handle = await host.start();
