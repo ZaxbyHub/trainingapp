@@ -131,12 +131,22 @@ export class NodeBackendHost implements BackendHost {
         if (this.store !== null) {
           const env = this.config.env ?? process.env;
           // Resolve the embedder FIRST (null when unavailable: weights not
-          // staged, bad env) so the B7 wiring below can reuse it.
-          this.embedder = resolveEmbedder({
-            env,
-            dims: this.store.dims,
-            repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
-          });
+          // staged, bad env) so the B7 wiring below can reuse it. Mirrors the
+          // B5/B6 degrade contract: a missing model degrades the store surface
+          // to embedder-less operation, it never fails host start (CI has no
+          // staged weights; the LFS pointer must not take the host down).
+          try {
+            this.embedder = resolveEmbedder({
+              env,
+              dims: this.store.dims,
+              repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
+            });
+          } catch (err) {
+            console.error(
+              `[trainingapp-backend] embedding model unavailable (store surface degrades to embedder-less): ${err instanceof Error ? err.message : String(err)}`,
+            );
+            this.embedder = null;
+          }
           // B7 (issue #65), SINGLE-THREAD ORT OWNERSHIP: onnxruntime-node
           // aborts the whole process when one module instance is used from
           // two threads of one process (empirically probed 2026-09-09; trace
@@ -148,20 +158,30 @@ export class NodeBackendHost implements BackendHost {
           // rerank disabled there is no worker and the main thread keeps its
           // sole-threaded ORT use.
           const retrievalConfig = resolveRetrievalConfig(env);
-          const rerankerModelDir = resolveRerankerModelDir({
-            env,
-            repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
-          });
-          if (
-            this.embedder instanceof OnnxEmbedder &&
-            retrievalConfig.rerank &&
-            rerankerModelDir !== null
-          ) {
-            this.reranker = new WorkerReranker({
-              modelDir: rerankerModelDir,
-              embedModelDir: this.embedder.weightsDir,
+          try {
+            const rerankerModelDir = resolveRerankerModelDir({
+              env,
+              repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
             });
-            this.embedder = new WorkerEmbedder(this.reranker as WorkerReranker, this.embedder.modelId);
+            if (
+              this.embedder instanceof OnnxEmbedder &&
+              retrievalConfig.rerank &&
+              rerankerModelDir !== null
+            ) {
+              this.reranker = new WorkerReranker({
+                modelDir: rerankerModelDir,
+                embedModelDir: this.embedder.weightsDir,
+              });
+              this.embedder = new WorkerEmbedder(this.reranker as WorkerReranker, this.embedder.modelId);
+            }
+          } catch (err) {
+            // Reranker unavailable: degrade to fused-ordering retrieval with
+            // the embedder as-is (no worker exists, so main-thread ORT stays
+            // single-threaded). Never fail host start.
+            this.reranker = null;
+            console.error(
+              `[trainingapp-backend] reranker unavailable (retrieval degrades to fused ordering): ${err instanceof Error ? err.message : String(err)}`,
+            );
           }
           attachStoreSurface(this.config, this.engine, this.store, this.embedder, {
             get: () => this.store,
