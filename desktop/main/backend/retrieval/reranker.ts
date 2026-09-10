@@ -151,7 +151,15 @@ export class WorkerReranker {
       });
       worker.on('error', (err) => this.failAll(err));
       worker.on('exit', (code) => {
-        if (code !== 0) this.failAll(new Error(`rerank worker exited with code ${code}`));
+        // Orphan exit (worker died on its own while this.worker still points
+        // at it) must settle pending jobs on ANY exit code — a clean exit with
+        // unanswered jobs would otherwise leave their promises pending forever
+        // (PRR-007, PR #102 review). A dispose-terminated worker is exempt:
+        // this.worker was already nulled and dispose() owns the rejection
+        // timing (the frozen C4 deferral contract).
+        if (this.worker === worker && this.pending.size > 0) {
+          this.failAll(new Error(`rerank worker exited with code ${code}`));
+        }
         if (this.worker === worker) this.worker = null;
       });
       this.worker = worker;
@@ -205,16 +213,21 @@ export class WorkerReranker {
     this.disposed = true;
     const worker = this.worker;
     this.worker = null;
-    if (worker !== null) {
-      await worker.terminate();
-    }
-    if (this.pending.size > 0) {
-      const err = new Error('WorkerReranker disposed with jobs in flight');
-      // Defer one macrotask: a caller that awaits dispose() and only THEN
-      // attaches a rejection handler to the in-flight job (the frozen C4
-      // pattern) would otherwise trip Node's unhandled-rejection detector,
-      // because the rejection would fire before the handler exists.
-      setImmediate(() => this.failAll(err));
+    // The pending-job rejection must run even if terminate() rejects, or the
+    // in-flight promises would be orphaned (PRR-006, PR #102 review).
+    try {
+      if (worker !== null) {
+        await worker.terminate();
+      }
+    } finally {
+      if (this.pending.size > 0) {
+        const err = new Error('WorkerReranker disposed with jobs in flight');
+        // Defer one macrotask: a caller that awaits dispose() and only THEN
+        // attaches a rejection handler to the in-flight job (the frozen C4
+        // pattern) would otherwise trip Node's unhandled-rejection detector,
+        // because the rejection would fire before the handler exists.
+        setImmediate(() => this.failAll(err));
+      }
     }
   }
 }

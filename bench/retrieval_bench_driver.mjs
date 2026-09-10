@@ -87,7 +87,9 @@ function waitForPortFile(portFile, timeoutMs) {
 }
 
 async function fetchJson(url, opts) {
-  const res = await fetch(url, opts);
+  // Per-request deadline (PRR-012, PR #102 review): a hung /search must not
+  // stall the driver past this bound now that startup itself is bounded.
+  const res = await fetch(url, { ...opts, signal: AbortSignal.timeout(30000) });
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 

@@ -50,10 +50,18 @@ export const DEFAULT_RETRIEVAL_CONFIG: Readonly<RetrievalConfig> = Object.freeze
 
 const POSITIVE_INT_PATTERN = /^\d+$/;
 
-function positiveInt(value: string | undefined, fallback: number): number {
+// Upper sanity bounds (PRR-011, PR #102 review): an unbounded topK (or
+// multiplier) turns legK = topK * multiplier into an absurd vec0 KNN `k`
+// (e.g. ~3e9 from TOPK=999999999). Out-of-range values fall back to the
+// default, matching the established per-key invalid-input behavior.
+const TOPK_MAX = 1000;
+const CANDIDATE_MULTIPLIER_MAX = 100;
+const RRF_K_MAX = 10000;
+
+function positiveInt(value: string | undefined, fallback: number, max: number): number {
   if (value !== undefined && POSITIVE_INT_PATTERN.test(value)) {
     const parsed = Number.parseInt(value, 10);
-    if (parsed >= 1) return parsed;
+    if (parsed >= 1 && parsed <= max) return parsed;
   }
   return fallback;
 }
@@ -76,13 +84,14 @@ function floorOrFallback(value: string | undefined, fallback: number): number {
 export function resolveRetrievalConfig(env?: Record<string, string | undefined>): RetrievalConfig {
   const source = env ?? process.env;
   return {
-    topK: positiveInt(source[RETRIEVAL_TOPK_ENV], DEFAULT_RETRIEVAL_CONFIG.topK),
+    topK: positiveInt(source[RETRIEVAL_TOPK_ENV], DEFAULT_RETRIEVAL_CONFIG.topK, TOPK_MAX),
     candidateMultiplier: positiveInt(
       source[RETRIEVAL_CANDIDATE_MULTIPLIER_ENV],
       DEFAULT_RETRIEVAL_CONFIG.candidateMultiplier,
+      CANDIDATE_MULTIPLIER_MAX,
     ),
     rerank: boolOrFallback(source[RETRIEVAL_RERANK_ENV], DEFAULT_RETRIEVAL_CONFIG.rerank),
-    rrfK: positiveInt(source[RETRIEVAL_RRF_K_ENV], DEFAULT_RETRIEVAL_CONFIG.rrfK),
+    rrfK: positiveInt(source[RETRIEVAL_RRF_K_ENV], DEFAULT_RETRIEVAL_CONFIG.rrfK, RRF_K_MAX),
     relevanceFloor: floorOrFallback(
       source[RETRIEVAL_RELEVANCE_FLOOR_ENV],
       DEFAULT_RETRIEVAL_CONFIG.relevanceFloor,

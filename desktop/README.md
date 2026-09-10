@@ -244,10 +244,12 @@ cross-encoder over the fused window IN A DEDICATED WORKER THREAD (never the
 main/event-loop thread) -> the calibrated relevance floor (ADR-0007) -> topK.
 
 - **Config keys** (env-resolved, mirroring the browser `balanced` preset;
-  invalid values fall back per key):
-  `TRAININGAPP_RETRIEVAL_TOPK` (10), `TRAININGAPP_RETRIEVAL_CANDIDATE_MULTIPLIER`
-  (3), `TRAININGAPP_RETRIEVAL_RERANK` (true; 'true'/'1'/'false'/'0'),
-  `TRAININGAPP_RETRIEVAL_RRF_K` (60), `TRAININGAPP_RETRIEVAL_RELEVANCE_FLOOR`
+  invalid or out-of-range values fall back per key):
+  `TRAININGAPP_RETRIEVAL_TOPK` (10, max 1000),
+  `TRAININGAPP_RETRIEVAL_CANDIDATE_MULTIPLIER`
+  (3, max 100), `TRAININGAPP_RETRIEVAL_RERANK` (true; 'true'/'1'/'false'/'0'),
+  `TRAININGAPP_RETRIEVAL_RRF_K` (60, max 10000),
+  `TRAININGAPP_RETRIEVAL_RELEVANCE_FLOOR`
   (the calibrated ADR-0007 value; finite float in [0, 1)).
 - **Reranker weights**: staged at `models/ettin-reranker-32m-v1/onnx/`
   (repo, or `<userData>/models`); `TRAININGAPP_RERANKER_MODEL_DIR` overrides.

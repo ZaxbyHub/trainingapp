@@ -136,10 +136,14 @@ export async function hybridRetrieve(
   const rrfK = options.rrfK ?? 60;
   const legK = topK * candidateMultiplier;
   const recency = options.recency ?? recencyWeight;
+  // Defense-in-depth cap (PRR-010, PR #102 review): the HTTP layer bounds
+  // /search and /ask queries, but EngineSurface callers bypass it — keep any
+  // single query from amplifying into a multi-megabyte embed/FTS5 expression.
+  const boundedQuery = query.length > 8000 ? query.slice(0, 8000) : query;
 
   // Vector leg: embed the query exactly once, then the interop-pinned vec0
   // KNN form (contracts/tests/store-interop are the canonical query shape).
-  const [queryVector] = await options.embedder.embed([query]);
+  const [queryVector] = await options.embedder.embed([boundedQuery]);
   const vectorRows = options.store.db
     .prepare(
       'SELECT chunk_id, distance FROM embeddings WHERE embedding MATCH ? AND k = ? ORDER BY distance',
@@ -148,7 +152,7 @@ export async function hybridRetrieve(
   const vectorLeg = vectorRows.map((row) => row.chunk_id).slice(0, legK);
 
   // FTS5 leg: sanitized user query, best match first (rank is negated bm25).
-  const ftsMatch = sanitizeFtsQuery(query);
+  const ftsMatch = sanitizeFtsQuery(boundedQuery);
   const ftsLeg = (
     ftsMatch === null
       ? []
@@ -180,14 +184,19 @@ export async function hybridRetrieve(
     // order) with calibrated relevance; window-out candidates are dropped.
     const window = ordered.slice(0, legK);
     const scores = await options.reranker.score(
-      query,
+      boundedQuery,
       window.map((chunk) => chunk.text),
     );
     const floor = options.relevanceFloor;
     ordered = window
       .map((chunk, index) => {
-        const score = scores[index];
-        return { ...chunk, score: typeof score === 'number' ? score : 0 };
+        const raw = scores[index];
+        const score = typeof raw === 'number' ? raw : Number(raw);
+        // NaN poisoning path: the q8 model could emit NaN, typeof 'number'
+        // passes it, and a NaN sort comparator breaks ordering (V8 treats it
+        // as 0). Map any non-finite score to the lowest useful score instead
+        // (PRR-005, PR #102 review).
+        return { ...chunk, score: Number.isFinite(score) ? score : 0 };
       })
       .filter((chunk) => (floor === undefined ? true : chunk.score >= floor))
       .sort((a, b) => b.score - a.score);
@@ -218,14 +227,19 @@ export function createRetrievalSurface(options: {
   const effectiveReranker =
     config.rerank === false ? null : (options.reranker ?? null);
   let rerankerWarned = false;
+  // Latched for the surface's lifetime: after the first reranker failure every
+  // later query stays on fused ordering. A per-call retry would re-walk the
+  // broken worker on each query while only the log line latched (PRR-004,
+  // PR #102 review).
+  let reranker = effectiveReranker;
   return {
     async search(query, nResults) {
       const topK = config.topK ?? 10;
-      let reranker = effectiveReranker;
       if (reranker !== null) {
         // Production isolation: a broken reranker worker must never 500
         // /search — that query degrades to fused, floor-free ordering (the
-        // same semantics as rerank disabled) after a single warning.
+        // same semantics as rerank disabled) after a single warning, and the
+        // latch keeps later queries on the degraded path.
         try {
           return await runSearch(query, nResults, topK, reranker, config, options);
         } catch (err) {
