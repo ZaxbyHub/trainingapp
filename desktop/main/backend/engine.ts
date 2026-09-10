@@ -12,6 +12,7 @@ import type {
   EngineSurface,
   IngestFileInput,
   IngestResult,
+  RetrievalSurface,
 } from './types.js';
 
 // Settings defaults mirror config.py's RAGSettings field defaults so the
@@ -78,11 +79,50 @@ function delay(ms: number): Promise<void> {
 export class StubEngine implements EngineSurface {
   private settings: Record<string, number | string | boolean> = { ...DEFAULT_SETTINGS };
 
-  // STUB: real generation lands with B4 (#62). Honors a cancellation flag so
-  // client disconnects stop work, matching the frozen stream semantics.
+  /**
+   * B7 (issue #65): late-bound hybrid retrieval surface. The host attaches it
+   * after the store opens; null restores the deterministic B3 behavior (the
+   * frozen conformance/dev mode). The `desktop-stub` row literal is retained
+   * as the DETACHED-state fallback by contract.
+   */
+  private retrievalSurface: RetrievalSurface | null = null;
+
+  attachRetrievalSurface(surface: RetrievalSurface | null): void {
+    this.retrievalSurface = surface;
+  }
+
+  /**
+   * B7 (issue #65): the retrieval step shared by query() here and by
+   * LlamaEngine.query() (which retrieves before grounding its prompt).
+   * Returns null when no surface is attached or retrieval yields nothing —
+   * callers keep their pre-B7 behavior in that case.
+   */
+  async retrieveContext(
+    question: string,
+    nResults?: number,
+  ): Promise<{ sources: string[]; contextLength: number; texts: string[] } | null> {
+    if (this.retrievalSurface === null) return null;
+    const n = nResults ?? (Number(this.settings.rag_n_results) || 4);
+    const rows = await this.retrievalSurface.search(question, n);
+    if (rows.length === 0) return null;
+    const sources: string[] = [];
+    for (const row of rows) {
+      if (!sources.includes(row.source)) sources.push(row.source);
+    }
+    return {
+      sources,
+      contextLength: rows.reduce((total, row) => total + row.text.length, 0),
+      texts: rows.map((row) => row.text),
+    };
+  }
+
   async query(question: string, opts: EngineQueryOptions = {}): Promise<EngineQueryResult> {
     const started = Date.now();
     const cancellation = opts.cancellationEvent;
+    // B7 (issue #65): when a retrieval surface is attached, /ask carries real
+    // retrieval — sources and context_length come from the hybrid pipeline
+    // (rank order, deduped) instead of the empty stub values.
+    const context = await this.retrieveContext(question, opts.nResults);
     for (const token of STUB_TOKENS) {
       if (cancellation?.isSet()) {
         return { answer: '', sources: [], context_length: 0, inference_time: (Date.now() - started) / 1000, cancelled: true };
@@ -94,14 +134,19 @@ export class StubEngine implements EngineSurface {
       // STUB answer text is deliberately explicit that this is not real
       // inference yet (B4 #62); the wire shape is what B3 certifies.
       answer: 'This desktop backend is not yet backed by real inference (B4, issue #62); wiring and contract conformance only (issue #61).',
-      sources: [],
-      context_length: 0,
+      sources: context?.sources ?? [],
+      context_length: context?.contextLength ?? 0,
       inference_time: (Date.now() - started) / 1000,
     };
   }
 
-  // STUB: real hybrid retrieval is B7 (#65).
+  // B7 (issue #65): the attached hybrid retrieval surface serves /search
+  // (vec0 UNION FTS5 -> RRF -> recency hook -> optional worker reranker ->
+  // calibrated floor). Detached (null), the deterministic B3 row remains.
   async search(query: string, nResults = 5): Promise<Array<{ text: string; source: string; similarity: number }>> {
+    if (this.retrievalSurface !== null) {
+      return this.retrievalSurface.search(query, nResults);
+    }
     return [{ text: `Stub retrieval result for "${query}" (B7, issue #65).`, source: 'desktop-stub', similarity: 0.5 }];
   }
 

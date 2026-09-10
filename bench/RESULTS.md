@@ -229,3 +229,20 @@ synthetic N-page PDF generated in-process. Budget: 200 pages in < 60 s
 | machine | model | pages | chunks | total_s | embeddings_per_second | outcome |
 |---|---|---|---|---|---|---|
 | devstation | bge-small-en-v1.5 | 200 | 200 | 7.7 | 26 | pass |
+
+## Desktop retrieval (B7)
+
+Hybrid desktop retrieval (issue #65): sqlite-vec KNN leg + FTS5 BM25 leg ->
+reciprocal-rank fusion (k=60) -> ettin-reranker-32m-v1 cross-encoder over the
+fused top-30 in the rerank worker thread, measured by
+`bench/retrieval_bench_driver.mjs`: boot the compiled desktop host with real
+weights, ingest the 8-doc eval corpus over /ingest, then 20 sequential timed
+POST /search round trips over the in-corpus eval questions (loopback HTTP, so
+each sample is the full stack: query embed -> vec0 + FTS5 legs -> RRF fuse ->
+rerank -> floor/slice; the cold first query — reranker worker spawn + model
+load — is part of the measured distribution). Budget: p95 <= 1500 ms
+(issue #65 acceptance).
+
+| machine | embedder | reranker | topk | multiplier | p50_ms | p95_ms | max_ms | outcome |
+|---|---|---|---|---|---|---|---|---|
+| devstation | bge-small-en-v1.5 | ettin-reranker-32m-v1 | 10 | 3 | 364 | 426 | 691 | pass |

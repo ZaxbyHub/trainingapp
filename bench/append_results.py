@@ -37,6 +37,7 @@ SECTION_HEADINGS = {
     "onnx-embed": "## ONNX embed/rerank cost",
     "onnx-rerank": "## ONNX embed/rerank cost",
     "desktop-ingest": "## Desktop ingest (B6)",
+    "desktop-retrieval": "## Desktop retrieval (B7)",
 }
 
 # surface -> header cells of the table that accepts the surface's rows. The
@@ -75,6 +76,17 @@ HEADER_CELLS = {
         "chunks",
         "total_s",
         "embeddings_per_second",
+        "outcome",
+    ],
+    "desktop-retrieval": [
+        "machine",
+        "embedder",
+        "reranker",
+        "topk",
+        "multiplier",
+        "p50_ms",
+        "p95_ms",
+        "max_ms",
         "outcome",
     ],
 }
@@ -123,6 +135,17 @@ REQUIRED_KEYS = {
         "total_s",
         "outcome",
     ),
+    "desktop-retrieval": (
+        "surface",
+        "machine",
+        "embedder",
+        "reranker",
+        "topk",
+        "multiplier",
+        "p50_ms",
+        "p95_ms",
+        "outcome",
+    ),
 }
 
 # Provenance keys every row (pass or fail) must carry.
@@ -139,6 +162,13 @@ IDENTITY_CELLS = {
     "onnx-embed": (0, 1),  # machine, model
     "onnx-rerank": (0, 1),  # machine, model
     "desktop-ingest": (0, 1),  # machine, model (mirrors onnx-embed)
+    "desktop-retrieval": (
+        0,
+        1,
+        2,
+        3,
+        4,
+    ),  # machine, embedder, reranker, topk, multiplier
 }
 
 REGISTRY_HEADING = "## Machine registry"
@@ -180,6 +210,18 @@ def row_cells(row: dict) -> list:
             row.get("model", ""),
             fmt(row.get("top15_ms")),
             fmt(row.get("top30_ms")),
+            row.get("outcome", ""),
+        ]
+    if row.get("surface") == "desktop-retrieval":
+        cells = [
+            row.get("machine", ""),
+            row.get("embedder", ""),
+            row.get("reranker", ""),
+            fmt(row.get("topk")),
+            fmt(row.get("multiplier")),
+            fmt(row.get("p50_ms")),
+            fmt(row.get("p95_ms")),
+            fmt(row.get("max_ms")),
             row.get("outcome", ""),
         ]
     elif row.get("surface") == "desktop-ingest":

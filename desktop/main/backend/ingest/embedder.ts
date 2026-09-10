@@ -92,6 +92,11 @@ export class OnnxEmbedder implements EmbeddingSurface {
 
   constructor(private readonly modelDir: string) {}
 
+  /** The resolved ONNX weights directory (B7 routes embeds through its worker). */
+  get weightsDir(): string {
+    return this.modelDir;
+  }
+
   /** Resolve and validate the weights location WITHOUT loading native code. */
   static stagedModelDir(candidates: Array<string | undefined>): string | null {
     for (const candidate of candidates) {

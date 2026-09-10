@@ -20,8 +20,11 @@ import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js
 import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
 import { StoreDocumentSurface } from './store/document-surface.js';
-import { resolveEmbedder } from './ingest/embedder.js';
+import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
+import { createRetrievalSurface, type RetrievalSurface } from './retrieval/hybrid.js';
+import { resolveRetrievalConfig } from './retrieval/config.js';
+import { resolveRerankerModelDir, WorkerEmbedder, WorkerReranker, type RerankerSurface } from './retrieval/reranker.js';
 import {
   resolveBackendMode,
   type BackendHandle,
@@ -66,6 +69,10 @@ export class NodeBackendHost implements BackendHost {
   private handle: BackendHandle | null = null;
   private store: StoreHandle | null = null;
   private surface: StoreDocumentSurface | null = null;
+  private retrieval: RetrievalSurface | null = null;
+  private reranker: RerankerSurface | null = null;
+  /** The embedder resolved for ingest — B7 reuses the SAME instance for query embedding. */
+  private embedder: EmbeddingSurface | null = null;
 
   /**
    * B6 (issue #64): snapshot the open store into <backupsDir>/<timestamp>/
@@ -122,12 +129,59 @@ export class NodeBackendHost implements BackendHost {
           this.store = await recoverOrDegradeStore(this.config, err);
         }
         if (this.store !== null) {
-          this.surface = attachStoreSurface(this.config, this.engine, this.store, {
+          const env = this.config.env ?? process.env;
+          // Resolve the embedder FIRST (null when unavailable: weights not
+          // staged, bad env) so the B7 wiring below can reuse it.
+          this.embedder = resolveEmbedder({
+            env,
+            dims: this.store.dims,
+            repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
+          });
+          // B7 (issue #65), SINGLE-THREAD ORT OWNERSHIP: onnxruntime-node
+          // aborts the whole process when one module instance is used from
+          // two threads of one process (empirically probed 2026-09-09; trace
+          // repro/mix-probe.mjs). When real ONNX weights are staged AND
+          // reranking is enabled, the retrieval worker is created FIRST and
+          // owns ALL onnxruntime work — ingest and query embeddings are
+          // proxied to it (WorkerEmbedder) so the main thread never loads
+          // ort. The hash fixture (no ORT) stays on the main thread; with
+          // rerank disabled there is no worker and the main thread keeps its
+          // sole-threaded ORT use.
+          const retrievalConfig = resolveRetrievalConfig(env);
+          const rerankerModelDir = resolveRerankerModelDir({
+            env,
+            repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
+          });
+          if (
+            this.embedder instanceof OnnxEmbedder &&
+            retrievalConfig.rerank &&
+            rerankerModelDir !== null
+          ) {
+            this.reranker = new WorkerReranker({
+              modelDir: rerankerModelDir,
+              embedModelDir: this.embedder.weightsDir,
+            });
+            this.embedder = new WorkerEmbedder(this.reranker as WorkerReranker, this.embedder.modelId);
+          }
+          attachStoreSurface(this.config, this.engine, this.store, this.embedder, {
             get: () => this.store,
             set: (handle: StoreHandle | null) => {
               this.store = handle;
             },
           });
+          if (this.embedder !== null) {
+            // B7: attach the hybrid retrieval surface AFTER the document
+            // surface, reusing the same (possibly worker-proxied) embedder.
+            this.retrieval = createRetrievalSurface({
+              store: this.store,
+              embedder: this.embedder,
+              reranker: this.reranker,
+              config: retrievalConfig,
+            });
+            if (typeof this.engine.attachRetrievalSurface === 'function') {
+              this.engine.attachRetrievalSurface(this.retrieval);
+            }
+          }
         }
       }
       return this.handle;
@@ -149,13 +203,25 @@ export class NodeBackendHost implements BackendHost {
       this.engine.attachDocumentSurface(null);
       this.surface = null;
     }
+    if (this.retrieval !== null && typeof this.engine.attachRetrievalSurface === 'function') {
+      this.engine.attachRetrievalSurface(null);
+      this.retrieval = null;
+    }
+    const reranker = this.reranker;
+    this.reranker = null;
     const store = this.store;
     this.store = null;
     try {
-      if (store !== null) closeStore(store);
+      if (reranker !== null && typeof (reranker as WorkerReranker).dispose === 'function') {
+        await (reranker as WorkerReranker).dispose();
+      }
     } finally {
-      // The listener must close even if the store close throws.
-      if (server !== null) await new Promise<void>((resolve) => server.close(() => resolve()));
+      try {
+        if (store !== null) closeStore(store);
+      } finally {
+        // The listener must close even if the store close throws.
+        if (server !== null) await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
     }
   }
 
@@ -282,39 +348,34 @@ interface StoreAccessors {
   set: (handle: StoreHandle | null) => void;
 }
 
-/** Build the B6 document surface (embedder + pipeline) and hand it to the engine. */
+/** Build the B6 document surface (embedder + pipeline) and hand it to the engine.
+ *  The embedder is resolved (and possibly worker-proxied) by the caller so the
+ *  document and retrieval surfaces share ONE embedding source. */
 function attachStoreSurface(
   config: BackendHostConfig,
   engine: EngineSurface,
   store: StoreHandle,
+  embedder: EmbeddingSurface | null,
   accessors: StoreAccessors,
-): StoreDocumentSurface | null {
-  try {
-    const env = config.env ?? process.env;
-    const embedder = resolveEmbedder({
-      env,
-      dims: store.dims,
-      repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT,
-    });
-    const surface = new StoreDocumentSurface({
-      getStore: accessors.get,
-      setStore: accessors.set,
-      embedder,
-      config: resolveIngestConfig(env),
-      limits: resolveIngestLimits(env),
-      onProgress: config.onIngestProgress,
-    });
-    if (typeof (engine as { attachDocumentSurface?: unknown }).attachDocumentSurface === 'function') {
-      engine.attachDocumentSurface?.(surface);
-    }
-    return surface;
-  } catch (err) {
-    // No usable embedder (weights not staged, bad env): ingestion reports the
-    // staging diagnostic per request; the rest of the host serves.
-    console.error(
-      `[trainingapp-backend] ingest surface unavailable (documents stay stubbed): ${err instanceof Error ? err.message : String(err)}`,
-    );
-    return null;
+): void {
+  if (embedder === null) {
+    // No usable embedder (weights not staged, bad env): the document surface
+    // stays detached and the engine keeps its stub document behavior; the
+    // rest of the host serves.
+    console.error('[trainingapp-backend] ingest surface unavailable (documents stay stubbed): no embedding model staged');
+    return;
+  }
+  const env = config.env ?? process.env;
+  const surface = new StoreDocumentSurface({
+    getStore: accessors.get,
+    setStore: accessors.set,
+    embedder,
+    config: resolveIngestConfig(env),
+    limits: resolveIngestLimits(env),
+    onProgress: config.onIngestProgress,
+  });
+  if (typeof (engine as { attachDocumentSurface?: unknown }).attachDocumentSurface === 'function') {
+    engine.attachDocumentSurface?.(surface);
   }
 }
 
