@@ -128,12 +128,13 @@ test.describe.serial('renderer smoke (AC1)', () => {
         buffer: Buffer.from(DOC_TEXT, 'utf8'),
       });
       await expect(page.getByText('training-notes.txt').first()).toBeVisible({ timeout: 15_000 });
-      // The optimistic row appears immediately; wait until the ingest has
-      // actually COMMITTED server-side (row leaves the uploading state)
-      // before asking — on a loaded CI runner the multipart upload can
-      // outlast a click-to-ask, and the cited answer needs the document
-      // retrievable.
-      await expect(page.getByText('Uploading...').first()).toBeHidden({ timeout: 30_000 });
+      // The optimistic row appears immediately; wait until the row reaches
+      // its terminal READY badge — that only renders after the server
+      // returned 200, so the ingest has committed and the document is
+      // retrievable before the ask proceeds. (A hidden-'Uploading...' check
+      // is vacuous here: on a cold CI app React may not have flushed the
+      // optimistic row yet, so the badge is absent before it ever exists.)
+      await expect(page.getByText('Ready').first()).toBeVisible({ timeout: 30_000 });
     };
     try {
       await upload();
