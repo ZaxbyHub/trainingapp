@@ -572,6 +572,8 @@ def chunk_text_semantic(self, text, source):
 | `/settings` | PUT | Update RAG settings | partial `rag_*` fields | Settings JSON |
 | `/auth/status` | GET | Authentication status | None | Auth config JSON |
 | `/auth/token` | POST | Exchange API key for JWT | `{api_key}` | Token JSON |
+| `/telemetry/memory` | GET | Memory telemetry snapshot and downgrade state (B8; 503 when unwired) | None | `{"snapshot": ..., "downgrade": ...}` |
+| `/status/models` | GET | Per-profile model presence for the first-run gate (B9; 503 when unwired) | None | `{"engine", "profile", "models": {"quality": {"present"}, "fast": {"present"}}}` |
 
 ### Request/Response Format
 

@@ -59,3 +59,7 @@ eval-report/
 
 # B5 runtime store artifacts (issue #63) - never track databases
 desktop/store/
+
+# Playwright-under-Electron artifacts (issue #67 e2e)
+desktop/test-results/
+desktop/playwright-report/

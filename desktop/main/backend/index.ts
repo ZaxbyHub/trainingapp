@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createLoopbackGuard } from '../security/loopback-guard.js';
+import { DEFAULT_ALLOWED_ORIGINS, DEV_ORIGINS_ENV } from '../security/defaults.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
 import { createBackendServer, listenOnRandomPort } from './server.js';
@@ -21,6 +22,7 @@ import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js
 import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
 import { StoreDocumentSurface } from './store/document-surface.js';
+import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
 import { createRetrievalSurface, type RetrievalSurface } from './retrieval/hybrid.js';
@@ -244,14 +246,56 @@ export class NodeBackendHost implements BackendHost {
       console.error(`[trainingapp-backend] ${detail}`);
       this.config.onMemoryEvent?.({ type: 'telemetry', detail });
     }
+    // B9 (issue #67): electron-free dev/CI runs (headless dev-server, the
+    // Playwright-under-Electron renderer over vite preview) can widen the
+    // guard's CORS allowlist via TRAININGAPP_DESKTOP_DEV_ORIGINS — the same
+    // env resolveSecurityConfig() honors on the Electron side. The packaged
+    // baseline (app://*) is never dropped; appends only.
+    const allowedOrigins = [...DEFAULT_ALLOWED_ORIGINS];
+    const rawDevOrigins = env[DEV_ORIGINS_ENV];
+    if (typeof rawDevOrigins === 'string' && rawDevOrigins.trim().length > 0) {
+      for (const part of rawDevOrigins.split(',')) {
+        const origin = part.trim();
+        if (origin.length > 0) allowedOrigins.push(origin);
+      }
+    }
+    // B9 (issue #67): apply the persisted settings snapshot BEFORE the
+    // listener exists, so the first GET /settings already reflects the last
+    // accepted override. The sidecar stores ACCEPTED PATCHES (the same key
+    // names applySettingsPatch validates) and the host accumulates every
+    // accepted PUT into it, so the file round-trips through the boot-time
+    // apply exactly; a snapshot from a newer/older schema that the engine
+    // rejects simply fails validation and the host boots on defaults.
+    // No store path (CI stub runs) => persistence disabled, engine-memory only.
+    let persistSettings: ((settings: Record<string, unknown>) => void) | undefined;
+    if (this.config.storePath) {
+      const storePath = this.config.storePath;
+      let storedPatch = loadSettingsSnapshot(storePath) ?? {};
+      if (Object.keys(storedPatch).length > 0) {
+        const applied = this.engine.applySettingsPatch(storedPatch);
+        if (!applied.ok) {
+          console.error(
+            `[trainingapp-backend] persisted settings snapshot rejected by the engine (${applied.detail}); booting with defaults`,
+          );
+          storedPatch = {};
+        }
+      }
+      persistSettings = (patch) => {
+        // Adopt the merged patch ONLY after the disk write succeeds, so a
+        // failed save cannot desynchronize memory from the sidecar.
+        const merged = { ...storedPatch, ...patch };
+        saveSettingsSnapshot(storePath, merged);
+        storedPatch = merged;
+      };
+    }
     const server = createBackendServer({
       guard: createLoopbackGuard({
         token: this.config.token,
         tokenHeaderName: this.config.tokenHeaderName,
-        allowedOrigins: this.config.allowedOrigins,
+        allowedOrigins: this.config.allowedOrigins ?? allowedOrigins,
       }),
       tokenHeaderName: this.config.tokenHeaderName,
-      allowedOrigins: this.config.allowedOrigins,
+      allowedOrigins: this.config.allowedOrigins ?? allowedOrigins,
       engine: this.engine,
       scheduler: this.scheduler,
       telemetry: () => {
@@ -270,6 +314,10 @@ export class NodeBackendHost implements BackendHost {
           },
         };
       },
+      modelStatus: typeof this.engine.modelStatus === 'function'
+        ? () => this.engine.modelStatus!()
+        : undefined,
+      persistSettings,
     });
     try {
       const port = await listenOnRandomPort(server);
@@ -413,6 +461,10 @@ export class NodeBackendHost implements BackendHost {
 
 
   async stop(): Promise<void> {
+    const dbg = (m: string): void => {
+      if (process.env.TRAININGAPP_CORS_DEBUG) console.error(`[stop-debug] ${m}`);
+    };
+    dbg('begin');
     // B8 (issue #66) governance teardown FIRST: no sampler fires mid-shutdown,
     // the idle controller never fires after dispose, and queued (not yet
     // started) generations fail fast instead of running after close.
@@ -454,8 +506,19 @@ export class NodeBackendHost implements BackendHost {
       try {
         if (store !== null) closeStore(store);
       } finally {
-        // The listener must close even if the store close throws.
-        if (server !== null) await new Promise<void>((resolve) => server.close(() => resolve()));
+        // The listener must close even if the store close throws. The
+        // renderer holds keep-alive sockets that would keep server.close()
+        // pending forever (issue #67 e2e: app quit hung on them) — drop
+        // idle/remaining connections explicitly before awaiting close.
+        if (server !== null) {
+          if (typeof (server as unknown as { closeIdleConnections?: () => void }).closeIdleConnections === 'function') {
+            (server as unknown as { closeIdleConnections: () => void }).closeIdleConnections();
+          }
+          (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+          dbg('connections dropped; awaiting server close');
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+          dbg('server closed');
+        }
       }
     }
   }
@@ -530,7 +593,10 @@ export class SidecarBackendHost implements BackendHost {
     this.manager = null;
     this.handle = null;
     if (manager !== null) await manager.stop();
-    if (server !== null) await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (server !== null) {
+      (server as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   }
 }
 

@@ -36,6 +36,7 @@ import type {
   EngineSurface,
   IngestFileInput,
   IngestResult,
+  ModelStatus,
   RetrievalSurface,
 } from '../types.js';
 import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
@@ -361,6 +362,24 @@ export class LlamaEngine implements EngineSurface {
    */
   async preflight(): Promise<void> {
     this.assertModelAvailable(this.effectiveProfile());
+  }
+
+  /**
+   * B9 (issue #67): launch-time per-profile GGUF presence for
+   * GET /status/models. Purely a disk check at the SAME resolved paths
+   * assertModelAvailable() enforces — presence here means a later /ask for
+   * that profile will not 503 — and never whether a model is resident.
+   */
+  modelStatus(): ModelStatus {
+    const statusFor = (profile: InferenceProfileName) => {
+      const modelPath = this.modelPathFor(profile);
+      return existsSync(modelPath) ? { present: true, path: modelPath } : { present: false };
+    };
+    return {
+      engine: 'llama.cpp',
+      profile: this.effectiveProfile(),
+      models: { quality: statusFor('quality'), fast: statusFor('fast') },
+    };
   }
 
   private async ensureResident(profile: InferenceProfileName, modelPath: string): Promise<ResidentEntry> {

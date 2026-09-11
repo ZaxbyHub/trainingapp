@@ -35,6 +35,11 @@ export type {
 export { ApiError } from './types';
 
 /**
- * Default client instance using same-origin requests
+ * Default client instance using same-origin requests.
+ *
+ * Same-origin + Authorization dialect ONLY — this instance is for the pure
+ * browser / remote-Python-server modes. Inside Electron, consumers MUST use
+ * the desktop session's client (web_ui/src/lib/desktop-session.tsx), which
+ * targets the loopback backend with the raw-token X-Desktop-Token header.
  */
 export const apiClient = new ApiClient('');

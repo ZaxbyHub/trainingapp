@@ -202,6 +202,22 @@ export interface EngineQueryResult {
 }
 
 /**
+ * B9 (issue #67): per-profile GGUF presence for GET /status/models
+ * (contracts/api.openapi.yaml StatusModelsResponse). `engine` lets the
+ * renderer tell the CI/dev stub fixture (which answers /ask without weights)
+ * apart from a real engine whose weights are missing — only the latter is a
+ * first-run blocking state. `path` is informational (staged file location).
+ */
+export interface ModelStatus {
+  engine: 'stub' | 'llama.cpp';
+  profile: string;
+  models: {
+    quality: { present: boolean; path?: string };
+    fast: { present: boolean; path?: string };
+  };
+}
+
+/**
  * Thrown when inference is requested but no usable model is staged/loadable.
  * Lives in the CONTRACT module (not any engine implementation) so the
  * transport maps it to the 503 `detail` without depending on a concrete
@@ -229,6 +245,15 @@ export interface EngineSurface {
    * Optional: StubEngine no-ops; callers must tolerate its absence.
    */
   preflight?(): Promise<void>;
+  /**
+   * B9 (issue #67): launch-time model presence for GET /status/models.
+   * Reports which inference profiles have their GGUF staged on disk (never
+   * whether a model is LOADED) plus the engine discriminator so the renderer
+   * can distinguish a real engine with no weights from the CI/dev stub (which
+   * answers /ask without weights and must not be gated as absent).
+   * Optional: callers must tolerate its absence (test doubles).
+   */
+  modelStatus?(): ModelStatus;
   search(query: string, nResults?: number): Promise<Array<{ text: string; source: string; similarity: number }>>;
   listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
   clearDocuments(): Promise<void>;

@@ -456,6 +456,66 @@ describe('ApiClient', () => {
     });
   });
 
+  describe('Auth header injection (issue #67 Electron X-Desktop-Token)', () => {
+    // R5 regression pin: the desktop loopback guard ONLY accepts
+    // X-Desktop-Token; the Python backend only accepts Authorization.
+    // A request that regresses to a hardcoded header name silently 401s in
+    // Electron mode, so every request KIND must carry the configured header.
+    const TOKEN = 'launch-token';
+
+    function clientWithDesktopHeader(): ApiClient {
+      return new ApiClient('http://127.0.0.1:4567', TOKEN, 'X-Desktop-Token');
+    }
+
+    it('GET /documents carries X-Desktop-Token and NOT Authorization', async () => {
+      mockFetch.mockResolvedValue(createSuccessResponse({ documents: [], total: 0 }));
+      await clientWithDesktopHeader().listDocuments();
+      const headers = getLastCallOptions().headers as Record<string, string>;
+      expect(headers['X-Desktop-Token']).toBe(TOKEN);
+      expect(headers['Authorization']).toBeUndefined();
+    });
+
+    it('POST /ask carries X-Desktop-Token', async () => {
+      mockFetch.mockResolvedValue(createSuccessResponse({ answer: 'a', sources: [] }));
+      await clientWithDesktopHeader().ask('q');
+      const headers = getLastCallOptions().headers as Record<string, string>;
+      expect(headers['X-Desktop-Token']).toBe(TOKEN);
+      expect(headers['Authorization']).toBeUndefined();
+    });
+
+    it('DELETE /documents carries X-Desktop-Token', async () => {
+      mockFetch.mockResolvedValue(createSuccessResponse({ status: 'ok' }));
+      await clientWithDesktopHeader().clearDocuments();
+      const headers = getLastCallOptions().headers as Record<string, string>;
+      expect(headers['X-Desktop-Token']).toBe(TOKEN);
+    });
+
+    it('multipart upload /ingest/file carries X-Desktop-Token', async () => {
+      mockFetch.mockResolvedValue(createSuccessResponse({ success: true, documents: [], chunks_added: 1 }));
+      await clientWithDesktopHeader().uploadFile(new File(['x'], 'a.txt'));
+      const headers = getLastCallOptions().headers as Record<string, string>;
+      expect(headers['X-Desktop-Token']).toBe(TOKEN);
+      expect(headers['Authorization']).toBeUndefined();
+      expect(headers['Content-Type']).toBeUndefined();
+    });
+
+    it('PUT /settings carries X-Desktop-Token', async () => {
+      mockFetch.mockResolvedValue(createSuccessResponse({ n_results: 4 }));
+      await clientWithDesktopHeader().updateSettings({ rag_n_results: 5 });
+      const headers = getLastCallOptions().headers as Record<string, string>;
+      expect(headers['X-Desktop-Token']).toBe(TOKEN);
+    });
+
+    it('default client keeps the Python Authorization: Bearer behavior', async () => {
+      mockGetToken.mockReturnValue(null);
+      mockFetch.mockResolvedValue(createSuccessResponse({ documents: [], total: 0 }));
+      await new ApiClient('http://127.0.0.1:4567', TOKEN).listDocuments();
+      const headers = getLastCallOptions().headers as Record<string, string>;
+      expect(headers['Authorization']).toBe(`Bearer ${TOKEN}`);
+      expect(headers['X-Desktop-Token']).toBeUndefined();
+    });
+  });
+
   describe.skip('Auth sessionStorage integration (FR-004)', () => {
     it('getToken reads from sessionStorage when auth module is not mocked', () => {
       // Skipped: vi.unmock('./auth') is incompatible with the top-level

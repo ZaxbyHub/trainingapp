@@ -115,6 +115,7 @@ export class SSEStreamConsumer {
   private url: string;
   private body: object;
   private token?: string;
+  private authHeaderName: string = 'Authorization';
   private controller: AbortController | null = null;
   private _starting: boolean = false;
   private reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
@@ -149,12 +150,16 @@ export class SSEStreamConsumer {
    * @param url - The endpoint URL to POST to
    * @param body - The request body object
    * @param token - Optional authorization token
+   * @param authHeaderName - Optional auth header name; defaults to the
+   *   Python backend's 'Authorization: Bearer' convention. Electron mode
+   *   passes the desktop loopback guard's 'X-Desktop-Token' (issue #67).
    */
-  constructor(url: string, body: object, token?: string) {
+  constructor(url: string, body: object, token?: string, authHeaderName?: string) {
     validateStreamUrl(url);
     this.url = url;
     this.body = body;
     this.token = token;
+    this.authHeaderName = authHeaderName ?? 'Authorization';
     this.decoder = new TextDecoder();
   }
 
@@ -225,7 +230,10 @@ export class SSEStreamConsumer {
       };
 
       if (this.token) {
-        headers['Authorization'] = `Bearer ${this.token}`;
+        // Authorization carries `Bearer <token>`; the desktop guard's
+        // X-Desktop-Token is the RAW token (issue #67).
+        headers[this.authHeaderName] =
+          this.authHeaderName === 'Authorization' ? `Bearer ${this.token}` : this.token;
       }
 
       const response = await fetch(this.url, {

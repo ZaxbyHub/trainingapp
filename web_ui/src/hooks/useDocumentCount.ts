@@ -12,16 +12,29 @@
  * `loadDocuments` already swallows IndexedDB errors and returns `[]`, so the
  * hook is robust to the object store not existing (e.g. a fresh profile before
  * the first migration): `count` simply reports `0`.
+ *
+ * B9 (issue #67): inside Electron the AUTHORITATIVE count is the desktop
+ * backend's (`GET /documents`), not IndexedDB — the same upload/delete calls
+ * the DocumentsPage makes. The Electron branch also exposes `recount()` so
+ * same-tab mutations (upload/clear resolve) can refresh the badge immediately;
+ * `visibilitychange` alone cannot observe in-tab mutations.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadDocuments } from '../lib/storage/document-store';
+import { isElectron, useDesktopSession } from '../lib/desktop-session';
 
 export interface UseDocumentCountResult {
   /** Number of persisted documents, or 0 if the store is unavailable. */
   count: number;
   /** True until the initial count has resolved. */
   loading: boolean;
+  /**
+   * Force a re-count (B9 Electron branch). Resolves the fresh backend total;
+   * a no-op promise in the browser-local branch (which recounts on
+   * visibilitychange).
+   */
+  recount: () => Promise<void>;
 }
 
 /**
@@ -30,24 +43,44 @@ export interface UseDocumentCountResult {
  * Re-counts on mount and whenever the document becomes visible again (so a
  * user returning to the tab sees deletes/uploads performed elsewhere).
  *
- * @returns `{ count, loading }` — `loading` is true until the first count
- *   resolves, then false for the rest of the hook's lifetime.
+ * @returns `{ count, loading, recount }` — `loading` is true until the first
+ *   count resolves, then false for the rest of the hook's lifetime.
  */
 export function useDocumentCount(): UseDocumentCountResult {
   const [count, setCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const { session } = useDesktopSession();
+  const electron = isElectron() && session !== null;
 
+  // F11 (issue #67 review): monotonic sequence so an out-of-order response
+  // from an earlier recount can never overwrite a fresher count.
+  const recountSeq = useRef(0);
   const recount = useCallback(async () => {
+    const seq = ++recountSeq.current;
+    const apply = (value: number) => {
+      if (recountSeq.current !== seq) return;
+      setCount(value);
+      setLoading(false);
+    };
+    // B9: inside Electron the backend store is authoritative.
+    if (electron && session) {
+      try {
+        const listing = await session.apiClient.listDocuments();
+        apply(typeof listing?.total === 'number' ? listing.total : 0);
+      } catch {
+        // Backend hiccup — report empty rather than a stale IndexedDB count.
+        apply(0);
+      }
+      return;
+    }
     try {
       const docs = await loadDocuments();
-      setCount(Array.isArray(docs) ? docs.length : 0);
+      apply(Array.isArray(docs) ? docs.length : 0);
     } catch {
       // Store missing / unavailable — treat as empty.
-      setCount(0);
-    } finally {
-      setLoading(false);
+      apply(0);
     }
-  }, []);
+  }, [electron, session]);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,13 +95,21 @@ export function useDocumentCount(): UseDocumentCountResult {
         void recount();
       }
     };
+    // C-7 (issue #67): DocumentsPage's Electron handlers dispatch this after
+    // same-tab upload/clear, because visibilitychange cannot observe in-tab
+    // mutations.
+    const handleDocumentsChanged = () => {
+      void recount();
+    };
     document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('documents-changed', handleDocumentsChanged);
 
     return () => {
       cancelled = true;
       document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('documents-changed', handleDocumentsChanged);
     };
   }, [recount]);
 
-  return { count, loading };
+  return { count, loading, recount };
 }

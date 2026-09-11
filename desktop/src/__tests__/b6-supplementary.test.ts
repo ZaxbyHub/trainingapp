@@ -121,7 +121,9 @@ describe('b6 supplementary (critic R2): embedder contract enforcement', () => {
 describe('b6 supplementary (critic R2): per-file failure isolation', () => {
   // The corrupt-PDF path lazily imports pdfjs-dist's legacy ESM build — a
   // multi-second cold import on a loaded CI runner — so the default 5s test
-  // timeout flakes (seen once on windows-latest). Give it headroom.
+  // timeout flakes (seen once on windows-latest), and even 20s proved too
+  // tight when the whole desktop suite runs ahead of it on the same runner
+  // (issue #67 CI round). Give it real headroom.
   itReal(
     'directory ingest: a corrupt .pdf fails alone; the good file still lands',
     async () => {
@@ -142,7 +144,7 @@ describe('b6 supplementary (critic R2): per-file failure isolation', () => {
         store.close();
       }
     },
-    20_000,
+    60_000,
   );
 
   itReal('batch ingest: the corrupt file is reported per-result; its sibling succeeds', async () => {

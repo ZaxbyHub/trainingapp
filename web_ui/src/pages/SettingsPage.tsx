@@ -12,6 +12,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useInferenceMode } from '../lib/inference';
+import { fetchModelStatus, isElectron, useDesktopSession } from '../lib/desktop-session';
+import type { ModelStatus } from '../lib/api/types';
 import { useTheme, type ThemePreference } from '../lib/theme';
 import { ModelDownloadManager, type DownloadProgress } from '../lib/llm/model-download';
 import { ModelReadinessGate } from '../lib/llm/model-readiness';
@@ -455,6 +457,16 @@ function SettingsPageInner(): React.ReactElement {
     checkServerConnectivity,
   } = useInferenceMode();
 
+  // B9 (issue #67): inside Electron, RAG presets and the inference profile
+  // persist SERVER-SIDE via PUT /settings (survives restart through the
+  // backend's settings sidecar), and the Desktop backend status section
+  // shows connectivity + model presence + the active profile.
+  const { session: desktopSession } = useDesktopSession();
+  const electronMode = isElectron() && desktopSession !== null;
+  const [desktopStatus, setDesktopStatus] = useState<ModelStatus | null>(null);
+  const [desktopProfile, setDesktopProfile] = useState<'quality' | 'fast' | 'auto' | ''>('');
+  const [desktopSettingsError, setDesktopSettingsError] = useState<string | null>(null);
+
   const { themePreference, setTheme } = useTheme();
 
   // Settings state
@@ -493,8 +505,73 @@ function SettingsPageInner(): React.ReactElement {
   // Settings loaded flag
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
+  // B9 (issue #67): load the desktop backend's settings + model status.
+  useEffect(() => {
+    if (!electronMode || !desktopSession) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const settings = await desktopSession.apiClient.getSettings();
+        if (cancelled) return;
+        const profile = settings['inference.profile'];
+        if (profile === 'quality' || profile === 'fast' || profile === 'auto') {
+          setDesktopProfile(profile);
+        }
+      } catch (err) {
+        if (!cancelled) setDesktopSettingsError(err instanceof Error ? err.message : String(err));
+      }
+      try {
+        const status = await fetchModelStatus(desktopSession);
+        if (!cancelled) setDesktopStatus(status);
+      } catch {
+        if (!cancelled) setDesktopStatus(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [electronMode, desktopSession]);
+
+  // B9: persist an inference-profile override to the backend (AC3 — survives
+  // restart through the backend's settings sidecar).
+  const handleDesktopProfileChange = useCallback(
+    (profile: 'quality' | 'fast' | 'auto') => {
+      if (!desktopSession) return;
+      setDesktopProfile(profile);
+      desktopSession.apiClient
+        .updateSettings({ 'inference.profile': profile })
+        .catch((err) => setDesktopSettingsError(err instanceof Error ? err.message : String(err)));
+    },
+    [desktopSession]
+  );
+
+  // B9: mirror a RAG preset change onto the backend's retrieval knobs
+  // (rag_n_results + rag_reranking_enabled) so server-side hybrid retrieval
+  // follows the preset semantics instead of only the browser orchestrator.
+  const handleRagPresetChange = useCallback(
+    (preset: 'fast' | 'balanced' | 'quality') => {
+      setRagPreset(preset);
+      if (!electronMode || !desktopSession) return;
+      const presetPatch: Record<string, unknown> =
+        preset === 'fast'
+          ? { rag_n_results: 5, rag_reranking_enabled: false }
+          : preset === 'quality'
+            ? { rag_n_results: 16, rag_reranking_enabled: true }
+            : { rag_n_results: 10, rag_reranking_enabled: true };
+      desktopSession.apiClient
+        .updateSettings(presetPatch)
+        .catch((err) => setDesktopSettingsError(err instanceof Error ? err.message : String(err)));
+    },
+    [electronMode, desktopSession, setRagPreset]
+  );
+
   // Load settings on mount
   useEffect(() => {
+    if (electronMode) {
+      // Server-backed settings live in the desktop session; skip IndexedDB.
+      setSettingsLoaded(true);
+      return;
+    }
     loadSettings().then((settings) => {
       setLocalServerUrl(settings.serverUrl);
       setSettingsLoaded(true);
@@ -867,9 +944,78 @@ function SettingsPageInner(): React.ReactElement {
         </section>
 
         {/* ================================================================== */}
-        {/* 2. Server Configuration (conditional on API mode) */}
+        {/* 2a. Desktop backend status (Electron mode only — issue #67).       */}
+        {/* Shows the hosted backend's connectivity, active inference profile */}
+        {/* and per-profile model presence; the profile override persists via */}
+        {/* PUT /settings across app restarts (backend settings sidecar).     */}
         {/* ================================================================== */}
-        {mode === 'api' && (
+        {electronMode && (
+          <section style={sectionStyle} aria-labelledby="desktop-backend-heading">
+            <h2 id="desktop-backend-heading" style={sectionTitleStyle}>
+              Desktop backend
+            </h2>
+            <div style={fieldGroupStyle}>
+              <p style={descriptionStyle}>
+                This app is using its built-in desktop backend
+                {desktopSession ? ` at ${desktopSession.baseUrl}` : ''}. Settings below
+                are stored by the backend and survive restarts.
+              </p>
+              {desktopSettingsError && (
+                <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }} role="alert">
+                  Settings error: {desktopSettingsError}
+                </p>
+              )}
+              <div>
+                <span style={labelStyle}>Inference profile</span>
+                <div role="radiogroup" aria-label="Inference profile">
+                  {(['quality', 'fast', 'auto'] as const).map((profile) => (
+                    <div key={profile}>
+                      <label>
+                        <input
+                          type="radio"
+                          name="desktop-inference-profile"
+                          value={profile}
+                          checked={desktopProfile === profile}
+                          onChange={() => handleDesktopProfileChange(profile)}
+                        />{' '}
+                        {profile === 'auto'
+                          ? 'Auto (choose by free memory)'
+                          : profile === 'quality'
+                            ? 'Quality'
+                            : 'Fast'}
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <span style={labelStyle}>Model availability</span>
+                {desktopStatus === null ? (
+                  <p style={descriptionStyle}>Model status unavailable (backend reachable for chat only if a model loads).</p>
+                ) : (
+                  <ul style={{ ...descriptionStyle, margin: 0, paddingLeft: 'var(--spacing-lg)' }}>
+                    <li>
+                      Quality model: {desktopStatus.models.quality.present ? 'found' : 'not found'}
+                    </li>
+                    <li>
+                      Fast model: {desktopStatus.models.fast.present ? 'found' : 'not found'}
+                    </li>
+                    <li>
+                      Active profile right now: {desktopStatus.profile}
+                      {desktopStatus.engine === 'stub' ? ' (development stub backend)' : ''}
+                    </li>
+                  </ul>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ================================================================== */}
+        {/* 2b. Server Configuration (API mode; hidden under Electron — the    */}
+        {/* loopback backend is managed by the app itself, issue #67)          */}
+        {/* ================================================================== */}
+        {mode === 'api' && !electronMode && (
           <section style={sectionStyle} aria-labelledby="server-config-heading">
             <h2 id="server-config-heading" style={sectionTitleStyle}>
               Server Configuration
@@ -1071,7 +1217,7 @@ function SettingsPageInner(): React.ReactElement {
                       name="rag-preset"
                       value={preset}
                       checked={ragPreset === preset}
-                      onChange={() => setRagPreset(preset)}
+                      onChange={() => handleRagPresetChange(preset)}
                       style={radioInputStyle}
                       aria-describedby={`rag-${preset}-desc`}
                     />

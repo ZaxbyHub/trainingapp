@@ -11,3 +11,10 @@
 
 export const DEFAULT_TOKEN_HEADER_NAME = 'X-Desktop-Token';
 export const DEFAULT_ALLOWED_ORIGINS = ['app://*'];
+/**
+ * Comma-separated dev-origin allowlist appended to DEFAULT_ALLOWED_ORIGINS
+ * for unpackaged runs (issue #67: the vite preview/dev-server renderer origin
+ * must be allowed through the guard's CORS layer). Name lives here so the
+ * electron-free backend host can honor it under plain node.
+ */
+export const DEV_ORIGINS_ENV = 'TRAININGAPP_DESKTOP_DEV_ORIGINS';

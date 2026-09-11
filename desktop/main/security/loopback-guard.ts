@@ -126,9 +126,21 @@ export function createLoopbackGuard(opts: CreateLoopbackGuardOptions): LoopbackG
     // every launch, so timing sampling of a never-reused secret is not a
     // practical attack here. Revisit only if the transport ever leaves
     // loopback.
-    const supplied = getHeader(tokenHeaderName);
-    if (supplied !== opts.token) {
-      return fail(401, 'Unauthorized');
+    //
+    // CORS-preflight exemption (issue #67, the reserved `method` field): a
+    // browser preflight (OPTIONS + Access-Control-Request-Method) NEVER
+    // carries custom headers by spec, so the token cannot be present yet.
+    // Origin (R2) and loopback-host (R3) gates above still apply to the
+    // preflight, and every real request (GET/POST/PUT/DELETE) still requires
+    // the token below — the exemption covers header negotiation only.
+    const isCorsPreflight =
+      (request.method ?? '').toUpperCase() === 'OPTIONS' &&
+      getHeader('access-control-request-method') !== null;
+    if (!isCorsPreflight) {
+      const supplied = getHeader(tokenHeaderName);
+      if (supplied !== opts.token) {
+        return fail(401, 'Unauthorized');
+      }
     }
 
     // R4 PASS.

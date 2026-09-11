@@ -25,6 +25,8 @@ import { presetOptions } from '../lib/rag/rag-presets';
 import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
+import { modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
+import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
 
 function generateId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -77,6 +79,11 @@ const exportButtonStyle: CSSProperties = {
 
 function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments }: ChatPageProps) {
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
+  // B9 (issue #67): desktop session drives the SSE endpoint/auth and the
+  // first-run model gate. Both are inert outside Electron (session null,
+  // predicate false).
+  const { session: desktopSession, models: desktopModels } = useDesktopSession();
+  const desktopModelBlocked = modelsAbsentForRealEngine(desktopModels);
   const messages = messagesProp;
   const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
@@ -440,7 +447,15 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       // auth is off (default) or on. Wrap setup so a synchronous throw (e.g.
       // URL validation) routes to onError and clears the stream ref instead of
       // wedging the send pipeline permanently. (issue #21 F5, F9)
-      const url = serverUrl ? `${serverUrl.replace(/\/$/, '')}/ask/stream` : '/ask/stream';
+      // B9 (issue #67): inside Electron, URL + per-launch token come from the
+      // desktop session and auth travels via X-Desktop-Token (the loopback
+      // guard rejects Bearer). Remote-Python/browser mode is unchanged.
+      const url = desktopSession
+        ? desktopSession.sseUrl()
+        : serverUrl
+          ? `${serverUrl.replace(/\/$/, '')}/ask/stream`
+          : '/ask/stream';
+      const sseToken = desktopSession ? desktopSession.token : getToken() ?? undefined;
       try {
         // Issue #40 RC1: thread conversation history into the server request so
         // server mode benefits from multi-turn memory + retrieval rewriting too.
@@ -450,7 +465,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         streamManager.startSSEStream(
           url,
           { question: text, history: buildHistorySnapshot(owningMessages) },
-          getToken() ?? undefined
+          sseToken,
+          desktopSession ? 'X-Desktop-Token' : undefined
         );
       } catch (err) {
         streamManager.error(err instanceof Error ? err.message : String(err));
@@ -549,6 +565,10 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // Prevent overlapping streams
     if (tokenStreamManagerRef.current) return;
 
+    // B9 first-run gate: with a real engine and no staged models the first
+    // /ask would 503 — the informative overlay is shown instead.
+    if (desktopModelBlocked) return;
+
     // Capture the turn so Regenerate can re-run it (images carry raw bytes).
     lastTurnRef.current = { text, images: attachedImages };
 
@@ -621,7 +641,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     }
 
     runGeneration(text, attachedImages, assistantMessageId, resolvedOwningId, appended);
-  }, [runGeneration, onSaveConversation, mode, browserEngine, currentConversationId, setCurrentConversationId]);
+  }, [runGeneration, onSaveConversation, mode, browserEngine, currentConversationId, setCurrentConversationId, desktopModelBlocked]);
 
   // Re-run the most recent user turn, replacing the last assistant response.
   const handleRegenerate = useCallback(() => {
@@ -820,6 +840,11 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           cause is usually missing packaged weights). Offers Retry and Open
           Settings actions. Extracted into ModelBlockedOverlay (issue #25) which
           adds aria-modal + a focus trap. (originally issue #21 F10) */}
+      {/* B9 (issue #67): desktop first-run gate — real engine, no staged
+          models. Blocks send with an informative state instead of a doomed
+          /ask (AC5). Extracted component per the shared-file convention. */}
+      <DesktopModelBlockedOverlay open={desktopModelBlocked} />
+
       {isModelBlocked && (
         <ModelBlockedOverlay
           readinessResult={getReadinessResultSnapshot()}
