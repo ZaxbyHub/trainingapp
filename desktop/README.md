@@ -233,3 +233,39 @@ Design decisions are frozen in ADR-0006 (`docs/adr/0006-profile-model.md`).
 - **`ingest:progress`**: IPC channel emitting `{docId, phase, percent}`
   (phase: extract | chunk | embed | write | done) per document; the renderer
   consumer lands with B9 (#67).
+
+## Hybrid retrieval (B7, issue #65)
+
+`POST /search` and the retrieval step inside `/ask` + `/ask/stream` run the
+hybrid pipeline in `main/backend/retrieval/`: sqlite-vec top-K UNION FTS5
+top-K -> Reciprocal Rank Fusion (1/(rrfK + rank + 1), dedup by chunk id) ->
+`recencyWeight()` hook (inert until C4/#71) -> the ettin-reranker-32m-v1
+cross-encoder over the fused window IN A DEDICATED WORKER THREAD (never the
+main/event-loop thread) -> the calibrated relevance floor (ADR-0007) -> topK.
+
+- **Config keys** (env-resolved, mirroring the browser `balanced` preset;
+  invalid or out-of-range values fall back per key):
+  `TRAININGAPP_RETRIEVAL_TOPK` (10, max 1000),
+  `TRAININGAPP_RETRIEVAL_CANDIDATE_MULTIPLIER`
+  (3, max 100), `TRAININGAPP_RETRIEVAL_RERANK` (true; 'true'/'1'/'false'/'0'),
+  `TRAININGAPP_RETRIEVAL_RRF_K` (60, max 10000),
+  `TRAININGAPP_RETRIEVAL_RELEVANCE_FLOOR`
+  (the calibrated ADR-0007 value; finite float in [0, 1)).
+- **Reranker weights**: staged at `models/ettin-reranker-32m-v1/onnx/`
+  (repo, or `<userData>/models`); `TRAININGAPP_RERANKER_MODEL_DIR` overrides.
+  Without weights the pipeline degrades to RRF-only ordering and the
+  relevance floor is NOT applied (it gates reranker-scale sigmoid scores
+  only). A reranker worker failure degrades that single query to the same
+  fused ordering (logged once) — `/search` never fails because of the
+  reranker.
+- **Query embedding** reuses the ingest embedder instance (single model load
+  per process): `bge-small-en-v1.5` (ADR-0006 pin, pending ADR-0001), or the
+  deterministic `TRAININGAPP_DESKTOP_EMBEDDER=hash` fixture in dev/CI.
+  Queries are embedded WITHOUT a model-card instruction prefix to stay in the
+  same vector space as the recorded parity baseline
+  (eval/samples/report-devstation-weighted.json); see ADR-0007 for the
+  re-baseline condition if that changes.
+- **Detached mode**: with no store configured (or no embedder resolvable) the
+  host attaches no retrieval surface and engines keep the B3 deterministic
+  behavior; attaching/detaching is the `attachRetrievalSurface` seam,
+  mirroring B6's document surface.

@@ -9,6 +9,9 @@
 //
 // This module must stay electron-free: it is imported by the headless
 // dev-server entry that CI and the acceptance checks run under plain node.
+import type { RetrievalSurface } from './retrieval/hybrid.js';
+
+export type { RetrievalSurface };
 
 export type BackendMode = 'node' | 'sidecar';
 
@@ -227,4 +230,12 @@ export interface EngineSurface {
    * stub otherwise. Attaching null detaches (host stop).
    */
   attachDocumentSurface?(surface: DocumentSurface | null): void;
+  /**
+   * B7 (issue #65): late-bound hybrid retrieval surface, mirroring the B6
+   * document seam. The host builds it (store + query embedder + optional
+   * worker reranker + retrieval.* config) after the store opens; engines that
+   * support it delegate search()/query() retrieval there, falling back to
+   * their stub otherwise. Attaching null detaches (host stop / B3 mode).
+   */
+  attachRetrievalSurface?(surface: RetrievalSurface | null): void;
 }

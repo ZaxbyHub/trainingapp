@@ -36,6 +36,7 @@ import type {
   EngineSurface,
   IngestFileInput,
   IngestResult,
+  RetrievalSurface,
 } from '../types.js';
 import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
 import {
@@ -373,19 +374,33 @@ export class LlamaEngine implements EngineSurface {
     const started = Date.now();
     const profile = this.effectiveProfile();
     const modelPath = this.assertModelAvailable(profile);
+    // B7 (issue #65): the retrieval step inside /ask//ask/stream. When the
+    // host attached a retrieval surface, the hybrid pipeline runs BEFORE
+    // generation: sources/context_length become real and the prompt is
+    // grounded by prepending the retrieved chunks to the question string
+    // (zero change when no surface is attached). An /ask cancellation during
+    // an in-flight retrieval lets the work complete and discards the result —
+    // the rerank worker is never terminated mid-query.
+    const context = await this.stub.retrieveContext(question, opts.nResults);
+    const groundedQuestion =
+      context === null
+        ? question
+        : `${'Answer the question using the retrieved context when relevant.'}\n\n${context.texts
+            .map((text, index) => `[${index + 1}] ${text}`)
+            .join('\n\n')}\n\n\nQuestion: ${question}`;
     const run = this.queue.then(async () => {
       const entry = await this.ensureResident(profile, modelPath);
       entry.inFlight += 1;
       try {
-        const result = await entry.backend.generate(question, {
+        const result = await entry.backend.generate(groundedQuestion, {
           history: opts.history,
           streamCallback: opts.streamCallback,
           cancellationEvent: opts.cancellationEvent,
         });
         const out: EngineQueryResult = {
           answer: result.answer,
-          sources: [],
-          context_length: 0,
+          sources: context?.sources ?? [],
+          context_length: context?.contextLength ?? 0,
           inference_time: (Date.now() - started) / 1000,
         };
         if (result.cancelled) out.cancelled = true;
@@ -524,6 +539,16 @@ export class LlamaEngine implements EngineSurface {
    */
   attachDocumentSurface(surface: DocumentSurface | null): void {
     this.documents = surface;
+  }
+
+  /**
+   * B7 (issue #65): the host attaches the store-backed hybrid retrieval
+   * surface after it opens the store (forwarded to the stub that owns the
+   * retrieval seam). While null, search()/query() keep the stub's
+   * deterministic detached behavior (the B3 conformance mode).
+   */
+  attachRetrievalSurface(surface: RetrievalSurface | null): void {
+    this.stub.attachRetrievalSurface(surface);
   }
 
   private documents: DocumentSurface | null = null;
