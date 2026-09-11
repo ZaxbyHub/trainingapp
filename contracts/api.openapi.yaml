@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Document Q&A API
-  version: "2.4.0"
+  version: "2.5.0"
   description: |
     RAG-based document question answering API.
 
@@ -348,6 +348,34 @@ paths:
                 $ref: "#/components/schemas/TelemetryMemoryResponse"
         "503":
           description: Memory telemetry is not wired on this host
+
+  /status/models:
+    get:
+      tags: [ops]
+      summary: Per-profile inference model presence for the first-run gate (B9, issue #67)
+      description: >
+        Reports whether each inference profile's GGUF is staged on disk at the
+        host's resolved model directory (presence means a later /ask for that
+        profile will not 503; it says nothing about residency). `engine`
+        distinguishes a real inference backend ('llama.cpp') from the CI/dev
+        stub fixture ('stub', which answers /ask without weights and must NOT
+        be treated as a blocking first-run state by clients). `profile` is the
+        profile the engine would use right now (effective profile; 'auto' on
+        the stub). Optional `path` is informational (staged file location).
+        Transport-token-guarded like every route.
+        A host without a model-status provider answers 503 (the path is
+        known, never 404); the Python API surface declares this desktop-only
+        route as a documented unwired 503 to keep the shared contract exact.
+      operationId: getStatusModels
+      responses:
+        "200":
+          description: Per-profile model presence and the effective profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusModelsResponse"
+        "503":
+          description: Model status is not wired on this host
 components:
   securitySchemes:
     bearerAuth:
@@ -359,6 +387,35 @@ components:
       in: header
       name: X-API-Key
   schemas:
+    StatusModelsResponse:
+      type: object
+      required: [engine, profile, models]
+      properties:
+        engine:
+          type: string
+          enum: [stub, llama.cpp]
+        profile:
+          type: string
+        models:
+          type: object
+          required: [quality, fast]
+          properties:
+            quality:
+              type: object
+              required: [present]
+              properties:
+                present:
+                  type: boolean
+                path:
+                  type: string
+            fast:
+              type: object
+              required: [present]
+              properties:
+                present:
+                  type: boolean
+                path:
+                  type: string
     HealthResponse:
       type: object
       required: [status, engine_ready]

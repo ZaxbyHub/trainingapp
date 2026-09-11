@@ -121,6 +121,20 @@ export interface SettingsResponse {
 /**
  * Stats Types
  */
+/**
+ * B9 (issue #67): GET /status/models payload — per-profile GGUF presence.
+ * `engine` distinguishes the CI/dev stub fixture (answers /ask without
+ * weights; never gated) from a real engine whose weights are missing.
+ */
+export interface ModelStatus {
+  engine: 'stub' | 'llama.cpp';
+  profile: string;
+  models: {
+    quality: { present: boolean; path?: string };
+    fast: { present: boolean; path?: string };
+  };
+}
+
 export interface StatsResponse {
   document_count: number;
   chunk_count: number;

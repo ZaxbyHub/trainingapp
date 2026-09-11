@@ -49,6 +49,13 @@ export interface UseServiceInitializationOptions {
   /** Current browser engine — used to filter readiness events so a stale event
    *  from engine A can't overwrite the readiness state for engine B (issue #21 F7/F8). */
   browserEngine: BrowserEngine;
+  /**
+   * B9 (issue #67): skip browser-local service boot entirely (Electron mode).
+   * When true the hook resolves immediately to an initialized idle state and
+   * never touches the embedding/vector/keyword/reranker/LLM singletons — the
+   * desktop backend owns documents and inference there. Default false.
+   */
+  skip?: boolean;
 }
 
 export interface UseServiceInitialization {
@@ -107,6 +114,7 @@ export const useServiceInitialization: UseServiceInitialization = ({
   setModelReady,
   setModelLoadingProgress,
   browserEngine,
+  skip = false,
 }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
@@ -259,6 +267,19 @@ export const useServiceInitialization: UseServiceInitialization = ({
       window.addEventListener('readiness-gate-checked', handleReadinessChecked as EventListener);
     }
 
+    // B9 (issue #67): Electron mode skips the browser-local service boot
+    // entirely — no vector/keyword/embedding/reranker/LLM singletons are
+    // touched (the desktop backend owns documents + inference). Readiness
+    // listeners stay registered harmlessly; nothing will emit those events.
+    if (skip) {
+      setCurrentStep('Ready');
+      setModelLoadingProgress(100);
+      setIsInitialized(true);
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
+
     initializeServices();
 
     return () => {
@@ -338,7 +359,7 @@ export const useServiceInitialization: UseServiceInitialization = ({
         }
       }, 0);
     };
-  }, [initializeServices, setModelReady]);
+  }, [initializeServices, setModelReady, skip]);
 
   return {
     isInitialized,

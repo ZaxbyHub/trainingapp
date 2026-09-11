@@ -7,7 +7,12 @@ import type { DocumentEntry } from '../types/document';
 
 interface DocumentListProps {
   documents: DocumentEntry[];
-  onDelete: (docId: string) => void;
+  /**
+   * B9 (issue #67): optional. When omitted (Electron mode — the frozen
+   * contract only exposes clear-all, rendered by the page header), the
+   * per-document delete button is not rendered at all.
+   */
+  onDelete?: (docId: string) => void;
   deletingId: string | null;
   /**
    * U2: optional per-document indexing-cancel handler. When provided, the
@@ -72,7 +77,7 @@ const BUFFER = 5;
 
 const DocumentItem = React.memo<{
   doc: DocumentEntry;
-  onDelete: (docId: string) => void;
+  onDelete?: (docId: string) => void;
   isDeleting: boolean;
   onCancelIndexing?: (docId: string) => void;
 }>(({ doc, onDelete, isDeleting, onCancelIndexing }) => {
@@ -90,7 +95,7 @@ const DocumentItem = React.memo<{
 
   const handleConfirmDelete = useCallback(() => {
     setIsConfirming(false);
-    onDelete(doc.id);
+    onDelete?.(doc.id);
   }, [doc.id, onDelete]);
 
   const handleCancelDelete = useCallback(() => {
@@ -341,8 +346,9 @@ const DocumentItem = React.memo<{
             Cancel
           </button>
         </div>
-      ) : (
-        /* Delete trigger button (arms the inline confirm). */
+      ) : onDelete ? (
+        /* Delete trigger button (arms the inline confirm). Not rendered in
+           B9 Electron mode (no per-document delete in the frozen contract). */
         <button
           type="button"
           onClick={handleDelete}
@@ -387,7 +393,7 @@ const DocumentItem = React.memo<{
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
           </svg>
         </button>
-      )}
+      ) : null}
     </div>
   );
 });

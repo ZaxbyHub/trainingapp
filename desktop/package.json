@@ -14,9 +14,11 @@
     "dev": "npm run compile && electron . --dev",
     "desktop:dev": "concurrently -k -n vite,electron \"npm --prefix ../web_ui run dev\" \"npm run compile && electron . --dev\"",
     "build": "npm run compile && electron-builder --win nsis --x64",
-    "desktop:build": "npm --prefix ../web_ui run build && node -e \"require('fs').cpSync('../web_ui/dist', 'renderer', { recursive: true })\" && npm run compile && electron-builder --win nsis --x64"
+    "desktop:build": "npm --prefix ../web_ui run build && node -e \"require('fs').cpSync('../web_ui/dist', 'renderer', { recursive: true })\" && npm run compile && electron-builder --win nsis --x64",
+    "test:e2e": "playwright test --config playwright.config.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^24.9.0",
     "concurrently": "^10.0.5",
     "electron": "^44.2.0",

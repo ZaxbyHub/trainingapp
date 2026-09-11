@@ -7,11 +7,13 @@
 // with deterministic, model-free data. Each stub names its owning issue.
 import type {
   BatchIngestResult,
+  DocumentSurface,
   EngineQueryOptions,
   EngineQueryResult,
   EngineSurface,
   IngestFileInput,
   IngestResult,
+  ModelStatus,
   RetrievalSurface,
 } from './types.js';
 
@@ -86,9 +88,21 @@ export class StubEngine implements EngineSurface {
    * as the DETACHED-state fallback by contract.
    */
   private retrievalSurface: RetrievalSurface | null = null;
+  private documentSurface: DocumentSurface | null = null;
 
   attachRetrievalSurface(surface: RetrievalSurface | null): void {
     this.retrievalSurface = surface;
+  }
+
+  /**
+   * B9 (issue #67): the store-backed document surface (B6) can attach to the
+   * stub exactly like the retrieval surface — with the deterministic hash
+   * embedder the dev/CI fixture becomes a full RAG pipeline (real ingest,
+   * real hybrid retrieval) without any LLM weights. Without an attached
+   * surface the honest not-implemented stub answers stay.
+   */
+  attachDocumentSurface(surface: DocumentSurface | null): void {
+    this.documentSurface = surface;
   }
 
   /**
@@ -123,12 +137,17 @@ export class StubEngine implements EngineSurface {
     // retrieval — sources and context_length come from the hybrid pipeline
     // (rank order, deduped) instead of the empty stub values.
     const context = await this.retrieveContext(question, opts.nResults);
+    // Issue #67: TRAININGAPP_STUB_TOKEN_DELAY_MS widens the inter-token gap so
+    // the Playwright-under-Electron suite can click Cancel mid-stream
+    // (deterministically). Default 1ms keeps conformance instant; the knob is
+    // a dev/CI fixture, never set in production.
+    const tokenDelayMs = Math.min(Math.max(Number(process.env.TRAININGAPP_STUB_TOKEN_DELAY_MS ?? 1) || 1, 1), 5000);
     for (const token of STUB_TOKENS) {
       if (cancellation?.isSet()) {
         return { answer: '', sources: [], context_length: 0, inference_time: (Date.now() - started) / 1000, cancelled: true };
       }
       opts.streamCallback?.(token);
-      await delay(1);
+      await delay(tokenDelayMs);
     }
     return {
       // STUB answer text is deliberately explicit that this is not real
@@ -154,13 +173,29 @@ export class StubEngine implements EngineSurface {
   // surface a missing model BEFORE any response byte is written.
   async preflight(): Promise<void> {}
 
-  // STUB: the document store arrives with B5/B6 (#63/#64).
+  /**
+   * B9 (issue #67): the stub fixture answers /ask WITHOUT weights, so its
+   * status reports engine 'stub' with nothing present — the renderer's
+   * first-run gate keys off the engine discriminator and must NOT block this
+   * engine (it is dev/CI only; production is 'llama.cpp').
+   */
+  modelStatus(): ModelStatus {
+    return {
+      engine: 'stub',
+      profile: 'auto',
+      models: { quality: { present: false }, fast: { present: false } },
+    };
+  }
+
   async listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }> {
+    if (this.documentSurface !== null) return this.documentSurface.listDocuments();
     return { documents: [], total: 0 };
   }
 
   // STUB: the document store (and clearing it) arrives with B6 (#64).
-  async clearDocuments(): Promise<void> {}
+  async clearDocuments(): Promise<void> {
+    if (this.documentSurface !== null) return this.documentSurface.clearDocuments();
+  }
 
   async getStats(): Promise<{ document_count: number; chunk_count: number; embedding_model: string; llm_backend: string | null; documents: string[] }> {
     return {
@@ -233,9 +268,11 @@ export class StubEngine implements EngineSurface {
     return out;
   }
 
-  // STUB: directory ingestion is B6 (#64). Honest stub: reports failure with
-  // the owning issue in the message rather than pretending success.
-  async ingestDirectory(_directory: string): Promise<IngestResult> {
+  // B9 (issue #67): with a store-backed document surface attached, the stub
+  // delegates ALL document operations to it (real ingest/list/clear over the
+  // SQLite store); without one, the honest not-implemented answers stay.
+  async ingestDirectory(directory: string): Promise<IngestResult> {
+    if (this.documentSurface !== null) return this.documentSurface.ingestDirectory(directory);
     return {
       success: false,
       documents: 0,
@@ -244,7 +281,8 @@ export class StubEngine implements EngineSurface {
     };
   }
 
-  async ingestFile(_input?: IngestFileInput): Promise<IngestResult> {
+  async ingestFile(input?: IngestFileInput): Promise<IngestResult> {
+    if (this.documentSurface !== null) return this.documentSurface.ingestFile(input);
     return {
       success: false,
       documents: 0,
@@ -258,6 +296,7 @@ export class StubEngine implements EngineSurface {
   // here is bounded: every provided file counts as failed with no per-file
   // results until a real store-backed surface is attached.
   async ingestBatch(inputs?: IngestFileInput[]): Promise<BatchIngestResult> {
+    if (this.documentSurface !== null) return this.documentSurface.ingestBatch(inputs);
     const count = inputs?.length ?? 0;
     return {
       total_files: count,

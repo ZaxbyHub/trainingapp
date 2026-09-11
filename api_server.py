@@ -556,6 +556,23 @@ async def get_memory_telemetry(auth: dict = Security(require_auth())):
     )
 
 
+@app.get("/status/models")
+async def get_status_models(auth: dict = Security(require_auth())):
+    """
+    Per-profile inference model presence (issue #67, B9).
+
+    Model presence is a desktop-only concept (the Electron/Node backend
+    resolves GGUF paths at desktop/main/backend/inference/llama-engine.ts);
+    this Python host never wires the status provider, so the route exists to
+    keep the shared contract (contracts/api.openapi.yaml) consistent across
+    backends and always answers the documented unwired 503 — the path is
+    known, never 404-absent.
+    """
+    raise HTTPException(
+        status_code=503, detail="Model status is not wired on this host"
+    )
+
+
 @app.post("/ask", response_model=QuestionResponse)
 async def ask_question(request: QuestionRequest, auth: dict = Security(require_auth())):
     """Ask a question about the ingested documents."""

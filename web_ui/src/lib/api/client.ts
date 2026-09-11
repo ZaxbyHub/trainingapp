@@ -74,35 +74,25 @@ async function parseErrorResponse(response: Response): Promise<string> {
 }
 
 /**
- * Create headers object with auth token if available.
- */
-function createHeaders(token?: string): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  return headers;
-}
-
-/**
  * ApiClient provides typed methods for all FastAPI endpoints.
  */
 export class ApiClient {
   private baseUrl: string;
   private token?: string;
+  private authHeaderName: string;
 
   /**
    * Create a new ApiClient instance.
    * @param baseUrl - Base URL of the API server (defaults to same-origin)
    * @param token - Optional auth token to use for all requests
+   * @param authHeaderName - Optional auth header name carrying the bearer
+   *   token; defaults to the Python backend's 'Authorization'. Electron mode
+   *   passes the desktop loopback guard's 'X-Desktop-Token' (issue #67).
    */
-  constructor(baseUrl: string = DEFAULT_BASE_URL, token?: string) {
+  constructor(baseUrl: string = DEFAULT_BASE_URL, token?: string, authHeaderName?: string) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.token = token;
+    this.authHeaderName = authHeaderName ?? 'Authorization';
   }
 
   /**
@@ -110,6 +100,44 @@ export class ApiClient {
    */
   private getEffectiveToken(): string | undefined {
     return this.token ?? getToken() ?? undefined;
+  }
+
+  /**
+   * Build request headers with the token carried in THIS client's configured
+   * auth header (issue #67). Replaces the module-level createHeaders for all
+   * instance fetches so no site can regress to a hardcoded header name.
+   */
+  private requestHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const token = this.getEffectiveToken();
+    if (token) {
+      headers[this.authHeaderName] = this.authValue(token);
+    }
+    return headers;
+  }
+
+  /**
+   * Multipart variant: same auth header, no Content-Type (the browser sets
+   * the multipart boundary).
+   */
+  private multipartHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    const token = this.getEffectiveToken();
+    if (token) {
+      headers[this.authHeaderName] = this.authValue(token);
+    }
+    return headers;
+  }
+
+  /**
+   * Header VALUE scheme: the Python backend's Authorization header carries
+   * `Bearer <token>`; the desktop guard's X-Desktop-Token is compared as the
+   * RAW token (plain equality, issue #67).
+   */
+  private authValue(token: string): string {
+    return this.authHeaderName === 'Authorization' ? `Bearer ${token}` : token;
   }
 
   /**
@@ -126,10 +154,9 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const response = await fetch(`${this.baseUrl}/documents`, {
       method: 'GET',
-      headers: createHeaders(token),
+      headers: this.requestHeaders(),
     });
 
     if (!response.ok) {
@@ -150,14 +177,10 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const formData = new FormData();
     formData.append('file', file);
 
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
+    const headers = this.multipartHeaders();
 
     const response = await fetch(`${this.baseUrl}/ingest/file`, {
       method: 'POST',
@@ -183,16 +206,12 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const formData = new FormData();
     for (const file of files) {
       formData.append('files', file);
     }
 
-    const headers: Record<string, string> = {};
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
+    const headers = this.multipartHeaders();
 
     const response = await fetch(`${this.baseUrl}/ingest/batch`, {
       method: 'POST',
@@ -220,10 +239,9 @@ export class ApiClient {
 
     const sanitized = sanitizeDirectoryPath(directory);
 
-    const token = this.getEffectiveToken();
     const response = await fetch(`${this.baseUrl}/ingest`, {
       method: 'POST',
-      headers: createHeaders(token),
+      headers: this.requestHeaders(),
       body: JSON.stringify({ directory: sanitized }),
     });
 
@@ -244,10 +262,9 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const response = await fetch(`${this.baseUrl}/documents`, {
       method: 'DELETE',
-      headers: createHeaders(token),
+      headers: this.requestHeaders(),
     });
 
     if (!response.ok) {
@@ -273,7 +290,6 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const body: { question: string; n_results?: number } = { question };
     if (nResults !== undefined) {
       body.n_results = nResults;
@@ -281,7 +297,7 @@ export class ApiClient {
 
     const response = await fetch(`${this.baseUrl}/ask`, {
       method: 'POST',
-      headers: createHeaders(token),
+      headers: this.requestHeaders(),
       body: JSON.stringify(body),
     });
 
@@ -304,10 +320,9 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const response = await fetch(`${this.baseUrl}/search`, {
       method: 'POST',
-      headers: createHeaders(token),
+      headers: this.requestHeaders(),
       body: JSON.stringify({ query, n_results: nResults }),
     });
 
@@ -332,10 +347,9 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const response = await fetch(`${this.baseUrl}/settings`, {
       method: 'GET',
-      headers: createHeaders(token),
+      headers: this.requestHeaders(),
     });
 
     if (!response.ok) {
@@ -356,10 +370,9 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const response = await fetch(`${this.baseUrl}/settings`, {
       method: 'PUT',
-      headers: createHeaders(token),
+      headers: this.requestHeaders(),
       body: JSON.stringify(partial),
     });
 
@@ -384,10 +397,9 @@ export class ApiClient {
       throw new ApiError(0, 'Network unavailable. Please check your connection.');
     }
 
-    const token = this.getEffectiveToken();
     const response = await fetch(`${this.baseUrl}/stats`, {
       method: 'GET',
-      headers: createHeaders(token),
+      headers: this.requestHeaders(),
     });
 
     if (!response.ok) {

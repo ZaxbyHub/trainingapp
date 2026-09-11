@@ -9,6 +9,7 @@ import type { RAGPreset } from '../rag/rag-presets';
 import { DEFAULT_RAG_PRESET } from '../rag/rag-presets';
 import { disposeBrowserEngine } from '../llm/llm-factory';
 import { getToken } from '../api/auth';
+import { initDesktopSession, isElectron } from '../desktop-session';
 
 export type InferenceMode = 'browser-local' | 'api';
 
@@ -206,10 +207,19 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
     try {
       const url = state.serverUrl.replace(/\/$/, '');
       const endpoint = url ? `${url}/auth/status` : '/auth/status';
+      // B9 (issue #67): the desktop loopback guard requires the per-launch
+      // X-Desktop-Token on EVERY route — a bare connectivity probe would 401
+      // and falsely report "server not connected" inside Electron.
+      const headers: Record<string, string> = {};
+      if (isElectron()) {
+        const { token } = await initDesktopSession();
+        headers['X-Desktop-Token'] = token;
+      }
       const response = await fetch(endpoint, {
         method: 'GET',
         signal: controller.signal,
         credentials: 'include',
+        headers,
       });
 
       if (timeoutIdRef.current) {

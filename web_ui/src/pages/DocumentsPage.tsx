@@ -16,14 +16,45 @@ import { getEmbeddingService } from '../lib/embeddings/embedding-service';
 import { ensureEmbeddingServiceReady } from '../hooks/useServiceInitialization';
 import { getVectorIndex } from '../lib/search/vector-index';
 import { getKeywordIndex } from '../lib/search/keyword-index';
+import { isElectron, useDesktopSession } from '../lib/desktop-session';
+import type { DocumentInfo } from '../lib/api';
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
+/**
+ * B9 (issue #67): map the frozen contract's DocumentInfo (id = source PATH,
+ * see document-surface.ts) to the page's display row. The server store is the
+ * authoritative source in Electron mode; fileSize is unknown server-side and
+ * intentionally 0 (never displayed from the server row).
+ */
+function serverDocToEntry(doc: DocumentInfo): DocumentEntry {
+  const fileName = doc.id.split(/[\/]/).pop() ?? doc.id;
+  const fileType = (fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.') + 1) : '').toLowerCase();
+  return {
+    id: doc.id,
+    fileName,
+    fileSize: 0,
+    fileType,
+    status: 'ready' as const,
+    progress: 100,
+    chunkCount: doc.chunk_count,
+    uploadedAt: Date.now(),
+  };
+}
+
 export function DocumentsPage() {
   // U3b: surface user-facing failures (and delete success) as toasts.
   const { showToast } = useToast();
+  // B9 (issue #67): inside Electron the desktop backend store is authoritative.
+  // Uploads go through apiClient (/ingest/file), listing through GET /documents,
+  // and deletion is the contract's clear-all (no per-document delete exists in
+  // the frozen contract) behind an explicit confirm. Browser-local behavior is
+  // byte-identical when the preload bridge is absent.
+  const { session: desktopSession } = useDesktopSession();
+  const electronMode = isElectron() && desktopSession !== null;
+  const [clearAllConfirming, setClearAllConfirming] = useState(false);
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -75,6 +106,20 @@ export function DocumentsPage() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      // B9: server-backed listing in Electron mode (no IndexedDB, no migration).
+      if (electronMode && desktopSession) {
+        try {
+          const listing = await desktopSession.apiClient.listDocuments();
+          if (cancelled) return;
+          setDocuments(listing.documents.map(serverDocToEntry));
+        } catch (error) {
+          console.error('Failed to load documents from the desktop backend:', error);
+          showToast('Failed to load documents from the desktop backend.', 'error');
+        } finally {
+          if (!cancelled) setIsLoading(false);
+        }
+        return;
+      }
       try {
         await migrateOrphanedNamespaces();
         if (cancelled) return;
@@ -106,7 +151,7 @@ export function DocumentsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [electronMode, desktopSession, showToast]);
 
   // Keep the latest-documents ref in sync so the debounced save and the unmount
   // flush always read CURRENT state (F4/F13).
@@ -119,7 +164,7 @@ export function DocumentsPage() {
   // than closing over the schedule-time `documents` snapshot, so a stale armed
   // timer cannot resurrect a just-deleted document via clear-and-rewrite-all.
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || electronMode) return;
 
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -139,7 +184,7 @@ export function DocumentsPage() {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [documents, isLoading]);
+  }, [documents, isLoading, electronMode]);
 
   // F4: flush the pending debounced save on unmount so navigating away within
   // the 500ms debounce window does not lose the latest document-list change.
@@ -147,6 +192,7 @@ export function DocumentsPage() {
   // but a hard tab close / bfcache eviction may abort it (documented residual).
   useEffect(() => {
     return () => {
+      if (electronMode) return;
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
         saveTimeoutRef.current = null;
@@ -155,7 +201,7 @@ export function DocumentsPage() {
         });
       }
     };
-  }, []);
+  }, [electronMode]);
 
   // Process a single file and update document state.
   // F3: the in-flight promise is registered in processingPromisesRef so
@@ -394,6 +440,51 @@ export function DocumentsPage() {
   // indexes). Skipped files surface a transient notice.
   const handleFilesSelected = useCallback(
     async (files: File[]) => {
+      // B9 (issue #67): Electron mode uploads through the desktop backend
+      // (/ingest/file) — extraction, chunking, embedding and indexing all
+      // happen server-side. The browser-local pipeline below is untouched.
+      if (electronMode && desktopSession) {
+        for (const file of files) {
+          const entry: DocumentEntry = {
+            id: generateId(),
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.name.slice(file.name.lastIndexOf('.')).toLowerCase(),
+            status: 'uploading',
+            progress: 30,
+            uploadedAt: Date.now(),
+          };
+          setDocuments((prev) => [entry, ...prev]);
+          try {
+            const result = await desktopSession.apiClient.uploadFile(file);
+            setDocuments((prev) =>
+              prev.map((doc) =>
+                doc.id === entry.id
+                  ? {
+                      ...doc,
+                      status: 'ready',
+                      progress: 100,
+                      chunkCount: result.chunks_added,
+                      errorMessage: undefined,
+                    }
+                  : doc
+              )
+            );
+            // C-7: tell useDocumentCount (chat empty-state badge) to recount.
+            window.dispatchEvent(new CustomEvent('documents-changed'));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            setDocuments((prev) =>
+              prev.map((doc) =>
+                doc.id === entry.id ? { ...doc, status: 'error', errorMessage: message } : doc
+              )
+            );
+            showToast(`Failed to upload "${file.name}": ${message}`, 'error');
+          }
+        }
+        return;
+      }
+
       const existing = latestDocumentsRef.current;
       const accepted: { file: File; entry: DocumentEntry }[] = [];
       const skipped: string[] = [];
@@ -443,7 +534,7 @@ export function DocumentsPage() {
         await processFile(file, entry.id);
       }
     },
-    [processFile]
+    [processFile, electronMode, desktopSession, showToast]
   );
 
   // Auto-dismiss the duplicate notice after a few seconds.
@@ -474,6 +565,10 @@ export function DocumentsPage() {
   // the deleted document; the state update below re-arms the debounce with the
   // post-delete list (read from the ref at fire time).
   const handleDelete = useCallback(async (docId: string) => {
+    // B9 (issue #67): Electron mode hides the per-document delete (the frozen
+    // contract only exposes clear-all) — the button is not rendered at all,
+    // so reaching here means a stale caller; keep it a safe no-op.
+    if (electronMode) return;
     setDeletingId(docId);
 
     try {
@@ -526,7 +621,29 @@ export function DocumentsPage() {
     } finally {
       setDeletingId(null);
     }
-  }, []);
+  }, [electronMode]);
+
+  // B9 (issue #67): Electron-mode clear-all (the contract's DELETE /documents).
+  // Two-step confirm because it removes EVERY document on the backend.
+  const handleClearAll = useCallback(async () => {
+    if (!electronMode || !desktopSession) return;
+    if (!clearAllConfirming) {
+      setClearAllConfirming(true);
+      return;
+    }
+    setClearAllConfirming(false);
+    try {
+      await desktopSession.apiClient.clearDocuments();
+      const listing = await desktopSession.apiClient.listDocuments();
+      setDocuments(listing.documents.map(serverDocToEntry));
+      // C-7: same-tab count refresh (see upload branch).
+      window.dispatchEvent(new CustomEvent('documents-changed'));
+      showToast('All documents cleared from the desktop library', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      showToast(`Failed to clear documents: ${message}`, 'error');
+    }
+  }, [electronMode, desktopSession, clearAllConfirming, showToast]);
 
   // Count supported documents
   const supportedCount = documents.filter((doc) =>
@@ -580,20 +697,41 @@ export function DocumentsPage() {
         >
           Documents
         </h1>
-        {supportedCount > 0 && (
-          <span
-            style={{
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              color: 'var(--color-text-muted)',
-              backgroundColor: 'var(--color-bubble-system)',
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              borderRadius: '12px',
-            }}
-          >
-            {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
-          </span>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
+          {electronMode && documents.length > 0 && (
+            <button
+              type="button"
+              onClick={handleClearAll}
+              aria-label={clearAllConfirming ? 'Confirm clear all documents' : 'Clear all documents'}
+              style={{
+                fontSize: 'var(--font-size-small)',
+                fontFamily: 'var(--font-family)',
+                cursor: 'pointer',
+                padding: 'var(--spacing-xs) var(--spacing-sm)',
+                borderRadius: '12px',
+                border: '1px solid ' + (clearAllConfirming ? 'var(--color-danger)' : 'transparent'),
+                color: clearAllConfirming ? 'var(--color-danger)' : 'var(--color-text-muted)',
+                backgroundColor: 'var(--color-bubble-system)',
+              }}
+            >
+              {clearAllConfirming ? 'Click again to clear ALL documents' : 'Clear all'}
+            </button>
+          )}
+          {supportedCount > 0 && (
+            <span
+              style={{
+                fontSize: 'var(--font-size-small)',
+                fontFamily: 'var(--font-family)',
+                color: 'var(--color-text-muted)',
+                backgroundColor: 'var(--color-bubble-system)',
+                padding: 'var(--spacing-xs) var(--spacing-sm)',
+                borderRadius: '12px',
+              }}
+            >
+              {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* F9: one-time re-index notice after an embedding-model upgrade. */}
@@ -675,9 +813,9 @@ export function DocumentsPage() {
       <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         <DocumentList
           documents={documents}
-          onDelete={handleDelete}
+          onDelete={electronMode ? undefined : handleDelete}
           deletingId={deletingId}
-          onCancelIndexing={handleCancelIndexing}
+          onCancelIndexing={electronMode ? undefined : handleCancelIndexing}
         />
       </div>
     </div>

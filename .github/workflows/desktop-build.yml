@@ -57,6 +57,44 @@ jobs:
           path: desktop/desktop-release/*.exe
           if-no-files-found: error
 
+  renderer-e2e:
+    name: Playwright under Electron (issue #67 AC1 smoke)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: |
+            web_ui/package-lock.json
+            desktop/package-lock.json
+
+      - name: Build renderer (production dist served by vite preview)
+        run: |
+          npm --prefix web_ui ci --no-audit --no-fund
+          npm --prefix web_ui run build
+
+      - name: Install + compile desktop (Electron binary + backend)
+        run: |
+          npm --prefix desktop ci --no-audit --no-fund
+          npm --prefix desktop run compile
+
+      - name: Run Playwright-under-Electron smoke
+        run: npm --prefix desktop run test:e2e
+
+      - name: Upload traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: renderer-e2e-traces
+          path: |
+            desktop/test-results/
+            desktop/playwright-report/
+          retention-days: 7
+
   backend-conformance:
     name: Electron backend host vs frozen API contract (issue #61)
     runs-on: windows-latest

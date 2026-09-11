@@ -1,7 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { ThemeProvider } from './lib/theme';
 import { ToastProvider } from './components/ToastProvider';
 import { InferenceModeProvider, useInferenceMode } from './lib/inference/InferenceModeContext';
+import {
+  DesktopSessionProvider,
+  fetchModelStatus,
+  initDesktopSession,
+  isElectron,
+  type DesktopSessionState,
+} from './lib/desktop-session';
 import { AppLayout } from './layouts/AppLayout';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ChatPage } from './pages/ChatPage';
@@ -78,6 +85,78 @@ function LoadingOverlay({
   );
 }
 
+/**
+ * B9 (issue #67): seed the inference-mode store BEFORE InferenceModeProvider
+ * mounts so a desktop launch boots in `api` mode pointed at the Electron
+ * backend. The loopback port and launch token rotate on every app start, so
+ * this must run with the FRESH session values each launch (loadStoredState
+ * would otherwise restore a stale serverUrl from the previous run).
+ */
+function seedInferenceModeForDesktop(baseUrl: string): void {
+  const KEY = 'inference-mode';
+  let stored: Record<string, unknown> = {};
+  try {
+    stored = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, unknown>;
+  } catch {
+    stored = {};
+  }
+  stored.mode = 'api';
+  stored.serverUrl = baseUrl;
+  localStorage.setItem(KEY, JSON.stringify(stored));
+}
+
+/**
+ * B9 (issue #67): boot gate for the Electron shell. Discovers the loopback
+ * backend + launch token once, fetches model presence for the first-run
+ * gate, seeds the inference-mode store, and only then mounts the app under
+ * the DesktopSessionProvider. Failures render an informative blocking state
+ * (never a silently broken app). Pure-browser builds never mount this gate.
+ */
+function DesktopBootGate({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<DesktopSessionState>({
+    session: null,
+    models: null,
+    loading: true,
+    error: null,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const session = await initDesktopSession();
+        // Presence fetch failure is degraded-but-live: the first-run gate
+        // treats null as "not blocking" and the status UI shows the error.
+        const models = await fetchModelStatus(session).catch(() => null);
+        if (cancelled) return;
+        seedInferenceModeForDesktop(session.baseUrl);
+        setState({ session, models, loading: false, error: null });
+      } catch (err) {
+        if (cancelled) return;
+        setState({
+          session: null,
+          models: null,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (state.loading) {
+    return <LoadingOverlay currentStep="Connecting to the desktop backend..." initError={null} />;
+  }
+  if (state.error) {
+    return (
+      <LoadingOverlay currentStep="Desktop backend unavailable" initError={state.error} />
+    );
+  }
+  return <DesktopSessionProvider value={state}>{children}</DesktopSessionProvider>;
+}
+
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('chat');
   const [initErrorDismissed, setInitErrorDismissed] = useState(false);
@@ -104,6 +183,9 @@ function AppContent() {
     setModelReady,
     setModelLoadingProgress,
     browserEngine,
+    // B9 (issue #67): inside Electron the desktop backend owns documents and
+    // inference — never boot the browser-local WASM/IndexedDB singletons.
+    skip: isElectron(),
   });
 
   const openSettings = () => setCurrentPage('settings');
@@ -256,6 +338,23 @@ function AppContent() {
 }
 
 function App() {
+  // B9 (issue #67): inside the Electron shell, discovery + model presence
+  // resolve BEFORE the app mounts; the pure-browser tree is untouched.
+  if (isElectron()) {
+    return (
+      <ThemeProvider>
+        <ToastProvider>
+          <DesktopBootGate>
+            <InferenceModeProvider>
+              <ErrorBoundary>
+                <AppContent />
+              </ErrorBoundary>
+            </InferenceModeProvider>
+          </DesktopBootGate>
+        </ToastProvider>
+      </ThemeProvider>
+    );
+  }
   return (
     <ThemeProvider>
       <ToastProvider>

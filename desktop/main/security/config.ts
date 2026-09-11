@@ -15,20 +15,18 @@
 // opt-in. This is the build/packaging-time gate equivalent for an Electron
 // main process, which has no compile-time define machinery in this repo.
 import { app } from 'electron';
-import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from './defaults.js';
+import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME, DEV_ORIGINS_ENV } from './defaults.js';
 
 // Re-exported for import compatibility: B2 modules and specs import these
 // constants from './config.js'. The canonical definitions live in
 // './defaults.js' so the B3 backend can share them without importing
 // electron (see defaults.ts).
-export { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME };
+export { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME, DEV_ORIGINS_ENV };
 
 export interface SecurityConfig {
   tokenHeaderName: string;
   allowedOrigins: string[];
 }
-
-export const DEV_ORIGINS_ENV = 'TRAININGAPP_DESKTOP_DEV_ORIGINS';
 
 /**
  * Resolve the transport security configuration.

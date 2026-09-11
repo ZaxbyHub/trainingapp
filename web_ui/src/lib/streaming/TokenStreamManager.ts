@@ -190,9 +190,13 @@ export class TokenStreamManager {
    * @param url - The API endpoint URL
    * @param body - Request body object
    * @param token - Optional authorization token
+   * @param authHeaderName - Optional auth header name (issue #67: Electron
+   *   mode passes the desktop guard's 'X-Desktop-Token'). Forwarded to the
+   *   consumer ONLY when supplied, so 3-arg call sites (and the existing
+   *   3-arg spy assertions) stay byte-identical.
    * @returns The SSEStreamConsumer instance
    */
-  startSSEStream(url: string, body: object, token?: string): SSEStreamConsumer {
+  startSSEStream(url: string, body: object, token?: string, authHeaderName?: string): SSEStreamConsumer {
     // Cancel any existing stream
     this.cancel();
 
@@ -206,7 +210,10 @@ export class TokenStreamManager {
     // pipeline). (issue #21 F5)
     let consumer: SSEStreamConsumer;
     try {
-      consumer = new SSEStreamConsumer(url, body, token);
+      consumer =
+        authHeaderName !== undefined
+          ? new SSEStreamConsumer(url, body, token, authHeaderName)
+          : new SSEStreamConsumer(url, body, token);
     } catch (err) {
       this.error(err instanceof Error ? err.message : String(err));
       // Re-throw to preserve the synchronous contract; callers that care wrap

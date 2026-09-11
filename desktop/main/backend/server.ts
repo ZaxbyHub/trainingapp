@@ -19,7 +19,7 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { originAllowed, type LoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from '../security/defaults.js';
-import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type EngineSurface, type IngestFileInput } from './types.js';
+import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type EngineSurface, type IngestFileInput, type ModelStatus } from './types.js';
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)
@@ -50,14 +50,29 @@ export interface BackendServerOptions {
     snapshot: Record<string, number>;
     downgrade: { effectiveProfile: 'quality' | 'fast'; downgraded: boolean };
   };
+  /**
+   * B9 (issue #67): the model-presence provider for GET /status/models.
+   * Host wires `() => engine.modelStatus()`. When absent the known route
+   * degrades to a contract-safe 503 — never 404 (same shape as telemetry).
+   */
+  modelStatus?: () => ModelStatus;
+  /**
+   * B9 (issue #67): persistence sink for accepted PUT /settings snapshots.
+   * Host wires an atomic writer (settings.json beside the profile store).
+   * Called ONLY after the engine accepted the patch; when absent, settings
+   * stay engine-memory-only (CI stub runs without a store path).
+   */
+  persistSettings?: (settings: Record<string, unknown>) => void;
 }
 
-// The 15 contract operations (contracts/api.openapi.yaml). Unknown paths get
+// The 16 contract operations (contracts/api.openapi.yaml). Unknown paths get
 // 404, known paths with a wrong method get 405 — the route TABLE is the
 // conformance surface. (/telemetry/memory arrives with B8, issue #66: it is
 // token-guarded like every route — it reveals process memory — and degrades
-// to a contract-safe 503 when no telemetry provider is wired.)
-const CONTRACT_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+// to a contract-safe 503 when no telemetry provider is wired. /status/models
+// arrives with B9, issue #67: model presence for the renderer's first-run
+// gate — same known-route/503 degradation when no provider is wired.)
+export const CONTRACT_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['/health', new Set(['GET'])],
   ['/auth/status', new Set(['GET'])],
   ['/auth/token', new Set(['POST'])],
@@ -71,11 +86,15 @@ const CONTRACT_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['/settings', new Set(['GET', 'PUT'])],
   ['/stats', new Set(['GET'])],
   ['/telemetry/memory', new Set(['GET'])],
+  ['/status/models', new Set(['GET'])],
 ]);
 
 function sendJson(res: ServerResponse, status: number, body: unknown, cors?: CorsContext): void {
   const headers: Record<string, string | string[]> = { 'content-type': 'application/json' };
   applyCorsHeaders(headers, cors);
+  if (process.env.TRAININGAPP_CORS_DEBUG) {
+    console.error(`[cors-debug] respond ${status} acao=${String(headers['access-control-allow-origin'])} corp=${String(headers['cross-origin-resource-policy'])}`);
+  }
   res.writeHead(status, headers);
   res.end(JSON.stringify(body));
 }
@@ -106,9 +125,27 @@ function applyCorsHeaders(headers: Record<string, string | string[]>, cors?: Cor
   if (cors.origin && originAllowed(cors.origin, cors.allowedOrigins)) {
     headers['access-control-allow-origin'] = cors.origin;
     headers['vary'] = 'Origin';
+    // Cross-origin requests from an allowed origin may opt into credentials
+    // (e.g. the renderer's connectivity probe sends credentials: 'include'
+    // against the Python surface's cookie convention); CORS requires the
+    // explicit flag whenever that happens. Loopback + token still gate all
+    // data access, so credentialed reads of a 204/JSON status stay safe.
+    headers['access-control-allow-credentials'] = 'true';
   }
   headers['access-control-allow-methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
   headers['access-control-allow-headers'] = cors.allowHeaders;
+  // Chromium's Private Network Access preflight (local page -> loopback
+  // backend across ports) requires this affirmative answer or the request
+  // fails with net::ERR_FAILED even when ACAO is present.
+  headers['access-control-allow-private-network'] = 'true';
+  // B9 (issue #67): the dev/preview renderer runs under COEP require-corp
+  // (vite preview headers for SharedArrayBuffer), and the packaged app://
+  // renderer sets the same header (B2 security headers). Under COEP, every
+  // cross-origin response needs CORP or it is blocked BEFORE CORS applies —
+  // which made every backend fetch fail from the renderer. The backend is
+  // loopback-only and token-guarded, so declaring the resource loadable
+  // cross-origin changes nothing about data authorization.
+  headers['cross-origin-resource-policy'] = 'cross-origin';
 }
 
 /** Read a request body with a hard cap. Rejects null when over the cap. */
@@ -337,11 +374,17 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
     const absoluteUrl = `http://${hostHeader}${req.url ?? '/'}`;
     const headers = new Headers(req.headers as Record<string, string>);
     const cors = corsContext(req, allowedOrigins, tokenHeaderName);
+    if (process.env.TRAININGAPP_CORS_DEBUG) {
+      console.error(`[cors-debug] ${req.method} ${req.url} origin=${String(req.headers.origin)} acrm=${String(req.headers['access-control-request-method'])} acrh=${String(req.headers['access-control-request-headers'])} allowlist=${JSON.stringify(allowedOrigins)}`);
+    }
 
     // SINGLE guard call site: every request — no exceptions — traverses the
     // gate before any routing or backend logic (B3 contract item 2).
     const verdict = opts.guard({ url: absoluteUrl, headers, method: req.method });
     if (verdict !== null) {
+      if (process.env.TRAININGAPP_CORS_DEBUG) {
+        console.error(`[cors-debug] guard REJECT ${verdict.status} for ${req.method} ${req.url} hdr=${JSON.stringify((req.headers as Record<string, unknown>)['x-desktop-token'] ?? null)} acrm=${String(req.headers['access-control-request-method'])} len=${JSON.stringify(req.headers['content-length'] ?? null)}`);
+      }
       res.writeHead(verdict.status, { 'content-type': 'text/plain' });
       res.end(verdict.status === 401 ? 'Unauthorized' : 'Forbidden');
       return;
@@ -611,7 +654,23 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               else validationError(res, result.errors ?? [result.detail], cors);
               return;
             }
-            sendJson(res, 200, engine.responseSettings(), cors);
+            const responseSettings = engine.responseSettings();
+            // B9 (issue #67): persistence is a post-validation side effect —
+            // only a patch the engine ACCEPTED is snapshotted (in PATCH form,
+            // i.e. the same key names applySettingsPatch validates), so the
+            // sidecar round-trips through the boot-time apply exactly. Hosts
+            // without a profile dir pass no sink and keep engine-memory only.
+            if (opts.persistSettings) {
+              try {
+                opts.persistSettings(patch);
+              } catch (err) {
+                sendJson(res, 500, {
+                  detail: `Settings were applied but could not be persisted: ${err instanceof Error ? err.message : String(err)}`,
+                }, cors);
+                return;
+              }
+            }
+            sendJson(res, 200, responseSettings, cors);
             return;
           }
           case 'GET /stats':
@@ -627,6 +686,18 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               return;
             }
             sendJson(res, 200, opts.telemetry(), cors);
+            return;
+          }
+          case 'GET /status/models': {
+            // B9 (issue #67): per-profile GGUF presence for the renderer's
+            // first-run gate. Token-guarded above like every route. Unwired
+            // hosts degrade to a contract-safe 503 — the path is KNOWN,
+            // never silently 404 (mirrors /telemetry/memory).
+            if (!opts.modelStatus) {
+              sendJson(res, 503, { detail: 'Model status is not wired on this host' }, cors);
+              return;
+            }
+            sendJson(res, 200, opts.modelStatus(), cors);
             return;
           }
           default:
