@@ -57,6 +57,8 @@ function LoadingOverlay({
         }}
       />
       <span
+        role="status"
+        aria-live="polite"
         style={{
           fontSize: 'var(--font-size-body)',
           color: 'var(--color-text-muted)',
@@ -66,6 +68,8 @@ function LoadingOverlay({
       </span>
       {initError && (
         <div
+          role="alert"
+          aria-live="assertive"
           style={{
             marginTop: 'var(--spacing-xl)',
             padding: 'var(--spacing-lg) var(--spacing-xl)',

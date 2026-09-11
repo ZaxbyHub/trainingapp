@@ -20,7 +20,7 @@
  * `visibilitychange` alone cannot observe in-tab mutations.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { loadDocuments } from '../lib/storage/document-store';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
 
@@ -52,28 +52,33 @@ export function useDocumentCount(): UseDocumentCountResult {
   const { session } = useDesktopSession();
   const electron = isElectron() && session !== null;
 
+  // F11 (issue #67 review): monotonic sequence so an out-of-order response
+  // from an earlier recount can never overwrite a fresher count.
+  const recountSeq = useRef(0);
   const recount = useCallback(async () => {
+    const seq = ++recountSeq.current;
+    const apply = (value: number) => {
+      if (recountSeq.current !== seq) return;
+      setCount(value);
+      setLoading(false);
+    };
     // B9: inside Electron the backend store is authoritative.
     if (electron && session) {
       try {
         const listing = await session.apiClient.listDocuments();
-        setCount(typeof listing?.total === 'number' ? listing.total : 0);
+        apply(typeof listing?.total === 'number' ? listing.total : 0);
       } catch {
         // Backend hiccup — report empty rather than a stale IndexedDB count.
-        setCount(0);
-      } finally {
-        setLoading(false);
+        apply(0);
       }
       return;
     }
     try {
       const docs = await loadDocuments();
-      setCount(Array.isArray(docs) ? docs.length : 0);
+      apply(Array.isArray(docs) ? docs.length : 0);
     } catch {
       // Store missing / unavailable — treat as empty.
-      setCount(0);
-    } finally {
-      setLoading(false);
+      apply(0);
     }
   }, [electron, session]);
 

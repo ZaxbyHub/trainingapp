@@ -132,13 +132,22 @@ export function useDesktopSession(): DesktopSessionState {
 
 /** Fetch GET /status/models over the desktop session (X-Desktop-Token). */
 export async function fetchModelStatus(session: DesktopSession): Promise<ModelStatus> {
-  const response = await fetch(`${session.baseUrl}/status/models`, {
-    headers: { 'X-Desktop-Token': session.token },
-  });
-  if (!response.ok) {
-    throw new DesktopSessionError(`GET /status/models failed: HTTP ${response.status}`);
+  // Bounded so a hung backend cannot pin the boot gate (mirrors the 5s
+  // AbortController convention of the connectivity probe).
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(`${session.baseUrl}/status/models`, {
+      headers: { 'X-Desktop-Token': session.token },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new DesktopSessionError(`GET /status/models failed: HTTP ${response.status}`);
+    }
+    return (await response.json()) as ModelStatus;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return (await response.json()) as ModelStatus;
 }
 
 /**

@@ -664,6 +664,8 @@ print(f"BM25 index: {'Ready' if engine.vector_store.bm25_index else 'Not built'}
 | `/settings` | PUT | Update RAG settings |
 | `/auth/status` | GET | Authentication status |
 | `/auth/token` | POST | Obtain JWT token |
+| `/telemetry/memory` | GET | Memory telemetry snapshot and downgrade state |
+| `/status/models` | GET | Per-profile inference model presence (first-run gate) |
 
 ### Example: Ask a Question
 

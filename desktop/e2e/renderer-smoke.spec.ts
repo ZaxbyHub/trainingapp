@@ -85,7 +85,6 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
       // Widen the stub's inter-token gap so Cancel lands mid-stream (the
       // default 1ms finishes a stub answer before a click can land).
       TRAININGAPP_STUB_TOKEN_DELAY_MS: '300',
-      TRAININGAPP_CORS_DEBUG: '1',
       TRAININGAPP_DESKTOP_STORE_PATH: storePath,
     } as Record<string, string>,
   });

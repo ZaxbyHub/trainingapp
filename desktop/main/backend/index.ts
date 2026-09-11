@@ -281,8 +281,11 @@ export class NodeBackendHost implements BackendHost {
         }
       }
       persistSettings = (patch) => {
-        storedPatch = { ...storedPatch, ...patch };
-        saveSettingsSnapshot(storePath, storedPatch);
+        // Adopt the merged patch ONLY after the disk write succeeds, so a
+        // failed save cannot desynchronize memory from the sidecar.
+        const merged = { ...storedPatch, ...patch };
+        saveSettingsSnapshot(storePath, merged);
+        storedPatch = merged;
       };
     }
     const server = createBackendServer({

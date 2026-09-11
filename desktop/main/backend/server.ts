@@ -383,7 +383,7 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
     const verdict = opts.guard({ url: absoluteUrl, headers, method: req.method });
     if (verdict !== null) {
       if (process.env.TRAININGAPP_CORS_DEBUG) {
-        console.error(`[cors-debug] guard REJECT ${verdict.status} for ${req.method} ${req.url} hdr=${JSON.stringify((req.headers as Record<string, unknown>)['x-desktop-token'] ?? null)} acrm=${String(req.headers['access-control-request-method'])} len=${JSON.stringify(req.headers['content-length'] ?? null)}`);
+        console.error(`[cors-debug] guard REJECT ${verdict.status} for ${req.method} ${req.url} tokenPresent=${String((req.headers as Record<string, unknown>)['x-desktop-token'] != null)} acrm=${String(req.headers['access-control-request-method'])} len=${JSON.stringify(req.headers['content-length'] ?? null)}`);
       }
       res.writeHead(verdict.status, { 'content-type': 'text/plain' });
       res.end(verdict.status === 401 ? 'Unauthorized' : 'Forbidden');

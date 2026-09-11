@@ -240,7 +240,11 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
           } catch {
             // Older servers may not return JSON; assume auth disabled.
           }
-          const hasToken = !!getToken();
+          // B9 (issue #67): inside Electron the auth credential is the
+          // per-launch bridge token sent via X-Desktop-Token on every request
+          // — sessionStorage is never involved, so don't let its absence
+          // manufacture a spurious auth-required error.
+          const hasToken = isElectron() ? true : !!getToken();
           const modeError = authEnabled && !hasToken
             ? 'Server requires authentication. Contact your administrator — see PACKAGING.md for setup.'
             : null;

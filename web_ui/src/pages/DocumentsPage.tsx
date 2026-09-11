@@ -55,6 +55,9 @@ export function DocumentsPage() {
   const { session: desktopSession } = useDesktopSession();
   const electronMode = isElectron() && desktopSession !== null;
   const [clearAllConfirming, setClearAllConfirming] = useState(false);
+  // F3: true while a clear-all request is in flight — uploads started in this
+  // window are skipped so they cannot re-add documents after the clear lands.
+  const clearInFlightRef = useRef(false);
   const [documents, setDocuments] = useState<DocumentEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -444,16 +447,45 @@ export function DocumentsPage() {
       // (/ingest/file) — extraction, chunking, embedding and indexing all
       // happen server-side. The browser-local pipeline below is untouched.
       if (electronMode && desktopSession) {
+        // F5 parity: same fileName+fileSize dedupe as the browser-local branch.
+        const existing = latestDocumentsRef.current;
+        const accepted: { file: File; entry: DocumentEntry }[] = [];
+        const skipped: string[] = [];
         for (const file of files) {
-          const entry: DocumentEntry = {
-            id: generateId(),
-            fileName: file.name,
-            fileSize: file.size,
-            fileType: file.name.slice(file.name.lastIndexOf('.')).toLowerCase(),
-            status: 'uploading',
-            progress: 30,
-            uploadedAt: Date.now(),
-          };
+          const isDuplicate =
+            existing.some((doc) => doc.fileName === file.name && doc.fileSize === file.size) ||
+            accepted.some((a) => a.entry.fileName === file.name && a.entry.fileSize === file.size);
+          if (isDuplicate) {
+            skipped.push(file.name);
+            continue;
+          }
+          accepted.push({
+            file,
+            entry: {
+              id: generateId(),
+              fileName: file.name,
+              fileSize: file.size,
+              fileType: file.name.slice(file.name.lastIndexOf('.')).toLowerCase(),
+              status: 'uploading' as const,
+              progress: 30,
+              uploadedAt: Date.now(),
+            },
+          });
+        }
+        if (skipped.length > 0) {
+          setDuplicateNotice(
+            skipped.length === 1
+              ? `Skipped duplicate file: ${skipped[0]}`
+              : `Skipped ${skipped.length} duplicate files`
+          );
+        }
+        // F3: a clear-all in flight wins — don't start uploads that would
+        // re-add documents the user just cleared (server-side race).
+        for (const { file, entry } of accepted) {
+          if (clearInFlightRef.current) {
+            showToast(`Skipped "${file.name}": clear-all is in progress.`, 'error');
+            continue;
+          }
           setDocuments((prev) => [entry, ...prev]);
           try {
             const result = await desktopSession.apiClient.uploadFile(file);
@@ -544,6 +576,12 @@ export function DocumentsPage() {
     return () => clearTimeout(t);
   }, [duplicateNotice]);
 
+  // F6 (issue #67 review): a hidden-then-reshown confirm button must never
+  // stay armed — reset when there is nothing left to clear.
+  useEffect(() => {
+    if (documents.length === 0) setClearAllConfirming(false);
+  }, [documents.length]);
+
   // U2: per-document indexing cancel. Aborts the AbortController armed in
   // processFile; the next throwIfCancelled() checkpoint (or the embedding batch
   // boundary) records the terminal 'Indexing cancelled' state. No-op if the
@@ -632,6 +670,7 @@ export function DocumentsPage() {
       return;
     }
     setClearAllConfirming(false);
+    clearInFlightRef.current = true;
     try {
       await desktopSession.apiClient.clearDocuments();
       const listing = await desktopSession.apiClient.listDocuments();
@@ -642,6 +681,8 @@ export function DocumentsPage() {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       showToast(`Failed to clear documents: ${message}`, 'error');
+    } finally {
+      clearInFlightRef.current = false;
     }
   }, [electronMode, desktopSession, clearAllConfirming, showToast]);
 
