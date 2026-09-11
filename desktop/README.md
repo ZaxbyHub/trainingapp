@@ -304,9 +304,10 @@ Design decisions are frozen in ADR-0008 (`docs/adr/0008-memory-budget.md`).
   outside the mutex so a missing model still answers 503 immediately.
 - **Worker pools (S4)**: `TRAININGAPP_EMBEDDING_WORKER_POOL_SIZE` /
   `TRAININGAPP_RERANKER_WORKER_POOL_SIZE` (default 1, never
-  `os.cpus()`-derived). Values >1 are reported by the parser but REJECTED at
-  the host (logged + `memory:event`): B7's single-thread ORT ownership means
-  a second ONNX instance on another thread aborts the process.
+  `os.cpus()`-derived). Values >1 are reported by the parser but rejected at
+  the host — logged + `memory:event`, and the host CONTINUES with 1 (no
+  startup failure): B7's single-thread ORT ownership means a second ONNX
+  instance on another thread aborts the process.
 - **Idle unload (AC5)**: the retrieval worker is terminated after
   `memory.idleUnloadMs` idle and transparently rebuilt on the next
   score/embed; the measured reload latency is recorded. The resident LLM is

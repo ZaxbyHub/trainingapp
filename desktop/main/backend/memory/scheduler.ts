@@ -24,7 +24,7 @@ interface QueuedJob {
 export class ConcurrencyScheduler {
   private readonly max: number;
   private queue: QueuedJob[] = [];
-  private waiters: Array<() => void> = [];
+  private waiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
   private active = 0;
 
   constructor(options: ConcurrencySchedulerOptions = {}) {
@@ -55,8 +55,8 @@ export class ConcurrencyScheduler {
    */
   waitForGenerationEnd(): Promise<void> {
     if (!this.generationInFlight) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      this.waiters.push(resolve);
+    return new Promise<void>((resolve, reject) => {
+      this.waiters.push({ resolve, reject });
     });
   }
 
@@ -75,10 +75,17 @@ export class ConcurrencyScheduler {
     return this.active;
   }
 
-  /** Host shutdown: reject every QUEUED (not yet started) generation. */
+  /**
+   * Host shutdown: reject every QUEUED (not yet started) generation AND every
+   * pending waitForGenerationEnd() waiter, so an ingest paused on the seam
+   * fails fast instead of awaiting a scheduler that no longer exists
+   * (PRR-F4).
+   */
   rejectQueued(err: Error): void {
     const queued = this.queue.splice(0, this.queue.length);
     for (const job of queued) job.reject(err);
+    const waiters = this.waiters.splice(0, this.waiters.length);
+    for (const waiter of waiters) waiter.reject(err);
   }
 
   private pump(): void {
@@ -96,7 +103,7 @@ export class ConcurrencyScheduler {
           this.active -= 1;
           if (this.active === 0) {
             const waiters = this.waiters.splice(0, this.waiters.length);
-            for (const waiter of waiters) waiter();
+            for (const waiter of waiters) waiter.resolve();
           }
           this.pump();
         })

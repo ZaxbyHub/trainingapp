@@ -180,6 +180,11 @@ export class NodeBackendHost implements BackendHost {
       this.downgradeLatched = false;
       this.recoveryEmitted = false;
       engineOverride.setProfileOverride?.(null);
+      // Acknowledge the upgrade on the monitor: without this the never-reset
+      // `downgraded` latch re-latched 'fast' on the very next tick (fast/
+      // quality oscillation + event spam; PR-review finding PRR-F1, pinned by
+      // b8-host-loop.test.ts).
+      monitor.resetAfterUpgrade();
       this.config.onMemoryEvent?.({
         type: 'telemetry',
         effectiveProfile: 'quality',
@@ -385,8 +390,15 @@ export class NodeBackendHost implements BackendHost {
       }
       // B8 (issue #66): the sampler loop — observe/evaluate/downgrade at
       // memory.telemetryIntervalMs. unref'd so a headless host can still exit.
+      // The tick's rejection is consumed here (log + keep the sampler alive):
+      // an unhandled rejection from a raced worker disposal must not take the
+      // host down in plain-node entries (PRR-F2).
       this.telemetryTimer = setInterval(() => {
-        void this.memoryTick();
+        void this.memoryTick().catch((err: unknown) => {
+          console.error(
+            `[trainingapp-backend] memory tick failed (sampler continues): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
       }, memoryConfig.telemetryIntervalMs);
       this.telemetryTimer.unref?.();
       return this.handle;

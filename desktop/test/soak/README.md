@@ -34,9 +34,11 @@ no CI run substitutes for it). Checklist:
    node desktop/test/soak/memory-soak.mjs --duration-s 1800 --target-free-gb 6 --report soak-16gb-i5.log
    ```
    (`--target-free-gb` ballast-allocates until free RAM is at/below the
-   target; it refuses to run on machines below `--min-total-gb` (default 12)
-   so it can never starve the target laptop itself. On a machine already at
-   ~6 GB free, omit the flag.)
+   target; on machines below `--min-total-gb` (default 12) it refuses to
+   BALLAST — logging a safety notice and continuing WITHOUT ballast — so it
+   can never starve the target laptop itself. On a machine already at
+   ~6 GB free, omit the flag. `--queries-per-cycle <n>` (default 1) controls
+   the concurrent /ask load per cycle.)
 4. While it runs: watch the telemetry lines — sustained sub-6 GiB free RAM
    must flip `profile:quality downgraded:false` to `downgraded:true` within
    ~10-20 s, and the host must keep serving ingest+query without OOM/crash.

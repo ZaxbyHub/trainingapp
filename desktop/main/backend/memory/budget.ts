@@ -21,7 +21,9 @@ export type MemoryComponent = 'chromium' | 'llm' | 'embeddingSession' | 'reranke
 export interface MemoryBudgetConfig {
   /** memory.telemetryIntervalMs — host sampler cadence (default 5000). */
   telemetryIntervalMs: number;
-  /** memory.maxTotalGb — the enforced peak-RSS ceiling (default 16, the v3 floor). */
+  /** memory.maxTotalGb — the ACCOUNTING ceiling: the component table (ADR-0008 /
+ *  bench/RESULTS.md) must sum under it with headroom. It is enforced
+ *  procedurally (ADR accounting + soak evidence), not as a runtime kill-switch. */
   maxTotalGb: number;
   /** memory.pressureThresholdGb — B4's inference.profileThresholdGb (default 6). */
   pressureThresholdGb: number;
@@ -33,11 +35,16 @@ export interface MemoryBudgetConfig {
   idleUnloadMs: number;
 }
 
-/** Explicit positive integers only; junk/zero/negative fall back to the default. */
+/** Explicit positive integers only, bounded to the 32-bit timer range: junk or
+ *  out-of-range values fall back to the default. Values above 2^31-1 reaching
+ *  setInterval/setTimeout get silently CLAMPED TO 1ms by Node
+ *  (TimeoutOverflowWarning) — a hot loop (PRR-F3). */
+const MAX_TIMER_MS = 2147483647;
+
 function positiveInt(raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw === '' || !/^\d+$/.test(raw)) return fallback;
   const value = Number.parseInt(raw, 10);
-  return Number.isFinite(value) && value > 0 ? value : fallback;
+  return Number.isFinite(value) && value > 0 && value <= MAX_TIMER_MS ? value : fallback;
 }
 
 export function resolveMemoryConfig(env: Record<string, string | undefined> = process.env): MemoryBudgetConfig {
@@ -78,6 +85,15 @@ export interface PressureStatus {
 export interface PressureMonitor {
   observe(freeBytes: number, atMs?: number): void;
   evaluate(atMs?: number): PressureStatus;
+  /**
+   * Host acknowledgement after it clears a latched downgrade override (the
+   * monitor's only upgrade path is the host's; PRR-F1). Clears the downgrade
+   * latch and recovery state so the NEXT downgrade requires a NEW sustained
+   * pressure episode — without this, `downgraded` stays true forever and the
+   * host re-latches the override on the next tick (level-vs-edge bug:
+   * oscillating fast/quality flips + event spam).
+   */
+  resetAfterUpgrade(): void;
 }
 
 /**
@@ -131,6 +147,12 @@ export function createPressureMonitor(options: PressureMonitorOptions = {}): Pre
         effectiveProfile: downgradedLatch ? 'fast' : 'quality',
         recoveryEligible: recoveryEligibleLatch,
       };
+    },
+    resetAfterUpgrade() {
+      downgradedLatch = false;
+      recoveryEligibleLatch = false;
+      pressureStreakStartMs = null;
+      recoveryStreakStartMs = null;
     },
   };
 }

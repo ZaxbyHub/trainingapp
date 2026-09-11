@@ -311,14 +311,28 @@ export class ResumableReranker {
     this.onUse?.();
     const rebuilt = this.runner === null;
     const startedAt = performance.now();
-    const result = await run(this.ensureRunner());
-    if (rebuilt) {
-      // performance.now(): sub-ms precision, so even an instant fixture
-      // rebuild reports a finite, positive latency (C9's assertion).
-      const reloadMs = performance.now() - startedAt;
-      if (reloadMs > 0) this.onReload?.(reloadMs);
+    try {
+      const result = await run(this.ensureRunner());
+      if (rebuilt) {
+        // performance.now(): sub-ms precision, so even an instant fixture
+        // rebuild reports a finite, positive latency (C9's assertion).
+        const reloadMs = performance.now() - startedAt;
+        if (reloadMs > 0) this.onReload?.(reloadMs);
+      }
+      return result;
+    } catch (err) {
+      // A DEAD runner must not be reused: worker-exit/dispose rejections
+      // would be replayed for every later job while the idle-unload
+      // controller never sees a usable session (PRR-F5). Drop it so the next
+      // call transparently rebuilds a fresh worker.
+      const message = err instanceof Error ? err.message : String(err);
+      if (/exited|disposed|terminated/i.test(message)) {
+        const dead = this.runner;
+        this.runner = null;
+        if (dead !== null) void dead.dispose().catch(() => {});
+      }
+      throw err;
     }
-    return result;
   }
 
   /** Score candidates against the query; rebuilds the worker after unload(). */

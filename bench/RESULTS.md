@@ -261,7 +261,7 @@ per ADR-0008: main-process RSS is the WHOLE process (incl. native heaps);
 |---|---|---|---|
 | devstation | main process RSS, no-model sustained ingest (75 s, 7667 cycles) | ~1108 MB | soak telemetry `chromiumRssMb` (soak-devstation.log) |
 | devstation | main process RSS with resident llama.cpp + sustained ingest+query | 9.2-9.8 GB | soak telemetry `chromiumRssMb` (soak-devstation-fast.log) — see anomaly note |
-| devstation | `llmRssMb` (baseline-relative, resident lfm2.5 + context) | ~9.7 GB | soak telemetry (same run) |
+| devstation | `llmRssMb` (baseline-relative delta — SUBSUMED in the main-RSS row above; DO NOT SUM the two) | ~9.7 GB | soak telemetry (same run) |
 | devstation | embedding session (worker external+arrayBuffers) | ~8-20 MB | soak telemetry |
 | devstation | reranker session (same single ORT worker) | ~8-20 MB | soak telemetry |
 | devstation | sqlite driver heap | ~0 MB (small store) | soak telemetry |
@@ -278,7 +278,11 @@ sampler excludes; either way it is the dominant budget line and it is
 precisely why the issue demands the physical 16 GB reference-laptop soak
 (CI/in-process numbers do not substitute — the reference run and its
 sum-vs-ceiling verdict are PENDING that hardware). The downgrade latch and
-recovery path were exercised separately by the frozen unit specs (C2/C9).
+recovery hysteresis are exercised at unit level by the frozen C2/C9 specs,
+and the REAL host loop (downgrade -> recovery -> upgrade -> quiet
+post-upgrade ticks, the oscillation regression) by
+`desktop/src/__tests__/b8-host-loop.test.ts` (added after PR-review finding
+PRR-F1/PRR-F6; the frozen specs alone do not drive the host loop).
 
 Reproduce: `node desktop/test/soak/memory-soak.mjs --duration-s 60 --docs 6 --model-dir models --report soak.log`
 (add `TRAININGAPP_DESKTOP_INFERENCE_PROFILE=fast` for the bounded-decode run

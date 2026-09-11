@@ -39,7 +39,7 @@ Electron has `os.freemem()`/`os.totalmem()`.
 | Component | Source | Semantics |
 |---|---|---|
 | `chromiumRssMb` | `process.memoryUsage().rss` (main) | Whole main-process RSS, INCLUDING the native heaps (llama.cpp mmap, main-thread ORT when the hash fixture is used, better-sqlite3). |
-| `llmRssMb` | baseline-relative delta | Main-RSS now minus main-RSS at host start; dominated by the resident llama model. 0 while no model is resident. Deliberately conservative: it is an increment, not a private counter (Node shares one process). |
+| `llmRssMb` | baseline-relative delta | Main-RSS now minus main-RSS at host start; dominated by the resident llama model once loaded. It is a delta of ALL post-start growth (not gated on model residency — treat it as an increment subsumed in `chromiumRssMb`, never a separate budget line), and reads 0 before any post-start growth. |
 | `embeddingSessionRssMb` / `rerankerSessionRssMb` | worker `process.memoryUsage()` (`external`+`arrayBuffers`) | Thread-local ONNX footprint from the single retrieval worker (B7 owns ALL ORT work on one thread). 0 while the worker is unloaded/absent. |
 | `sqliteRssMb` | better-sqlite3 `memoryUsed()` | The driver's own heap counter. 0 when no store is open. |
 
@@ -77,7 +77,11 @@ per-worker ORT isolation AND duplicated model memory — rejected until a future
 - **Recovery / no silent auto-upgrade:** after the downgrade, sustained above-threshold free RAM
   for `recoverySustainedMs` latches `recoveryEligible` (event `recovery-eligible` fires once). The
   override clears ONLY at a sampler tick where the scheduler is fully drained
-  (`generationInFlight === false && queueDepth === 0 && activeGenerations === 0`). Bounded
+  (`generationInFlight === false && queueDepth === 0 && activeGenerations === 0`). At that upgrade
+  the host ACKNOWLEDGES the monitor (`resetAfterUpgrade()`), which clears the monitor's downgrade
+  latch so the next downgrade requires a NEW sustained pressure episode — without the ack, the
+  never-reset latch re-latched 'fast' on the next tick (fast/quality oscillation + event spam;
+  PR-review finding PRR-F1, pinned by b8-host-loop.test.ts). Bounded
   staleness: at most one telemetry interval past predicate satisfaction. Rationale: flipping the
   resident model mid-session under oscillating pressure thrashes the resident sequence and KV
   cache; a drained-transition makes the flip atomic with respect to generation work.
