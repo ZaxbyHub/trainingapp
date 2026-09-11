@@ -47,6 +47,12 @@ export interface StoreDocumentSurfaceOptions {
   /** Schema root for re-initialization; discovered when omitted. */
   repoRoot?: string;
   onProgress?: (event: IngestProgress) => void;
+  /** B8 (issue #66, S3): forwarded to the pipeline — the embed phase awaits
+   *  this before embed-heavy work while a generation runs (ConcurrencyScheduler
+   *  satisfies it structurally). */
+  coordination?: {
+    waitForGenerationEnd(): Promise<void>;
+  };
 }
 
 export class StoreDocumentSurface implements DocumentSurface {
@@ -66,6 +72,7 @@ export class StoreDocumentSurface implements DocumentSurface {
         config: this.opts.config,
         ...(this.opts.limits ? { limits: this.opts.limits } : {}),
         onProgress: this.opts.onProgress,
+        ...(this.opts.coordination ? { coordination: this.opts.coordination } : {}),
       });
     }
     return this.pipeline;

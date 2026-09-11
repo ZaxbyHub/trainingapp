@@ -276,6 +276,14 @@ export class LlamaEngine implements EngineSurface {
   private resident: ResidentEntry | null = null;
   private loads = 0;
   private queue: Promise<unknown> = Promise.resolve();
+  /**
+   * B8 (issue #66) downgrade actuator: when latched ('fast' under sustained
+   * memory pressure), it shadows the user's inference.profile setting until
+   * the host clears it. The SETTING is never mutated, so the user's choice
+   * resumes automatically once the host clears the override (AC3: the only
+   * profile upgrade path is explicit host policy between generations).
+   */
+  private profileOverride: InferenceProfileName | null = null;
 
   constructor(options: LlamaEngineOptions = {}) {
     this.freeMemBytes = options.freeMemBytes ?? (() => os.freemem());
@@ -299,8 +307,25 @@ export class LlamaEngine implements EngineSurface {
     return path.join(os.homedir(), '.trainingapp', 'models');
   }
 
-  private effectiveProfile(): InferenceProfileName {
+  /**
+   * The effective inference profile for the NEXT query: the B8 pressure
+   * override wins when latched, else B4's selectProfile semantics
+   * (explicit setting beats auto-by-free-RAM; inclusive 6 GiB boundary).
+   * Public so the host (backend/index.ts) can observe it for telemetry.
+   */
+  effectiveProfile(): InferenceProfileName {
+    if (this.profileOverride !== null) return this.profileOverride;
     return selectProfile(this.profileSetting, this.freeMemBytes(), this.thresholdGb);
+  }
+
+  /**
+   * B8 (issue #66): the host latches 'fast' under sustained memory pressure
+   * and clears with null on recovery (between generations only). Passing the
+   * same value twice is a no-op; an unknown value is ignored.
+   */
+  setProfileOverride(profile: InferenceProfileName | null): void {
+    if (profile !== null && profile !== 'quality' && profile !== 'fast') return;
+    this.profileOverride = profile;
   }
 
   private effectiveThreads(): number {

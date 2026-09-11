@@ -246,3 +246,44 @@ load — is part of the measured distribution). Budget: p95 <= 1500 ms
 | machine | embedder | reranker | topk | multiplier | p50_ms | p95_ms | max_ms | outcome |
 |---|---|---|---|---|---|---|---|---|
 | devstation | bge-small-en-v1.5 | ettin-reranker-32m-v1 | 10 | 3 | 364 | 426 | 691 | pass |
+
+## Desktop runtime memory (B8, issue #66)
+
+Provisional component accounting from the B8 in-process telemetry
+(`GET /telemetry/memory`) during a sustained ingest+query soak
+(`desktop/test/soak/memory-soak.mjs`, 2026-09-11, real staged weights:
+`lfm2.5-vl-450m` resident via the Fast profile, `bge-small-en-v1.5` +
+`ettin-reranker-32m-v1` ONNX in the retrieval worker). Attribution semantics
+per ADR-0008: main-process RSS is the WHOLE process (incl. native heaps);
+`llmRssMb` is baseline-relative; sessions are worker thread counters.
+
+| machine | component | measured | source |
+|---|---|---|---|
+| devstation | main process RSS, no-model sustained ingest (75 s, 7667 cycles) | ~1108 MB | soak telemetry `chromiumRssMb` (soak-devstation.log) |
+| devstation | main process RSS with resident llama.cpp + sustained ingest+query | 9.2-9.8 GB | soak telemetry `chromiumRssMb` (soak-devstation-fast.log) — see anomaly note |
+| devstation | `llmRssMb` (baseline-relative delta — SUBSUMED in the main-RSS row above; DO NOT SUM the two) | ~9.7 GB | soak telemetry (same run) |
+| devstation | embedding session (worker external+arrayBuffers) | ~8-20 MB | soak telemetry |
+| devstation | reranker session (same single ORT worker) | ~8-20 MB | soak telemetry |
+| devstation | sqlite driver heap | ~0 MB (small store) | soak telemetry |
+| devstation | llama.cpp lfm2.5-vl-450m peak RSS, spawn-isolated | 617-619 MB | native llama.cpp table above (node-llama-cpp rows) |
+| devstation | llama.cpp gemma-4-e2b-it peak RSS, spawn-isolated | 2761-2819 MB | native llama.cpp table above |
+| reference-i5 | full sum under 16 GB with headroom | **PENDING** — physical soak (AC1) | desktop/test/soak/README.md procedure |
+
+**Anomaly note (honest measurement):** the in-process main-RSS under a
+resident node-llama-cpp context measured ~8.6 GB above the no-model baseline
+on this 128 GB host, versus 617-619 MB peak-RSS for the same model in the
+spawn-isolated bench rows above. The in-process figure plausibly includes
+mmap-prefault + context/compute arena accounting that the spawn-isolated
+sampler excludes; either way it is the dominant budget line and it is
+precisely why the issue demands the physical 16 GB reference-laptop soak
+(CI/in-process numbers do not substitute — the reference run and its
+sum-vs-ceiling verdict are PENDING that hardware). The downgrade latch and
+recovery hysteresis are exercised at unit level by the frozen C2/C9 specs,
+and the REAL host loop (downgrade -> recovery -> upgrade -> quiet
+post-upgrade ticks, the oscillation regression) by
+`desktop/src/__tests__/b8-host-loop.test.ts` (added after PR-review finding
+PRR-F1/PRR-F6; the frozen specs alone do not drive the host loop).
+
+Reproduce: `node desktop/test/soak/memory-soak.mjs --duration-s 60 --docs 6 --model-dir models --report soak.log`
+(add `TRAININGAPP_DESKTOP_INFERENCE_PROFILE=fast` for the bounded-decode run
+above; the reference-laptop procedure is in `desktop/test/soak/README.md`).

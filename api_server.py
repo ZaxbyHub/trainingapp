@@ -540,6 +540,22 @@ async def get_stats(auth: dict = Security(require_auth())):
     )
 
 
+@app.get("/telemetry/memory")
+async def get_memory_telemetry(auth: dict = Security(require_auth())):
+    """
+    Memory telemetry snapshot + downgrade state (issue #66, B8).
+
+    The B8 telemetry subsystem lives on the Electron/Node desktop surface
+    (desktop/main/backend/memory/); this Python host never wires it, so the
+    route exists to keep the shared contract (contracts/api.openapi.yaml
+    v2.4.0) consistent across backends and always answers the documented
+    unwired 503 — the path is known, never 404-absent.
+    """
+    raise HTTPException(
+        status_code=503, detail="Memory telemetry is not wired on this host"
+    )
+
+
 @app.post("/ask", response_model=QuestionResponse)
 async def ask_question(request: QuestionRequest, auth: dict = Security(require_auth())):
     """Ask a question about the ingested documents."""

@@ -90,6 +90,20 @@ export interface IngestProgressEvent {
   percent: number;
 }
 
+/**
+ * Memory telemetry event shape (B8, issue #66): `memory:event` for B9.
+ * `downgrade` fires once when sustained pressure latches the Quality->Fast
+ * switch (carrying the observed free-RAM value); `recovery-eligible` fires
+ * once when the recovery window matures; `telemetry` carries informational
+ * budget notices (e.g. a worker-pool size >1 rejected by the ORT guardrail).
+ */
+export interface MemoryEvent {
+  type: 'downgrade' | 'recovery-eligible' | 'telemetry';
+  effectiveProfile?: 'quality' | 'fast';
+  freeMemMb?: number;
+  detail?: string;
+}
+
 export interface BackendHostConfig {
   mode?: BackendMode;
   /** Per-launch transport token (from security/token.ts, or a test token). */
@@ -121,6 +135,10 @@ export interface BackendHostConfig {
   /** Node mode only (B6): ingest progress sink. The Electron bootstrap
    *  forwards these to the renderer as `ingest:progress` IPC events. */
   onIngestProgress?: (event: IngestProgressEvent) => void;
+  /** Node mode only (B8, issue #66): memory telemetry/downgrade event sink.
+   *  The Electron bootstrap forwards these to the renderer as `memory:event`
+   *  IPC events (B9 owns the UI). */
+  onMemoryEvent?: (event: MemoryEvent) => void;
   /** Node mode only (B6): corruption prompt seam. When the store file fails
    *  the startup integrity check, the host asks the embedder of this callback
    *  whether to restore from the latest backup or start fresh; when unset,

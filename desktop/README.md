@@ -269,3 +269,48 @@ main/event-loop thread) -> the calibrated relevance floor (ADR-0007) -> topK.
   host attaches no retrieval surface and engines keep the B3 deterministic
   behavior; attaching/detaching is the `attachRetrievalSurface` seam,
   mirroring B6's document surface.
+
+## Runtime memory and concurrency budget (B8, issue #66)
+
+Design decisions are frozen in ADR-0008 (`docs/adr/0008-memory-budget.md`).
+
+- **Telemetry**: the host samples per-component memory every
+  `memory.telemetryIntervalMs` and serves `GET /telemetry/memory`
+  (`{snapshot, downgrade}`; `contracts/api.openapi.yaml` v2.4.0) —
+  token-guarded like every route (it reveals process memory). Component
+  attribution semantics (main-process RSS, baseline-relative LLM delta,
+  worker thread counters, better-sqlite3 heap) are documented in the ADR.
+  Unwired hosts answer 503 — the path is known, never 404.
+- **Memory env keys** (invalid values fall back per-key):
+  `TRAININGAPP_MEMORY_TELEMETRY_INTERVAL_MS` (5000),
+  `TRAININGAPP_MEMORY_MAX_TOTAL_GB` (16 — the v3 floor from
+  `.swarm/spec-snapshot.md`), `TRAININGAPP_MEMORY_PRESSURE_THRESHOLD_GB`
+  (6 — the SAME constant as `inference.profileThresholdGb`, imported not
+  restated), `TRAININGAPP_MEMORY_PRESSURE_SUSTAINED_MS` (10000),
+  `TRAININGAPP_MEMORY_RECOVERY_SUSTAINED_MS` (60000),
+  `TRAININGAPP_MEMORY_IDLE_UNLOAD_MS` (300000).
+- **Downgrade (AC2/AC3)**: free RAM strictly below the threshold for the
+  sustained window latches the effective profile to Fast (the user's
+  `inference.profile` setting is never mutated), logs the observed free-RAM
+  value, and emits `memory:event {type:'downgrade', effectiveProfile,
+  freeMemMb}`. There is NO silent auto-upgrade: after a sustained recovery
+  window the host clears the override only between generations (scheduler
+  fully drained), emitting `recovery-eligible` first. Renderer consumption
+  of `memory:event` lands with B9 (#67).
+- **Serialization (AC4)**: `/ask` + `/ask/stream` run under a FIFO generation
+  mutex (`concurrency.maxConcurrentGenerations`, default 1; excess requests
+  queue, never 503). The B6 embed phase pauses while a generation runs
+  (`coordination.waitForGenerationEnd()`). The stream preflight stays
+  outside the mutex so a missing model still answers 503 immediately.
+- **Worker pools (S4)**: `TRAININGAPP_EMBEDDING_WORKER_POOL_SIZE` /
+  `TRAININGAPP_RERANKER_WORKER_POOL_SIZE` (default 1, never
+  `os.cpus()`-derived). Values >1 are reported by the parser but rejected at
+  the host — logged + `memory:event`, and the host CONTINUES with 1 (no
+  startup failure): B7's single-thread ORT ownership means a second ONNX
+  instance on another thread aborts the process.
+- **Idle unload (AC5)**: the retrieval worker is terminated after
+  `memory.idleUnloadMs` idle and transparently rebuilt on the next
+  score/embed; the measured reload latency is recorded. The resident LLM is
+  deliberately not unloaded (B4's resident-model contract).
+- **Soak harness**: `desktop/test/soak/memory-soak.mjs` (+ README) — the
+  AC1 reference-laptop procedure lives in `desktop/test/soak/README.md`.

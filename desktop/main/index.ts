@@ -212,6 +212,14 @@ export function bootstrap(): void {
             win.webContents.send('ingest:progress', event);
           }
         },
+        // B8 (issue #66): forward memory telemetry/downgrade events to the
+        // renderer as `memory:event` (B9 owns the UI; the channel name is the
+        // B9 contract, documented in docs/adr/0008-memory-budget.md).
+        onMemoryEvent: (event) => {
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send('memory:event', event);
+          }
+        },
         // B6: corruption prompt — modal by design (ADR-0006): a store failing
         // integrity cannot be served, so startup blocks on the user's choice.
         onStoreCorruption: async (info) => {

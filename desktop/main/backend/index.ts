@@ -11,6 +11,7 @@
 // Electron-free: safe to import from the headless dev-server entry and CI.
 import net from 'node:net';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createLoopbackGuard } from '../security/loopback-guard.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
@@ -24,7 +25,25 @@ import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/e
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
 import { createRetrievalSurface, type RetrievalSurface } from './retrieval/hybrid.js';
 import { resolveRetrievalConfig } from './retrieval/config.js';
-import { resolveRerankerModelDir, WorkerEmbedder, WorkerReranker, type RerankerSurface } from './retrieval/reranker.js';
+import {
+  resolveRerankerModelDir,
+  ResumableReranker,
+  WorkerEmbedder,
+  WorkerReranker,
+  type RerankerSurface,
+  type WorkerMemoryReport,
+} from './retrieval/reranker.js';
+import {
+  createPressureMonitor,
+  resolveConcurrencyConfig,
+  resolveMemoryConfig,
+  resolveWorkerPoolConfig,
+  type MemoryComponent,
+  type PressureMonitor,
+} from './memory/budget.js';
+import { createMemoryTelemetry, type MemoryTelemetry } from './memory/telemetry.js';
+import { ConcurrencyScheduler } from './memory/scheduler.js';
+import { IdleUnloadController } from './memory/idle-unload.js';
 import {
   resolveBackendMode,
   type BackendHandle,
@@ -73,6 +92,106 @@ export class NodeBackendHost implements BackendHost {
   private reranker: RerankerSurface | null = null;
   /** The embedder resolved for ingest — B7 reuses the SAME instance for query embedding. */
   private embedder: EmbeddingSurface | null = null;
+  // ---- B8 memory/concurrency governance (issue #66). All new members are
+  // INSTANCE FIELDS, deliberately never prototype methods: the b3 duck-type
+  // pin requires both host prototypes to expose exactly start/stop.
+  private scheduler: ConcurrencyScheduler | null = null;
+  private telemetry: MemoryTelemetry | null = null;
+  private monitor: PressureMonitor | null = null;
+  private idle: IdleUnloadController | null = null;
+  private resumable: ResumableReranker | null = null;
+  private telemetryTimer: ReturnType<typeof setInterval> | null = null;
+  private workerMemory: WorkerMemoryReport | null = null;
+  private embedsViaWorker = false;
+  private rssBaselineBytes = 0;
+  private downgradeLatched = false;
+  private recoveryEmitted = false;
+
+  /** Per-component RSS provider for the telemetry snapshot (bytes). */
+  private rssFor = (component: MemoryComponent): number => {
+    if (component === 'chromium') return process.memoryUsage().rss;
+    if (component === 'llm') {
+      // Baseline-relative increment: dominated by the resident llama model
+      // (native heap inside the main process; attribution documented in
+      // docs/adr/0008-memory-budget.md).
+      return Math.max(0, process.memoryUsage().rss - this.rssBaselineBytes);
+    }
+    if (component === 'rerankerSession') {
+      return this.workerMemory === null ? 0 : this.workerMemory.external + this.workerMemory.arrayBuffers;
+    }
+    if (component === 'embeddingSession') {
+      // The embed session shares the SAME single ORT thread when ingest
+      // embeddings are worker-proxied (B7 WorkerEmbedder); 0 otherwise
+      // (hash embedder or main-thread fixture — nothing measurable to own).
+      return this.embedsViaWorker && this.workerMemory !== null
+        ? this.workerMemory.external + this.workerMemory.arrayBuffers
+        : 0;
+    }
+    if (component === 'sqlite') {
+      const store = this.store;
+      if (store === null) return 0;
+      const db = store.db as unknown as { memoryUsed?: () => number };
+      return typeof db.memoryUsed === 'function' ? db.memoryUsed() : 0;
+    }
+    return 0;
+  };
+
+  /** One sampler tick: refresh worker memory, sample, observe, decide. */
+  private memoryTick = async (): Promise<void> => {
+    const monitor = this.monitor;
+    const scheduler = this.scheduler;
+    if (monitor === null || scheduler === null) return;
+    this.workerMemory = this.resumable !== null ? await this.resumable.reportMemory() : null;
+    const snapshot = this.telemetry?.sample() ?? null;
+    monitor.observe(os.freemem(), Date.now());
+    const status = monitor.evaluate();
+    const engineOverride = this.engine as { setProfileOverride?: (profile: 'quality' | 'fast' | null) => void };
+    if (status.downgraded && !this.downgradeLatched) {
+      this.downgradeLatched = true;
+      engineOverride.setProfileOverride?.('fast');
+      const freeMemMb = snapshot?.systemFreeMb ?? 0;
+      console.error(
+        `[trainingapp-backend] memory pressure: free RAM ${freeMemMb.toFixed(0)} MB sustained below threshold; downgrading inference profile to fast`,
+      );
+      this.config.onMemoryEvent?.({
+        type: 'downgrade',
+        effectiveProfile: 'fast',
+        freeMemMb,
+        detail: 'sustained free-RAM pressure below memory.pressureThresholdGb',
+      });
+    }
+    if (status.recoveryEligible && !this.recoveryEmitted) {
+      this.recoveryEmitted = true;
+      this.config.onMemoryEvent?.({
+        type: 'recovery-eligible',
+        detail: 'free RAM recovered above the threshold for the sustained recovery window',
+      });
+    }
+    // AC3 (issue #66): the ONLY upgrade path — the override clears when the
+    // recovery is eligible AND no generation is running or queued (checked
+    // between generations; bounded staleness = one telemetry interval).
+    if (
+      this.downgradeLatched &&
+      status.recoveryEligible &&
+      scheduler.generationInFlight === false &&
+      scheduler.queueDepth === 0 &&
+      scheduler.activeGenerations === 0
+    ) {
+      this.downgradeLatched = false;
+      this.recoveryEmitted = false;
+      engineOverride.setProfileOverride?.(null);
+      // Acknowledge the upgrade on the monitor: without this the never-reset
+      // `downgraded` latch re-latched 'fast' on the very next tick (fast/
+      // quality oscillation + event spam; PR-review finding PRR-F1, pinned by
+      // b8-host-loop.test.ts).
+      monitor.resetAfterUpgrade();
+      this.config.onMemoryEvent?.({
+        type: 'telemetry',
+        effectiveProfile: 'quality',
+        detail: 'profile override cleared between generations (recovery sustained)',
+      });
+    }
+  };
 
   /**
    * B6 (issue #64): snapshot the open store into <backupsDir>/<timestamp>/
@@ -100,6 +219,31 @@ export class NodeBackendHost implements BackendHost {
 
   async start(): Promise<BackendHandle> {
     if (this.handle) return this.handle;
+    // B8 (issue #66): resolve the memory/concurrency budget and build the
+    // governance stack BEFORE the listener exists, so /telemetry/memory and
+    // the generation mutex are live from the first request.
+    const env = this.config.env ?? process.env;
+    const memoryConfig = resolveMemoryConfig(env);
+    const concurrency = resolveConcurrencyConfig(env);
+    const poolConfig = resolveWorkerPoolConfig(env);
+    this.scheduler = new ConcurrencyScheduler({ maxConcurrentGenerations: concurrency.maxConcurrentGenerations });
+    this.rssBaselineBytes = process.memoryUsage().rss;
+    this.telemetry = createMemoryTelemetry({ rssProvider: this.rssFor });
+    this.monitor = createPressureMonitor({
+      pressureThresholdGb: memoryConfig.pressureThresholdGb,
+      pressureSustainedMs: memoryConfig.pressureSustainedMs,
+      recoverySustainedMs: memoryConfig.recoverySustainedMs,
+    });
+    if (poolConfig.rerankerWorkerPoolSize > 1 || poolConfig.embeddingWorkerPoolSize > 1) {
+      // Honest-config policy: the parser reports values as configured; the
+      // CONSUMPTION site rejects >1 because onnxruntime-node aborts the whole
+      // process when one ORT module instance is used from two threads (the
+      // B7 single-ORT-owner probe, backend start block below).
+      const detail =
+        'worker pool sizes > 1 rejected (B7 single-thread ORT ownership: a second ONNX instance on another thread aborts the process); continuing with 1';
+      console.error(`[trainingapp-backend] ${detail}`);
+      this.config.onMemoryEvent?.({ type: 'telemetry', detail });
+    }
     const server = createBackendServer({
       guard: createLoopbackGuard({
         token: this.config.token,
@@ -109,6 +253,23 @@ export class NodeBackendHost implements BackendHost {
       tokenHeaderName: this.config.tokenHeaderName,
       allowedOrigins: this.config.allowedOrigins,
       engine: this.engine,
+      scheduler: this.scheduler,
+      telemetry: () => {
+        // The payload's effectiveProfile reflects the ENGINE's actual profile
+        // (settings + pressure override) when the engine exposes it — the
+        // monitor alone cannot see an explicit inference.profile setting.
+        // downgraded remains the pressure-latch state (S6/AC3).
+        const status = this.monitor?.evaluate() ?? { downgraded: false };
+        const engineProfile = (this.engine as { effectiveProfile?: () => 'quality' | 'fast' })
+          .effectiveProfile?.();
+        return {
+          snapshot: this.telemetry?.snapshot() ?? {},
+          downgrade: {
+            effectiveProfile: engineProfile ?? 'quality',
+            downgraded: status.downgraded,
+          },
+        };
+      },
     });
     try {
       const port = await listenOnRandomPort(server);
@@ -168,17 +329,40 @@ export class NodeBackendHost implements BackendHost {
               retrievalConfig.rerank &&
               rerankerModelDir !== null
             ) {
-              this.reranker = new WorkerReranker({
+              // B8 (issue #66): the worker is RESUMABLE — the idle-unload
+              // controller may terminate it after memory.idleUnloadMs idle;
+              // the next score/embed transparently rebuilds it (reload
+              // latency recorded for AC5). onUse re-arms the idle window on
+              // every job start (score/embed/ingest embeds alike).
+              const resumable = new ResumableReranker({
                 modelDir: rerankerModelDir,
                 embedModelDir: this.embedder.weightsDir,
+                onUse: () => {
+                  this.idle?.touch();
+                },
+                onReload: (ms) => {
+                  this.idle?.recordReload(ms);
+                },
               });
-              this.embedder = new WorkerEmbedder(this.reranker as WorkerReranker, this.embedder.modelId);
+              this.idle = new IdleUnloadController({
+                idleUnloadMs: memoryConfig.idleUnloadMs,
+                unload: () => resumable.unload(),
+              });
+              this.resumable = resumable;
+              this.reranker = resumable;
+              this.embedder = new WorkerEmbedder(resumable, this.embedder.modelId);
+              this.embedsViaWorker = true;
             }
           } catch (err) {
             // Reranker unavailable: degrade to fused-ordering retrieval with
             // the embedder as-is (no worker exists, so main-thread ORT stays
-            // single-threaded). Never fail host start.
+            // single-threaded). Never fail host start. B8: the resumable
+            // wrapper and its idle controller are torn down with it.
             this.reranker = null;
+            this.resumable = null;
+            this.idle?.dispose();
+            this.idle = null;
+            this.embedsViaWorker = false;
             console.error(
               `[trainingapp-backend] reranker unavailable (retrieval degrades to fused ordering): ${err instanceof Error ? err.message : String(err)}`,
             );
@@ -188,7 +372,7 @@ export class NodeBackendHost implements BackendHost {
             set: (handle: StoreHandle | null) => {
               this.store = handle;
             },
-          });
+          }, this.scheduler);
           if (this.embedder !== null) {
             // B7: attach the hybrid retrieval surface AFTER the document
             // surface, reusing the same (possibly worker-proxied) embedder.
@@ -204,6 +388,19 @@ export class NodeBackendHost implements BackendHost {
           }
         }
       }
+      // B8 (issue #66): the sampler loop — observe/evaluate/downgrade at
+      // memory.telemetryIntervalMs. unref'd so a headless host can still exit.
+      // The tick's rejection is consumed here (log + keep the sampler alive):
+      // an unhandled rejection from a raced worker disposal must not take the
+      // host down in plain-node entries (PRR-F2).
+      this.telemetryTimer = setInterval(() => {
+        void this.memoryTick().catch((err: unknown) => {
+          console.error(
+            `[trainingapp-backend] memory tick failed (sampler continues): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+      }, memoryConfig.telemetryIntervalMs);
+      this.telemetryTimer.unref?.();
       return this.handle;
     } catch (err) {
       // Partial-init cleanup: a failed bind must not leak the listener into
@@ -216,6 +413,24 @@ export class NodeBackendHost implements BackendHost {
 
 
   async stop(): Promise<void> {
+    // B8 (issue #66) governance teardown FIRST: no sampler fires mid-shutdown,
+    // the idle controller never fires after dispose, and queued (not yet
+    // started) generations fail fast instead of running after close.
+    if (this.telemetryTimer !== null) {
+      clearInterval(this.telemetryTimer);
+      this.telemetryTimer = null;
+    }
+    this.idle?.dispose();
+    this.idle = null;
+    this.scheduler?.rejectQueued(new Error('backend host is stopping'));
+    this.scheduler = null;
+    this.telemetry = null;
+    this.monitor = null;
+    this.workerMemory = null;
+    this.embedsViaWorker = false;
+    this.downgradeLatched = false;
+    this.recoveryEmitted = false;
+    this.resumable = null;
     const server = this.server;
     this.server = null;
     this.handle = null;
@@ -377,6 +592,7 @@ function attachStoreSurface(
   store: StoreHandle,
   embedder: EmbeddingSurface | null,
   accessors: StoreAccessors,
+  coordination: ConcurrencyScheduler | null,
 ): void {
   if (embedder === null) {
     // No usable embedder (weights not staged, bad env): the document surface
@@ -393,6 +609,8 @@ function attachStoreSurface(
     config: resolveIngestConfig(env),
     limits: resolveIngestLimits(env),
     onProgress: config.onIngestProgress,
+    // B8 (issue #66, S3): the embed phase pauses while a generation runs.
+    ...(coordination !== null ? { coordination } : {}),
   });
   if (typeof (engine as { attachDocumentSurface?: unknown }).attachDocumentSurface === 'function') {
     engine.attachDocumentSurface?.(surface);
