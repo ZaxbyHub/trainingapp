@@ -84,7 +84,7 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
       TRAININGAPP_DESKTOP_EMBEDDER: 'hash',
       // Widen the stub's inter-token gap so Cancel lands mid-stream (the
       // default 1ms finishes a stub answer before a click can land).
-      TRAININGAPP_STUB_TOKEN_DELAY_MS: '300',
+      TRAININGAPP_STUB_TOKEN_DELAY_MS: '600',
       TRAININGAPP_DESKTOP_STORE_PATH: storePath,
     } as Record<string, string>,
   });
@@ -128,6 +128,12 @@ test.describe.serial('renderer smoke (AC1)', () => {
         buffer: Buffer.from(DOC_TEXT, 'utf8'),
       });
       await expect(page.getByText('training-notes.txt').first()).toBeVisible({ timeout: 15_000 });
+      // The optimistic row appears immediately; wait until the ingest has
+      // actually COMMITTED server-side (row leaves the uploading state)
+      // before asking — on a loaded CI runner the multipart upload can
+      // outlast a click-to-ask, and the cited answer needs the document
+      // retrievable.
+      await expect(page.getByText('Uploading...').first()).toBeHidden({ timeout: 30_000 });
     };
     try {
       await upload();
