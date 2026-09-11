@@ -32,11 +32,31 @@ export interface BackendServerOptions {
   engine?: EngineSurface;
   /** Sidecar mode: forward every request to this loopback upstream port. */
   upstreamPort?: number;
+  /**
+   * B8 (issue #66): generation/ingestion serialization. When wired, /ask and
+   * /ask/stream execute under the scheduler's FIFO mutex (max
+   * maxConcurrentGenerations) and its observability feeds the host's
+   * upgrade predicate. Optional: old constructions keep working unwired.
+   */
+  scheduler?: {
+    runGeneration<T>(fn: () => Promise<T>): Promise<T>;
+  };
+  /**
+   * B8 (issue #66): the telemetry snapshot provider for GET /telemetry/memory.
+   * Provider FUNCTION shape (host wires `() => ({ snapshot, downgrade })`).
+   * When absent the known route degrades to a contract-safe 503 — never 404.
+   */
+  telemetry?: () => {
+    snapshot: Record<string, number>;
+    downgrade: { effectiveProfile: 'quality' | 'fast'; downgraded: boolean };
+  };
 }
 
-// The 14 contract operations (contracts/api.openapi.yaml). Unknown paths get
+// The 15 contract operations (contracts/api.openapi.yaml). Unknown paths get
 // 404, known paths with a wrong method get 405 — the route TABLE is the
-// conformance surface.
+// conformance surface. (/telemetry/memory arrives with B8, issue #66: it is
+// token-guarded like every route — it reveals process memory — and degrades
+// to a contract-safe 503 when no telemetry provider is wired.)
 const CONTRACT_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['/health', new Set(['GET'])],
   ['/auth/status', new Set(['GET'])],
@@ -50,6 +70,7 @@ const CONTRACT_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ['/search', new Set(['POST'])],
   ['/settings', new Set(['GET', 'PUT'])],
   ['/stats', new Set(['GET'])],
+  ['/telemetry/memory', new Set(['GET'])],
 ]);
 
 function sendJson(res: ServerResponse, status: number, body: unknown, cors?: CorsContext): void {
@@ -350,6 +371,13 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
       sendJson(res, 500, { detail: 'Backend host misconfigured: neither engine nor upstream' }, cors);
       return;
     }
+    // B8 (issue #66): when the host wired the scheduler, /ask + /ask/stream
+    // execute under the FIFO generation mutex. Unwired constructions keep the
+    // old unwrapped semantics (the transport cannot serialize what it was
+    // never handed).
+    const runGeneration = opts.scheduler
+      ? <T,>(fn: () => Promise<T>): Promise<T> => opts.scheduler!.runGeneration(fn)
+      : <T,>(fn: () => Promise<T>): Promise<T> => fn();
     const path = (req.url ?? '/').split('?')[0] ?? '/';
     const methods = CONTRACT_ROUTES.get(path);
     if (methods === undefined) {
@@ -396,10 +424,12 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
             if (path === '/ask') {
               let result;
               try {
-                result = await engine.query(parsed.value.question, {
-                  nResults: parsed.value.n_results,
-                  history: parsed.value.history,
-                });
+                result = await runGeneration(() =>
+                  engine.query(parsed.value.question, {
+                    nResults: parsed.value.n_results,
+                    history: parsed.value.history,
+                  }),
+                );
               } catch (err) {
                 // B4 (issue #62): no staged model is the contract's 503
                 // "engine not initialized" response with a load diagnostic.
@@ -422,9 +452,10 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 cors,
               );
             } else {
-              // B4 (issue #62): preflight BEFORE runAskStream writes any
-              // header, so a missing model still answers 503 JSON instead of
-              // a mid-stream error event after `200 text/event-stream`.
+              // B8 (issue #66): preflight stays OUTSIDE the generation mutex —
+              // a missing model must answer its 503 immediately, never queue
+              // behind an in-flight generation. Only the actual
+              // generation-carrying stream runs under the scheduler.
               try {
                 await engine.preflight?.();
               } catch (err) {
@@ -434,10 +465,12 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 }
                 throw err;
               }
-              await runAskStream(res, engine, parsed.value.question, {
-                n_results: parsed.value.n_results,
-                history: parsed.value.history,
-              }, cors);
+              await runGeneration(() =>
+                runAskStream(res, engine, parsed.value.question, {
+                  n_results: parsed.value.n_results,
+                  history: parsed.value.history,
+                }, cors),
+              );
             }
             return;
           }
@@ -584,6 +617,18 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
           case 'GET /stats':
             sendJson(res, 200, await engine.getStats(), cors);
             return;
+          case 'GET /telemetry/memory': {
+            // B8 (issue #66): token-guarded above (every route traverses the
+            // guard), so this reveals process memory only to the host's own
+            // renderer. Unwired hosts degrade to a contract-safe 503 — the
+            // path is KNOWN (405 semantics apply), never silently 404.
+            if (!opts.telemetry) {
+              sendJson(res, 503, { detail: 'Memory telemetry is not wired on this host' }, cors);
+              return;
+            }
+            sendJson(res, 200, opts.telemetry(), cors);
+            return;
+          }
           default:
             sendJson(res, 404, { detail: 'Not found' }, cors);
             return;

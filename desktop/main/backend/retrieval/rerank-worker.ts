@@ -9,13 +9,16 @@
 // The host therefore never calls ORT on the main thread when this worker
 // exists (WorkerEmbedder proxies query/ingest embeddings here).
 //
-// Message protocol (rerank half pinned by C4):
+// Message protocol (rerank half pinned by C4; memory half pinned by C9):
 //   main  -> worker: { kind: 'rerank', jobId, query, candidates }
 //                  | { kind: 'embed',  jobId, texts }
+//                  | { kind: 'memory', jobId }
 //   worker -> main:  { kind: 'rerank:result', jobId, scores }
 //                or  { kind: 'rerank:error',   jobId, message }
 //                or  { kind: 'embed:result',   jobId, vectors }
 //                or  { kind: 'embed:error',    jobId, message }
+//                or  { kind: 'memory:result',  jobId,
+//                      memory: { rss, external, arrayBuffers } }
 //
 // Models: ettin-reranker-32m-v1 (the web_ui baseline reranker,
 // web_ui/src/lib/models/model-manifest.ts:72-76) and bge-small-en-v1.5
@@ -125,12 +128,28 @@ async function scoreBatch(
   return scores;
 }
 
+type WorkerMessage =
+  | WorkerJob
+  | { kind: 'memory'; jobId: number };
+
 const port = parentPort;
 if (port !== null) {
   port.on('message', (raw: unknown) => {
     void (async () => {
-      const message = raw as WorkerJob;
-      if (!message || (message.kind !== 'rerank' && message.kind !== 'embed')) return;
+      const message = raw as WorkerMessage;
+      if (!message || typeof message.jobId !== 'number') return;
+      // B8 (issue #66): memory probe — thread-local counters for the
+      // telemetry snapshot (the ONNX sessions live on THIS thread).
+      if (message.kind === 'memory') {
+        const memory = process.memoryUsage();
+        port.postMessage({
+          kind: 'memory:result',
+          jobId: message.jobId,
+          memory: { rss: memory.rss, external: memory.external, arrayBuffers: memory.arrayBuffers },
+        });
+        return;
+      }
+      if (message.kind !== 'rerank' && message.kind !== 'embed') return;
       const dirs = ((workerData ?? {}) as { modelDir?: string | null; embedModelDir?: string | null });
       try {
         if (message.kind === 'rerank') {

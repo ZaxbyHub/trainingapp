@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Document Q&A API
-  version: "2.3.0"
+  version: "2.4.0"
   description: |
     RAG-based document question answering API.
 
@@ -328,6 +328,26 @@ paths:
                 $ref: "#/components/schemas/StatsResponse"
         "503":
           description: Engine not initialized
+  /telemetry/memory:
+    get:
+      tags: [ops]
+      summary: Current memory telemetry snapshot and profile-downgrade state (B8, issue #66)
+      description: >
+        MB-denominated per-component RSS attribution plus system free/total RAM
+        (snapshot), and the sustained-pressure downgrade state (downgrade).
+        Component attribution semantics are documented in docs/adr/0008-memory-budget.md.
+        Transport-token-guarded like every route: it reveals process memory.
+        A host without a telemetry provider answers 503 (the path is known, never 404).
+      operationId: getTelemetryMemory
+      responses:
+        "200":
+          description: Current memory snapshot and downgrade state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryMemoryResponse"
+        "503":
+          description: Memory telemetry is not wired on this host
 components:
   securitySchemes:
     bearerAuth:
@@ -623,6 +643,37 @@ components:
         documents:
           type: array
           items: { type: string }
+    MemorySnapshot:
+      type: object
+      description: Per-component memory attribution in MB (1 MB = 1024*1024 bytes). B8 (issue #66).
+      required:
+        [chromiumRssMb, llmRssMb, embeddingSessionRssMb, rerankerSessionRssMb, sqliteRssMb, systemFreeMb, systemTotalMb]
+      properties:
+        chromiumRssMb: { type: number, description: Main-process RSS (includes native heaps) }
+        llmRssMb: { type: number, description: Resident-LLM incremental footprint since host start (0 when none) }
+        embeddingSessionRssMb: { type: number, description: Embedding-session thread counters (0 when not measurable) }
+        rerankerSessionRssMb: { type: number, description: Reranker-worker thread counters (0 when not measurable) }
+        sqliteRssMb: { type: number, description: SQLite driver heap (0 when no store is open) }
+        systemFreeMb: { type: number, description: os.freemem() in MB }
+        systemTotalMb: { type: number, description: os.totalmem() in MB }
+    DowngradeState:
+      type: object
+      description: Sustained-pressure downgrade state (B8 S6; AC3 hysteresis documented in ADR-0008).
+      required: [effectiveProfile, downgraded]
+      properties:
+        effectiveProfile:
+          type: string
+          enum: [quality, fast]
+        downgraded:
+          type: boolean
+    TelemetryMemoryResponse:
+      type: object
+      required: [snapshot, downgrade]
+      properties:
+        snapshot:
+          $ref: "#/components/schemas/MemorySnapshot"
+        downgrade:
+          $ref: "#/components/schemas/DowngradeState"
 security:
   - {}
   - bearerAuth: []

@@ -62,6 +62,15 @@ export interface IngestPipelineOptions {
   /** Extraction resource caps; omit for none (direct test constructions). */
   limits?: IngestLimits;
   onProgress?: (event: IngestProgress) => void;
+  /**
+   * B8 (issue #66, S3): the generation/ingestion coordination seam. When
+   * present, the embed phase awaits coordination.waitForGenerationEnd()
+   * before EVERY embed call — ingestion pauses while a generation runs
+   * (ConcurrencyScheduler satisfies this structurally; AC4).
+   */
+  coordination?: {
+    waitForGenerationEnd(): Promise<void>;
+  };
 }
 
 /** Byte-matches run_interop.py's normalized(): CRLF->LF, trailing space strip. */
@@ -252,6 +261,9 @@ export class IngestPipeline {
     }
 
     this.emit(docId, 'embed', 55);
+    // B8 (issue #66, AC4): pause before embed-heavy work while a generation
+    // is in flight — the awaited seam resolves the moment no generation runs.
+    await this.opts.coordination?.waitForGenerationEnd();
     let vectors: number[][];
     try {
       vectors = await this.opts.embedder.embed(chunks.map((c) => c.text));

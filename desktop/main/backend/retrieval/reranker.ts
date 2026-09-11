@@ -39,11 +39,23 @@ type WorkerResponse =
   | { kind: 'rerank:result'; jobId: number; scores: number[] }
   | { kind: 'rerank:error'; jobId: number; message: string }
   | { kind: 'embed:result'; jobId: number; vectors: number[][] }
-  | { kind: 'embed:error'; jobId: number; message: string };
+  | { kind: 'embed:error'; jobId: number; message: string }
+  | {
+      kind: 'memory:result';
+      jobId: number;
+      memory: { rss: number; external: number; arrayBuffers: number };
+    };
 
 interface PendingJob {
-  resolve: (payload: number[] | number[][]) => void;
+  resolve: (payload: number[] | number[][] | WorkerMemoryReport) => void;
   reject: (err: Error) => void;
+}
+
+/** Thread-local memory counters reported by the retrieval worker (B8, C9). */
+export interface WorkerMemoryReport {
+  rss: number;
+  external: number;
+  arrayBuffers: number;
 }
 
 /** A real reranker weight file is ~127MB; a Git-LFS pointer is ~134 bytes. */
@@ -143,6 +155,8 @@ export class WorkerReranker {
           job.resolve(message.scores);
         } else if (message.kind === 'embed:result' && Array.isArray(message.vectors)) {
           job.resolve(message.vectors);
+        } else if (message.kind === 'memory:result' && typeof message.memory === 'object' && message.memory !== null) {
+          job.resolve(message.memory);
         } else if ((message.kind === 'rerank:error' || message.kind === 'embed:error')) {
           job.reject(new Error(message.message));
         } else {
@@ -208,6 +222,27 @@ export class WorkerReranker {
     });
   }
 
+  /**
+   * B8 (issue #66, C9): the worker's thread-local memory counters for the
+   * telemetry snapshot. Resolves null when the worker was never started —
+   * it must NOT spawn a thread just to ask. Wire protocol: `{ kind: 'memory',
+   * jobId }` -> `{ kind: 'memory:result', jobId, memory: {...} }` (unwrapped
+   * here), served on the same pending-job machinery as score/embed.
+   */
+  async reportMemory(): Promise<WorkerMemoryReport | null> {
+    if (this.worker === null) return null;
+    const worker = this.worker;
+    const jobId = this.nextJobId;
+    this.nextJobId += 1;
+    return new Promise<WorkerMemoryReport>((resolve, reject) => {
+      this.pending.set(jobId, {
+        resolve: (payload) => resolve(payload as WorkerMemoryReport),
+        reject,
+      });
+      worker.postMessage({ kind: 'memory', jobId });
+    });
+  }
+
   /** Terminate the worker, reject in-flight jobs, idempotent. */
   async dispose(): Promise<void> {
     this.disposed = true;
@@ -233,15 +268,105 @@ export class WorkerReranker {
 }
 
 /**
+ * B8 (issue #66, S5/AC5): an unload-then-rebuild retrieval surface. The
+ * idle-unload host policy terminates the worker WITHOUT poisoning this
+ * instance; the NEXT score()/embed() transparently rebuilds a fresh
+ * WorkerReranker from the retained options and reports the measured
+ * construct-to-first-answer latency via onReload. dispose() is permanent
+ * (a disposed WorkerReranker is single-shot by construction, so "unload"
+ * vs "dispose" differ exactly in whether this instance may rebuild).
+ *
+ * Satisfies the RerankerSurface + WorkerEmbedder-embedder seams structurally,
+ * so the host can wrap the production worker without touching B7's surface.
+ */
+export class ResumableReranker {
+  private readonly runnerOptions: RerankerRunnerOptions;
+  private readonly onReload: ((ms: number) => void) | undefined;
+  private readonly onUse: (() => void) | undefined;
+  private runner: WorkerReranker | null = null;
+  private disposed = false;
+
+  constructor(
+    options: RerankerRunnerOptions & { onReload?: (ms: number) => void; onUse?: () => void } = {},
+  ) {
+    const { onReload, onUse, ...runnerOptions } = options;
+    this.runnerOptions = runnerOptions;
+    this.onReload = onReload;
+    this.onUse = onUse;
+  }
+
+  private ensureRunner(): WorkerReranker {
+    if (this.disposed) {
+      throw new Error('ResumableReranker has been disposed');
+    }
+    if (this.runner === null) {
+      this.runner = new WorkerReranker(this.runnerOptions);
+    }
+    return this.runner;
+  }
+
+  private async runWithReloadTiming<T>(run: (runner: WorkerReranker) => Promise<T>): Promise<T> {
+    // onUse fires on EVERY job start (the B8 idle-unload controller re-arms
+    // here), including during a rebuild.
+    this.onUse?.();
+    const rebuilt = this.runner === null;
+    const startedAt = performance.now();
+    const result = await run(this.ensureRunner());
+    if (rebuilt) {
+      // performance.now(): sub-ms precision, so even an instant fixture
+      // rebuild reports a finite, positive latency (C9's assertion).
+      const reloadMs = performance.now() - startedAt;
+      if (reloadMs > 0) this.onReload?.(reloadMs);
+    }
+    return result;
+  }
+
+  /** Score candidates against the query; rebuilds the worker after unload(). */
+  score(query: string, candidates: string[]): Promise<number[]> {
+    return this.runWithReloadTiming((runner) => runner.score(query, candidates));
+  }
+
+  /** Embed texts through the worker's bge pipeline; rebuilds after unload(). */
+  embed(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) return Promise.resolve([]);
+    return this.runWithReloadTiming((runner) => runner.embed(texts));
+  }
+
+  /**
+   * Idle unload: terminate the worker (in-flight jobs reject) and forget the
+   * instance. The NEXT score()/embed() transparently rebuilds a fresh one.
+   */
+  async unload(): Promise<void> {
+    const runner = this.runner;
+    this.runner = null;
+    if (runner !== null) await runner.dispose();
+  }
+
+  /** B8: worker memory counters, or null while unloaded (never rebuilds). */
+  async reportMemory(): Promise<WorkerMemoryReport | null> {
+    return this.runner !== null ? this.runner.reportMemory() : null;
+  }
+
+  /** Permanent teardown; idempotent; safe after unload(). */
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    const runner = this.runner;
+    this.runner = null;
+    if (runner !== null) await runner.dispose();
+  }
+}
+
+/**
  * Main-thread proxy that routes embeddings through the retrieval worker so
  * onnxruntime stays on a SINGLE thread of this process (cross-thread ort
  * aborts the process; see rerank-worker.ts header). Satisfies the same
- * EmbeddingSurface contract as ingest/embedder.ts.
+ * EmbeddingSurface contract as ingest/embedder.ts. Structural embedder seam:
+ * accepts the raw WorkerReranker OR the B8 ResumableReranker wrapper.
  */
 export class WorkerEmbedder {
   readonly modelId: string;
   constructor(
-    private readonly worker: WorkerReranker,
+    private readonly worker: { embed(texts: string[]): Promise<number[][]> },
     modelId: string,
   ) {
     this.modelId = modelId;
