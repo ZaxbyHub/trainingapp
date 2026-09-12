@@ -55,7 +55,7 @@ export function decodeGlobalProvideData(payloadName: string, text: string): unkn
   return JSON.parse(unescaped) as unknown;
 }
 
-/** Decode a story_content/&lt;id&gt;_transcripts.js sidecar asset. */
+/** Decode a story_content/<id>_transcripts.js sidecar asset. */
 export function decodeSidecarAsset(text: string): unknown {
   const m = /const data = (\{[\s\S]*\});\s*window\.globalLoadJsAsset/.exec(text);
   if (m === null || m[1] === undefined) {

@@ -55,11 +55,24 @@ function requireString(value: unknown, what: string): string {
 }
 
 function extractMetaAttribute(metaXml: string, attribute: string): string {
-  const m = new RegExp(`\\b${attribute}="([^"]*)"`).exec(metaXml);
-  if (m === null || m[1] === undefined) {
-    throw new Error(`meta.xml is missing the "${attribute}" attribute`);
+  // PRR-015 fix: anchor to the FIRST opening tag whose attributes actually
+  // contain the requested attribute. The old unscoped regex matched any
+  // title="..." in the document including nested elements like <description
+  // title="...">. We walk every opening tag in source order and pick the
+  // first whose attribute span carries the attribute — matching the original
+  // semantics for normal publishers (meta.xml shape verified against the
+  // real OpMed corpus: <meta xmlns:...> carries no attributes, then the
+  // sibling <project ... title="..."> does).
+  const tagRe = /<[A-Za-z][A-Za-z0-9]*\b([^>]*?)>/g;
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(metaXml)) !== null) {
+    const attrsSpan = m[1] ?? '';
+    const am = new RegExp(`(?:^|[\\s])(${attribute})="([^"]*)"`, 'i').exec(attrsSpan);
+    if (am !== null && am[2] !== undefined) {
+      return am[2];
+    }
   }
-  return m[1];
+  throw new Error(`meta.xml is missing the "${attribute}" attribute`);
 }
 
 /** Build the section map (slideId -> section title) from the frame.js payload. */

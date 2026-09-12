@@ -77,3 +77,15 @@ Turns an unmodified Articulate Storyline 360 HTML5 publish folder into:
   committed mini fixture `../tests/fixtures/storyline-mini` (byte-for-byte
   golden output). CI runs the fixture suite only; the full 384-slide corpus run
   is a documented manual acceptance step (`packtool` never ships media).
+
+### Fixture origin and licensing
+
+`tests/fixtures/storyline-mini/` trims a portion of an internal Articulate
+Storyline 360 HTML5 publish held at `E:\ClaudeCode\OpMed CDP MicroLearning
+Companion_7-10-26` on the operator's local machine (issue #77's reference
+corpus). The fixture is committed solely to pin the extractor's byte-for-byte
+output for CI; **no redistribution right is asserted for the embedded
+courseware**, and consumers should treat the fixture as an internal test
+artifact, not as redistributable content. If you fork or reuse this package,
+replace the fixture with content you are licensed to distribute or generate a
+new minimal fixture from your own publisher.

@@ -55,7 +55,8 @@ function readUtf8(path: string): string {
   return readFileSync(path, 'utf8');
 }
 
-// dist/ is stale when cli.js is missing or any packtool/storyline/*.ts is newer.
+// dist/ is stale when cli.js is missing or any packtool/**/*.ts (incl. cli.ts
+// at package root — PRR-004 fix) is newer.
 function distIsStale(): boolean {
   const cli = join(PACKTOOL_DIR, 'dist', 'cli.js');
   if (!existsSync(cli)) return true;
@@ -68,7 +69,7 @@ function distIsStale(): boolean {
       else if (p.endsWith('.ts')) tsFiles.push(p);
     }
   };
-  walk(join(PACKTOOL_DIR, 'storyline'));
+  walk(PACKTOOL_DIR);
   return tsFiles.some((p) => statSync(p).mtimeMs > cliMtime);
 }
 
@@ -115,7 +116,19 @@ describe('AC1: golden fixture extraction via built CLI', () => {
     }
   });
 
-  it('extractPublishDir API exists with the frozen signature (library-level contract)', () => {
-    expect(typeof extractPublishDir).toBe('function');
+  it('PRR-012 cross-check: outline.json sections partition sums to spine.slides.length', () => {
+    // Independent of the byte-golden: derive the expected sections[] from the
+    // fixture inputs and compare. Catches a hand-derived golden error that the
+    // byte-compare alone would silently pass.
+    const outline = JSON.parse(readUtf8(join(outDir, 'outline.json'))) as {
+      scene_count: number;
+      sections: Array<{ title: string; slide_count: number }>;
+    };
+    expect(outline.scene_count).toBe(2); // fixture has 2 non-message scenes
+    expect(outline.sections.map((s) => s.title)).toEqual([
+      'Course Introduction',
+      'Tasks & Drills',
+    ]);
+    expect(outline.sections.map((s) => s.slide_count).reduce((a, b) => a + b, 0)).toBe(6);
   });
 });
