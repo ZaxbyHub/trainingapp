@@ -119,8 +119,12 @@ export function buildSpine(publishDir: string): Spine {
   const course = extractMetaAttribute(metaXml, 'title');
   const duration = extractMetaAttribute(metaXml, 'duration');
 
-  const data = asRecord(decodeGlobalProvideData('data', readTextFile(join(publishDir, 'html5', 'data', 'js', 'data.js'))));
-  const frame = asRecord(decodeGlobalProvideData('frame', readTextFile(join(publishDir, 'html5', 'data', 'js', 'frame.js'))));
+  // PRR-006: pass source paths so a malformed data.js or frame.js throws an
+  // error that names the file (instead of the generic '<input>' fallback).
+  const dataPath = join(publishDir, 'html5', 'data', 'js', 'data.js');
+  const framePath = join(publishDir, 'html5', 'data', 'js', 'frame.js');
+  const data = asRecord(decodeGlobalProvideData('data', readTextFile(dataPath), dataPath));
+  const frame = asRecord(decodeGlobalProvideData('frame', readTextFile(framePath), framePath));
   const sectionsBySlideId = sectionMapFromFrame(frame);
 
   const scenes = asArray(data['scenes']);
