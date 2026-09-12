@@ -7,12 +7,14 @@ on:
       - 'desktop/**'
       - 'web_ui/**'
       - 'contracts/**'
+      - 'packtool/**'
       - '.github/workflows/desktop-build.yml'
   pull_request:
     paths:
       - 'desktop/**'
       - 'web_ui/**'
       - 'contracts/**'
+      - 'packtool/**'
       - '.github/workflows/desktop-build.yml'
 
 jobs:
@@ -29,6 +31,7 @@ jobs:
           cache-dependency-path: |
             web_ui/package-lock.json
             desktop/package-lock.json
+            packtool/package-lock.json
 
       - name: Build renderer (web_ui)
         run: |
@@ -40,6 +43,12 @@ jobs:
 
       - name: Acceptance tests (vitest, stubbed electron)
         run: npm --prefix desktop test
+
+      - name: Storyline extractor tests (packtool, fixture-only)
+        run: |
+          npm --prefix packtool ci --no-audit --no-fund
+          npm --prefix packtool run build
+          npm --prefix packtool test
 
       - name: Build installer (unsigned NSIS x64)
         run: npm --prefix desktop run desktop:build

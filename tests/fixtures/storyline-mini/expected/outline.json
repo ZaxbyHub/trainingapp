@@ -1,0 +1,15 @@
+{
+  "course": "OpMed CDP Mini Fixture",
+  "duration": "About 3 minutes",
+  "scene_count": 2,
+  "sections": [
+    {
+      "title": "Course Introduction",
+      "slide_count": 2
+    },
+    {
+      "title": "Tasks & Drills",
+      "slide_count": 4
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+window.globalProvideData('slide', '{"id":"6fxKq2mV8bR","slideLayers":[{"isBaseLayer":true,"kind":"layer","objects":[{"kind":"vectorshape","id":"aaQq2mV8b01","referenceName":"aaQq2mV8b01","data":{"vectorData":{"altText":""}}},{"kind":"vectorshape","id":"aaQq2mV8b02","referenceName":"aaQq2mV8b02","data":{"vectorData":{"altText":null}}}]}]}');
