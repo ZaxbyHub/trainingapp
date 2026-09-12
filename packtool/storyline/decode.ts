@@ -26,15 +26,15 @@ export function readTextFile(path: string): string {
 
 /**
  * Decode the payload of window.globalProvideData('<payloadName>', '...').
- * Throws (message mentions globalProvideData) when the wrapper is absent.
+ * Throws (message mentions globalProvideData AND the caller-supplied source
+ * path, if any) when the wrapper is absent or unterminated.
  */
-export function decodeGlobalProvideData(payloadName: string, text: string): unknown {
+export function decodeGlobalProvideData(payloadName: string, text: string, sourcePath?: string): unknown {
   const marker = `window.globalProvideData('${payloadName}', '`;
   const at = text.indexOf(marker);
   if (at === -1) {
     throw new Error(
-      `no window.globalProvideData('${payloadName}', ...) wrapper found — ` +
-        `file is not a Storyline ${payloadName} payload`,
+      `no window.globalProvideData('${payloadName}', ...) wrapper found in ${sourcePath ?? '<input>'}`,
     );
   }
   const start = at + marker.length;
@@ -48,7 +48,7 @@ export function decodeGlobalProvideData(payloadName: string, text: string): unkn
     i += 1;
   }
   if (i >= text.length) {
-    throw new Error(`unterminated window.globalProvideData('${payloadName}', ...) payload`);
+    throw new Error(`unterminated window.globalProvideData('${payloadName}', ...) payload in ${sourcePath ?? '<input>'}`);
   }
   const raw = text.slice(start, i);
   const unescaped = raw.replace(/\\\\|\\'/g, (m) => (m === '\\\\' ? '\\' : "'"));
@@ -56,10 +56,12 @@ export function decodeGlobalProvideData(payloadName: string, text: string): unkn
 }
 
 /** Decode a story_content/<id>_transcripts.js sidecar asset. */
-export function decodeSidecarAsset(text: string): unknown {
+export function decodeSidecarAsset(text: string, sourcePath?: string): unknown {
   const m = /const data = (\{[\s\S]*\});\s*window\.globalLoadJsAsset/.exec(text);
   if (m === null || m[1] === undefined) {
-    throw new Error('no `const data = {...}` + globalLoadJsAsset wrapper found — file is not a Storyline sidecar asset');
+    throw new Error(
+      `no \`const data = {...}\` + globalLoadJsAsset wrapper found in ${sourcePath ?? '<input>'} — file is not a Storyline sidecar asset`,
+    );
   }
   return JSON.parse(m[1]) as unknown;
 }
