@@ -563,6 +563,23 @@ def run_transcription(
     }
 
 
+def _fatal_report(args: argparse.Namespace, message: str) -> dict:
+    return {
+        "publish": args.publish,
+        "model_alias": args.model,
+        "model": resolve_model_id(args.model),
+        "compute_type": args.compute_type,
+        "language": args.language,
+        "total": 0,
+        "media_count": 0,
+        "transcribed": 0,
+        "cache_hits": 0,
+        "failures": 1,
+        "media": [],
+        "fatal": message,
+    }
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="transcribe.py",
@@ -605,20 +622,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     except TranscribeError as exc:
         # Fatal inventory error: report it loudly, still write the report file.
-        report = {
-            "publish": args.publish,
-            "model_alias": args.model,
-            "model": resolve_model_id(args.model),
-            "compute_type": args.compute_type,
-            "language": args.language,
-            "total": 0,
-            "media_count": 0,
-            "transcribed": 0,
-            "cache_hits": 0,
-            "failures": 1,
-            "media": [],
-            "fatal": str(exc),
-        }
+        report = _fatal_report(args, str(exc))
+    except Exception as exc:  # noqa: BLE001 - the report artifact must exist on
+        # EVERY failure path (PR review F1): a fatal non-TranscribeError (e.g.
+        # a missing publish dir raising FileNotFoundError) still writes the
+        # report and exits 1 instead of raising a bare traceback.
+        report = _fatal_report(args, f"{type(exc).__name__}: {exc}")
     atomic_write_json(args.report, report)
     return 1 if report["failures"] != 0 else 0
 

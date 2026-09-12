@@ -179,4 +179,24 @@ describe('AC4: ASR transcript store feeds the D1 consumer without an adapter', (
     expect(refs.transcriptText).toBe('Asr video narration.');
     expect(refs.narrationRef).toBe('vidAsr_transcripts.js');
   });
+
+  it('(h) PR review F6: a first-position silent bumper with an empty ASR twin must NOT shadow a later video with a native sidecar', () => {
+    const publish = makeTmp();
+    const asrDir = makeTmp();
+    mkdirSync(join(publish, 'story_content'), { recursive: true });
+    // Real-corpus shape: silent bumper FIRST (its ASR transcript is EMPTY),
+    // narrated video with a human-authored native sidecar SECOND.
+    writeFileSync(join(asrDir, 'bumperA_transcripts.js'), asrSidecarContent('bumperA', []));
+    writeFileSync(join(publish, 'story_content', 'narrB_transcripts.js'), nativeSidecarContent([
+      { start: 0, text: 'Real narration text.' },
+    ]));
+    const payload = slidePayload([
+      { kind: 'video', id: 'bumperA', data: { videodata: {} } },
+      { kind: 'video', id: 'narrB', data: { videodata: {} } },
+    ]);
+    const refs = resolveVideoRefs(payload, publish, { asrDir });
+    expect(refs.transcriptSource).toBe('sidecar');
+    expect(refs.transcriptText).toBe('Real narration text.');
+    expect(refs.narrationRef).toBe('story_content/narrB_transcripts.js');
+  });
 });

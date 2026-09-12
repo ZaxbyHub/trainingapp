@@ -507,6 +507,27 @@ def test_unresolvable_asset_is_entry_error(tmp_path):
     assert "resolvable" in report["media"][0]["error"]
 
 
+def test_bad_publish_path_writes_fatal_report(tmp_path):
+    """PR review F1: a fatal non-TranscribeError (missing publish dir) must
+    still write the report artifact and exit 1, never raise a bare traceback."""
+    report_path = str(tmp_path / "report.json")
+    argv = [
+        "--publish",
+        str(tmp_path / "no-such-publish"),
+        "--out",
+        str(tmp_path / "out"),
+        "--cache-dir",
+        str(tmp_path / "cache"),
+        "--report",
+        report_path,
+    ]
+    exit_code = transcribe.main(argv)
+    assert exit_code == 1
+    report = json.load(open(report_path, encoding="utf-8"))
+    assert report["failures"] == 1 and report["media"] == []
+    assert "FileNotFoundError" in report["fatal"]
+
+
 def test_empty_publish_zero_media(tmp_path):
     publish = make_publish(tmp_path, {}, [], [])
     report = transcribe.run_transcription(

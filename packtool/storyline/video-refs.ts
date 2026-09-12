@@ -119,60 +119,70 @@ export function resolveVideoRefs(
 
   // A slide may carry several video objects (15 on the real corpus, where the
   // first video is often an untranscribed bumper and a later one has the
-  // narration sidecar). Deterministically prefer the FIRST candidate that has
-  // a native sidecar; report 'missing' only when none does (or when every
-  // candidate videoId is rejected by the path-safety check — an adversarial
-  // publish cannot trigger arbitrary file reads under story_content/ or the
-  // ASR store).
+  // narration sidecar). Resolution is TWO-PASS (PRR6-F6): pass 1 probes ALL
+  // candidates for a NATIVE sidecar, pass 2 (overlay set) probes all for an
+  // ASR transcript, candidate order within each pass. A single combined loop
+  // would let an earlier candidate's ASR twin (e.g. a silent bumper's empty
+  // transcript) shadow a later candidate's human-authored sidecar, inverting
+  // the documented sidecar > asr > missing priority. An unsafe id (PRR-001)
+  // or a contained-path violation (PRR-006) is filtered once, up front — an
+  // adversarial publish cannot trigger arbitrary file reads under
+  // story_content/ or the ASR store.
   const candidates: Array<{ id: string; kind: 'video' | 'audio' }> = [
     ...videoIds.map((id) => ({ id, kind: 'video' as const })),
     ...audioIds.map((id) => ({ id, kind: 'audio' as const })),
   ];
+  const safe: Array<{ id: string; sidecarPath: string; narrationRef: string; asrPath?: string; asrRef?: string }> = [];
+  const resolvedStory = resolvePath(publishDir, 'story_content');
   for (const candidate of candidates) {
     const videoId = candidate.id;
-    const narrationRef = `story_content/${videoId}_transcripts.js`;
-    const sidecarPath = join(publishDir, 'story_content', `${videoId}_transcripts.js`);
-    // PRR-001 videoId leg: refuse any component that could escape publishDir.
-    // Defense-in-depth: even though the literal-sidecar lookup later runs
-    // existsSync, the join() above has already normalized the path; an unsafe
-    // videoId would yield a path outside story_content/ and either miss
-    // (existsSync=false → 'missing', which is acceptable) or hit a real file
-    // the operator never intended. Refusing unsafe videoIds makes the
-    // adversarial case deterministically 'missing' and observable.
     if (isUnsafeComponent(videoId)) {
       continue;
     }
-    // PRR-006 belt-and-suspenders: also verify the joined path stays inside
-    // story_content/.
+    const sidecarPath = join(publishDir, 'story_content', `${videoId}_transcripts.js`);
     const resolvedSidecar = resolvePath(sidecarPath);
-    const resolvedStory = resolvePath(publishDir, 'story_content');
     if (
       resolvedSidecar !== resolvedStory &&
       !resolvedSidecar.startsWith(resolvedStory + sep)
     ) {
       continue;
     }
-    if (existsSync(sidecarPath)) {
-      const sidecar = decodeSidecarAsset(readTextFile(sidecarPath), sidecarPath);
-      return { transcriptSource: 'sidecar', transcriptText: sidecarTranscriptText(sidecar), narrationRef };
-    }
-    // ASR overlay leg (#78): same object-id key space, same byte format, same
-    // decode path — no shape adapter. narrationRef is ASR-store-relative and
-    // deliberately NOT publish-relative (the file lives in asrDir).
+    const entry: { id: string; sidecarPath: string; narrationRef: string; asrPath?: string; asrRef?: string } = {
+      id: videoId,
+      sidecarPath,
+      narrationRef: `story_content/${videoId}_transcripts.js`,
+    };
     if (asrDir !== undefined) {
+      // ASR overlay leg (#78): same object-id key space, same byte format,
+      // same decode path — no shape adapter. asrRef is ASR-store-relative and
+      // deliberately NOT publish-relative (the file lives in asrDir).
       const asrRef = `${videoId}_transcripts.js`;
       const asrPath = join(asrDir, asrRef);
       const resolvedAsr = resolvePath(asrPath);
       const resolvedAsrDir = resolvePath(asrDir);
-      if (
-        (resolvedAsr === resolvedAsrDir || resolvedAsr.startsWith(resolvedAsrDir + sep)) &&
-        existsSync(asrPath)
-      ) {
-        const asrSidecar = decodeSidecarAsset(readTextFile(asrPath), asrPath);
+      if (resolvedAsr === resolvedAsrDir || resolvedAsr.startsWith(resolvedAsrDir + sep)) {
+        entry.asrPath = asrPath;
+        entry.asrRef = asrRef;
+      }
+    }
+    safe.push(entry);
+  }
+  // Pass 1: the first candidate with a native sidecar wins for the slide.
+  for (const entry of safe) {
+    if (existsSync(entry.sidecarPath)) {
+      const sidecar = decodeSidecarAsset(readTextFile(entry.sidecarPath), entry.sidecarPath);
+      return { transcriptSource: 'sidecar', transcriptText: sidecarTranscriptText(sidecar), narrationRef: entry.narrationRef };
+    }
+  }
+  // Pass 2: otherwise the first candidate with an ASR transcript (overlay set).
+  if (asrDir !== undefined) {
+    for (const entry of safe) {
+      if (entry.asrPath !== undefined && existsSync(entry.asrPath)) {
+        const asrSidecar = decodeSidecarAsset(readTextFile(entry.asrPath), entry.asrPath);
         return {
           transcriptSource: 'asr',
           transcriptText: sidecarTranscriptText(asrSidecar),
-          narrationRef: asrRef,
+          narrationRef: entry.asrRef!,
         };
       }
     }

@@ -1,6 +1,7 @@
 // packtool CLI entry (issue #77): packtool storyline extract <publishDir> --out <dir>
 // issue #78 adds the optional --asr-dir <dir> ASR transcript store.
 
+import { existsSync } from 'node:fs';
 import { extractPublishDir } from './storyline/extract.js';
 
 interface ExtractArgs {
@@ -25,7 +26,11 @@ function parseArgs(argv: string[]): ExtractArgs {
       outDir = argv[i + 1];
       i++;
     } else if (arg === '--asr-dir') {
-      asrDir = argv[i + 1];
+      // PR review F10: a missing value (trailing flag, or followed by another
+      // -- token) must fail loudly, never silently disable the overlay.
+      const value = argv[i + 1];
+      if (value === undefined || value.startsWith('--')) usage();
+      asrDir = value;
       i++;
     } else if (arg !== undefined && !arg.startsWith('--')) {
       publishDir = arg;
@@ -39,6 +44,13 @@ function parseArgs(argv: string[]): ExtractArgs {
 
 export function main(argv: string[]): number {
   const { publishDir, outDir, asrDir } = parseArgs(argv);
+  // PR review F11: a non-existent ASR store directory must fail loudly —
+  // silently degrading every transcript_source to 'missing' is the exact
+  // failure the flag exists to prevent.
+  if (asrDir !== undefined && !existsSync(asrDir)) {
+    console.error(`packtool storyline extract: --asr-dir directory does not exist: ${asrDir}`);
+    return 2;
+  }
   try {
     extractPublishDir(publishDir, outDir, { asrDir });
   } catch (error) {
