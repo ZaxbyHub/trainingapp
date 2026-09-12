@@ -1,0 +1,19 @@
+{
+  "course": "OpMed CDP Mini Fixture",
+  "scene_number": 2,
+  "section_title": "Tasks & Drills",
+  "slide_number_in_scene": 4,
+  "slide_id": "9dNpYzSa6Kr",
+  "slide_title": "Plan & Charts",
+  "on_screen_text": "Plan & Charts\nReview the task list before starting. Then select a task.",
+  "text_chars": 71,
+  "transcript_source": "none",
+  "provenance": "Tasks & Drills > Slide 4",
+  "source_files": [
+    "meta.xml",
+    "html5/data/js/data.js",
+    "html5/data/js/frame.js",
+    "html5/data/js/9dNpYzSa6Kr.js"
+  ],
+  "html5url": "html5/data/js/9dNpYzSa6Kr.js"
+}

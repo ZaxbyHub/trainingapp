@@ -1,0 +1,22 @@
+{
+  "course": "OpMed CDP Mini Fixture",
+  "scene_number": 2,
+  "section_title": "Tasks & Drills",
+  "slide_number_in_scene": 2,
+  "slide_id": "7bLnWpQxT4s",
+  "slide_title": "Demo Video",
+  "on_screen_text": "Watch the demonstration",
+  "text_chars": 23,
+  "transcript_source": "sidecar",
+  "transcript_text": "Patient documentation from outside of CDP can be imported and associated with your patient’s current encounter by using the Import Document Button.[End Video]",
+  "narration_ref": "story_content/5a5ry690OX4_transcripts.js",
+  "provenance": "Tasks & Drills > Slide 2",
+  "source_files": [
+    "meta.xml",
+    "html5/data/js/data.js",
+    "html5/data/js/frame.js",
+    "html5/data/js/7bLnWpQxT4s.js",
+    "story_content/5a5ry690OX4_transcripts.js"
+  ],
+  "html5url": "html5/data/js/7bLnWpQxT4s.js"
+}

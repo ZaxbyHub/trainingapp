@@ -1,0 +1,19 @@
+{
+  "course": "OpMed CDP Mini Fixture",
+  "scene_number": 2,
+  "section_title": "Tasks & Drills",
+  "slide_number_in_scene": 1,
+  "slide_id": "6fxKq2mV8bR",
+  "slide_title": "Blank Slide",
+  "on_screen_text": "",
+  "text_chars": 0,
+  "transcript_source": "none",
+  "provenance": "Tasks & Drills > Slide 1",
+  "source_files": [
+    "meta.xml",
+    "html5/data/js/data.js",
+    "html5/data/js/frame.js",
+    "html5/data/js/6fxKq2mV8bR.js"
+  ],
+  "html5url": "html5/data/js/6fxKq2mV8bR.js"
+}

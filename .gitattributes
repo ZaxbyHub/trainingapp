@@ -2,3 +2,10 @@
 # theme-bootstrap script of this file, so its served bytes must be identical on
 # every checkout regardless of core.autocrlf. LF everywhere, no exceptions.
 web_ui/index.html text eol=lf
+
+# Byte-stable paths (issue #77): the Storyline fixture payloads and the packtool
+# acceptance checks are hashed byte-for-byte by the issue-tracer checkpoint
+# manifest; CRLF conversion on checkout would break blob verification and
+# golden-file equality. No conversion, no exceptions.
+tests/fixtures/storyline-mini/** -text
+packtool/** -text
