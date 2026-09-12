@@ -55,7 +55,18 @@ function readNonMessageSceneCount(publishDir: string): number {
   return n;
 }
 
-export function extractPublishDir(publishDir: string, outDir: string): void {
+export interface ExtractOptions {
+  /**
+   * ASR transcript store written by packtool/storyline/transcribe.py
+   * (issue #78). When set, resolveVideoRefs additionally resolves audio
+   * objects and sidecar-less media from the store, emitting
+   * transcript_source 'asr'. Omitted (default) = pre-#78 behavior,
+   * byte-identical output (goldens pinned by tests/fixtures/storyline-mini).
+   */
+  asrDir?: string;
+}
+
+export function extractPublishDir(publishDir: string, outDir: string, options: ExtractOptions = {}): void {
   const tmpDir = join(outDir, `.packtool-tmp-${process.pid}-${Date.now()}`);
   mkdirSync(tmpDir, { recursive: true });
   const tmpSlides = join(tmpDir, 'slides');
@@ -88,7 +99,7 @@ export function extractPublishDir(publishDir: string, outDir: string): void {
       // PRR-006: pass the source path so a thrown decode error names the file.
       const payload = decodeGlobalProvideData('slide', readTextFile(slidePath), slidePath);
       const { onScreenText, textChars } = walkSlideText(payload as object);
-      const videoRefs = resolveVideoRefs(payload as object, publishDir);
+      const videoRefs = resolveVideoRefs(payload as object, publishDir, { asrDir: options.asrDir });
 
       const sourceFiles = ['meta.xml', 'html5/data/js/data.js', 'html5/data/js/frame.js', entry.html5url];
       if (videoRefs.transcriptSource === 'sidecar' && videoRefs.narrationRef !== undefined) {

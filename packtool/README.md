@@ -30,9 +30,11 @@ Turns an unmodified Articulate Storyline 360 HTML5 publish folder into:
   "slide_title": "Note 10.2",                                // from data.js slide.title
   "on_screen_text": "…",                                     // altText + vartext, %player.*%-stripped
   "text_chars": 690,                                         // 0 is legal — slide still emitted
-  "transcript_source": "sidecar" | "missing" | "none",
-  "transcript_text": "…",                                    // sidecar cue texts, concatenated
-  "narration_ref": "story_content/<mediaId>_transcripts.js", // D2 (#78) placeholder, see below
+  "transcript_source": "sidecar" | "asr" | "missing" | "none",
+  "transcript_text": "…",                                    // sidecar or ASR cue texts, concatenated
+  "narration_ref": "story_content/<mediaId>_transcripts.js", // 'sidecar': publish-relative.
+                                                             // 'asr': '<id>_transcripts.js'
+                                                             //   (ASR-store-relative, see D2).
   "provenance": "<section_title> > Slide <n>",
   "source_files": ["meta.xml", "…"],                          // publish-relative inputs for this doc
   "html5url": "html5/data/js/<slideId>.js"                    // deep-link target (#58/#81/#82)
@@ -57,8 +59,20 @@ Turns an unmodified Articulate Storyline 360 HTML5 publish folder into:
   `story_content/<id>_transcripts.js`. Slides with several video objects take
   the first object that has a sidecar (on the reference corpus 15 slides carry
   a second, transcribed video behind an untranscribed bumper). `missing` = at
-  least one video object but no sidecar anywhere on the slide — that is D2's
-  (#78) transcription queue; `narration_ref` values are D2-owned placeholders.
+  least one media object but no transcript anywhere on the slide — that is
+  D2's (#78) transcription queue.
+- **ASR overlay (D2, issue #78)**: `packtool storyline extract <dir> --out
+  <dir> --asr-dir <dir>` additionally resolves AUDIO objects (kind 'audio',
+  layer `audiolib[]`) and sidecar-less media from the ASR transcript store
+  written by `packtool/storyline/transcribe.py` (see
+  `docs/training-transcription.md`). The store holds one
+  `<objectId>_transcripts.js` file per media object id — the SAME byte format
+  as native sidecars, decoded by the unchanged decode path — so slides come
+  out with `transcript_source: "asr"`, `transcript_text` = concatenated cue
+  texts, and `narration_ref` = `<id>_transcripts.js` (ASR-store-relative:
+  deliberately NOT publish-relative, so it is NOT pushed into `source_files`).
+  Without `--asr-dir` the output is byte-identical to the pre-#78 extractor
+  (goldens pinned).
 - **Version pin** (re-verify before reuse on any re-export): decode assumptions
   verified against Storyline `3.114.36620.0` / `bwVersion 4.0` (issue #77's
   invalidation clause). Corrections vs the issue text: `textLib` lives per
@@ -71,12 +85,17 @@ Turns an unmodified Articulate Storyline 360 HTML5 publish folder into:
 - `storyline/walk.ts` — per-slide text walk (`vectorData.altText` +
   `vartext.blocks[].spans[].text`), token stripping, `text_chars`.
 - `storyline/spine.ts` — data.js scene→slide walk + frame.js outline partition.
-- `storyline/video-refs.ts` — sidecar resolution + cue concatenation.
+- `storyline/video-refs.ts` — sidecar resolution + cue concatenation (+ the
+  issue #78 ASR overlay).
 - `storyline/extract.ts` + `cli.ts` — document assembly and the CLI entry.
-- `storyline/__tests__/` — acceptance tests (AC1–AC7 of issue #77) against the
-  committed mini fixture `../tests/fixtures/storyline-mini` (byte-for-byte
-  golden output). CI runs the fixture suite only; the full 384-slide corpus run
-  is a documented manual acceptance step (`packtool` never ships media).
+- `storyline/transcribe.py` — D2 (#78) offline narration transcription
+  (Python, build machine only, content-hash cache; see
+  `docs/training-transcription.md`).
+- `storyline/__tests__/` — acceptance tests (AC1–AC7 of issue #77 plus the
+  #78 ASR-consumer integration test) against the committed mini fixture
+  `../tests/fixtures/storyline-mini` (byte-for-byte golden output). CI runs
+  the fixture suite only; the full 384-slide corpus run is a documented
+  manual acceptance step (`packtool` never ships media).
 
 ### Fixture origin and licensing
 
