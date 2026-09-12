@@ -181,6 +181,9 @@ describe('MarkdownRenderer', () => {
 
       const bold = screen.getByText('bold');
       expect(bold.tagName).toBe('STRONG');
+      // PRR48-018: pin the fontWeight override so a regression to default
+      // weight (400) or a removed override would fail this test.
+      expect((bold as HTMLElement).style.fontWeight).toBe('600');
     });
 
     it('renders bold text with __', () => {
@@ -202,6 +205,8 @@ describe('MarkdownRenderer', () => {
 
       const italic = screen.getByText('italic');
       expect(italic.tagName).toBe('EM');
+      // PRR48-018: pin the fontStyle override.
+      expect((italic as HTMLElement).style.fontStyle).toBe('italic');
     });
 
     it('renders italic text with _ (issue #36)', () => {

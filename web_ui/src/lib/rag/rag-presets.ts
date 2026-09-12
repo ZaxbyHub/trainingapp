@@ -19,12 +19,12 @@ export const RAG_PRESETS: Record<
 > = {
   // fast: no rerank → over-fetching wastes work. candidateMultiplier 1 keeps
   // both legs at topK.
-  fast: { topK: 5, candidateMultiplier: 1, rerank: false, maxTokens: 384, temperature: 0.3, topP: 0.9, repeatPenalty: 1.1, frequencyPenalty: 0.0, presencePenalty: 0.0 },
+  fast: { topK: 5, candidateMultiplier: 1, rerank: false, maxTokens: 512, temperature: 0.4, topP: 0.9, repeatPenalty: 1.05, frequencyPenalty: 0.0, presencePenalty: 0.0 },
   // balanced: retrieve 3×topK per leg (30 candidates), rerank down to topK=10.
-  balanced: { topK: 10, candidateMultiplier: 3, rerank: true, maxTokens: 512, temperature: 0.3, topP: 0.9, repeatPenalty: 1.1, frequencyPenalty: 0.0, presencePenalty: 0.0 },
+  balanced: { topK: 10, candidateMultiplier: 3, rerank: true, maxTokens: 1024, temperature: 0.4, topP: 0.9, repeatPenalty: 1.05, frequencyPenalty: 0.0, presencePenalty: 0.0 },
   // quality: retrieve 4×topK per leg (64 candidates), rerank down to topK=16.
   // The reranker caps scoring at RERANK_INPUT_CAP=50 to bound per-query cost.
-  quality: { topK: 16, candidateMultiplier: 4, rerank: true, maxTokens: 1024, temperature: 0.2, topP: 0.9, repeatPenalty: 1.1, frequencyPenalty: 0.0, presencePenalty: 0.0 },
+  quality: { topK: 16, candidateMultiplier: 4, rerank: true, maxTokens: 1536, temperature: 0.3, topP: 0.9, repeatPenalty: 1.05, frequencyPenalty: 0.0, presencePenalty: 0.0 },
 };
 
 /** Human-readable description for the settings UI. */

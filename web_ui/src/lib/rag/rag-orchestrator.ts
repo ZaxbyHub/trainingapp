@@ -128,12 +128,36 @@ export type RAGEvent =
 type RAGStage = 'embedding' | 'vector_search' | 'keyword_search' | 'rrf_fusion' | 'reranking' | 'context' | 'generation';
 
 /**
- * Default system prompt. Issue #40 RC1/RC2: enriched beyond the bare citation
- * instruction to (a) acknowledge the conversation history so the model treats
- * follow-ups as continuing turns, and (b) reinforce anti-repetition. Kept short
- * so it consumes minimal context budget.
+ * Default system prompt. Instructs the model on RAG grounding, citation
+ * format, AND output structure (markdown formatting, capitalization,
+ * paragraphing) so answers render with ChatGPT/Claude-level polish in the
+ * markdown renderer. ~280 tokens (1120 chars) — non-trivial but bounded by
+ * MAX_HISTORY_BUDGET_TOKENS so it can't collapse the chunk budget.
+ *
+ * Gemma 4 E2B-it has a known tendency toward lowercase sentence starts and
+ * terse unstructured output; the formatting instructions counteract that.
  */
-const DEFAULT_SYSTEM_PROMPT = 'You are a helpful assistant answering questions about uploaded documents. Use the provided context to answer, and cite sources using [1], [2] notation. The conversation history may provide context for follow-up questions. If the context doesn\'t contain enough information, say so. Do not repeat yourself.';
+const DEFAULT_SYSTEM_PROMPT = `You are a knowledgeable assistant answering questions about uploaded documents. Follow these rules carefully:
+
+GROUNDING
+- Answer using ONLY the provided Context. Quote or paraphrase faithfully.
+- Cite sources inline using [1], [2], [3] notation matching the context numbering.
+- If the context does not contain enough information, say so explicitly — never invent facts.
+- Use the conversation history to clarify follow-up questions.
+
+FORMATTING (important)
+- Always start sentences with a capital letter and end with proper punctuation.
+- Use Markdown to structure your answer:
+  - Use short paragraphs separated by blank lines for readability.
+  - Use **bold** for key terms, field names, and emphasis.
+  - Use bullet lists (-) or numbered lists (1.) for steps, options, or enumerations.
+  - Use ## headings to separate major sections of a long answer.
+- Be thorough and detailed — give complete explanations, not one-line answers.
+- When listing steps or procedures, number them in order.
+- When comparing options, use a structured list or table.
+
+TONE
+- Professional, clear, direct. Write as a helpful expert would.`;
 
 /**
  * Retrieval query instruction. Issue #37 R9: the value is UNCHANGED from the
@@ -189,6 +213,17 @@ const DEGRADED_VECTOR_COSINE_FLOOR = 0.4;
  */
 const CHARS_PER_TOKEN = 4;
 const TOKEN_SAFETY_MARGIN = 96;
+/**
+ * Hard cap on the token budget consumed by conversation history. Without this,
+ * 6 turns of long answers (up to 1536 tokens each on the quality preset) could
+ * saturate the 8192-token context window, collapsing the retrieved-chunk
+ * budget to near-zero (swarm-pr-review run-48 PRR48-004). Capping history at
+ * 2048 tokens (~25% of n_ctx) bounds the worst case while preserving enough
+ * multi-turn context for follow-up questions. The cap is applied to the JOINED
+ * history text BEFORE the budget reservation, so only the most recent ~2048
+ * tokens of history are charged.
+ */
+const MAX_HISTORY_BUDGET_TOKENS = 2048;
 
 /**
  * RAG Orchestrator - Coordinates embedding search, keyword search, RRF fusion,
@@ -244,7 +279,11 @@ export class RAGOrchestrator {
     const presencePenalty = options.presencePenalty;
     // Issue #40 RC1: prior conversation turns. Threaded into the LLM prompt
     // (buildMessages) and used to contextualize the retrieval query (RC3).
-    const history = options.history ?? [];
+    // PRR48-004: cap the history token budget by dropping oldest whole turns
+    // until the joined text fits MAX_HISTORY_BUDGET_TOKENS. This bounds BOTH
+    // the budget reservation AND the actual prompt sent to the model (the
+    // prior fix only capped the estimate, leaving the messages unbounded).
+    const history = capHistoryBudget(options.history ?? [], MAX_HISTORY_BUDGET_TOKENS * CHARS_PER_TOKEN);
     const signal = options.signal;
 
     // Ensure lazy services are initialized before the pipeline runs (FR-002)
@@ -465,8 +504,9 @@ export class RAGOrchestrator {
     //
     // Issue #40 RC1: history is also in the prompt (threaded by buildMessages),
     // so charge it to reservedTokens here. Without this term, history + context
-    // could silently overflow DEFAULT_N_CTX. The caller caps history length; the
-    // safety margin covers chat-template control tokens.
+    // could silently overflow DEFAULT_N_CTX. The history array is already
+    // token-capped (capHistoryBudget at line ~282 per PRR48-004), so the
+    // joined text here is bounded.
     const historyText = history.map((t) => t.content).join('\n');
     const reservedTokens =
       estimateTokens(systemPrompt, CHARS_PER_TOKEN) +
@@ -680,6 +720,43 @@ export class RAGOrchestrator {
  */
 function estimateTokens(text: string, charsPerToken: number): number {
   return Math.ceil((text?.length ?? 0) / charsPerToken);
+}
+
+/**
+ * PRR48-004: bound the conversation-history token budget by dropping oldest
+ * whole turns until the joined text fits `maxChars`. Dropping whole turns
+ * (rather than slicing mid-content) preserves the user/assistant alternation
+ * the chat template expects and keeps each turn's content intact. After the
+ * drop loop: (a) if the surviving window starts with an assistant turn, drop
+ * it too (mirrors history-snapshot's re-anchor — the chat template's
+ * user/model alternation expects a user-first history); (b) if a single
+ * surviving turn still exceeds maxChars (e.g. user pasted a huge document),
+ * tail-truncate it to maxChars so even the degenerate case can't saturate n_ctx.
+ */
+export function capHistoryBudget(history: RAGHistoryTurn[], maxChars: number): RAGHistoryTurn[] {
+  if (history.length === 0) return history;
+  const joinedLen = history.map((t) => t.content).join('\n').length;
+  if (joinedLen <= maxChars) return history;
+  // Drop oldest turns until the remaining text fits. Always keep at least 1 turn.
+  let kept = history.slice();
+  while (kept.length > 1) {
+    const len = kept.map((t) => t.content).join('\n').length;
+    if (len <= maxChars) break;
+    kept = kept.slice(1);
+  }
+  // PRR48-004 critic fix 1: re-anchor to user-first (mirrors history-snapshot).
+  // The drop loop can leave an assistant-first window when an early user turn
+  // is the largest and gets dropped first.
+  while (kept.length > 1 && kept[0].role === 'assistant') {
+    kept = kept.slice(1);
+  }
+  // PRR48-004 critic fix 3: tail-truncate a single over-cap surviving turn
+  // (e.g. user pasted a 50K-char document). Tail slice keeps the most recent
+  // content, which is the most relevant for follow-up contextualization.
+  if (kept.length === 1 && kept[0].content.length > maxChars) {
+    kept = [{ ...kept[0], content: kept[0].content.slice(-maxChars) }];
+  }
+  return kept;
 }
 
 /**

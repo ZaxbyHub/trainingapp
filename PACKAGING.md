@@ -167,34 +167,45 @@ running **Google Gemma 4 E2B-it GGUF + mmproj**. Two pieces are packaged:
    browser generation, server mode is unaffected):
 
 ```bash
-# (a) obtain Gemma 4 E2B-it GGUF + mmproj from unsloth/gemma-4-E2B-it-GGUF on HuggingFace:
-#       gemma-4-E2B-it-Q4_K_M.gguf  (~2.9 GB) → rename to model.gguf
-#       mmproj-F16.gguf              (~940 MB) → rename to mmproj.gguf
+# (a) obtain Gemma 4 E2B-it QAT weights + mmproj from unsloth/gemma-4-E2B-it-qat-GGUF on HuggingFace:
+#       gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf  (~2.44 GB) → rename to model.gguf
+#       mmproj-F16.gguf                       (~940 MB) → rename to mmproj.gguf
 #     then place them at the repo root as:
 #       models/gemma-4-e2b-it/model.gguf
 #       models/gemma-4-e2b-it/mmproj.gguf
 # (b) npm run prepare-models   # copies them to public/models/llm/gemma-4-e2b-it/
 ```
 
-Gemma 4 E2B-it Q4_K_M is ~2.9 GB. This exceeds the historical ~2 GB/file WASM
-`ArrayBuffer` ceiling, but wllama v3+ streams via HTTP range requests (not a
-single ArrayBuffer), so the practical limit is browser RAM, not the 2 GB ceiling.
-Validate on target hardware before packaging. ~2.3B effective parameters (~5.1B
-total with Per-Layer Embeddings), 128K context window (capped at 8192 by default
-for RAM headroom on 8 GB target boxes).
+Gemma 4 E2B-it QAT UD-Q4_K_XL is ~2.44 GB (down from ~2.9 GB for the prior
+post-training Q4_K_M — quantization-aware training preserves more accuracy per
+bit, so the smaller file is the recommended baseline). This exceeds the
+historical ~2 GB/file WASM `ArrayBuffer` ceiling, but wllama v3+ streams via
+HTTP range requests (not a single ArrayBuffer), so the practical limit is
+browser RAM, not the 2 GB ceiling. Validate on target hardware before packaging.
+~2.3B effective parameters (~5.1B total with Per-Layer Embeddings), 128K context
+window (capped at 8192 by default for RAM headroom on 8 GB target boxes).
+
+The QAT repo also ships an `mtp-gemma-4-E2B-it.gguf` Multi-Token Prediction
+drafter (~56 MB). **Do not stage it** — wllama 3.5.1 does not expose the
+`--spec-type draft-mtp` path (only the classic `--model-draft` path, which
+fails on Gemma 4 E2B/E4B per llama.cpp#22337). MTP is server-mode-only until
+wllama adds the API surface. See the QAT investigation notes in the PR that
+introduced this swap.
 
 **Chat-template override (important):** The `gemma-4-e2b-it` GGUF embeds an
 ~18 KB Jinja chat template that uses macros (`format_parameters`,
 `format_argument`, etc.) wllama 3.5.1's Jinja subset cannot evaluate — the
 macros render to empty strings, producing a blank prompt and **empty assistant
-responses** (model emits `<eos>` immediately). The app works around this by
-injecting a macro-free Gemma 4 template override at load time via
-`LoadModelParams.chat_template` + `jinja: true` (see
+responses** (model emits `<eos>` immediately). The embedded template is
+byte-identical between the QAT and post-training repos (MD5
+`d451e60cbddd44f7a929b8eee8b209c6`), so the override applies to both. The app
+works around this by injecting a macro-free Gemma 4 template override at load
+time via `LoadModelParams.chat_template` + `jinja: true` (see
 `web_ui/src/lib/llm/wllama-service.ts` → `GEMMA4_CHAT_TEMPLATE`). This makes
 the app robust to any Gemma 4 GGUF regardless of its embedded template, so
-operators staging a different quant (e.g. Q5_K_M, Q8_0) from
-`unsloth/gemma-4-E2B-it-GGUF` do not need to verify the template field
-themselves. The override can be removed once wllama ships a Jinja runtime
+operators staging a different quant (e.g. UD-Q2_K_XL, or a non-QAT Q5_K_M /
+Q8_0 from `unsloth/gemma-4-E2B-it-GGUF`) do not need to verify the template
+field themselves. The override can be removed once wllama ships a Jinja runtime
 with macro support.
 
 The user picks the engine in Settings (**wllama** default, or **WebLLM** when
