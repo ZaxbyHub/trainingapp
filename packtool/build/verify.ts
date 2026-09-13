@@ -147,6 +147,14 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
 
     // 3. Prebuilt index stamps + row parity.
     const indexPath = pack.index?.path ?? 'index.sqlite';
+    // Final-critic round 1 (defense in depth): the manifest guard rejects the
+    // pack above, but verify's own read must not trust that alone.
+    try {
+      assertSafeDocPath(indexPath);
+    } catch (error) {
+      problems.push(`${indexPath}: ${error instanceof Error ? error.message : String(error)}`);
+      return { ok: false, problems, docs: pack.docs.length };
+    }
     if (!source.entryExists(indexPath)) {
       problems.push(`${indexPath}: prebuilt index is missing from the pack`);
     } else {

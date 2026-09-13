@@ -79,6 +79,32 @@ describe('verify negative surfaces', () => {
     expect(result.problems.some((p) => p.includes('../escape.json') && p.includes('refused'))).toBe(true);
   });
 
+  it('rejects a manifest whose index.path is a traversal path (final-critic round 1)', { timeout: 20_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'neg-idx-'));
+    scratchRoots.push(root);
+    const { publishDir } = makeSyntheticPublish(root);
+    const build = await buildStorylinePack({
+      publishDir,
+      out: join(root, 'pack.zip'),
+      embedder: 'hash',
+      id: 'fixture-pack',
+      version: '1.0.0',
+    });
+    // Unpack, point index.path OUTSIDE the pack root, re-verify: both guard
+    // layers (manifest validation + verify's own read gate) must refuse.
+    const JSZip = (await import('jszip')).default;
+    const zip = await JSZip.loadAsync(readFileSync(build.packPath));
+    const unpacked = join(root, 'unpacked');
+    await extractAll(zip, unpacked);
+    const packJsonPath = join(unpacked, 'pack.json');
+    const manifest = JSON.parse(readFileSync(packJsonPath, 'utf8')) as { index: { path: string } };
+    manifest.index.path = '../evil-outside.sqlite';
+    writeFileSync(packJsonPath, JSON.stringify(manifest, null, 2));
+    const result = await verifyPack(unpacked);
+    expect(result.ok).toBe(false);
+    expect(result.problems.some((p) => p.includes('index.path') && p.includes('refused'))).toBe(true);
+  });
+
   it('rejects a tampered bundled doc via the sha256 re-hash', { timeout: 20_000 }, async () => {
     const root = mkdtempSync(join(tmpdir(), 'neg-tamper-'));
     scratchRoots.push(root);

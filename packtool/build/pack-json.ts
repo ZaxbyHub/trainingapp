@@ -287,6 +287,14 @@ export function validatePackManifest(value: unknown): ManifestProblems {
       const idx = index as Record<string, unknown>;
       if (typeof idx['path'] !== 'string' || (idx['path'] as string).length === 0) {
         add('index.path is missing or empty');
+      } else {
+        // Final-critic round 1: index.path is manifest-supplied and would
+        // otherwise reach verify's filesystem join unguarded (traversal).
+        try {
+          assertSafeDocPath(idx['path'] as string);
+        } catch (error) {
+          add(`index.path refused: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       if (typeof idx['schema_version'] !== 'number' || (idx['schema_version'] as number) < 1) {
         add('index.schema_version must be a positive integer');
