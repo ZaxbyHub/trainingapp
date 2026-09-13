@@ -91,9 +91,13 @@ Turns an unmodified Articulate Storyline 360 HTML5 publish folder into:
 - `storyline/transcribe.py` — D2 (#78) offline narration transcription
   (Python, build machine only, content-hash cache; see
   `docs/training-transcription.md`).
-- `storyline/__tests__/` — acceptance tests (AC1–AC7 of issue #77 plus the
-  #78 ASR-consumer integration test) against the committed mini fixture
-  `../tests/fixtures/storyline-mini` (byte-for-byte golden output). CI runs
+- `storyline/__tests__/` — acceptance tests (AC1–AC8 of issue #77 plus the
+  #78 ASR-consumer integration test and the #79 build-storyline suite:
+  docs-count, install-without-embedding, reproducibility, player assets,
+  transcript wiring, index conformance + retrieval, chunker parity, and a
+  negative/guardrail file) against the committed mini fixture
+  `../tests/fixtures/storyline-mini` (byte-for-byte golden output) and the
+  synthetic publish in `__tests__/helpers/build-fixture.ts`. CI runs
   the fixture suite only; the full 384-slide corpus run is a documented
   manual acceptance step (`packtool` never ships media).
 

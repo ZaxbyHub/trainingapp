@@ -105,6 +105,73 @@ describe('verify negative surfaces', () => {
     expect(result.problems.some((p) => p.includes('index.path') && p.includes('refused'))).toBe(true);
   });
 
+  it('rejects a manifest with zero docs[] entries', { timeout: 20_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'neg-zerodocs-'));
+    scratchRoots.push(root);
+    mkdirSync(join(root, 'pack'), { recursive: true });
+    writeFileSync(
+      join(root, 'pack', 'pack.json'),
+      JSON.stringify({
+        id: 'empty-pack-01',
+        name: 'empty',
+        version: '1.0.0',
+        published_at: '2026-09-13T00:00:00.000Z',
+        source_class: 'training',
+        embedding: { model_id: 'hash', dims: 384, normalize: true },
+        chunking: { strategy: 'slide-aware', size: 256, overlap: 100 },
+        docs: [],
+      }),
+    );
+    const result = await verifyPack(join(root, 'pack'));
+    expect(result.ok).toBe(false);
+    expect(result.problems.some((p) => p.includes('docs[] is missing or empty'))).toBe(true);
+  });
+
+  it('rejects a manifest with malformed field types (dims as string)', { timeout: 20_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'neg-types-'));
+    scratchRoots.push(root);
+    mkdirSync(join(root, 'pack'), { recursive: true });
+    writeFileSync(
+      join(root, 'pack', 'pack.json'),
+      JSON.stringify({
+        id: 'typed-pack-01',
+        name: 'typed',
+        version: '1.0.0',
+        published_at: '2026-09-13T00:00:00.000Z',
+        source_class: 'training',
+        embedding: { model_id: 'hash', dims: '384', normalize: true },
+        chunking: { strategy: 'slide-aware', size: 256, overlap: 100 },
+        docs: [{ path: 'docs/x.json', sha256: '0'.repeat(64), title: 'x', mime: 'application/json' }],
+      }),
+    );
+    const result = await verifyPack(join(root, 'pack'));
+    expect(result.ok).toBe(false);
+    expect(result.problems.some((p) => p.includes('embedding.dims must be a positive integer'))).toBe(true);
+  });
+
+  it('rejects a manifest with unknown top-level fields (draft #68 strictness, PR review C5)', { timeout: 20_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'neg-unknown-'));
+    scratchRoots.push(root);
+    mkdirSync(join(root, 'pack'), { recursive: true });
+    writeFileSync(
+      join(root, 'pack', 'pack.json'),
+      JSON.stringify({
+        id: 'unknown-pack-1',
+        name: 'unknown',
+        version: '1.0.0',
+        published_at: '2026-09-13T00:00:00.000Z',
+        source_class: 'training',
+        embedding: { model_id: 'hash', dims: 384, normalize: true },
+        chunking: { strategy: 'slide-aware', size: 256, overlap: 100 },
+        docs: [{ path: 'docs/x.json', sha256: '0'.repeat(64), title: 'x', mime: 'application/json' }],
+        experimental_field: true,
+      }),
+    );
+    const result = await verifyPack(join(root, 'pack'));
+    expect(result.ok).toBe(false);
+    expect(result.problems.some((p) => p.includes('unknown field "experimental_field"'))).toBe(true);
+  });
+
   it('rejects a tampered bundled doc via the sha256 re-hash', { timeout: 20_000 }, async () => {
     const root = mkdtempSync(join(tmpdir(), 'neg-tamper-'));
     scratchRoots.push(root);

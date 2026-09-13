@@ -84,12 +84,40 @@ describe('build-storyline.ac7: transcripts are wired into docs and index chunks'
       expect(allText).toContain('Wombat splint drill narration');
       expect(allText).toContain('summary notes');
 
-      const manifest = await readPackJson<PackShape>(result.packPath);
-      const chunksTable = db.prepare('SELECT COUNT(*) AS n FROM chunks').get() as { n: number };
-      const embeddingsTable = db.prepare('SELECT COUNT(*) AS n FROM embeddings').get() as { n: number };
-      expect(chunksTable.n).toBeGreaterThan(0);
-      expect(chunksTable.n).toBe(embeddingsTable.n);
-      expect(manifest.docs).toHaveLength(4);
+    const manifest = await readPackJson<PackShape>(result.packPath);
+    const chunksTable = db.prepare('SELECT COUNT(*) AS n FROM chunks').get() as { n: number };
+    const embeddingsTable = db.prepare('SELECT COUNT(*) AS n FROM embeddings').get() as { n: number };
+    expect(chunksTable.n).toBeGreaterThan(0);
+    expect(chunksTable.n).toBe(embeddingsTable.n);
+    expect(manifest.docs).toHaveLength(4);
+
+    // PR review TC-7: the stored embedding must match what the declared
+    // embedder computes from the chunk text — right text with wrong vectors
+    // would otherwise pass. vec0 stores float32, so read back the binary
+    // vector and compare against the recomputed vector within float32
+    // tolerance.
+    const { HashEmbedder } = await import('../../build/embedder');
+    const embedder = new HashEmbedder({ dims: manifest.embedding.dims });
+    const joined = db
+      .prepare(
+        'SELECT c.text AS text, e.embedding AS embedding FROM chunks c JOIN embeddings e ON e.chunk_id = c.id',
+      )
+      .all() as Array<{ text: string; embedding: Buffer }>;
+    expect(joined.length).toBe(chunksTable.n);
+    const recomputed = await embedder.embed(joined.map((row) => row.text));
+    joined.forEach((row, i) => {
+      const storedF32 = new Float32Array(
+        row.embedding.buffer,
+        row.embedding.byteOffset,
+        row.embedding.byteLength / 4,
+      );
+      expect(storedF32).toHaveLength(manifest.embedding.dims);
+      const expectedF32 = Float32Array.from(recomputed[i] ?? []);
+      expect(storedF32).toHaveLength(expectedF32.length);
+      for (let j = 0; j < expectedF32.length; j += 1) {
+        expect(Math.abs(storedF32[j] - expectedF32[j])).toBeLessThan(1e-6);
+      }
+    });
     } finally {
       db.close();
     }

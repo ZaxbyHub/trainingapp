@@ -13,7 +13,7 @@
 // carry fixed dates derived from --published-at (epoch otherwise) and are
 // added in sorted order with fixed compression. published_at (defaulting to
 // build time) is the one volatile field.
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -103,6 +103,11 @@ export async function buildStorylinePack(options: BuildStorylineOptions): Promis
     throw new Error(`publishDir does not exist: ${options.publishDir}`);
   }
   const outPath = path.resolve(options.out);
+  // A failed build must not leave a stale pack from a previous run at --out
+  // (PR review RB-2): remove it up front so failure = no artifact.
+  if (existsSync(outPath)) {
+    rmSync(outPath, { force: true });
+  }
   const repoRoot = options.repoRoot ?? findRepoRoot(moduleDir());
   if (repoRoot === undefined) {
     throw new Error(`cannot locate ${SCHEMA_HINT} above ${moduleDir()}`);
@@ -188,13 +193,18 @@ export async function buildStorylinePack(options: BuildStorylineOptions): Promis
       chunkText: outlineChunkText(packOutline),
     });
 
-    // 4. Player assets — byte-for-byte (the issue's enumerated set).
+    // 4. Player assets — byte-for-byte (the issue's enumerated set). Copied
+    // through a link-refusing walk, never fs.cpSync: cpSync dereferences
+    // Windows junctions/directory symlinks (even with dereference:false —
+    // the native fast path recurses into reparse points), so a poisoned
+    // publish folder could silently bundle arbitrary outside files into the
+    // distributable pack (PR review F2-1, empirically confirmed).
     for (const entryName of ['html5', 'story.html', 'story_content']) {
       const source = path.join(publishDir, entryName);
       if (!existsSync(source)) {
         throw new Error(`publish folder is missing the required player asset: ${entryName}`);
       }
-      cpSync(source, path.join(playerDir, entryName), { recursive: true });
+      copyTreeRejectingLinks(source, path.join(playerDir, entryName));
     }
 
     // 5. Chunk + embed per document (chunks never cross documents; zero-text
@@ -282,7 +292,12 @@ export async function buildStorylinePack(options: BuildStorylineOptions): Promis
       compression: 'DEFLATE',
       compressionOptions: { level: 9 },
     });
-    writeFileSync(outPath, buffer);
+    // Atomic publish (PR review C3): write to a sibling temp file and rename
+    // over --out, so a crash mid-write can never leave a torn zip at the
+    // user-visible path.
+    const tempOut = `${outPath}.tmp-${process.pid}`;
+    writeFileSync(tempOut, buffer);
+    renameSync(tempOut, outPath);
 
     return {
       packPath: outPath,
@@ -309,4 +324,28 @@ function listFilesRelative(root: string, dir: string = root): string[] {
     }
   }
   return out;
+}
+
+/**
+ * Recursive copy that REFUSES symlinks and Windows junctions instead of
+ * dereferencing them: every entry is lstat-checked, so a poisoned publish
+ * folder cannot pull files from outside its root into the pack (PR review
+ * F2-1; fs.cpSync dereferences junctions on Windows even with
+ * dereference:false).
+ */
+function copyTreeRejectingLinks(src: string, dest: string): void {
+  const stat = lstatSync(src);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`refusing symlink/junction in publish folder: ${src}`);
+  }
+  if (stat.isDirectory()) {
+    mkdirSync(dest, { recursive: true });
+    for (const entry of readdirSync(src, { withFileTypes: true })) {
+      copyTreeRejectingLinks(path.join(src, entry.name), path.join(dest, entry.name));
+    }
+  } else if (stat.isFile()) {
+    copyFileSync(src, dest);
+  } else {
+    throw new Error(`refusing non-regular publish entry: ${src}`);
+  }
 }

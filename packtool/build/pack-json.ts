@@ -129,8 +129,19 @@ export function serializePackOutlineDoc(outline: PackOutlineDoc): string {
 }
 
 const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/;
-const SEMVER_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+export const SEMVER_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
+
+/**
+ * Top-level fields the draft #68 manifest schema allows (required + the
+ * optional supersedes/index/signature blocks). Anything else is rejected by
+ * validatePackManifest so packs cannot drift ahead of the real schema
+ * (which is additionalProperties: false).
+ */
+const KNOWN_MANIFEST_FIELDS = new Set([
+  'id', 'name', 'version', 'published_at', 'source_class',
+  'supersedes', 'index', 'signature', 'embedding', 'chunking', 'docs',
+]);
 
 /** Lowercase a course title into a pack-id slug piece ('' when empty). */
 export function slugifyPackId(course: string): string {
@@ -195,6 +206,12 @@ export function validatePackManifest(value: unknown): ManifestProblems {
     return { ok: false, problems: ['pack.json must be a JSON object'] };
   }
   const manifest = value as Record<string, unknown>;
+
+  for (const key of Object.keys(manifest)) {
+    if (!KNOWN_MANIFEST_FIELDS.has(key)) {
+      add(`unknown field "${key}" (the draft #68 manifest allows only: ${[...KNOWN_MANIFEST_FIELDS].join(', ')})`);
+    }
+  }
 
   if (typeof manifest['id'] !== 'string' || !PACK_ID_PATTERN.test(manifest['id'] as string)) {
     add('id is missing or does not match ^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$');

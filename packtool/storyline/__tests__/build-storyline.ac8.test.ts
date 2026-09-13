@@ -49,9 +49,13 @@ describe('build-storyline.ac8: prebuilt index conforms and retrieves', () => {
 
     const manifest = await readPackJson<PackShape>(result.packPath);
     const indexPath = await extractPackIndex(result.packPath, root);
-    const db = new Database(indexPath, { readonly: true });
-    sqliteVec.load(db);
+    // Open + extension load INSIDE the guarded region so a failure can never
+    // leak the native handle (an open handle makes afterEach rmSync fail with
+    // EPERM on Windows).
+    let db: ReturnType<typeof Database> | null = null;
     try {
+      db = new Database(indexPath, { readonly: true });
+      sqliteVec.load(db);
       // Meta stamps.
       const meta = (key: string): string =>
         (db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string }).value;
@@ -75,7 +79,9 @@ describe('build-storyline.ac8: prebuilt index conforms and retrieves', () => {
       const manifestHashes = manifest.docs.map((doc) => doc.sha256).sort();
       expect(indexHashes).toEqual(manifestHashes);
 
-      // vec0 self-hit: a stored vector queried back must find its own chunk.
+      // vec0 self-hit: a stored vector queried back must find its own chunk
+      // with a NEGLIGIBLE distance (PR review TC-2 — a broken vec0 returning
+      // arbitrary rows that merely include the input row must not pass).
       const stored = db
         .prepare('SELECT chunk_id, embedding FROM embeddings LIMIT 1')
         .get() as { chunk_id: string; embedding: string };
@@ -84,6 +90,7 @@ describe('build-storyline.ac8: prebuilt index conforms and retrieves', () => {
         .all(stored.embedding) as Array<{ chunk_id: string; distance: number }>;
       expect(nearest.length).toBeGreaterThan(0);
       expect(nearest[0]?.chunk_id).toBe(stored.chunk_id);
+      expect(nearest[0]?.distance).toBeLessThan(1e-6);
 
       // FTS5 hit on a distinctive word returns the chunk containing it.
       const fts = db
@@ -95,7 +102,11 @@ describe('build-storyline.ac8: prebuilt index conforms and retrieves', () => {
         .get('%Quokka%') as { id: string };
       expect(fts.map((row) => row.chunk_id)).toContain(quokkaChunk.id);
     } finally {
-      db.close();
+      try {
+        db?.close();
+      } catch {
+        // never mask the test result with a close failure
+      }
     }
   });
 });

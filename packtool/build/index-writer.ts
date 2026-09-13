@@ -69,9 +69,20 @@ export function loadSchemaSql(repoRoot: string, dims: number): string {
  */
 export function openStoreWithSchema(dbPath: string, dims: number, repoRoot: string): StoreDb {
   const db = new Database(dbPath);
-  sqliteVec.load(db);
-  db.exec(loadSchemaSql(repoRoot, dims));
-  return db;
+  try {
+    sqliteVec.load(db);
+    db.exec(loadSchemaSql(repoRoot, dims));
+    return db;
+  } catch (error) {
+    // Never leak the native handle on a failed open: an open handle makes
+    // subsequent temp-dir cleanup fail with EPERM on Windows.
+    try {
+      db.close();
+    } catch {
+      // fall through — the original error is the useful one
+    }
+    throw error;
+  }
 }
 
 export interface PackIndexDocRow {
@@ -118,10 +129,12 @@ export function writePackIndex(options: WritePackIndexOptions): void {
       insertPack.run(manifest.id, manifest.name, manifest.version, manifest.published_at, manifest.source_class);
 
       const insertDoc = db.prepare(
-        "INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, 'training', ?, ?, ?, ?, ?)",
+        'INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
       );
       for (const doc of docs) {
-        insertDoc.run(doc.docId, doc.path, doc.sha256, doc.title, doc.publishedAt, manifest.id);
+        // source_class flows from the manifest (never hardcoded), so the
+        // packs and docs rows can never disagree (PR review WD-1).
+        insertDoc.run(doc.docId, manifest.source_class, doc.path, doc.sha256, doc.title, doc.publishedAt, manifest.id);
       }
 
       const insertChunk = db.prepare(
@@ -140,7 +153,13 @@ export function writePackIndex(options: WritePackIndexOptions): void {
 
       db.exec('COMMIT');
     } catch (error) {
-      db.exec('ROLLBACK');
+      // Preserve the ORIGINAL error if the rollback itself fails (PR review
+      // C1) — a throwing ROLLBACK must not mask why the transaction failed.
+      try {
+        db.exec('ROLLBACK');
+      } catch {
+        // nothing to roll back, or rollback failed — original error wins
+      }
       throw error;
     }
   } finally {
@@ -154,14 +173,30 @@ export function writePackIndex(options: WritePackIndexOptions): void {
  * re-embedding" acceptance proof. Rows are copied verbatim from the prebuilt
  * index (both files already carry the pinned schema), so install is pure data
  * movement.
+ *
+ * Precondition (PR review C2): targetDb must NOT hold an active transaction —
+ * the BEGIN IMMEDIATE here would fail with "cannot start a transaction within
+ * a transaction". Callers on a live profile store should run this on a quiet
+ * connection (the store schema's single-writer assumption).
  */
 export function installPackRows(
   targetDb: StoreDb,
   sourceDbPath: string,
 ): { docs: number; chunks: number } {
-  const source = new Database(sourceDbPath);
-  sqliteVec.load(source);
+  let source: StoreDb | null = null;
   try {
+    source = new Database(sourceDbPath);
+    try {
+      sqliteVec.load(source);
+    } catch (error) {
+      try {
+        source.close();
+      } catch {
+        // the load error is the useful one
+      }
+      source = null;
+      throw error;
+    }
     const packRows = source.prepare('SELECT id, name, version, published_at, source_class, supersedes FROM packs').all() as Array<
       Record<string, unknown>
     >;
@@ -217,11 +252,17 @@ export function installPackRows(
       }
       targetDb.exec('COMMIT');
     } catch (error) {
-      targetDb.exec('ROLLBACK');
+      // Preserve the ORIGINAL error if the rollback itself fails (PR review
+      // C1) — a throwing ROLLBACK must not mask why the transaction failed.
+      try {
+        targetDb.exec('ROLLBACK');
+      } catch {
+        // nothing to roll back, or rollback failed — original error wins
+      }
       throw error;
     }
     return { docs: docRows.length, chunks: chunkRows.length };
   } finally {
-    source.close();
+    source?.close();
   }
 }

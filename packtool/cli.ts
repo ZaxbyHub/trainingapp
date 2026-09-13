@@ -7,6 +7,7 @@ import { existsSync } from 'node:fs';
 import { extractPublishDir } from './storyline/extract.js';
 import { buildStorylinePack } from './build/compose.js';
 import { verifyPack } from './build/verify.js';
+import { SEMVER_PATTERN } from './build/pack-json.js';
 
 interface ExtractArgs {
   publishDir: string;
@@ -131,6 +132,11 @@ function parseBuildStorylineArgs(argv: string[]): BuildStorylineArgs {
     }
   }
   if (publishDir === undefined || out === undefined) usage();
+  // Fail at parse time (PR review RB-3/RB-6): a malformed --published-at
+  // previously flowed an Invalid Date into the zip entries, and a non-semver
+  // --version produced a pack that only failed later at verify.
+  if (publishedAt !== undefined && Number.isNaN(Date.parse(publishedAt))) usage();
+  if (version !== undefined && !SEMVER_PATTERN.test(version)) usage();
   return { publishDir, out, asrDir, embedder, modelDir, id, version, name, publishedAt };
 }
 

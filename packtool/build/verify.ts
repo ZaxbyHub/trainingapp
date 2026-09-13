@@ -121,6 +121,9 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
     }
     const pack = manifest as {
       id: string;
+      name: string;
+      version: string;
+      source_class: string;
       embedding: { model_id: string; dims: number; normalize: boolean };
       docs: Array<{ path: string; sha256: string; title: string; mime: string }>;
       index?: { path: string; schema_version: number; sqlite_vec_version: string };
@@ -173,6 +176,17 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
         if (meta('schema_version') !== '1') {
           problems.push(`index meta.schema_version is ${String(meta('schema_version'))}, want 1`);
         }
+        // Cross-check the manifest's OWN declared schema version against the
+        // index (PR review WD-2): a manifest claiming v2 over a v1 index must
+        // not verify.
+        if (
+          pack.index !== undefined &&
+          String(pack.index.schema_version) !== meta('schema_version')
+        ) {
+          problems.push(
+            `index meta.schema_version ${String(meta('schema_version'))} != manifest index.schema_version ${String(pack.index.schema_version)}`,
+          );
+        }
         if (meta('embedding_dims') !== String(pack.embedding.dims)) {
           problems.push(
             `index meta.embedding_dims ${String(meta('embedding_dims'))} != manifest dims ${String(pack.embedding.dims)}`,
@@ -201,14 +215,32 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
         if (indexHashes !== manifestHashes) {
           problems.push('index docs table sha256 set does not match the manifest docs[] set');
         }
-        const packRow = db.prepare('SELECT id FROM packs').get() as { id: string } | undefined;
+        const packRow = db
+          .prepare('SELECT id, name, version, published_at, source_class FROM packs')
+          .get() as
+          | { id: string; name: string; version: string; published_at: string | null; source_class: string }
+          | undefined;
         if (packRow === undefined || packRow.id !== pack.id) {
           problems.push(`index packs row id ${String(packRow?.id)} != manifest id ${pack.id}`);
+        } else if (
+          packRow.name !== pack.name ||
+          packRow.version !== pack.version ||
+          packRow.source_class !== pack.source_class
+        ) {
+          // PR review WD-3: full packs-row parity, not just the id.
+          problems.push(
+            `index packs row does not match the manifest (name/version/source_class differ)`,
+          );
         }
       } catch (error) {
         problems.push(`index could not be opened: ${error instanceof Error ? error.message : String(error)}`);
       } finally {
-        db?.close();
+        try {
+          db?.close();
+        } catch {
+          // PR review RB-9: a close() failure must not mask the problems
+          // already collected (or the original open error).
+        }
       }
     }
 
