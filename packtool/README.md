@@ -156,8 +156,14 @@ re-embedding.
   chunk identities are content hashes (stable); `--published-at` fixes the
   one volatile timestamp (and the zip entry dates), making two builds
   byte-identical. Without it, `published_at` defaults to build time.
+  Scope note (PR #108 review): byte-identity is guaranteed WITHIN a build
+  environment (same machine, same onnxruntime build); cross-environment ONNX
+  builds are float-identical but not guaranteed bit-identical — the `hash`
+  embedder is fully deterministic everywhere.
 - **Player assets**: `html5/`, `story.html`, and `story_content/` are copied
-  byte-for-byte under `assets/player/` in the pack.
+  byte-for-byte under `assets/player/` in the pack. Symlinks and Windows
+  junctions inside the publish folder are REFUSED (loud error, no pack) —
+  they are never dereferenced into the pack.
 - **Index**: `index.sqlite` applies the authoritative
   `contracts/store.schema.sql` (sqlite-vec 0.1.9 pin; `meta.schema_version`
   1, `meta.embedding_model_id`/`meta.embedding_dims` stamped from the build).
