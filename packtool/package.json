@@ -10,6 +10,12 @@
   "bin": {
     "packtool": "./dist/cli.js"
   },
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "better-sqlite3": "13.0.3",
+    "jszip": "^3.10.2",
+    "sqlite-vec": "0.1.9"
+  },
   "devDependencies": {
     "@types/node": "^22.20.1",
     "typescript": "^5.7.2",

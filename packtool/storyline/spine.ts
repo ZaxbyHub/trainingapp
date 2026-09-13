@@ -86,6 +86,42 @@ function extractMetaAttribute(metaXml: string, attribute: string): string {
   throw new Error(`meta.xml is missing the "${attribute}" attribute`);
 }
 
+/**
+ * Attribute value of the FIRST element whose TAG NAME equals `element`
+ * (issue #79 build-storyline: author/courseid are publisher metadata the
+ * pack stamps, distinct from the any-carrier title/duration rule above).
+ * Returns undefined when the element/attribute is absent — callers decide
+ * whether that is fatal (courseid for the default pack id) or optional
+ * (author).
+ */
+export function readMetaElementAttribute(
+  metaXml: string,
+  element: string,
+  attribute: string,
+): string | undefined {
+  const stripped = metaXml.replace(/<\?[\s\S]*?\?>/g, '').replace(/<!--[\s\S]*?-->/g, '');
+  const tagRe = new RegExp(`<(${element})\\b([^>]*?)>`, 'gi');
+  let m: RegExpExecArray | null;
+  while ((m = tagRe.exec(stripped)) !== null) {
+    const attrsSpan = m[2] ?? '';
+    const am = new RegExp(`(?:^|[\\s])(${attribute})="([^"]*)"`, 'i').exec(attrsSpan);
+    if (am !== null && am[2] !== undefined) {
+      return am[2];
+    }
+  }
+  return undefined;
+}
+
+/** The <author name="..."/> element's name (undefined when absent). */
+export function readMetaAuthor(metaXml: string): string | undefined {
+  return readMetaElementAttribute(metaXml, 'author', 'name');
+}
+
+/** The <project courseid="..."> publisher identity (undefined when absent). */
+export function readMetaProjectAttribute(metaXml: string, attribute: string): string | undefined {
+  return readMetaElementAttribute(metaXml, 'project', attribute);
+}
+
 /** Build the section map (slideId -> section title) from the frame.js payload. */
 function sectionMapFromFrame(frame: unknown): Map<string, string> {
   const sections = new Map<string, string>();
