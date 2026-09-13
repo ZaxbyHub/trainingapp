@@ -91,9 +91,13 @@ Turns an unmodified Articulate Storyline 360 HTML5 publish folder into:
 - `storyline/transcribe.py` — D2 (#78) offline narration transcription
   (Python, build machine only, content-hash cache; see
   `docs/training-transcription.md`).
-- `storyline/__tests__/` — acceptance tests (AC1–AC7 of issue #77 plus the
-  #78 ASR-consumer integration test) against the committed mini fixture
-  `../tests/fixtures/storyline-mini` (byte-for-byte golden output). CI runs
+- `storyline/__tests__/` — acceptance tests (AC1–AC8 of issue #77 plus the
+  #78 ASR-consumer integration test and the #79 build-storyline suite:
+  docs-count, install-without-embedding, reproducibility, player assets,
+  transcript wiring, index conformance + retrieval, chunker parity, and a
+  negative/guardrail file) against the committed mini fixture
+  `../tests/fixtures/storyline-mini` (byte-for-byte golden output) and the
+  synthetic publish in `__tests__/helpers/build-fixture.ts`. CI runs
   the fixture suite only; the full 384-slide corpus run is a documented
   manual acceptance step (`packtool` never ships media).
 
@@ -108,3 +112,83 @@ courseware**, and consumers should treat the fixture as an internal test
 artifact, not as redistributable content. If you fork or reuse this package,
 replace the fixture with content you are licensed to distribute or generate a
 new minimal fixture from your own publisher.
+
+## `packtool build-storyline` (issue #79)
+
+```bash
+node packtool/dist/cli.js build-storyline <publishDir> --out <pack.zip> \
+  [--asr-dir <dir>] [--embedder hash|onnx] [--embedding-model <dir>] \
+  [--id <pack-id>] [--version <semver>] [--name <name>] [--published-at <iso>]
+# build first: npm --prefix packtool run build
+```
+
+Composes the extracted per-slide documents (D1), the D2 ASR transcript store
+(`--asr-dir`, resolved at extraction time), and the raw publish folder into one
+installable training pack (`source_class: "training"`) with a PREBUILT
+`index.sqlite` (embeddings + FTS5 over every slide document plus the
+course-outline document), so installing the pack requires zero client-side
+re-embedding.
+
+- **pack.json** follows the DRAFT manifest schema quoted in issue #68 (C1,
+  still open): required `id/name/version/published_at/source_class/embedding/
+  chunking/docs`, optional `index`. When #68 lands with
+  `contracts/pack.schema.json`, verify against that file and adopt any field
+  drift as an additive re-plug — build-storyline's field shapes are marked
+  draft-per-#68 in `build/pack-json.ts`.
+- **Default pack id**: `<course-title-slug>-<courseid-lowercase>` from
+  meta.xml (collision-safe across same-titled courses, stable across
+  re-publishes). Loud failure when meta.xml has no `courseid` and `--id` is
+  not given. `--version` defaults to `1.0.0`.
+- **Embeddings**: `--embedder onnx` (default) uses transformers.js over the
+  repo-staged `bge-small-en-v1.5` weights (384-dim, cls pooling, L2-normalized,
+  fp32 — same conventions as the desktop ingest embedder; ADR-0001 #55 may
+  re-pin, which is a `--embedding-model` invocation change, not a schema
+  change). `--embedder hash` is the deterministic hermetic fixture for
+  dev/CI (stamped `model_id: "hash"`); the hash fixture never ships a
+  production pack. A usable onnx model dir has `onnx/model.onnx` >= 10 MB
+  (LFS-pointer rejection).
+- **Chunking**: `chunking.strategy: "slide-aware"` — chunks never cross a
+  slide/outline document boundary; within a document the desktop ingest
+  chunker semantics apply (256 words / 100 overlap, sentence-aware, CJK char
+  fallback). Parity with `desktop/main/backend/ingest/text-chunker.ts` is
+  pinned by goldens in `storyline/__tests__/build-chunker.test.ts`.
+- **Determinism / reproducibility**: with fixed inputs the emitted docs and
+  chunk identities are content hashes (stable); `--published-at` fixes the
+  one volatile timestamp (and the zip entry dates), making two builds
+  byte-identical. Without it, `published_at` defaults to build time.
+  Scope note (PR #108 review): byte-identity is guaranteed WITHIN a build
+  environment (same machine, same onnxruntime build); cross-environment ONNX
+  builds are float-identical but not guaranteed bit-identical — the `hash`
+  embedder is fully deterministic everywhere.
+- **Player assets**: `html5/`, `story.html`, and `story_content/` are copied
+  byte-for-byte under `assets/player/` in the pack. Symlinks and Windows
+  junctions inside the publish folder are REFUSED (loud error, no pack) —
+  they are never dereferenced into the pack.
+- **Index**: `index.sqlite` applies the authoritative
+  `contracts/store.schema.sql` (sqlite-vec 0.1.9 pin; `meta.schema_version`
+  1, `meta.embedding_model_id`/`meta.embedding_dims` stamped from the build).
+
+## `packtool verify` (issue #79)
+
+```bash
+node packtool/dist/cli.js verify <pack.zip | packDir>
+```
+
+Validates a pack (zip or unpacked directory): pack.json conformance against
+the #68 draft shape, a per-doc sha256 re-hash of every `docs[]` member (tamper
+detection), prebuilt-index stamp conformance (`schema_version`, embedding
+dims/model id, row-count parity, docs-table hash set, packs-row id), and the
+`assets/player/story.html` anchor. Exit 0 prints
+`verify: OK (docs=<n>)`; failures print one `problem: <line>` each and exit 1.
+
+### Module map (issue #79 additions)
+
+- `build/compose.ts` — the build-storyline orchestrator.
+- `build/pack-json.ts` — manifest/outline types, serialization, pack-id
+  derivation, the shared `assertSafeDocPath` path-safety guardrail.
+- `build/chunk.ts` — slide-aware chunking + content-derived identity
+  (`docId`/`chunkId` formulas byte-match the desktop ingest pipeline).
+- `build/embedder.ts` — hash fixture + onnx production embedding surfaces.
+- `build/index-writer.ts` — schema application + row writes (also the single
+  local DDL-apply surface reused by the acceptance install test).
+- `build/verify.ts` — the verify implementation.
