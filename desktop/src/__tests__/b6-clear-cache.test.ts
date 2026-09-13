@@ -135,7 +135,7 @@ describe('b6 C7 (AC7): host-level clear cache', () => {
     const probe = openStore({ dbPath: storePath, dims: 8, repoRoot: REPO_ROOT });
     try {
       expect(countRows(probe, 'docs')).toBe(0);
-      expect(probe.schemaVersion).toBe(1);
+      expect(probe.schemaVersion).toBe(2);
     } finally {
       probe.close();
     }

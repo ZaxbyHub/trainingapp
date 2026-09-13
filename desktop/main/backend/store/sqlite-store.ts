@@ -43,7 +43,11 @@ const sqliteVec = require('sqlite-vec') as { load(db: BetterSqlite3Db): void };
 /** Structural subset of a better-sqlite3 Database this module uses. */
 interface BetterSqlite3Db {
   exec(sql: string): void;
-  prepare(sql: string): { get(...params: unknown[]): unknown; all(...params: unknown[]): unknown[] };
+  prepare(sql: string): {
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+    run(...params: unknown[]): { changes: number | bigint };
+  };
   close(): void;
 }
 

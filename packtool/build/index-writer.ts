@@ -103,6 +103,17 @@ export interface PackIndexChunkRow {
   vector: number[];
 }
 
+/** One precomputed doc-chunk -> training-slide link (D4/#80). */
+export interface PackIndexLinkRow {
+  chunkId: string;
+  slideId: string;
+  /** Owning doc pack id; null for unpackaged docs. */
+  packId: string | null;
+  score: number;
+  rank: number;
+  computedAt: string;
+}
+
 export interface WritePackIndexOptions {
   dbPath: string;
   repoRoot: string;
@@ -110,6 +121,8 @@ export interface WritePackIndexOptions {
   manifest: PackManifest;
   docs: PackIndexDocRow[];
   chunks: PackIndexChunkRow[];
+  /** Optional precomputed links (packtool links / #73 build-docs). */
+  links?: PackIndexLinkRow[];
 }
 
 /**
@@ -118,7 +131,7 @@ export interface WritePackIndexOptions {
  * JSON.stringify (pipeline.ts:381 parity).
  */
 export function writePackIndex(options: WritePackIndexOptions): void {
-  const { dbPath, repoRoot, dims, manifest, docs, chunks } = options;
+  const { dbPath, repoRoot, dims, manifest, docs, chunks, links } = options;
   const db = openStoreWithSchema(dbPath, dims, repoRoot);
   try {
     db.exec('BEGIN IMMEDIATE');
@@ -146,6 +159,15 @@ export function writePackIndex(options: WritePackIndexOptions): void {
         insertChunk.run(chunk.chunkId, chunk.docId, chunk.chunkIndex, chunk.text, chunk.contentHash);
         insertVector.run(chunk.chunkId, JSON.stringify(chunk.vector));
         insertFts.run(chunk.chunkId, chunk.text);
+      }
+
+      if (links !== undefined && links.length > 0) {
+        const insertLink = db.prepare(
+          'INSERT INTO links (chunk_id, slide_id, pack_id, score, rank, computed_at) VALUES (?, ?, ?, ?, ?, ?)',
+        );
+        for (const link of links) {
+          insertLink.run(link.chunkId, link.slideId, link.packId, link.score, link.rank, link.computedAt);
+        }
       }
 
       const setModel = db.prepare("UPDATE meta SET value = ? WHERE key = 'embedding_model_id'");
@@ -182,7 +204,7 @@ export function writePackIndex(options: WritePackIndexOptions): void {
 export function installPackRows(
   targetDb: StoreDb,
   sourceDbPath: string,
-): { docs: number; chunks: number } {
+): { docs: number; chunks: number; links: number } {
   let source: StoreDb | null = null;
   try {
     source = new Database(sourceDbPath);
@@ -211,6 +233,11 @@ export function installPackRows(
       .all() as Array<Record<string, unknown>>;
     const ftsRows = source
       .prepare('SELECT chunk_id, text FROM chunks_fts')
+      .all() as Array<Record<string, unknown>>;
+    // D4/#80: links are part of the pack's precomputed payload — a wholesale
+    // install that skipped them would silently strip the pack's slide links.
+    const linkRows = source
+      .prepare('SELECT chunk_id, slide_id, pack_id, score, rank, computed_at FROM links')
       .all() as Array<Record<string, unknown>>;
 
     targetDb.exec('BEGIN IMMEDIATE');
@@ -241,6 +268,19 @@ export function installPackRows(
       for (const row of ftsRows) {
         insertFts.run(row['chunk_id'], row['text']);
       }
+      const insertLink = targetDb.prepare(
+        'INSERT INTO links (chunk_id, slide_id, pack_id, score, rank, computed_at) VALUES (?, ?, ?, ?, ?, ?)',
+      );
+      for (const row of linkRows) {
+        insertLink.run(
+          row['chunk_id'],
+          row['slide_id'],
+          row['pack_id'],
+          row['score'],
+          row['rank'],
+          row['computed_at'],
+        );
+      }
       const setModel = targetDb.prepare("UPDATE meta SET value = ? WHERE key = 'embedding_model_id'");
       if (packRows[0] !== undefined) {
         // The installing store must record the pack's embedding model so a
@@ -261,7 +301,7 @@ export function installPackRows(
       }
       throw error;
     }
-    return { docs: docRows.length, chunks: chunkRows.length };
+    return { docs: docRows.length, chunks: chunkRows.length, links: linkRows.length };
   } finally {
     source?.close();
   }

@@ -59,7 +59,7 @@ describe('build-storyline.ac8: prebuilt index conforms and retrieves', () => {
       // Meta stamps.
       const meta = (key: string): string =>
         (db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value: string }).value;
-      expect(meta('schema_version')).toBe('1');
+      expect(meta('schema_version')).toBe('2');
       expect(meta('embedding_dims')).toBe(String(manifest.embedding.dims));
       expect(Number.parseInt(meta('embedding_dims'), 10)).toBe(384);
       expect(meta('embedding_model_id')).toBe(manifest.embedding.model_id);

@@ -1,11 +1,15 @@
 -- =============================================================================
--- contracts/store.schema.sql — AUTHORITATIVE per-profile store schema (v1)
+-- contracts/store.schema.sql — AUTHORITATIVE per-profile store schema (v2)
 -- =============================================================================
 -- This file is the single source of truth for the SQLite store shared by the
 -- desktop Node backend (better-sqlite3) and the Python sidecar (sqlite3 +
 -- sqlite-vec). One store file per profile; both runtimes MUST be able to open
 -- and read a file written by the other (proven bidirectionally by
 -- contracts/tests/store-interop/).
+--
+-- v2 (D4/#80): the links table gains pack_id/rank/computed_at (was a
+-- write-free reserved table in v1, so the 1->2 ladder drops and recreates it
+-- losslessly — see both migrate ladders).
 --
 -- Pinned extension: sqlite-vec 0.1.9 (pre-1.0; exact pin required — no ranges).
 --   Node: desktop/package.json "sqlite-vec": "0.1.9"  (dependencies, exact)
@@ -82,10 +86,20 @@ CREATE TABLE packs (
 );
 
 -- Reserved for D4/#80 (doc-to-slide links recomputed on pack changes).
+-- Live since schema v2: each row records one doc chunk's k-th nearest
+-- training slide above the cosine threshold (top-3 cap, rank 1..3, scores
+-- descending). Rows are computed at pack-build time for doc packs
+-- (`packtool links`) and recomputed in-store whenever doc content changes
+-- (ingest pipeline) or a pack lifecycle event lands (#70 composes the same
+-- store-layer operations). pack_id is the owning DOC pack id — NULL for
+-- runtime-ingested unpackaged docs, which is why it is deliberately FK-free.
 CREATE TABLE links (
-    chunk_id TEXT NOT NULL REFERENCES chunks(id),
-    slide_id TEXT NOT NULL,
-    score    REAL NOT NULL,
+    chunk_id    TEXT NOT NULL REFERENCES chunks(id),
+    slide_id    TEXT NOT NULL,              -- Storyline slide.id (docs/slide-NNN-<slide_id>.json)
+    pack_id     TEXT,                       -- owning doc pack id; NULL = unpackaged doc
+    score       REAL NOT NULL,              -- cosine similarity in [-1, 1]
+    rank        INTEGER NOT NULL,           -- 1..3, scores descending within a chunk
+    computed_at TEXT NOT NULL,              -- ISO-8601 UTC timestamp of computation
     PRIMARY KEY (chunk_id, slide_id)
 );
 CREATE INDEX links_slide_id_idx ON links(slide_id);
@@ -96,6 +110,6 @@ CREATE TABLE meta (
     value TEXT NOT NULL
 );
 INSERT INTO meta (key, value) VALUES
-    ('schema_version', '1'),
+    ('schema_version', '2'),
     ('embedding_model_id', ''),
     ('embedding_dims', '__EMBEDDING_DIMS__');
