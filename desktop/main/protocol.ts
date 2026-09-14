@@ -326,7 +326,16 @@ export function registerAppSchemePrivileges(): void {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: 'app',
-      privileges: { standard: true, secure: true, supportFetchAPI: true },
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        // Streaming: required so media elements (the embedded Storyline
+        // player's narration audio, issue #81) can consume responses served
+        // by protocol.handle — without it Chromium's media pipeline rejects
+        // the source with MEDIA_ELEMENT_ERROR (Format error).
+        stream: true,
+      },
     },
   ]);
 }

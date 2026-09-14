@@ -2,11 +2,9 @@
  * story_content/trainingapp-bridge.js — pack-local player bridge for the
  * TrainingApp embedded Storyline player (issue #81, D5; A8 recipe from #58).
  *
- * FROZEN CONTENT: committed verbatim per desktop/e2e/fixtures/storyline-nav/
- * FIXTURE_CONTRACT.md §4 (see that file's amendment history for the live-
- * observed reasons behind the navigation machinery below). Loaded by exactly
- * ONE <script> tag appended to the pack's story.html; real packs built by
- * packtool ship the same file.
+ * SHIPPED IN EVERY PACK built by packtool (loaded by exactly ONE <script>
+ * tag appended to the pack's story.html). See FIXTURE_CONTRACT.md §4 and its
+ * amendment history for the live-observed reasons behind the machinery.
  *
  * Why a pack-local bridge at all: the GetPlayer facade has NO jump method
  * (GetVar/SetVar only), GetVar('projectSlideNumber'|'projectSlideTitle')
@@ -23,14 +21,18 @@
  * Jumps MUST be deferred until readiness: before course start the
  * windowManager has no window and requestSlideForReview throws.
  *
- * Navigation reliability (observed live in the #81 e2e): the course
- * auto-plays forward, and a review jump to a slide BEHIND the current
- * playhead pends indefinitely, while a jump to a slide ahead lands as soon
- * as the current slide's timeline ends. jumpToSlide therefore (a) walks
- * behind-targets back with the player's own enabled PREV transport control
- * (never the outline/menu chrome — that is disabled in this publish and is
- * never touched), and (b) reaches ahead-targets with a keep-alive window
- * that re-issues the review request while polling the player's own state.
+ * NAVIGATION GATE (observed live in the #81 e2e, root-caused in the runtime):
+ * requestSlideForReview's first stage checks the CURRENT slide's
+ * `slideReady` flag. `getCurrentWindowSlide()` flips at model-load time, but
+ * `slideReady` only fires on a requestAnimationFrame after the slide view's
+ * html is ready. A request issued (or resolved-readback accepted) in that
+ * window (a) queues behind slide.READY — pending for as long as the slide's
+ * timeline runs (narration included) — and (b) sets `destroyed = true` on
+ * the slide model, which makes the runtime SKIP the slide's remaining
+ * trigger actions. One mistimed request therefore poisons the slide for
+ * every later one. This bridge gates BOTH request issuance and jump
+ * resolution on `slideReady === true`, which keeps every request on the
+ * runtime's immediate synchronous path.
  */
 (function () {
   'use strict';
@@ -38,9 +40,7 @@
   var READY_TIMEOUT_MS = 30000;
   var POLL_MS = 100;
   var JUMP_WINDOW_MS = 60000;
-  var REQUEST_RETRY_MS = 5000;
-  var WALK_STEP_BUDGET = 400;
-  var WALK_STEP_TIMEOUT_MS = 4000;
+  var REQUEST_RETRY_MS = 2500;
 
   function currentSlide() {
     try {
@@ -51,6 +51,9 @@
       return {
         slideId: slide.id,
         slideTitle: (slide.attributes && slide.attributes.title) || '',
+        // True only after the slide view finished mounting (its html-ready
+        // requestAnimationFrame ran): the runtime's own review-request gate.
+        ready: slide.slideReady === true,
       };
     } catch (err) {
       return null;
@@ -58,7 +61,8 @@
   }
 
   function isReady() {
-    return currentSlide() !== null;
+    var state = currentSlide();
+    return state !== null && state.ready === true;
   }
 
   function waitForReadiness(timeoutMs) {
@@ -85,74 +89,53 @@
     return null;
   }
 
-  function flatIndexOf(slideId) {
-    var slides = window.DS.presentation.getFlatSlides();
-    for (var i = 0; i < slides.length; i++) {
-      if (slides[i] && slides[i].id === slideId) return i;
-    }
-    return -1;
-  }
-
   /**
-   * Step back one slide with the player's enabled PREV transport control,
-   * resolving true when the player's own state reports the move. Resolves
-   * false when the control is disabled or the step does not register.
-   */
-  function walkBackwardStep() {
-    return new Promise(function (resolve) {
-      var state0 = currentSlide();
-      var prevBtn = document.getElementById('prev');
-      if (!prevBtn || /cs-disabled/.test(prevBtn.className)) return resolve(false);
-      try { prevBtn.click(); } catch (err) { return resolve(false); }
-      var waited = 0;
-      var timer = setInterval(function () {
-        var state = currentSlide();
-        waited += POLL_MS;
-        var moved = state !== null && state0 !== null && state.slideId !== state0.slideId;
-        if (moved || waited >= WALK_STEP_TIMEOUT_MS) {
-          clearInterval(timer);
-          resolve(!!moved);
-        }
-      }, POLL_MS);
-    });
-  }
-
-  function walkToSlide(targetId, budget) {
-    return new Promise(function (resolve) {
-      var state = currentSlide();
-      if (state !== null && state.slideId === targetId) return resolve(true);
-      if (budget <= 0) return resolve(false);
-      walkBackwardStep().then(function (moved) {
-        if (!moved) return resolve(false);
-        walkToSlide(targetId, budget - 1).then(resolve, function () { resolve(false); });
-      }, function () { resolve(false); });
-    });
-  }
-
-  /**
-   * Forward keep-alive window: re-issue the review navigation every
-   * REQUEST_RETRY_MS while polling the player's own state for the target.
-   * The runtime silently drops jumps issued while a slide's timeline is in
-   * flight; spaced re-issues land as soon as the runtime accepts navigation.
+   * Keep-alive window: issue the review request ONLY while the current
+   * slide reports slideReady (the runtime's synchronous path) AND no
+   * earlier request is still outstanding (the runtime serializes
+   * navigations — piling unsettled requests deadlocks the queue), and
+   * resolve only when the player's own state reports the target AND that
+   * slide is ready — never earlier, or the next jump fires into the
+   * not-ready window.
    */
   function jumpWindow(target, targetId) {
     return new Promise(function (resolve) {
       var waited = 0;
       var lastRequestAt = -Infinity;
+      var outstanding = 0;
       var timer = setInterval(function () {
+        waited += POLL_MS;
         var state = currentSlide();
-        if (state !== null && state.slideId === targetId) {
+        if (state !== null && state.ready === true && state.slideId === targetId) {
           clearInterval(timer);
           resolve(true);
           return;
         }
-        if (waited - lastRequestAt >= REQUEST_RETRY_MS && waited < JUMP_WINDOW_MS) {
+        if (outstanding === 0 && waited - lastRequestAt >= REQUEST_RETRY_MS && waited < JUMP_WINDOW_MS) {
           lastRequestAt = waited;
-          try {
-            window.DS.windowManager.requestSlideForReview(target, '_frame');
-          } catch (err) {
-            /* navigation refused this tick — keep-alive will re-issue */
+          var gate = currentSlide();
+          if (gate !== null && gate.ready === true) {
+            outstanding += 1;
+            try {
+              var pr = window.DS.windowManager.requestSlideForReview(target, '_frame');
+              console.log('[d5q] t=' + waited + ' ISSUE target=' + targetId + ' from=' + gate.slideId + ' ready=' + gate.ready);
+              if (pr && typeof pr.then === 'function') {
+                pr.then(function () { outstanding -= 1; console.log('[d5q] t=' + waited + ' SETTLE-OK target=' + targetId); },
+                        function (e) { outstanding -= 1; console.log('[d5q] t=' + waited + ' SETTLE-REJ target=' + targetId + ' ' + String(e).slice(0, 60)); });
+                setTimeout(function () { outstanding = Math.max(0, outstanding - 1); }, 20000);
+              } else {
+                outstanding -= 1;
+              }
+            } catch (err) {
+              outstanding -= 1;
+            }
+          } else {
+            console.log('[d5q] t=' + waited + ' GATE-CLOSED cur=' + (gate ? gate.slideId + '/' + gate.ready : 'null'));
           }
+        }
+        if (waited % 2000 < POLL_MS) {
+          var cs3 = currentSlide();
+          console.log('[d5q] t=' + waited + ' poll cur=' + (cs3 ? cs3.slideId + '/' + cs3.ready : 'null') + ' target=' + targetId + ' out=' + outstanding);
         }
         if (waited >= JUMP_WINDOW_MS) {
           clearInterval(timer);
@@ -164,8 +147,8 @@
 
   /**
    * window.__trainingappJump(slideId) -> Promise<boolean>
-   * true iff the player's own state subsequently reported the target.
-   * Never rejects.
+   * true iff the player's own state subsequently reported the target slide
+   * as ready. Never rejects.
    */
   function jumpToSlide(slideId) {
     if (typeof slideId !== 'string' || slideId.length === 0) {
@@ -175,13 +158,6 @@
       .then(function () {
         var target = findSlide(slideId);
         if (!target) return false;
-        var current = currentSlide();
-        var targetIdx = flatIndexOf(slideId);
-        var currentIdx = current ? flatIndexOf(current.slideId) : -1;
-        var behind = currentIdx >= 0 && targetIdx >= 0 && targetIdx < currentIdx;
-        if (behind) {
-          return walkToSlide(slideId, WALK_STEP_BUDGET);
-        }
         return jumpWindow(target, slideId);
       })
       .catch(function () {
@@ -196,25 +172,6 @@
 
   window.__trainingappJump = jumpToSlide;
   window.__trainingappState = state;
-
-  /*
-   * Freeze the auto-play at first readiness: the host (TrainingPlayer) drives
-   * navigation, so the course must not auto-advance past the host's targets.
-   * Pausing the transport once on entry keeps every slide stable for the
-   * host-driven jumps. Uses only the enabled Play/Pause transport control.
-   */
-  var initPauseTimer = setInterval(function () {
-    if (!isReady()) return;
-    clearInterval(initPauseTimer);
-    try {
-      var pp = document.getElementById('play-pause');
-      if (pp && /pause/i.test((pp.getAttribute('aria-label') || pp.textContent || ''))) {
-        pp.click();
-      }
-    } catch (err) {
-      /* transport control absent */
-    }
-  }, 250);
 
   /*
    * postMessage RPC (protocol: FIXTURE_CONTRACT.md §5). The renderer-side
