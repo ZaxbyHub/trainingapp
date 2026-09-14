@@ -165,3 +165,26 @@ errors only; favicon 404s and slide-media 404s are ignored). If the fixture stay
   `getCurrentWindowSlide()` until non-null) work after Start AND after Resume/Restart.
 - Section nodes themselves are NOT jump targets (only leaf slide ids resolve in
   `getFlatSlides()`); `getFlatSlides()` = 386 entries (384 content + 2 internal prompts).
+
+
+## 8. Amendment history (post-freeze deviations, #81 e2e)
+
+- Slide payloads: `audiolib` arrays were emptied by a session strip script
+  and later RESTORED to the source-publish state — the committed payloads are
+  byte-for-byte copies of the publish.
+- Slide JS files: 16 committed (12 manifest + 4 author-flow dependency
+  slides: 5gDfO5cQKNZ, 5m9bkEDzWA8, 6GS4zInSHj7, 6ZLL3kg8suP).
+- Narration: 300 real MP3s from the publish (supersedes §6's ~10 MB
+  guideline; committed fixture ~21 MB). Real audio is REQUIRED: uniform-clip
+  and no-audio variants both broke navigation determinism (#81 e2e).
+- Bridge amendments: slideReady-gated issuance/resolution, outstanding-request
+  bookkeeping with floored decrements, landed-slide `slideReady` recovery
+  (PlayerMemoryEnhancements eats htmlReady rAFs — see
+  docs/training-player.md "Known runtime defect").
+
+## 9. Licensing
+
+The fixture embeds third-party Articulate Storyline 360 output (minified
+runtime, slide payloads, narration MP3s) used internally for testing only.
+It is not covered by this repository's MIT license and must not be
+redistributed outside the organization.

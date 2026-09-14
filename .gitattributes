@@ -9,3 +9,4 @@ web_ui/index.html text eol=lf
 # golden-file equality. No conversion, no exceptions.
 tests/fixtures/storyline-mini/** -text
 packtool/** -text
+desktop/e2e/fixtures/storyline-nav/** -text

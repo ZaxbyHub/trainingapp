@@ -24,9 +24,12 @@ namespaces" note in `desktop/README.md` required.
   realpath re-check — is the same discipline the renderer route has used
   since B2.
 - Every response keeps the B2 header posture (COOP `same-origin`, COEP
-  `require-corp`, CORP `same-origin`, `nosniff`, `no-cache`); the player runs
-  cleanly under `require-corp` — verified live, zero COOP/COEP console
-  errors.
+  `require-corp`, `nosniff`, `no-cache`). CORP is `cross-origin` on pack
+  responses: the player frame is a different `app://` host from the renderer,
+  so the frame must be cross-origin embeddable — CORP `same-origin` made
+  Chromium abort the frame with `chrome-error://chromewebdata` despite a 200.
+  The player runs cleanly under `require-corp` — verified live, zero
+  COOP/COEP console errors.
 
 ### Training CSP profile
 
@@ -145,6 +148,24 @@ runtime's own synchronous stage-1 path (`requestSlideForReview` resolves
 immediately when the current slide reports ready). With the recovery, the
 10-jump sequence is deterministic (10/10 sequential runs, plus the @ac3 leg
 5/5).
+
+## Decision summary (#58 acceptance)
+
+- iframe-vs-window: iframe embed (same-origin under the private `app:` scheme;
+  no COEP-nesting fallback needed — the player boots cleanly in-frame).
+- jump-method: `requestSlideForReview` via the internal DS runtime (recipe
+  above) with the slideReady gate and landed-slide recovery.
+- polling-interval: 1000 ms `setInterval` on the pack bridge's state read,
+  emit-only-on-change.
+
+## Provenance and licensing note
+
+The e2e fixture (`desktop/e2e/fixtures/storyline-nav/`) embeds a trimmed copy
+of the Articulate Storyline 360 publish (minified runtime, slide payloads,
+narration MP3s). That content is third-party Articulate output used
+internally for testing only; it is not covered by this repo's MIT license and
+must not be redistributed outside the organization. Fixture deviations from
+the original contract are recorded in `FIXTURE_CONTRACT.md` §8.
 
 ## Invalidations
 

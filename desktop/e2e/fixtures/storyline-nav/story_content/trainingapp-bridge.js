@@ -151,9 +151,13 @@
             try {
               var pr = window.DS.windowManager.requestSlideForReview(target, '_frame');
               if (pr && typeof pr.then === 'function') {
-                pr.then(function () { outstanding -= 1; },
-                        function () { outstanding -= 1; });
+                pr.then(function () { outstanding = Math.max(0, outstanding - 1); },
+                        function () { outstanding = Math.max(0, outstanding - 1); });
                 setTimeout(function () { outstanding = Math.max(0, outstanding - 1); }, 20000);
+                // Both release paths floor at 0: a promise that settles after
+                // the watchdog fired would otherwise drive `outstanding`
+                // negative, permanently wedging the re-issue guard
+                // (`outstanding === 0`) — observed live in the #81 e2e.
               } else {
                 outstanding -= 1;
               }
