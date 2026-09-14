@@ -59,3 +59,49 @@ export function buildCspPolicy(): string {
     "frame-ancestors 'none'",
   ].join('; ');
 }
+
+/**
+ * The training-pack policy (issue #81, D5) applied to responses served from
+ * the app://training/<packId>/ route — i.e. to FIRST-PARTY documents shipped
+ * inside an installed knowledge pack (assets/player/**), never to renderer
+ * documents. Deltas from buildCspPolicy(), each proven necessary by the live
+ * player probe captured in the #81 trace (evidence/csp-profile-*.log):
+ *   - script-src 'unsafe-inline': the pack's story.html boots from an inline
+ *     <script> (window.globals + the dynamic bootstrapper loader). Without
+ *     'unsafe-inline' the player never starts. No 'unsafe-eval' is needed:
+ *     the probe recorded zero script-src violations beyond inline content.
+ *   - style-src 'unsafe-inline': the player runtime writes inline style
+ *     attributes/elements constantly (72 violations in the probe run).
+ *   - font-src data: + media-src 'self' app: data:: the publish inlines its
+ *     fonts and narration audio as data: URIs (28 + 79 violations).
+ *   - connect-src tightened to 'self' app:: pack content has no business
+ *     calling the loopback backend, and the probe confirmed the player makes
+ *     no loopback requests. (Dropping the loopback sources also avoids
+ *     carrying Chromium's 'http://[::1]:*' source-list parse warning into a
+ *     document class that never needed it.)
+ *   - frame-ancestors omitted entirely: on the PACK document frame-ancestors
+ *     governs who may embed the pack; the only embedder is our own renderer
+ *     (whose embedding decision is made by the RENDERER policy's frame-src,
+ *     already 'self' app:). A pack-side frame-ancestors 'none' would forbid
+ *     the app's own player iframe; omitting it is harmless because app:// is
+ *     a private scheme unreachable from the web. The renderer document keeps
+ *     the strict 'none'.
+ * Everything else (COOP/COEP/CORP attachment, nosniff, no-cache) is applied
+ * by protocol.ts exactly as for renderer responses.
+ */
+export function buildTrainingCspPolicy(): string {
+  return [
+    "default-src 'self' app:",
+    "script-src 'self' app: 'wasm-unsafe-eval' 'unsafe-inline'",
+    "style-src 'self' app: 'unsafe-inline'",
+    "img-src 'self' app: data:",
+    "font-src 'self' app: data:",
+    "connect-src 'self' app:",
+    "worker-src 'self' app: blob:",
+    "frame-src 'self' app:",
+    "media-src 'self' app: data:",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+  ].join('; ');
+}

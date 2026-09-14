@@ -14,6 +14,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { ChatPage } from './pages/ChatPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { TrainingPage } from './pages/TrainingPage';
 import { useServiceInitialization } from './hooks/useServiceInitialization';
 import { useConversations } from './hooks/useConversations';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -243,6 +244,12 @@ function AppContent() {
         return (
           <ErrorBoundary>
             <SettingsPage />
+          </ErrorBoundary>
+        );
+      case 'training':
+        return (
+          <ErrorBoundary>
+            <TrainingPage />
           </ErrorBoundary>
         );
       default:
