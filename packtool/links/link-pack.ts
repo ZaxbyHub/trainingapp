@@ -271,9 +271,9 @@ export async function computeAndWriteLinks(
     docIndex = null;
 
     if (fs.statSync(path.resolve(packPath)).isFile()) {
-      // Rewrite the zip entry with the updated index, preserving every
-      // entry's original date (compose's determinism discipline), then
-      // publish atomically.
+      // Rewrite the zip entry with the updated index. JSZip preserves every
+      // untouched entry's original date on regeneration; the replaced entry's
+      // date is set explicitly below. Publish is atomic (temp + rename).
       const zip = await JSZip.loadAsync(fs.readFileSync(path.resolve(packPath)));
       const entry = zip.file(INDEX_FILE_NAME);
       if (entry === null) throw new Error('doc pack: index entry vanished while rewriting');
@@ -288,12 +288,12 @@ export async function computeAndWriteLinks(
       });
       const tempOut = `${path.resolve(packPath)}.tmp-${process.pid}`;
       fs.writeFileSync(tempOut, updated);
-      fs.renameSync(tempOut, path.resolve(packPath));
+      renameOrCleanup(tempOut, path.resolve(packPath));
     } else {
       const stagingIndex = path.join(path.resolve(packPath), ...INDEX_FILE_NAME.split('/'));
       const tempOut = `${stagingIndex}.tmp-${process.pid}`;
       fs.copyFileSync(docIndexPath, tempOut);
-      fs.renameSync(tempOut, stagingIndex);
+      renameOrCleanup(tempOut, stagingIndex);
     }
 
     return {
@@ -321,5 +321,31 @@ export async function computeAndWriteLinks(
     }
     docSource?.dispose();
     trainSource?.dispose();
+    // Always remove the mkdtemp root (covers dir-source packs, whose dispose
+    // is a no-op, and every throw before the sources were assigned). The
+    // materialized index copies live in the doc/train subdirs it contains;
+    // real pack directories are never inside it.
+    try {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    } catch {
+      // best-effort temp cleanup
+    }
+  }
+}
+
+/**
+ * renameSync with crash-safe temp cleanup: a failed rename (Windows AV lock,
+ * cross-device link) must not leave the .tmp-<pid> file behind.
+ */
+function renameOrCleanup(tempOut: string, target: string): void {
+  try {
+    fs.renameSync(tempOut, target);
+  } catch (error) {
+    try {
+      fs.rmSync(tempOut, { force: true });
+    } catch {
+      // the original rename error is the useful one
+    }
+    throw error;
   }
 }

@@ -232,7 +232,9 @@ function parseLinksArgs(argv: string[]): LinksArgs {
       const flagged = flagValue(argv, i);
       if (flagged === undefined) usage();
       const value = Number(flagged.value);
-      if (!Number.isFinite(value)) usage();
+      // Parse-time range check so a bad --threshold fails as usage (exit 2)
+      // instead of a mid-run kernel error.
+      if (!Number.isFinite(value) || value < -1 || value > 1) usage();
       threshold = value;
       i = flagged.next;
     } else if (arg === '--top') {
@@ -259,7 +261,7 @@ export async function runLinks(argv: string[]): Promise<number> {
   try {
     const result = await computeAndWriteLinks(args.pack, args.training, {
       ...(args.threshold !== undefined ? { threshold: args.threshold } : {}),
-      ...(args.top !== undefined ? { top: args.top } : {}),
+      ...(args.top !== undefined ? { topK: args.top } : {}),
     });
     console.error(
       `links: wrote ${result.links} row(s) for ${result.chunks} chunk(s) against ${result.slides} slide(s) (threshold ${result.threshold}, top ${result.topK}) -> ${result.outputPath}`,

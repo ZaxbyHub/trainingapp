@@ -195,6 +195,34 @@ describe('d4 links runtime maintenance (issue #80)', () => {
     }
   });
 
+  itReal('loadSlideVectors decodes raw float32 blobs (PRR-022: the vec0 read-back shape)', async () => {
+    const { openStore, loadSlideVectors, recomputeLinksForDocs } = await loadModules();
+    const store = openStore({ dbPath: makeTempDbPath(), dims: 2, repoRoot: REPO_ROOT });
+    try {
+      const db = store.db;
+      // Seed the slide embedding as a raw little-endian float32 blob — the
+      // shape sqlite-vec actually returns on SELECT — not the JSON the
+      // writer serialized.
+      seedTraining(db, 'S1', [1, 0]);
+      db.prepare('UPDATE embeddings SET embedding = ? WHERE chunk_id = ?').run(
+        Buffer.from(new Float32Array([1, 0]).buffer),
+        'ch-slide-S1',
+      );
+      seedGeneral(db, 'doc-a', 'ch-a', [1, 0]);
+      const slides = loadSlideVectors(db);
+      expect(slides).toHaveLength(1);
+      expect(slides[0]?.vector).toEqual([1, 0]);
+      // End-to-end: the blob-decoded slide still links a matching doc chunk.
+      recomputeLinksForDocs(db, ['doc-a'], { now: () => '2026-09-13T00:00:00.000Z' });
+      const rows = db.prepare('SELECT slide_id, score FROM links WHERE chunk_id = ?').all('ch-a') as Array<Row>;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.slide_id).toBe('S1');
+      expect(Number(rows[0]?.score)).toBeCloseTo(1, 6);
+    } finally {
+      store.close();
+    }
+  });
+
   itReal('recompute throws on invalid options', async () => {
     const { openStore, recomputeLinksForDocs } = await loadModules();
     const store = openStore({ dbPath: makeTempDbPath(), dims: 3, repoRoot: REPO_ROOT });

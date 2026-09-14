@@ -216,10 +216,17 @@ describe('links CLI verb (D4, issue #80)', () => {
     expect(rows[0]?.slide_id).toBe('S1');
   });
 
-  it('honors --top 1', { timeout: 60_000 }, async () => {
+  it('honors --top 1 even when more candidates exist above the threshold', { timeout: 60_000 }, async () => {
+    // Discriminating construction (--threshold 0 makes ALL 3 slides score
+    // above the floor, so default topK=3 would return 3 rows; --top 1 must
+    // return exactly 1). A fixture-matched default would hide a dropped
+    // topK option (conditional-spread blind spot — see PR review PRR fix).
     const docPack = await stageDocPack({ id: 'd4-cli-top1-doc' });
-    const exit = await runLinks(['links', '--pack', docPack, '--training', join(root, 'training-pack.zip'), '--top', '1']);
-    expect(exit).toBe(0);
+    const allExit = await runLinks(['links', '--pack', docPack, '--training', join(root, 'training-pack.zip'), '--threshold', '0']);
+    expect(allExit).toBe(0);
+    expect(linkRowsFor(docPack).length).toBeGreaterThanOrEqual(3);
+    const topExit = await runLinks(['links', '--pack', docPack, '--training', join(root, 'training-pack.zip'), '--threshold', '0', '--top', '1']);
+    expect(topExit).toBe(0);
     const rows = linkRowsFor(docPack);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.rank).toBe(1);

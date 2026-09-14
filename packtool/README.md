@@ -196,8 +196,9 @@ so an installed doc pack ships pre-linked (schema v2). Refuses (exit 1) when
 the doc pack is `source_class: "training"` (links relate DOC chunks to
 slides), when either pack is missing or has an invalid pack.json, or when the
 two embedding spaces are not comparable (model_id, dims, or normalize
-mismatch). Both packs may be zips or unpacked directories; zip rewriting
-preserves entry dates and publishes atomically. Runtime recomputation on
+mismatch). Exit 0 on success (prints the written row count); exit 1 on any
+refusal or failure. Both packs may be zips or unpacked directories; zip
+rewriting preserves entry dates and publishes atomically. Runtime recomputation on
 content change lives in `desktop/main/backend/store/links.ts`; a future pack
 lifecycle (#70) composes the same operations.
 
@@ -212,3 +213,12 @@ lifecycle (#70) composes the same operations.
 - `build/index-writer.ts` — schema application + row writes (also the single
   local DDL-apply surface reused by the acceptance install test).
 - `build/verify.ts` — the verify implementation.
+
+### Module map (issue #80 additions)
+
+- `links/compute-links.ts` — the pure doc-chunk -> training-slide kernel
+  (cosine top-K above threshold, deterministic tie-break), mirrored by the
+  desktop runtime in `desktop/main/backend/store/links.ts`.
+- `links/link-pack.ts` — the pack-level `links` operation (dual zip/dir
+  sources, embedding-comparability guards, transactional link rewrite,
+  atomic publish).

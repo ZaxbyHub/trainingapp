@@ -95,7 +95,7 @@ CREATE TABLE packs (
 -- runtime-ingested unpackaged docs, which is why it is deliberately FK-free.
 CREATE TABLE links (
     chunk_id    TEXT NOT NULL REFERENCES chunks(id),
-    slide_id    TEXT NOT NULL,              -- Storyline slide.id (docs/slide-NNN-<slide_id>.json)
+    slide_id    TEXT NOT NULL,              -- Storyline slide.id (docs/slide-<digits>-<slide_id>.json)
     pack_id     TEXT,                       -- owning doc pack id; NULL = unpackaged doc
     score       REAL NOT NULL,              -- cosine similarity in [-1, 1]
     rank        INTEGER NOT NULL,           -- 1..3, scores descending within a chunk

@@ -154,6 +154,22 @@ describe('links integrity guardrail in verifyPack (D4, issue #80)', () => {
     expect(result.ok).toBe(true);
   });
 
+  it('rejects a manifest stamp / index meta schema_version mismatch (PRR-020)', { timeout: 60_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'd4verify-'));
+    scratchRoots.push(root);
+    const packDir = stagePack(root, validLinks());
+    // Downgrade ONLY the index meta stamp: pack.json still declares
+    // index.schema_version = STORE_SCHEMA_VERSION (2), so verify's
+    // stamp check AND its manifest cross-check must both fire.
+    corrupt(packDir, "UPDATE meta SET value = '1' WHERE key = 'schema_version'");
+    const result = await verifyPack(packDir);
+    expect(result.ok).toBe(false);
+    expect(result.problems.some((p) => p.includes('index meta.schema_version is 1, want 2'))).toBe(true);
+    expect(
+      result.problems.some((p) => p.includes('!= manifest index.schema_version 2')),
+    ).toBe(true);
+  });
+
   it('rejects an orphan chunk reference', { timeout: 60_000 }, async () => {
     const root = mkdtempSync(join(tmpdir(), 'd4verify-'));
     scratchRoots.push(root);

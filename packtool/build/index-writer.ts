@@ -3,10 +3,11 @@
 // Applies the AUTHORITATIVE schema (contracts/store.schema.sql — loaded from
 // disk, never copied) with the __EMBEDDING_DIMS__ token substituted, loads the
 // pinned sqlite-vec extension BEFORE any vec0 DDL, then inserts this pack's
-// rows in one transaction. Row shapes byte-match the runtime ingest
+// rows in one transaction (meta.embedding_model_id included — the runtime
+// pipeline stamps it after its COMMIT; the index build has no such split).
+// Row shapes byte-match the runtime ingest
 // (desktop/main/backend/ingest/pipeline.ts): embeddings as JSON arrays, chunk
-// ids = sha256(`${docId}:${chunkIndex}:${normalized}`), meta.embedding_model_id
-// stamped after COMMIT.
+// ids = sha256(`${docId}:${chunkIndex}:${normalized}`).
 //
 // The index carries exactly one packs row (this pack) so docs.pack_id is
 // satisfiable under FK enforcement and an installer can copy every table
