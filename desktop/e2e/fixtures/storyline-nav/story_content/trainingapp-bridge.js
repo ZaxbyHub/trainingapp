@@ -41,6 +41,7 @@
   var POLL_MS = 100;
   var JUMP_WINDOW_MS = 60000;
   var REQUEST_RETRY_MS = 2500;
+  var UNSTICK_AFTER_MS = 4000;
 
   function currentSlide() {
     try {
@@ -103,6 +104,7 @@
       var waited = 0;
       var lastRequestAt = -Infinity;
       var outstanding = 0;
+      var lastUnstickAt = -Infinity;
       var timer = setInterval(function () {
         waited += POLL_MS;
         var state = currentSlide();
@@ -110,6 +112,36 @@
           clearInterval(timer);
           resolve(true);
           return;
+        }
+        /*
+         * Stuck-target recovery: the navigation LANDED (the model reports the
+         * target as current) but the view's readiness rAF was eaten — under
+         * PlayerMemoryEnhancements the runtime's componentWillUnmount cancels
+         * every pending htmlReady requestAnimationFrame (slides.min.js,
+         * htmlReadyIds.forEach(cancelAnimationFrame)), and a reconcile cycle
+         * on scene entry can swallow the new slide's readiness rAF, leaving
+         * slideReady permanently false. Every later review request would then
+         * queue behind a slide.READY that never fires (the #81 e2e stall).
+         * Setting the landed model's flag back to true restores the runtime's
+         * own synchronous stage-1 path; the slide content already loaded
+         * (loadedDfd resolved) and is displayed.
+         */
+        if (
+          state !== null &&
+          state.slideId === targetId &&
+          state.ready !== true &&
+          waited - lastUnstickAt >= UNSTICK_AFTER_MS
+        ) {
+          lastUnstickAt = waited;
+          try {
+            var wm = window.DS.windowManager;
+            var model = wm.getCurrentWindowSlide();
+            if (model && model.id === targetId && model.slideReady !== true) {
+              model.slideReady = true;
+            }
+          } catch (err) {
+            /* model unavailable — retry on the next unstick tick */
+          }
         }
         if (outstanding === 0 && waited - lastRequestAt >= REQUEST_RETRY_MS && waited < JUMP_WINDOW_MS) {
           lastRequestAt = waited;

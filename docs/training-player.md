@@ -124,6 +124,28 @@ the app's own UI built from the pack outline) is the only navigation surface;
 no code may assume a Storyline menu button exists to click. A static check
 (the C4 scan from the #81 trace) enforces this on shipped sources.
 
+## Known runtime defect and the bridge's recovery (observed live, #81 e2e)
+
+Under `PlayerMemoryEnhancements` (enabled in this publish), the runtime's
+`componentWillUnmount` cancels every pending `htmlReady`
+`requestAnimationFrame` (`htmlReadyIds.forEach(cancelAnimationFrame)` in
+`slides.min.js`). On scene-entry transitions a reconcile cycle can swallow
+the newly-mounted slide's readiness rAF: the slide's model loads and is
+reported as current (`loadedDfd` resolved, content displayed), but its view's
+`slideReady` flag stays false forever. Every subsequent review request then
+queues behind a `slide.READY` event that never fires — the serialized
+navigation queue deadlocks (reproduced ~50-60% of Electron runs at the CDS
+scene entry; captured as `cur=<target>/false` for 150s with zero outstanding
+requests).
+
+The pack bridge carries a targeted recovery: when a jump has LANDED (the
+model reports the target as current) but readiness stays false for 4s, the
+bridge sets the landed model's `slideReady` back to true, restoring the
+runtime's own synchronous stage-1 path (`requestSlideForReview` resolves
+immediately when the current slide reports ready). With the recovery, the
+10-jump sequence is deterministic (10/10 sequential runs, plus the @ac3 leg
+5/5).
+
 ## Invalidations
 
 Re-verify this recipe if the OpMed course is re-published with a newer
