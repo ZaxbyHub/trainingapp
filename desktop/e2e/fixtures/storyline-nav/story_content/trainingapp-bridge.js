@@ -150,10 +150,9 @@
             outstanding += 1;
             try {
               var pr = window.DS.windowManager.requestSlideForReview(target, '_frame');
-              console.log('[d5q] t=' + waited + ' ISSUE target=' + targetId + ' from=' + gate.slideId + ' ready=' + gate.ready);
               if (pr && typeof pr.then === 'function') {
-                pr.then(function () { outstanding -= 1; console.log('[d5q] t=' + waited + ' SETTLE-OK target=' + targetId); },
-                        function (e) { outstanding -= 1; console.log('[d5q] t=' + waited + ' SETTLE-REJ target=' + targetId + ' ' + String(e).slice(0, 60)); });
+                pr.then(function () { outstanding -= 1; },
+                        function () { outstanding -= 1; });
                 setTimeout(function () { outstanding = Math.max(0, outstanding - 1); }, 20000);
               } else {
                 outstanding -= 1;
@@ -161,13 +160,7 @@
             } catch (err) {
               outstanding -= 1;
             }
-          } else {
-            console.log('[d5q] t=' + waited + ' GATE-CLOSED cur=' + (gate ? gate.slideId + '/' + gate.ready : 'null'));
           }
-        }
-        if (waited % 2000 < POLL_MS) {
-          var cs3 = currentSlide();
-          console.log('[d5q] t=' + waited + ' poll cur=' + (cs3 ? cs3.slideId + '/' + cs3.ready : 'null') + ' target=' + targetId + ' out=' + outstanding);
         }
         if (waited >= JUMP_WINDOW_MS) {
           clearInterval(timer);
