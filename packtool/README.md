@@ -166,7 +166,7 @@ re-embedding.
   they are never dereferenced into the pack.
 - **Index**: `index.sqlite` applies the authoritative
   `contracts/store.schema.sql` (sqlite-vec 0.1.9 pin; `meta.schema_version`
-  1, `meta.embedding_model_id`/`meta.embedding_dims` stamped from the build).
+  2, `meta.embedding_model_id`/`meta.embedding_dims` stamped from the build).
 
 ## `packtool verify` (issue #79)
 
@@ -181,6 +181,27 @@ dims/model id, row-count parity, docs-table hash set, packs-row id), and the
 `assets/player/story.html` anchor. Exit 0 prints
 `verify: OK (docs=<n>)`; failures print one `problem: <line>` each and exit 1.
 
+## `packtool links` (issue #80)
+
+```bash
+node packtool/dist/cli.js links --pack <docPack.zip | docPackDir> --training <trainingPack.zip | trainingPackDir> [--threshold <cosine>] [--top <k>]
+```
+
+Computes doc-chunk -> training-slide links (D4): for every chunk in the DOC
+pack, the top-3 nearest training slides of the TRAINING pack above a cosine
+similarity threshold (default 0.5, overridable with `--threshold`; cap
+overridable with `--top`) are written into the doc pack's `index.sqlite`
+`links` table (chunk_id, slide_id, pack_id, score, rank 1..3, computed_at),
+so an installed doc pack ships pre-linked (schema v2). Refuses (exit 1) when
+the doc pack is `source_class: "training"` (links relate DOC chunks to
+slides), when either pack is missing or has an invalid pack.json, or when the
+two embedding spaces are not comparable (model_id, dims, or normalize
+mismatch). Exit 0 on success (prints the written row count); exit 1 on any
+refusal or failure. Both packs may be zips or unpacked directories; zip
+rewriting preserves entry dates and publishes atomically. Runtime recomputation on
+content change lives in `desktop/main/backend/store/links.ts`; a future pack
+lifecycle (#70) composes the same operations.
+
 ### Module map (issue #79 additions)
 
 - `build/compose.ts` — the build-storyline orchestrator.
@@ -192,3 +213,12 @@ dims/model id, row-count parity, docs-table hash set, packs-row id), and the
 - `build/index-writer.ts` — schema application + row writes (also the single
   local DDL-apply surface reused by the acceptance install test).
 - `build/verify.ts` — the verify implementation.
+
+### Module map (issue #80 additions)
+
+- `links/compute-links.ts` — the pure doc-chunk -> training-slide kernel
+  (cosine top-K above threshold, deterministic tie-break), mirrored by the
+  desktop runtime in `desktop/main/backend/store/links.ts`.
+- `links/link-pack.ts` — the pack-level `links` operation (dual zip/dir
+  sources, embedding-comparability guards, transactional link rewrite,
+  atomic publish).

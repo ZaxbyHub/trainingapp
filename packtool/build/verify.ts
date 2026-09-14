@@ -13,7 +13,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import JSZip from 'jszip';
-import { assertSafeDocPath, validatePackManifest } from './pack-json.js';
+import { assertSafeDocPath, validatePackManifest, STORE_SCHEMA_VERSION } from './pack-json.js';
 
 const require = createRequire(import.meta.url);
 type ReadonlyDatabase = {
@@ -173,8 +173,10 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
             | undefined;
           return row?.value;
         };
-        if (meta('schema_version') !== '1') {
-          problems.push(`index meta.schema_version is ${String(meta('schema_version'))}, want 1`);
+        if (meta('schema_version') !== String(STORE_SCHEMA_VERSION)) {
+          problems.push(
+            `index meta.schema_version is ${String(meta('schema_version'))}, want ${String(STORE_SCHEMA_VERSION)}`,
+          );
         }
         // Cross-check the manifest's OWN declared schema version against the
         // index (PR review WD-2): a manifest claiming v2 over a v1 index must
@@ -231,6 +233,72 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
           problems.push(
             `index packs row does not match the manifest (name/version/source_class differ)`,
           );
+        }
+        // 5. Links integrity (D4/#80): the links table carries derived
+        // doc-chunk -> training-slide rows. Any pack may legitimately ship
+        // zero rows (training packs; sub-threshold doc packs), but shipped
+        // rows must be internally consistent — this is the defect-class
+        // guardrail against derived rows outliving their referents.
+        const linkRows = db
+          .prepare('SELECT chunk_id, slide_id, pack_id, score, rank, computed_at FROM links ORDER BY chunk_id, rank')
+          .all() as Array<{
+          chunk_id: unknown;
+          slide_id: unknown;
+          pack_id: unknown;
+          score: unknown;
+          rank: unknown;
+          computed_at: unknown;
+        }>;
+        if (linkRows.length > 0) {
+          const chunkIds = new Set(
+            (db.prepare('SELECT id FROM chunks').all() as Array<{ id: string }>).map((row) => row.id),
+          );
+          const packIds = new Set(
+            (db.prepare('SELECT id FROM packs').all() as Array<{ id: string }>).map((row) => row.id),
+          );
+          const perChunk = new Map<string, Array<{ rank: number; score: number }>>();
+          for (const row of linkRows) {
+            const chunkId = String(row.chunk_id);
+            if (!chunkIds.has(chunkId)) {
+              problems.push(`links row references missing chunk id ${chunkId}`);
+            }
+            if (row.pack_id !== null && row.pack_id !== undefined && !packIds.has(String(row.pack_id))) {
+              problems.push(`links row references missing pack id ${String(row.pack_id)}`);
+            }
+            const score = Number(row.score);
+            if (!Number.isFinite(score) || score < -1 || score > 1) {
+              problems.push(`links row (${chunkId} -> ${String(row.slide_id)}): score ${String(row.score)} is not a cosine in [-1, 1]`);
+            }
+            const rank = Number(row.rank);
+            if (!Number.isInteger(rank) || rank < 1) {
+              problems.push(`links row (${chunkId} -> ${String(row.slide_id)}): rank ${String(row.rank)} is not a positive integer`);
+            }
+            if (typeof row.computed_at !== 'string' || Number.isNaN(Date.parse(row.computed_at))) {
+              problems.push(`links row (${chunkId} -> ${String(row.slide_id)}): computed_at ${String(row.computed_at)} is not a parseable timestamp`);
+            }
+            const list = perChunk.get(chunkId) ?? [];
+            list.push({ rank, score });
+            perChunk.set(chunkId, list);
+          }
+          for (const [chunkId, list] of perChunk) {
+            if (list.length > 3) {
+              problems.push(`links rows for chunk ${chunkId}: ${list.length} rows exceed the top-3 cap`);
+            }
+            const sortedByRank = [...list].sort((a, b) => a.rank - b.rank);
+            for (let i = 0; i < sortedByRank.length; i += 1) {
+              const entry = sortedByRank[i];
+              if (entry === undefined) continue;
+              if (entry.rank !== i + 1) {
+                problems.push(`links rows for chunk ${chunkId}: ranks are not contiguous from 1`);
+                break;
+              }
+              const previous = sortedByRank[i - 1];
+              if (previous !== undefined && entry.score > previous.score) {
+                problems.push(`links rows for chunk ${chunkId}: rank order does not follow descending score`);
+                break;
+              }
+            }
+          }
         }
       } catch (error) {
         problems.push(`index could not be opened: ${error instanceof Error ? error.message : String(error)}`);

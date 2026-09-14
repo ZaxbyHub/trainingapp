@@ -12,10 +12,12 @@
 // Write rules (frozen by the acceptance checks):
 //   - content SHA-dedupe FIRST: bytes already in docs -> no-op success;
 //   - then DELETE-BEFORE-REINGEST: a different revision at the same path
-//     value has its doc + chunks + embeddings + fts rows removed inside the
-//     same transaction that inserts the new revision;
+//     value has its doc + chunks + embeddings + fts + links rows removed
+//     inside the same transaction that inserts the new revision;
 //   - per-document writes are single BEGIN IMMEDIATE..COMMIT transactions;
-//   - all DB work serializes on one queue (v1: one writer per store file).
+//   - all DB work serializes on one queue (v1: one writer per store file);
+//   - doc->slide links (D4/#80) are refreshed inside the same transaction —
+//     links can never outlive (or lag) the chunks they reference.
 // Embeddings are sized to store.dims and validated per batch — a model whose
 // output width contradicts the store fails loud instead of corrupting vec0.
 import { createHash } from 'node:crypto';
@@ -23,6 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { StoreHandle } from '../store/sqlite-store.js';
+import { recomputeLinksForDocs } from '../store/links.js';
 import { isSupportedFile, extractDocumentFromFile, type ExtractionPage } from './extractors.js';
 import type { EmbeddingSurface } from './embedder.js';
 import type { IngestConfig, IngestLimits } from './config.js';
@@ -357,6 +360,9 @@ export class IngestPipeline {
         for (const chunk of chunkIds) {
           stmt(db, 'DELETE FROM embeddings WHERE chunk_id = ?').run(chunk.id);
           stmt(db, 'DELETE FROM chunks_fts WHERE chunk_id = ?').run(chunk.id);
+          // D4/#80: links are a third derived table keyed by chunk id — the
+          // stale cascade must clear them or they orphan (FKs unenforced).
+          stmt(db, 'DELETE FROM links WHERE chunk_id = ?').run(chunk.id);
         }
         stmt(db, 'DELETE FROM chunks WHERE doc_id = ?').run(doc.id);
         stmt(db, 'DELETE FROM docs WHERE id = ?').run(doc.id);
@@ -381,6 +387,11 @@ export class IngestPipeline {
         insertVector.run(chunkId, JSON.stringify(vectors[chunk.chunkIndex] ?? []));
         insertFts.run(chunkId, chunk.text);
       }
+
+      // D4/#80: refresh the doc's links inside the SAME transaction so a
+      // crash can never leave links lagging or orphaned relative to chunks.
+      // No-op write when the store holds no active training slides.
+      recomputeLinksForDocs(db, [docId]);
 
       if (!this.modelIdRecorded) {
         stmt(db, "UPDATE meta SET value = ? WHERE key = 'embedding_model_id'").run(this.opts.embedder.modelId);

@@ -8,6 +8,7 @@ import { extractPublishDir } from './storyline/extract.js';
 import { buildStorylinePack } from './build/compose.js';
 import { verifyPack } from './build/verify.js';
 import { SEMVER_PATTERN } from './build/pack-json.js';
+import { computeAndWriteLinks } from './links/link-pack.js';
 
 interface ExtractArgs {
   publishDir: string;
@@ -33,6 +34,7 @@ function usage(): never {
   console.error('usage: packtool storyline extract <publishDir> --out <dir> [--asr-dir <dir>]');
   console.error('usage: packtool build-storyline <publishDir> --out <pack.zip> [--asr-dir <dir>] [--embedder hash|onnx] [--embedding-model <dir>] [--id <pack-id>] [--version <semver>] [--name <name>] [--published-at <iso>]');
   console.error('usage: packtool verify <packPath>');
+  console.error('usage: packtool links --pack <docPackPath> --training <trainingPackPath> [--threshold <cosine>] [--top <k>]');
   process.exit(2);
 }
 
@@ -200,11 +202,84 @@ async function runVerify(argv: string[]): Promise<number> {
   }
 }
 
+interface LinksArgs {
+  pack: string;
+  training: string;
+  threshold?: number;
+  top?: number;
+}
+
+function parseLinksArgs(argv: string[]): LinksArgs {
+  // argv[0] is the verb.
+  let pack: string | undefined;
+  let training: string | undefined;
+  let threshold: number | undefined;
+  let top: number | undefined;
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === undefined) break;
+    if (arg === '--pack') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      pack = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--training') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      training = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--threshold') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      const value = Number(flagged.value);
+      // Parse-time range check so a bad --threshold fails as usage (exit 2)
+      // instead of a mid-run kernel error.
+      if (!Number.isFinite(value) || value < -1 || value > 1) usage();
+      threshold = value;
+      i = flagged.next;
+    } else if (arg === '--top') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      const value = Number(flagged.value);
+      if (!Number.isInteger(value) || value < 1) usage();
+      top = value;
+      i = flagged.next;
+    } else {
+      usage();
+    }
+  }
+  if (pack === undefined || training === undefined) usage();
+  return { pack, training, threshold, top };
+}
+
+/**
+ * D4/#80: compute doc->slide links for a doc pack against a training pack.
+ * Exported for tests (the CLI entry is dist/cli.js; tests import modules).
+ */
+export async function runLinks(argv: string[]): Promise<number> {
+  const args = parseLinksArgs(argv);
+  try {
+    const result = await computeAndWriteLinks(args.pack, args.training, {
+      ...(args.threshold !== undefined ? { threshold: args.threshold } : {}),
+      ...(args.top !== undefined ? { topK: args.top } : {}),
+    });
+    console.error(
+      `links: wrote ${result.links} row(s) for ${result.chunks} chunk(s) against ${result.slides} slide(s) (threshold ${result.threshold}, top ${result.topK}) -> ${result.outputPath}`,
+    );
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`packtool links failed: ${message}`);
+    return 1;
+  }
+}
+
 export function main(argv: string[]): number | Promise<number> {
   const verb = argv[0];
   if (verb === 'storyline') return runExtract(argv);
   if (verb === 'build-storyline') return runBuildStoryline(argv);
   if (verb === 'verify') return runVerify(argv);
+  if (verb === 'links') return runLinks(argv);
   usage();
 }
 
