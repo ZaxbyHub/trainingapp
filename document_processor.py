@@ -249,34 +249,38 @@ class DocumentProcessor:
             raw = f.read()
         try:
             payload = json.loads(raw)
-        except (json.JSONDecodeError, RecursionError):
-            # RecursionError: deeply-nested JSON raises past JSONDecodeError.
+            if not isinstance(payload, dict):
+                return json.dumps(payload, indent=2, ensure_ascii=False)
+            slide_id = payload.get("slide_id")
+            slide_title = payload.get("slide_title")
+            on_screen_text = payload.get("on_screen_text")
+            if not (slide_id and slide_title and isinstance(on_screen_text, str)):
+                return json.dumps(payload, indent=2, ensure_ascii=False)
+
+            def _sanitize(value: str) -> str:
+                return str(value).replace("|", "/").replace("\n", " ").strip()
+
+            parts = [
+                "[training-slide] section=%s | title=%s | slide_id=%s"
+                % (
+                    _sanitize(str(payload.get("section_title") or "")),
+                    _sanitize(str(slide_title)),
+                    _sanitize(str(slide_id)),
+                )
+            ]
+            if on_screen_text.strip():
+                parts.append(on_screen_text.strip())
+            transcript = payload.get("transcript_text")
+            if isinstance(transcript, str) and transcript.strip():
+                parts.append(transcript.strip())
+            return "\n\n".join(parts)
+        except Exception:
+            # Untrusted-content guard: ANY parse/serialization failure —
+            # JSONDecodeError, RecursionError (deep nesting; json.loads on
+            # older interpreters, json.dumps(indent) on newer ones with a
+            # list root), MemoryError — degrades to the raw text fallback.
+            # Broad by design; the fallback is the pre-#82 behavior.
             return raw
-        if not isinstance(payload, dict):
-            return json.dumps(payload, indent=2, ensure_ascii=False)
-        slide_id = payload.get("slide_id")
-        slide_title = payload.get("slide_title")
-        on_screen_text = payload.get("on_screen_text")
-        if not (slide_id and slide_title and isinstance(on_screen_text, str)):
-            return json.dumps(payload, indent=2, ensure_ascii=False)
-
-        def _sanitize(value: str) -> str:
-            return str(value).replace("|", "/").replace("\n", " ").strip()
-
-        parts = [
-            "[training-slide] section=%s | title=%s | slide_id=%s"
-            % (
-                _sanitize(str(payload.get("section_title") or "")),
-                _sanitize(str(slide_title)),
-                _sanitize(str(slide_id)),
-            )
-        ]
-        if on_screen_text.strip():
-            parts.append(on_screen_text.strip())
-        transcript = payload.get("transcript_text")
-        if isinstance(transcript, str) and transcript.strip():
-            parts.append(transcript.strip())
-        return "\n\n".join(parts)
 
     def clean_text(self, text: str) -> str:
         """Clean and normalize text while preserving paragraph and list structure."""

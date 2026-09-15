@@ -300,13 +300,15 @@ export async function runAskStream(
       streamCallback: (token) => emit({ token }),
     });
     if (result.cancelled || clientGone) {
+      // Frozen cancellation semantics (b3-server spec): the cancelled terminal
+      // carries exactly done/cancelled/sources/context_length/inference_time —
+      // learn is emitted on SUCCESS responses only.
       emit({
         done: true,
         cancelled: true,
         sources: result.sources,
         context_length: result.context_length,
         inference_time: result.inference_time,
-        learn: result.learn ?? [],
       });
     } else {
       emit({
