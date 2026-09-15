@@ -237,6 +237,7 @@ def run_eval(
                 "id": row["id"],
                 "category": row["category"],
                 "expected_doc_id": row["expected_doc_id"],
+                "expected_training_slide_id": row.get("expected_training_slide_id"),
                 "latency_ms": round(latency_ms, 1),
                 "error": error,
                 "sources": [],
@@ -244,6 +245,7 @@ def run_eval(
                 "abstained": False,
                 "fallback_phrase": False,
                 "rank": None,
+                "learn_rank": None,
             }
             if body is not None:
                 answer = str(body.get("answer", ""))
@@ -261,6 +263,17 @@ def run_eval(
                     if row["expected_doc_id"] is not None:
                         entry["rank"] = rank_of_expected(
                             sources, row["expected_doc_id"]
+                        )
+                    learn = body.get("learn")
+                    learn_ids = [
+                        str(item.get("slide_id"))
+                        for item in (learn if isinstance(learn, list) else [])
+                        if isinstance(item, dict) and item.get("slide_id")
+                    ]
+                    entry["learn"] = learn_ids
+                    if entry["expected_training_slide_id"] is not None:
+                        entry["learn_rank"] = rank_of_expected(
+                            learn_ids, str(entry["expected_training_slide_id"])
                         )
             results.append(entry)
 
@@ -287,6 +300,18 @@ def run_eval(
     abstain_accuracy = (abstain_hits / len(ok_ooc)) if ok_ooc else 0.0
     latencies = [r["latency_ms"] for r in successful]
     fallback_count = sum(1 for r in successful if r["fallback_phrase"])
+
+    # Learn hit@3 (issue #82 / D6): fraction of questions carrying an
+    # expected_training_slide_id where that slide id appears within the first
+    # 3 entries of the response's learn[] array.
+    learn_rows = [
+        r for r in successful if r.get("expected_training_slide_id") is not None
+    ]
+    learn_hit_at_3 = (
+        sum(1 for r in learn_rows if 0 < (r["learn_rank"] or 0) <= 3) / len(learn_rows)
+        if learn_rows
+        else 0.0
+    )
 
     per_category = {}
     for category, rows in Counter(r["category"] for r in ok_in).items():
@@ -323,6 +348,8 @@ def run_eval(
             "abstain_accuracy": abstain_accuracy,
             "abstain_total": len(ok_ooc),
             "abstain_hits": abstain_hits,
+            "learn_hit_at_3": learn_hit_at_3,
+            "learn_slide_question_count": len(learn_rows),
             "latency_ms": {
                 "p50": round(percentile(latencies, 50), 1),
                 "p95": round(percentile(latencies, 95), 1),
@@ -358,6 +385,9 @@ def render_markdown(report: dict) -> str:
         f"| MRR | {metrics['mrr']:.3f} |",
         f"| abstain accuracy | {metrics['abstain_accuracy']:.3f} "
         f"({metrics['abstain_hits']}/{metrics['abstain_total']}) |",
+        f"| Learn hit@3 | {metrics.get('learn_hit_at_3', 0.0):.3f} "
+        f"(over {metrics.get('learn_slide_question_count', 0)} slide-target questions; "
+        f"initial target >= 0.70) |",
         f"| latency p50 (ms) | {metrics['latency_ms']['p50']:.1f} |",
         f"| latency p95 (ms) | {metrics['latency_ms']['p95']:.1f} |",
         f"| fallback-phrase answers | {report['fallback_count']} |",

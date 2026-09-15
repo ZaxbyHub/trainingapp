@@ -113,7 +113,21 @@ emits `onSlideChange({slideId, slideTitle})` on slide id change only (1000 ms
 poll cadence). `jumpToSlide(slideId): Promise<boolean>` is available via ref
 and via the `window.__trainingappTrainingPlayer` automation seam. The
 Training page (`?pack=<packId>`) mounts it from the app navigation; the Learn
-panel that will drive it lands with D6 (#82).
+panel drives it since D6 (#82).
+
+### Learn-panel deep links (D6, #82)
+
+The chat's Learn panel ("Open in training" buttons on each `learn[]` row)
+navigates to the training page through a lifted `trainingTarget` in
+`App.tsx`. `TrainingPage` accepts `initialPackId` + `pendingSlideId`; the
+pending slide is passed to `TrainingPlayer` as `initialSlideId` only once a
+pack resolves, so the mount-time auto-jump fires exactly once (readiness-
+deferred per the pack bridge). The Node backend's `learn[]` rows carry
+`pack_id`, so Electron-mode deep links open the right pack directly; on
+surfaces without a pack id the page shows its no-pack prompt (open a pack
+via `?pack=<packId>`) and the pending slide jumps once a pack is opened —
+there is deliberately no in-app pack picker yet (pack support on non-Node
+surfaces is #76).
 
 ## Native menu dependency: confirmed disabled
 

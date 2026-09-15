@@ -10,6 +10,8 @@ interface ChatMessageListProps {
   onSuggestedPrompt?: (prompt: string) => void;
   /** U4: navigate to the Documents page (for the zero-doc empty state). */
   onNavigateToDocuments?: () => void;
+  /** D6 (issue #82): "Open in training" deep link from the Learn panel. */
+  onOpenTraining?: (target: { packId?: string; slideId: string }) => void;
 }
 
 const SCROLL_THRESHOLD = 100;
@@ -32,6 +34,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   onRegenerate,
   onSuggestedPrompt,
   onNavigateToDocuments,
+  onOpenTraining,
 }) => {
   // U4: document-count-aware empty state. With zero docs, suggesting prompts
   // that route through the cold-load then abstain is a guaranteed dead end.
@@ -317,6 +320,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
               key={message.id}
               message={message}
               now={now}
+              onOpenTraining={onOpenTraining}
               onRegenerate={
                 onRegenerate &&
                 message.role === 'assistant' &&

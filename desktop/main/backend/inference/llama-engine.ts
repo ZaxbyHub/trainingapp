@@ -36,6 +36,7 @@ import type {
   EngineSurface,
   IngestFileInput,
   IngestResult,
+  LearnAssembler,
   ModelStatus,
   RetrievalSurface,
 } from '../types.js';
@@ -448,6 +449,12 @@ export class LlamaEngine implements EngineSurface {
           inference_time: (Date.now() - started) / 1000,
         };
         if (result.cancelled) out.cancelled = true;
+        // D6 (issue #82): learn rows from the attached assembler when real
+        // retrieval produced cited chunks (null assembler result → omitted).
+        if (!result.cancelled && context !== null && context.cited.length > 0 && this.learnAssembler !== null) {
+          const learn = this.learnAssembler(context.cited);
+          if (learn !== null) out.learn = learn;
+        }
         return out;
       } finally {
         entry.inFlight -= 1;
@@ -594,6 +601,17 @@ export class LlamaEngine implements EngineSurface {
   attachRetrievalSurface(surface: RetrievalSurface | null): void {
     this.stub.attachRetrievalSurface(surface);
   }
+
+  /**
+   * D6 (issue #82): the learn assembler is held by the llama engine itself
+   * and consulted in query() when real retrieval produced cited chunks —
+   * the same retrieveContext() seam the stub's own query() path uses.
+   */
+  attachLearnAssembler(assembler: LearnAssembler | null): void {
+    this.learnAssembler = assembler;
+  }
+
+  private learnAssembler: LearnAssembler | null = null;
 
   private documents: DocumentSurface | null = null;
 

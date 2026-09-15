@@ -1,0 +1,19 @@
+{
+  "course": "OpMed CDP Mini Fixture",
+  "scene_number": 1,
+  "section_title": "Course Introduction",
+  "slide_number_in_scene": 2,
+  "slide_id": "5b8obQzpBWu",
+  "slide_title": "Note 10.2",
+  "on_screen_text": "Note, Make sure to review the Special Instructions within the information pane at the top of the window for accurate and complete medication information. Additionally, verify that the provider’s intended dose matches the medication ordered.",
+  "text_chars": 240,
+  "transcript_source": "none",
+  "provenance": "Course Introduction > Slide 2",
+  "source_files": [
+    "meta.xml",
+    "html5/data/js/data.js",
+    "html5/data/js/frame.js",
+    "html5/data/js/5b8obQzpBWu.js"
+  ],
+  "html5url": "html5/data/js/5b8obQzpBWu.js"
+}

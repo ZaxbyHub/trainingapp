@@ -300,6 +300,9 @@ export async function runAskStream(
       streamCallback: (token) => emit({ token }),
     });
     if (result.cancelled || clientGone) {
+      // Frozen cancellation semantics (b3-server spec): the cancelled terminal
+      // carries exactly done/cancelled/sources/context_length/inference_time —
+      // learn is emitted on SUCCESS responses only.
       emit({
         done: true,
         cancelled: true,
@@ -313,6 +316,7 @@ export async function runAskStream(
         sources: result.sources,
         context_length: result.context_length,
         inference_time: result.inference_time,
+        learn: result.learn ?? [],
       });
     }
   } catch {
@@ -491,6 +495,11 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                   sources: result.sources,
                   context_length: result.context_length,
                   inference_time: result.inference_time,
+                  // D6 (issue #82): always emitted on success (possibly []),
+                  // per the contract wording. Explicit-payload construction —
+                  // only the serializable learn rows cross the wire, never
+                  // result.cited.
+                  learn: result.learn ?? [],
                 },
                 cors,
               );

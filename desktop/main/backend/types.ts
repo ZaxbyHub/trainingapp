@@ -132,6 +132,12 @@ export interface BackendHostConfig {
   /** Node mode only (B6, issue #64): directory for store backups created by
    *  the recovery/backup surfaces. Defaults to <storeDir>/backups. */
   storeBackupsDir?: string;
+  /** Node mode only (D6, issue #82): installed-packs root so the learn
+   *  assembler can enrich results with slide metadata from
+   *  <packsRoot>/<packId>/docs/<path>. Optional: without it, learn results
+   *  fall back to store-derived titles and empty sections. The Electron
+   *  bootstrap passes resolvePacksRoot(). */
+  packsRoot?: string;
   /** Node mode only (B6): ingest progress sink. The Electron bootstrap
    *  forwards these to the renderer as `ingest:progress` IPC events. */
   onIngestProgress?: (event: IngestProgressEvent) => void;
@@ -193,12 +199,40 @@ export interface EngineQueryOptions {
   cancellationEvent?: CancellationFlag;
 }
 
+/** One Learn-panel entry (issue #82 / D6) — mirrors api_server.py LearnResult. */
+export interface LearnResultRow {
+  slide_id: string;
+  title: string;
+  section: string;
+  score: number;
+  reason: 'direct' | 'linked';
+  snippet?: string;
+  pack_id?: string;
+}
+
+/** A retrieval-cited chunk handed to the learn assembler (issue #82). */
+export interface CitedChunk {
+  chunkId: string;
+  score: number;
+}
+
+/**
+ * Learn assembler (issue #82): derives learn[] rows from the cited chunk
+ * ids. Synchronous (better-sqlite3); returns null when learn cannot be
+ * computed (store closed) so callers omit the field.
+ */
+export type LearnAssembler = (cited: CitedChunk[]) => LearnResultRow[] | null;
+
 export interface EngineQueryResult {
   answer: string;
   sources: string[];
   context_length: number;
   inference_time: number;
   cancelled?: boolean;
+  /** D6 (issue #82): learn-panel rows; serialized when the engine produced them. */
+  learn?: LearnResultRow[];
+  /** D6 (issue #82): internal only — NEVER serialized (server builds explicit payloads). */
+  cited?: CitedChunk[];
 }
 
 /**
@@ -281,4 +315,10 @@ export interface EngineSurface {
    * their stub otherwise. Attaching null detaches (host stop / B3 mode).
    */
   attachRetrievalSurface?(surface: RetrievalSurface | null): void;
+  /**
+   * D6 (issue #82): late-bound learn assembler. The host attaches it after
+   * the store opens; engines that support it populate EngineQueryResult.learn
+   * from the retrieval-cited chunk ids. Attaching null detaches (host stop).
+   */
+  attachLearnAssembler?(assembler: LearnAssembler | null): void;
 }

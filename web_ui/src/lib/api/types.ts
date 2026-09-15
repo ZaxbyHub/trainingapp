@@ -74,12 +74,24 @@ export interface AskRequest {
   n_results?: number;
 }
 
+/** One Learn-panel entry (issue #82 / D6) — mirrors api_server.py LearnResult. */
+export interface LearnResult {
+  slide_id: string;
+  title: string;
+  section: string;
+  score: number;
+  reason: 'direct' | 'linked';
+  snippet?: string;
+  pack_id?: string;
+}
+
 export interface AskResponse {
   question: string;
   answer: string;
   sources: string[];
   context_length: number;
   inference_time: number;
+  learn?: LearnResult[];
 }
 
 export interface SearchRequest {
@@ -173,4 +185,6 @@ export interface StreamDoneEvent {
   sources: string[];
   context_length: number;
   inference_time: number;
+  /** D6 (issue #82): Learn-panel rows; clients must tolerate absence on older servers. */
+  learn?: LearnResult[];
 }

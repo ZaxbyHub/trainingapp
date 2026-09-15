@@ -7,6 +7,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '../types/chat';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { SourceCitation } from './SourceCitation';
+import { LearnPanel } from './LearnPanel';
 import { formatRelativeTime } from '../utils/relativeTime';
 
 interface ChatMessageBubbleProps {
@@ -17,9 +18,11 @@ interface ChatMessageBubbleProps {
    *  recompute every 60s instead of freezing at first paint. The prop change
    *  defeats React.memo so formatRelativeTime re-runs. */
   now?: number;
+  /** D6 (issue #82): "Open in training" deep link (Learn panel buttons). */
+  onOpenTraining?: (target: { packId?: string; slideId: string }) => void;
 }
 
-export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({ message, onRegenerate, now }) => {
+export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({ message, onRegenerate, now, onOpenTraining }) => {
   // S8: recompute the label whenever `now` changes. Falling back to Date.now()
   // keeps one-off renders (tests, direct usage) correct.
   const relativeLabel = formatRelativeTime(message.timestamp, now);
@@ -311,6 +314,11 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
               <SourceCitation citations={message.citations} />
             ) : (
               message.sources && message.sources.length > 0 && <SourceCitation sources={message.sources} />
+            )}
+            {/* D6 (issue #82): "where to learn this" deep links, rendered after
+                the citations they are derived from. */}
+            {message.learn && message.learn.length > 0 && (
+              <LearnPanel learn={message.learn} onOpenTraining={onOpenTraining} />
             )}
           </>
         )}

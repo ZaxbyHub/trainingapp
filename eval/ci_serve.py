@@ -226,13 +226,23 @@ def build_patched_lifespan():
 
 
 def ingest_corpus(engine) -> int:
-    """Ingest every eval/corpus/*.md via the real ingestion path."""
+    """Ingest every eval/corpus/*.md and eval/corpus/slides/*.json via the
+    real ingestion path (slide fixtures feed the Learn hit@3 metric, #82)."""
     total = 0
     for doc in sorted(CORPUS_DIR.glob("*.md")):
         stats = engine.ingest_file(str(doc), source_name=doc.name)
         if not stats.get("success"):
             raise RuntimeError(f"eval ci_serve: failed to ingest {doc.name}: {stats}")
         total += stats.get("chunks_added", 0)
+    slides_dir = CORPUS_DIR / "slides"
+    if slides_dir.is_dir():
+        for doc in sorted(slides_dir.glob("*.json")):
+            stats = engine.ingest_file(str(doc), source_name=doc.name)
+            if not stats.get("success"):
+                raise RuntimeError(
+                    f"eval ci_serve: failed to ingest {doc.name}: {stats}"
+                )
+            total += stats.get("chunks_added", 0)
     return total
 
 

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, validator
 
 from auth import get_auth_status, require_auth
 from config import get_settings, settings
+from learn_panel import build_learn_results
 from llm_interface import QueryCancelled
 from rag_engine import RAGConfig, RAGEngine
 
@@ -238,6 +239,23 @@ class DocumentsResponse(BaseModel):
     total: int
 
 
+class LearnResult(BaseModel):
+    """One Learn-panel entry (issue #82 / D6).
+
+    Union of direct training-slide hits and #80-linked slides for the cited
+    chunks, ranked and deduped by slide, capped at learn_panel's
+    MAX_LEARN_RESULTS. Suppressed to [] when grounding is "general".
+    """
+
+    slide_id: str
+    title: str
+    section: str
+    score: float
+    reason: str
+    snippet: Optional[str] = None
+    pack_id: Optional[str] = None
+
+
 class QuestionResponse(BaseModel):
     """Response model for question answers."""
 
@@ -246,6 +264,23 @@ class QuestionResponse(BaseModel):
     sources: List[str]
     context_length: int
     inference_time: float
+    learn: Optional[List[LearnResult]] = None
+
+
+def _learn_for(result) -> List[dict]:
+    """Learn-panel entries for one query result (issue #82).
+
+    Returns plain dicts (SSE payloads json.dumps them directly; pydantic
+    coerces them into LearnResult for QuestionResponse). Engines that
+    already ran the kernel (rag_engine.query) carry result.learn; engine
+    doubles that bypass it (tests, sidecar-style adapters) still get learn
+    assembled here from retrieved_chunks so the /ask contract never depends
+    on which layer computed it.
+    """
+    learn = getattr(result, "learn", None)
+    if learn is None:
+        learn = build_learn_results(getattr(result, "retrieved_chunks", None) or [])
+    return [dict(entry) for entry in learn]
 
 
 class SearchRequest(BaseModel):
@@ -615,6 +650,7 @@ async def ask_question(request: QuestionRequest, auth: dict = Security(require_a
             sources=result.sources,
             context_length=result.context_length,
             inference_time=result.inference_time,
+            learn=_learn_for(result),
         )
     except Exception as e:
         logger.error("Error in ask_question: %s", e)
@@ -852,6 +888,7 @@ if HAS_SSE:
                 sources = result.sources
                 context_length = result.context_length
                 inference_time = result.inference_time
+                learn = _learn_for(result)
 
                 if cancellation_event.is_set() or result.answer == CANCELLED_ANSWER:
                     # rag_engine swallows QueryCancelled and returns a sentinel
@@ -871,6 +908,7 @@ if HAS_SSE:
                                     "sources": sources,
                                     "context_length": context_length,
                                     "inference_time": inference_time,
+                                    "learn": learn,
                                 }
                             ),
                         }
@@ -883,6 +921,7 @@ if HAS_SSE:
                                 "sources": sources,
                                 "context_length": context_length,
                                 "inference_time": inference_time,
+                                "learn": learn,
                             }
                         ),
                     }

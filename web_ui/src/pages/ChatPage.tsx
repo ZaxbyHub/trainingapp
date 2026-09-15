@@ -4,7 +4,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react';
-import type { ChatMessage } from '../types/chat';
+import type { ChatMessage, TrainingTarget } from '../types/chat';
 import { ChatMessageList } from '../components/ChatMessageList';
 import { ChatInput } from '../components/ChatInput';
 import { StreamingIndicator } from '../components/StreamingIndicator';
@@ -59,6 +59,9 @@ export interface ChatPageProps {
   onOpenSettings: () => void;
   /** U4: navigate to the Documents page (zero-doc empty-state CTA). */
   onNavigateToDocuments?: () => void;
+  /** D6 (issue #82): navigate into the embedded training player, targeting a
+   *  slide ("Open in training" deep link from the Learn panel). */
+  onOpenTraining?: (target: TrainingTarget) => void;
 }
 
 export function ChatPage(props: ChatPageProps) {
@@ -77,7 +80,7 @@ const exportButtonStyle: CSSProperties = {
   transition: 'all 0.15s ease',
 };
 
-function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments }: ChatPageProps) {
+function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments, onOpenTraining }: ChatPageProps) {
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
   // B9 (issue #67): desktop session drives the SSE endpoint/auth and the
   // first-run model gate. Both are inert outside Electron (session null,
@@ -384,6 +387,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                 page: c.page,
                 text: c.text,
               })),
+              // D6 (issue #82): Learn-panel rows from either surface.
+              learn: data.learn,
               abstain: data.abstain,
               abstainReason: data.abstainReason,
               retrievalDegraded: data.retrievalDegraded,
@@ -523,6 +528,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                 streamManager.complete({
                   sources,
                   chunks: event.data.chunks,
+                  learn: event.data.learn,
                   abstain: event.data.abstain,
                   abstainReason: event.data.abstainReason,
                   retrievalDegraded: event.data.retrievalDegraded,
@@ -865,6 +871,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         onRegenerate={!isLoading && lastTurnRef.current ? handleRegenerate : undefined}
         onSuggestedPrompt={(prompt) => handleSend(prompt)}
         onNavigateToDocuments={onNavigateToDocuments}
+        onOpenTraining={onOpenTraining}
       />
 
       {/* Streaming Indicator — U1: during a cold model load (multi-minute on
