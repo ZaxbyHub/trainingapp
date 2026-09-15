@@ -16,13 +16,13 @@ afterEach(cleanup);
 
 describe('pinnedSlideLabel', () => {
   test('section present → "Section > Title"', () => {
-    expect(pinnedSlideLabel(LIVE_PIN)).toBe('Intro Module > Welcome');
+    expect(pinnedSlideLabel({ slideTitle: 'Welcome', section: 'Intro Module' })).toBe('Intro Module > Welcome');
   });
   test('section absent → title only', () => {
-    expect(pinnedSlideLabel({ slideId: 'x', slideTitle: 'Roles Menu' })).toBe('Roles Menu');
+    expect(pinnedSlideLabel({ slideTitle: 'Roles Menu' })).toBe('Roles Menu');
   });
   test('blank section → title only (never a bare " > ")', () => {
-    expect(pinnedSlideLabel({ slideId: 'x', slideTitle: 'Roles Menu', section: '   ' })).toBe('Roles Menu');
+    expect(pinnedSlideLabel({ slideTitle: 'Roles Menu', section: '   ' })).toBe('Roles Menu');
   });
 });
 
