@@ -9,15 +9,22 @@
  */
 import { useMemo } from 'react';
 import { TrainingPlayer } from '../components/TrainingPlayer';
+import type { TrainingPlayerSlideState } from '../components/training-player-bridge';
 
 export interface TrainingPageProps {
   /** D6 (issue #82): pack from the lifted chat navigation target. */
   initialPackId?: string;
   /** D6 (issue #82): slide to jump to once a pack is open. */
   pendingSlideId?: string;
+  /**
+   * D7 (issue #83): forwarded VERBATIM to TrainingPlayer.onSlideChange — the
+   * frozen `{slideId, slideTitle}` payload reaches the caller (App, which owns
+   * the pinned-slide state) unchanged. Do not decorate the event here.
+   */
+  onSlideChange?: (event: TrainingPlayerSlideState) => void;
 }
 
-export function TrainingPage({ initialPackId, pendingSlideId }: TrainingPageProps) {
+export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: TrainingPageProps) {
   const packId = useMemo(() => {
     if (initialPackId !== undefined && initialPackId !== '') return initialPackId;
     if (typeof window === 'undefined') return '';
@@ -50,7 +57,7 @@ export function TrainingPage({ initialPackId, pendingSlideId }: TrainingPageProp
           No training pack selected. Open a pack with ?pack=&lt;packId&gt;.
         </div>
       ) : (
-        <TrainingPlayer packId={packId} initialSlideId={pendingSlideId} />
+        <TrainingPlayer packId={packId} initialSlideId={pendingSlideId} onSlideChange={onSlideChange} />
       )}
     </div>
   );

@@ -15,6 +15,8 @@ import { ChatPage } from './pages/ChatPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TrainingPage } from './pages/TrainingPage';
+import type { PinnedSlide } from './components/PinnedSlideContext';
+import { resolveSlideDoc, type ResolvedSlideDoc } from './lib/training/slide-doc-resolver';
 import { useServiceInitialization } from './hooks/useServiceInitialization';
 import { useConversations } from './hooks/useConversations';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -168,6 +170,12 @@ function AppContent() {
   // "Open in training" deep link survives the page switch and is consumed by
   // TrainingPage → TrainingPlayer's initialSlideId auto-jump.
   const [trainingTarget, setTrainingTarget] = useState<{ packId?: string; slideId: string } | null>(null);
+  // D7 (issue #83): the slide currently pinned from the training player.
+  // Captured from slidechange (title immediately; section/text resolved from
+  // the ingested slide docs), cleared by dismissal, superseded by every new
+  // slidechange, marked stale when the player moves to a different pack, and
+  // naturally cleared on reload (in-memory only).
+  const [pinnedSlide, setPinnedSlide] = useState<PinnedSlide | null>(null);
   const [initErrorDismissed, setInitErrorDismissed] = useState(false);
   const { setModelReady, setModelLoadingProgress, browserEngine } = useInferenceMode();
 
@@ -205,6 +213,36 @@ function AppContent() {
     setCurrentPage('training');
   };
 
+  // D7 (issue #83): the pack the training page will play right now — the
+  // lifted target wins, else the ?pack= query parameter (TrainingPage's own
+  // fallback, mirrored here for the staleness producer).
+  const effectiveTrainingPack = (): string => {
+    if (trainingTarget?.packId) return trainingTarget.packId;
+    if (typeof window === 'undefined') return '';
+    return new URLSearchParams(window.location.search).get('pack') ?? '';
+  };
+
+  // D7 (issue #83): capture the player's slidechange as the pinned slide.
+  // Title/section degrade gracefully: on-screen text and section resolve from
+  // the ingested slide docs when available (never guessed); any resolver
+  // failure degrades to a title-only pin.
+  const handlePlayerSlideChange = (event: { slideId: string; slideTitle: string }) => {
+    let resolved: ResolvedSlideDoc | null = null;
+    try {
+      resolved = resolveSlideDoc(event.slideId);
+    } catch {
+      resolved = null;
+    }
+    setPinnedSlide({
+      slideId: event.slideId,
+      slideTitle: event.slideTitle,
+      packId: effectiveTrainingPack(),
+      stale: false,
+      ...(resolved?.section ? { section: resolved.section } : {}),
+      ...(resolved?.text ? { text: resolved.text } : {}),
+    });
+  };
+
   // Global Ctrl+, (Open Settings) shortcut, registered here so it works from
   // every page (Documents, Settings, Chat), not just while ChatPage is mounted.
   // ChatPage additionally registers its own useKeyboardShortcuts for the
@@ -215,6 +253,34 @@ function AppContent() {
   // call `openSettings`, but `setCurrentPage('settings')` is idempotent when
   // called twice with the same value, so the double-firing is harmless.
   useKeyboardShortcuts({ onOpenSettings: openSettings });
+
+  // D7 (issue #83) staleness producer (AC5): entering the training page for a
+  // pack the pinned slide does NOT belong to means the player can no longer
+  // vouch for the pin — mark it stale (visibly marked in the chat banner,
+  // never attached to questions). The new pack's first slidechange supersedes
+  // the pin with a fresh one. Guards: unknown packIds never stale-flag, and an
+  // already-stale pin stays stale.
+  //
+  // HOOK-ORDER NOTE: this effect MUST stay above the `if (!isInitialized)`
+  // early return below. Registered after that conditional return, the hook
+  // count would grow when the boot gate lifts (isInitialized false → true),
+  // crashing the renderer with React error #310 ("Rendered more hooks than
+  // during the previous render") exactly at the end of first-run init —
+  // caught by the Playwright-under-Electron smoke, invisible to unit suites
+  // that mock the gate as always-initialized.
+  useEffect(() => {
+    if (currentPage !== 'training') return;
+    setPinnedSlide((prev) => {
+      if (prev === null || prev.stale === true) return prev;
+      const packId = effectiveTrainingPack();
+      return packId !== '' && prev.packId !== undefined && prev.packId !== '' && prev.packId !== packId
+        ? { ...prev, stale: true }
+        : prev;
+    });
+    // effectiveTrainingPack reads trainingTarget + window.location.search;
+    // both are re-read whenever the page switches to 'training'.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentPage, trainingTarget]);
 
   if (!isInitialized) {
     return (
@@ -231,24 +297,31 @@ function AppContent() {
     setCurrentPage(page);
   };
 
+  // D7 (issue #83): the ChatPage element is built ONCE — both the 'chat' case
+  // and the default case render the SAME element, so the pinned-slide props
+  // can never be wired at one render site and forgotten at the other.
+  const chatPage = (
+    <ErrorBoundary>
+      <ChatPage
+        messages={currentMessages}
+        onMessagesChange={setCurrentMessages}
+        onSaveConversation={saveMessages}
+        currentConversationId={currentConversationId}
+        setCurrentConversationId={setCurrentConversationId}
+        onNewChat={newChat}
+        onOpenSettings={openSettings}
+        onNavigateToDocuments={goToDocuments}
+        onOpenTraining={openTraining}
+        pinnedSlide={pinnedSlide}
+        onDismissPinnedSlide={() => setPinnedSlide(null)}
+      />
+    </ErrorBoundary>
+  );
+
   const renderPage = () => {
     switch (currentPage) {
       case 'chat':
-        return (
-          <ErrorBoundary>
-            <ChatPage
-              messages={currentMessages}
-              onMessagesChange={setCurrentMessages}
-              onSaveConversation={saveMessages}
-              currentConversationId={currentConversationId}
-              setCurrentConversationId={setCurrentConversationId}
-              onNewChat={newChat}
-              onOpenSettings={openSettings}
-              onNavigateToDocuments={goToDocuments}
-              onOpenTraining={openTraining}
-            />
-          </ErrorBoundary>
-        );
+        return chatPage;
       case 'documents':
         return (
           <ErrorBoundary>
@@ -267,25 +340,12 @@ function AppContent() {
             <TrainingPage
               initialPackId={trainingTarget?.packId}
               pendingSlideId={trainingTarget?.slideId}
+              onSlideChange={handlePlayerSlideChange}
             />
           </ErrorBoundary>
         );
       default:
-        return (
-          <ErrorBoundary>
-            <ChatPage
-              messages={currentMessages}
-              onMessagesChange={setCurrentMessages}
-              onSaveConversation={saveMessages}
-              currentConversationId={currentConversationId}
-              setCurrentConversationId={setCurrentConversationId}
-              onNewChat={newChat}
-              onOpenSettings={openSettings}
-              onNavigateToDocuments={goToDocuments}
-              onOpenTraining={openTraining}
-            />
-          </ErrorBoundary>
-      );
+        return chatPage;
     }
   };
 

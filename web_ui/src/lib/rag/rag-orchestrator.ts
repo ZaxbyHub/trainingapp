@@ -90,6 +90,14 @@ export interface RAGQueryOptions {
    * starves context. Each turn is plain text.
    */
   history?: RAGHistoryTurn[];
+  /**
+   * D7 (issue #83): text of the training slide the user is currently viewing
+   * in the embedded player (title/section + on-screen text, resolved by the
+   * caller). Threaded into the LLM prompt's user turn and charged against
+   * reservedTokens exactly like `history` is — see {@link computeReservedTokens}.
+   * The caller decides staleness; a stale pin must arrive here as `undefined`.
+   */
+  pinnedContext?: string;
   /** AbortSignal for cancelling the in-progress query */
   signal?: AbortSignal;
 }
@@ -472,12 +480,16 @@ export class RAGOrchestrator {
     // could silently overflow DEFAULT_N_CTX. The caller caps history length; the
     // safety margin covers chat-template control tokens.
     const historyText = history.map((t) => t.content).join('\n');
-    const reservedTokens =
-      estimateTokens(systemPrompt, CHARS_PER_TOKEN) +
-      estimateTokens(question, CHARS_PER_TOKEN) +
-      estimateTokens(historyText, CHARS_PER_TOKEN) +
-      (maxTokens ?? 512) +
-      TOKEN_SAFETY_MARGIN;
+    // D7 (issue #83): pinnedContext is charged through the same extracted sum
+    // as every other prompt channel — dropping the term there would let pin +
+    // history + context silently overflow DEFAULT_N_CTX (C3 pins both ways).
+    const reservedTokens = computeReservedTokens({
+      systemPrompt,
+      question,
+      historyText,
+      pinnedContext: options.pinnedContext,
+      maxTokens,
+    });
     const contextBudgetChars = Math.max(0, (DEFAULT_N_CTX - reservedTokens) * CHARS_PER_TOKEN);
     let usedChars = 0;
     let droppedForBudget = 0;
@@ -535,7 +547,9 @@ export class RAGOrchestrator {
     const contextText = this.buildContext(contextChunks);
     // Issue #40 RC1: thread history into the message array (between system and
     // the current user turn) so the model has conversational continuity.
-    const contextMessages = this.buildMessages(systemPrompt, question, contextText, options.images, history);
+    // D7 (issue #83): thread the pinned-slide text into the USER turn (C9 pins
+    // the placement: never the system prompt, never a history turn).
+    const contextMessages = this.buildMessages(systemPrompt, question, contextText, options.images, history, options.pinnedContext);
 
     yield {
       type: 'generating',
@@ -647,9 +661,17 @@ export class RAGOrchestrator {
     question: string,
     context: string,
     images?: RAGImageInput[],
-    history?: RAGHistoryTurn[]
+    history?: RAGHistoryTurn[],
+    pinnedContext?: string
   ): LLMMessage[] {
-    const userText = `Context:\n${context}\n\nQuestion: ${question}`;
+    // D7 (issue #83): the pinned-slide block lives INSIDE the user turn —
+    // after the numbered context (so [i] citation numbering is untouched) and
+    // before the question. Empty/whitespace pins render nothing.
+    const pinBlock =
+      pinnedContext && pinnedContext.trim().length > 0
+        ? `\n\nCurrently viewing this slide:\n${pinnedContext}`
+        : '';
+    const userText = `Context:\n${context}${pinBlock}\n\nQuestion: ${question}`;
 
     // Text-only: keep the simple string content. With attached images, build a
     // multimodal content array (text first, then image parts) for the VLM.
@@ -693,6 +715,39 @@ export class RAGOrchestrator {
  */
 function estimateTokens(text: string, charsPerToken: number): number {
   return Math.ceil((text?.length ?? 0) / charsPerToken);
+}
+
+/**
+ * Inputs to the prompt's reserved-token sum. Every text channel that
+ * `buildMessages` renders into the prompt MUST appear here — that invariant is
+ * the Phase 4.2 defect-class guardrail for issue #83 ("a prompt-context
+ * channel that is not charged to the token budget").
+ */
+export interface ReservedTokenInputs {
+  systemPrompt: string;
+  question: string;
+  /** Concatenated prior-turn text (charged as one block, as before #83). */
+  historyText: string;
+  /** D7 (issue #83): pinned-slide text; charged exactly like history. */
+  pinnedContext?: string;
+  maxTokens?: number;
+}
+
+/**
+ * Token budget reserved BEFORE context chunks are fitted (F11), extracted in
+ * #83 so the every-channel-charged invariant is directly unit-testable
+ * (computeReservedTokens must include the pinnedContext term; C3(ii)/(iii)
+ * pin the behavioral consequence in both directions).
+ */
+export function computeReservedTokens(inputs: ReservedTokenInputs): number {
+  return (
+    estimateTokens(inputs.systemPrompt, CHARS_PER_TOKEN) +
+    estimateTokens(inputs.question, CHARS_PER_TOKEN) +
+    estimateTokens(inputs.historyText, CHARS_PER_TOKEN) +
+    estimateTokens(inputs.pinnedContext ?? '', CHARS_PER_TOKEN) +
+    (inputs.maxTokens ?? 512) +
+    TOKEN_SAFETY_MARGIN
+  );
 }
 
 /**
