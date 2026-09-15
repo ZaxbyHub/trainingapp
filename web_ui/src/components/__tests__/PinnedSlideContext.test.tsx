@@ -16,13 +16,17 @@ afterEach(cleanup);
 
 describe('pinnedSlideLabel', () => {
   test('section present → "Section > Title"', () => {
-    expect(pinnedSlideLabel({ slideTitle: 'Welcome', section: 'Intro Module' })).toBe('Intro Module > Welcome');
+    expect(pinnedSlideLabel({ slideId: '5rN4PvXJM5d', slideTitle: 'Welcome', section: 'Intro Module' })).toBe('Intro Module > Welcome');
   });
   test('section absent → title only', () => {
-    expect(pinnedSlideLabel({ slideTitle: 'Roles Menu' })).toBe('Roles Menu');
+    expect(pinnedSlideLabel({ slideId: '6RdggQhakWc', slideTitle: 'Roles Menu' })).toBe('Roles Menu');
   });
   test('blank section → title only (never a bare " > ")', () => {
-    expect(pinnedSlideLabel({ slideTitle: 'Roles Menu', section: '   ' })).toBe('Roles Menu');
+    expect(pinnedSlideLabel({ slideId: '6RdggQhakWc', slideTitle: 'Roles Menu', section: '   ' })).toBe('Roles Menu');
+  });
+  test('blank slideTitle → falls back to the slideId (never an empty label)', () => {
+    expect(pinnedSlideLabel({ slideId: '6RdggQhakWc', slideTitle: '   ' })).toBe('6RdggQhakWc');
+    expect(pinnedSlideLabel({ slideId: '6RdggQhakWc', slideTitle: '', section: 'Intro Module' })).toBe('Intro Module > 6RdggQhakWc');
   });
 });
 

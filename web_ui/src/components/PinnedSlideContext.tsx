@@ -90,10 +90,16 @@ const dismissButtonStyle: CSSProperties = {
   padding: '2px var(--spacing-xs)',
 };
 
-/** Section > Title — section only when a non-blank string; never a bare " > ". */
-export function pinnedSlideLabel(pinned: Pick<PinnedSlide, 'section' | 'slideTitle'>): string {
+/** Section > Title — section only when a non-blank string; never a bare " > ".
+ *  A blank slideTitle falls back to the slideId so the banner/injection can
+ *  never render an empty label (the player protocol always sends one, but the
+ *  payload is external input). */
+export function pinnedSlideLabel(
+  pinned: Pick<PinnedSlide, 'slideId' | 'section' | 'slideTitle'>
+): string {
   const section = pinned.section?.trim();
-  return section ? `${section} > ${pinned.slideTitle}` : pinned.slideTitle;
+  const title = pinned.slideTitle.trim() || pinned.slideId;
+  return section ? `${section} > ${title}` : title;
 }
 
 export const PinnedSlideContext: React.FC<PinnedSlideContextProps> = React.memo(
@@ -103,6 +109,7 @@ export const PinnedSlideContext: React.FC<PinnedSlideContextProps> = React.memo(
       <section
         data-testid="pinned-slide-context"
         data-stale={stale ? 'true' : undefined}
+        role="status"
         style={stale ? staleBannerStyle : bannerStyle}
         aria-label={`Currently viewing: ${pinnedSlideLabel(pinnedSlide)}${stale ? ' (stale)' : ''}`}
       >

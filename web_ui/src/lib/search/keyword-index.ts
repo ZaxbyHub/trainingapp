@@ -279,6 +279,10 @@ export class KeywordIndex {
    * `slide-<n>-<slideId>.json` source filename), which full-text search cannot
    * answer. Additive read-only accessor over `idMapping`; preserves insertion
    * order and stops at `limit` (default 10).
+   *
+   * The returned `score` is a PLACEHOLDER (always 1) present only so results
+   * satisfy the SearchResult shape — never consume it as a relevance signal;
+   * results are NOT ranked. Iteration is O(index size) per call.
    */
   findChunks(
     predicate: (meta: { docId: string; chunkIndex: number; text: string; source?: string; page?: number }) => boolean,
