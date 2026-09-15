@@ -7,12 +7,14 @@
 // with deterministic, model-free data. Each stub names its owning issue.
 import type {
   BatchIngestResult,
+  CitedChunk,
   DocumentSurface,
   EngineQueryOptions,
   EngineQueryResult,
   EngineSurface,
   IngestFileInput,
   IngestResult,
+  LearnAssembler,
   ModelStatus,
   RetrievalSurface,
 } from './types.js';
@@ -89,6 +91,16 @@ export class StubEngine implements EngineSurface {
    */
   private retrievalSurface: RetrievalSurface | null = null;
   private documentSurface: DocumentSurface | null = null;
+  private learnAssembler: LearnAssembler | null = null;
+
+  /**
+   * D6 (issue #82): late-bound learn assembler. The host attaches it after
+   * the store opens; query() then populates EngineQueryResult.learn from the
+   * retrieval-cited chunk ids. Attaching null detaches (host stop).
+   */
+  attachLearnAssembler(assembler: LearnAssembler | null): void {
+    this.learnAssembler = assembler;
+  }
 
   attachRetrievalSurface(surface: RetrievalSurface | null): void {
     this.retrievalSurface = surface;
@@ -114,7 +126,7 @@ export class StubEngine implements EngineSurface {
   async retrieveContext(
     question: string,
     nResults?: number,
-  ): Promise<{ sources: string[]; contextLength: number; texts: string[] } | null> {
+  ): Promise<{ sources: string[]; contextLength: number; texts: string[]; cited: CitedChunk[] } | null> {
     if (this.retrievalSurface === null) return null;
     const n = nResults ?? (Number(this.settings.rag_n_results) || 4);
     const rows = await this.retrievalSurface.search(question, n);
@@ -127,6 +139,11 @@ export class StubEngine implements EngineSurface {
       sources,
       contextLength: rows.reduce((total, row) => total + row.text.length, 0),
       texts: rows.map((row) => row.text),
+      // D6 (issue #82): cited chunk ids + scores for the learn assembler
+      // (rows whose surface predates chunkId are simply absent from cited).
+      cited: rows
+        .filter((row): row is typeof row & { chunkId: string } => typeof row.chunkId === 'string')
+        .map((row) => ({ chunkId: row.chunkId, score: row.similarity })),
     };
   }
 
@@ -156,6 +173,15 @@ export class StubEngine implements EngineSurface {
       sources: context?.sources ?? [],
       context_length: context?.contextLength ?? 0,
       inference_time: (Date.now() - started) / 1000,
+      // D6 (issue #82): learn rows when the assembler is attached and
+      // retrieval produced cited chunks; the assembler's null (store closed)
+      // and the assembler-less fixtures both omit the field.
+      ...(context !== null && context.cited.length > 0 && this.learnAssembler !== null
+        ? (() => {
+            const learn = this.learnAssembler(context.cited);
+            return learn === null ? {} : { learn };
+          })()
+        : {}),
     };
   }
 

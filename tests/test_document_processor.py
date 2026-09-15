@@ -2,12 +2,11 @@
 Tests for Document Processor Module (Phase 4.2)
 """
 
-import pytest
-import os
-from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
-from document_processor import DocumentProcessor, DocumentChunk
+import pytest
+
+from document_processor import DocumentChunk, DocumentProcessor
 
 
 class TestPDFExtraction:
@@ -28,14 +27,18 @@ class TestPDFExtraction:
         pdf_path.write_bytes(sample_pdf_bytes)
 
         # Mock pdfplumber to avoid requiring actual PDF parsing library
-        with patch('pdfplumber.open') as mock_open:
+        with patch("pdfplumber.open") as mock_open:
             # Set up mock PDF with pages
             mock_page1 = MagicMock()
-            mock_page1.extract_text.return_value = "This is page one content. It has multiple sentences."
+            mock_page1.extract_text.return_value = (
+                "This is page one content. It has multiple sentences."
+            )
             mock_page1.page_number = 1
 
             mock_page2 = MagicMock()
-            mock_page2.extract_text.return_value = "This is page two content. More sentences here."
+            mock_page2.extract_text.return_value = (
+                "This is page two content. More sentences here."
+            )
             mock_page2.page_number = 2
 
             mock_pdf = MagicMock()
@@ -74,7 +77,7 @@ class TestDOCXExtraction:
         docx_path.write_text("fake docx content")
 
         # Mock python-docx
-        with patch('docx.Document') as mock_document_class:
+        with patch("docx.Document") as mock_document_class:
             # Set up mock DOCX structure
             mock_doc = MagicMock()
 
@@ -176,14 +179,16 @@ class TestChunkingBoundary:
             # which would indicate mid-sentence split
             if len(chunk_text) > 10:
                 # If it ends with a lowercase letter after space, it's likely mid-sentence
-                assert not (chunk_text[-1].islower() and chunk_text[-2] == ' '), \
-                    f"Chunk may split mid-sentence: {chunk_text[-30:]}"
+                assert not (
+                    chunk_text[-1].islower() and chunk_text[-2] == " "
+                ), f"Chunk may split mid-sentence: {chunk_text[-30:]}"
 
         # Verify chunks don't exceed size (by word count)
         for chunk in chunks:
             word_count = len(chunk.text.split())
-            assert word_count <= processor.chunk_size + 5, \
-                f"Chunk exceeds size: {word_count} words, max {processor.chunk_size}"
+            assert (
+                word_count <= processor.chunk_size + 5
+            ), f"Chunk exceeds size: {word_count} words, max {processor.chunk_size}"
 
     def test_chunking_small_text(self, tmp_path):
         """Test chunking with text smaller than chunk size."""
@@ -225,7 +230,10 @@ class TestChunkingBoundary:
         processor = DocumentProcessor(chunk_size=30, chunk_overlap=10)
 
         # Create text with predictable words
-        text = "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen"
+        text = (
+            "one two three four five six seven eight nine ten"
+            " eleven twelve thirteen fourteen fifteen"
+        )
         chunks = processor.chunk_text(text, "test.txt")
 
         # With overlap, some words should appear in multiple chunks
@@ -404,8 +412,56 @@ class TestUnsupportedExtension:
         """Test that SUPPORTED_EXTENSIONS includes all expected formats."""
         processor = DocumentProcessor()
 
-        expected = {'.pdf', '.docx', '.doc', '.pptx', '.ppt', '.txt', '.md', '.xlsx'}
+        expected = {
+            ".pdf",
+            ".docx",
+            ".doc",
+            ".pptx",
+            ".ppt",
+            ".txt",
+            ".md",
+            ".xlsx",
+            ".json",
+        }
         assert processor.SUPPORTED_EXTENSIONS == expected
+
+    def test_json_storyline_slide_gets_marker(self, tmp_path):
+        """Storyline slide JSON (#77 shape) extracts with the #82 marker line."""
+        import json
+
+        processor = DocumentProcessor()
+        slide = {
+            "slide_id": "5rN4PvXJM5d",
+            "slide_title": "Welcome | Intro",
+            "section_title": "Course Introduction",
+            "on_screen_text": "Start\nOpMed CDP",
+            "transcript_text": "Hello everyone.",
+        }
+        path = tmp_path / "slide-001-5rN4PvXJM5d.json"
+        path.write_text(json.dumps(slide), encoding="utf-8")
+
+        chunks = processor.process_file(str(path))
+        assert chunks, "slide JSON should produce chunks"
+        first = chunks[0].text
+        assert first.startswith("[training-slide] ")
+        assert "slide_id=5rN4PvXJM5d" in first
+        # pipe characters in metadata are sanitized so the marker stays parseable
+        assert "title=Welcome / Intro" in first
+        assert "Start" in first and "Hello everyone." in first
+        assert chunks[0].source_path == str(path.resolve())
+
+    def test_json_generic_document_has_no_marker(self, tmp_path):
+        """Non-slide JSON extracts as pretty text with no training marker."""
+        import json
+
+        processor = DocumentProcessor()
+        path = tmp_path / "config.json"
+        path.write_text(json.dumps({"settings": {"a": 1}}), encoding="utf-8")
+
+        chunks = processor.process_file(str(path))
+        assert chunks
+        assert "[training-slide]" not in chunks[0].text
+        assert "settings" in chunks[0].text
 
 
 class TestDocumentProcessorIntegration:
@@ -446,7 +502,9 @@ class TestDocumentProcessorIntegration:
         - Directory traversal works correctly
         """
         # Create multiple test files
-        (tmp_path / "file1.txt").write_text("First file content with multiple sentences.")
+        (tmp_path / "file1.txt").write_text(
+            "First file content with multiple sentences."
+        )
         (tmp_path / "file2.txt").write_text("Second file content. More sentences here.")
         (tmp_path / "unsupported.xyz").write_text("Should be skipped")
         (tmp_path / "subdir").mkdir()
@@ -488,16 +546,14 @@ class TestDocumentProcessorIntegration:
 
 # Additional utility tests
 
+
 class TestDocumentChunk:
     """Tests for DocumentChunk dataclass."""
 
     def test_chunk_creation(self):
         """Test creating a DocumentChunk."""
         chunk = DocumentChunk(
-            text="Test content",
-            source="test.pdf",
-            page=1,
-            chunk_index=0
+            text="Test content", source="test.pdf", page=1, chunk_index=0
         )
 
         assert chunk.text == "Test content"
@@ -507,10 +563,7 @@ class TestDocumentChunk:
 
     def test_chunk_default_values(self):
         """Test DocumentChunk with default values."""
-        chunk = DocumentChunk(
-            text="Test content",
-            source="test.pdf"
-        )
+        chunk = DocumentChunk(text="Test content", source="test.pdf")
 
         assert chunk.text == "Test content"
         assert chunk.source == "test.pdf"
@@ -574,7 +627,9 @@ class TestCleanTextParagraphStructure:
         cleaned = processor.clean_text(text)
         # Each adjacent pair of paragraphs must be separated by exactly \n\n
         paragraphs = cleaned.split("\n\n")
-        assert len(paragraphs) == 3, f"Expected 3 paragraphs, got {len(paragraphs)}: {repr(cleaned)}"
+        assert (
+            len(paragraphs) == 3
+        ), f"Expected 3 paragraphs, got {len(paragraphs)}: {repr(cleaned)}"
         assert paragraphs[0] == "First paragraph"
         assert paragraphs[1] == "Second paragraph"
         assert paragraphs[2] == "Third paragraph"
@@ -585,7 +640,9 @@ class TestCleanTextParagraphStructure:
         text = "Para one\n\nPara two"
         cleaned = processor.clean_text(text)
         # Must contain exactly one \n\n between paragraphs (not stripped to \n)
-        assert cleaned.count("\n\n") >= 1, f"Expected \\n\\n paragraph break, got: {repr(cleaned)}"
+        assert (
+            cleaned.count("\n\n") >= 1
+        ), f"Expected \\n\\n paragraph break, got: {repr(cleaned)}"
         assert "Para one" in cleaned
         assert "Para two" in cleaned
 
@@ -598,7 +655,9 @@ class TestCleanTextParagraphStructure:
         assert "\n\n" in cleaned, f"Expected \\n\\n, got: {repr(cleaned)}"
         assert "\n\n\n" not in cleaned, "Triple+ newlines should be absent"
         paragraphs = cleaned.split("\n\n")
-        assert len(paragraphs) == 2, f"Expected 2 paragraphs separated by \\n\\n, got: {repr(cleaned)}"
+        assert (
+            len(paragraphs) == 2
+        ), f"Expected 2 paragraphs separated by \\n\\n, got: {repr(cleaned)}"
         assert paragraphs[0].strip() == "Para one"
         assert paragraphs[1].strip() == "Para two"
 
@@ -611,16 +670,22 @@ class TestCleanTextParagraphStructure:
         # Step 3: split ["First", "", "Last"], strip -> ["First", "", "Last"]
         # Join: "First\n\nLast"
         # Step 4: \n\n -> stays \n\n
-        assert cleaned == "First\n\nLast", f"Expected 'First\\n\\nLast', got: {repr(cleaned)}"
+        assert (
+            cleaned == "First\n\nLast"
+        ), f"Expected 'First\\n\\nLast', got: {repr(cleaned)}"
 
     def test_leading_and_trailing_newlines_stripped(self):
         """Leading/trailing newlines must be stripped from output."""
         processor = DocumentProcessor()
         text = "\n\nContent here\n\n"
         cleaned = processor.clean_text(text)
-        assert not cleaned.startswith("\n"), f"Should not start with \\n: {repr(cleaned)}"
+        assert not cleaned.startswith(
+            "\n"
+        ), f"Should not start with \\n: {repr(cleaned)}"
         assert not cleaned.endswith("\n"), f"Should not end with \\n: {repr(cleaned)}"
-        assert cleaned == "Content here", f"Expected 'Content here', got: {repr(cleaned)}"
+        assert (
+            cleaned == "Content here"
+        ), f"Expected 'Content here', got: {repr(cleaned)}"
 
 
 class TestCleanTextLineEndings:
@@ -651,7 +716,9 @@ class TestCleanTextLineEndings:
         assert "\r" not in cleaned, f"Carriage returns should be gone: {repr(cleaned)}"
         # Paragraphs separated by blank lines
         paragraphs = cleaned.split("\n\n")
-        assert len(paragraphs) >= 2, f"Expected paragraph separation, got: {repr(cleaned)}"
+        assert (
+            len(paragraphs) >= 2
+        ), f"Expected paragraph separation, got: {repr(cleaned)}"
 
     def test_crlf_with_multiple_blank_lines(self):
         """\\r\\n + multiple blank lines should normalize correctly."""
@@ -756,7 +823,9 @@ class TestCleanTextEdgeCases:
         text = "Line one of paragraph\nLine two of paragraph\nLine three"
         cleaned = processor.clean_text(text)
         lines = cleaned.split("\n")
-        assert len(lines) == 3, f"Expected 3 lines within paragraph, got: {repr(cleaned)}"
+        assert (
+            len(lines) == 3
+        ), f"Expected 3 lines within paragraph, got: {repr(cleaned)}"
 
     def test_leading_whitespace_on_all_lines(self):
         """Leading whitespace on every line is stripped."""
@@ -834,7 +903,9 @@ class TestCleanTextListsAndProcedures:
         cleaned = processor.clean_text(text)
         # Paragraph breaks should be preserved
         paragraphs = cleaned.split("\n\n")
-        assert len(paragraphs) == 3, f"Expected 3 step paragraphs, got {len(paragraphs)}: {repr(cleaned)}"
+        assert (
+            len(paragraphs) == 3
+        ), f"Expected 3 step paragraphs, got {len(paragraphs)}: {repr(cleaned)}"
         assert "Step 1" in paragraphs[0]
         assert "Step 2" in paragraphs[1]
         assert "Step 3" in paragraphs[2]
@@ -852,13 +923,18 @@ class TestCleanTextListsAndProcedures:
     def test_nested_structure_with_blank_lines(self):
         """Nested content with blank lines preserves hierarchy."""
         processor = DocumentProcessor()
-        text = "Section A\n\nSubsection A1\nContent under A1\n\nSubsection A2\nContent under A2\n\nSection B\n\nSubsection B1"
+        text = (
+            "Section A\n\nSubsection A1\nContent under A1"
+            "\n\nSubsection A2\nContent under A2\n\nSection B\n\nSubsection B1"
+        )
         cleaned = processor.clean_text(text)
         # Blank lines between subsections create paragraph breaks (\n\n).
         # Single \n within each subsection are preserved as line breaks.
         # Split by \n\n gives: [SectionA-part, A1-part, A2-part, SectionB-part, B1-part]
         sections = cleaned.split("\n\n")
-        assert len(sections) == 5, f"Expected 5 sections, got {len(sections)}: {repr(cleaned)}"
+        assert (
+            len(sections) == 5
+        ), f"Expected 5 sections, got {len(sections)}: {repr(cleaned)}"
         assert "Section A" in sections[0]
         assert "Subsection A1" in sections[1]
         assert "Subsection A2" in sections[2]
@@ -866,7 +942,9 @@ class TestCleanTextListsAndProcedures:
         assert "Subsection B1" in sections[4]
         # Verify single \n line structure is preserved within each section
         lines_p1 = sections[1].split("\n")
-        assert len(lines_p1) == 2, f"Expected 2 lines in subsection A1, got: {repr(lines_p1)}"
+        assert (
+            len(lines_p1) == 2
+        ), f"Expected 2 lines in subsection A1, got: {repr(lines_p1)}"
 
 
 class TestExtractXlsx:
@@ -874,9 +952,10 @@ class TestExtractXlsx:
 
     def test_extract_xlsx_basic(self, tmp_path):
         """Test basic XLSX extraction with openpyxl."""
-        from document_processor import DocumentProcessor
         import openpyxl
-        
+
+        from document_processor import DocumentProcessor
+
         proc = DocumentProcessor()
         filepath = tmp_path / "test.xlsx"
         wb = openpyxl.Workbook()
@@ -892,22 +971,23 @@ class TestExtractXlsx:
 
     def test_extract_xlsx_multiple_sheets(self, tmp_path):
         """Test XLSX with multiple sheets separated by blank lines."""
-        from document_processor import DocumentProcessor
         import openpyxl
-        
+
+        from document_processor import DocumentProcessor
+
         proc = DocumentProcessor()
         filepath = tmp_path / "multi_sheet.xlsx"
         wb = openpyxl.Workbook()
-        
+
         # First sheet
         ws1 = wb.active
         ws1.title = "Sheet1"
         ws1.append(["A1", "B1"])
-        
+
         # Create second sheet
         ws2 = wb.create_sheet("Sheet2")
         ws2.append(["A2", "B2"])
-        
+
         wb.save(filepath)
         result = proc.extract_xlsx(str(filepath))
         assert "[Sheet: Sheet1]" in result
@@ -917,9 +997,10 @@ class TestExtractXlsx:
 
     def test_extract_xlsx_empty_rows_skipped(self, tmp_path):
         """Test that empty rows are skipped in XLSX extraction."""
-        from document_processor import DocumentProcessor
         import openpyxl
-        
+
+        from document_processor import DocumentProcessor
+
         proc = DocumentProcessor()
         filepath = tmp_path / "empty_rows.xlsx"
         wb = openpyxl.Workbook()
@@ -941,9 +1022,10 @@ class TestExtractXlsx:
 
     def test_extract_xlsx_no_data(self, tmp_path):
         """Test XLSX with no data rows (headers only)."""
-        from document_processor import DocumentProcessor
         import openpyxl
-        
+
+        from document_processor import DocumentProcessor
+
         proc = DocumentProcessor()
         filepath = tmp_path / "headers_only.xlsx"
         wb = openpyxl.Workbook()
@@ -956,9 +1038,10 @@ class TestExtractXlsx:
 
     def test_extract_xlsx_different_sheet_names(self, tmp_path):
         """Test that sheet names appear correctly in output."""
-        from document_processor import DocumentProcessor
         import openpyxl
-        
+
+        from document_processor import DocumentProcessor
+
         proc = DocumentProcessor()
         filepath = tmp_path / "special_names.xlsx"
         wb = openpyxl.Workbook()

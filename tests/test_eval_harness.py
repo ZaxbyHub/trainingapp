@@ -61,7 +61,14 @@ class TestQuestionSetSchema:
             line for line in text.splitlines()[:30] if line.startswith("#")
         )
         assert "expected_training_slide_id" in header
-        assert "#77" in header or "follow-up" in header.lower()
+        # D6 (#82) populated the field; the header must document either the
+        # historical deferral (#77) or the now-current population semantics.
+        assert (
+            "#77" in header
+            or "follow-up" in header.lower()
+            or "#82" in header
+            or "populated since" in header.lower()
+        )
 
     def test_unique_ids(self):
         ids = [row["id"] for row in _load_rows()]
@@ -86,9 +93,15 @@ class TestQuestionSetSchema:
     def test_every_expected_doc_exists_in_corpus(self):
         for row in _load_rows():
             if row["expected_doc_id"] is not None:
-                assert (EVAL_DIR / "corpus" / row["expected_doc_id"]).is_file(), row[
-                    "id"
-                ]
+                if row["expected_doc_id"].endswith(".json"):
+                    # D6 (#82): Storyline slide docs live under corpus/slides/.
+                    assert (
+                        EVAL_DIR / "corpus" / "slides" / row["expected_doc_id"]
+                    ).is_file(), row["id"]
+                else:
+                    assert (
+                        EVAL_DIR / "corpus" / row["expected_doc_id"]
+                    ).is_file(), row["id"]
 
     def test_categories_documented_in_readme(self):
         readme = README_PATH.read_text(encoding="utf-8")

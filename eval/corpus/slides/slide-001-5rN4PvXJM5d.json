@@ -1,0 +1,19 @@
+{
+  "course": "OpMed CDP Mini Fixture",
+  "scene_number": 1,
+  "section_title": "Course Introduction",
+  "slide_number_in_scene": 1,
+  "slide_id": "5rN4PvXJM5d",
+  "slide_title": "Welcome",
+  "on_screen_text": "Start\nOpMed CDP MicroLearning Companion",
+  "text_chars": 39,
+  "transcript_source": "none",
+  "provenance": "Course Introduction > Slide 1",
+  "source_files": [
+    "meta.xml",
+    "html5/data/js/data.js",
+    "html5/data/js/frame.js",
+    "html5/data/js/5rN4PvXJM5d.js"
+  ],
+  "html5url": "html5/data/js/5rN4PvXJM5d.js"
+}

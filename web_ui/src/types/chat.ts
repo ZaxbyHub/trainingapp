@@ -2,6 +2,8 @@
  * Shared chat types for the Document Q&A application.
  */
 
+import type { LearnResult } from '../lib/api/types';
+
 export type MessageRole = 'user' | 'assistant' | 'system';
 
 /** A rendered image attached to a chat message (preview only; no raw bytes). */
@@ -25,6 +27,12 @@ export interface CitationRef {
   text?: string;
 }
 
+/** Cross-page navigation into the embedded training player (D6, issue #82). */
+export interface TrainingTarget {
+  packId?: string;
+  slideId: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -33,6 +41,8 @@ export interface ChatMessage {
   sources?: string[];
   /** Structured numbered citations, aligned with the model's [1],[2] order (F7). */
   citations?: CitationRef[];
+  /** Learn-panel rows (issue #82): "where to learn this" deep links. */
+  learn?: LearnResult[];
   /** True when the pipeline abstained (no usable evidence) instead of answering (F2). */
   abstain?: boolean;
   /** Why the pipeline abstained. */

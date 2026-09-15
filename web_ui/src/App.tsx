@@ -164,6 +164,10 @@ function DesktopBootGate({ children }: { children: ReactNode }) {
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('chat');
+  // D6 (issue #82): lifted training navigation target so a chat-side
+  // "Open in training" deep link survives the page switch and is consumed by
+  // TrainingPage → TrainingPlayer's initialSlideId auto-jump.
+  const [trainingTarget, setTrainingTarget] = useState<{ packId?: string; slideId: string } | null>(null);
   const [initErrorDismissed, setInitErrorDismissed] = useState(false);
   const { setModelReady, setModelLoadingProgress, browserEngine } = useInferenceMode();
 
@@ -195,6 +199,11 @@ function AppContent() {
 
   const openSettings = () => setCurrentPage('settings');
   const goToDocuments = () => setCurrentPage('documents');
+  // D6 (issue #82): chat → training deep link ("Open in training").
+  const openTraining = (target: { packId?: string; slideId: string }) => {
+    setTrainingTarget(target);
+    setCurrentPage('training');
+  };
 
   // Global Ctrl+, (Open Settings) shortcut, registered here so it works from
   // every page (Documents, Settings, Chat), not just while ChatPage is mounted.
@@ -214,6 +223,11 @@ function AppContent() {
   }
 
   const handleNavigate = (page: string) => {
+    // D6 (issue #82): a pending slide target never leaks across an unrelated
+    // page switch (and can never be lost on a documents → training hop).
+    if (page !== 'training' && trainingTarget !== null) {
+      setTrainingTarget(null);
+    }
     setCurrentPage(page);
   };
 
@@ -231,6 +245,7 @@ function AppContent() {
               onNewChat={newChat}
               onOpenSettings={openSettings}
               onNavigateToDocuments={goToDocuments}
+              onOpenTraining={openTraining}
             />
           </ErrorBoundary>
         );
@@ -249,7 +264,10 @@ function AppContent() {
       case 'training':
         return (
           <ErrorBoundary>
-            <TrainingPage />
+            <TrainingPage
+              initialPackId={trainingTarget?.packId}
+              pendingSlideId={trainingTarget?.slideId}
+            />
           </ErrorBoundary>
         );
       default:
@@ -264,6 +282,7 @@ function AppContent() {
               onNewChat={newChat}
               onOpenSettings={openSettings}
               onNavigateToDocuments={goToDocuments}
+              onOpenTraining={openTraining}
             />
           </ErrorBoundary>
       );

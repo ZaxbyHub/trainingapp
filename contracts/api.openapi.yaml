@@ -17,10 +17,14 @@ info:
       spec. Terminal semantics: a stream ends with exactly one `done` payload
       (contains `sources` AND `context_length`) or one `error` payload
       (contains `error`) — never both, never neither.
-    - Reserved fields: `learn` (array) and `grounding` (object) are RESERVED on
-      ask/ask-stream response payloads for the OpMed learning companion
-      (WS-C #72 grounded/general provenance). Servers MUST NOT rely on them and
-      clients MUST tolerate their absence. They are not emitted in this version.
+    - Emitted field: `learn` (array, D6 issue #82) is emitted on ask/ask-stream
+      response payloads since D6 — optional per response, empty when no
+      training-slide content contributed or when grounding is "general".
+      Clients MUST tolerate its absence on older servers.
+    - Reserved field: `grounding` (object) is RESERVED on ask/ask-stream
+      response payloads for the OpMed learning companion (WS-C #72
+      grounded/general provenance). Servers MUST NOT rely on it and clients
+      MUST tolerate its absence. It is not emitted in this version.
 servers:
   - url: http://127.0.0.1:8080
     description: Local loopback server (default bind)
@@ -502,9 +506,32 @@ components:
           format: float
         learn:
           type: array
-          description: RESERVED for WS-C #72 (OpMed learning links). Not emitted yet.
+          description: Learn-panel results (D6, issue #82) - direct training-slide hits unioned with linked slides of the cited chunks, ranked and deduped by slide, capped at MAX_LEARN_RESULTS = 5; empty when grounding is "general"; emitted on success (possibly []).
           items:
             type: object
+            required: [slide_id, score, reason]
+            properties:
+              slide_id:
+                type: string
+                description: Raw Storyline slide id (TrainingPlayer.jumpToSlide input)
+              title:
+                type: string
+                description: Slide title
+              section:
+                type: string
+                description: Course section title the slide belongs to
+              score:
+                type: number
+                format: float
+              reason:
+                type: string
+                enum: [direct, linked]
+              snippet:
+                type: string
+                description: One-line excerpt of the slide's on-screen text
+              pack_id:
+                type: string
+                description: Owning training pack id, when known
         grounding:
           type: object
           description: RESERVED for WS-C #72 (grounded/general provenance). Not emitted yet.
@@ -542,9 +569,28 @@ components:
               type: number
             learn:
               type: array
-              description: RESERVED for WS-C #72. Not emitted yet.
+              description: Learn-panel results (D6, issue #82), same shape as QuestionResponse.learn - direct hits unioned with linked slides, ranked, deduped by slide, capped at MAX_LEARN_RESULTS = 5.
               items:
                 type: object
+                required: [slide_id, score, reason]
+                properties:
+                  slide_id:
+                    type: string
+                    description: Raw Storyline slide id (TrainingPlayer.jumpToSlide input)
+                  title:
+                    type: string
+                  section:
+                    type: string
+                  score:
+                    type: number
+                    format: float
+                  reason:
+                    type: string
+                    enum: [direct, linked]
+                  snippet:
+                    type: string
+                  pack_id:
+                    type: string
             grounding:
               type: object
               description: RESERVED for WS-C #72. Not emitted yet.

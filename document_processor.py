@@ -4,22 +4,60 @@ Handles extraction and chunking of PDF, DOCX, and PPTX files.
 """
 
 import hashlib
+import json
+import logging
 import os
 import re
-import logging
-from typing import List, Tuple, Optional
 from dataclasses import dataclass
 from pathlib import Path
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-ABBREVIATIONS = frozenset({
-    'dr', 'mr', 'mrs', 'ms', 'prof', 'jr', 'sr', 'st', 'ave', 'blvd',
-    'dept', 'rev', 'vol', 'fig', 'ed', 'eds', 'repr', 'trans', 'pt',
-    'ch', 'sec', 'app', 'ex', 'cf', 'eg', 'ie', 'etc', 'approx',
-    'esp', 'viz', 'al', 'vs', 'inc', 'corp', 'ltd', 'govt', 'est',
-    'acct', 'tel', 'ref',
-})
+ABBREVIATIONS = frozenset(
+    {
+        "dr",
+        "mr",
+        "mrs",
+        "ms",
+        "prof",
+        "jr",
+        "sr",
+        "st",
+        "ave",
+        "blvd",
+        "dept",
+        "rev",
+        "vol",
+        "fig",
+        "ed",
+        "eds",
+        "repr",
+        "trans",
+        "pt",
+        "ch",
+        "sec",
+        "app",
+        "ex",
+        "cf",
+        "eg",
+        "ie",
+        "etc",
+        "approx",
+        "esp",
+        "viz",
+        "al",
+        "vs",
+        "inc",
+        "corp",
+        "ltd",
+        "govt",
+        "est",
+        "acct",
+        "tel",
+        "ref",
+    }
+)
 
 
 @dataclass
@@ -30,14 +68,24 @@ class DocumentChunk:
     source: str
     page: Optional[int] = None
     chunk_index: int = 0
-    doc_id: Optional[str] = None        # Stable hash-based document identifier
-    source_path: Optional[str] = None   # Full file path for deduplication
+    doc_id: Optional[str] = None  # Stable hash-based document identifier
+    source_path: Optional[str] = None  # Full file path for deduplication
 
 
 class DocumentProcessor:
     """Processes various document formats and extracts text."""
 
-    SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md", ".xlsx"}
+    SUPPORTED_EXTENSIONS = {
+        ".pdf",
+        ".docx",
+        ".doc",
+        ".pptx",
+        ".ppt",
+        ".txt",
+        ".md",
+        ".xlsx",
+        ".json",
+    }
 
     def __init__(self, chunk_size: int = 256, chunk_overlap: int = 100):
         if chunk_size <= 0:
@@ -70,7 +118,8 @@ class DocumentProcessor:
         except ImportError:
             logger.warning(
                 "pdfplumber not installed. Falling back to pypdf for PDF extraction. "
-                "Consider installing pdfplumber for better extraction quality: pip install pdfplumber"
+                "Consider installing pdfplumber for better extraction quality: "
+                "pip install pdfplumber"
             )
             from pypdf import PdfReader
 
@@ -136,6 +185,7 @@ class DocumentProcessor:
     def extract_xlsx(self, filepath: str) -> str:
         """Extract text from Excel .xlsx files, preserving sheet and row structure."""
         import openpyxl
+
         wb = openpyxl.load_workbook(filepath, data_only=True)
         sheets_text = []
         for sheet in wb.worksheets:
@@ -181,8 +231,51 @@ class DocumentProcessor:
             return self.extract_xlsx(filepath), []
         elif ext in {".txt", ".md"}:
             return self.extract_text_file(filepath), []
+        elif ext == ".json":
+            return self.extract_json_document(filepath), []
         else:
             raise ValueError(f"Unsupported file format: {ext}")
+
+    def extract_json_document(self, filepath: str) -> str:
+        """Extract text from a JSON document.
+
+        Storyline slide documents (issue #77/#79: JSON with slide_id,
+        slide_title and on_screen_text) get a machine-parseable marker line
+        prepended so the learn kernel (#82) can recover title/section
+        metadata from chunk text; the marker values are |-sanitized. Any
+        other JSON is returned as pretty-printed text with no marker.
+        """
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            raw = f.read()
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+        if not isinstance(payload, dict):
+            return json.dumps(payload, indent=2, ensure_ascii=False)
+        slide_id = payload.get("slide_id")
+        slide_title = payload.get("slide_title")
+        on_screen_text = payload.get("on_screen_text")
+        if not (slide_id and slide_title and isinstance(on_screen_text, str)):
+            return json.dumps(payload, indent=2, ensure_ascii=False)
+
+        def _sanitize(value: str) -> str:
+            return str(value).replace("|", "/").replace("\n", " ").strip()
+
+        parts = [
+            "[training-slide] section=%s | title=%s | slide_id=%s"
+            % (
+                _sanitize(str(payload.get("section_title") or "")),
+                _sanitize(str(slide_title)),
+                _sanitize(str(slide_id)),
+            )
+        ]
+        if on_screen_text.strip():
+            parts.append(on_screen_text.strip())
+        transcript = payload.get("transcript_text")
+        if isinstance(transcript, str) and transcript.strip():
+            parts.append(transcript.strip())
+        return "\n\n".join(parts)
 
     def clean_text(self, text: str) -> str:
         """Clean and normalize text while preserving paragraph and list structure."""
@@ -210,16 +303,18 @@ class DocumentProcessor:
         protected = paragraph
         for abbr in ABBREVIATIONS:
             protected = re.sub(
-                rf'\b{abbr}\.',
-                f'{abbr}\x00',
+                rf"\b{abbr}\.",
+                f"{abbr}\x00",
                 protected,
                 flags=re.IGNORECASE,
             )
+
         def _protect_initial(m):
-            return m.group(1) + '\x00'
-        protected = re.sub(r'\b([A-Z])\.', _protect_initial, protected)
-        sentences = re.split(r'(?<=[.!?])\s+', protected)
-        return [s.replace('\x00', '.').strip() for s in sentences if s.strip()]
+            return m.group(1) + "\x00"
+
+        protected = re.sub(r"\b([A-Z])\.", _protect_initial, protected)
+        sentences = re.split(r"(?<=[.!?])\s+", protected)
+        return [s.replace("\x00", ".").strip() for s in sentences if s.strip()]
 
     def _calculate_overlap(
         self, sentences: List[str], overlap_size: int
@@ -236,7 +331,9 @@ class DocumentProcessor:
                 break
         return overlap_sentences, overlap_word_count
 
-    def chunk_text(self, text: str, source: str, pages: Optional[List[Tuple[int, str]]] = None) -> List[DocumentChunk]:
+    def chunk_text(
+        self, text: str, source: str, pages: Optional[List[Tuple[int, str]]] = None
+    ) -> List[DocumentChunk]:
         """Split text into overlapping chunks respecting paragraph and sentence boundaries."""
         text = self.clean_text(text)
         # Build page mapping from PDF pages
@@ -289,7 +386,9 @@ class DocumentProcessor:
                         chunk_text = " ".join(chunk_words)
                         chunks.append(
                             DocumentChunk(
-                                text=chunk_text, source=source, chunk_index=chunk_index,
+                                text=chunk_text,
+                                source=source,
+                                chunk_index=chunk_index,
                                 page=_find_page(chunk_text),
                             )
                         )
@@ -312,7 +411,9 @@ class DocumentProcessor:
                     chunk_text = " ".join(current_chunk_sentences)
                     chunks.append(
                         DocumentChunk(
-                            text=chunk_text, source=source, chunk_index=chunk_index,
+                            text=chunk_text,
+                            source=source,
+                            chunk_index=chunk_index,
                             page=_find_page(chunk_text),
                         )
                     )
@@ -332,8 +433,12 @@ class DocumentProcessor:
         if current_chunk_sentences:
             chunk_text = " ".join(current_chunk_sentences)
             chunks.append(
-                DocumentChunk(text=chunk_text, source=source, chunk_index=chunk_index,
-                               page=_find_page(chunk_text))
+                DocumentChunk(
+                    text=chunk_text,
+                    source=source,
+                    chunk_index=chunk_index,
+                    page=_find_page(chunk_text),
+                )
             )
 
         return chunks
@@ -364,7 +469,7 @@ class DocumentProcessor:
             # Known error (unsupported format, etc.)
             logger.error("Failed to process %s: %s", filename, e)
             return []
-        except Exception as e:
+        except Exception:
             # Unexpected error - log full exception details
             logger.exception("Unexpected error processing %s", filename)
             return []
@@ -396,14 +501,23 @@ class DocumentProcessor:
                     if file_size > max_file_size_bytes:
                         size_mb = file_size / (1024 * 1024)
                         skipped_files.append((filepath.name, size_mb))
-                        logger.info("Skipping %s: %.1fMB > %.0fMB limit", filepath.name, size_mb, max_file_size_mb)
+                        logger.info(
+                            "Skipping %s: %.1fMB > %.0fMB limit",
+                            filepath.name,
+                            size_mb,
+                            max_file_size_mb,
+                        )
                         continue
 
                     chunks = self.process_file(str(filepath))
                     all_chunks.extend(chunks)
 
         if skipped_files:
-            logger.info("Skipped %d file(s) exceeding %.0fMB limit", len(skipped_files), max_file_size_mb)
+            logger.info(
+                "Skipped %d file(s) exceeding %.0fMB limit",
+                len(skipped_files),
+                max_file_size_mb,
+            )
         logger.info("Total: %d chunks from %s", len(all_chunks), directory)
         return all_chunks
 

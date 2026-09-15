@@ -44,7 +44,7 @@ the schema (a validator enforces this header).
 | `question` | non-empty string | must NOT begin with a greeting keyword — the engine's greeting bypass (`rag_engine.py` "hello/hi" short-circuit) skips retrieval entirely |
 | `expected_doc_id` | string or null | filename under `eval/corpus/`; null ONLY for out-of-corpus rows |
 | `expected_page` | int or null | null for `.md`-sourced corpora (no page concept); populate once pdf/pptx fixtures land |
-| `expected_training_slide_id` | int or null | STAYS null until the Storyline extractor (D1, issue #77) ships doc-to-slide links — follow-up per issue #54 |
+| `expected_training_slide_id` | string or null | raw Storyline slide id; populated since D6 (issue #82) for `training` rows whose doc is a slide fixture under `corpus/slides/` — the Learn hit@3 metric is computed over exactly these rows |
 | `category` | string | one of the taxonomy values below |
 
 Contract: 50-80 rows total; at least 5 out-of-corpus rows
@@ -63,6 +63,7 @@ must appear in this README; ids unique.
 | `training-content` | product/course training material | product-training.md |
 | `compliance` | compliance obligations, gifts, records | compliance-basics.md |
 | `expenses` | expense reimbursement rules | expenses-guide.md |
+| `training` | training-slide targets (Learn hit@3 rows, issue #82) | slides/*.json |
 | `out-of-corpus` | deliberately unanswerable from the corpus (abstain rows) | — |
 
 ## Authoring process

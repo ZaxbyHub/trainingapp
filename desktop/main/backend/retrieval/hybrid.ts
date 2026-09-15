@@ -54,7 +54,7 @@ export interface RetrievalSurface {
   search(
     query: string,
     nResults?: number,
-  ): Promise<Array<{ text: string; source: string; similarity: number }>>;
+  ): Promise<Array<{ text: string; source: string; similarity: number; chunkId?: string }>>;
 }
 
 /** Reciprocal Rank Fusion over ranked chunk-id legs; dedup by chunk id. */
@@ -280,5 +280,8 @@ async function runSearch(
     text: chunk.text,
     source: chunk.source,
     similarity: chunk.score,
+    // D6 (issue #82): the learn assembler joins cited chunk ids against the
+    // links/docs tables; consumers that ignore it are unaffected.
+    chunkId: chunk.chunkId,
   }));
 }

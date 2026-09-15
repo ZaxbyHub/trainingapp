@@ -27,6 +27,7 @@ import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/e
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
 import { createRetrievalSurface, type RetrievalSurface } from './retrieval/hybrid.js';
 import { resolveRetrievalConfig } from './retrieval/config.js';
+import { assembleLearnResults } from './learn.js';
 import {
   resolveRerankerModelDir,
   ResumableReranker,
@@ -433,6 +434,15 @@ export class NodeBackendHost implements BackendHost {
             if (typeof this.engine.attachRetrievalSurface === 'function') {
               this.engine.attachRetrievalSurface(this.retrieval);
             }
+            // D6 (issue #82): attach the learn assembler after the store (and
+            // retrieval) are live; it reads the links/docs tables ask-time.
+            // packsRoot enriches titles/sections from the installed pack's
+            // slide docs; without it the store-derived fallbacks are used.
+            if (typeof this.engine.attachLearnAssembler === 'function') {
+              this.engine.attachLearnAssembler((cited) =>
+                assembleLearnResults({ db: this.store !== null ? this.store.db : null, cited, packsRoot: this.config.packsRoot }),
+              );
+            }
           }
         }
       }
@@ -493,6 +503,10 @@ export class NodeBackendHost implements BackendHost {
     if (this.retrieval !== null && typeof this.engine.attachRetrievalSurface === 'function') {
       this.engine.attachRetrievalSurface(null);
       this.retrieval = null;
+    }
+    // D6 (issue #82): detach the learn assembler with the store lifecycle.
+    if (typeof this.engine.attachLearnAssembler === 'function') {
+      this.engine.attachLearnAssembler(null);
     }
     const reranker = this.reranker;
     this.reranker = null;

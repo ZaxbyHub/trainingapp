@@ -8,9 +8,11 @@
 #                             (eval/corpus/<expected_doc_id>); null for out-of-corpus rows
 #   expected_page             null for .md-sourced corpora (no page concept); populated
 #                             once pdf/pptx fixtures land
-#   expected_training_slide_id  STAYS null until the Storyline extractor (D1, issue #77)
-#                             exists - follow-up note: populate slide ids only after #77
-#                             ships doc-to-slide links (see issue #54 required scope)
+#   expected_training_slide_id  raw Storyline slide id answering the question.
+#                             Populated since D6 (issue #82) for "training"-category
+#                             rows, whose expected_doc_id is the slide doc filename
+#                             ingested from eval/corpus/slides/; the Learn hit@3
+#                             metric is computed over exactly these rows.
 #   category                  taxonomy value documented in eval/README.md
 #
 # Out-of-corpus rows (expected_doc_id null, category "out-of-corpus") measure abstain
@@ -72,3 +74,7 @@
 {"id": "q54", "question": "Is there a pet adoption benefit available to staff?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}
 {"id": "q55", "question": "Which foreign language courses can employees take?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}
 {"id": "q56", "question": "How do I request a salary advance before payday?", "expected_doc_id": null, "expected_page": null, "expected_training_slide_id": null, "category": "out-of-corpus"}
+{"id": "q57", "question": "Which training slide introduces the OpMed CDP MicroLearning Companion?", "expected_doc_id": "slide-001-5rN4PvXJM5d.json", "expected_page": null, "expected_training_slide_id": "5rN4PvXJM5d", "category": "training"}
+{"id": "q58", "question": "Which training slide says to review the Special Instructions in the information pane?", "expected_doc_id": "slide-002-5b8obQzpBWu.json", "expected_page": null, "expected_training_slide_id": "5b8obQzpBWu", "category": "training"}
+{"id": "q59", "question": "How can patient documentation from outside of CDP be imported and associated with a patient in the training demo?", "expected_doc_id": "slide-004-7bLnWpQxT4s.json", "expected_page": null, "expected_training_slide_id": "7bLnWpQxT4s", "category": "training"}
+{"id": "q60", "question": "Which training slide says to review the task list before starting and then select a task?", "expected_doc_id": "slide-006-9dNpYzSa6Kr.json", "expected_page": null, "expected_training_slide_id": "9dNpYzSa6Kr", "category": "training"}

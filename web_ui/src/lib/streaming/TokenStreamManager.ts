@@ -5,6 +5,7 @@
 
 import { SSEStreamConsumer } from '../api/streaming';
 import type { SearchResult } from '../../types/search';
+import type { LearnResult } from '../api/types';
 
 type TokenCallback = (token: string) => void;
 
@@ -18,6 +19,8 @@ type DoneCallback = (data: {
   inferenceTime: number;
   /** Structured per-chunk citations aligned with the model's [1],[2] order (F7). */
   chunks?: SearchResult[];
+  /** Learn-panel rows (issue #82); present when the answering surface computed them. */
+  learn?: LearnResult[];
   /** True when the pipeline abstained instead of answering (F2). */
   abstain?: boolean;
   abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
@@ -149,6 +152,7 @@ export class TokenStreamManager {
     contextLength: number;
     inferenceTime: number;
     chunks?: SearchResult[];
+    learn?: LearnResult[];
     abstain?: boolean;
     abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
     retrievalDegraded?: boolean;
@@ -230,6 +234,8 @@ export class TokenStreamManager {
         sources: data.sources,
         contextLength: data.context_length,
         inferenceTime: data.inference_time,
+        // D6 (issue #82): forward the server's learn rows when present.
+        ...(data.learn !== undefined ? { learn: data.learn } : {}),
       });
     });
 

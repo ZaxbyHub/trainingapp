@@ -37,7 +37,7 @@ export function slideIdFromDocPath(docPath: string): string | null {
 }
 
 /** Structural subset of a better-sqlite3 Database this module needs. */
-interface LinksDb {
+export interface LinksDb {
   prepare(sql: string): {
     get(...params: unknown[]): unknown;
     all(...params: unknown[]): unknown[];
@@ -212,4 +212,29 @@ export function pruneOrphanLinks(db: LinksDb): number {
 export function removeLinksForPack(db: LinksDb, packId: string): number {
   const result = db.prepare('DELETE FROM links WHERE pack_id = ?').run(packId);
   return Number(result.changes);
+}
+
+/** One read-side links row (D6/#82 learn assembly). */
+export interface LinkRow {
+  chunk_id: string;
+  slide_id: string;
+  pack_id: string | null;
+  score: number;
+  rank: number;
+}
+
+/**
+ * D6 (issue #82): read-side accessor — the links rows for the cited chunk
+ * ids. Callers pass ids from retrieval; rows come back unordered (the learn
+ * kernel re-ranks). Complements the write-side recomputators above: this is
+ * the ask-time read path the Learn panel consumes.
+ */
+export function queryLinksForChunks(db: LinksDb, chunkIds: string[]): LinkRow[] {
+  if (chunkIds.length === 0) return [];
+  const placeholders = chunkIds.map(() => '?').join(', ');
+  return db
+    .prepare(
+      `SELECT chunk_id, slide_id, pack_id, score, rank FROM links WHERE chunk_id IN (${placeholders})`,
+    )
+    .all(...chunkIds) as LinkRow[];
 }

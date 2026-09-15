@@ -18,6 +18,7 @@
  */
 
 import type { SearchResult } from '../../types/search';
+import type { LearnResult } from '../api/types';
 import type { LLMMessage, LLMService } from '../../types/llm';
 import type { EmbeddingVector } from '../../types/embedding';
 
@@ -27,6 +28,7 @@ import { getKeywordIndex, type KeywordIndex } from '../search/keyword-index';
 import { rrfFuse } from '../search/rrf-fusion';
 import { getRerankerService, type RerankerService } from '../search/reranker';
 import { getLLMService } from '../llm/llm-factory';
+import { buildLearnResults } from './learn-kernel';
 import { DEFAULT_N_CTX } from '../llm/wllama-service';
 import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization';
 
@@ -111,6 +113,8 @@ export type RAGEvent =
         /** The exact contextChunks array passed to buildContext, in order. The
          *  model's [1],[2] citations map onto this array by index. */
         chunks: SearchResult[];
+        /** Learn-panel rows (issue #82): "where to learn this" deep links. */
+        learn?: LearnResult[];
         /** True when the pipeline abstained instead of answering (F2). */
         abstain?: boolean;
         abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
@@ -504,6 +508,8 @@ export class RAGOrchestrator {
           answer: '',
           sources: [],
           chunks: [],
+          // D6 (issue #82): no cited chunks → no learn results.
+          learn: [],
           abstain: true,
           abstainReason:
             retrievalDegraded && keywordResults.length === 0
@@ -570,12 +576,19 @@ export class RAGOrchestrator {
     // Stage 9: Yield final complete event. `chunks` is the exact contextChunks
     // array passed to buildContext, in order — the model's [1],[2] citations map
     // onto it by index (F7 numbering invariant).
+    //
+    // D6 (issue #82): learn[] = the union of direct training-slide hits and
+    // linked slides of the cited chunks (browser surface: no links store —
+    // the linked half is the documented #76 divergence), ranked and deduped
+    // by the same kernel the other surfaces run.
+    const learn = buildLearnResults(contextChunks);
     yield {
       type: 'complete',
       data: {
         answer: fullAnswer,
         sources,
         chunks: contextChunks,
+        learn,
         retrievalDegraded,
         contextTrimmed: droppedForBudget > 0 ? droppedForBudget : undefined,
       },

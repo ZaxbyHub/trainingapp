@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import app_paths
 from config import default_gguf_threads
 from document_processor import DocumentProcessor
+from learn_panel import build_learn_results
 from llm_interface import InferenceConfig, QueryCancelled, SmartLLM
 from vector_store import VectorStore
 
@@ -53,6 +54,11 @@ class QueryResult:
     inference_time: float
     chunks_retrieved: int
     retrieved_chunks: Optional[List[Dict[str, Any]]] = None
+    # Learn-panel results (issue #82): union of direct training-slide hits
+    # and #80-linked slides for the cited chunks, ranked/deduped/capped by
+    # learn_panel.build_learn_results. Empty until the Python stack gains a
+    # links source (documented divergence); grounding=general keeps it [].
+    learn: Optional[List[Dict[str, Any]]] = None
 
 
 class RAGConfig:
@@ -760,6 +766,7 @@ class RAGEngine:
             inference_time=time.time() - start_time,
             chunks_retrieved=chunks_retrieved,
             retrieved_chunks=chunk_details,
+            learn=build_learn_results(chunk_details),
         )
 
     def search_documents(

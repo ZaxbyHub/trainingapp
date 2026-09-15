@@ -218,6 +218,8 @@ export function bootstrap(): void {
         engine: resolveNodeEngine(process.env, { userDataPath }),
         // B6 (issue #64): open the per-profile SQLite store (ADR-0006 layout).
         storePath,
+        // D6 (issue #82): packs root for learn-result slide metadata.
+        packsRoot: resolvePacksRoot(),
         storeBackupsDir: backupsDir,
         // B6: forward ingest progress to the renderer (B9 owns the bar UI).
         onIngestProgress: (event) => {

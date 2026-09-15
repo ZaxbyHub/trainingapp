@@ -306,6 +306,7 @@ export async function runAskStream(
         sources: result.sources,
         context_length: result.context_length,
         inference_time: result.inference_time,
+        ...(result.learn !== undefined ? { learn: result.learn } : {}),
       });
     } else {
       emit({
@@ -313,6 +314,7 @@ export async function runAskStream(
         sources: result.sources,
         context_length: result.context_length,
         inference_time: result.inference_time,
+        ...(result.learn !== undefined ? { learn: result.learn } : {}),
       });
     }
   } catch {
@@ -491,6 +493,9 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                   sources: result.sources,
                   context_length: result.context_length,
                   inference_time: result.inference_time,
+                  // D6 (issue #82): explicit-payload construction — only the
+                  // serializable learn rows cross the wire, never result.cited.
+                  ...(result.learn !== undefined ? { learn: result.learn } : {}),
                 },
                 cors,
               );
