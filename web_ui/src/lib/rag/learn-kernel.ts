@@ -31,7 +31,15 @@ export function slideIdFromName(name: string | null | undefined): string | null 
   return match === null ? null : (match[1] ?? null);
 }
 
-function parseMarker(text: string | null | undefined): { section: string | null; title: string | null } {
+/**
+ * Parse the `[training-slide] section=… | title=… | slide_id=…` marker line.
+ *
+ * D7 (issue #83): deliberately exported (previously module-private) so the
+ * pinned-slide resolver (`lib/training/slide-doc-resolver.ts`) reuses the
+ * EXACT marker grammar `buildLearnResults` already parses — a second copy of
+ * the regex would drift the same way the mirrored kernels guard against.
+ */
+export function parseMarker(text: string | null | undefined): { section: string | null; title: string | null } {
   if (!text) return { section: null, title: null };
   const firstLine = text.split('\n', 1)[0].trim();
   const match = MARKER_RE.exec(firstLine);

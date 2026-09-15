@@ -129,6 +129,36 @@ via `?pack=<packId>`) and the pending slide jumps once a pack is opened —
 there is deliberately no in-app pack picker yet (pack support on non-Node
 surfaces is #76).
 
+### Ask-about-this-slide: pinned slide context (D7, #83)
+
+`web_ui/src/components/PinnedSlideContext.tsx` is the chat-side banner for the
+slide the user is currently viewing. App captures each TrainingPlayer
+`slidechange` as the pin (title immediately; section + on-screen text resolved
+once from the ingested slide docs via
+`web_ui/src/lib/training/slide-doc-resolver.ts` — the same
+`slide-<n>-<slideId>.json` + `[training-slide]` marker scheme the Learn kernel
+parses), and hands it to `ChatPage` as `pinnedSlide`.
+
+Lifecycle: every new `slidechange` supersedes the pin; the banner's × control
+dismisses it (live or stale); the pin is in-memory only (a reload clears it);
+and App's staleness producer marks a pin `stale` when the player moves to a
+DIFFERENT pack without the pinned pack's slides playing — a stale banner
+renders visibly marked (`data-stale="true"`) and is never attached to a
+question, because a stale pin silently mis-contextualizing an unrelated
+question is a worse failure mode than no pin at all.
+
+Injection: on the browser-local RAG path, a live pin adds `pinnedContext` to
+`orchestrator.query` — a header line plus the resolved on-screen text — which
+`rag-orchestrator.ts` renders inside the user turn (below the numbered context,
+above the question) and charges against `reservedTokens` through
+`computeReservedTokens` exactly like history, so pin + long history + long
+retrieved context can never overflow `DEFAULT_N_CTX`. The banner itself
+renders in both inference modes, but the `api` (server SSE) path deliberately
+sends nothing pinned: the frozen `QuestionRequest` contract has no such field,
+and server-side prefill parity is the follow-up #83 names explicitly. The
+player bridge payload stays byte-identical to #81's frozen protocol — the
+section/on-screen text never rides through it.
+
 ## Native menu dependency: confirmed disabled
 
 This publish ships with the player's own outline/menu chrome **disabled**:

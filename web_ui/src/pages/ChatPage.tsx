@@ -10,6 +10,7 @@ import { ChatInput } from '../components/ChatInput';
 import { StreamingIndicator } from '../components/StreamingIndicator';
 import { ModelBlockedOverlay } from '../components/ModelBlockedOverlay';
 import { IsolationBanner } from '../components/IsolationBanner';
+import { PinnedSlideContext, pinnedSlideLabel, type PinnedSlide } from '../components/PinnedSlideContext';
 import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
@@ -33,6 +34,18 @@ function generateId(): string {
     return crypto.randomUUID();
   }
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+/**
+ * D7 (issue #83): the injected pinned-slide text — a header line with the
+ * "Section > Title" label (always contains the slide title) plus the resolved
+ * on-screen text when the slide doc resolved in the store. Budgeted by the
+ * orchestrator's computeReservedTokens like history is.
+ */
+export function composePinnedContext(pinned: PinnedSlide): string {
+  const header = `Pinned training slide: ${pinnedSlideLabel(pinned)}`;
+  const text = pinned.text?.trim();
+  return text ? `${header}\n${text}` : header;
 }
 
 export interface ChatPageProps {
@@ -62,6 +75,12 @@ export interface ChatPageProps {
   /** D6 (issue #82): navigate into the embedded training player, targeting a
    *  slide ("Open in training" deep link from the Learn panel). */
   onOpenTraining?: (target: TrainingTarget) => void;
+  /** D7 (issue #83): the slide currently pinned from the training player, or
+   *  null/undefined when no pin is active (never set, dismissed, or cleared). */
+  pinnedSlide?: PinnedSlide | null;
+  /** D7 (issue #83): clears the pin (App nulls its state). Same for live and
+   *  stale pins. */
+  onDismissPinnedSlide?: () => void;
 }
 
 export function ChatPage(props: ChatPageProps) {
@@ -80,7 +99,7 @@ const exportButtonStyle: CSSProperties = {
   transition: 'all 0.15s ease',
 };
 
-function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments, onOpenTraining }: ChatPageProps) {
+function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments, onOpenTraining, pinnedSlide, onDismissPinnedSlide }: ChatPageProps) {
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
   // B9 (issue #67): desktop session drives the SSE endpoint/auth and the
   // first-run model gate. Both are inert outside Electron (session null,
@@ -110,6 +129,13 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  // D7 (issue #83): the pin is read through a ref at SEND time (same pattern
+  // as messagesRef) so runGeneration needs no pinnedSlide dependency and an
+  // Explain click always attaches the pin as of the click, never a stale
+  // closure from an earlier render.
+  const pinnedSlideRef = useRef<PinnedSlide | null | undefined>(pinnedSlide);
+  pinnedSlideRef.current = pinnedSlide;
 
   // S1: cancel any in-flight stream when the active conversation changes (a
   // non-empty→non-empty switch). This is ADDITIVE to the existing
@@ -507,6 +533,17 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           const startTime = Date.now();
           let sources: string[] = [];
 
+          // D7 (issue #83): attach the pinned-slide context iff a LIVE pin is
+          // active (stale pins never attach — AC5/C5). Read from the ref so
+          // the value is the pin as of THIS send. The api-mode branch above
+          // intentionally sends nothing pinned: the frozen QuestionRequest
+          // contract has no such field (server-side parity is the issue's
+          // named follow-up).
+          const activePinnedSlide = pinnedSlideRef.current;
+          const pinnedContext =
+            activePinnedSlide && activePinnedSlide.stale !== true
+              ? composePinnedContext(activePinnedSlide)
+              : undefined;
           for await (const event of orchestrator.query(text, {
             ...presetOptions(ragPreset),
             signal: abortController.signal,
@@ -514,6 +551,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
             // Issue #40 RC1: thread prior conversation turns for multi-turn
             // memory + retrieval contextualization (RC3).
             history: buildHistorySnapshot(owningMessages),
+            pinnedContext,
           })) {
             if (abortController.signal.aborted) return;
             if (tokenStreamManagerRef.current !== streamManager) return;
@@ -861,6 +899,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
             void ensureReadinessGateChecked(browserEngine);
           }}
           onOpenSettings={onOpenSettings}
+        />
+      )}
+
+      {/* D7 (issue #83): pinned "Ask about this slide" banner — shown in BOTH
+          inference modes (C10); only browser-local mode injects its context
+          into the query. A stale pin renders visibly marked (data-stale) and
+          never attaches to questions. */}
+      {pinnedSlide && (
+        <PinnedSlideContext
+          pinnedSlide={pinnedSlide}
+          onDismiss={() => onDismissPinnedSlide?.()}
+          onExplainThisStep={() => { void handleSend('Explain what this step does'); }}
         />
       )}
 

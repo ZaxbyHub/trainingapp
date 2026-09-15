@@ -274,6 +274,33 @@ export class KeywordIndex {
   }
 
   /**
+   * D7 (issue #83): direct chunk lookup by predicate — the pinned-slide
+   * resolver needs the indexed chunk for a specific slide id (matched on the
+   * `slide-<n>-<slideId>.json` source filename), which full-text search cannot
+   * answer. Additive read-only accessor over `idMapping`; preserves insertion
+   * order and stops at `limit` (default 10).
+   */
+  findChunks(
+    predicate: (meta: { docId: string; chunkIndex: number; text: string; source?: string; page?: number }) => boolean,
+    limit = 10
+  ): SearchResult[] {
+    const results: SearchResult[] = [];
+    for (const meta of this.idMapping.values()) {
+      if (!predicate(meta)) continue;
+      results.push({
+        docId: meta.docId,
+        chunkIndex: meta.chunkIndex,
+        score: 1,
+        text: meta.text,
+        source: meta.source,
+        page: meta.page,
+      });
+      if (results.length >= limit) break;
+    }
+    return results;
+  }
+
+  /**
    * Persist the index to IndexedDB.
    */
   async save(): Promise<void> {
