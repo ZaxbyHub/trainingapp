@@ -91,6 +91,13 @@ jobs:
           npm --prefix desktop ci --no-audit --no-fund
           npm --prefix desktop run compile
 
+      # The training-player spec boots the app in PRODUCTION mode (app://
+      # protocol, no ELECTRON_START_URL), whose unpackaged renderer root is
+      # desktop/renderer - the same staging desktop:build performs.
+      - name: Stage renderer for production-mode spec
+        run: |
+          node -e "const fs = require('fs'); fs.cpSync('web_ui/dist', 'desktop/renderer', { recursive: true })"
+
       - name: Run Playwright-under-Electron smoke
         run: npm --prefix desktop run test:e2e
 

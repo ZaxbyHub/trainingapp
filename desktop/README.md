@@ -172,10 +172,11 @@ desktop change.
 
 ## Reserved namespaces
 
-- `app://training/<packId>/` is RESERVED for Workstream D5 (#81, embedded
-  Storyline player). The current handler maps every path under the renderer
-  root; when D5 lands it must register its pack routes before the generic
-  file mapping.
+- `app://training/<packId>/` — the embedded Storyline player route
+  (Workstream D5, #81), implemented in `desktop/main/protocol.ts`
+  (`resolveTrainingRequest`): serves `<packsRoot>/<packId>/assets/player/`
+  with the training CSP profile; see `docs/training-player.md`. The pack
+  routes dispatch before the generic renderer file mapping.
 
 ## ADR-0003 note (issue #57, still open)
 

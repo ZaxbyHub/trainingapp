@@ -3,10 +3,13 @@ repos:
     rev: v4.5.0
     hooks:
       - id: trailing-whitespace
+        exclude: '^desktop/e2e/fixtures/'
       - id: end-of-file-fixer
+        exclude: '^desktop/e2e/fixtures/'
       - id: check-yaml
       - id: check-added-large-files
         args: ['--maxkb=1000']
+        exclude: '^desktop/e2e/fixtures/'
 
   - repo: https://github.com/psf/black
     rev: 23.12.1

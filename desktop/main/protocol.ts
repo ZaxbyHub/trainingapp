@@ -6,12 +6,26 @@
 // requests onto that root with correct MIME types and refuses anything that
 // resolves outside it.
 //
+// Issue #81 (D5) adds the reserved app://training/<packId>/ namespace: pack
+// player assets are served from <packsDir>/<packId>/assets/player/<rest>
+// (the pack layout of packtool build-storyline). Pack documents carry the
+// training CSP profile (security/csp.ts); every other discipline — path
+// validation, containment, realpath re-check, COOP/COEP/CORP headers — is
+// identical to the renderer route.
+//
 // Deeper transport hardening (CSP, loopback token, renderer policy) is
 // Workstream B2 / issue #60; this handler only guarantees baseline path safety.
 import { promises as fsp, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { protocol } from 'electron';
-import { buildCspPolicy } from './security/csp.js';
+import { buildCspPolicy, buildTrainingCspPolicy } from './security/csp.js';
+
+/**
+ * Mirror of packtool/build/pack-json.ts PACK_ID_PATTERN (that package is a
+ * separate npm project, so the pattern is re-declared here). Keep in sync:
+ * packtool build-storyline refuses ids this pattern refuses.
+ */
+const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/;
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -36,6 +50,14 @@ const MIME_TYPES: Record<string, string> = {
   '.wasm': 'application/wasm',
   '.onnx': 'application/octet-stream',
   '.gguf': 'application/octet-stream',
+  // Storyline pack media (issue #81): the player's AudioClipBase elements
+  // refuse to load narration/media served as application/octet-stream.
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
 };
 
 function mimeTypeFor(filePath: string): string {
@@ -54,11 +76,23 @@ function mimeTypeFor(filePath: string): string {
  *     wasm.numThreads > 1 (web_ui/src/lib/models/offline-env.ts) — parity
  *     with start.ps1's SharedArrayBuffer setup.
  */
-function withSecurityHeaders(response: Response): Response {
-  response.headers.set('content-security-policy', buildCspPolicy());
+function withSecurityHeaders(
+  response: Response,
+  csp: string = buildCspPolicy(),
+  corp: 'same-origin' | 'cross-origin' = 'same-origin',
+  allowCrossOrigin: boolean = false,
+): Response {
+  response.headers.set('content-security-policy', csp);
   response.headers.set('cross-origin-opener-policy', 'same-origin');
   response.headers.set('cross-origin-embedder-policy', 'require-corp');
-  response.headers.set('cross-origin-resource-policy', 'same-origin');
+  response.headers.set('cross-origin-resource-policy', corp);
+  if (allowCrossOrigin) {
+    // Pack documents are a different app:// host from the renderer and are
+    // embedded as a frame in a COEP require-corp document; their media and
+    // subresource fetches are therefore cross-origin and need a CORS pass
+    // (the app: scheme is private to this app, so '*' exposes nothing).
+    response.headers.set('access-control-allow-origin', '*');
+  }
   return response;
 }
 
@@ -97,6 +131,17 @@ function resolveWithinRoot(rootAbs: string, requestUrl: string): string | Respon
   if (decoded.includes('\\') || decoded.includes('\0')) return forbidden();
 
   const segments = decoded.split('/').filter((segment) => segment.length > 0);
+  // The renderer page is loaded from the host-only URL app://index.html (no
+  // path component), so the browser resolves index.html's RELATIVE asset URLs
+  // (`./assets/...` from the vite build) against the host: a subresource
+  // request arrives as app://index.html/assets/<file>. `index.html` is a
+  // file, never a directory, so a longer path with that leading segment can
+  // only be this relative-resolution form — strip the page segment and serve
+  // the rest from the root, keeping the same segment validation as any other
+  // request (`..`/`.` after the prefix are still refused below).
+  if (segments.length > 1 && segments[0] === 'index.html') {
+    segments.shift();
+  }
   if (segments.some((segment) => segment === '.' || segment === '..')) {
     return forbidden();
   }
@@ -113,40 +158,155 @@ function resolveWithinRoot(rootAbs: string, requestUrl: string): string | Respon
 }
 
 /**
+ * Resolve a training-route request (`app://training/<packId>/<rest>`) against
+ * the packs root. Returns `null` when the request is not a training-route
+ * path (caller falls through to the renderer mapping), a `Response` refusal,
+ * or the absolute file path to serve: <packsAbs>/<packId>/assets/player/<rest>
+ * (the pack layout of `packtool build-storyline`, PLAYER_ASSETS_PREFIX).
+ * The validation discipline mirrors resolveWithinRoot exactly — decode
+ * refusal, backslash/NUL refusal (catches percent-encoded backslashes too,
+ * because the check runs AFTER decode), `.`/`..` segment refusal, containment
+ * — with the packId additionally constrained to PACK_ID_PATTERN before it is
+ * ever joined onto the filesystem path.
+ */
+function resolveTrainingRequest(
+  packsAbs: string,
+  requestUrl: string,
+): string | Response | null {
+  const schemeEnd = requestUrl.indexOf('://');
+  let rest = schemeEnd >= 0 ? requestUrl.slice(schemeEnd + 3) : requestUrl;
+  const suffix = rest.search(/[?#]/);
+  if (suffix >= 0) rest = rest.slice(0, suffix);
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(rest);
+  } catch {
+    return notFound();
+  }
+  const segments = decoded.split('/').filter((segment) => segment.length > 0);
+  if (segments.length === 0 || segments[0] !== 'training') return null;
+  if (segments.length < 3) return notFound(); // training/<packId>/<rest> needs all three parts
+
+  const packId = segments[1];
+  if (packId === undefined || !PACK_ID_PATTERN.test(packId)) return forbidden();
+  const restSegments = segments.slice(2);
+  if (restSegments.some((segment) => segment === '.' || segment === '..')) {
+    return forbidden();
+  }
+  if (decoded.includes('\\') || decoded.includes('\0')) return forbidden();
+
+  const relative = path.join(packId, 'assets', 'player', ...restSegments);
+  const resolved = path.resolve(packsAbs, relative);
+  if (resolved !== packsAbs && !resolved.startsWith(packsAbs + path.sep)) {
+    return forbidden();
+  }
+  return resolved;
+}
+
+/**
+ * Stat, realpath re-check, and read a resolved path under `rootAbs`, applying
+ * `csp` and the `corp` resource policy plus the shared transport-security
+ * headers. Shared by the renderer and pack routes so both keep identical
+ * serving semantics. The pack route passes corp='cross-origin': the player
+ * frame (app://training/<packId>) is a DIFFERENT host from the embedding
+ * renderer (app://index.html), so the frame response must be embeddable
+ * cross-origin (the app: scheme is private to this app; see csp.ts).
+ * `rangeHeader` enables HTTP Range serving: the player's media elements issue
+ * Range requests, and a plain 200 full-body response makes Chromium's media
+ * pipeline abort with MEDIA_ELEMENT_ERROR (Format error) — narrated slides
+ * then never complete their timeline and navigation gates up.
+ */
+async function serveUnderRoot(
+  resolved: string,
+  rootAbs: string,
+  csp: string,
+  corp: 'same-origin' | 'cross-origin' = 'same-origin',
+  allowCrossOrigin: boolean = false,
+  rangeHeader: string | null = null,
+): Promise<Response> {
+  try {
+    const stats = await fsp.stat(resolved);
+    let filePath = resolved;
+    if (stats.isDirectory()) {
+      filePath = path.join(resolved, 'index.html');
+    }
+    // Re-resolve through the filesystem so a symlink inside root cannot
+    // serve content from outside it, and open the realpath result (not the
+    // pre-realpath path) so a post-check swap cannot escape either.
+    const real = realpathSync(filePath);
+    if (real !== rootAbs && !real.startsWith(rootAbs + path.sep)) {
+      return forbidden();
+    }
+    const data = await fsp.readFile(real);
+    const bytes = new Uint8Array(data);
+    const total = bytes.byteLength;
+    const baseHeaders: Record<string, string> = {
+      'content-type': mimeTypeFor(real),
+      'x-content-type-options': 'nosniff',
+      'cache-control': 'no-cache',
+      'accept-ranges': 'bytes',
+    };
+    if (rangeHeader !== null) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+      if (match !== null && (match[1] !== '' || match[2] !== '')) {
+        let start: number;
+        let end: number;
+        if (match[1] === '') {
+          // suffix range: bytes=-N (last N bytes)
+          start = Math.max(0, total - Number(match[2]));
+          end = total - 1;
+        } else {
+          start = Number(match[1]);
+          end = match[2] === '' ? total - 1 : Math.min(Number(match[2]), total - 1);
+        }
+        if (Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && start < total) {
+          return withSecurityHeaders(new Response(bytes.slice(start, end + 1), {
+            status: 206,
+            headers: {
+              ...baseHeaders,
+              'content-range': 'bytes ' + start + '-' + end + '/' + total,
+            },
+          }), csp, corp, allowCrossOrigin);
+        }
+        return withSecurityHeaders(new Response('Range Not Satisfiable', {
+          status: 416,
+          headers: { 'content-range': 'bytes */' + total },
+        }), csp, corp, allowCrossOrigin);
+      }
+    }
+    return withSecurityHeaders(new Response(bytes, {
+      headers: baseHeaders,
+    }), csp, corp, allowCrossOrigin);
+  } catch {
+    return notFound();
+  }
+}
+
+/**
  * Create the pure request handler served under the app:// scheme.
  * Testable without Electron: `(request: Request) => Promise<Response>`.
+ * `packsDir` enables the reserved app://training/<packId>/ route (issue #81);
+ * without it, training paths fall through to the renderer mapping and 404.
  */
-export function createAppFileHandler(opts: { root: string }) {
+export function createAppFileHandler(opts: { root: string; packsDir?: string }) {
   const rootAbs = path.resolve(opts.root);
+  const packsAbs = opts.packsDir === undefined ? null : path.resolve(opts.packsDir);
   return async function handleAppRequest(request: Request): Promise<Response> {
     const url = typeof request?.url === 'string' ? request.url : '';
+    const rangeHeader = typeof request?.headers?.get === 'function' ? request.headers.get('range') : null;
+
+    if (packsAbs !== null) {
+      const packResolved = resolveTrainingRequest(packsAbs, url);
+      if (packResolved !== null) {
+        if (typeof packResolved !== 'string') return packResolved;
+        return serveUnderRoot(packResolved, packsAbs, buildTrainingCspPolicy(), 'cross-origin', true, rangeHeader);
+      }
+    }
+
     const resolved = resolveWithinRoot(rootAbs, url);
     if (typeof resolved !== 'string') return resolved;
-
-    try {
-      const stats = await fsp.stat(resolved);
-      let filePath = resolved;
-      if (stats.isDirectory()) {
-        filePath = path.join(resolved, 'index.html');
-      }
-      // Re-resolve through the filesystem so a symlink inside root cannot
-      // serve content from outside it, and open the realpath result (not the
-      // pre-realpath path) so a post-check swap cannot escape either.
-      const real = realpathSync(filePath);
-      if (real !== rootAbs && !real.startsWith(rootAbs + path.sep)) {
-        return forbidden();
-      }
-      const data = await fsp.readFile(real);
-      return withSecurityHeaders(new Response(new Uint8Array(data), {
-        headers: {
-          'content-type': mimeTypeFor(real),
-          'x-content-type-options': 'nosniff',
-          'cache-control': 'no-cache',
-        },
-      }));
-    } catch {
-      return notFound();
-    }
+    return serveUnderRoot(resolved, rootAbs, buildCspPolicy(), 'same-origin', false, rangeHeader);
   };
 }
 
@@ -154,7 +314,7 @@ export function createAppFileHandler(opts: { root: string }) {
  * Register the app:// handler with the real Electron runtime.
  * Call after `app` is ready. Must be called exactly once.
  */
-export function registerAppProtocol(opts: { root: string }): void {
+export function registerAppProtocol(opts: { root: string; packsDir?: string }): void {
   protocol.handle('app', createAppFileHandler(opts));
 }
 
@@ -166,7 +326,16 @@ export function registerAppSchemePrivileges(): void {
   protocol.registerSchemesAsPrivileged([
     {
       scheme: 'app',
-      privileges: { standard: true, secure: true, supportFetchAPI: true },
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        // Streaming: required so media elements (the embedded Storyline
+        // player's narration audio, issue #81) can consume responses served
+        // by protocol.handle — without it Chromium's media pipeline rejects
+        // the source with MEDIA_ELEMENT_ERROR (Format error).
+        stream: true,
+      },
     },
   ]);
 }

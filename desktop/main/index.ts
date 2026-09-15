@@ -74,6 +74,19 @@ function resolveRendererRoot(): string {
 }
 
 /**
+ * Packs root for the app://training/<packId>/ player route (issue #81).
+ * Operator override via TRAININGAPP_DESKTOP_PACKS_DIR (mirrors
+ * TRAININGAPP_DESKTOP_STORE_PATH); installs default to <userData>/packs.
+ * A future pack lifecycle extracts built pack zips into exactly this layout:
+ * <packsRoot>/<packId>/{pack.json,index.sqlite,docs/,assets/player/}.
+ */
+function resolvePacksRoot(): string {
+  const override = process.env.TRAININGAPP_DESKTOP_PACKS_DIR;
+  if (override !== undefined && override.length > 0) return path.resolve(override);
+  return path.join(app.getPath('userData'), 'packs');
+}
+
+/**
  * Create the one and only application window.
  *
  * Secure defaults are contractual (frozen spec, AC3):
@@ -287,7 +300,7 @@ export function bootstrap(): void {
         app.quit();
         return;
       }
-      registerAppProtocol({ root });
+      registerAppProtocol({ root, packsDir: resolvePacksRoot() });
     }
     createMainWindow();
   }).catch((err: unknown) => {
