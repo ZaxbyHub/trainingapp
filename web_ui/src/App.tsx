@@ -254,18 +254,20 @@ function AppContent() {
   // called twice with the same value, so the double-firing is harmless.
   useKeyboardShortcuts({ onOpenSettings: openSettings });
 
-  if (!isInitialized) {
-    return (
-      <LoadingOverlay currentStep={currentStep} initError={initError} />
-    );
-  }
-
   // D7 (issue #83) staleness producer (AC5): entering the training page for a
   // pack the pinned slide does NOT belong to means the player can no longer
   // vouch for the pin — mark it stale (visibly marked in the chat banner,
   // never attached to questions). The new pack's first slidechange supersedes
   // the pin with a fresh one. Guards: unknown packIds never stale-flag, and an
   // already-stale pin stays stale.
+  //
+  // HOOK-ORDER NOTE: this effect MUST stay above the `if (!isInitialized)`
+  // early return below. Registered after that conditional return, the hook
+  // count would grow when the boot gate lifts (isInitialized false → true),
+  // crashing the renderer with React error #310 ("Rendered more hooks than
+  // during the previous render") exactly at the end of first-run init —
+  // caught by the Playwright-under-Electron smoke, invisible to unit suites
+  // that mock the gate as always-initialized.
   useEffect(() => {
     if (currentPage !== 'training') return;
     setPinnedSlide((prev) => {
@@ -279,6 +281,12 @@ function AppContent() {
     // both are re-read whenever the page switches to 'training'.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPage, trainingTarget]);
+
+  if (!isInitialized) {
+    return (
+      <LoadingOverlay currentStep={currentStep} initError={initError} />
+    );
+  }
 
   const handleNavigate = (page: string) => {
     // D6 (issue #82): a pending slide target never leaks across an unrelated
