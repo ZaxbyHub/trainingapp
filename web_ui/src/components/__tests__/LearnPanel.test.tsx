@@ -53,6 +53,14 @@ describe('LearnPanel', () => {
     expect(onOpenTraining).toHaveBeenCalledWith({ packId: undefined, slideId: '6RdggQhakWc' });
   });
 
+  test('no-section rows render an exact aria-label without a section prefix', () => {
+    render(<LearnPanel learn={SAMPLE} />);
+    expect(screen.getByRole('button', { name: 'Open in training: Slides And Charts' })).toBeDefined();
+    expect(
+      screen.getByRole('button', { name: 'Open in training: Course Introduction — Welcome' }),
+    ).toBeDefined();
+  });
+
   test('forwards the pack id when the learn result carries one', () => {
     const onOpenTraining = vi.fn();
     const withPack: LearnResult[] = [{ ...SAMPLE[0], pack_id: 'opmed-cdp-mlc' }];

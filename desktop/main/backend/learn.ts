@@ -38,8 +38,14 @@ interface SlideMeta {
 /** Read title/section/on-screen snippet from the slide doc JSON on disk. */
 function readSlideMeta(packsRoot: string | null | undefined, packId: string | null, docPath: string): SlideMeta | null {
   if (!packsRoot || !packId) return null;
+  // Containment (defense-in-depth; protocol.ts discipline): the resolved path
+  // must stay inside packsRoot even if a stored docPath ever carried `..` or
+  // was absolute. Failure to contain = no metadata, never a wrong-file read.
+  const packsRootAbs = path.resolve(packsRoot);
+  const resolved = path.resolve(packsRootAbs, packId, docPath);
+  if (!resolved.startsWith(packsRootAbs + path.sep)) return null;
   try {
-    const raw = fs.readFileSync(path.join(packsRoot, packId, docPath), 'utf8');
+    const raw = fs.readFileSync(resolved, 'utf8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const onScreen = typeof parsed.on_screen_text === 'string' ? parsed.on_screen_text.trim() : '';
     return {

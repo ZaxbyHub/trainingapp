@@ -450,6 +450,42 @@ class TestUnsupportedExtension:
         assert "Start" in first and "Hello everyone." in first
         assert chunks[0].source_path == str(path.resolve())
 
+    def test_json_list_root_has_no_marker(self, tmp_path):
+        """A JSON array at the root is not a slide doc — pretty text, no marker."""
+        import json
+
+        processor = DocumentProcessor()
+        path = tmp_path / "list.json"
+        path.write_text(
+            json.dumps([{"slide_id": "x", "slide_title": "y", "on_screen_text": "z"}]),
+            encoding="utf-8",
+        )
+        chunks = processor.process_file(str(path))
+        assert chunks
+        assert "[training-slide]" not in chunks[0].text
+
+    def test_json_slide_missing_on_screen_text_has_no_marker(self, tmp_path):
+        """slide JSON missing on_screen_text falls back to unmarked pretty text."""
+        import json
+
+        processor = DocumentProcessor()
+        path = tmp_path / "slide-001-nope.json"
+        path.write_text(
+            json.dumps({"slide_id": "nope", "slide_title": "t"}), encoding="utf-8"
+        )
+        chunks = processor.process_file(str(path))
+        assert chunks
+        assert "[training-slide]" not in chunks[0].text
+
+    def test_json_deeply_nested_does_not_crash(self, tmp_path):
+        """RecursionError from deeply-nested JSON degrades to raw text (no raise)."""
+        processor = DocumentProcessor()
+        path = tmp_path / "deep.json"
+        path.write_text("[" * 2000 + "]" * 2000, encoding="utf-8")
+        chunks = processor.process_file(str(path))
+        assert chunks
+        assert "[training-slide]" not in chunks[0].text
+
     def test_json_generic_document_has_no_marker(self, tmp_path):
         """Non-slide JSON extracts as pretty text with no training marker."""
         import json

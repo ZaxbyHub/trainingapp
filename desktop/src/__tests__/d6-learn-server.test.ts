@@ -178,13 +178,13 @@ describe('d6 /ask learn emission (issue #82)', () => {
     expect(learn.map((entry) => entry.slide_id)).toContain('5rN4PvXJM5d');
   }, 30000);
 
-  it('omits learn when no assembler is attached (pre-D6 payloads unchanged)', async () => {
+  it('emits empty learn when no assembler is attached (contract: emitted on success, possibly [])', async () => {
     const fixture = await startServer(false);
     servers.push(fixture.server);
     const { status, body } = await postJson(fixture.port, '/ask', { question: MARKER_TOKEN });
     expect(status).toBe(200);
     const payload = body as Record<string, unknown>;
-    expect(payload.learn).toBeUndefined();
+    expect(payload.learn).toEqual([]);
     expect(payload.cited).toBeUndefined();
   }, 30000);
 });

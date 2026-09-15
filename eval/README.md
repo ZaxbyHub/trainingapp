@@ -64,6 +64,9 @@ must appear in this README; ids unique.
 | `compliance` | compliance obligations, gifts, records | compliance-basics.md |
 | `expenses` | expense reimbursement rules | expenses-guide.md |
 | `training` | training-slide targets (Learn hit@3 rows, issue #82) | slides/*.json |
+
+Slide fixtures under `corpus/slides/` are Storyline-derived — see
+`corpus/slides/PROVENANCE.md` for their third-party content constraints.
 | `out-of-corpus` | deliberately unanswerable from the corpus (abstain rows) | — |
 
 ## Authoring process

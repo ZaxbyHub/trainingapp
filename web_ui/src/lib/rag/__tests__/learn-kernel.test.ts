@@ -55,6 +55,23 @@ describe('learn kernel (browser mirror)', () => {
     expect([...scores].sort((a, b) => b - a)).toEqual(scores);
   });
 
+  test('browser kernel never emits linked rows (documented divergence)', () => {
+    const learn = buildLearnResults([
+      chunk({ source: 'policy.md', score: 0.9 }),
+      chunk({ source: 'slide-001-5rN4PvXJM5d.json', score: 0.5, text: `${MARKER}
+body` }),
+    ]);
+    expect(learn.every((r) => r.reason === 'direct')).toBe(true);
+    expect(learn.some((r) => r.reason === 'linked')).toBe(false);
+  });
+
+  test('custom maxResults truncates below the default cap', () => {
+    const chunks = Array.from({ length: 4 }, (_, i) =>
+      chunk({ source: `slide-${String(i + 1).padStart(3, '0')}-s${i}.json`, score: 0.9 - i * 0.01 }),
+    );
+    expect(buildLearnResults(chunks, { maxResults: 2 })).toHaveLength(2);
+  });
+
   test('non-slide chunks yield an empty array', () => {
     expect(buildLearnResults([chunk({ source: 'handbook.md', score: 0.9 })])).toEqual([]);
     expect(buildLearnResults([])).toEqual([]);

@@ -249,7 +249,8 @@ class DocumentProcessor:
             raw = f.read()
         try:
             payload = json.loads(raw)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
+            # RecursionError: deeply-nested JSON raises past JSONDecodeError.
             return raw
         if not isinstance(payload, dict):
             return json.dumps(payload, indent=2, ensure_ascii=False)

@@ -124,8 +124,10 @@ pending slide is passed to `TrainingPlayer` as `initialSlideId` only once a
 pack resolves, so the mount-time auto-jump fires exactly once (readiness-
 deferred per the pack bridge). The Node backend's `learn[]` rows carry
 `pack_id`, so Electron-mode deep links open the right pack directly; on
-surfaces without a pack id the existing pack picker shows and the slide
-jumps after selection.
+surfaces without a pack id the page shows its no-pack prompt (open a pack
+via `?pack=<packId>`) and the pending slide jumps once a pack is opened —
+there is deliberately no in-app pack picker yet (pack support on non-Node
+surfaces is #76).
 
 ## Native menu dependency: confirmed disabled
 

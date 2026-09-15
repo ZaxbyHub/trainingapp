@@ -579,8 +579,10 @@ components:
                     description: Raw Storyline slide id (TrainingPlayer.jumpToSlide input)
                   title:
                     type: string
+                    description: Slide title
                   section:
                     type: string
+                    description: Course section title the slide belongs to
                   score:
                     type: number
                     format: float
@@ -589,8 +591,10 @@ components:
                     enum: [direct, linked]
                   snippet:
                     type: string
+                    description: One-line excerpt of the slide's on-screen text
                   pack_id:
                     type: string
+                    description: Owning training pack id, when known
             grounding:
               type: object
               description: RESERVED for WS-C #72. Not emitted yet.

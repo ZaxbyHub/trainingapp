@@ -528,6 +528,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                 streamManager.complete({
                   sources,
                   chunks: event.data.chunks,
+                  learn: event.data.learn,
                   abstain: event.data.abstain,
                   abstainReason: event.data.abstainReason,
                   retrievalDegraded: event.data.retrievalDegraded,
