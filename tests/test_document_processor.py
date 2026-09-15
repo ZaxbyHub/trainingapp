@@ -486,6 +486,18 @@ class TestUnsupportedExtension:
         assert chunks
         assert "[training-slide]" not in chunks[0].text
 
+    def test_json_bom_prefixed_degrades_gracefully(self, tmp_path):
+        """A UTF-8 BOM breaks json.loads; the raw text fallback applies (no marker)."""
+        processor = DocumentProcessor()
+        path = tmp_path / "bom.json"
+        bom = b"\xef\xbb\xbf"
+        path.write_bytes(
+            bom + b'{"slide_id": "x", "slide_title": "t", "on_screen_text": "s"}'
+        )
+        chunks = processor.process_file(str(path))
+        assert chunks
+        assert "[training-slide]" not in chunks[0].text
+
     def test_json_generic_document_has_no_marker(self, tmp_path):
         """Non-slide JSON extracts as pretty text with no training marker."""
         import json
