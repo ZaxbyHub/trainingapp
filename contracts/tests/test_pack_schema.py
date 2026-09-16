@@ -149,6 +149,11 @@ def test_traversal_doc_path_rejected_with_named_error(tmp_path):
     out = output(proc)
     assert "../../etc/passwd" in out
     assert "FAIL:" in out
+    # Discriminate the REASON, not just any rejection: the path-safety guard
+    # must fire (reviewer mutation probe: neutering doc_path_problem makes the
+    # validator fall through to a 'doc missing from pack' rejection, which must
+    # NOT satisfy this test).
+    assert "relative-path segment (refused)" in out
 
 
 def test_full_optional_fields_validate(tmp_path):
