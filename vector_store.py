@@ -9,7 +9,7 @@ import re
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 try:
     import chromadb
@@ -754,7 +754,7 @@ class VectorStore:
         self,
         chunks_with_vectors: List[Dict[str, Any]],
         rebuild_index: bool = False,
-        on_conflict: str = "error",
+        on_conflict: Literal["error", "replace"] = "error",
     ) -> None:
         """Add document chunks with pre-computed embeddings to the vector store.
 

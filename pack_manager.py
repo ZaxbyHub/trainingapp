@@ -32,9 +32,11 @@ semantics"; recorded in the ADR's C2 policy section):
 File layout: ``install(pack_path)`` treats ``pack_path`` as the SOURCE only.
 The pack tree is copied into the managed per-version directory
 ``<packs_root>/<pack_id>/<version>/`` and the registry records that managed
-path as ``install_path``. Deactivation (implicit upgrade or supersede)
-retains managed files; only ``remove`` deletes them (ADR-0004: "never
-physically delete on supersede").
+path as ``install_path``. FOLDER-FORM packs only: a ``.zip`` source is
+refused with :class:`PackManagerError` — zip ingestion (and prebuilt
+``index.sqlite`` consumption) is the C6 packtool / C8 hardening surface.
+Deactivation (implicit upgrade or supersede) retains managed files; only
+``remove`` deletes them (ADR-0004: "never physically delete on supersede").
 
 Atomicity: ordering is validate -> copy -> chunk/embed -> Chroma write ->
 registry commit, under the registry lock. Content-derived ids make retries
@@ -111,8 +113,11 @@ def _version_key(version: str) -> Tuple[int, int, int, tuple]:
     if not pre:
         pre_key: Tuple[int, tuple] = (1, ())
     else:
+        # Semver 11.4: numeric identifiers compare numerically and have LOWER
+        # precedence than alphanumeric ones; longer identifier sets win on
+        # equal prefixes (tuple comparison handles both).
         ids = tuple(
-            (1, int(part), "") if part.isdigit() else (0, 0, part)
+            (0, int(part), "") if part.isdigit() else (1, 0, part)
             for part in pre.split(".")
         )
         pre_key = (0, ids)
@@ -339,9 +344,14 @@ class PackManager:
         embeddings = self.store.embedder.encode(texts)
         if not isinstance(embeddings, list):
             embeddings = list(embeddings)
-        if len(embeddings) == 1 and len(texts) > 1:
-            # embedder mocks that return one vector regardless of batch size
-            embeddings = [embeddings[0] for _ in texts]
+        # No mock broadcast here: an embedder that cannot produce one vector
+        # per chunk fails the install explicitly, so a pack is never recorded
+        # as complete with borrowed or missing vectors.
+        if len(embeddings) != len(texts):
+            raise PackManagerError(
+                f"embedder returned {len(embeddings)} vectors for "
+                f"{len(texts)} chunks; refusing partial install"
+            )
         payload = [dict(chunk, embedding=emb) for chunk, emb in zip(chunks, embeddings)]
         self.store.add_chunks_with_embeddings(payload, on_conflict="replace")
         return len(payload)
@@ -384,6 +394,13 @@ class PackManager:
 
     def install(self, pack_path) -> InstallResult:
         source = Path(pack_path)
+        if not source.is_dir():
+            # PackSource would validate a zip fine, but install/ingest below
+            # require a folder on disk; refuse cleanly instead of crashing.
+            raise PackManagerError(
+                f"{source}: folder-form packs only; zip ingestion (and "
+                "prebuilt indexes) land with C6 packtool / C8 hardening"
+            )
         with self._lock:
             manifest = self._validated_manifest(source)
             pack_id = manifest["id"]

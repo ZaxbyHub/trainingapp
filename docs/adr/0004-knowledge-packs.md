@@ -194,3 +194,7 @@ PackManager implementations (C2 Python, C3 Node):
   (`<packs_root>/<pack_id>/<version>/`), which content-hash identity makes
   byte-identical to the original install. Managed files are retained on
   deactivation and deleted only by `remove` (irreversible).
+- **Folder-form install only (C2 Python):** `PackManager.install` refuses
+  `.zip` sources with a clear `PackManagerError` naming the C6/C8 surface;
+  zip ingestion (and prebuilt `index.sqlite` consumption) is the C6
+  packtool / C8 hardening deliverable, not a C2 capability.

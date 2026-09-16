@@ -523,3 +523,49 @@ def test_rollback_to_unknown_version_refused(workspace):
     pm.install(source)
     with pytest.raises(PackManagerError, match="not installed"):
         pm.rollback("bundled-min", "9.9.9")
+
+
+# ------------------------------------------------------------------ #
+# round-2 hardening: zip refusal, semver pre-release order, embed guard
+# ------------------------------------------------------------------ #
+
+
+def test_zip_source_refused_cleanly(workspace):
+    import zipfile
+
+    pm = make_manager(workspace)
+    source = copy_fixture("bundled-min", workspace)
+    zip_path = workspace / "bundled-min.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for path in source.rglob("*"):
+            if path.is_file():
+                zf.write(path, path.relative_to(source))
+    with pytest.raises(PackManagerError, match="folder-form packs only"):
+        pm.install(zip_path)
+
+
+def test_semver_prerelease_numeric_binds_lower_than_alnum():
+    from pack_manager import _version_key
+
+    # semver 11.4: numeric identifiers have LOWER precedence than alphanumeric
+    assert _version_key("1.0.0-1") < _version_key("1.0.0-alpha")
+    assert _version_key("1.0.0-alpha") < _version_key("1.0.0-beta")
+    assert _version_key("1.0.0-1") < _version_key("1.0.0-2")
+    # a pre-release sorts below its release
+    assert _version_key("1.0.0-rc.1") < _version_key("1.0.0")
+    # longer identifier set wins on equal prefix
+    assert _version_key("1.0.0-alpha") < _version_key("1.0.0-alpha.1")
+
+
+def test_embedder_length_mismatch_refuses_partial_install(workspace):
+    pm = make_manager(workspace)
+    source = copy_fixture("bundled-min", workspace)
+
+    class ShortEmbedder:
+        def encode(self, texts):
+            return [[0.1] * 384]  # one vector for two docs
+
+    pm.store.embedder = ShortEmbedder()
+    with pytest.raises(PackManagerError, match="refusing partial install"):
+        pm.install(source)
+    assert pm.list_installed() == []
