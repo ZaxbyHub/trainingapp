@@ -9,9 +9,9 @@ optional-blocks manifest, zip mode, and missing-doc rejection.
 
 These tests live under contracts/ (not pytest.ini testpaths) on purpose:
 scripts/check_test_collection.py ignores contracts/ by design, and CI runs
-this file via the dedicated contracts-triggered step in the store-interop
-job (.github/workflows/desktop-build.yml), matching the store-interop
-precedent.
+this file via a dedicated step in the store-interop job
+(.github/workflows/desktop-build.yml — a job whose triggers include
+contracts/**), matching the store-interop precedent.
 """
 from __future__ import annotations
 
@@ -34,11 +34,12 @@ VALID_FIXTURES = [
 ]
 
 
-def run_validator(path: Path) -> subprocess.CompletedProcess[str]:
+def run_validator(path: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(VALIDATOR), str(path)],
+        [sys.executable, str(VALIDATOR), str(path), *extra],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=120,
     )
 
@@ -229,3 +230,124 @@ def test_zip_mode_reports_missing_pack_json(tmp_path):
 def test_missing_pack_path_is_usage_error():
     proc = run_validator(FIXTURES.parent / "does-not-exist")
     assert proc.returncode == 2
+    assert "pack not found" in output(proc)
+
+
+def test_missing_pack_json_in_dir_mode_is_invalid(tmp_path):
+    # Uniform with zip mode (packtool verify precedent): an existing container
+    # without pack.json is a BROKEN pack (FAIL/exit 1), not a usage error.
+    pack = tmp_path / "no-manifest"
+    pack.mkdir()
+    (pack / "docs").mkdir()
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    assert "pack.json is missing from the pack" in output(proc)
+
+
+def test_corrupt_zip_is_usage_error(tmp_path):
+    bad_zip = tmp_path / "corrupt.zip"
+    bad_zip.write_bytes(b"PK\x03\x04 this is not a real zip")
+    proc = run_validator(bad_zip)
+    assert proc.returncode == 2
+    assert "could not be opened" in output(proc)
+
+
+def test_missing_schema_file_is_usage_error(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+    proc = run_validator(pack, "--schema", str(tmp_path / "absent-schema.json"))
+    assert proc.returncode == 2
+    assert "schema could not be read" in output(proc)
+
+
+def test_malformed_schema_json_is_usage_error(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+    bad_schema = tmp_path / "bad-schema.json"
+    bad_schema.write_text('{"type": "object", "required": [', encoding="utf-8")
+    proc = run_validator(pack, "--schema", str(bad_schema))
+    assert proc.returncode == 2
+    assert "schema is not valid JSON" in output(proc)
+
+
+def test_non_utf8_pack_json_rejected(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+    (pack / "pack.json").write_bytes(b"\xff\xfe{\x00}")
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    assert "not valid UTF-8 JSON" in output(proc)
+
+
+def test_empty_docs_array_rejected(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+    edit_manifest(pack, lambda m: m.update(docs=[]))
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    assert "FAIL: $.docs" in output(proc)
+
+
+def test_uppercase_sha256_rejected(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+
+    def upper(m):
+        m["docs"][0]["sha256"] = m["docs"][0]["sha256"].upper()
+
+    edit_manifest(pack, upper)
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    assert "FAIL: $.docs[0]" in output(proc)
+
+
+def test_nul_byte_in_doc_path_rejected(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+    edit_manifest(pack, lambda m: m["docs"][0].update(path="docs/\x00a.json"))
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    out = output(proc)
+    assert "NUL byte" in out
+    assert "../../" not in out  # sanity: the NUL case, not traversal
+
+
+def test_control_char_in_doc_path_rejected(tmp_path):
+    # A newline inside a manifest path must not split the diff-able FAIL line.
+    pack = copy_fixture("bundled-min", tmp_path)
+    edit_manifest(pack, lambda m: m["docs"][0].update(path="docs/a\nFAIL: fake.json"))
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    out = output(proc)
+    assert "control character" in out
+    assert out.count("FAIL: $.docs[0]") == 1  # the injected fake line never appears
+
+
+def test_ascii_drive_letter_path_rejected(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+    edit_manifest(pack, lambda m: m["docs"][0].update(path="C:/etc/passwd"))
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    assert "must be relative" in output(proc)
+
+
+def test_non_letter_colon_path_matches_packtool_semantics(tmp_path):
+    # packtool's ^[A-Za-z]: does NOT treat '1:foo' as absolute; the validator
+    # mirrors that: path-safety passes, so the failure is the missing doc.
+    pack = copy_fixture("bundled-min", tmp_path)
+    edit_manifest(pack, lambda m: m["docs"][0].update(path="1:foo"))
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    out = output(proc)
+    assert "must be relative" not in out
+    assert "1:foo: doc missing from pack" in out
+
+
+def test_supersedes_non_string_entry_rejected(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+    edit_manifest(pack, lambda m: m.update(supersedes=[1]))
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    assert "FAIL: $.supersedes" in output(proc)
+
+
+def test_index_block_wrong_type_rejected(tmp_path):
+    pack = copy_fixture("bundled-min", tmp_path)
+    edit_manifest(pack, lambda m: m.update(index="index.sqlite"))
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    assert "FAIL: $.index" in output(proc)

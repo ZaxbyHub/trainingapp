@@ -30,18 +30,27 @@
 
 ## Folder and zip layout
 
+The manifest's `docs[].path` values are PACK-RELATIVE (e.g. `docs/welcome.json`,
+`docs/outline.json`) — NOT relative to the `docs/` directory. Consumers must
+join them onto the pack root directly.
+
 - `<pack-id>/pack.json` at the pack root (the manifest).
-- `<pack-id>/docs/<relative paths from the manifest>` — doc bytes whose sha256
-  is declared in the manifest.
+- `<pack-id>/docs/<pack-relative entries>` — doc bytes whose sha256 is
+  declared in the manifest.
 - Optional `<pack-id>/index.sqlite` (prebuilt index; `index.schema_version`
   must match `contracts/store.schema.sql`'s `meta.schema_version` — `2` at
   freeze time — and `index.sqlite_vec_version` the sqlite-vec pin from
   ADR-0005, `0.1.9`).
 - Optional `<pack-id>/pack.sig` (detached signature; format finalized by C8).
-- Zip form: the same tree zipped with `pack.json` present as a root-level
-  entry; entry ORDER is not constrained, only presence. Validators must read
-  entries by exact name and never extract to disk (zip-slip-by-lookup), which
-  is how both `packtool verify` and `contracts/validate_pack.py` behave.
+- Zip form: the zip is rooted at the pack root — `pack.json` is a top-level
+  entry and there is NO enclosing `<pack-id>/` folder (this is what
+  `packtool build-storyline` writes and both validators read). Entry ORDER is
+  not constrained, only presence and exact spelling. Validators must read
+  entries by exact name (case-sensitive, per the zip spec) and never extract
+  to disk (zip-slip-by-lookup), which is how both `packtool verify` and
+  `contracts/validate_pack.py` behave; folder sources follow the host
+  filesystem's case rules (case-sensitive on Linux, insensitive on Windows),
+  so manifests must declare paths with exact casing.
 
 ## Chunk identity (normative)
 
@@ -53,8 +62,9 @@ level, exactly as the store schema froze for B5):
 doc_id      = sha256(raw doc bytes)
 chunk_id    = sha256(doc_sha256 + ":" + chunk_index + ":" + normalized_text)
 content_hash = sha256(normalized_text)
-normalized_text = text with CRLF/CR normalized to LF and trailing horizontal
-                  whitespace stripped per line
+normalized_text = text with CRLF normalized to LF (bare CR is NOT
+                  normalized — byte-matching the implementations) and
+                  trailing horizontal whitespace stripped per line
 ```
 
 The `":"` separators are part of the frozen formula. This byte-matches the
@@ -139,12 +149,20 @@ full-optional-blocks pin.
   runtime code. The TS validator may stay stricter for its own builds (e.g.
   `slide-aware`-only) — the schema is the superset contract across
   bundled/training/user.
+- The schema's `name` `maxLength: 200` (issue-frozen) is NOT enforced by
+  today's packtool: `compose.ts` derives the pack name from the course title
+  with no length cap, so a course titled longer than 200 chars would build a
+  pack the frozen schema rejects. C6/#73's re-plug must enforce the cap at
+  build time; until then `packtool build-storyline` accepts `--name`.
+- #76 (C9) owns the separate browser-surface decision (browser adapter vs
+  capability gate) and consumes this schema by path, as do C2-C8; nothing in
+  this freeze predetermines it.
 - If ADR-0001 (issue #55, embedding bake-off) re-pins `model_id`/`dims`,
   fixtures are regenerated (hashes are content-derived) — the schema shape
   does not change.
-- `contracts/tests/test_pack_schema.py` runs in CI via the
-  contracts-triggered step in `.github/workflows/desktop-build.yml`'s
-  store-interop job (store-interop precedent); `scripts/check_test_collection.py`
-  ignores `contracts/` by design.
+- `contracts/tests/test_pack_schema.py` runs in CI via the store-interop job
+  in `.github/workflows/desktop-build.yml` (that job triggers on
+  `contracts/**` among other paths; store-interop precedent);
+  `scripts/check_test_collection.py` ignores `contracts/` by design.
 - The validator's named path-traversal rejection is defense-in-depth ahead of
   C8/#75 runtime hardening.

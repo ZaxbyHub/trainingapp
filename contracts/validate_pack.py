@@ -19,17 +19,26 @@ supersede target may name another pack id is PackManager install policy
 docs/adr/0004-knowledge-packs.md.
 
 Report format is diff-able: one ``FAIL: <instance path>: <message>`` line
-per problem (schema errors in schema-error order, then semantic checks in
-manifest order), a single ``OK: <n> docs validated`` line on success.
+per problem (schema errors sorted by instance path; when the manifest is
+schema-clean, semantic check problems follow in manifest order), a single
+``OK: <n> docs validated`` line on success.
 
-Exit codes: 0 valid; 1 invalid (FAIL lines emitted); 2 usage error (missing
-pack path, unreadable schema).
+Exit codes: 0 valid; 1 invalid (FAIL lines emitted — including a missing
+``pack.json``, in either input mode); 2 usage error (the pack path does not
+exist / is not a pack container, the schema is unreadable or malformed, or
+the zip itself is corrupt).
+
+Entry-name matching: zip entries are looked up by exact name (case-sensitive
+per the zip spec); folder entries follow the host filesystem (case-sensitive
+on Linux, case-insensitive on Windows). Doc paths are matched exactly as
+declared.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -66,17 +75,19 @@ class PackSource:
                 raise UsageError(
                     f"pack zip could not be opened: {root}: {error}"
                 ) from error
-        elif root.is_dir():
-            if not (root / PACK_JSON).exists():
-                raise UsageError(
-                    f"pack not found (no {PACK_JSON} in directory): {root}"
-                )
-        else:
+        elif not root.is_dir():
             raise UsageError(f"pack not found: {root}")
+        # An existing container without pack.json is a BROKEN pack candidate,
+        # not a usage error: both modes report it as FAIL/exit 1 through the
+        # shared read_entry(PACK_JSON) path (mirrors packtool verify's
+        # uniform ok:false for a missing manifest).
 
     def read_entry(self, name: str) -> Optional[bytes]:
         if self._zip is not None:
             try:
+                # Size/bomb limits are C8/#75's scope (issue #75: "zip bombs"
+                # + peak-memory acceptance row); this validator is a
+                # build/dev-time tool over trusted-local packs.
                 return self._zip.read(name)
             except KeyError:
                 return None
@@ -104,20 +115,26 @@ def instance_path(prefix: str, key: Union[str, int]) -> str:
     )
 
 
+_DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
+
+
 def doc_path_problem(value: str) -> Optional[str]:
-    """Mirror packtool's assertSafeDocPath: reject absolute paths, backslashes,
-    '..'/'.' segments, and NUL bytes. Returns the problem message or None."""
+    """Mirror packtool's assertSafeDocPath: reject absolute paths (POSIX root
+    or ASCII drive letters), backslashes, '..'/'.' segments, NUL bytes, and
+    control characters. Returns the problem message or None."""
     if value == "":
         return "doc path must not be empty"
     if "\\" in value:
         return "doc path must use forward slashes (refused)"
-    if value.startswith("/") or (len(value) >= 2 and value[1] == ":"):
+    if value.startswith("/") or _DRIVE_LETTER.match(value):
         return "doc path must be relative (refused)"
     for segment in value.split("/"):
         if segment in ("..", "."):
             return "doc path contains a relative-path segment (refused)"
         if "\x00" in segment:
             return "doc path contains a NUL byte (refused)"
+    if any(ord(ch) < 0x20 for ch in value):
+        return "doc path contains a control character (refused)"
     return None
 
 
@@ -148,7 +165,9 @@ def semantic_problems(manifest: Dict[str, object], source: PackSource) -> List[s
             continue  # schema already reported the shape problem
         problem = doc_path_problem(path)
         if problem is not None:
-            fail(problems, at, f"{path}: {problem}")
+            # json.dumps keeps the echoed path on one line even when the
+            # manifest smuggles control characters into it.
+            fail(problems, at, f"{json.dumps(path)}: {problem}")
             continue
         # zip entries are addressed by exact name (no extraction), so a
         # traversal-style name can never escape the archive.
