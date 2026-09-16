@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ZaxbyHub/trainingapp/contracts/pack.schema.json",
+  "title": "Knowledge Pack Manifest",
+  "type": "object",
+  "required": ["id", "name", "version", "published_at", "source_class", "embedding", "chunking", "docs"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$",
+      "description": "Stable pack identifier, immutable across versions of the same pack (e.g. 'opmed-cds-docs')."
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$",
+      "description": "Semver 2.0.0. Precedence per semver.org sec 11 (numeric MAJOR.MINOR.PATCH, then pre-release comparison)."
+    },
+    "published_at": { "type": "string", "format": "date-time", "description": "RFC3339 timestamp, UTC recommended (e.g. 2026-09-05T00:00:00Z). Drives recency ranking (C4) and MUST NOT be confused with the pack file's mtime." },
+    "source_class": { "type": "string", "enum": ["bundled", "training", "user"] },
+    "supersedes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]@\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$" },
+      "description": "List of 'id@version' strings this pack version explicitly supersedes. Upgrade policy (own-id vs cross-id) is PackManager-level (C2/C3) and recorded in docs/adr/0004-knowledge-packs.md."
+    },
+    "embedding": {
+      "type": "object",
+      "required": ["model_id", "dims", "normalize"],
+      "additionalProperties": false,
+      "properties": {
+        "model_id": { "type": "string", "minLength": 1, "description": "e.g. 'snowflake-arctic-embed-m-v1.5' or 'bge-small-en-v1.5'; must match the id ADR-0001 (A5) freezes." },
+        "dims": { "type": "integer", "minimum": 1 },
+        "normalize": { "type": "boolean", "description": "Whether stored vectors are L2-normalized; consumers must match at query time or re-embed." }
+      }
+    },
+    "chunking": {
+      "type": "object",
+      "required": ["strategy", "size", "overlap"],
+      "additionalProperties": false,
+      "properties": {
+        "strategy": { "type": "string", "enum": ["fixed-words", "fixed-tokens", "page-aware", "slide-aware"] },
+        "size": { "type": "integer", "minimum": 1 },
+        "overlap": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "docs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "title", "mime"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "description": "Relative path within the pack, forward-slash separated, no '..' segments (enforced by validator + C8 hardening)." },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Content hash of the raw doc file BEFORE chunking; this is the doc identity used in chunk id derivation, not a path hash." },
+          "title": { "type": "string", "minLength": 1 },
+          "published_at": { "type": "string", "format": "date-time" },
+          "mime": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "index": {
+      "type": "object",
+      "required": ["path", "schema_version", "sqlite_vec_version"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "description": "Relative path to a prebuilt index.sqlite (packtool output, see C6)." },
+        "schema_version": { "type": "integer", "minimum": 1, "description": "Must match contracts/store.schema.sql SCHEMA_VERSION (B5) or the pack is refused (C8)." },
+        "sqlite_vec_version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "description": "Optional detached signature block, format finalized by C8.",
+      "properties": {
+        "algorithm": { "type": "string" },
+        "value": { "type": "string" },
+        "key_id": { "type": "string" }
+      }
+    }
+  }
+}
