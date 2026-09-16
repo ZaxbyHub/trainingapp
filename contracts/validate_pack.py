@@ -120,8 +120,10 @@ _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
 
 def doc_path_problem(value: str) -> Optional[str]:
     """Mirror packtool's assertSafeDocPath: reject absolute paths (POSIX root
-    or ASCII drive letters), backslashes, '..'/'.' segments, NUL bytes, and
-    control characters. Returns the problem message or None."""
+    or ASCII drive letters), backslashes, '..'/'.' segments, and NUL bytes.
+    One deliberate extra beyond packtool: control characters are rejected so
+    an adversarial manifest path cannot split the diff-able FAIL report.
+    Returns the problem message or None."""
     if value == "":
         return "doc path must not be empty"
     if "\\" in value:

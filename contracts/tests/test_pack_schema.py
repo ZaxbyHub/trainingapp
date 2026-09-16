@@ -345,6 +345,16 @@ def test_supersedes_non_string_entry_rejected(tmp_path):
     assert "FAIL: $.supersedes" in output(proc)
 
 
+def test_bad_published_at_format_rejected(tmp_path):
+    # FormatChecker enforces date-time (requires the jsonschema [format]
+    # extra, pinned in requirements.txt and installed by the CI step).
+    pack = copy_fixture("bundled-min", tmp_path)
+    edit_manifest(pack, lambda m: m.update(published_at="not-a-timestamp"))
+    proc = run_validator(pack)
+    assert proc.returncode == 1
+    assert "FAIL: $.published_at" in output(proc)
+
+
 def test_index_block_wrong_type_rejected(tmp_path):
     pack = copy_fixture("bundled-min", tmp_path)
     edit_manifest(pack, lambda m: m.update(index="index.sqlite"))

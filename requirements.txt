@@ -42,4 +42,6 @@ httpx>=0.24.0  # eval/ runner + contracts conformance HTTP client
 # Contracts
 # >=4.18: first release on the modern 'referencing' backend used by
 # Draft202012Validator+FormatChecker; <5: guard against a v5 major bump.
-jsonschema>=4.18,<5.0.0  # contracts/pack.schema.json validator (issue #68)
+# [format] extra: installs rfc3339-validator so FormatChecker actually
+# enforces the schema's format: date-time constraints (published_at).
+jsonschema[format]>=4.18,<5.0.0  # contracts/pack.schema.json validator (issue #68)
