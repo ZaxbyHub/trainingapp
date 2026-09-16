@@ -1,0 +1,25 @@
+{
+  "id": "versioned-a",
+  "name": "Versioned A Fixture",
+  "version": "2.0.0",
+  "published_at": "2026-09-16T00:00:00Z",
+  "source_class": "bundled",
+  "embedding": {
+    "model_id": "bge-small-en-v1.5",
+    "dims": 384,
+    "normalize": true
+  },
+  "chunking": {
+    "strategy": "fixed-words",
+    "size": 256,
+    "overlap": 100
+  },
+  "docs": [
+    {
+      "path": "docs/a.json",
+      "sha256": "583709c505866ba6415ae6c5d86963053a4b345198b3105605f82736f039a9ee",
+      "title": "Doc A",
+      "mime": "application/json"
+    }
+  ]
+}

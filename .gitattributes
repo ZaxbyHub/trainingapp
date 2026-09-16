@@ -10,3 +10,4 @@ web_ui/index.html text eol=lf
 tests/fixtures/storyline-mini/** -text
 packtool/** -text
 desktop/e2e/fixtures/storyline-nav/** -text
+contracts/fixtures/packs/** -text
