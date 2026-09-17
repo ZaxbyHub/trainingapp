@@ -23,6 +23,7 @@ import {
   resolveFreeRamBytes,
 } from '../../main/first-run/ram-gate.js';
 import {
+  containedJoin,
   loadManifest,
   resolveManifestPath,
   verifyManifest,
@@ -131,6 +132,41 @@ describe('C4: verify-manifest blocks on corrupted bytes with expected vs actual 
     expect(failure?.expected).toBe(`sha256 ${sha256('quality-model-bytes-v1')}`);
     expect(failure?.actual).toBe(`sha256 ${sha256('quality-model-bytes-CORRUPTED')}`);
     expect(failure?.actual).not.toBe(failure?.expected);
+  });
+});
+
+// ---- PRR-001 regression: manifest path containment -------------------------
+
+describe('PRR-001: manifest-controlled paths cannot escape their roots', () => {
+  it('a traversal file path is a named traversal failure, never read outside the root', () => {
+    const root = makeTempDir('e2-traversal-');
+    const manifest: ResourcesManifest = {
+      version: '1',
+      models: [
+        {
+          id: 'evil',
+          files: [
+            {
+              path: path.join('..', '..', '..', 'Windows', 'System32', 'drivers', 'etc', 'hosts'),
+              required: true,
+              sha256: sha256('anything'),
+            },
+          ],
+        },
+      ],
+    };
+    const result = verifyManifest(manifest, [root]);
+    expect(result.ok).toBe(false);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]?.reason).toBe('traversal');
+    expect(result.digests).toEqual({});
+  });
+
+  it('containedJoin allows safe relatives and refuses escapes', () => {
+    const base = path.resolve(makeTempDir('e2-contained-'));
+    expect(containedJoin(base, path.join('llm', 'model.gguf'))).toBe(path.join(base, 'llm', 'model.gguf'));
+    expect(containedJoin(base, path.join('..', 'elsewhere'))).toBeNull();
+    expect(containedJoin(base, 'C:/elsewhere/absolute')).toBeNull();
   });
 });
 

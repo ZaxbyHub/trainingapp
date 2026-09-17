@@ -22,6 +22,7 @@ import {
 import { CONTEXT_SIZE } from './backend/inference/llama-engine.js';
 import { autoSelectProfile, resolveFreeRamBytes } from './first-run/ram-gate.js';
 import {
+  containedJoin,
   loadManifest,
   manifestGroupBytes,
   resolveManifestPath,
@@ -346,8 +347,13 @@ export function bootstrap(): void {
         };
       }
     };
-    const packEntryDir = (manifestDir: string, entry: { id: string; version?: string; dir?: string }): string =>
-      path.join(manifestDir, 'packs', entry.dir ?? `${entry.id}-${entry.version ?? ''}`);
+    // Manifest-controlled dir (PRR-001): containment-checked join; null when
+    // the entry tries to escape the manifest's packs directory.
+    const packEntryDir = (
+      manifestDir: string,
+      entry: { id: string; version?: string; dir?: string },
+    ): string | null =>
+      containedJoin(path.join(manifestDir, 'packs'), entry.dir ?? `${entry.id}-${entry.version ?? ''}`);
     const buildFirstRunStatus = async () => {
       const freeBytes = resolveFreeRamBytes(process.env);
       const modelStatus =
@@ -364,26 +370,24 @@ export function bootstrap(): void {
       };
       const qualityBytes = modelBytesFor('quality');
       const fastBytes = modelBytesFor('fast');
+      // One load+verify per status invocation: each wizardManifest() runs a
+      // full sha256 pass over every required file, so callers share the result
+      // (PRR-002) instead of hashing the manifest tree twice.
+      const wm = wizardManifest();
       // RAM-gate sizes: the staged file's real size when present, otherwise
       // the manifest's declared size for the group (a quality model that has
       // not been staged yet still gets an honest gate at first run).
-      const wmForGate = wizardManifest();
       const gateSizes = {
         qualityFileBytes:
-          qualityBytes?.bytes ??
-          (wmForGate.manifest !== null
-            ? manifestGroupBytes(wmForGate.manifest, 'llm-quality')
-            : undefined),
+          qualityBytes?.bytes ?? (wm.manifest !== null ? manifestGroupBytes(wm.manifest, 'llm-quality') : undefined),
         fastFileBytes:
-          fastBytes?.bytes ??
-          (wmForGate.manifest !== null ? manifestGroupBytes(wmForGate.manifest, 'llm-fast') : undefined),
+          fastBytes?.bytes ?? (wm.manifest !== null ? manifestGroupBytes(wm.manifest, 'llm-fast') : undefined),
       };
       const recommendation = autoSelectProfile({
         freeBytes,
         nCtx: CONTEXT_SIZE,
         ...gateSizes,
       });
-      const wm = wizardManifest();
       const failures: ManifestFailure[] =
         wm.loadError !== null
           ? [
@@ -400,7 +404,10 @@ export function bootstrap(): void {
         id: entry.id,
         ...(entry.version !== undefined ? { version: entry.version } : {}),
         ...(entry.dir !== undefined ? { dir: entry.dir } : {}),
-        resolvedDir: wm.manifest !== null && wm.manifestPath !== null ? packEntryDir(path.dirname(wm.manifestPath), entry) : null,
+        resolvedDir:
+          wm.manifest !== null && wm.manifestPath !== null
+            ? packEntryDir(path.dirname(wm.manifestPath), entry)
+            : null,
       }));
       let installed: Array<{ id: string; version: string; active: boolean }> = [];
       if (packTools !== null) {
@@ -509,6 +516,14 @@ export function bootstrap(): void {
             );
             if (satisfied) {
               results.push({ id: entry.id, ok: true, detail: 'already installed and active' });
+              continue;
+            }
+            if (dir === null) {
+              results.push({
+                id: entry.id,
+                ok: false,
+                detail: `pack dir for ${entry.id} escapes the manifest packs directory (traversal refused)`,
+              });
               continue;
             }
             if (!existsSync(dir)) {

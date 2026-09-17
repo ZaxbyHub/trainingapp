@@ -18,7 +18,13 @@
  * representable. */
 export interface FirstRunManifestFailure {
   path: string;
-  reason: 'missing' | 'hash-mismatch' | 'size-mismatch' | 'sha256-required' | 'manifest-unreadable';
+  reason:
+    | 'missing'
+    | 'hash-mismatch'
+    | 'size-mismatch'
+    | 'sha256-required'
+    | 'manifest-unreadable'
+    | 'traversal';
   expected: string;
   actual: string;
 }

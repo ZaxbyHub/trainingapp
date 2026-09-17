@@ -11,7 +11,7 @@
  * "Skip for now" only dismisses — it never completes, so the wizard re-appears
  * on the next launch until the operator finishes it.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   activateRequiredPacks,
   completeFirstRun,
@@ -183,6 +183,38 @@ export function FirstRunWizard({
   } | null>(null);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Modal keyboard behavior (PRR-003): Escape dismisses exactly like
+  // "Skip for now" (never completes), and Tab is trapped inside the panel.
+  useEffect(() => {
+    const handler = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const panel = panelRef.current;
+      if (panel === null) return;
+      const focusables = panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (active === null || !panel.contains(active) || (event.shiftKey && active === first)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handler);
+    panelRef.current?.focus();
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
 
   const step: Step = completed ? 'complete' : WIZARD_STEPS[stepIndex];
   const manifestBlocking =
@@ -227,7 +259,7 @@ export function FirstRunWizard({
 
   return (
     <div style={overlayStyle} data-testid="first-run-wizard" role="dialog" aria-modal="true" aria-label="First-run setup">
-      <div style={panelStyle}>
+      <div ref={panelRef} style={panelStyle} tabIndex={-1}>
         <div>
           <h2 style={{ margin: 0, fontSize: 'var(--font-size-title, 20px)' }}>
             {status.rerun ? 'Re-run setup' : 'Welcome to TrainingApp'}

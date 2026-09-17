@@ -52,7 +52,24 @@ export type ManifestFailureReason =
   | 'hash-mismatch'
   | 'size-mismatch'
   | 'sha256-required'
-  | 'manifest-unreadable';
+  | 'manifest-unreadable'
+  | 'traversal';
+
+/** Join `relative` under `base` and require the result to stay INSIDE `base`.
+ *  Returns null when the relative path escapes (traversal attempt) — manifest
+ *  paths are installer-controlled, so this is defense-in-depth, but a generic
+ *  join silently reads (and hashes) files anywhere on disk. Case-insensitive
+ *  on the prefix because Windows path case is not significant. */
+export function containedJoin(base: string, relative: string): string | null {
+  const resolvedBase = path.resolve(base);
+  const resolved = path.resolve(resolvedBase, relative);
+  const baseWithSep = resolvedBase.endsWith(path.sep) ? resolvedBase : resolvedBase + path.sep;
+  const inside =
+    process.platform === 'win32'
+      ? resolved.toLowerCase().startsWith(baseWithSep.toLowerCase())
+      : resolved.startsWith(baseWithSep);
+  return inside ? resolved : null;
+}
 
 export interface ManifestFailure {
   path: string;
@@ -149,13 +166,18 @@ export function verifyManifest(manifest: ResourcesManifest, roots: string[]): Ve
         });
         continue;
       }
-      const found = roots.map((root) => path.join(root, file.path)).find((candidate) => existsSync(candidate));
+      const found = roots
+        .map((root) => containedJoin(root, file.path))
+        .find((candidate): candidate is string => candidate !== null && existsSync(candidate));
       if (found === undefined) {
+        // Distinguish "not present" from "never looked because the path tried
+        // to escape its root" — a traversal attempt is its own named failure.
+        const escaped = roots.some((root) => containedJoin(root, file.path) === null);
         failures.push({
           path: file.path,
-          reason: 'missing',
-          expected: `sha256 ${file.sha256}`,
-          actual: 'missing',
+          reason: escaped ? 'traversal' : 'missing',
+          expected: escaped ? `a path inside the manifest roots (${roots.join(', ')})` : `sha256 ${file.sha256}`,
+          actual: escaped ? 'path escapes the manifest roots' : 'missing',
         });
         continue;
       }
