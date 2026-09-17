@@ -24,4 +24,20 @@ contextBridge.exposeInMainWorld('desktopApi', {
   // a URL). B9 consumes it; the token still travels via getAuthToken and is
   // sent under the X-Desktop-Token header, not Authorization.
   getBackendInfo: () => ipcRenderer.invoke('desktop:get-backend'),
+  // E2 (issue #85): first-run validation wizard. Status/complete/reset mirror
+  // the store-backup pattern (renderer-reachable main-process capability);
+  // onFirstRunRequired subscribes to the push fired when a needed first run
+  // (or drift re-run) is detected at boot.
+  getFirstRunStatus: () => ipcRenderer.invoke('desktop:first-run:status'),
+  activateFirstRunPacks: () => ipcRenderer.invoke('desktop:first-run:activate-packs'),
+  completeFirstRun: (payload: { selectedProfile: string; acknowledgedLicenses: boolean }) =>
+    ipcRenderer.invoke('desktop:first-run:complete', payload),
+  resetFirstRun: () => ipcRenderer.invoke('desktop:first-run:reset'),
+  onFirstRunRequired: (callback: (status: unknown) => void) => {
+    const listener = (_event: unknown, status: unknown): void => callback(status);
+    ipcRenderer.on('first-run:required', listener);
+    return () => {
+      ipcRenderer.removeListener('first-run:required', listener);
+    };
+  },
 });

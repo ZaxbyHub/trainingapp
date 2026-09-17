@@ -21,6 +21,13 @@ function stubBridge(overrides: Partial<DesktopApiBridge> = {}): DesktopApiBridge
   return {
     getAuthToken: vi.fn(async () => 'launch-token-abc'),
     getBackendInfo: vi.fn(async () => ({ mode: 'node', port: 4567, url: 'http://127.0.0.1:4567' })),
+    // E2 (issue #85): inert first-run surface stubs — this suite never
+    // exercises the wizard, it only needs a type-complete bridge.
+    getFirstRunStatus: vi.fn(async () => null) as unknown as DesktopApiBridge['getFirstRunStatus'],
+    activateFirstRunPacks: vi.fn(async () => ({ ok: true, results: [] })),
+    completeFirstRun: vi.fn(async () => ({ ok: true })),
+    resetFirstRun: vi.fn(async () => ({ ok: true })),
+    onFirstRunRequired: vi.fn(() => () => {}),
     ...overrides,
   };
 }

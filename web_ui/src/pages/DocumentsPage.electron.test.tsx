@@ -93,6 +93,12 @@ beforeEach(() => {
   (window as { desktopApi?: DesktopApiBridge }).desktopApi = {
     getAuthToken: vi.fn(async () => 't'),
     getBackendInfo: vi.fn(async () => ({ mode: 'node', port: 1, url: 'http://127.0.0.1:1' })),
+    // E2 (issue #85): type-complete inert first-run stubs (unused here).
+    getFirstRunStatus: vi.fn(async () => null) as unknown as DesktopApiBridge['getFirstRunStatus'],
+    activateFirstRunPacks: vi.fn(async () => ({ ok: true, results: [] })),
+    completeFirstRun: vi.fn(async () => ({ ok: true })),
+    resetFirstRun: vi.fn(async () => ({ ok: true })),
+    onFirstRunRequired: vi.fn(() => () => {}),
   };
   vi.mocked(window.fetch ?? fetch).mockRestore?.();
 });

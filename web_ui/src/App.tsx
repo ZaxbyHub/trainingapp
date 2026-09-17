@@ -10,6 +10,7 @@ import {
   type DesktopSessionState,
 } from './lib/desktop-session';
 import { AppLayout } from './layouts/AppLayout';
+import { FirstRunGate } from './components/FirstRunWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ChatPage } from './pages/ChatPage';
 import { DocumentsPage } from './pages/DocumentsPage';
@@ -362,6 +363,9 @@ function AppContent() {
       hasMore={hasMore}
       onLoadMore={loadMore}
     >
+      {/* E2 (issue #85): first-run validation wizard gate — renders the
+          overlay only when a first run (or drift re-run) is needed. */}
+      <FirstRunGate />
       {persistenceError && (
         <div style={{
           padding: 'var(--spacing-sm) var(--spacing-md)',

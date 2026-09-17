@@ -106,7 +106,9 @@ const PROFILE_GENERATION: Record<InferenceProfileName, { maxTokens: number; temp
 };
 const SAMPLER_TOP_P = 0.9;
 const SAMPLER_REPEAT_PENALTY = 1.1;
-const CONTEXT_SIZE = 8192; // DEFAULT_N_CTX parity (web_ui/src/lib/llm/wllama-service.ts:39)
+export const CONTEXT_SIZE = 8192; // DEFAULT_N_CTX parity (web_ui/src/lib/llm/wllama-service.ts:39)
+// Exported for the E2 first-run wizard's RAM gate (first-run/ram-gate.ts), which must
+// estimate with the SAME context size the engine will actually create — one source of truth.
 const CANCEL_POLL_MS = 20;
 // Bounds shared by the PUT /settings gate and the env-var ingress so neither
 // path can reach createContext() with an unvalidated thread count.

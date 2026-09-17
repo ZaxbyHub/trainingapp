@@ -13,6 +13,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useInferenceMode } from '../lib/inference';
 import { fetchModelStatus, isElectron, useDesktopSession } from '../lib/desktop-session';
+import { fetchFirstRunStatus, resetFirstRun, emitFirstRunReopen } from '../lib/first-run';
 import type { ModelStatus } from '../lib/api/types';
 import { useTheme, type ThemePreference } from '../lib/theme';
 import { ModelDownloadManager, type DownloadProgress } from '../lib/llm/model-download';
@@ -38,6 +39,53 @@ import {
   deleteNamespace,
   listStalePrefixes,
 } from '../lib/storage/profile';
+
+// ============================================================================
+// First-run setup (E2, issue #85): status + manual "Re-run setup" entry.
+// Reset clears the wizard state and reopens the App-owned overlay via the
+// module-level reopen bus in lib/first-run.
+// ============================================================================
+function FirstRunSetupCard(): React.ReactElement | null {
+  const [statusLine, setStatusLine] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchFirstRunStatus().then((status) => {
+      if (cancelled) return;
+      if (status === null) return;
+      setStatusLine(
+        status.state.completed
+          ? `Setup completed ${status.state.completedAt || ''} (profile: ${status.state.selectedProfile})${status.rerun ? ' — re-run needed' : ''}`
+          : 'Setup has not been completed yet',
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleRerun = async (): Promise<void> => {
+    await resetFirstRun();
+    emitFirstRunReopen();
+  };
+
+  if (window.desktopApi === undefined) return null;
+  return (
+    <section style={sectionStyle} aria-labelledby="first-run-heading" data-testid="first-run-setup-section">
+      <h2 id="first-run-heading" style={sectionTitleStyle}>
+        First-run setup
+      </h2>
+      <div style={fieldGroupStyle}>
+        <p style={descriptionStyle}>
+          {statusLine ?? 'First-run status unavailable (backend starting).'}
+        </p>
+        <button type="button" onClick={() => void handleRerun()} data-testid="first-run-rerun">
+          Re-run setup
+        </button>
+      </div>
+    </section>
+  );
+}
 
 // ============================================================================
 // Settings Store (IndexedDB)
@@ -1010,6 +1058,11 @@ function SettingsPageInner(): React.ReactElement {
             </div>
           </section>
         )}
+
+        {/* ================================================================== */}
+        {/* 2a-2. First-run setup (E2, issue #85): status + Re-run setup.      */}
+        {/* ================================================================== */}
+        {electronMode && <FirstRunSetupCard />}
 
         {/* ================================================================== */}
         {/* 2b. Server Configuration (API mode; hidden under Electron — the    */}
