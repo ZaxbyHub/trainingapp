@@ -28,6 +28,8 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "better-sqlite3": "13.0.3",
     "jszip": "^3.10.2",
     "mammoth": "^1.12.2",

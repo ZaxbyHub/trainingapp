@@ -120,7 +120,7 @@ describe('b6 C3 (AC5): backup and restore', () => {
     expect(fs.existsSync(dbPath)).toBe(false);
 
     const restored = await restoreBackup({ backupPath: second.path, dbPath, repoRoot: REPO_ROOT, dims: 8 });
-    expect(restored.schemaVersion).toBe(2);
+    expect(restored.schemaVersion).toBe(3);
     const reopened = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
       expect(countRows(reopened, 'docs')).toBe(1);
@@ -128,7 +128,7 @@ describe('b6 C3 (AC5): backup and restore', () => {
       const sha = reopened.db.prepare('SELECT sha256 FROM docs').get() as { sha256: string };
       // Same content identity survived the backup -> restore roundtrip.
       expect(sha.sha256).toBe(sha256hex(seededText));
-      expect(reopened.schemaVersion).toBe(2);
+      expect(reopened.schemaVersion).toBe(3);
     } finally {
       reopened.close();
     }

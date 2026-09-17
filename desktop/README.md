@@ -189,7 +189,8 @@ against it (per the issue's invalidation clause).
 ## B5 store (issue #63)
 
 The Node host opens the per-profile SQLite store (`contracts/store.schema.sql`,
-schema v1) on the `NodeBackendHost` start path when a store path is configured
+schema v3 — per-version `packs` since C3/#70) on the `NodeBackendHost` start
+path when a store path is configured
 (Electron bootstrap: `<userData>/store/store.db`; dev-server:
 `--store-path` or `TRAININGAPP_DESKTOP_STORE_PATH`). Init is
 failure-isolated — the store is not load-bearing until B6 (#64). Pinned
@@ -197,6 +198,21 @@ sqlite-vec 0.1.9 (`better-sqlite3` + `sqlite-vec` in `desktop/package.json`);
 Node↔Python interop proof: `contracts/tests/store-interop/` (ADR-0005). The
 Electron-packaged native-addon path remains #84/E1. Browser IndexedDB storage
 (`web_ui`) is unchanged by B5.
+
+## Pack lifecycle (C3, issue #70)
+
+The backend host start path constructs the Node `PackManager`
+(`desktop/main/backend/store/pack-manager.ts`) over the opened store and the
+shared embedder, and attaches it to the engine (`attachPackManager`; the
+instance-field/attach shape keeps the b3 prototype pin intact). It implements
+C2's `pack_manager.py` semantics on the shared schema — install / supersede /
+rollback / remove / listInstalled with ADR-0004 content-hash chunk ids —
+against the v3 per-version `packs` table (migration ladder handles older
+stores). Lifecycle ops are serialized (C2 registry-lock parity) and rebind
+across clear-cache store swaps. Cross-backend chunk-id parity with the Python
+PackManager is proven in CI's store-interop job
+(`contracts/tests/test_pack_parity.py`). The Documents-page UI consuming this
+surface lands with C7/#74; hardening (symlinks, resource caps) is C8/#75.
 
 ## Ingestion, profiles, backup and recovery (B6, issue #64)
 

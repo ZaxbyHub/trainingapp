@@ -192,7 +192,8 @@ pack, the top-3 nearest training slides of the TRAINING pack above a cosine
 similarity threshold (default 0.5, overridable with `--threshold`; cap
 overridable with `--top`) are written into the doc pack's `index.sqlite`
 `links` table (chunk_id, slide_id, pack_id, score, rank 1..3, computed_at),
-so an installed doc pack ships pre-linked (schema v2). Refuses (exit 1) when
+so an installed doc pack ships pre-linked (links table since schema v2,
+unchanged through v3). Refuses (exit 1) when
 the doc pack is `source_class: "training"` (links relate DOC chunks to
 slides), when either pack is missing or has an invalid pack.json, or when the
 two embedding spaces are not comparable (model_id, dims, or normalize

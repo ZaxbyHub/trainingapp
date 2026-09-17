@@ -22,6 +22,7 @@ import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js
 import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
 import { StoreDocumentSurface } from './store/document-surface.js';
+import { PackManager } from './store/pack-manager.js';
 import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
@@ -92,6 +93,9 @@ export class NodeBackendHost implements BackendHost {
   private store: StoreHandle | null = null;
   private surface: StoreDocumentSurface | null = null;
   private retrieval: RetrievalSurface | null = null;
+  /** C3 (#70): pack lifecycle, constructed on start (instance field — the b3
+   * duck-type pin reserves host prototypes for start/stop only). */
+  private packManager: PackManager | null = null;
   private reranker: RerankerSurface | null = null;
   /** The embedder resolved for ingest — B7 reuses the SAME instance for query embedding. */
   private embedder: EmbeddingSurface | null = null;
@@ -420,6 +424,9 @@ export class NodeBackendHost implements BackendHost {
             get: () => this.store,
             set: (handle: StoreHandle | null) => {
               this.store = handle;
+              // C3/#70 (PRR-003): clear-cache/recovery swap the connection —
+              // the pack lifecycle must follow or it holds a closed handle.
+              this.packManager?.rebindStore(handle);
             },
           }, this.scheduler);
           if (this.embedder !== null) {
@@ -441,6 +448,29 @@ export class NodeBackendHost implements BackendHost {
             if (typeof this.engine.attachLearnAssembler === 'function') {
               this.engine.attachLearnAssembler((cited) =>
                 assembleLearnResults({ db: this.store !== null ? this.store.db : null, cited, packsRoot: this.config.packsRoot }),
+              );
+            }
+            // C3 (#70): the pack lifecycle shares the store handle and the
+            // SAME embedder instance as ingest/retrieval (single ORT owner —
+            // the WorkerEmbedder above already proxies when a worker exists).
+            // Managed copies default to a profile-local packs/ dir; the
+            // packsRoot config knob overrides. Attach to the engine via the
+            // established optional-attach pattern when the seam exists.
+            try {
+              this.packManager = new PackManager({
+                store: this.store,
+                embedder: this.embedder,
+                packsRoot: this.config.packsRoot ?? path.join(path.dirname(this.config.storePath ?? this.store.dbPath), 'packs'),
+              });
+              if (typeof (this.engine as { attachPackManager?: unknown }).attachPackManager === 'function') {
+                (this.engine as unknown as { attachPackManager: (pm: PackManager) => void }).attachPackManager(this.packManager);
+              }
+            } catch (err) {
+              // Degrade like the other surfaces: a pack-lifecycle failure must
+              // not take the host down.
+              this.packManager = null;
+              console.error(
+                `[trainingapp-backend] pack lifecycle unavailable: ${err instanceof Error ? err.message : String(err)}`,
               );
             }
           }
@@ -504,6 +534,12 @@ export class NodeBackendHost implements BackendHost {
       this.engine.attachRetrievalSurface(null);
       this.retrieval = null;
     }
+    // C3/#70 (PRR-016): detach the pack lifecycle like the other surfaces so
+    // the engine never holds a stale manager across stop()->start().
+    if (typeof (this.engine as unknown as { attachPackManager?: unknown }).attachPackManager === 'function') {
+      (this.engine as unknown as { attachPackManager: (pm: PackManager | null) => void }).attachPackManager(null);
+    }
+    this.packManager = null;
     // D6 (issue #82): detach the learn assembler with the store lifecycle.
     if (typeof this.engine.attachLearnAssembler === 'function') {
       this.engine.attachLearnAssembler(null);

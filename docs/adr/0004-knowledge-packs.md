@@ -39,8 +39,8 @@ join them onto the pack root directly.
   declared in the manifest.
 - Optional `<pack-id>/index.sqlite` (prebuilt index; `index.schema_version`
   must match `contracts/store.schema.sql`'s `meta.schema_version` — `2` at
-  freeze time — and `index.sqlite_vec_version` the sqlite-vec pin from
-  ADR-0005, `0.1.9`).
+  freeze time, `3` since C3/#70's per-version packs — and
+  `index.sqlite_vec_version` the sqlite-vec pin from ADR-0005, `0.1.9`).
 - Optional `<pack-id>/pack.sig` (detached signature; format finalized by C8).
 - Zip form: the zip is rooted at the pack root — `pack.json` is a top-level
   entry and there is NO enclosing `<pack-id>/` folder (this is what

@@ -26,6 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ChatHistoryItem } from 'node-llama-cpp';
 import { StubEngine } from '../engine.js';
+import type { PackManager } from '../store/pack-manager.js';
 import { ModelNotConfiguredError } from '../types.js';
 import type {
   BatchIngestResult,
@@ -612,6 +613,24 @@ export class LlamaEngine implements EngineSurface {
   }
 
   private learnAssembler: LearnAssembler | null = null;
+
+  /**
+   * C3 (issue #70): the host attaches the store-backed pack lifecycle after
+   * it opens the store (the same optional-attach pattern as the document
+   * surface). Held so the API layer reaches the lifecycle through the engine,
+   * exactly like documents/retrieval — never through host prototypes (the b3
+   * duck-type pin reserves those for start/stop).
+   */
+  attachPackManager(manager: PackManager | null): void {
+    this.packManager = manager;
+  }
+
+  /** The attached pack lifecycle (null until the host start path attaches). */
+  get attachedPackManager(): PackManager | null {
+    return this.packManager;
+  }
+
+  private packManager: PackManager | null = null;
 
   private documents: DocumentSurface | null = null;
 
