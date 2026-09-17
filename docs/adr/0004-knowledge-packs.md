@@ -166,3 +166,35 @@ full-optional-blocks pin.
   `scripts/check_test_collection.py` ignores `contracts/` by design.
 - The validator's named path-traversal rejection is defense-in-depth ahead of
   C8/#75 runtime hardening.
+
+## C2 PackManager install policy (recorded at C2 implementation, issue #69)
+
+This section records the install-policy decisions ADR-0004 delegated to the
+PackManager implementations (C2 Python, C3 Node):
+
+- **Implicit upgrade (unchanged):** installing a pack whose `id` equals an
+  installed pack's `id` with a HIGHER semver version is an upgrade; the prior
+  active version's changed docs are delete-before-reingested (content-hash
+  identity; docs whose sha256 is unchanged at the same manifest path keep
+  their chunks).
+- **Downgrade and equal-version installs are refused** by `install`:
+  downgrades belong to `rollback`, and a same-version reinstall belongs to
+  `remove` + `install`.
+- **Cross-id `supersedes` entries are honored:** an entry naming an INSTALLED
+  foreign `id@version` deactivates that version and deletes its chunks from
+  the live collection; its managed files are retained (rollback-able). The
+  issue #69 acceptance prose names a foreign id `a@1.0.0` which is
+  schema-invalid (id pattern requires 3+ chars); the frozen schema pattern
+  outvotes the prose — tests pin the equivalent schema-valid
+  `pack-a@1.0.0`. Entries naming nothing installed are recorded on the new
+  row and warn (C8/#75 may tighten this to a refusal).
+- **Verb symmetry:** `supersede(pack_id, from, to)` and
+  `rollback(pack_id, to)` are state verbs over ALREADY-INSTALLED rows;
+  activation re-ingests from the retained per-version managed directory
+  (`<packs_root>/<pack_id>/<version>/`), which content-hash identity makes
+  byte-identical to the original install. Managed files are retained on
+  deactivation and deleted only by `remove` (irreversible).
+- **Folder-form install only (C2 Python):** `PackManager.install` refuses
+  `.zip` sources with a clear `PackManagerError` naming the C6/C8 surface;
+  zip ingestion (and prebuilt `index.sqlite` consumption) is the C6
+  packtool / C8 hardening deliverable, not a C2 capability.

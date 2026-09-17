@@ -9,7 +9,7 @@ import re
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Literal, Optional, Set, Tuple
 
 try:
     import chromadb
@@ -751,7 +751,10 @@ class VectorStore:
         return added
 
     def add_chunks_with_embeddings(
-        self, chunks_with_vectors: List[Dict[str, Any]], rebuild_index: bool = False
+        self,
+        chunks_with_vectors: List[Dict[str, Any]],
+        rebuild_index: bool = False,
+        on_conflict: Literal["error", "replace"] = "error",
     ) -> None:
         """Add document chunks with pre-computed embeddings to the vector store.
 
@@ -763,9 +766,18 @@ class VectorStore:
                 - metadata (dict): Metadata dict with keys like source, doc_id, chunk_index, etc.
             rebuild_index: If True, rebuild the legacy BM25Okapi index after adding.
                           If False (default), only update incremental BM25 structures.
+            on_conflict: What to do when a chunk_id already exists (issue #69):
+                "error" (default) raises ValueError, preserving the fail-fast
+                contract for existing callers; "replace" deletes the colliding
+                chunks first (Chroma plus matching BM25 doc_ids) and inserts
+                the new ones — the sanctioned path for pack supersede. Neither
+                mode reconciles metadata["documents"]: this method performs no
+                document bookkeeping (pack chunks carry doc_id metadata and no
+                registry entry here).
 
         Raises:
-            ValueError: If a chunk_id already exists in the collection.
+            ValueError: If a chunk_id already exists and on_conflict is
+                "error" (the default), or if on_conflict is not a known mode.
         """
         if not chunks_with_vectors:
             return
@@ -811,7 +823,56 @@ class VectorStore:
                 all_existing_ids = set(existing["ids"]) if existing["ids"] else set()
             except Exception as e:
                 logger.warning("Could not check for existing IDs in batch: %s", e)
+            if all_existing_ids and on_conflict == "replace":
+                # Replace mode (issue #69): delete-then-insert for the
+                # colliding ids, keeping BM25 consistent via the removed
+                # chunks' doc_id metadata.
+                removed_metadatas: List[Any] = []
+                try:
+                    removed = self.collection.get(
+                        ids=sorted(all_existing_ids), include=["metadatas"]
+                    )
+                    removed_metadatas = removed.get("metadatas") or []
+                except Exception as e:
+                    logger.warning(
+                        "Could not fetch metadata for replaced chunk ids: %s", e
+                    )
+                purged_doc_ids = {
+                    meta.get("doc_id")
+                    for meta in removed_metadatas
+                    if isinstance(meta, dict) and meta.get("doc_id")
+                }
+                self.collection.delete(ids=sorted(all_existing_ids))
+                if purged_doc_ids and self.bm25_index and self.bm25_index.chunks:
+                    try:
+                        remaining = [
+                            c
+                            for c in self.bm25_index.chunks
+                            if getattr(c, "doc_id", None) not in purged_doc_ids
+                        ]
+                        if remaining:
+                            self.bm25_index.build_index(remaining)
+                            self.bm25_index.chunks = remaining
+                        else:
+                            self.bm25_index.bm25_index = None
+                            self.bm25_index.chunks = []
+                        self._bm25_needs_rebuild = len(remaining) == 0
+                    except Exception as e:
+                        # Chroma (source of truth) is already updated; flag the
+                        # BM25 index for the lazy full rebuild rather than
+                        # failing the insert with a stale-keyword index.
+                        logger.warning(
+                            "BM25 purge after replace failed; flagging rebuild: %s",
+                            e,
+                        )
+                        self._bm25_needs_rebuild = True
+                all_existing_ids = set()
             if all_existing_ids:
+                if on_conflict != "error":
+                    raise ValueError(
+                        f"Unknown on_conflict mode: {on_conflict!r} "
+                        '(expected "error" or "replace")'
+                    )
                 raise ValueError(f"Chunk IDs already exist: {all_existing_ids}")
 
             # Add to ChromaDB collection
@@ -1006,10 +1067,69 @@ class VectorStore:
             except Exception:
                 return []
 
+    def _delete_doc_id_keyed_chunks(self, doc_id: str) -> bool:
+        """Delete chunks that carry doc_id metadata but no
+        metadata['documents'] entry (pack chunks, issue #69). Returns True
+        if any chunk was deleted. Safe to call while holding the locks (RLocks)."""
+        with _chroma_lock:
+            try:
+                fetched = self.collection.get(where={"doc_id": doc_id})
+            except Exception as e:
+                logger.warning(
+                    "delete_document: doc_id lookup failed for %r: %s", doc_id, e
+                )
+                return False
+            found_ids = fetched.get("ids") or []
+            if not found_ids:
+                return False
+            try:
+                self.collection.delete(where={"doc_id": doc_id})
+            except Exception as e:
+                logger.warning(
+                    "delete_document: chroma delete failed for doc %r: %s", doc_id, e
+                )
+                return False
+            removed_n = len(found_ids)
+
+            if self.bm25_index and self.bm25_index.chunks:
+                try:
+                    remaining = [
+                        c
+                        for c in self.bm25_index.chunks
+                        if getattr(c, "doc_id", None) != doc_id
+                    ]
+                    if remaining:
+                        self.bm25_index.build_index(remaining)
+                        self.bm25_index.chunks = remaining
+                    else:
+                        self.bm25_index.bm25_index = None
+                        self.bm25_index.chunks = []
+                    self._bm25_needs_rebuild = len(remaining) == 0
+                except Exception as e:
+                    logger.warning(
+                        "BM25 purge after doc delete failed; flagging rebuild: %s", e
+                    )
+                    self._bm25_needs_rebuild = True
+
+            try:
+                new_chunk_count = self.collection.count()
+                if not isinstance(new_chunk_count, int):
+                    raise ValueError("count() did not return an integer")
+            except Exception:
+                new_chunk_count = max(
+                    0, self.metadata.get("chunk_count", 0) - removed_n
+                )
+            self.metadata["chunk_count"] = new_chunk_count
+            self._save_metadata()
+        return True
+
     def delete_document(self, doc_id: str) -> bool:
         """Delete a document and all its chunks by doc_id.
 
-        Accepts doc_id (new-style hash) or source/basename (legacy).
+        Accepts doc_id (new-style hash) or source/basename (legacy). Doc ids
+        with no metadata["documents"] entry (pack chunks inserted via
+        add_chunks_with_embeddings) are deleted by their doc_id metadata
+        field through _delete_doc_id_keyed_chunks (issue #69).
 
         Returns:
             True if the document existed and was removed, False otherwise.
@@ -1033,6 +1153,13 @@ class VectorStore:
                         doc_id = basename  # use the key we found
 
                 if entry is None:
+                    # Pack-manager fallback (issue #69): chunks inserted via
+                    # add_chunks_with_embeddings carry doc_id metadata but no
+                    # metadata["documents"] bookkeeping, so the entry-keyed
+                    # path below can never see them. Delete by the doc_id
+                    # metadata field so lifecycle verbs can remove them.
+                    if self._delete_doc_id_keyed_chunks(doc_id):
+                        return True
                     logger.warning("delete_document: no entry found for %r", doc_id)
                     return False
 
