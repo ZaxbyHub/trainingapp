@@ -286,7 +286,7 @@ describe('d4 links runtime maintenance (issue #80)', () => {
 describe('d4 migrate ladder v1 -> v2 (issue #80)', () => {
   itReal('upgrades a v1 store: reserved links shape gains pack_id/rank/computed_at', async () => {
     const { openStore, migrate, CURRENT_SCHEMA_VERSION } = await loadModules();
-    expect(CURRENT_SCHEMA_VERSION).toBe(2);
+    expect(CURRENT_SCHEMA_VERSION).toBe(3);
     const dbPath = makeTempDbPath();
     const store = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
@@ -301,9 +301,9 @@ describe('d4 migrate ladder v1 -> v2 (issue #80)', () => {
     // Re-open runs the ladder via openStore's migrate call.
     const upgraded = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
-      expect(upgraded.schemaVersion).toBe(2);
+      expect(upgraded.schemaVersion).toBe(3);
       const version = upgraded.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as Row;
-      expect(version.value).toBe('2');
+      expect(version.value).toBe('3');
       const columns = upgraded.db.prepare('PRAGMA table_info(links)').all() as Array<Row>;
       const names = columns.map((c) => c.name).sort();
       expect(names).toEqual(['chunk_id', 'computed_at', 'pack_id', 'rank', 'score', 'slide_id']);
@@ -313,7 +313,7 @@ describe('d4 migrate ladder v1 -> v2 (issue #80)', () => {
     // The explicit ladder is idempotent at v2.
     const again = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
-      expect(migrate(again.db)).toBe(2);
+      expect(migrate(again.db)).toBe(3);
     } finally {
       again.close();
     }
@@ -331,7 +331,7 @@ describe('d4 migrate ladder v1 -> v2 (issue #80)', () => {
     seed.db.exec('DROP TABLE links');
     seed.db.exec('CREATE TABLE links (chunk_id TEXT NOT NULL REFERENCES chunks(id), slide_id TEXT NOT NULL, score REAL NOT NULL, PRIMARY KEY (chunk_id, slide_id))');
     seed.db.exec("UPDATE meta SET value = '1' WHERE key = 'schema_version'");
-    expect(migrate(seed.db)).toBe(2);
+    expect(migrate(seed.db)).toBe(3);
     try {
       const shapeOf = (db: import('../../main/backend/store/sqlite-store.js').StoreHandle['db']): string =>
         JSON.stringify(

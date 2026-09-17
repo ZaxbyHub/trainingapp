@@ -137,10 +137,13 @@ export function writePackIndex(options: WritePackIndexOptions): void {
   try {
     db.exec('BEGIN IMMEDIATE');
     try {
+      // v3 (C3/#70): active/install_path are explicit — the index's own pack
+      // row is the live version (active=1) and prebuilt rows carry no managed
+      // folder (install_path NULL). Relying on DEFAULTs would leave active=0.
       const insertPack = db.prepare(
-        'INSERT INTO packs (id, name, version, published_at, source_class, supersedes) VALUES (?, ?, ?, ?, ?, NULL)',
+        'INSERT INTO packs (id, version, name, published_at, source_class, active, install_path, supersedes) VALUES (?, ?, ?, ?, ?, 1, NULL, NULL)',
       );
-      insertPack.run(manifest.id, manifest.name, manifest.version, manifest.published_at, manifest.source_class);
+      insertPack.run(manifest.id, manifest.version, manifest.name, manifest.published_at, manifest.source_class);
 
       const insertDoc = db.prepare(
         'INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -243,11 +246,13 @@ export function installPackRows(
 
     targetDb.exec('BEGIN IMMEDIATE');
     try {
+      // v3 (C3/#70): a wholesale-installed prebuilt pack is live (active=1)
+      // and has no managed folder copy (install_path NULL).
       const insertPack = targetDb.prepare(
-        'INSERT INTO packs (id, name, version, published_at, source_class, supersedes) VALUES (?, ?, ?, ?, ?, ?)',
+        'INSERT INTO packs (id, version, name, published_at, source_class, active, install_path, supersedes) VALUES (?, ?, ?, ?, ?, 1, NULL, ?)',
       );
       for (const row of packRows) {
-        insertPack.run(row['id'], row['name'], row['version'], row['published_at'], row['source_class'], row['supersedes']);
+        insertPack.run(row['id'], row['version'], row['name'], row['published_at'], row['source_class'], row['supersedes']);
       }
       const insertDoc = targetDb.prepare(
         'INSERT INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',

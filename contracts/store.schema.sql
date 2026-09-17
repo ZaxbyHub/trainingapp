@@ -1,5 +1,5 @@
 -- =============================================================================
--- contracts/store.schema.sql — AUTHORITATIVE per-profile store schema (v2)
+-- contracts/store.schema.sql — AUTHORITATIVE per-profile store schema (v3)
 -- =============================================================================
 -- This file is the single source of truth for the SQLite store shared by the
 -- desktop Node backend (better-sqlite3) and the Python sidecar (sqlite3 +
@@ -10,6 +10,15 @@
 -- v2 (D4/#80): the links table gains pack_id/rank/computed_at (was a
 -- write-free reserved table in v1, so the 1->2 ladder drops and recreates it
 -- losslessly — see both migrate ladders).
+--
+-- v3 (C3/#70): the packs table becomes per-version — PK (id, version) — with
+-- active/install_path lifecycle columns, because the PackManager semantics
+-- (mirror: pack_manager.py) require multiple installed versions per pack id
+-- (supersede needs both rows; rollback reactivates a retained row). The
+-- packs.supersedes and docs.pack_id FKs are dropped: a composite-PK parent can
+-- no longer serve a lone-id FK, and both columns are content-carried references
+-- (supersedes is a JSON array of "id@version" strings; docs.pack_id follows the
+-- links.pack_id precedent of being deliberately FK-free).
 --
 -- Pinned extension: sqlite-vec 0.1.9 (pre-1.0; exact pin required — no ranges).
 --   Node: desktop/package.json "sqlite-vec": "0.1.9"  (dependencies, exact)
@@ -39,7 +48,7 @@ CREATE TABLE docs (
     sha256       TEXT NOT NULL,              -- content hash of the source document bytes
     title        TEXT,
     published_at TEXT,
-    pack_id      TEXT REFERENCES packs(id)
+    pack_id      TEXT                        -- owning pack id when the doc came from a pack (v3: reference by value, like links.pack_id)
 );
 CREATE UNIQUE INDEX docs_sha256_uq ON docs(sha256);
 
@@ -76,13 +85,24 @@ CREATE VIRTUAL TABLE chunks_fts USING fts5 (
     text
 );
 
+-- One row per INSTALLED PACK VERSION (v3, C3/#70): the PackManager lifecycle
+-- (mirror: pack_manager.py) keeps superseded versions installed-but-inactive
+-- so rollback can reactivate them without re-obtaining the pack. active is the
+-- SQLite boolean convention (0/1); exactly one version per pack id is active
+-- at a time (enforced by writers, not constraints). install_path points at the
+-- managed folder copy for folder-form installs (C3 PackManager) and is NULL
+-- for prebuilt-index rows (D3 packtool wholesale installs). supersedes is a
+-- JSON array of "id@version" strings (the C2 registry shape).
 CREATE TABLE packs (
-    id           TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,
+    id           TEXT NOT NULL,
     version      TEXT NOT NULL,
+    name         TEXT NOT NULL,
     published_at TEXT,
     source_class TEXT NOT NULL,
-    supersedes   TEXT REFERENCES packs(id)
+    active       INTEGER NOT NULL DEFAULT 0 CHECK (active IN (0, 1)),
+    install_path TEXT,
+    supersedes   TEXT,
+    PRIMARY KEY (id, version)
 );
 
 -- Reserved for D4/#80 (doc-to-slide links recomputed on pack changes).
@@ -110,6 +130,6 @@ CREATE TABLE meta (
     value TEXT NOT NULL
 );
 INSERT INTO meta (key, value) VALUES
-    ('schema_version', '2'),
+    ('schema_version', '3'),
     ('embedding_model_id', ''),
     ('embedding_dims', '__EMBEDDING_DIMS__');

@@ -15,7 +15,8 @@
 export const DOC_MIME = 'application/json';
 export const SOURCE_CLASS_TRAINING = 'training';
 export const SQLITE_VEC_PIN = '0.1.9';
-export const STORE_SCHEMA_VERSION = 2;
+/** v3 (C3/#70): per-version packs rows with active/install_path. */
+export const STORE_SCHEMA_VERSION = 3;
 export const INDEX_FILE_NAME = 'index.sqlite';
 export const PACK_JSON_NAME = 'pack.json';
 export const PLAYER_ASSETS_PREFIX = 'assets/player';

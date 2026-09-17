@@ -170,7 +170,7 @@ describe('b6 C6 (AC6): corruption detection and recovery', () => {
     const reopened = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
       expect(countRows(reopened, 'docs')).toBe(0);
-      expect(reopened.schemaVersion).toBe(2);
+      expect(reopened.schemaVersion).toBe(3);
     } finally {
       reopened.close();
     }

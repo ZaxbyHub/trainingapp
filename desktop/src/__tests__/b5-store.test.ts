@@ -70,10 +70,10 @@ describe('b5 store schema application', () => {
       }
       const meta = store.db.prepare('SELECT key, value FROM meta ORDER BY key').all() as { key: string; value: string }[];
       const metaMap = new Map(meta.map((row) => [row.key, row.value]));
-      expect(metaMap.get('schema_version')).toBe('2');
+      expect(metaMap.get('schema_version')).toBe('3');
       expect(metaMap.get('embedding_dims')).toBe('8');
       expect(metaMap.has('embedding_model_id')).toBe(true);
-      expect(store.schemaVersion).toBe(2);
+      expect(store.schemaVersion).toBe(3);
     } finally {
       store.close();
     }
@@ -90,7 +90,7 @@ describe('b5 store schema application', () => {
         n: number;
       };
       expect(rows.n).toBe(1);
-      expect(second.schemaVersion).toBe(2);
+      expect(second.schemaVersion).toBe(3);
     } finally {
       second.close();
     }
@@ -102,7 +102,7 @@ describe('b5 store schema application', () => {
     const store = openStore({ dbPath: makeTempDbPath(), dims: 8, repoRoot: REPO_ROOT });
     try {
       const before = store.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-      expect(migrate(store.db)).toBe(2);
+      expect(migrate(store.db)).toBe(3);
       const after = store.db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
       expect(after).toEqual(before);
     } finally {
@@ -128,7 +128,7 @@ describe('b5 store schema application', () => {
     // The original store is untouched by the failed mismatched open.
     const probe = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
     try {
-      expect(probe.schemaVersion).toBe(2);
+      expect(probe.schemaVersion).toBe(3);
     } finally {
       probe.close();
     }
@@ -140,7 +140,7 @@ describe('b5 store schema application', () => {
     // (desktop/src/__tests__ under vitest) to the repo root on its own.
     const store = openStore({ dbPath: makeTempDbPath(), dims: 8 });
     try {
-      expect(store.schemaVersion).toBe(2);
+      expect(store.schemaVersion).toBe(3);
     } finally {
       store.close();
     }
@@ -168,7 +168,7 @@ describe('b5 store production wiring', () => {
       const { openStore } = await loadStoreModule();
       const probe = openStore({ dbPath, dims: 8, repoRoot: REPO_ROOT });
       try {
-        expect(probe.schemaVersion).toBe(2);
+        expect(probe.schemaVersion).toBe(3);
       } finally {
         probe.close();
       }

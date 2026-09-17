@@ -18,6 +18,7 @@ import type {
   ModelStatus,
   RetrievalSurface,
 } from './types.js';
+import type { PackManager } from './store/pack-manager.js';
 
 // Settings defaults mirror config.py's RAGSettings field defaults so the
 // desktop settings surface stays number-compatible with the Python reference.
@@ -116,6 +117,23 @@ export class StubEngine implements EngineSurface {
   attachDocumentSurface(surface: DocumentSurface | null): void {
     this.documentSurface = surface;
   }
+
+  /**
+   * C3 (issue #70): the store-backed pack lifecycle attaches exactly like the
+   * document surface — the host start path owns construction, the engine is
+   * the surface consumers read (b3 duck-type pin keeps host prototypes at
+   * start/stop only).
+   */
+  attachPackManager(manager: PackManager | null): void {
+    this.packManager = manager;
+  }
+
+  /** The attached pack lifecycle (null until the host start path attaches). */
+  get attachedPackManager(): PackManager | null {
+    return this.packManager;
+  }
+
+  private packManager: PackManager | null = null;
 
   /**
    * B7 (issue #65): the retrieval step shared by query() here and by

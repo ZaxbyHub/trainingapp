@@ -159,14 +159,18 @@ describe('links integrity guardrail in verifyPack (D4, issue #80)', () => {
     scratchRoots.push(root);
     const packDir = stagePack(root, validLinks());
     // Downgrade ONLY the index meta stamp: pack.json still declares
-    // index.schema_version = STORE_SCHEMA_VERSION (2), so verify's
-    // stamp check AND its manifest cross-check must both fire.
+    // index.schema_version = STORE_SCHEMA_VERSION, so verify's
+    // stamp check AND its manifest cross-check must both fire. The expected
+    // message strings template over the constant so the pin cannot drift
+    // when the store schema version bumps (C3/#70 moved it to 3).
     corrupt(packDir, "UPDATE meta SET value = '1' WHERE key = 'schema_version'");
     const result = await verifyPack(packDir);
     expect(result.ok).toBe(false);
-    expect(result.problems.some((p) => p.includes('index meta.schema_version is 1, want 2'))).toBe(true);
     expect(
-      result.problems.some((p) => p.includes('!= manifest index.schema_version 2')),
+      result.problems.some((p) => p.includes(`index meta.schema_version is 1, want ${STORE_SCHEMA_VERSION}`)),
+    ).toBe(true);
+    expect(
+      result.problems.some((p) => p.includes(`!= manifest index.schema_version ${STORE_SCHEMA_VERSION}`)),
     ).toBe(true);
   });
 
