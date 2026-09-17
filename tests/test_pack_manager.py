@@ -141,6 +141,20 @@ def test_install_splits_long_docs_by_fixed_words(workspace):
     assert result.chunks_added == 4
     assert len(collection_ids(pm.store)) == 4
 
+    stored = pm.store.collection.get(include=["documents", "metadatas"])
+    rows = sorted(
+        zip(stored["ids"], stored["metadatas"], stored["documents"]),
+        key=lambda triple: triple[1]["chunk_index"],
+    )
+    words_per_chunk = [text.split() for _, _, text in rows]
+    assert [len(w) for w in words_per_chunk] == [256, 256, 256, 132]
+    # overlap: each chunk's trailing 100 words are the next chunk's first 100
+    for prev, nxt in zip(words_per_chunk, words_per_chunk[1:]):
+        assert prev[-100:] == nxt[:100]
+    # every chunk id matches the ADR formula over its own stored text
+    for chunk_id, meta, text in rows:
+        assert chunk_id == chunk_id_of(meta["doc_id"], meta["chunk_index"], text)
+
 
 # ------------------------------------------------------------------ #
 # AC2 — the stale-chunk regression (the actual bug)
@@ -179,6 +193,7 @@ def test_reinstall_with_changed_content_removes_stale_chunks(workspace):
     v2 = pm.install(install_dir)
 
     assert v1.version == "1.0.0" and v2.version == "2.0.0"
+    assert v1_sha in v2.replaced_doc_ids
     ids_now = collection_ids(pm.store)
     assert old_chunk_id not in ids_now, "stale v1 chunk survived the 2.0.0 install"
     assert len(ids_now) == 1  # exactly the new content, no duplicates
@@ -370,6 +385,11 @@ def test_on_conflict_replace_deletes_then_inserts(workspace):
 
     got = store.collection.get(ids=["dup-1"], include=["documents"])
     assert got["documents"] == ["NEW TEXT"]
+    # BM25 purge (PRR-010): exactly one chunk for doc d1 remains, with the
+    # new text -- a broken purge would leave the stale chunk here.
+    bm25_for_doc = [c for c in store.bm25_index.chunks if c.doc_id == "d1"]
+    assert len(bm25_for_doc) == 1
+    assert bm25_for_doc[0].text == "NEW TEXT"
 
 
 def test_on_conflict_signature_defaults_to_error():
@@ -569,3 +589,157 @@ def test_embedder_length_mismatch_refuses_partial_install(workspace):
     with pytest.raises(PackManagerError, match="refusing partial install"):
         pm.install(source)
     assert pm.list_installed() == []
+
+
+# ------------------------------------------------------------------ #
+# swarm-pr-feedback round (PRR-001..018): error contract + negative paths
+# ------------------------------------------------------------------ #
+
+
+def test_missing_pack_json_refused(workspace):
+    pm = make_manager(workspace)
+    source = copy_fixture("bundled-min", workspace)
+    (source / "pack.json").unlink()
+    with pytest.raises(PackManagerError, match="missing from the pack"):
+        pm.install(source)
+
+
+def test_corrupt_pack_json_refused(workspace):
+    pm = make_manager(workspace)
+    source = copy_fixture("bundled-min", workspace)
+    (source / "pack.json").write_bytes(b"\xff\xfe\x00not json")
+    with pytest.raises(PackManagerError, match="not valid UTF-8 JSON"):
+        pm.install(source)
+
+
+def test_duplicate_doc_paths_refused(workspace):
+    pm = make_manager(workspace)
+    source = copy_fixture("bundled-min", workspace)
+    manifest = json.loads((source / "pack.json").read_text(encoding="utf-8"))
+    manifest["docs"].append(dict(manifest["docs"][0]))
+    (source / "pack.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PackManagerError, match="duplicate docs"):
+        pm.install(source)
+
+
+def test_registry_corruption_raises_pack_manager_error(workspace):
+    pm = make_manager(workspace)
+    source = copy_fixture("bundled-min", workspace)
+    pm.install(source)
+    pm.registry_path.write_bytes(b"\xff\xfe not utf-8 json")
+    with pytest.raises(PackManagerError, match="unreadable"):
+        pm.list_installed()
+
+
+def test_remove_specific_version_keeps_other_versions(workspace):
+    pm = make_manager(workspace)
+    install_dir = workspace / "install" / "versioned-a"
+    shutil.copytree(FIXTURES / "versioned-a-1.0.0", install_dir)
+    pm.install(install_dir)
+    ids_v1 = collection_ids(pm.store)
+    shutil.rmtree(install_dir)
+    shutil.copytree(FIXTURES / "versioned-a-2.0.0", install_dir)
+    write_doc(
+        install_dir,
+        "docs/a.json",
+        {
+            "title": "Doc A",
+            "text": "Versioned A fixture document, mutated for the 2.0.0 refresh.",
+        },
+    )
+    pm.install(install_dir)
+    ids_v2 = collection_ids(pm.store)
+    assert ids_v2 != ids_v1
+
+    removed = pm.remove("versioned-a", version="1.0.0")
+
+    assert removed == 1
+    records = {r.version: r for r in pm.list_installed() if r.pack_id == "versioned-a"}
+    assert "1.0.0" not in records
+    assert records["2.0.0"].active is True
+    assert collection_ids(pm.store) == ids_v2
+
+
+def test_supersedes_warning_for_absent_target(workspace):
+    pm = make_manager(workspace)
+    superseding = workspace / "src" / "versioned-a-2.0.0"
+    shutil.copytree(FIXTURES / "versioned-a-2.0.0", superseding)
+    manifest = json.loads((superseding / "pack.json").read_text(encoding="utf-8"))
+    manifest["supersedes"] = ["ghost-pack@3.1.4"]
+    (superseding / "pack.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = pm.install(superseding)
+
+    assert any("ghost-pack@3.1.4" in w for w in result.warnings)
+    records = {r.pack_id: r for r in pm.list_installed()}
+    assert records["versioned-a"].supersedes == ["ghost-pack@3.1.4"]
+
+
+def test_unsupported_mime_refused(workspace):
+    pm = make_manager(workspace)
+    source = copy_fixture("bundled-min", workspace)
+    manifest = json.loads((source / "pack.json").read_text(encoding="utf-8"))
+    manifest["docs"][0]["mime"] = "application/pdf"
+    (source / "pack.json").write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(PackManagerError, match="unsupported doc mime"):
+        pm.install(source)
+
+
+def build_long_doc_pack(workspace: Path, chunking: dict) -> Path:
+    pack = workspace / "src" / "longpack"
+    (pack / "docs").mkdir(parents=True)
+    long_text = " ".join(f"word{i}" for i in range(600))
+    doc = pack / "docs" / "long.json"
+    doc.write_text(json.dumps({"title": "L", "text": long_text}), encoding="utf-8")
+    manifest = {
+        "id": "longpack",
+        "name": "Long",
+        "version": "1.0.0",
+        "published_at": "2026-09-16T00:00:00Z",
+        "source_class": "user",
+        "embedding": {"model_id": "bge-small-en-v1.5", "dims": 384, "normalize": True},
+        "chunking": chunking,
+        "docs": [
+            {
+                "path": "docs/long.json",
+                "sha256": doc_id_from_bytes(doc.read_bytes()),
+                "title": "L",
+                "mime": "application/json",
+            }
+        ],
+    }
+    (pack / "pack.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return pack
+
+
+def test_overlap_ge_size_refused(workspace):
+    pm = make_manager(workspace)
+    pack = build_long_doc_pack(
+        workspace, {"strategy": "fixed-words", "size": 256, "overlap": 256}
+    )
+    with pytest.raises(PackManagerError, match="overlap"):
+        pm.install(pack)
+
+
+def test_strategy_over_size_refused(workspace):
+    pm = make_manager(workspace)
+    pack = build_long_doc_pack(
+        workspace, {"strategy": "slide-aware", "size": 256, "overlap": 100}
+    )
+    with pytest.raises(PackManagerError, match="C6"):
+        pm.install(pack)
+
+
+def test_unknown_on_conflict_value_raises(workspace):
+    store = make_store(workspace)
+    payload = [
+        {
+            "chunk_id": "x1",
+            "text": "t",
+            "embedding": [0.1] * 384,
+            "metadata": {"source": "s"},
+        }
+    ]
+    store.add_chunks_with_embeddings(payload)
+    with pytest.raises(ValueError, match="Unknown on_conflict"):
+        store.add_chunks_with_embeddings(payload, on_conflict="bogus")

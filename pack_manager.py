@@ -76,6 +76,11 @@ _SCHEMA_PATH = Path(__file__).resolve().parent / "contracts" / "pack.schema.json
 
 _REGISTRY_VERSION = 1
 
+# Module-level (not instance-level): two PackManager instances over the same
+# db_path share one pack_registry.json and one Chroma collection, so the
+# registry read-modify-write critical section must be process-global.
+_registry_lock = threading.RLock()
+
 
 class PackManagerError(Exception):
     """Raised for refused or failed pack lifecycle operations."""
@@ -102,7 +107,7 @@ def chunk_id_of(doc_sha256: str, chunk_index: int, normalized_text: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _version_key(version: str) -> Tuple[int, int, int, tuple]:
+def _version_key(version: str) -> Tuple[int, int, int, Tuple[int, tuple]]:
     """Semver 2.0.0 sort key (section 11): numeric triple, then pre-release
     (a pre-release sorts BELOW its release; numeric identifiers compare
     numerically and sort below alphanumeric ones)."""
@@ -129,7 +134,7 @@ def extract_doc_text(raw: bytes, mime: str) -> str:
     if mime == "application/json":
         try:
             data = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
             raise PackManagerError(f"doc is not valid JSON: {error}") from error
         if not isinstance(data, dict) or not isinstance(data.get("text"), str):
             raise PackManagerError("JSON doc must be an object with a string 'text'")
@@ -221,7 +226,6 @@ class PackManager:
         )
         self.packs_root.mkdir(parents=True, exist_ok=True)
         self.registry_path = self.db_path / "pack_registry.json"
-        self._lock = threading.RLock()
         self._validator: Optional[Draft202012Validator] = None
 
     # ------------------------------------------------------------------ #
@@ -233,7 +237,7 @@ class PackManager:
             return []
         try:
             data = json.loads(self.registry_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise PackManagerError(f"pack registry unreadable: {error}") from error
         if data.get("version") != _REGISTRY_VERSION:
             raise PackManagerError(
@@ -244,10 +248,13 @@ class PackManager:
     def _save_rows(self, rows: List[Dict[str, Any]]) -> None:
         payload = {"version": _REGISTRY_VERSION, "packs": rows}
         tmp = self.registry_path.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        tmp.replace(self.registry_path)
+        try:
+            tmp.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            tmp.replace(self.registry_path)
+        except OSError as error:
+            raise PackManagerError(f"pack registry write failed: {error}") from error
 
     def _find(self, rows, pack_id: str, version: Optional[str] = None):
         for row in rows:
@@ -273,15 +280,23 @@ class PackManager:
         """Schema + semantic validation via the frozen C1 validator building
         blocks (no re-encoded rules; doc bytes hash-checked against the
         manifest by semantic_problems)."""
-        source = PackSource(pack_path)
         try:
-            problems: List[str] = list(
-                schema_errors(
-                    json.loads(source.read_entry("pack.json").decode("utf-8")),
-                    self._validator_for(),
+            source = PackSource(pack_path)
+        except UsageError as error:
+            raise PackManagerError(str(error)) from error
+        try:
+            manifest_bytes = source.read_entry("pack.json")
+            if manifest_bytes is None:
+                raise PackManagerError(
+                    f"{pack_path}: pack.json is missing from the pack"
                 )
-            )
-            manifest = json.loads(source.read_entry("pack.json").decode("utf-8"))
+            try:
+                manifest = json.loads(manifest_bytes.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                raise PackManagerError(
+                    f"{pack_path}: pack.json is not valid UTF-8 JSON: {error}"
+                ) from error
+            problems: List[str] = list(schema_errors(manifest, self._validator_for()))
             problems.extend(semantic_problems(manifest, source))
         except UsageError as error:
             raise PackManagerError(str(error)) from error
@@ -298,7 +313,13 @@ class PackManager:
     def _build_chunks(
         self, install_dir: Path, manifest: Dict[str, Any]
     ) -> List[Dict[str, Any]]:
-        """Build add_chunks_with_embeddings payloads (without embeddings)."""
+        """Build add_chunks_with_embeddings payloads (without embeddings).
+
+        Non-fixed-words strategies are accepted only for under-size docs
+        (single chunk); over-size docs on those strategies refuse with
+        PackManagerError - prebuilt-index packs are the C6 path. The same
+        applies to unsupported doc mimes.
+        """
         chunking = manifest.get("chunking", {})
         strategy = chunking.get("strategy", "fixed-words")
         size = int(chunking.get("size", 256))
@@ -307,7 +328,12 @@ class PackManager:
         chunks: List[Dict[str, Any]] = []
         for entry in manifest["docs"]:
             rel_path = entry["path"]
-            raw = (install_dir / rel_path).read_bytes()
+            try:
+                raw = (install_dir / rel_path).read_bytes()
+            except OSError as error:
+                raise PackManagerError(
+                    f"doc unreadable: {rel_path}: {error}"
+                ) from error
             doc_sha = doc_id_from_bytes(raw)
             text = extract_doc_text(raw, entry.get("mime", "text/plain"))
             if strategy == "fixed-words":
@@ -376,6 +402,17 @@ class PackManager:
         for info in row.get("docs", {}).values():
             if self.store.delete_document(info["doc_id"]):
                 removed.append(info["doc_id"])
+            else:
+                # Single-user semantics: deactivate proceeds; the orphan is
+                # logged and absorbed by the next reinstall of this version
+                # (content-hash ids make re-ingest byte-identical).
+                logger.warning(
+                    "pack %s@%s: chunk delete returned False for doc %s;"
+                    " row deactivated but chunks may remain in the collection",
+                    row["pack_id"],
+                    row["version"],
+                    info["doc_id"],
+                )
         row["active"] = False
         return removed
 
@@ -401,10 +438,16 @@ class PackManager:
                 f"{source}: folder-form packs only; zip ingestion (and "
                 "prebuilt indexes) land with C6 packtool / C8 hardening"
             )
-        with self._lock:
+        with _registry_lock:
             manifest = self._validated_manifest(source)
             pack_id = manifest["id"]
             version = manifest["version"]
+
+            doc_paths = [entry["path"] for entry in manifest["docs"]]
+            if len(doc_paths) != len(set(doc_paths)):
+                raise PackManagerError(
+                    f"{pack_path}: duplicate docs[].path entries in manifest"
+                )
 
             rows = self._rows()
             own_active = [r for r in rows if r["pack_id"] == pack_id and r["active"]]
@@ -443,9 +486,14 @@ class PackManager:
 
             # managed copy; source path is never referenced again
             managed = self.packs_root / pack_id / version
-            if managed.exists():
-                shutil.rmtree(managed)  # residue of a failed earlier attempt
-            shutil.copytree(source, managed)
+            try:
+                if managed.exists():
+                    shutil.rmtree(managed)  # residue of a failed earlier attempt
+                shutil.copytree(source, managed)
+            except OSError as error:
+                raise PackManagerError(
+                    f"failed to stage managed copy of {pack_id}@{version}: {error}"
+                ) from error
 
             new_docs = self._docs_map(manifest)
 
@@ -486,6 +534,16 @@ class PackManager:
                 }
             )
             self._save_rows(rows)
+            for warning in warnings:
+                logger.warning("install %s@%s: %s", pack_id, version, warning)
+            logger.info(
+                "installed pack %s@%s (%d chunks, %d doc(s)) from %s",
+                pack_id,
+                version,
+                added,
+                len(manifest["docs"]),
+                source,
+            )
 
             return InstallResult(
                 pack_id=pack_id,
@@ -502,7 +560,7 @@ class PackManager:
     def supersede(self, pack_id: str, from_version: str, to_version: str) -> None:
         """Deactivate ``from_version`` and make ``to_version`` live, both of
         which must already be installed. Symmetric with :meth:`rollback`."""
-        with self._lock:
+        with _registry_lock:
             rows = self._rows()
             from_row = self._find(rows, pack_id, from_version)
             to_row = self._find(rows, pack_id, to_version)
@@ -520,7 +578,7 @@ class PackManager:
     def rollback(self, pack_id: str, to_version: str) -> None:
         """Reactivate a previously superseded version and deactivate the
         current active one."""
-        with self._lock:
+        with _registry_lock:
             rows = self._rows()
             to_row = self._find(rows, pack_id, to_version)
             if to_row is None:
@@ -539,7 +597,7 @@ class PackManager:
     def remove(self, pack_id: str, version: Optional[str] = None) -> int:
         """Irreversibly delete managed files, live chunks, and registry rows.
         Returns the number of pack versions removed."""
-        with self._lock:
+        with _registry_lock:
             rows = self._rows()
             victims = [
                 r
@@ -555,15 +613,21 @@ class PackManager:
             for row in victims:
                 install_path = Path(row["install_path"])
                 if install_path.exists():
-                    shutil.rmtree(install_path)
+                    try:
+                        shutil.rmtree(install_path)
+                    except OSError as error:
+                        raise PackManagerError(
+                            f"failed to delete managed dir {install_path}: {error}"
+                        ) from error
                 for info in row.get("docs", {}).values():
                     self.store.delete_document(info["doc_id"])
             remaining = [r for r in rows if r not in victims]
             self._save_rows(remaining)
+            logger.info("removed pack %s (%d version(s))", pack_id, len(victims))
             return len(victims)
 
     def list_installed(self) -> List[PackRecord]:
-        with self._lock:
+        with _registry_lock:
             return [
                 PackRecord.from_dict(row)  # type: ignore[arg-type]
                 for row in self._rows()

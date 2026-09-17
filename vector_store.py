@@ -844,18 +844,28 @@ class VectorStore:
                 }
                 self.collection.delete(ids=sorted(all_existing_ids))
                 if purged_doc_ids and self.bm25_index and self.bm25_index.chunks:
-                    remaining = [
-                        c
-                        for c in self.bm25_index.chunks
-                        if getattr(c, "doc_id", None) not in purged_doc_ids
-                    ]
-                    if remaining:
-                        self.bm25_index.build_index(remaining)
-                        self.bm25_index.chunks = remaining
-                    else:
-                        self.bm25_index.bm25_index = None
-                        self.bm25_index.chunks = []
-                    self._bm25_needs_rebuild = len(remaining) == 0
+                    try:
+                        remaining = [
+                            c
+                            for c in self.bm25_index.chunks
+                            if getattr(c, "doc_id", None) not in purged_doc_ids
+                        ]
+                        if remaining:
+                            self.bm25_index.build_index(remaining)
+                            self.bm25_index.chunks = remaining
+                        else:
+                            self.bm25_index.bm25_index = None
+                            self.bm25_index.chunks = []
+                        self._bm25_needs_rebuild = len(remaining) == 0
+                    except Exception as e:
+                        # Chroma (source of truth) is already updated; flag the
+                        # BM25 index for the lazy full rebuild rather than
+                        # failing the insert with a stale-keyword index.
+                        logger.warning(
+                            "BM25 purge after replace failed; flagging rebuild: %s",
+                            e,
+                        )
+                        self._bm25_needs_rebuild = True
                 all_existing_ids = set()
             if all_existing_ids:
                 if on_conflict != "error":
@@ -1072,22 +1082,34 @@ class VectorStore:
             found_ids = fetched.get("ids") or []
             if not found_ids:
                 return False
-            self.collection.delete(where={"doc_id": doc_id})
+            try:
+                self.collection.delete(where={"doc_id": doc_id})
+            except Exception as e:
+                logger.warning(
+                    "delete_document: chroma delete failed for doc %r: %s", doc_id, e
+                )
+                return False
             removed_n = len(found_ids)
 
             if self.bm25_index and self.bm25_index.chunks:
-                remaining = [
-                    c
-                    for c in self.bm25_index.chunks
-                    if getattr(c, "doc_id", None) != doc_id
-                ]
-                if remaining:
-                    self.bm25_index.build_index(remaining)
-                    self.bm25_index.chunks = remaining
-                else:
-                    self.bm25_index.bm25_index = None
-                    self.bm25_index.chunks = []
-                self._bm25_needs_rebuild = len(remaining) == 0
+                try:
+                    remaining = [
+                        c
+                        for c in self.bm25_index.chunks
+                        if getattr(c, "doc_id", None) != doc_id
+                    ]
+                    if remaining:
+                        self.bm25_index.build_index(remaining)
+                        self.bm25_index.chunks = remaining
+                    else:
+                        self.bm25_index.bm25_index = None
+                        self.bm25_index.chunks = []
+                    self._bm25_needs_rebuild = len(remaining) == 0
+                except Exception as e:
+                    logger.warning(
+                        "BM25 purge after doc delete failed; flagging rebuild: %s", e
+                    )
+                    self._bm25_needs_rebuild = True
 
             try:
                 new_chunk_count = self.collection.count()
@@ -1104,7 +1126,10 @@ class VectorStore:
     def delete_document(self, doc_id: str) -> bool:
         """Delete a document and all its chunks by doc_id.
 
-        Accepts doc_id (new-style hash) or source/basename (legacy).
+        Accepts doc_id (new-style hash) or source/basename (legacy). Doc ids
+        with no metadata["documents"] entry (pack chunks inserted via
+        add_chunks_with_embeddings) are deleted by their doc_id metadata
+        field through _delete_doc_id_keyed_chunks (issue #69).
 
         Returns:
             True if the document existed and was removed, False otherwise.
