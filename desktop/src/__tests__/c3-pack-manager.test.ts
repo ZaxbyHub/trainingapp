@@ -386,6 +386,114 @@ describe('c3 PackManager lifecycle (issue #70)', () => {
     expect(liveChunkIds(db).size).toBe(0);
   });
 
+  itReal('zip source refused cleanly (C2 parity: folder-form packs only)', async () => {
+    const { manager } = await makeWorkspace();
+    const { PackManagerError } = await loadModules();
+    const root = makeTempDir('c3-zip-');
+    // A file with a zip magic header: the refusal is about the SOURCE SHAPE
+    // (not a directory), matching C2's folder-form-only contract.
+    const fakeZip = path.join(root, 'pack.zip');
+    fs.writeFileSync(fakeZip, Buffer.from('PK not a real central directory'));
+    await expect(manager.install(fakeZip)).rejects.toThrow(PackManagerError);
+    await expect(manager.install(fakeZip)).rejects.toThrow(/folder-form packs only/);
+  });
+
+  itReal('semver pre-release ordering: pre-release sorts below release, numeric below alphanumeric', async () => {
+    const managerMod = await import('../../main/backend/store/pack-manager.js');
+    const { compareVersionKeys, versionKey } = managerMod;
+    // Pre-release binds LOWER than its release (semver 11).
+    expect(compareVersionKeys(versionKey('1.0.0-alpha'), versionKey('1.0.0'))).toBeLessThan(0);
+    // Numeric identifiers compare numerically and sort below alphanumeric.
+    expect(compareVersionKeys(versionKey('1.0.0-1'), versionKey('1.0.0-alpha'))).toBeLessThan(0);
+    expect(compareVersionKeys(versionKey('1.0.0-2'), versionKey('1.0.0-10'))).toBeLessThan(0);
+    // Longer identifier sets win on equal prefixes.
+    expect(compareVersionKeys(versionKey('1.0.0-alpha'), versionKey('1.0.0-alpha.1'))).toBeLessThan(0);
+    // Release equality.
+    expect(compareVersionKeys(versionKey('2.0.0'), versionKey('2.0.0'))).toBe(0);
+    // Install-level consequence: 1.0.0-beta over active 1.0.0 is an UPGRADE
+    // (pre-release binds lower, so beta > release? NO — beta < release, so
+    // installing 1.0.0-beta over active 1.0.0 must be a downgrade refusal).
+    const { manager } = await makeWorkspace();
+    const root = makeTempDir('c3-semver-');
+    const v1 = copyFixture(root, 'versioned-a-1.0.0');
+    await manager.install(v1);
+    const pre = copyFixture(root, 'versioned-a-2.0.0', 'pre-copy');
+    writeDoc(pre, 'docs/a.json', 'Pre-release content over an active release.');
+    const pm = readManifest(pre) as Record<string, unknown>;
+    pm.version = '1.0.0-beta';
+    writeManifest(pre, pm);
+    await expect(manager.install(pre)).rejects.toThrow(/refusing downgrade/);
+  });
+
+  itReal('supersedes warning recorded for absent target (C2 parity)', async () => {
+    const { manager } = await makeWorkspace();
+    const root = makeTempDir('c3-sups-');
+    // Pack B supersedes a version that is NOT installed.
+    const bDir = copyFixture(root, 'versioned-a-1.0.0', 'pack-b-warning');
+    writeDoc(bDir, 'docs/a.json', 'Pack B warning-scenario content.');
+    const manifest = readManifest(bDir) as Record<string, unknown>;
+    manifest.id = 'pack-b';
+    manifest.name = 'Pack B';
+    manifest.supersedes = ['ghost-pack@9.9.9'];
+    writeManifest(bDir, manifest);
+    const result = await manager.install(bDir);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('ghost-pack@9.9.9');
+    // Recorded on the new row only: listInstalled reports it.
+    const records = await manager.listInstalled();
+    expect(records[0]?.supersedes).toEqual(['ghost-pack@9.9.9']);
+  });
+
+  itReal('installed rows persist across store close/reopen', async () => {
+    const { openStore } = await import('../../main/backend/store/sqlite-store.js');
+    const { PackManager } = await import('../../main/backend/store/pack-manager.js');
+    const { HashEmbedder } = await import('../../main/backend/ingest/embedder.js');
+    const root = makeTempDir('c3-reopen-');
+    const dbPath = path.join(root, 'store.db');
+    const packsRoot = path.join(root, 'packs');
+    const fixture = copyFixture(root, 'versioned-a-1.0.0');
+
+    const first = openStore({ dbPath, dims: 8 });
+    try {
+      const manager = new PackManager({
+        store: first,
+        embedder: new HashEmbedder({ dims: 8 }),
+        packsRoot,
+        repoRoot: REPO_ROOT,
+      });
+      await manager.install(fixture);
+    } finally {
+      first.close();
+    }
+
+    // Reopen: registry rows survive (C2 registry-persistence parity), and a
+    // NEW manager instance over the reopened store sees them.
+    const second = openStore({ dbPath, dims: 8 });
+    openStores.push(second);
+    const manager2 = new PackManager({
+      store: second,
+      embedder: new HashEmbedder({ dims: 8 }),
+      packsRoot,
+      repoRoot: REPO_ROOT,
+    });
+    const records = await manager2.listInstalled();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ packId: 'versioned-a', version: '1.0.0', active: true });
+    // And the lifecycle continues to work across the reopen boundary.
+    await expect(manager2.rollback('versioned-a', '1.0.0')).rejects.toThrow(/already the active version/);
+  });
+
+  itReal('index.schema_version NEWER than the store also refuses explicitly', async () => {
+    const { manager } = await makeWorkspace();
+    const { PackManagerError } = await loadModules();
+    const dir = copyFixture(makeTempDir('c3-fixture-'), 'versioned-a-1.0.0');
+    const manifest = readManifest(dir) as Record<string, unknown>;
+    manifest.index = { path: 'index.sqlite', schema_version: 99, sqlite_vec_version: '0.1.9' };
+    writeManifest(dir, manifest);
+    await expect(manager.install(dir)).rejects.toThrow(PackManagerError);
+    await expect(manager.install(dir)).rejects.toThrow(/schema_version/);
+  });
+
   itReal('listInstalled reports id, version, active, install_path, supersedes and doc shas', async () => {
     const { manager } = await makeWorkspace();
     const root = makeTempDir('c3-fixture-root-');

@@ -307,17 +307,53 @@ export interface PackManagerOptions {
 }
 
 export class PackManager {
-  private readonly store: StoreHandle;
+  /**
+   * The bound store handle. REBINDABLE: store-swap paths (clear cache /
+   * recovery) close and reopen the connection, so the host calls
+   * `rebindStore` with the fresh handle — mirrors the StoreDocumentSurface
+   * get/set accessor contract (PRR-003).
+   */
+  private storeHandle: StoreHandle | null;
   private readonly embedder: EmbeddingSurface;
   readonly packsRoot: string;
   private readonly repoRoot: string;
   private validateManifestSchema: ((data: unknown) => boolean) | null = null;
+  /**
+   * C2 parity for `pack_manager.py:82 _registry_lock`: every public lifecycle
+   * operation serializes behind this promise chain (PRR-005). Node's event
+   * loop prevents true intra-call concurrency but NOT cross-surface
+   * interleaving at await points (embed runs between the policy checks and
+   * the write transaction); the queue restores C2's one-operation-at-a-time
+   * contract.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(opts: PackManagerOptions) {
-    this.store = opts.store;
+    this.storeHandle = opts.store;
     this.embedder = opts.embedder;
     this.packsRoot = opts.packsRoot;
     this.repoRoot = opts.repoRoot ?? findRepoRoot();
+  }
+
+  /** Rebind after a store swap (host clear-cache / recovery paths). */
+  rebindStore(handle: StoreHandle | null): void {
+    this.storeHandle = handle;
+  }
+
+  private get store(): StoreHandle {
+    if (this.storeHandle === null) {
+      throw new PackManagerError(
+        'store handle unavailable (swapped by a clear-cache/recovery operation); retry after the host reopens the store',
+      );
+    }
+    return this.storeHandle;
+  }
+
+  /** Serialize every public lifecycle operation (C2 _registry_lock parity). */
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.queue.then(work, work);
+    this.queue = run.catch(() => {});
+    return run;
   }
 
   private get db(): LinksDb {
@@ -332,7 +368,11 @@ export class PackManager {
   // public lifecycle API (external contract mirrors pack_manager.py)
   // ------------------------------------------------------------- #
 
-  async install(packPath: string): Promise<InstallResult> {
+  install(packPath: string): Promise<InstallResult> {
+    return this.enqueue(() => this.installLocked(packPath));
+  }
+
+  private async installLocked(packPath: string): Promise<InstallResult> {
     const source = path.resolve(packPath);
     const stat = fs.statSync(source, { throwIfNoEntry: false });
     if (stat === undefined || !stat.isDirectory()) {
@@ -471,7 +511,11 @@ export class PackManager {
     };
   }
 
-  async supersede(packId: string, fromVersion: string, toVersion: string): Promise<void> {
+  supersede(packId: string, fromVersion: string, toVersion: string): Promise<void> {
+    return this.enqueue(() => this.supersedeLocked(packId, fromVersion, toVersion));
+  }
+
+  private async supersedeLocked(packId: string, fromVersion: string, toVersion: string): Promise<void> {
     const rows = this.readPackRows();
     const fromRow = rows.find((r) => r.id === packId && r.version === fromVersion);
     const toRow = rows.find((r) => r.id === packId && r.version === toVersion);
@@ -498,7 +542,11 @@ export class PackManager {
     });
   }
 
-  async rollback(packId: string, toVersion: string): Promise<void> {
+  rollback(packId: string, toVersion: string): Promise<void> {
+    return this.enqueue(() => this.rollbackLocked(packId, toVersion));
+  }
+
+  private async rollbackLocked(packId: string, toVersion: string): Promise<void> {
     const rows = this.readPackRows();
     const toRow = rows.find((r) => r.id === packId && r.version === toVersion);
     if (toRow === undefined) {
@@ -519,7 +567,11 @@ export class PackManager {
     });
   }
 
-  async remove(packId: string, version?: string): Promise<number> {
+  remove(packId: string, version?: string): Promise<number> {
+    return this.enqueue(() => this.removeLocked(packId, version));
+  }
+
+  private async removeLocked(packId: string, version?: string): Promise<number> {
     const rows = this.readPackRows().filter(
       (r) => r.id === packId && (version === undefined || r.version === version),
     );
@@ -557,8 +609,9 @@ export class PackManager {
     return rows.length;
   }
 
-  async listInstalled(): Promise<PackRecord[]> {
-    return this.readPackRows().map((row) => {
+  listInstalled(): Promise<PackRecord[]> {
+    return this.enqueue(async () =>
+      this.readPackRows().map((row) => {
       let supersedes: string[] = [];
       if (row.supersedes !== null) {
         try {
@@ -579,7 +632,8 @@ export class PackManager {
         supersedes,
         docs: this.docsMapForRow(row),
       };
-    });
+      }),
+    );
   }
 
   // ------------------------------------------------------------- #
@@ -638,8 +692,10 @@ export class PackManager {
       let docBytes: Buffer;
       try {
         docBytes = fs.readFileSync(path.join(packPath, entry.path));
-      } catch {
-        throw new PackManagerError(`doc unreadable: ${entry.path}`);
+      } catch (error) {
+        throw new PackManagerError(
+          `doc unreadable: ${entry.path}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
       const actual = sha256Hex(docBytes);
       if (actual !== entry.sha256.toLowerCase()) {
@@ -726,9 +782,16 @@ export class PackManager {
   // ------------------------------------------------------------- #
 
   private readPackRows(): PacksRow[] {
-    return this.stmt(
-      'SELECT id, version, name, published_at, source_class, active, install_path, supersedes FROM packs ORDER BY id, version',
-    ).all() as unknown as PacksRow[];
+    try {
+      return this.stmt(
+        'SELECT id, version, name, published_at, source_class, active, install_path, supersedes FROM packs ORDER BY id, version',
+      ).all() as unknown as PacksRow[];
+    } catch (error) {
+      if (error instanceof PackManagerError) throw error;
+      throw new PackManagerError(
+        `pack registry read failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   /** Doc map for an installed row, derived from its retained managed manifest

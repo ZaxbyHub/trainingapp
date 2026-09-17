@@ -178,13 +178,21 @@ describe('c3 store schema migration (issue #70 AC6)', () => {
     }
   });
 
-  itReal('the Python mirror ladder agrees (migrate.py --selftest)', () => {
-    const script = path.join(REPO_ROOT, 'contracts', 'tests', 'store-interop', 'migrate.py');
-    expect(fs.existsSync(script)).toBe(true);
-    const out = execFileSync('python', [script, '--selftest'], {
-      encoding: 'utf8',
-      timeout: 120_000,
-    });
-    expect(out).toContain('selftest OK');
-  });
+  // 120s per-test budget: the child execFileSync timeout is meaningless if
+  // vitest's own (5s default) wrapper fires first — cold python + sqlite
+  // startup on CI runners measured ~7-8s (observed 'Electron shell' job
+  // timeout, PR #115 review PRR-001).
+  itReal(
+    'the Python mirror ladder agrees (migrate.py --selftest)',
+    () => {
+      const script = path.join(REPO_ROOT, 'contracts', 'tests', 'store-interop', 'migrate.py');
+      expect(fs.existsSync(script)).toBe(true);
+      const out = execFileSync('python', [script, '--selftest'], {
+        encoding: 'utf8',
+        timeout: 120_000,
+      });
+      expect(out).toContain('selftest OK');
+    },
+    120_000,
+  );
 });

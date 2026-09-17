@@ -30,7 +30,8 @@ function findRepoRoot(dir: string): string {
 const REPO_ROOT = findRepoRoot(THIS_DIR);
 
 describe('c3 pack parity (issue #70 AC1, Node leg)', () => {
-  it('installs the fixture and dumps its chunk-id set', async () => {
+  // 120s per-test budget: cold better-sqlite3/sqlite-vec loads on CI (PRR-010).
+  it('installs the fixture and dumps its chunk-id set', { timeout: 120_000 }, async () => {
     const fixture = process.env.C3_PARITY_FIXTURE;
     const out = process.env.C3_PARITY_OUT;
     if (fixture === undefined || out === undefined) {
