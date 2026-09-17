@@ -6,7 +6,7 @@
 // decision, issue #57, renames/replaces that file mechanically without
 // touching this bootstrap). Baseline transport hardening beyond the flags
 // below is Workstream B2 / issue #60.
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
@@ -19,6 +19,23 @@ import {
   type BackendHandle,
   type BackendHost,
 } from './backend/index.js';
+import { CONTEXT_SIZE } from './backend/inference/llama-engine.js';
+import { autoSelectProfile, resolveFreeRamBytes } from './first-run/ram-gate.js';
+import {
+  containedJoin,
+  loadManifest,
+  manifestGroupBytes,
+  resolveManifestPath,
+  verifyManifest,
+  type ManifestFailure,
+} from './first-run/manifest-verifier.js';
+import {
+  EMPTY_FIRST_RUN_STATE,
+  evaluateStatus,
+  loadFirstRunState,
+  saveFirstRunState,
+} from './first-run/first-run-store.js';
+import { assertCanComplete, manifestCompletionState, WizardBlockError } from './first-run/wizard.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
 import {
   getLoopbackGuard,
@@ -200,13 +217,24 @@ export function bootstrap(): void {
     let storePath: string;
     try {
       migrateLegacyStoreLayout(userDataPath);
-      storePath = resolveProfileLayout({ userDataPath }).storePath;
+      // TRAININGAPP_DESKTOP_STORE_PATH: the same seam the headless dev-server
+      // honors (dev-server.ts) and the Playwright-under-Electron suite relies
+      // on for per-test store isolation; absent, the ADR-0006 profile layout
+      // applies (<userData>/profiles/default/store.sqlite).
+      const explicitStorePath = process.env.TRAININGAPP_DESKTOP_STORE_PATH;
+      storePath =
+        explicitStorePath !== undefined && explicitStorePath.length > 0
+          ? path.resolve(explicitStorePath)
+          : resolveProfileLayout({ userDataPath }).storePath;
     } catch (err) {
       console.error('[trainingapp-desktop] profile resolution failed:', err instanceof Error ? err.message : err);
       app.quit();
       return;
     }
     const backupsDir = path.join(userDataPath, 'backups');
+    // E2 (issue #85): the engine reference is kept so the wizard can read
+    // per-profile model paths (modelStatus) for the RAM-gate estimate.
+    const engine = resolveNodeEngine(process.env, { userDataPath });
     try {
       backendHost = createBackendHost({
         token: getLaunchToken(),
@@ -215,7 +243,7 @@ export function bootstrap(): void {
         mode: resolveBackendMode({ env: process.env }),
         // B4 (issue #62): when backend.mode is "node", serve real llama.cpp
         // inference with the model dir defaulting to <userData>/models.
-        engine: resolveNodeEngine(process.env, { userDataPath }),
+        engine,
         // B6 (issue #64): open the per-profile SQLite store (ADR-0006 layout).
         storePath,
         // D6 (issue #82): packs root for learn-result slide metadata.
@@ -277,6 +305,313 @@ export function bootstrap(): void {
       }
       return nodeHost.createStoreBackup(backupsDir);
     });
+    // ---- E2 (issue #85): first-run validation wizard -----------------------
+    // Same registration discipline as desktop:get-backend: the handlers exist
+    // only after the backend host started; the renderer client treats a
+    // missing handler as "backend not ready yet".
+    const devRepoRoot = (): string =>
+      process.env.TRAININGAPP_DESKTOP_REPO_ROOT ?? path.join(moduleDir(), '..', '..', '..');
+    const licensesPath = (): string | null => {
+      if (app.isPackaged) return path.join(process.resourcesPath, 'docs', 'licenses.md');
+      const root = devRepoRoot();
+      return path.join(root, 'docs', 'licenses.md');
+    };
+    /** Load + verify the integrity manifest (E1 contract, #84). `staged:false`
+     *  is NOT an error — dev/CI trees and pre-E1 packaged builds have none;
+     *  the fail-closed decision belongs to the caller. */
+    const wizardManifest = () => {
+      const manifestPath = resolveManifestPath({
+        env: process.env,
+        isPackaged: app.isPackaged,
+        resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+        repoRoot: devRepoRoot(),
+      });
+      if (manifestPath === null || !existsSync(manifestPath)) {
+        return { staged: false, manifestPath, manifest: null, verify: null, loadError: null };
+      }
+      const manifestDir = path.dirname(manifestPath);
+      try {
+        const { manifest } = loadManifest(manifestPath);
+        const verify =
+          manifest === null
+            ? null
+            : verifyManifest(manifest, [manifestDir, path.join(userDataPath, 'models')]);
+        return { staged: manifest !== null, manifestPath, manifest, verify, loadError: null };
+      } catch (err) {
+        return {
+          staged: true,
+          manifestPath,
+          manifest: null,
+          verify: null,
+          loadError: err instanceof Error ? err.message : String(err),
+        };
+      }
+    };
+    // Manifest-controlled dir (PRR-001): containment-checked join; null when
+    // the entry tries to escape the manifest's packs directory.
+    const packEntryDir = (
+      manifestDir: string,
+      entry: { id: string; version?: string; dir?: string },
+    ): string | null =>
+      containedJoin(path.join(manifestDir, 'packs'), entry.dir ?? `${entry.id}-${entry.version ?? ''}`);
+    const buildFirstRunStatus = async () => {
+      const freeBytes = resolveFreeRamBytes(process.env);
+      const modelStatus =
+        typeof engine.modelStatus === 'function' ? engine.modelStatus() : null;
+      const engineName = modelStatus?.engine ?? 'unknown';
+      const modelBytesFor = (profile: 'quality' | 'fast'): { path: string; bytes: number } | null => {
+        const entry = modelStatus?.models?.[profile];
+        if (entry === undefined || !entry.present || typeof entry.path !== 'string') return null;
+        try {
+          return { path: entry.path, bytes: statSync(entry.path).size };
+        } catch {
+          return null;
+        }
+      };
+      const qualityBytes = modelBytesFor('quality');
+      const fastBytes = modelBytesFor('fast');
+      // One load+verify per status invocation: each wizardManifest() runs a
+      // full sha256 pass over every required file, so callers share the result
+      // (PRR-002) instead of hashing the manifest tree twice.
+      const wm = wizardManifest();
+      // RAM-gate sizes: the staged file's real size when present, otherwise
+      // the manifest's declared size for the group (a quality model that has
+      // not been staged yet still gets an honest gate at first run).
+      const gateSizes = {
+        qualityFileBytes:
+          qualityBytes?.bytes ?? (wm.manifest !== null ? manifestGroupBytes(wm.manifest, 'llm-quality') : undefined),
+        fastFileBytes:
+          fastBytes?.bytes ?? (wm.manifest !== null ? manifestGroupBytes(wm.manifest, 'llm-fast') : undefined),
+      };
+      const recommendation = autoSelectProfile({
+        freeBytes,
+        nCtx: CONTEXT_SIZE,
+        ...gateSizes,
+      });
+      const failures: ManifestFailure[] =
+        wm.loadError !== null
+          ? [
+              {
+                path: wm.manifestPath ?? 'resources/manifest.json',
+                reason: 'manifest-unreadable',
+                expected: 'a valid JSON resources manifest',
+                actual: wm.loadError,
+              },
+            ]
+          : (wm.verify?.failures ?? []);
+      const packTools = (backendHost as NodeBackendHost | null | undefined)?.getFirstRunPackTools?.() ?? null;
+      const required = (wm.manifest?.packs ?? []).map((entry) => ({
+        id: entry.id,
+        ...(entry.version !== undefined ? { version: entry.version } : {}),
+        ...(entry.dir !== undefined ? { dir: entry.dir } : {}),
+        resolvedDir:
+          wm.manifest !== null && wm.manifestPath !== null
+            ? packEntryDir(path.dirname(wm.manifestPath), entry)
+            : null,
+      }));
+      let installed: Array<{ id: string; version: string; active: boolean }> = [];
+      if (packTools !== null) {
+        try {
+          installed = await packTools.listInstalled();
+        } catch (err) {
+          console.error(
+            `[trainingapp-desktop] first-run pack snapshot failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      const licensesFile = licensesPath();
+      const licensesAvailable = licensesFile !== null && existsSync(licensesFile);
+      const licensesContent = licensesAvailable
+        ? (() => {
+            try {
+              return readFileSync(licensesFile as string, 'utf8');
+            } catch {
+              return null;
+            }
+          })()
+        : null;
+      const state = loadFirstRunState(storePath);
+      const force = process.env.TRAININGAPP_FIRST_RUN_FORCE === '1';
+      const evaluation = evaluateStatus(state, {
+        forced: force,
+        manifestDigests: wm.staged && wm.verify !== null ? wm.verify.digests : null,
+      });
+      // Stub exemption (B9 precedent, desktop-session.tsx modelsAbsentForRealEngine):
+      // the CI/dev stub must boot ungated unless the test force-seam is set.
+      const needed = evaluation.needed && (engineName !== 'stub' || force);
+      return {
+        needed,
+        reason: evaluation.reason,
+        rerun: evaluation.reason === 'reset' || evaluation.reason === 'drift',
+        engine: engineName,
+        hardware: { freeBytes },
+        profile: {
+          recommended: recommendation.profile,
+          warning: recommendation.warning ?? null,
+          stored: state.firstRun.selectedProfile,
+          contextSize: CONTEXT_SIZE,
+          models: { quality: qualityBytes, fast: fastBytes },
+        },
+        manifest: {
+          staged: wm.staged,
+          packaged: app.isPackaged,
+          failures,
+          verifiedCount: wm.verify?.verifiedCount ?? 0,
+        },
+        packs: { toolsAvailable: packTools !== null, required, installed },
+        licenses: {
+          available: licensesAvailable,
+          path: licensesAvailable ? licensesFile : null,
+          content: licensesContent,
+        },
+        state: {
+          completed: state.firstRun.completed,
+          selectedProfile: state.firstRun.selectedProfile,
+          completedAt: state.firstRun.completedAt,
+          acknowledgedLicenses: state.firstRun.acknowledgedLicenses,
+        },
+      };
+    };
+    const pushFirstRunRequired = (): void => {
+      void buildFirstRunStatus()
+        .then((status) => {
+          if (!status.needed) return;
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send('first-run:required', status);
+          }
+        })
+        .catch((err: unknown) => {
+          console.error(
+            `[trainingapp-desktop] first-run status push failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    };
+    ipcMain.handle('desktop:first-run:status', () => buildFirstRunStatus());
+    ipcMain.handle(
+      'desktop:first-run:activate-packs',
+      async () => {
+        const packTools = (backendHost as NodeBackendHost | null | undefined)?.getFirstRunPackTools?.() ?? null;
+        if (packTools === null) {
+          return { ok: false as const, detail: 'pack lifecycle unavailable (no store or embedder)', results: [] };
+        }
+        const wm = wizardManifest();
+        if (wm.manifest === null || wm.manifestPath === null) {
+          return {
+            ok: false as const,
+            detail: 'no integrity manifest is staged, so no packs are required (dev tree?)',
+            results: [],
+          };
+        }
+        const manifestDir = path.dirname(wm.manifestPath);
+        const results: Array<{ id: string; ok: boolean; detail: string }> = [];
+        for (const entry of wm.manifest.packs ?? []) {
+          const dir = packEntryDir(manifestDir, entry);
+          try {
+            const installedNow = await packTools.listInstalled();
+            const satisfied = installedNow.some(
+              (record) =>
+                record.id === entry.id &&
+                record.active &&
+                (entry.version === undefined || record.version === entry.version),
+            );
+            if (satisfied) {
+              results.push({ id: entry.id, ok: true, detail: 'already installed and active' });
+              continue;
+            }
+            if (dir === null) {
+              results.push({
+                id: entry.id,
+                ok: false,
+                detail: `pack dir for ${entry.id} escapes the manifest packs directory (traversal refused)`,
+              });
+              continue;
+            }
+            if (!existsSync(dir)) {
+              results.push({ id: entry.id, ok: false, detail: `staged pack folder is missing: ${dir}` });
+              continue;
+            }
+            const installed = await packTools.install(dir);
+            results.push({ id: installed.id, ok: true, detail: `installed ${installed.id}@${installed.version}` });
+          } catch (err) {
+            results.push({
+              id: entry.id,
+              ok: false,
+              detail: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        return { ok: results.every((r) => r.ok), results };
+      },
+    );
+    ipcMain.handle(
+      'desktop:first-run:complete',
+      async (_event, payload: unknown) => {
+        try {
+          const request = (typeof payload === 'object' && payload !== null ? payload : {}) as {
+            selectedProfile?: unknown;
+            acknowledgedLicenses?: unknown;
+          };
+          const acknowledgedLicenses = request.acknowledgedLicenses === true;
+          const selectedProfile =
+            request.selectedProfile === 'quality' || request.selectedProfile === 'fast'
+              ? request.selectedProfile
+              : null;
+          if (selectedProfile === null) {
+            return {
+              ok: false as const,
+              detail: 'select-profile: no profile was selected',
+              reason: 'profile-not-selected' as const,
+            };
+          }
+          // Fresh verification (TOCTOU guard): the operator may have completed
+          // the wizard long after the status they saw was rendered.
+          const status = await buildFirstRunStatus();
+          const manifestOk = manifestCompletionState({
+            packaged: status.manifest.packaged,
+            staged: status.manifest.staged,
+            failureCount: status.manifest.failures.length,
+          });
+          const inactiveRequiredPacks = status.packs.required
+            .filter(
+              (entry) =>
+                !status.packs.installed.some(
+                  (record) =>
+                    record.id === entry.id &&
+                    record.active &&
+                    (entry.version === undefined || record.version === entry.version),
+                ),
+            )
+            .map((entry) => entry.id);
+          assertCanComplete({
+            selectedProfile,
+            acknowledgedLicenses,
+            manifestOk,
+            inactiveRequiredPacks,
+          });
+          const wm = wizardManifest();
+          saveFirstRunState(storePath, {
+            firstRun: {
+              completed: true,
+              selectedProfile: selectedProfile as 'quality' | 'fast',
+              completedAt: new Date().toISOString(),
+              acknowledgedLicenses,
+              manifestDigests: wm.verify?.digests ?? {},
+            },
+          });
+          return { ok: true as const };
+        } catch (err) {
+          if (err instanceof WizardBlockError) return { ok: false as const, detail: err.message, reason: err.reason };
+          return { ok: false as const, detail: err instanceof Error ? err.message : String(err) };
+        }
+      },
+    );
+    ipcMain.handle('desktop:first-run:reset', () => {
+      saveFirstRunState(storePath, EMPTY_FIRST_RUN_STATE());
+      pushFirstRunRequired();
+      return { ok: true as const };
+    });
+    // Fire the push once so a needed first run surfaces without renderer polling.
+    pushFirstRunRequired();
     let quitting = false;
     app.on('will-quit', (event) => {
       if (quitting || backendHost === null) return;

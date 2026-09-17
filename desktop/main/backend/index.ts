@@ -219,6 +219,34 @@ export class NodeBackendHost implements BackendHost {
     }
   };
 
+  /**
+   * E2 (issue #85): the first-run wizard's pack-activation tools, exposed to
+   * the bootstrap IPC layer the same way createStoreBackup is — an OWN
+   * PROPERTY (b3 duck-type pin: prototypes stay start/stop only), null when
+   * the pack lifecycle is unavailable (no embedder, no store). Idempotent at
+   * the caller: install() refuses an already-active same version, so the
+   * wizard treats installed+active as satisfied.
+   */
+  getFirstRunPackTools = (): {
+    listInstalled: () => Promise<Array<{ id: string; version: string; active: boolean }>>;
+    install: (packPath: string) => Promise<{ id: string; version: string }>;
+  } | null => {
+    const packManager = this.packManager;
+    if (packManager === null) return null;
+    return {
+      listInstalled: async () =>
+        (await packManager.listInstalled()).map((record) => ({
+          id: record.packId,
+          version: record.version,
+          active: record.active,
+        })),
+      install: async (packPath: string) => {
+        const result = await packManager.install(packPath);
+        return { id: result.packId, version: result.version };
+      },
+    };
+  };
+
   constructor(
     private readonly config: BackendHostConfig,
     private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(config.env ?? process.env),

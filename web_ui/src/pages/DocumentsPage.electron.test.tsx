@@ -13,7 +13,7 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/re
 import { DocumentsPage } from './DocumentsPage';
 import { ToastProvider } from '../components/ToastProvider';
 import { DesktopSessionProvider, type DesktopSession } from '../lib/desktop-session';
-import type { DesktopApiBridge } from '../types/desktop';
+import type { DesktopApiBridge, FirstRunStatus } from '../types/desktop';
 import type { ApiClient } from '../lib/api';
 
 vi.mock('../lib/storage/document-store', () => ({
@@ -46,6 +46,29 @@ vi.mock('../hooks/useServiceInitialization', () => ({
 }));
 
 import { loadDocuments, saveDocuments, deleteDocument } from '../lib/storage/document-store';
+
+/** Minimal type-honest FirstRunStatus for inert bridge stubs (PRR-004). */
+function stubFirstRunStatus(): FirstRunStatus {
+  return {
+    needed: false,
+    reason: 'complete',
+    rerun: false,
+    engine: 'stub',
+    hardware: { freeBytes: 0 },
+    profile: {
+      recommended: 'fast',
+      warning: null,
+      stored: 'fast',
+      contextSize: 8192,
+      models: { quality: null, fast: null },
+    },
+    manifest: { staged: false, packaged: false, failures: [], verifiedCount: 0 },
+    packs: { toolsAvailable: false, required: [], installed: [] },
+    licenses: { available: false, path: null, content: null },
+    state: { completed: false, selectedProfile: 'fast', completedAt: '', acknowledgedLicenses: false },
+  };
+}
+
 
 const mockStore = { loadDocuments, saveDocuments, deleteDocument };
 
@@ -93,6 +116,12 @@ beforeEach(() => {
   (window as { desktopApi?: DesktopApiBridge }).desktopApi = {
     getAuthToken: vi.fn(async () => 't'),
     getBackendInfo: vi.fn(async () => ({ mode: 'node', port: 1, url: 'http://127.0.0.1:1' })),
+    // E2 (issue #85): type-complete inert first-run stubs (unused here).
+    getFirstRunStatus: vi.fn(async () => stubFirstRunStatus()),
+    activateFirstRunPacks: vi.fn(async () => ({ ok: true, results: [] })),
+    completeFirstRun: vi.fn(async () => ({ ok: true })),
+    resetFirstRun: vi.fn(async () => ({ ok: true })),
+    onFirstRunRequired: vi.fn(() => () => {}),
   };
   vi.mocked(window.fetch ?? fetch).mockRestore?.();
 });

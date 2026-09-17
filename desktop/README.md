@@ -214,6 +214,43 @@ PackManager is proven in CI's store-interop job
 (`contracts/tests/test_pack_parity.py`). The Documents-page UI consuming this
 surface lands with C7/#74; hardening (symlinks, resource caps) is C8/#75.
 
+## First-run wizard (E2, issue #85)
+
+A fresh install walks a deterministic six-state sequence: `detect-hardware` →
+`select-profile` → `verify-manifest` → `activate-packs` → `licensing-notices` →
+`complete`. Key facts an operator or reviewer needs:
+
+- **Profile gate** (`main/first-run/ram-gate.ts`): the default profile is
+  `quality` iff the quality model fits in free RAM under A3's
+  `file_size + kv_estimate(n_ctx) + GGUF_LOAD_OVERHEAD_BYTES` (1 GiB each,
+  `n_ctx = CONTEXT_SIZE`); otherwise `fast` with a warning naming the numbers.
+  An explicit operator choice always overrides. When a model is not staged,
+  the manifest's declared `sizeBytes` drives the estimate.
+- **Integrity verification** (`main/first-run/manifest-verifier.ts`): every
+  manifest-required file's sha256 is checked at first run and at every launch
+  after completion (drift re-run). Failures name the path + expected/actual.
+  A packaged install without `resources/manifest.json` fails CLOSED (broken
+  install); a dev/CI tree with none staged degrades explicitly.
+- **State** (`main/first-run/first-run-store.ts`): `firstRun.completed`,
+  `firstRun.selectedProfile`, `firstRun.completedAt`, license acknowledgment,
+  and the per-file digest anchor persist atomically in
+  `<profileDir>/first-run.json`. The engine settings API deliberately does NOT
+  carry these (its key set is contract-frozen).
+- **Completion guard** (`main/first-run/wizard.ts`): completion is impossible
+  without an explicit profile choice, all manifest-required packs active, and
+  the license acknowledgment. "Skip for now" only closes the window; the
+  wizard re-opens on the next launch.
+- **Re-run**: Settings → "First-run setup" → "Re-run setup" resets the state;
+  mutating any manifest-covered file re-triggers the wizard automatically
+  (`reason: "drift"`).
+- **Dev/test seams**: `TRAININGAPP_DESKTOP_MANIFEST` (manifest path override),
+  `TRAININGAPP_DESKTOP_FREE_RAM_BYTES` (free-RAM override),
+  `TRAININGAPP_FIRST_RUN_FORCE=1` (opens the wizard on the CI stub engine,
+  which is otherwise exempt like the B9 boot gate).
+- `TRAININGAPP_DESKTOP_STORE_PATH` is honored by the Electron bootstrap (not
+  just the headless dev-server), which is what gives the Playwright-under-
+  Electron suite per-test store isolation.
+
 ## Ingestion, profiles, backup and recovery (B6, issue #64)
 
 Design decisions are frozen in ADR-0006 (`docs/adr/0006-profile-model.md`).

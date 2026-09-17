@@ -14,13 +14,42 @@ import {
   modelsAbsentForRealEngine,
   resetDesktopSessionForTests,
 } from './desktop-session';
-import type { DesktopApiBridge } from '../types/desktop';
+import type { DesktopApiBridge, FirstRunStatus } from '../types/desktop';
 import type { ModelStatus } from './api/types';
+
+/** Minimal type-honest FirstRunStatus for inert bridge stubs (PRR-004). */
+function stubFirstRunStatus(): FirstRunStatus {
+  return {
+    needed: false,
+    reason: 'complete',
+    rerun: false,
+    engine: 'stub',
+    hardware: { freeBytes: 0 },
+    profile: {
+      recommended: 'fast',
+      warning: null,
+      stored: 'fast',
+      contextSize: 8192,
+      models: { quality: null, fast: null },
+    },
+    manifest: { staged: false, packaged: false, failures: [], verifiedCount: 0 },
+    packs: { toolsAvailable: false, required: [], installed: [] },
+    licenses: { available: false, path: null, content: null },
+    state: { completed: false, selectedProfile: 'fast', completedAt: '', acknowledgedLicenses: false },
+  };
+}
 
 function stubBridge(overrides: Partial<DesktopApiBridge> = {}): DesktopApiBridge {
   return {
     getAuthToken: vi.fn(async () => 'launch-token-abc'),
     getBackendInfo: vi.fn(async () => ({ mode: 'node', port: 4567, url: 'http://127.0.0.1:4567' })),
+    // E2 (issue #85): inert first-run surface stubs — this suite never
+    // exercises the wizard, it only needs a type-complete bridge.
+    getFirstRunStatus: vi.fn(async () => stubFirstRunStatus()),
+    activateFirstRunPacks: vi.fn(async () => ({ ok: true, results: [] })),
+    completeFirstRun: vi.fn(async () => ({ ok: true })),
+    resetFirstRun: vi.fn(async () => ({ ok: true })),
+    onFirstRunRequired: vi.fn(() => () => {}),
     ...overrides,
   };
 }
