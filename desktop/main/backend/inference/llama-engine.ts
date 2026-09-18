@@ -452,6 +452,9 @@ export class LlamaEngine implements EngineSurface {
           inference_time: (Date.now() - started) / 1000,
         };
         if (result.cancelled) out.cancelled = true;
+        // C4 (issue #71): cited chunks ride the internal result so the
+        // server serializes pack-attributed citations (internal only).
+        if (context !== null) out.cited = context.cited;
         // D6 (issue #82): learn rows from the attached assembler when real
         // retrieval produced cited chunks (null assembler result → omitted).
         if (!result.cancelled && context !== null && context.cited.length > 0 && this.learnAssembler !== null) {

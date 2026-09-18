@@ -85,6 +85,15 @@ export interface LearnResult {
   pack_id?: string;
 }
 
+/** C4 (issue #71): pack-attributed citation (mirror of the OpenAPI Citation schema). */
+export interface Citation {
+  source: string;
+  page: number | null;
+  pack_id: string | null;
+  pack_version: string | null;
+  pack_published_at: string | null;
+}
+
 export interface AskResponse {
   question: string;
   answer: string;
@@ -92,6 +101,8 @@ export interface AskResponse {
   context_length: number;
   inference_time: number;
   learn?: LearnResult[];
+  /** C4 (issue #71): pack-attributed per-chunk citations; additive — tolerate absence on older servers. */
+  citations?: Citation[];
 }
 
 export interface SearchRequest {
@@ -187,4 +198,6 @@ export interface StreamDoneEvent {
   inference_time: number;
   /** D6 (issue #82): Learn-panel rows; clients must tolerate absence on older servers. */
   learn?: LearnResult[];
+  /** C4 (issue #71): pack-attributed per-chunk citations; additive — tolerate absence on older servers. */
+  citations?: Citation[];
 }

@@ -19,7 +19,7 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { originAllowed, type LoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from '../security/defaults.js';
-import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type EngineSurface, type IngestFileInput, type ModelStatus } from './types.js';
+import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type Citation, type CitedChunk, type EngineSurface, type IngestFileInput, type ModelStatus } from './types.js';
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)
@@ -253,6 +253,22 @@ function validationError(res: ServerResponse, errors: string[], cors?: CorsConte
  * Exported for the cancellation-semantics spec (b3-server.test.ts), which
  * drives it with a recording response double.
  */
+/**
+ * C4 (issue #71): the serialized citations array for an /ask result,
+ * derived from the internal cited chunks (which are never sent verbatim).
+ * Always an array (possibly empty); `page` is null on this backend, which
+ * stores no page column.
+ */
+function citationsFromResult(result: { cited?: CitedChunk[] }): Citation[] {
+  return (result.cited ?? []).map((cited) => ({
+    source: cited.source ?? '',
+    page: null,
+    pack_id: cited.packId ?? null,
+    pack_version: cited.packVersion ?? null,
+    pack_published_at: cited.packPublishedAt ?? null,
+  }));
+}
+
 export async function runAskStream(
   res: ServerResponse,
   engine: EngineSurface,
@@ -317,6 +333,8 @@ export async function runAskStream(
         context_length: result.context_length,
         inference_time: result.inference_time,
         learn: result.learn ?? [],
+        // C4 (issue #71): pack-attributed citations on the success terminal.
+        citations: citationsFromResult(result),
       });
     }
   } catch {
@@ -500,6 +518,9 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                   // only the serializable learn rows cross the wire, never
                   // result.cited.
                   learn: result.learn ?? [],
+                  // C4 (issue #71): pack-attributed citations derived from the
+                  // internal cited chunks; always emitted on success.
+                  citations: citationsFromResult(result),
                 },
                 cors,
               );

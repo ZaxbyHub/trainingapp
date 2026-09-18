@@ -198,3 +198,52 @@ PackManager implementations (C2 Python, C3 Node):
   `.zip` sources with a clear `PackManagerError` naming the C6/C8 surface;
   zip ingestion (and prebuilt `index.sqlite` consumption) is the C6
   packtool / C8 hardening deliverable, not a C2 capability.
+
+## Recency ranking implementation (amended at C4, issue #71)
+
+C4 implements the ranking rules this ADR specified prospectively. The
+shipping formula is the linear form decided above, now with a configurable
+horizon: `packs.recency.floorMonths` (default `18`, the age at which the
+floor is reached) and `packs.recency.floor` (default `0.85`) parameterize
+`multiplier = 1.0 - (1.0 - floor) * min(1.0, age_months / floorMonths)` with
+`age_months = (now - published_at) / 30.44 days`, applied multiplicatively to
+the fused RRF score AFTER fusion (`adjusted = rrf * multiplier`) in BOTH the
+Python (`recency.py` -> `VectorStore.get_context` hybrid path) and Node
+(`desktop/main/backend/retrieval/recency.ts` -> `hybridRetrieve`) backends.
+`packs.recency.halfLifeMonths` (default `9`) remains reserved for the
+optional exponential half-life variant and is NOT wired: both backends ship
+the linear form so they cannot silently diverge. Recorded decisions that
+close the issue's open choice:
+
+- The prior is defined on fused RRF scores only. The Python vector-only
+  fallback path applies the version-precedence exclusion and cross-pack
+  dedup (below) but not the recency multiplier, because it ranks by raw
+  similarity, not fused RRF scores.
+- Chunks without pack metadata (unpackaged/user-uploaded documents) are
+  neutral: never excluded, never deduped, multiplier 1.0. Making them
+  content-hash identified like pack chunks is a potential follow-up, not
+  part of C4.
+- Ordering scope note: all three passes (exclusion, dedup, multiply)
+  operate on the FUSED candidate set, after RRF fusion — the issue's
+  "excluded from the candidate set entirely before RRF" phrasing is
+  satisfied in the observable sense (an inactive-pack chunk never surfaces
+  in any ranking result, and is never merely down-weighted); the review
+  trace (PR #117, finding OD-01) resolved the wording in favor of AC7,
+  which pins the prior as an after-fusion multiplier.
+- Exclusion ordering per candidate: inactive-pack exclusion first, then
+  cross-pack dedup by precedence (greater owning-pack `published_at`, then
+  semver-highest `version`, then lexicographically greatest pack `id` —
+  exactly the dedup semantics section above), then the recency multiply.
+  A chunk attributed to a pack that no active version claims (orphan of a
+  superseded/removed version) is excluded from the candidate set entirely —
+  defense-in-depth at the ranking layer against a PackManager delete bug.
+- Citations in both /ask responses carry `pack_id`, `pack_version`,
+  `pack_published_at` alongside the existing filename/page fields
+  (`Citation` schema in contracts/api.openapi.yaml; contracts stay
+  authoritative).
+- Registry/parity note: the Python pack registry persists each active
+  version's manifest `published_at` additively; pre-C4 registries load as
+  null and render the neutral multiplier. The scale-invariance property
+  the issue records still holds: the multiplier is multiplicative on
+  whatever the fused score is, so an A5 embedding/reranker scale change
+  does not require rework.

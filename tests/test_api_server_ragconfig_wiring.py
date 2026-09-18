@@ -64,6 +64,9 @@ def mock_settings():
     mock.rag_reranker_model = "cross-encoder/ms-marco-MiniLM-L-12-v2"
     mock.rag_context_truncation = 15000
     mock.rag_initial_retrieval_top_k = 50
+    mock.rag_packs_recency_half_life_months = 9
+    mock.rag_packs_recency_floor_months = 18
+    mock.rag_packs_recency_floor = 0.85
     mock.rag_rerank_top_k = 10
     return mock
 
@@ -343,6 +346,9 @@ class TestDefaultValuesFlowThrough:
         mock.rag_reranker_model = "cross-encoder/ms-marco-MiniLM-L6-v2"
         mock.rag_context_truncation = 20000
         mock.rag_initial_retrieval_top_k = 30
+        mock.rag_packs_recency_half_life_months = 9
+        mock.rag_packs_recency_floor_months = 18
+        mock.rag_packs_recency_floor = 0.85
         mock.rag_rerank_top_k = 6
         mock.rag_gguf_n_ctx = 4096
         mock.rag_gguf_n_threads = 4
@@ -397,6 +403,9 @@ class TestRAGEngineReceivesRAGConfig:
         mock.rag_reranker_model = "cross-encoder/ms-marco-MiniLM-L6-v2"
         mock.rag_context_truncation = 20000
         mock.rag_initial_retrieval_top_k = 30
+        mock.rag_packs_recency_half_life_months = 9
+        mock.rag_packs_recency_floor_months = 18
+        mock.rag_packs_recency_floor = 0.85
         mock.rag_rerank_top_k = 6
         mock.rag_gguf_n_ctx = 4096
         mock.rag_gguf_n_threads = 4
@@ -462,6 +471,9 @@ class TestGGUFPathValidation:
         mock.rag_reranker_model = "cross-encoder/ms-marco-MiniLM-L6-v2"
         mock.rag_context_truncation = 20000
         mock.rag_initial_retrieval_top_k = 30
+        mock.rag_packs_recency_half_life_months = 9
+        mock.rag_packs_recency_floor_months = 18
+        mock.rag_packs_recency_floor = 0.85
         mock.rag_rerank_top_k = 6
         mock.rag_gguf_n_ctx = 4096
         mock.rag_gguf_n_threads = 4
@@ -521,6 +533,9 @@ class TestGGUFPathValidation:
         mock.rag_reranker_model = "cross-encoder/ms-marco-MiniLM-L6-v2"
         mock.rag_context_truncation = 20000
         mock.rag_initial_retrieval_top_k = 30
+        mock.rag_packs_recency_half_life_months = 9
+        mock.rag_packs_recency_floor_months = 18
+        mock.rag_packs_recency_floor = 0.85
         mock.rag_rerank_top_k = 6
         mock.rag_gguf_n_ctx = 4096
         mock.rag_gguf_n_threads = 4

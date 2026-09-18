@@ -85,6 +85,9 @@ class RAGConfig:
         gguf_n_ctx: int = 4096,
         gguf_n_threads: Optional[int] = None,
         fast_profile_path: Optional[str] = None,
+        packs_recency_half_life_months: int = 9,
+        packs_recency_floor_months: int = 18,
+        packs_recency_floor: float = 0.85,
     ):
         self.db_path = (
             db_path if db_path is not None else str(app_paths.get_vector_db_path())
@@ -109,6 +112,12 @@ class RAGConfig:
             gguf_n_threads if gguf_n_threads is not None else default_gguf_threads()
         )
         self.fast_profile_path = fast_profile_path
+        # C4 (issue #71): packs.recency.* — halfLifeMonths is reserved for
+        # the optional exponential variant (unwired); the shipped prior is
+        # the linear form with floorMonths/floor.
+        self.packs_recency_half_life_months = packs_recency_half_life_months
+        self.packs_recency_floor_months = packs_recency_floor_months
+        self.packs_recency_floor = packs_recency_floor
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -131,6 +140,9 @@ class RAGConfig:
             "gguf_n_ctx": self.gguf_n_ctx,
             "gguf_n_threads": self.gguf_n_threads,
             "fast_profile_path": self.fast_profile_path,
+            "packs_recency_half_life_months": self.packs_recency_half_life_months,
+            "packs_recency_floor_months": self.packs_recency_floor_months,
+            "packs_recency_floor": self.packs_recency_floor,
         }
 
     @classmethod
@@ -160,6 +172,11 @@ class RAGConfig:
             gguf_n_ctx=data.get("gguf_n_ctx", 4096),
             gguf_n_threads=data.get("gguf_n_threads", default_gguf_threads()),
             fast_profile_path=data.get("fast_profile_path"),
+            packs_recency_half_life_months=data.get(
+                "packs_recency_half_life_months", 9
+            ),
+            packs_recency_floor_months=data.get("packs_recency_floor_months", 18),
+            packs_recency_floor=data.get("packs_recency_floor", 0.85),
         )
 
 
@@ -194,7 +211,11 @@ class RAGEngine:
         logger.info("[OK] Document processor ready")
 
         self.vector_store = VectorStore(
-            db_path=self.config.db_path, embedding_model=self.config.embedding_model
+            db_path=self.config.db_path,
+            embedding_model=self.config.embedding_model,
+            pack_status_provider=self._pack_status_provider,
+            recency_floor=self.config.packs_recency_floor,
+            recency_floor_months=self.config.packs_recency_floor_months,
         )
 
         self.llm: Optional[SmartLLM] = None
@@ -213,6 +234,17 @@ class RAGEngine:
 
         self._save_config()
         self._log_init_banner("RAG Engine Ready")
+
+    def _pack_status_provider(self):
+        """Active pack claims for the C4 recency/precedence prior (issue #71).
+
+        Lazy import keeps pack tooling (jsonschema, contracts validation)
+        out of engine init; failures degrade to a neutral prior inside the
+        vector store's provider guard.
+        """
+        from pack_manager import PackManager
+
+        return PackManager(self.vector_store).active_pack_claims()
 
     def _init_llm(self, gguf_path: Optional[str]):
         """Initialize LLM with GGUF model only."""
@@ -753,6 +785,11 @@ class RAGEngine:
                 "page": chunk.page,
                 "chunk_index": chunk.chunk_index,
                 "snippet": chunk.text[:300] if chunk.text else "",
+                # C4 (issue #71): pack attribution for citations; None for
+                # unpackaged chunks.
+                "pack_id": getattr(chunk, "pack_id", None),
+                "pack_version": getattr(chunk, "pack_version", None),
+                "pack_published_at": getattr(chunk, "pack_published_at", None),
                 **({"score": float(score)} if score is not None else {}),
             }
             for chunk, score in final_chunks_with_scores

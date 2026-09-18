@@ -77,7 +77,7 @@ describe('d6 host wiring: NodeBackendHost.start() attaches the learn assembler (
       const store = openStore({ dbPath, dims: DIMS, repoRoot: REPO_ROOT });
       const vector = (await embedder.embed([SLIDE_TEXT]))[0];
       store.db
-        .prepare("INSERT OR IGNORE INTO packs (id, name, version, published_at, source_class, supersedes) VALUES ('p-train', 'Training', '1.0.0', '2026-09-15T00:00:00.000Z', 'training', NULL)")
+        .prepare("INSERT OR IGNORE INTO packs (id, name, version, published_at, source_class, active, supersedes) VALUES ('p-train', 'Training', '1.0.0', '2026-09-15T00:00:00.000Z', 'training', 1, NULL)")
         .run();
       store.db
         .prepare('INSERT INTO docs (id, source_class, path, sha256, title, pack_id) VALUES (?, ?, ?, ?, ?, ?)')

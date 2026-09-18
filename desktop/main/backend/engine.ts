@@ -37,6 +37,10 @@ const DEFAULT_SETTINGS = {
   rag_retrieval_window: 1,
   rag_initial_retrieval_top_k: 12,
   rag_rerank_top_k: 4,
+  // C4 (issue #71): mirror config.py RAGSettings defaults.
+  rag_packs_recency_half_life_months: 9,
+  rag_packs_recency_floor_months: 18,
+  rag_packs_recency_floor: 0.85,
 } as const;
 
 // SettingsUpdateRequest bounds (api_server.py SettingsUpdateRequest).
@@ -53,6 +57,19 @@ const SETTING_BOUNDS = {
   rag_retrieval_window: { min: 0, max: Number.POSITIVE_INFINITY, type: 'int' },
   rag_initial_retrieval_top_k: { min: 1, max: 50, type: 'int' },
   rag_rerank_top_k: { min: 1, max: 20, type: 'int' },
+  // C4 (issue #71): mirror api_server.py SettingsUpdateRequest bounds
+  // (ge=1 on the month fields, no upper bound; floor within [0, 1]).
+  rag_packs_recency_half_life_months: {
+    min: 1,
+    max: Number.POSITIVE_INFINITY,
+    type: 'int',
+  },
+  rag_packs_recency_floor_months: {
+    min: 1,
+    max: Number.POSITIVE_INFINITY,
+    type: 'int',
+  },
+  rag_packs_recency_floor: { min: 0, max: 1, type: 'float' },
 } as const;
 
 const RAG_TO_RESPONSE: Record<string, string> = {
@@ -68,6 +85,10 @@ const RAG_TO_RESPONSE: Record<string, string> = {
   rag_retrieval_window: 'retrieval_window',
   rag_initial_retrieval_top_k: 'initial_retrieval_top_k',
   rag_rerank_top_k: 'rerank_top_k',
+  // C4 (issue #71): packs_recency_* per the OpenAPI SettingsResponse.
+  rag_packs_recency_half_life_months: 'packs_recency_half_life_months',
+  rag_packs_recency_floor_months: 'packs_recency_floor_months',
+  rag_packs_recency_floor: 'packs_recency_floor',
 };
 
 /** The stub streams a short deterministic token sequence (suite-shaped). */
@@ -161,7 +182,16 @@ export class StubEngine implements EngineSurface {
       // (rows whose surface predates chunkId are simply absent from cited).
       cited: rows
         .filter((row): row is typeof row & { chunkId: string } => typeof row.chunkId === 'string')
-        .map((row) => ({ chunkId: row.chunkId, score: row.similarity })),
+        .map((row) => ({
+          chunkId: row.chunkId,
+          score: row.similarity,
+          source: row.source,
+          // C4 (issue #71): pack attribution rides the cited chunk so the
+          // server can serialize citations without re-querying the store.
+          packId: row.packId ?? null,
+          packVersion: row.packVersion ?? null,
+          packPublishedAt: row.packPublishedAt ?? null,
+        })),
     };
   }
 
@@ -191,6 +221,9 @@ export class StubEngine implements EngineSurface {
       sources: context?.sources ?? [],
       context_length: context?.contextLength ?? 0,
       inference_time: (Date.now() - started) / 1000,
+      // C4 (issue #71): cited chunks ride the internal result so the server
+      // serializes pack-attributed citations (never serialized verbatim).
+      ...(context !== null ? { cited: context.cited } : {}),
       // D6 (issue #82): learn rows when the assembler is attached and
       // retrieval produced cited chunks; the assembler's null (store closed)
       // and the assembler-less fixtures both omit the field.

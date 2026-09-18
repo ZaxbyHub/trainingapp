@@ -322,10 +322,19 @@ class Conformance:
                 "retrieval_window",
                 "initial_retrieval_top_k",
                 "rerank_top_k",
+                # C4 (issue #71): mirror the OpenAPI SettingsResponse
+                # required list so desktop-host drift cannot recur.
+                "packs_recency_half_life_months",
+                "packs_recency_floor_months",
+                "packs_recency_floor",
             }
             missing = required - set(original)
             ok = not missing
-            detail += f" missing={sorted(missing)}" if missing else " 12 keys present"
+            detail += (
+                f" missing={sorted(missing)}"
+                if missing
+                else f" {len(required)} keys present"
+            )
         if ok:
             target = 4 if original.get("n_results") != 4 else 5
             r2 = await self.client.put("/settings", json={"rag_n_results": target})

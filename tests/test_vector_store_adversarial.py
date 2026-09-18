@@ -15,16 +15,15 @@ Covers:
 All tests verify SPECIFIC outcomes — not just "it doesn't crash".
 """
 
-import sys
-import os
-import pytest
-import math
 from pathlib import Path
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_vector_store(monkeypatch):
@@ -32,18 +31,20 @@ def mock_vector_store(monkeypatch):
     Fully mocked VectorStore so tests don't need real ChromaDB/embeddings.
     Mocks .search() and .bm25_index to return deterministic results.
     """
-    from vector_store import VectorStore, BM25Index, DocumentChunk
+    from vector_store import BM25Index, DocumentChunk, VectorStore
 
     # Minimal mock collection
     mock_collection = MagicMock()
     mock_collection.count.return_value = 3
     mock_collection.query.return_value = {
         "documents": [["doc0 content", "doc1 content", "doc2 content"]],
-        "metadatas": [[
-            {"source": "file0.txt", "chunk_index": 0, "page": 1},
-            {"source": "file1.txt", "chunk_index": 1, "page": 2},
-            {"source": "file2.txt", "chunk_index": 2, "page": 3},
-        ]],
+        "metadatas": [
+            [
+                {"source": "file0.txt", "chunk_index": 0, "page": 1},
+                {"source": "file1.txt", "chunk_index": 1, "page": 2},
+                {"source": "file2.txt", "chunk_index": 2, "page": 3},
+            ]
+        ],
         "distances": [[0.1, 0.2, 0.3]],
     }
 
@@ -56,15 +57,25 @@ def mock_vector_store(monkeypatch):
     vs.collection = mock_collection
     vs.embedder = mock_embedder
     vs.db_path = Path("/tmp/test_db")
-    vs.metadata = {"document_count": 1, "chunk_count": 3, "documents": {"file0.txt": {"chunks": 1}}}
+    vs.metadata = {
+        "document_count": 1,
+        "chunk_count": 3,
+        "documents": {"file0.txt": {"chunks": 1}},
+    }
     vs.bm25_index = MagicMock(spec=BM25Index)
     vs._lock = __import__("threading").RLock()
     vs._bm25_needs_rebuild = False
+    # C4 (issue #71) attributes; fixture mirrors the __init__ contract.
+    vs.pack_status_provider = None
+    vs.recency_floor = 0.85
+    vs.recency_floor_months = 18.0
+    vs._pack_provider_warned = False
 
     # Mock bm25_index.search() to return deterministic results
     def bm25_search(query, top_k=10):
         # Return results in the same namespace style as real BM25
         return [(0, 0.95), (1, 0.85)]
+
     vs.bm25_index.search = bm25_search
 
     # Expose bm25_index.chunks for RRF resolution
@@ -79,6 +90,7 @@ def mock_vector_store(monkeypatch):
 # ---------------------------------------------------------------------------
 # Category 1: Empty / Whitespace-Only Queries
 # ---------------------------------------------------------------------------
+
 
 class TestEmptyQueries:
     """get_context() must handle empty and whitespace-only queries gracefully."""
@@ -97,7 +109,9 @@ class TestEmptyQueries:
 
     def test_none_like_empty(self, mock_vector_store):
         # Not explicitly typed, but the guard uses `if not query`
-        ctx, sources, chunks = mock_vector_store.get_context("", n_results=3, hybrid_search=True)
+        ctx, sources, chunks = mock_vector_store.get_context(
+            "", n_results=3, hybrid_search=True
+        )
         assert ctx == ""
         assert sources == []
         assert chunks == []
@@ -106,6 +120,7 @@ class TestEmptyQueries:
 # ---------------------------------------------------------------------------
 # Category 2: n_results Boundary Values
 # ---------------------------------------------------------------------------
+
 
 class TestNResultsBoundaries:
     """n_results must be handled safely at boundaries."""
@@ -121,7 +136,9 @@ class TestNResultsBoundaries:
         assert isinstance(chunks, list)
 
     def test_n_results_negative(self, mock_vector_store):
-        ctx, sources, chunks = mock_vector_store.get_context("test query", n_results=-999)
+        ctx, sources, chunks = mock_vector_store.get_context(
+            "test query", n_results=-999
+        )
         # Must not crash — should treat as no-results or clamp
         assert isinstance(ctx, str)
         assert isinstance(sources, list)
@@ -129,7 +146,9 @@ class TestNResultsBoundaries:
 
     def test_n_results_exceeds_store_size(self, mock_vector_store):
         # n_results=1000 on a 3-doc store should clamp gracefully
-        ctx, sources, chunks = mock_vector_store.get_context("test query", n_results=1000)
+        ctx, sources, chunks = mock_vector_store.get_context(
+            "test query", n_results=1000
+        )
         # ChromaDB clamps internally; we just verify it doesn't crash
         assert isinstance(ctx, str)
         assert isinstance(sources, list)
@@ -137,7 +156,9 @@ class TestNResultsBoundaries:
 
     def test_n_results_huge(self, mock_vector_store):
         # Int overflow territory
-        ctx, sources, chunks = mock_vector_store.get_context("test query", n_results=2**31)
+        ctx, sources, chunks = mock_vector_store.get_context(
+            "test query", n_results=2**31
+        )
         assert isinstance(ctx, str)
         assert isinstance(sources, list)
 
@@ -145,6 +166,7 @@ class TestNResultsBoundaries:
 # ---------------------------------------------------------------------------
 # Category 3: min_similarity Boundary Values
 # ---------------------------------------------------------------------------
+
 
 class TestMinSimilarityBoundaries:
     """min_similarity must accept valid range [0, 1] and reject extremes."""
@@ -213,19 +235,24 @@ class TestMinSimilarityBoundaries:
 # Category 4: Type Confusion Attacks
 # ---------------------------------------------------------------------------
 
+
 class TestTypeConfusion:
     """Parameters must handle wrong types without crashing."""
 
     def test_query_is_number(self, mock_vector_store):
         # BUG: get_context calls query.strip() without type-checking query first.
         # int 42 has no .strip() method → AttributeError.
-        with pytest.raises(AttributeError, match="'int' object has no attribute 'strip'"):
+        with pytest.raises(
+            AttributeError, match="'int' object has no attribute 'strip'"
+        ):
             mock_vector_store.get_context(42, n_results=3)
 
     def test_query_is_list(self, mock_vector_store):
         # BUG: get_context calls query.strip() without type-checking query first.
         # list has no .strip() method → AttributeError.
-        with pytest.raises(AttributeError, match="'list' object has no attribute 'strip'"):
+        with pytest.raises(
+            AttributeError, match="'list' object has no attribute 'strip'"
+        ):
             mock_vector_store.get_context(["a", "b"], n_results=3)
 
     def test_query_is_none(self, mock_vector_store):
@@ -274,6 +301,7 @@ class TestTypeConfusion:
 # Category 5: Oversized Payloads & Unicode Attacks
 # ---------------------------------------------------------------------------
 
+
 class TestOversizedPayloads:
     """Very large inputs must not cause crashes or resource exhaustion."""
 
@@ -303,13 +331,17 @@ class TestOversizedPayloads:
     def test_unicode_combining_chars(self, mock_vector_store):
         # Combining characters — should not cause normalization issues
         combining_query = "A\u0300\u0301\u0302" * 50  # A with combining accents
-        ctx, sources, chunks = mock_vector_store.get_context(combining_query, n_results=3)
+        ctx, sources, chunks = mock_vector_store.get_context(
+            combining_query, n_results=3
+        )
         assert isinstance(ctx, str)
 
     def test_deeply_nested_template_literal(self, mock_vector_store):
         # Template injection — should be processed as literal text
         template_query = "${" * 100 + "malicious" + "}" * 100
-        ctx, sources, chunks = mock_vector_store.get_context(template_query, n_results=3)
+        ctx, sources, chunks = mock_vector_store.get_context(
+            template_query, n_results=3
+        )
         assert isinstance(ctx, str)
 
     def test_sql_injection_fragment(self, mock_vector_store):
@@ -333,6 +365,7 @@ class TestOversizedPayloads:
 # ---------------------------------------------------------------------------
 # Category 6: Malformed Hybrid Search Combinations
 # ---------------------------------------------------------------------------
+
 
 class TestHybridSearchEdgeCases:
     """hybrid_search=True with various malformed states."""
@@ -361,6 +394,7 @@ class TestHybridSearchEdgeCases:
         # Empty collection — override mock to return empty vector results
         def empty_query(**kwargs):
             return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+
         mock_vector_store.collection.query.side_effect = empty_query
         mock_vector_store.collection.count.return_value = 0
 
@@ -376,7 +410,10 @@ class TestHybridSearchEdgeCases:
 
     def test_hybrid_search_bm25_chunks_out_of_bounds(self, mock_vector_store):
         # BM25 returns corpus_idx >= len(bm25_index.chunks) — should not crash
-        mock_vector_store.bm25_index.search = lambda q, top_k=10: [(9999, 0.9), (0, 0.8)]
+        mock_vector_store.bm25_index.search = lambda q, top_k=10: [
+            (9999, 0.9),
+            (0, 0.8),
+        ]
         ctx, sources, chunks = mock_vector_store.get_context(
             "test", n_results=3, hybrid_search=True
         )
@@ -400,6 +437,7 @@ class TestHybridSearchEdgeCases:
 # ---------------------------------------------------------------------------
 # Category 7: Retrieval Window Edge Cases
 # ---------------------------------------------------------------------------
+
 
 class TestRetrievalWindowEdgeCases:
     """retrieval_window parameter at boundaries."""
@@ -430,6 +468,7 @@ class TestRetrievalWindowEdgeCases:
 # Category 8: RRF Namespace Safety (OFFSET=1_000_000)
 # ---------------------------------------------------------------------------
 
+
 class TestRRFNamespaceSafety:
     """
     RRF fusion uses OFFSET=1_000_000 to separate BM25 corpus indices from
@@ -455,8 +494,9 @@ class TestRRFNamespaceSafety:
         # Top-ranked items should include both vector and BM25
         top_10_ids = [doc_id for doc_id, _ in fused[:10]]
         # Should have some vector results (top scores)
-        assert any(doc_id < OFFSET for doc_id in top_10_ids), \
-            "RRF fusion must include vector results"
+        assert any(
+            doc_id < OFFSET for doc_id in top_10_ids
+        ), "RRF fusion must include vector results"
 
     def test_rrf_fuse_with_tied_scores(self):
         """RRF must handle equal scores deterministically."""
@@ -518,6 +558,7 @@ class TestRRFNamespaceSafety:
 # Category 9: Concurrency / Thread Safety
 # ---------------------------------------------------------------------------
 
+
 class TestConcurrencySafety:
     """Multiple simultaneous calls should not corrupt state."""
 
@@ -530,9 +571,15 @@ class TestConcurrencySafety:
             assert isinstance(chunks, list)
 
     def test_sequential_calls_different_hybrid_modes(self, mock_vector_store):
-        ctx1, _, _ = mock_vector_store.get_context("test", n_results=2, hybrid_search=False)
-        ctx2, _, _ = mock_vector_store.get_context("test", n_results=2, hybrid_search=True)
-        ctx3, _, _ = mock_vector_store.get_context("test", n_results=2, hybrid_search=False)
+        ctx1, _, _ = mock_vector_store.get_context(
+            "test", n_results=2, hybrid_search=False
+        )
+        ctx2, _, _ = mock_vector_store.get_context(
+            "test", n_results=2, hybrid_search=True
+        )
+        ctx3, _, _ = mock_vector_store.get_context(
+            "test", n_results=2, hybrid_search=False
+        )
 
         # All should return valid strings without state corruption
         assert isinstance(ctx1, str)

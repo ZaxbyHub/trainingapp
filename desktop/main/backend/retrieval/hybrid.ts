@@ -9,9 +9,12 @@
 // window-out candidates are dropped; the calibrated relevanceFloor applies to
 // reranker scores ONLY) -> topK slice.
 //
-// recencyWeight is the documented C4 extension point (issue #71): it returns
-// exactly 1 for every input while Knowledge Pack recency/version precedence is
-// unbuilt; C4 replaces the implementation without touching this pipeline.
+// C4 (issue #71) adds a pack-aware stage BEFORE that hook: fused candidates
+// are screened through pack version precedence (inactive-pack exclusion +
+// cross-pack chunk_id dedup with publishedAt/semver/id precedence) and the
+// linear recency multiplier (retrieval/recency.ts), then the frozen
+// recencyWeight hook still applies (exactly 1 by default, so pack-free
+// stores rank bit-identically to the B7 pipeline).
 //
 // better-sqlite3 is synchronous, so the store legs run on the calling thread;
 // the reranker (ONNX inference) runs in a dedicated worker thread
@@ -20,6 +23,7 @@
 // web_ui/src/lib/search/reranker.ts:187-233).
 import type { StoreHandle } from '../store/sqlite-store.js';
 import type { EmbeddingSurface } from '../ingest/embedder.js';
+import { applyRecencyPrior, precedenceWinner, type PackClaim } from './recency.js';
 
 /** One retrieved chunk with its final score (fused RRF*recency, or reranker). */
 export interface RetrievedChunk {
@@ -27,6 +31,10 @@ export interface RetrievedChunk {
   text: string;
   source: string;
   score: number;
+  /** C4 (issue #71): pack attribution of the precedence-winning claim; null for unpackaged chunks. */
+  packId?: string | null;
+  packVersion?: string | null;
+  packPublishedAt?: string | null;
 }
 
 /** Cross-encoder scoring surface (implemented by the worker-backed reranker). */
@@ -48,13 +56,30 @@ export interface HybridRetrievalOptions {
   relevanceFloor?: number;
   /** Recency multiplier per fused chunk; default recencyWeight (inert until C4/#71). */
   recency?: (chunk: RetrievedChunk) => number;
+  /** C4 (issue #71) packs.recency.floor override; default 0.85 (recency.ts). */
+  packsRecencyFloor?: number;
+  /** C4 (issue #71) packs.recency.floorMonths override; default 18 (recency.ts). */
+  packsRecencyFloorMonths?: number;
+}
+
+export interface RetrievedChunkAttribution {
+  packId?: string | null;
+  packVersion?: string | null;
+  packPublishedAt?: string | null;
 }
 
 export interface RetrievalSurface {
   search(
     query: string,
     nResults?: number,
-  ): Promise<Array<{ text: string; source: string; similarity: number; chunkId?: string }>>;
+  ): Promise<
+    Array<{
+      text: string;
+      source: string;
+      similarity: number;
+      chunkId?: string;
+    } & RetrievedChunkAttribution>
+  >;
 }
 
 /** Reciprocal Rank Fusion over ranked chunk-id legs; dedup by chunk id. */
@@ -103,21 +128,35 @@ interface ChunkRow {
   id: string;
   text: string;
   path: string;
+  /** Owning pack id by value (docs.pack_id); null for unpackaged docs. */
+  packId: string | null;
+  /** Active pack-version attribution (LEFT JOIN packs ON active = 1); null when the owning pack has no active version or the doc is unpackaged. */
+  packVersion: string | null;
+  packPublishedAt: string | null;
 }
 
-function loadChunkRows(store: StoreHandle, chunkIds: string[]): Map<string, ChunkRow> {
-  const rows = new Map<string, ChunkRow>();
+function loadChunkRows(store: StoreHandle, chunkIds: string[]): Map<string, ChunkRow[]> {
+  // C4 (issue #71): LEFT JOIN keeps unpackaged docs in the result with NULL
+  // pack fields (neutral). Multiple ACTIVE versions of one pack id (the
+  // engineered both-active state) return one row per version so the prior
+  // can apply its precedence chain; docs.pack_id with no active pack row
+  // yields NULL version fields -> the prior drops the chunk as an orphan.
+  const rows = new Map<string, ChunkRow[]>();
   if (chunkIds.length === 0) return rows;
   const placeholders = chunkIds.map(() => '?').join(', ');
   const found = store.db
     .prepare(
-      `SELECT c.id AS id, c.text AS text, d.path AS path
+      `SELECT c.id AS id, c.text AS text, d.path AS path,
+              d.pack_id AS packId, p.version AS packVersion, p.published_at AS packPublishedAt
        FROM chunks c JOIN docs d ON c.doc_id = d.id
+       LEFT JOIN packs p ON p.id = d.pack_id AND p.active = 1
        WHERE c.id IN (${placeholders})`,
     )
-    .all(...chunkIds) as Array<{ id: string; text: string; path: string }>;
+    .all(...chunkIds) as Array<ChunkRow>;
   for (const row of found) {
-    rows.set(row.id, row);
+    const list = rows.get(row.id);
+    if (list) list.push(row);
+    else rows.set(row.id, [row]);
   }
   return rows;
 }
@@ -165,15 +204,52 @@ export async function hybridRetrieve(
   if (fused.size === 0) return [];
   const rows = loadChunkRows(options.store, [...fused.keys()]);
 
-  // Fused score * recency, ordered descending.
-  let ordered: RetrievedChunk[] = [...fused.entries()]
+  // C4 (issue #71): build each fused chunk's pack claims from the joined
+  // rows, then run the precedence/recency prior. A chunk whose doc belongs
+  // to a pack with NO active version is an orphan -> empty claim list (the
+  // prior excludes it); a chunk with no pack membership stays neutral.
+  const packMetadataByChunk = new Map<string, PackClaim[]>();
+  for (const [chunkId, chunkRows] of rows) {
+    const memberOfPack = chunkRows.some((row) => row.packId !== null);
+    if (!memberOfPack) continue;
+    const claims: PackClaim[] = chunkRows
+      .filter((row) => row.packVersion !== null && row.packId !== null)
+      .map((row) => ({
+        packId: row.packId as string,
+        version: row.packVersion as string,
+        publishedAt: row.packPublishedAt,
+        active: true,
+      }));
+    packMetadataByChunk.set(chunkId, claims);
+  }
+  const ranked = applyRecencyPrior([...fused.entries()], packMetadataByChunk, {
+    floor: options.packsRecencyFloor,
+    floorMonths: options.packsRecencyFloorMonths,
+  });
+
+  // Winning claim per surviving chunk for citation attribution.
+  const winnerByChunk = new Map<string, PackClaim>();
+  for (const [chunkId] of ranked) {
+    const claims = packMetadataByChunk.get(chunkId);
+    if (claims === undefined) continue;
+    const winner = claims.length > 0 ? precedenceWinner(claims) : null;
+    if (winner !== null) winnerByChunk.set(chunkId, winner);
+  }
+
+  // Ranked (prior) score * frozen recency hook, ordered descending.
+  let ordered: RetrievedChunk[] = ranked
     .map(([chunkId, score]) => {
-      const row = rows.get(chunkId);
+      const chunkRows = rows.get(chunkId);
+      const row = chunkRows?.[0];
+      const winner = winnerByChunk.get(chunkId);
       const chunk: RetrievedChunk = {
         chunkId,
         text: row?.text ?? '',
         source: row?.path ?? '',
         score,
+        packId: winner?.packId ?? row?.packId ?? null,
+        packVersion: winner?.version ?? null,
+        packPublishedAt: winner?.publishedAt ?? null,
       };
       return { ...chunk, score: score * recency(chunk) };
     })
@@ -221,6 +297,8 @@ export function createRetrievalSurface(options: {
     rerank?: boolean;
     rrfK?: number;
     relevanceFloor?: number;
+    packsRecencyFloor?: number;
+    packsRecencyFloorMonths?: number;
   };
 }): RetrievalSurface {
   const config = options.config ?? {};
@@ -262,7 +340,14 @@ async function runSearch(
   nResults: number | undefined,
   topK: number,
   reranker: RerankerSurface | null,
-  config: { candidateMultiplier?: number; rerank?: boolean; rrfK?: number; relevanceFloor?: number },
+  config: {
+    candidateMultiplier?: number;
+    rerank?: boolean;
+    rrfK?: number;
+    relevanceFloor?: number;
+    packsRecencyFloor?: number;
+    packsRecencyFloorMonths?: number;
+  },
   options: { store: StoreHandle; embedder: EmbeddingSurface },
 ): Promise<Array<{ text: string; source: string; similarity: number }>> {
   const chunks = await hybridRetrieve(query, {
@@ -275,6 +360,10 @@ async function runSearch(
     // The floor is meaningful only when a reranker will run (hybridRetrieve
     // enforces the same rule internally; passing it unconditionally is safe).
     relevanceFloor: config.relevanceFloor,
+    // C4 (issue #71): resolved packs.recency.* values reach the prior so the
+    // env contract is honored end to end, not merely parsed.
+    packsRecencyFloor: config.packsRecencyFloor,
+    packsRecencyFloorMonths: config.packsRecencyFloorMonths,
   });
   return chunks.slice(0, nResults ?? topK).map((chunk) => ({
     text: chunk.text,
@@ -283,5 +372,9 @@ async function runSearch(
     // D6 (issue #82): the learn assembler joins cited chunk ids against the
     // links/docs tables; consumers that ignore it are unaffected.
     chunkId: chunk.chunkId,
+    // C4 (issue #71): pack attribution for citations.
+    packId: chunk.packId,
+    packVersion: chunk.packVersion,
+    packPublishedAt: chunk.packPublishedAt,
   }));
 }

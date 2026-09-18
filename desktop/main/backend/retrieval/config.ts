@@ -24,6 +24,12 @@ export interface RetrievalConfig {
   rrfK: number;
   /** Calibrated floor on reranker sigmoid scores (scores < floor are dropped). */
   relevanceFloor: number;
+  /** C4 (issue #71) packs.recency.floor: multiplier floor reached at floorMonths age. */
+  packsRecencyFloor: number;
+  /** C4 (issue #71) packs.recency.floorMonths: age (30.44-day months) at which the floor is reached. */
+  packsRecencyFloorMonths: number;
+  /** C4 (issue #71) packs.recency.halfLifeMonths: RESERVED for the optional exponential variant; NOT wired. */
+  packsRecencyHalfLifeMonths: number;
 }
 
 export const RETRIEVAL_TOPK_ENV = 'TRAININGAPP_RETRIEVAL_TOPK';
@@ -31,6 +37,9 @@ export const RETRIEVAL_CANDIDATE_MULTIPLIER_ENV = 'TRAININGAPP_RETRIEVAL_CANDIDA
 export const RETRIEVAL_RERANK_ENV = 'TRAININGAPP_RETRIEVAL_RERANK';
 export const RETRIEVAL_RRF_K_ENV = 'TRAININGAPP_RETRIEVAL_RRF_K';
 export const RETRIEVAL_RELEVANCE_FLOOR_ENV = 'TRAININGAPP_RETRIEVAL_RELEVANCE_FLOOR';
+export const PACKS_RECENCY_FLOOR_ENV = 'TRAININGAPP_PACKS_RECENCY_FLOOR';
+export const PACKS_RECENCY_FLOOR_MONTHS_ENV = 'TRAININGAPP_PACKS_RECENCY_FLOOR_MONTHS';
+export const PACKS_RECENCY_HALF_LIFE_MONTHS_ENV = 'TRAININGAPP_PACKS_RECENCY_HALF_LIFE_MONTHS';
 
 /**
  * Calibrated on the ettin-reranker-32m-v1 cross-encoder over the A4 tier-0
@@ -46,6 +55,9 @@ export const DEFAULT_RETRIEVAL_CONFIG: Readonly<RetrievalConfig> = Object.freeze
   rerank: true,
   rrfK: 60,
   relevanceFloor: CALIBRATED_RELEVANCE_FLOOR,
+  packsRecencyFloor: 0.85,
+  packsRecencyFloorMonths: 18,
+  packsRecencyHalfLifeMonths: 9,
 });
 
 const POSITIVE_INT_PATTERN = /^\d+$/;
@@ -57,6 +69,7 @@ const POSITIVE_INT_PATTERN = /^\d+$/;
 const TOPK_MAX = 1000;
 const CANDIDATE_MULTIPLIER_MAX = 100;
 const RRF_K_MAX = 10000;
+const FLOOR_MONTHS_MAX = 1200;
 
 function positiveInt(value: string | undefined, fallback: number, max: number): number {
   if (value !== undefined && POSITIVE_INT_PATTERN.test(value)) {
@@ -72,10 +85,15 @@ function boolOrFallback(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
-function floorOrFallback(value: string | undefined, fallback: number): number {
+function floorOrFallback(
+  value: string | undefined,
+  fallback: number,
+  opts: { inclusiveMax?: boolean } = {},
+): number {
   if (value !== undefined && value.length > 0) {
     const parsed = Number.parseFloat(value);
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed < 1) return parsed;
+    const maxOk = opts.inclusiveMax ? parsed <= 1 : parsed < 1;
+    if (Number.isFinite(parsed) && parsed >= 0 && maxOk) return parsed;
   }
   return fallback;
 }
@@ -95,6 +113,23 @@ export function resolveRetrievalConfig(env?: Record<string, string | undefined>)
     relevanceFloor: floorOrFallback(
       source[RETRIEVAL_RELEVANCE_FLOOR_ENV],
       DEFAULT_RETRIEVAL_CONFIG.relevanceFloor,
+    ),
+    packsRecencyFloor: floorOrFallback(
+      source[PACKS_RECENCY_FLOOR_ENV],
+      DEFAULT_RETRIEVAL_CONFIG.packsRecencyFloor,
+      // The OpenAPI contract allows floor = 1.0 (no decay); unlike the
+      // reranker relevanceFloor, the recency floor's maximum is inclusive.
+      { inclusiveMax: true },
+    ),
+    packsRecencyFloorMonths: positiveInt(
+      source[PACKS_RECENCY_FLOOR_MONTHS_ENV],
+      DEFAULT_RETRIEVAL_CONFIG.packsRecencyFloorMonths,
+      FLOOR_MONTHS_MAX,
+    ),
+    packsRecencyHalfLifeMonths: positiveInt(
+      source[PACKS_RECENCY_HALF_LIFE_MONTHS_ENV],
+      DEFAULT_RETRIEVAL_CONFIG.packsRecencyHalfLifeMonths,
+      FLOOR_MONTHS_MAX,
     ),
   };
 }

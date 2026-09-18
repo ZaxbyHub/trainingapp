@@ -678,3 +678,21 @@ query_transformation_enabled=False
 
 **Version**: 1.0.0
 **Last Updated**: 2026-02-28
+
+## Knowledge Pack Recency (packs.recency.*)
+
+Ranking of hybrid-retrieval results (issue #71 / C4) applies a linear recency
+prior to fused scores, per ADR-0004: `multiplier = 1.0 - (1.0 - floor) *
+min(1.0, age_months / floorMonths)` with `age_months = (now -
+published_at) / 30.44 days`. Chunks from inactive/superseded pack versions
+are excluded from ranking, and identical content across active packs is
+deduped deterministically. Unpackaged documents are neutral (multiplier 1.0).
+
+| Key (logical) | Env variable (Python `RAG_*` / desktop `TRAININGAPP_*`) | Default | Meaning |
+| --- | --- | --- | --- |
+| `packs.recency.floor` | `RAG_PACKS_RECENCY_FLOOR` / `TRAININGAPP_PACKS_RECENCY_FLOOR` | `0.85` | Multiplier floor reached at `floorMonths` age |
+| `packs.recency.floorMonths` | `RAG_PACKS_RECENCY_FLOOR_MONTHS` / `TRAININGAPP_PACKS_RECENCY_FLOOR_MONTHS` | `18` | Age (30.44-day months) at which the floor is reached |
+| `packs.recency.halfLifeMonths` | `RAG_PACKS_RECENCY_HALF_LIFE_MONTHS` / `TRAININGAPP_PACKS_RECENCY_HALF_LIFE_MONTHS` | `9` | Reserved for the optional exponential variant; NOT wired — the linear form ships in both backends |
+
+The same three keys are exposed via `GET/PUT /settings`
+(`packs_recency_*` / `rag_packs_recency_*` fields) on the Python API.

@@ -504,6 +504,11 @@ components:
         inference_time:
           type: number
           format: float
+        citations:
+          type: array
+          description: Pack-attributed per-chunk citations (C4, issue #71) - one entry per retrieved chunk feeding the answer, in ranking order; pack fields are null for unpackaged documents; additive since v2.2, consumers may ignore it.
+          items:
+            $ref: '#/components/schemas/Citation'
         learn:
           type: array
           description: Learn-panel results (D6, issue #82) - direct training-slide hits unioned with linked slides of the cited chunks, ranked and deduped by slide, capped at MAX_LEARN_RESULTS = 5; empty when grounding is "general"; emitted on success (possibly []).
@@ -536,6 +541,30 @@ components:
           type: object
           description: RESERVED for WS-C #72 (grounded/general provenance). Not emitted yet.
           additionalProperties: true
+    Citation:
+      type: object
+      description: One cited chunk with knowledge-pack attribution (C4, issue #71).
+      required: [source]
+      properties:
+        source:
+          type: string
+          description: Same display value as the entries of QuestionResponse.sources
+        page:
+          type: integer
+          nullable: true
+        pack_id:
+          type: string
+          nullable: true
+          description: Owning knowledge pack id; null for unpackaged documents
+        pack_version:
+          type: string
+          nullable: true
+          description: Active pack version the cited chunk is attributed to
+        pack_published_at:
+          type: string
+          nullable: true
+          format: date-time
+          description: Pack manifest published_at (RFC3339) used by the recency prior; null for unpackaged documents
     StreamEvent:
       description: |
         One SSE `data` payload (JSON). Discriminated by field presence, NOT by a
@@ -595,6 +624,11 @@ components:
                   pack_id:
                     type: string
                     description: Owning training pack id, when known
+            citations:
+              type: array
+              description: Pack-attributed per-chunk citations (C4, issue #71) on the success terminal event - same shape and ordering as QuestionResponse.citations; additive since v2.2, clients must tolerate absence on older servers.
+              items:
+                $ref: '#/components/schemas/Citation'
             grounding:
               type: object
               description: RESERVED for WS-C #72. Not emitted yet.
@@ -710,6 +744,9 @@ components:
         - retrieval_window
         - initial_retrieval_top_k
         - rerank_top_k
+        - packs_recency_half_life_months
+        - packs_recency_floor_months
+        - packs_recency_floor
       properties:
         chunk_size: { type: integer }
         chunk_overlap: { type: integer }
@@ -723,6 +760,9 @@ components:
         retrieval_window: { type: integer }
         initial_retrieval_top_k: { type: integer }
         rerank_top_k: { type: integer }
+        packs_recency_half_life_months: { type: integer, minimum: 1 }
+        packs_recency_floor_months: { type: integer, minimum: 1 }
+        packs_recency_floor: { type: number, minimum: 0, maximum: 1 }
     SettingsUpdateRequest:
       type: object
       description: Field names are the rag_* settings keys; omitted fields are unchanged.
@@ -739,6 +779,9 @@ components:
         rag_retrieval_window: { type: integer, minimum: 0 }
         rag_initial_retrieval_top_k: { type: integer, minimum: 1, maximum: 50 }
         rag_rerank_top_k: { type: integer, minimum: 1, maximum: 20 }
+        rag_packs_recency_half_life_months: { type: integer, minimum: 1, default: 9 }
+        rag_packs_recency_floor_months: { type: integer, minimum: 1, default: 18 }
+        rag_packs_recency_floor: { type: number, minimum: 0, maximum: 1, default: 0.85 }
     StatsResponse:
       type: object
       required: [document_count, chunk_count, embedding_model]

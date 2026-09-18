@@ -382,6 +382,9 @@ export class SSEStreamConsumer {
             // D6 (issue #82): forward the server's learn rows when present
             // (older servers omit the field; LearnResult[] per contract).
             ...(data.learn !== undefined ? { learn: data.learn } : {}),
+            // C4 (issue #71): forward pack-attributed citations when present
+            // (older servers omit the field; Citation[] per contract).
+            ...(data.citations !== undefined ? { citations: data.citations } : {}),
           };
           this.emitDone(doneEvent);
         } else if (data.token !== undefined) {

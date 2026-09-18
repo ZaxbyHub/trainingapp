@@ -256,6 +256,40 @@ class LearnResult(BaseModel):
     pack_id: Optional[str] = None
 
 
+class Citation(BaseModel):
+    """One cited chunk in an /ask response (C4, issue #71).
+
+    Pack fields are None for unpackaged documents; `source` carries the same
+    display value as the entries of `sources` (kept for existing clients).
+    """
+
+    source: str
+    page: Optional[int] = None
+    pack_id: Optional[str] = None
+    pack_version: Optional[str] = None
+    pack_published_at: Optional[str] = None
+
+
+def _citations_for(result) -> List[Citation]:
+    """Pack-attributed citations for one query result (issue #71).
+
+    Built from retrieved_chunks so the /ask contract never depends on which
+    layer assembled them (same pattern as _learn_for).
+    """
+    citations: List[Citation] = []
+    for chunk in getattr(result, "retrieved_chunks", None) or []:
+        citations.append(
+            Citation(
+                source=chunk.get("source_display") or "",
+                page=chunk.get("page"),
+                pack_id=chunk.get("pack_id"),
+                pack_version=chunk.get("pack_version"),
+                pack_published_at=chunk.get("pack_published_at"),
+            )
+        )
+    return citations
+
+
 class QuestionResponse(BaseModel):
     """Response model for question answers."""
 
@@ -265,6 +299,7 @@ class QuestionResponse(BaseModel):
     context_length: int
     inference_time: float
     learn: Optional[List[LearnResult]] = None
+    citations: Optional[List[Citation]] = None
 
 
 def _learn_for(result) -> List[dict]:
@@ -352,6 +387,10 @@ class SettingsResponse(BaseModel):
     retrieval_window: int
     initial_retrieval_top_k: int
     rerank_top_k: int
+    # C4 (issue #71): packs.recency.* (halfLifeMonths reserved/unwired).
+    packs_recency_half_life_months: int
+    packs_recency_floor_months: int
+    packs_recency_floor: float
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -369,6 +408,9 @@ class SettingsUpdateRequest(BaseModel):
     rag_retrieval_window: Optional[int] = Field(default=None, ge=0)
     rag_initial_retrieval_top_k: Optional[int] = Field(default=None, ge=1, le=50)
     rag_rerank_top_k: Optional[int] = Field(default=None, ge=1, le=20)
+    rag_packs_recency_half_life_months: Optional[int] = Field(default=None, ge=1)
+    rag_packs_recency_floor_months: Optional[int] = Field(default=None, ge=1)
+    rag_packs_recency_floor: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 class StatsResponse(BaseModel):
@@ -426,6 +468,9 @@ async def lifespan(app: FastAPI):
             gguf_n_ctx=settings.rag_gguf_n_ctx,
             gguf_n_threads=settings.rag_gguf_n_threads,
             fast_profile_path=settings.rag_fast_profile_path,
+            packs_recency_half_life_months=settings.rag_packs_recency_half_life_months,
+            packs_recency_floor_months=settings.rag_packs_recency_floor_months,
+            packs_recency_floor=settings.rag_packs_recency_floor,
         )
 
         engine = RAGEngine(
@@ -651,6 +696,7 @@ async def ask_question(request: QuestionRequest, auth: dict = Security(require_a
             context_length=result.context_length,
             inference_time=result.inference_time,
             learn=_learn_for(result),
+            citations=_citations_for(result),
         )
     except Exception as e:
         logger.error("Error in ask_question: %s", e)
@@ -889,6 +935,9 @@ if HAS_SSE:
                 context_length = result.context_length
                 inference_time = result.inference_time
                 learn = _learn_for(result)
+                # C4 (issue #71): pack-attributed citations ride the terminal
+                # event; additive key, existing consumers unaffected.
+                citations = [c.model_dump() for c in _citations_for(result)]
 
                 if cancellation_event.is_set() or result.answer == CANCELLED_ANSWER:
                     # rag_engine swallows QueryCancelled and returns a sentinel
@@ -909,6 +958,7 @@ if HAS_SSE:
                                     "context_length": context_length,
                                     "inference_time": inference_time,
                                     "learn": learn,
+                                    "citations": citations,
                                 }
                             ),
                         }
@@ -922,6 +972,7 @@ if HAS_SSE:
                                 "context_length": context_length,
                                 "inference_time": inference_time,
                                 "learn": learn,
+                                "citations": citations,
                             }
                         ),
                     }
@@ -1120,6 +1171,9 @@ async def get_settings_endpoint(auth: dict = Security(require_auth())):
         retrieval_window=s.rag_retrieval_window,
         initial_retrieval_top_k=s.rag_initial_retrieval_top_k,
         rerank_top_k=s.rag_rerank_top_k,
+        packs_recency_half_life_months=s.rag_packs_recency_half_life_months,
+        packs_recency_floor_months=s.rag_packs_recency_floor_months,
+        packs_recency_floor=s.rag_packs_recency_floor,
     )
 
 
@@ -1155,6 +1209,14 @@ async def update_settings(
         s.rag_initial_retrieval_top_k = request.rag_initial_retrieval_top_k
     if request.rag_rerank_top_k is not None:
         s.rag_rerank_top_k = request.rag_rerank_top_k
+    if request.rag_packs_recency_half_life_months is not None:
+        s.rag_packs_recency_half_life_months = (
+            request.rag_packs_recency_half_life_months
+        )
+    if request.rag_packs_recency_floor_months is not None:
+        s.rag_packs_recency_floor_months = request.rag_packs_recency_floor_months
+    if request.rag_packs_recency_floor is not None:
+        s.rag_packs_recency_floor = request.rag_packs_recency_floor
 
     # Cross-field validation
     if s.rag_chunk_overlap >= s.rag_chunk_size:
@@ -1176,6 +1238,9 @@ async def update_settings(
         retrieval_window=s.rag_retrieval_window,
         initial_retrieval_top_k=s.rag_initial_retrieval_top_k,
         rerank_top_k=s.rag_rerank_top_k,
+        packs_recency_half_life_months=s.rag_packs_recency_half_life_months,
+        packs_recency_floor_months=s.rag_packs_recency_floor_months,
+        packs_recency_floor=s.rag_packs_recency_floor,
     )
 
 

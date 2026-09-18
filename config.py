@@ -80,6 +80,18 @@ class RAGSettings(BaseSettings):
     )
     rag_rerank_top_k: int = Field(default=4, validation_alias="RAG_RERANK_TOP_K")
 
+    # Knowledge-pack recency settings (C4, issue #71; logical names
+    # packs.recency.halfLifeMonths / floorMonths / floor per ADR-0004).
+    rag_packs_recency_half_life_months: int = Field(
+        default=9, validation_alias="RAG_PACKS_RECENCY_HALF_LIFE_MONTHS"
+    )
+    rag_packs_recency_floor_months: int = Field(
+        default=18, validation_alias="RAG_PACKS_RECENCY_FLOOR_MONTHS"
+    )
+    rag_packs_recency_floor: float = Field(
+        default=0.85, validation_alias="RAG_PACKS_RECENCY_FLOOR"
+    )
+
     # GGUF model settings
     rag_gguf_n_ctx: int = Field(
         default=4096, validation_alias=AliasChoices("rag_gguf_n_ctx", "RAG_GGUF_N_CTX")

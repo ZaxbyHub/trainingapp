@@ -179,6 +179,10 @@ class PackRecord:
     install_path: str
     supersedes: List[str] = field(default_factory=list)
     docs: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    # C4 (issue #71): manifest published_at, persisted additively so the
+    # recency prior can rank without re-reading managed manifests. Registries
+    # written before C4 load as None -> neutral multiplier.
+    published_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -188,6 +192,7 @@ class PackRecord:
             "install_path": self.install_path,
             "supersedes": list(self.supersedes),
             "docs": {path: dict(info) for path, info in self.docs.items()},
+            "published_at": self.published_at,
         }
 
     @classmethod
@@ -199,6 +204,7 @@ class PackRecord:
             install_path=data["install_path"],
             supersedes=list(data.get("supersedes", [])),
             docs={path: dict(info) for path, info in data.get("docs", {}).items()},
+            published_at=data.get("published_at"),
         )
 
 
@@ -263,6 +269,39 @@ class PackManager:
             ):
                 return row
         return None
+
+    def active_pack_claims(self) -> List[Dict[str, Any]]:
+        """Active pack claims for the C4 recency/precedence prior (issue #71).
+
+        One entry per active registry row: pack_id, version, published_at
+        (None for pre-C4 registries -> neutral multiplier) and the doc shas
+        that version ships. A chunk is "claimed" iff its doc_id appears in
+        an active row's doc shas; chunks carrying pack metadata that no
+        active row claims are orphans of a superseded/removed version and
+        the ranking layer excludes them (defense-in-depth against a
+        PackManager delete bug — the storage layer already deletes on
+        supersede).
+        """
+        claims: List[Dict[str, Any]] = []
+        for row in self._rows():
+            if not row.get("active"):
+                continue
+            claims.append(
+                {
+                    "pack_id": row["pack_id"],
+                    "version": row["version"],
+                    "published_at": row.get("published_at"),
+                    # Explicit flag: the prior's precedence contract consumes
+                    # the same claim shape as the pure-function tests.
+                    "active": True,
+                    "doc_shas": [
+                        info.get("doc_id")
+                        for info in (row.get("docs") or {}).values()
+                        if info.get("doc_id")
+                    ],
+                }
+            )
+        return claims
 
     # ------------------------------------------------------------------ #
     # validation
@@ -360,6 +399,10 @@ class PackManager:
                             "pack_id": pack_id,
                             "pack_version": manifest["version"],
                             "content_hash": content_hash_of(chunk_text),
+                            # C4 (issue #71): age for the recency prior; the
+                            # manifest value is the only published_at source
+                            # at ranking time (ADR-0004: not the file mtime).
+                            "pack_published_at": manifest.get("published_at"),
                         },
                     }
                 )
@@ -531,6 +574,9 @@ class PackManager:
                     "install_path": str(managed),
                     "supersedes": list(manifest.get("supersedes", [])),
                     "docs": new_docs,
+                    # C4 (issue #71): additive; queried per-keystroke by the
+                    # recency prior instead of re-reading the manifest.
+                    "published_at": manifest.get("published_at"),
                 }
             )
             self._save_rows(rows)
