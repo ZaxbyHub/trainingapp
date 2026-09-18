@@ -624,6 +624,11 @@ components:
                   pack_id:
                     type: string
                     description: Owning training pack id, when known
+            citations:
+              type: array
+              description: Pack-attributed per-chunk citations (C4, issue #71) on the success terminal event - same shape and ordering as QuestionResponse.citations; additive since v2.2, clients must tolerate absence on older servers.
+              items:
+                $ref: '#/components/schemas/Citation'
             grounding:
               type: object
               description: RESERVED for WS-C #72. Not emitted yet.

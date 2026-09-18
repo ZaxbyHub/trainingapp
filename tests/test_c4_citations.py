@@ -143,3 +143,9 @@ def test_openapi_declares_citation_schema():
     assert "pack_published_at" in yaml_text
     assert re.search(r"Citation:", yaml_text)
     assert "citations" in yaml_text
+    # The streaming terminal event declares citations too (DoneEvent inside
+    # StreamEvent oneOf), referencing the same Citation schema.
+    done_section = yaml_text[yaml_text.index("title: DoneEvent") :]
+    done_section = done_section[: done_section.index("- type: object")]
+    assert "citations" in done_section
+    assert "#/components/schemas/Citation" in done_section
