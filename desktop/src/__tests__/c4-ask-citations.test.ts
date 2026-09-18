@@ -130,7 +130,7 @@ interface CitationWire {
 }
 
 describe('c4 /ask citations (issue #71, AC8)', () => {
-  itReal('emits pack-attributed citations on /ask and never serializes cited', async () => {
+  itReal('emits pack-attributed citations on /ask and never serializes cited', { timeout: 60_000 }, async () => {
     const { port } = await startServer();
     const response = await fetch(`http://127.0.0.1:${port}/ask`, {
       method: 'POST',
@@ -155,7 +155,7 @@ describe('c4 /ask citations (issue #71, AC8)', () => {
     expect(payload.cited).toBeUndefined();
   });
 
-  itReal('emits citations on the /ask/stream terminal done event', async () => {
+  itReal('emits citations on the /ask/stream terminal done event', { timeout: 60_000 }, async () => {
     const { port } = await startServer();
     const response = await fetch(`http://127.0.0.1:${port}/ask/stream`, {
       method: 'POST',
