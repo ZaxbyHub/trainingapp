@@ -7,18 +7,17 @@ Tests: malformed ChromaDB responses, edge-case metadata, return-type invariants,
        neighbor expansion attacks, oversized ChromaDB payloads, injection through stored docs.
 """
 
-import pytest
-import math
-import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from vector_store import VectorStore, BM25Index, DocumentChunk
+import pytest
 
+from vector_store import DocumentChunk, VectorStore
 
 # ---------------------------------------------------------------------------
 # Shared mock fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_vs(mock_collection=None, mock_embedder=None, metadata=None):
     """Factory to build a minimally-mocked VectorStore for the vector-only path."""
@@ -31,9 +30,14 @@ def _make_vs(mock_collection=None, mock_embedder=None, metadata=None):
         "chunk_count": 3,
         "documents": {"file0.txt": {"chunks": 1}},
     }
-    vs.bm25_index = None          # Vector-only path does not consult bm25_index
+    vs.bm25_index = None  # Vector-only path does not consult bm25_index
     vs._lock = __import__("threading").RLock()
     vs._bm25_needs_rebuild = False
+    # C4 (issue #71) attributes; fixture mirrors the __init__ contract.
+    vs.pack_status_provider = None
+    vs.recency_floor = 0.85
+    vs.recency_floor_months = 18.0
+    vs._pack_provider_warned = False
     return vs
 
 
@@ -42,11 +46,13 @@ def _default_mock_collection():
     mc.count.return_value = 3
     mc.query.return_value = {
         "documents": [["doc0 content", "doc1 content", "doc2 content"]],
-        "metadatas": [[
-            {"source": "file0.txt", "chunk_index": 0, "page": 1},
-            {"source": "file1.txt", "chunk_index": 1, "page": 2},
-            {"source": "file2.txt", "chunk_index": 2, "page": 3},
-        ]],
+        "metadatas": [
+            [
+                {"source": "file0.txt", "chunk_index": 0, "page": 1},
+                {"source": "file1.txt", "chunk_index": 1, "page": 2},
+                {"source": "file2.txt", "chunk_index": 2, "page": 3},
+            ]
+        ],
         "distances": [[0.1, 0.2, 0.3]],
     }
     return mc
@@ -61,6 +67,7 @@ def _default_mock_embedder():
 # ---------------------------------------------------------------------------
 # Helper: build a mock collection returning specific documents/metadata
 # ---------------------------------------------------------------------------
+
 
 def _make_collection(documents, metadatas, distances):
     mc = MagicMock()
@@ -77,6 +84,7 @@ def _make_collection(documents, metadatas, distances):
 # Test: Return-type invariants (3 values, correct types)
 # ---------------------------------------------------------------------------
 
+
 class TestReturnTypeInvariant:
     """Every code path in get_context must return exactly 3 values with correct types."""
 
@@ -90,7 +98,9 @@ class TestReturnTypeInvariant:
         assert isinstance(context, str), "context must be str"
         assert isinstance(sources, list), "sources must be list"
         assert isinstance(chunks, list), "chunks must be list"
-        assert all(isinstance(c, DocumentChunk) for c in chunks), "chunks must contain DocumentChunk"
+        assert all(
+            isinstance(c, DocumentChunk) for c in chunks
+        ), "chunks must contain DocumentChunk"
 
     def test_empty_result_still_returns_three_values(self):
         """Empty result (no matches) must still return 3-tuple, not raise."""
@@ -109,7 +119,7 @@ class TestReturnTypeInvariant:
         mc = _make_collection(
             ["doc0"],
             [{"source": "f.txt", "chunk_index": 0, "page": 1}],
-            [0.99],   # distance 0.99 → similarity 0.01 < min_similarity 0.3
+            [0.99],  # distance 0.99 → similarity 0.01 < min_similarity 0.3
         )
         vs = _make_vs(mock_collection=mc)
         ctx, sources, chunks = vs.get_context(
@@ -134,15 +144,18 @@ class TestReturnTypeInvariant:
         ctx, sources, chunks = vs.get_context("query", n_results=3, hybrid_search=False)
         # Context is joined with "\n\n---\n\n"
         expected_parts = 3
-        assert ctx.count("\n\n---\n\n") == expected_parts - 1, \
-            "Context join separator count should be n-1"
-        assert len(chunks) == expected_parts, \
-            f"result_chunks length ({len(chunks)}) must match context parts ({expected_parts})"
+        assert (
+            ctx.count("\n\n---\n\n") == expected_parts - 1
+        ), "Context join separator count should be n-1"
+        assert (
+            len(chunks) == expected_parts
+        ), f"result_chunks length ({len(chunks)}) must match context parts ({expected_parts})"
 
 
 # ---------------------------------------------------------------------------
 # Test: ChromaDB Response Malformations
 # ---------------------------------------------------------------------------
+
 
 class TestChromaDBResponseMalformations:
     """ChromaDB responses can be malformed — get_context must be resilient."""
@@ -152,7 +165,7 @@ class TestChromaDBResponseMalformations:
         mc = MagicMock()
         mc.count.return_value = 0
         mc.query.return_value = {
-            "documents": [[]],   # empty docs
+            "documents": [[]],  # empty docs
             "metadatas": [[]],
             "distances": [[]],
         }
@@ -183,7 +196,7 @@ class TestChromaDBResponseMalformations:
         mc.count.return_value = 1
         mc.query.return_value = {
             "documents": [["some text"]],
-            "metadatas": None,   # BUG: search() line 544 does results["metadatas"][0] w/o guard
+            "metadatas": None,  # BUG: search() line 544 does results["metadatas"][0] w/o guard
             "distances": [[0.1]],
         }
         vs = _make_vs(mock_collection=mc)
@@ -212,7 +225,7 @@ class TestChromaDBResponseMalformations:
         mc.query.return_value = {
             "documents": [["doc text"]],
             "metadatas": [[{"source": "f.txt", "chunk_index": 0, "page": 1}]],
-            "distances": None,    # BUG: search() line 545 does results["distances"][0] w/o guard
+            "distances": None,  # BUG: search() line 545 does results["distances"][0] w/o guard
         }
         vs = _make_vs(mock_collection=mc)
         # Expected: TypeError — this is a SOURCE BUG
@@ -228,7 +241,7 @@ class TestChromaDBResponseMalformations:
                 {"source": "f.txt", "chunk_index": 1, "page": 2},
                 {"source": "f.txt", "chunk_index": 2, "page": 3},
             ],
-            [0.1],    # only one distance
+            [0.1],  # only one distance
         )
         vs = _make_vs(mock_collection=mc)
         ctx, sources, chunks = vs.get_context("test", n_results=3, hybrid_search=False)
@@ -238,7 +251,14 @@ class TestChromaDBResponseMalformations:
         """Metadata contains nested dicts — .get() must return None or the value safely."""
         mc = _make_collection(
             ["nested meta doc"],
-            [{"source": "f.txt", "chunk_index": 0, "page": 1, "extra": {"nested": True}}],
+            [
+                {
+                    "source": "f.txt",
+                    "chunk_index": 0,
+                    "page": 1,
+                    "extra": {"nested": True},
+                }
+            ],
             [0.1],
         )
         vs = _make_vs(mock_collection=mc)
@@ -250,19 +270,24 @@ class TestChromaDBResponseMalformations:
         mc = MagicMock()
         mc.count.return_value = 1
         mc.query.return_value = {
-            "documents": [[12345]],  # int instead of string — BUG: search() returns it as-is
+            "documents": [
+                [12345]
+            ],  # int instead of string — BUG: search() returns it as-is
             "metadatas": [[{"source": "f.txt", "chunk_index": 0, "page": 1}]],
             "distances": [[0.1]],
         }
         vs = _make_vs(mock_collection=mc)
         # Expected: TypeError at get_context() line 874 — context_parts contains int
-        with pytest.raises(TypeError, match="sequence item 0: expected str instance, int found"):
+        with pytest.raises(
+            TypeError, match="sequence item 0: expected str instance, int found"
+        ):
             vs.get_context("test", n_results=3, hybrid_search=False)
 
 
 # ---------------------------------------------------------------------------
 # Test: Malformed Metadata Field Values
 # ---------------------------------------------------------------------------
+
 
 class TestMetadataFieldMalformations:
     """Metadata fields can contain unexpected types or values."""
@@ -287,7 +312,7 @@ class TestMetadataFieldMalformations:
         """source key is entirely missing from metadata."""
         mc = _make_collection(
             ["doc0"],
-            [{"chunk_index": 0, "page": 1}],   # no "source" key
+            [{"chunk_index": 0, "page": 1}],  # no "source" key
             [0.1],
         )
         vs = _make_vs(mock_collection=mc)
@@ -301,8 +326,8 @@ class TestMetadataFieldMalformations:
         mc = _make_collection(
             ["doc0", "doc1"],
             [
-                {"source": "f.txt"},   # no chunk_index
-                {"source": "f.txt"},   # no chunk_index
+                {"source": "f.txt"},  # no chunk_index
+                {"source": "f.txt"},  # no chunk_index
             ],
             [0.1, 0.2],
         )
@@ -349,7 +374,7 @@ class TestMetadataFieldMalformations:
         """page key is entirely missing — must default to None."""
         mc = _make_collection(
             ["doc0"],
-            [{"source": "f.txt", "chunk_index": 0}],   # no page
+            [{"source": "f.txt", "chunk_index": 0}],  # no page
             [0.1],
         )
         vs = _make_vs(mock_collection=mc)
@@ -362,6 +387,7 @@ class TestMetadataFieldMalformations:
 # Test: Oversized ChromaDB Payloads
 # ---------------------------------------------------------------------------
 
+
 class TestOversizedChromaDBPayloads:
     """ChromaDB returning massive result sets must not exhaust memory."""
 
@@ -369,13 +395,14 @@ class TestOversizedChromaDBPayloads:
         """ChromaDB returns 1000 documents — must process without OOM."""
         docs = [f"document number {i}" for i in range(1000)]
         metas = [
-            {"source": f"file{i}.txt", "chunk_index": 0, "page": 1}
-            for i in range(1000)
+            {"source": f"file{i}.txt", "chunk_index": 0, "page": 1} for i in range(1000)
         ]
         dists = [0.01 * i for i in range(1000)]
         mc = _make_collection(docs, metas, dists)
         vs = _make_vs(mock_collection=mc)
-        ctx, sources, chunks = vs.get_context("test", n_results=1000, hybrid_search=False)
+        ctx, sources, chunks = vs.get_context(
+            "test", n_results=1000, hybrid_search=False
+        )
         assert isinstance(ctx, str)
         assert len(chunks) <= 1000  # at most n_results
 
@@ -402,15 +429,17 @@ class TestOversizedChromaDBPayloads:
         dists = [0.001 * i for i in range(100)]
         mc = _make_collection(docs, metas, dists)
         vs = _make_vs(mock_collection=mc)
-        ctx, sources, chunks = vs.get_context("test", n_results=100, hybrid_search=False)
+        ctx, sources, chunks = vs.get_context(
+            "test", n_results=100, hybrid_search=False
+        )
         assert "same_file.txt" in sources
-        assert sources.count("same_file.txt") == 1, \
-            "sources list must be deduplicated"
+        assert sources.count("same_file.txt") == 1, "sources list must be deduplicated"
 
 
 # ---------------------------------------------------------------------------
 # Test: Injection Through Stored Document Content
 # ---------------------------------------------------------------------------
+
 
 class TestInjectionThroughStoredDocs:
     """Malicious content stored in ChromaDB must not affect control flow."""
@@ -441,7 +470,9 @@ class TestInjectionThroughStoredDocs:
     def test_template_literal_in_stored_doc(self):
         """Stored document contains ${...} template injection."""
         mc = _make_collection(
-            ["User input: ${process.mainModule.require('child_process').execSync('ls')}"],
+            [
+                "User input: ${process.mainModule.require('child_process').execSync('ls')}"
+            ],
             [{"source": "injection.txt", "chunk_index": 0, "page": 1}],
             [0.05],
         )
@@ -478,6 +509,7 @@ class TestInjectionThroughStoredDocs:
 # Test: Neighbor Expansion (retrieval_window > 0)
 # ---------------------------------------------------------------------------
 
+
 class TestNeighborExpansion:
     """retrieval_window > 0 triggers _expand_chunks_with_neighbors."""
 
@@ -491,8 +523,16 @@ class TestNeighborExpansion:
         mc = _make_collection(
             ["chunk0", "chunk1"],
             [
-                {"source": "file.txt", "chunk_index": 1, "page": 1},   # metadata idx=1 = list position 1
-                {"source": "file.txt", "chunk_index": 1, "page": 1},   # duplicate key — deduplicated
+                {
+                    "source": "file.txt",
+                    "chunk_index": 1,
+                    "page": 1,
+                },  # metadata idx=1 = list position 1
+                {
+                    "source": "file.txt",
+                    "chunk_index": 1,
+                    "page": 1,
+                },  # duplicate key — deduplicated
             ],
             [0.05, 0.15],
         )
@@ -511,6 +551,7 @@ class TestNeighborExpansion:
                     ],
                 }
             return {"documents": [], "metadatas": []}
+
         mc.get = mock_collection_get
 
         ctx, sources, chunks = vs.get_context(
@@ -535,7 +576,9 @@ class TestNeighborExpansion:
         """
         mc = _make_collection(
             ["chunk0"],
-            [{"source": "file.txt", "chunk_index": 5, "page": 1}],  # idx=5 but only 3 chunks exist
+            [
+                {"source": "file.txt", "chunk_index": 5, "page": 1}
+            ],  # idx=5 but only 3 chunks exist
             [0.05],
         )
         vs = _make_vs(mock_collection=mc)
@@ -552,6 +595,7 @@ class TestNeighborExpansion:
                     ],
                 }
             return {"documents": [], "metadatas": []}
+
         mc.get = mock_collection_get
 
         ctx, sources, chunks = vs.get_context(
@@ -560,8 +604,7 @@ class TestNeighborExpansion:
         # After fix: source_chunks returned from DB are included up to valid indices.
         # The 3 returned chunks (indices 4,5,6) all fall within needed_indices for
         # chunk_index=5 with window=1 → range(4, 6) → all 3 are kept.
-        assert len(chunks) == 3, \
-            f"Expected 3 chunks after fix, got {len(chunks)}"
+        assert len(chunks) == 3, f"Expected 3 chunks after fix, got {len(chunks)}"
 
     def test_retrieval_window_get_chunks_returns_empty(self):
         """get_chunks_by_source returns [] — must not crash in neighbor expansion."""
@@ -571,7 +614,7 @@ class TestNeighborExpansion:
             [0.05],
         )
         vs = _make_vs(mock_collection=mc)
-        vs.get_chunks_by_source = lambda source, **kwargs: []   # no neighbors found
+        vs.get_chunks_by_source = lambda source, **kwargs: []  # no neighbors found
 
         ctx, sources, chunks = vs.get_context(
             "test", n_results=1, retrieval_window=5, hybrid_search=False
@@ -642,6 +685,7 @@ class TestNeighborExpansion:
 # ---------------------------------------------------------------------------
 # Test: Result Chunk Properties
 # ---------------------------------------------------------------------------
+
 
 class TestResultChunkProperties:
     """result_chunks elements must have correct field values."""
@@ -719,6 +763,7 @@ class TestResultChunkProperties:
 # Test: Context String Properties
 # ---------------------------------------------------------------------------
 
+
 class TestContextStringProperties:
     """Context string must have correct structure."""
 
@@ -726,10 +771,7 @@ class TestContextStringProperties:
         """Context join must use exactly 3 separators for 4 parts."""
         mc = _make_collection(
             ["p0", "p1", "p2", "p3"],
-            [
-                {"source": "s.txt", "chunk_index": i, "page": i}
-                for i in range(4)
-            ],
+            [{"source": "s.txt", "chunk_index": i, "page": i} for i in range(4)],
             [0.05, 0.1, 0.15, 0.2],
         )
         vs = _make_vs(mock_collection=mc)
@@ -770,6 +812,7 @@ class TestContextStringProperties:
 # Test: min_similarity = 0 exactly (passes all results)
 # ---------------------------------------------------------------------------
 
+
 class TestMinSimilarityZeroEdgeCase:
     """min_similarity=0.0 passes every non-negative similarity."""
 
@@ -782,7 +825,7 @@ class TestMinSimilarityZeroEdgeCase:
                 {"source": "s.txt", "chunk_index": 1, "page": 2},
                 {"source": "s.txt", "chunk_index": 2, "page": 3},
             ],
-            [0.95, 0.98, 0.99],   # distances 0.95+ → sim 0.05, 0.02, 0.01
+            [0.95, 0.98, 0.99],  # distances 0.95+ → sim 0.05, 0.02, 0.01
         )
         vs = _make_vs(mock_collection=mc)
         ctx, sources, chunks = vs.get_context(
@@ -796,6 +839,7 @@ class TestMinSimilarityZeroEdgeCase:
 # Test: search() returns malformed tuples
 # ---------------------------------------------------------------------------
 
+
 class TestSearchResultMalformations:
     """The internal search() method could return malformed data."""
 
@@ -805,7 +849,7 @@ class TestSearchResultMalformations:
         mc.count.return_value = 1
         mc.query.return_value = {
             "documents": [["test doc"]],
-            "metadatas": [[{}]],   # empty metadata dict
+            "metadatas": [[{}]],  # empty metadata dict
             "distances": [[0.1]],
         }
         vs = _make_vs(mock_collection=mc)

@@ -37,6 +37,10 @@ const DEFAULT_SETTINGS = {
   rag_retrieval_window: 1,
   rag_initial_retrieval_top_k: 12,
   rag_rerank_top_k: 4,
+  // C4 (issue #71): mirror config.py RAGSettings defaults.
+  rag_packs_recency_half_life_months: 9,
+  rag_packs_recency_floor_months: 18,
+  rag_packs_recency_floor: 0.85,
 } as const;
 
 // SettingsUpdateRequest bounds (api_server.py SettingsUpdateRequest).
@@ -53,6 +57,10 @@ const SETTING_BOUNDS = {
   rag_retrieval_window: { min: 0, max: Number.POSITIVE_INFINITY, type: 'int' },
   rag_initial_retrieval_top_k: { min: 1, max: 50, type: 'int' },
   rag_rerank_top_k: { min: 1, max: 20, type: 'int' },
+  // C4 (issue #71): mirror api_server.py SettingsUpdateRequest bounds.
+  rag_packs_recency_half_life_months: { min: 1, max: 1200, type: 'int' },
+  rag_packs_recency_floor_months: { min: 1, max: 1200, type: 'int' },
+  rag_packs_recency_floor: { min: 0, max: 1, type: 'float' },
 } as const;
 
 const RAG_TO_RESPONSE: Record<string, string> = {
@@ -68,6 +76,10 @@ const RAG_TO_RESPONSE: Record<string, string> = {
   rag_retrieval_window: 'retrieval_window',
   rag_initial_retrieval_top_k: 'initial_retrieval_top_k',
   rag_rerank_top_k: 'rerank_top_k',
+  // C4 (issue #71): packs_recency_* per the OpenAPI SettingsResponse.
+  rag_packs_recency_half_life_months: 'packs_recency_half_life_months',
+  rag_packs_recency_floor_months: 'packs_recency_floor_months',
+  rag_packs_recency_floor: 'packs_recency_floor',
 };
 
 /** The stub streams a short deterministic token sequence (suite-shaped). */

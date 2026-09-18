@@ -223,6 +223,13 @@ close the issue's open choice:
   neutral: never excluded, never deduped, multiplier 1.0. Making them
   content-hash identified like pack chunks is a potential follow-up, not
   part of C4.
+- Ordering scope note: all three passes (exclusion, dedup, multiply)
+  operate on the FUSED candidate set, after RRF fusion — the issue's
+  "excluded from the candidate set entirely before RRF" phrasing is
+  satisfied in the observable sense (an inactive-pack chunk never surfaces
+  in any ranking result, and is never merely down-weighted); the review
+  trace (PR #117, finding OD-01) resolved the wording in favor of AC7,
+  which pins the prior as an after-fusion multiplier.
 - Exclusion ordering per candidate: inactive-pack exclusion first, then
   cross-pack dedup by precedence (greater owning-pack `published_at`, then
   semver-highest `version`, then lexicographically greatest pack `id` —

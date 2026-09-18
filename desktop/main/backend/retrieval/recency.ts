@@ -47,8 +47,7 @@ export function recencyMultiplier(
   publishedAt: string | null | undefined,
   options: RecencyPriorOptions = {},
 ): number {
-  if (!publishedAt) return 1;
-  const moment = Date.parse(publishedAt);
+  const moment = publishedAtTime(publishedAt);
   if (!Number.isFinite(moment)) return 1;
   const nowMs = (options.now ?? new Date()).getTime();
   const ageMonths = (nowMs - moment) / (DAYS_PER_MONTH * 24 * 60 * 60 * 1000);
@@ -56,6 +55,29 @@ export function recencyMultiplier(
   const horizon = options.floorMonths ?? DEFAULT_RECENCY_FLOOR_MONTHS;
   const fraction = Math.min(1, ageMonths / horizon);
   return 1 - (1 - (options.floor ?? DEFAULT_RECENCY_FLOOR)) * fraction;
+}
+
+/**
+ * Epoch-ms for a pack publishedAt, matching Python parse_published_at:
+ * timezone-less ISO datetimes are treated as UTC (Python assigns UTC to
+ * naive values) and missing/invalid values map to -Infinity so claim
+ * precedence can never promote an unparseable timestamp (Python parity:
+ * recency.py _claim_sort_key).
+ */
+export function publishedAtTime(
+  publishedAt: string | null | undefined,
+): number {
+  if (!publishedAt) return Number.NEGATIVE_INFINITY;
+  const text = publishedAt.trim();
+  if (!text) return Number.NEGATIVE_INFINITY;
+  // Date-only forms ("2024-01-01") are UTC per the JS spec; datetimes
+  // without an explicit offset get a Z appended so they parse as UTC too.
+  const normalized =
+    /[Zz]$|[+-]\d{2}:?\d{2}$/.test(text) || !/T/i.test(text)
+      ? text
+      : `${text}Z`;
+  const ms = Date.parse(normalized);
+  return Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY;
 }
 
 /**
@@ -68,8 +90,8 @@ export function precedenceWinner(claims: readonly PackClaim[]): PackClaim | null
   const active = claims.filter((claim) => claim.active);
   if (active.length === 0) return null;
   return active.reduce((best, claim) => {
-    const bestTime = best.publishedAt ? Date.parse(best.publishedAt) : Number.NEGATIVE_INFINITY;
-    const claimTime = claim.publishedAt ? Date.parse(claim.publishedAt) : Number.NEGATIVE_INFINITY;
+    const bestTime = publishedAtTime(best.publishedAt);
+    const claimTime = publishedAtTime(claim.publishedAt);
     if (claimTime !== bestTime) return claimTime > bestTime ? claim : best;
     const versionCmp = safeVersionCompare(claim.version, best.version);
     if (versionCmp !== 0) return versionCmp > 0 ? claim : best;

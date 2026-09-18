@@ -162,13 +162,17 @@ def test_ac5_duplicate_chunk_ids_collapse_and_are_deterministic():
 
 
 def test_ac7_prior_reorders_after_fusion_and_neutral_pass_through():
-    fused = [("old-pack-chunk", 0.04), ("fresh-pack-chunk", 0.03), ("user-doc", 0.02)]
+    # The OLD chunk holds the HIGHER fused score (0.03); the 36-month-old
+    # pack's 0.85 floor multiplier (0.03 * 0.85 = 0.0255) must demote it
+    # BELOW the fresh chunk (0.04 * 1.0 = 0.04) so the prior demonstrably
+    # reorders the fused ranking after fusion.
+    fused = [("old-pack-chunk", 0.03), ("fresh-pack-chunk", 0.04), ("user-doc", 0.02)]
     claims = {
         "old-pack-chunk": [
             {
                 "pack_id": "p",
                 "version": "1.0.0",
-                "published_at": months_ago(20),
+                "published_at": months_ago(36),
                 "active": True,
             }
         ],
@@ -183,15 +187,35 @@ def test_ac7_prior_reorders_after_fusion_and_neutral_pass_through():
     }
     ranked = apply_recency_prior(fused, claims, now=NOW)
     ids = [chunk_id for chunk_id, _ in ranked]
-    # The fresher pack chunk overtakes the higher fused score; the
-    # unpackaged chunk keeps its exact fused score and never drops.
-    assert ids[0] == "old-pack-chunk" or ids[0] == "fresh-pack-chunk"
+    # Non-vacuous: the fresh chunk MUST now outrank the previously-higher
+    # stale chunk; the unpackaged chunk keeps its exact fused score.
+    assert ids[0] == "fresh-pack-chunk"
     by_id = dict(ranked)
     assert by_id["user-doc"] == pytest.approx(0.02, rel=1e-12)
-    assert by_id["fresh-pack-chunk"] == pytest.approx(0.03, rel=1e-12)
-    assert by_id["old-pack-chunk"] < 0.04  # recency demoted the stale chunk
+    assert by_id["fresh-pack-chunk"] == pytest.approx(0.04, rel=1e-12)
+    assert by_id["old-pack-chunk"] == pytest.approx(0.03 * 0.85, rel=1e-12)
     scores = [score for _, score in ranked]
     assert scores == sorted(scores, reverse=True)
+
+
+def test_ac7_legacy_pack_without_published_at_is_neutral():
+    """Pre-upgrade packs: claim exists with published_at None (old registry)
+    -> winner attribution still works but the multiplier is exactly 1.0."""
+    fused = [("legacy", 0.03)]
+    claims = {
+        "legacy": [
+            {
+                "pack_id": "p",
+                "version": "1.0.0",
+                "published_at": None,
+                "active": True,
+            }
+        ]
+    }
+    ranked = apply_recency_prior(fused, claims, now=NOW)
+    assert ranked == [("legacy", pytest.approx(0.03, rel=1e-12))]
+    winner = recency.winning_claim(claims["legacy"])
+    assert winner["version"] == "1.0.0"
 
 
 def test_ac7_orphans_excluded_and_never_downweighted():

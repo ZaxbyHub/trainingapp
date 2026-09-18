@@ -32,6 +32,10 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
+const NATIVE_DEPS_PRESENT = fs.existsSync(
+  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
+);
+const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
 const DIMS = 8;
 const TOKEN = 'c4-citations-spec-token';
 const PACK_PUBLISHED_AT = '2026-09-16T00:00:00.000Z';
@@ -126,7 +130,7 @@ interface CitationWire {
 }
 
 describe('c4 /ask citations (issue #71, AC8)', () => {
-  it('emits pack-attributed citations on /ask and never serializes cited', async () => {
+  itReal('emits pack-attributed citations on /ask and never serializes cited', async () => {
     const { port } = await startServer();
     const response = await fetch(`http://127.0.0.1:${port}/ask`, {
       method: 'POST',
@@ -151,7 +155,7 @@ describe('c4 /ask citations (issue #71, AC8)', () => {
     expect(payload.cited).toBeUndefined();
   });
 
-  it('emits citations on the /ask/stream terminal done event', async () => {
+  itReal('emits citations on the /ask/stream terminal done event', async () => {
     const { port } = await startServer();
     const response = await fetch(`http://127.0.0.1:${port}/ask/stream`, {
       method: 'POST',

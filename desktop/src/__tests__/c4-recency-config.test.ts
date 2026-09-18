@@ -10,6 +10,26 @@ import {
   resolveRetrievalConfig,
 } from '../../main/backend/retrieval/config';
 import { recencyMultiplier } from '../../main/backend/retrieval/recency';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
+function findRepoRoot(dir: string): string {
+  let current = dir;
+  for (let i = 0; i < 32; i += 1) {
+    if (fs.existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  throw new Error('could not locate the repo root');
+}
+const REPO_ROOT = findRepoRoot(THIS_DIR);
+const NATIVE_DEPS_PRESENT = fs.existsSync(
+  path.join(REPO_ROOT, 'desktop', 'node_modules', 'better-sqlite3'),
+);
+const itReal = NATIVE_DEPS_PRESENT ? it : it.skip;
 
 describe('c4 packs.recency.* config keys (issue #71)', () => {
   it('defaults to floor 0.85 / floorMonths 18 / halfLifeMonths 9', () => {
@@ -65,7 +85,7 @@ describe('c4 packs.recency.* config keys (issue #71)', () => {
 });
 
 describe('c4 recency config end-to-end plumbing (reviewer follow-up)', () => {
-  it('a non-default surface config changes and exactly predicts pipeline scores', async () => {
+  itReal('a non-default surface config changes and exactly predicts pipeline scores', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');
     const path = await import('node:path');

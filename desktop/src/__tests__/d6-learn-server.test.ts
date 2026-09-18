@@ -75,7 +75,7 @@ async function startServer(withAssembler: boolean): Promise<Fixture> {
   };
   // One training-slide doc + chunk (the direct hit) and one general doc +
   // chunk (cited too, with two links rows feeding the "linked" half).
-  seed("INSERT OR IGNORE INTO packs (id, name, version, published_at, source_class, supersedes) VALUES ('p-train', 'Training', '1.0.0', '2026-09-14T00:00:00.000Z', 'training', NULL)");
+  seed("INSERT OR IGNORE INTO packs (id, name, version, published_at, source_class, active, supersedes) VALUES ('p-train', 'Training', '1.0.0', '2026-09-14T00:00:00.000Z', 'training', 1, NULL)");
   seed("INSERT INTO docs (id, source_class, path, sha256, title, pack_id) VALUES (?, ?, ?, ?, ?, ?)", 'doc-slide-5rN4PvXJM5d', 'training', 'docs/slide-001-5rN4PvXJM5d.json', 'sha-slide', 'Welcome', 'p-train');
   seed('INSERT INTO chunks (id, doc_id, chunk_index, text, content_hash) VALUES (?, ?, ?, ?, ?)', 'ch-slide', 'doc-slide-5rN4PvXJM5d', 0, SLIDE_TEXT, 'hash-slide');
   seed("INSERT INTO docs (id, source_class, path, sha256, title, pack_id) VALUES (?, ?, ?, ?, ?, ?)", 'doc-slide-6RdggQhakWc', 'training', 'docs/slide-002-6RdggQhakWc.json', 'sha-slide-b', 'Slides And Charts', 'p-train');

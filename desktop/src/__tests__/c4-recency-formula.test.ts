@@ -3,7 +3,11 @@
 // Values must match tests/test_c4_recency_formula.py at 1e-9.
 import { describe, expect, it } from 'vitest';
 
-import { applyRecencyPrior, recencyMultiplier } from '../../main/backend/retrieval/recency';
+import {
+  applyRecencyPrior,
+  precedenceWinner,
+  recencyMultiplier,
+} from '../../main/backend/retrieval/recency';
 
 const NOW = new Date('2026-09-18T12:00:00.000Z');
 
@@ -81,6 +85,8 @@ describe('c4 cross-pack dedup + precedence (AC5, issue #71)', () => {
     ]);
     const idTieRanked = applyRecencyPrior([['chunkH', 0.01]], idTie, { now: NOW });
     expect(idTieRanked).toHaveLength(1);
+    // Lexicographic tie-break parity with Python: pack-b wins.
+    expect(precedenceWinner(idTie.get('chunkH') as never)?.packId).toBe('pack-b');
   });
 
   it('collapses duplicate chunk ids to one copy deterministically', () => {

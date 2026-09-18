@@ -376,3 +376,110 @@ def test_hybrid_window_neighbors_inherit_pack_attribution(tmp_path):
         if chunk.source.startswith("versioned-a/"):
             assert chunk.pack_id == "versioned-a"
             assert chunk.pack_version == "1.0.0"
+
+
+# ------------------------------------------------------------------ #
+# PR #117 review findings PRR-010/011/012: vector-only screening,
+# legacy-registry neutrality, provider-failure neutral degrade.
+# ------------------------------------------------------------------ #
+
+
+def test_vector_only_screen_excludes_orphans_and_keeps_attribution(tmp_path):
+    """hybrid_search=False applies the same orphan exclusion + dedup and the
+    surviving chunks carry winner attribution (no recency multiply)."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    pm = make_manager(ws)
+    v1 = copy_fixture("versioned-a-1.0.0", ws / "src")
+    v2 = copy_fixture("versioned-a-2.0.0", ws / "src")
+    pm.install(v1)
+    pm.install(v2)
+    store = pm.store
+
+    stale_text = "vectoronly orphan quasar ledger beacon cobalt trigger"
+    store.add_chunks_with_embeddings(
+        [
+            {
+                "chunk_id": "stale-vo-orphan-0003",
+                "text": stale_text,
+                "embedding": StubEmbeddingModel().encode_single(stale_text),
+                "metadata": {
+                    "source": "versioned-a/vo-removed.json",
+                    "doc_id": "sha-not-in-active-rows",
+                    "chunk_index": 0,
+                    "pack_id": "versioned-a",
+                    "pack_version": "1.0.0",
+                    "content_hash": "cafebabe",
+                },
+            }
+        ],
+        on_conflict="replace",
+    )
+
+    query = fixture_query_text("versioned-a-2.0.0")[:200]
+    _ctx, _sources, chunks = store.get_context(
+        query + " " + stale_text, n_results=5, hybrid_search=False
+    )
+    assert chunks, "vector-only path returned no results"
+    for chunk in chunks:
+        assert not (chunk.text == stale_text), "orphan surfaced in vector-only mode"
+    attributed = [c for c in chunks if c.pack_id == "versioned-a"]
+    assert attributed, "pack-attributed chunk missing from vector-only results"
+    assert attributed[0].pack_version == "2.0.0"
+
+
+def test_legacy_registry_row_without_published_at_is_neutral(tmp_path):
+    """A registry row written before C4 (no published_at key) must yield a
+    neutral multiplier (1.0) while still attributing version/claims."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    pm = make_manager(ws)
+    pm.install(copy_fixture("versioned-a-1.0.0", ws / "src"))
+    # Rewrite the registry row without published_at (legacy shape).
+    rows = pm._rows()
+    for row in rows:
+        row.pop("published_at", None)
+    pm._save_rows(rows)
+
+    claims = pm.active_pack_claims()
+    assert claims and all(c["published_at"] is None for c in claims)
+    query = fixture_query_text("versioned-a-1.0.0")[:200]
+    _ctx, _sources, chunks = pm.store.get_context(
+        query, n_results=5, hybrid_search=True
+    )
+    assert chunks
+    assert chunks[0].pack_version == "1.0.0"
+
+
+def test_provider_failure_degrades_to_neutral_and_latches_once(tmp_path, caplog):
+    """A raising provider must NOT exclude pack chunks (unknown active-set
+    = neutral); the warning latches to once across repeated failures and
+    resets after a successful call."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    pm = make_manager(ws)
+    pm.install(copy_fixture("versioned-a-1.0.0", ws / "src"))
+    store = pm.store
+
+    calls = {"n": 0}
+
+    def raising_provider():
+        calls["n"] += 1
+        raise RuntimeError("registry exploded")
+
+    store.pack_status_provider = raising_provider
+    query = fixture_query_text("versioned-a-1.0.0")[:200]
+    _ctx, _sources, chunks = store.get_context(query, n_results=5, hybrid_search=True)
+    assert chunks, "provider failure must degrade to neutral, not exclude"
+    assert any(c.pack_id == "versioned-a" for c in chunks)
+    assert store._pack_provider_warned is True
+
+    _ctx, _sources, chunks = store.get_context(query, n_results=5, hybrid_search=True)
+    assert calls["n"] == 2  # provider still consulted each query
+    assert store._pack_provider_warned is True  # latch held across failures
+
+    # A successful call resets the latch.
+    store.pack_status_provider = lambda: pm.active_pack_claims()
+    _ctx, _sources, chunks = store.get_context(query, n_results=5, hybrid_search=True)
+    assert store._pack_provider_warned is False
+    assert chunks and chunks[0].pack_version == "1.0.0"

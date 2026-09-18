@@ -1336,15 +1336,23 @@ class VectorStore:
         expanded.sort(key=lambda c: (c.source, c.chunk_index))
         return expanded
 
-    def _pack_claims_snapshot(self) -> List[Dict[str, Any]]:
+    def _pack_claims_snapshot(self) -> Optional[List[Dict[str, Any]]]:
         """Active pack claims for one query (C4, issue #71).
 
-        Calls the injected pack_status_provider once per query; any provider
-        failure degrades to [] (fully neutral prior) with a warning latched
-        to once per store lifetime, reset after a successful call.
+        Calls the injected pack_status_provider once per query. Returns:
+
+        * ``None`` when no provider is configured OR the provider failed —
+          the prior is fully neutral for that query (pack screening must
+          never exclude chunks based on an UNKNOWN active-set);
+        * a list (possibly empty) from a successful call — an empty list
+          means the healthy registry genuinely has no active packs, so the
+          orphan-exclusion defense-in-depth applies.
+
+        Provider failures log a warning latched to once per store lifetime,
+        reset after a successful call.
         """
         if self.pack_status_provider is None:
-            return []
+            return None
         try:
             claims = self.pack_status_provider() or []
             self._pack_provider_warned = False
@@ -1353,9 +1361,11 @@ class VectorStore:
             if not self._pack_provider_warned:
                 self._pack_provider_warned = True
                 logger.warning(
-                    "pack_status_provider raised, degrading to neutral: %s", e
+                    "pack_status_provider raised, degrading to neutral "
+                    "(pack screening disabled for this query): %s",
+                    e,
                 )
-            return []
+            return None
 
     @staticmethod
     def _derived_chunk_id(
@@ -1465,10 +1475,11 @@ class VectorStore:
                         # No identity derivable: rank key unique, neutral.
                         chunk_id = f"__res{id(resolved)}__"
                     rank_key = chunk_id
-                    if pack_id and self.pack_status_provider is not None:
+                    if pack_id and snapshot is not None:
                         # Orphan/exclusion semantics require pack status to be
-                        # AVAILABLE: with no provider configured the whole
-                        # prior is neutral (legacy behavior, issue #71).
+                        # AVAILABLE (provider configured AND healthy): with no
+                        # provider or a failed provider the whole prior is
+                        # neutral (legacy behavior, issue #71).
                         claims = [
                             c
                             for c in snapshot
@@ -1698,22 +1709,39 @@ class VectorStore:
             # candidate set and duplicate content-hash identities collapse
             # to the first hit — but NO recency multiplier here: the prior
             # is defined on fused RRF scores and this branch ranks by raw
-            # similarity (ADR-0004 amendment).
-            if self.pack_status_provider is not None:
-                snapshot = self._pack_claims_snapshot()
+            # similarity (ADR-0004 amendment). A None snapshot (no provider
+            # or provider failure) leaves the results fully untouched.
+            vo_snapshot = self._pack_claims_snapshot()
+            vo_pack_fields: List[Dict[str, Optional[str]]] = []
+            if vo_snapshot is not None:
                 screened = []
                 seen_ids = set()
                 for doc, meta, sim in filtered:
                     pack_id = meta.get("pack_id")
+                    entry_pack = {
+                        "pack_id": pack_id,
+                        "pack_version": meta.get("pack_version"),
+                        "pack_published_at": meta.get("pack_published_at"),
+                    }
                     if pack_id:
                         doc_id = meta.get("doc_id")
                         claims = [
                             c
-                            for c in snapshot
+                            for c in vo_snapshot
                             if doc_id and doc_id in c.get("doc_shas", [])
                         ]
                         if not claims:
                             continue  # inactive-pack orphan: excluded
+                        winner = winning_claim(claims)
+                        if winner is not None:
+                            # Attribution from the precedence winner, matching
+                            # the hybrid path (never the possibly-stale row
+                            # metadata).
+                            entry_pack = {
+                                "pack_id": winner.get("pack_id"),
+                                "pack_version": winner.get("version"),
+                                "pack_published_at": winner.get("published_at"),
+                            }
                         chunk_id = self._derived_chunk_id(
                             doc_id, meta.get("chunk_index", 0), doc
                         )
@@ -1721,8 +1749,9 @@ class VectorStore:
                             if chunk_id in seen_ids:
                                 continue  # cross-pack duplicate: keep first
                             seen_ids.add(chunk_id)
-                    screened.append((doc, meta, sim))
-                filtered = screened
+                    screened.append((doc, meta, sim, entry_pack))
+                filtered = [(doc, meta, sim) for doc, meta, sim, _entry in screened]
+                vo_pack_fields = [entry for *_, entry in screened]
 
             if not filtered:
                 return "", [], []
@@ -1774,9 +1803,40 @@ class VectorStore:
                 per_chunk_source_paths = [
                     getattr(c, "source_path", None) for c in expanded
                 ]
+                # Neighbors inherit the cited entry's pack attribution by
+                # source (same doc => same owning pack), mirroring hybrid.
+                vo_pack_by_source = {
+                    meta.get("source", "Unknown"): entry
+                    for (_doc, meta, _sim), entry in zip(filtered, vo_pack_fields)
+                }
+                vo_pack_fields = []
+                for c in expanded:
+                    attrs = {
+                        "pack_id": getattr(c, "pack_id", None),
+                        "pack_version": getattr(c, "pack_version", None),
+                        "pack_published_at": getattr(c, "pack_published_at", None),
+                    }
+                    if attrs["pack_id"] is None:
+                        attrs = vo_pack_by_source.get(
+                            c.source,
+                            {
+                                "pack_id": None,
+                                "pack_version": None,
+                                "pack_published_at": None,
+                            },
+                        )
+                    vo_pack_fields.append(attrs)
                 sources = list(dict.fromkeys(c.source for c in expanded))
 
             # Build result chunks
+            while len(vo_pack_fields) < len(context_parts):
+                vo_pack_fields.append(
+                    {
+                        "pack_id": None,
+                        "pack_version": None,
+                        "pack_published_at": None,
+                    }
+                )
             result_chunks = [
                 DocumentChunk(
                     text=text,
@@ -1785,14 +1845,18 @@ class VectorStore:
                     page=pg,
                     doc_id=did,
                     source_path=sp,
+                    pack_id=pk["pack_id"],
+                    pack_version=pk["pack_version"],
+                    pack_published_at=pk["pack_published_at"],
                 )
-                for text, src, idx, pg, did, sp in zip(
+                for text, src, idx, pg, did, sp, pk in zip(
                     context_parts,
                     per_chunk_sources,
                     per_chunk_indices,
                     per_chunk_pages,
                     per_chunk_doc_ids,
                     per_chunk_source_paths,
+                    vo_pack_fields,
                 )
             ]
 

@@ -85,10 +85,15 @@ function boolOrFallback(value: string | undefined, fallback: boolean): boolean {
   return fallback;
 }
 
-function floorOrFallback(value: string | undefined, fallback: number): number {
+function floorOrFallback(
+  value: string | undefined,
+  fallback: number,
+  opts: { inclusiveMax?: boolean } = {},
+): number {
   if (value !== undefined && value.length > 0) {
     const parsed = Number.parseFloat(value);
-    if (Number.isFinite(parsed) && parsed >= 0 && parsed < 1) return parsed;
+    const maxOk = opts.inclusiveMax ? parsed <= 1 : parsed < 1;
+    if (Number.isFinite(parsed) && parsed >= 0 && maxOk) return parsed;
   }
   return fallback;
 }
@@ -112,6 +117,9 @@ export function resolveRetrievalConfig(env?: Record<string, string | undefined>)
     packsRecencyFloor: floorOrFallback(
       source[PACKS_RECENCY_FLOOR_ENV],
       DEFAULT_RETRIEVAL_CONFIG.packsRecencyFloor,
+      // The OpenAPI contract allows floor = 1.0 (no decay); unlike the
+      // reranker relevanceFloor, the recency floor's maximum is inclusive.
+      { inclusiveMax: true },
     ),
     packsRecencyFloorMonths: positiveInt(
       source[PACKS_RECENCY_FLOOR_MONTHS_ENV],
