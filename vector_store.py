@@ -47,6 +47,12 @@ import logging
 
 from document_processor import DocumentChunk
 from query_transformer import STOP_WORDS
+from recency import (
+    DEFAULT_FLOOR,
+    DEFAULT_FLOOR_MONTHS,
+    apply_recency_prior,
+    winning_claim,
+)
 from utils import rrf_fuse
 
 logger = logging.getLogger(__name__)
@@ -500,13 +506,25 @@ class VectorStore:
     METADATA_FILE = "store_metadata.json"
 
     def __init__(
-        self, db_path: str = "./chroma_db", embedding_model: Optional[str] = None
+        self,
+        db_path: str = "./chroma_db",
+        embedding_model: Optional[str] = None,
+        pack_status_provider: Optional[Any] = None,
+        recency_floor: float = DEFAULT_FLOOR,
+        recency_floor_months: float = DEFAULT_FLOOR_MONTHS,
     ):
         if not CHROMADB_AVAILABLE:
             raise ImportError("chromadb not installed. Run: pip install chromadb")
 
         self.db_path = Path(db_path)
         self.db_path.mkdir(parents=True, exist_ok=True)
+        # C4 (issue #71): returns the active pack claims
+        # (PackManager.active_pack_claims shape) for version precedence and
+        # recency. None/absent/failed -> the prior is fully neutral.
+        self.pack_status_provider = pack_status_provider
+        self.recency_floor = recency_floor
+        self.recency_floor_months = recency_floor_months
+        self._pack_provider_warned = False
 
         self.embedder = EmbeddingModel(embedding_model)
 
@@ -539,9 +557,13 @@ class VectorStore:
                     all_data = self.collection.get(include=["documents", "metadatas"])
                     docs = all_data.get("documents") or []
                     metas = all_data.get("metadatas") or []
+                    # C4 (issue #71): ids ride along so BM25 chunks keep the
+                    # content-hash chunk identity (the vector leg resolves it
+                    # from metadata; BM25 has no other source for it).
+                    all_ids = all_data.get("ids") or []
                     if docs and metas:
                         all_chunks = []
-                        for doc, meta in zip(docs, metas):
+                        for idx_i, (doc, meta) in enumerate(zip(docs, metas)):
                             if (
                                 not meta
                                 or "source" not in meta
@@ -555,6 +577,14 @@ class VectorStore:
                                 page=meta.get("page"),
                                 doc_id=meta.get("doc_id"),
                                 source_path=meta.get("source_path"),
+                                chunk_id=(
+                                    all_ids[idx_i]
+                                    if idx_i < len(all_ids)
+                                    else meta.get("chunk_id")
+                                ),
+                                pack_id=meta.get("pack_id"),
+                                pack_version=meta.get("pack_version"),
+                                pack_published_at=meta.get("pack_published_at"),
                             )
                             all_chunks.append(chunk)
                         if all_chunks:
@@ -895,6 +925,13 @@ class VectorStore:
                         page=meta.get("page"),
                         doc_id=meta.get("doc_id"),
                         source_path=meta.get("source_path"),
+                        # C4 (issue #71): the BM25 leg must carry the same
+                        # pack attribution as the vector leg or fused ranking
+                        # would treat BM25-sourced hits as unpackaged.
+                        chunk_id=chunk_id,
+                        pack_id=meta.get("pack_id"),
+                        pack_version=meta.get("pack_version"),
+                        pack_published_at=meta.get("pack_published_at"),
                     )
                     for i, (chunk_id, text, meta) in enumerate(
                         zip(ids, documents, metadatas)
@@ -1299,6 +1336,46 @@ class VectorStore:
         expanded.sort(key=lambda c: (c.source, c.chunk_index))
         return expanded
 
+    def _pack_claims_snapshot(self) -> List[Dict[str, Any]]:
+        """Active pack claims for one query (C4, issue #71).
+
+        Calls the injected pack_status_provider once per query; any provider
+        failure degrades to [] (fully neutral prior) with a warning latched
+        to once per store lifetime, reset after a successful call.
+        """
+        if self.pack_status_provider is None:
+            return []
+        try:
+            claims = self.pack_status_provider() or []
+            self._pack_provider_warned = False
+            return claims
+        except Exception as e:
+            if not self._pack_provider_warned:
+                self._pack_provider_warned = True
+                logger.warning(
+                    "pack_status_provider raised, degrading to neutral: %s", e
+                )
+            return []
+
+    @staticmethod
+    def _derived_chunk_id(
+        doc_id: Optional[str], chunk_index: int, text: str
+    ) -> Optional[str]:
+        """Content-hash chunk identity for a resolved candidate.
+
+        Pack chunks were inserted with exactly this id, so the derivation
+        reproduces the store PK; unpackaged (legacy) candidates get a stable
+        derived key but stay neutral in the prior (no pack metadata).
+        """
+        if not doc_id:
+            return None
+        try:
+            from pack_manager import chunk_id_of, normalize_text
+
+            return chunk_id_of(doc_id, chunk_index, normalize_text(text or ""))
+        except Exception:
+            return None
+
     def get_context(
         self,
         query: str,
@@ -1354,28 +1431,90 @@ class VectorStore:
 
                 fused = rrf_fuse([vector_ranked, bm25_ranked])
 
-                context_parts = []
-                per_chunk_sources = []  # one source per chunk, NOT deduplicated
-                per_chunk_pages = []
-                per_chunk_indices = []
-                sources = []  # deduplicated for display
+                # C4 (issue #71): resolve EVERY fused candidate before
+                # slicing, screen it through pack version precedence
+                # (inactive-pack exclusion + cross-pack dedup), apply the
+                # recency multiplier to the fused RRF score, re-sort, and
+                # only then take the top n_results.
+                snapshot = self._pack_claims_snapshot()
+                claims_by_chunk: Dict[str, list] = {}
+                resolved: List[Dict[str, Any]] = []
+                resolved_by_key: Dict[str, Dict[str, Any]] = {}
                 seen_keys = set()
 
-                for fused_id, _ in fused[:n_results]:
+                def _resolve(
+                    key_chunk_id: Optional[str],
+                    score: float,
+                    text: str,
+                    source: str,
+                    chunk_idx: int,
+                    page: Any,
+                    doc_id: Optional[str],
+                    pack_id: Optional[str],
+                    pack_version: Optional[str],
+                    pack_published_at: Optional[str],
+                ) -> None:
+                    key = (source, chunk_idx)
+                    if key in seen_keys:
+                        return
+                    seen_keys.add(key)
+                    chunk_id = key_chunk_id or self._derived_chunk_id(
+                        doc_id, chunk_idx, text
+                    )
+                    if chunk_id is None:
+                        # No identity derivable: rank key unique, neutral.
+                        chunk_id = f"__res{id(resolved)}__"
+                    rank_key = chunk_id
+                    if pack_id and self.pack_status_provider is not None:
+                        # Orphan/exclusion semantics require pack status to be
+                        # AVAILABLE: with no provider configured the whole
+                        # prior is neutral (legacy behavior, issue #71).
+                        claims = [
+                            c
+                            for c in snapshot
+                            if doc_id and doc_id in c.get("doc_shas", [])
+                        ]
+                        if claims:
+                            claims_by_chunk[rank_key] = claims
+                        else:
+                            # Pack-attributed but no active version claims
+                            # this doc: orphan of a superseded/removed
+                            # version -> excluded from the candidate set
+                            # (never merely down-weighted).
+                            claims_by_chunk[rank_key] = []
+                    entry = {
+                        "rank_key": rank_key,
+                        "score": score,
+                        "text": text,
+                        "source": source,
+                        "chunk_index": chunk_idx,
+                        "page": page,
+                        "doc_id": doc_id,
+                        "pack_id": pack_id,
+                        "pack_version": pack_version,
+                        "pack_published_at": pack_published_at,
+                    }
+                    resolved.append(entry)
+                    resolved_by_key.setdefault(rank_key, entry)
+
+                for fused_id, fused_score in fused:
                     if fused_id >= OFFSET:
                         # BM25 result — resolve against bm25_index.chunks
                         corpus_idx = fused_id - OFFSET
                         if corpus_idx < len(self.bm25_index.chunks):
                             chunk = self.bm25_index.chunks[corpus_idx]
-                            key = (chunk.source, chunk.chunk_index)
-                            if key not in seen_keys:
-                                seen_keys.add(key)
-                                context_parts.append(chunk.text)
-                                per_chunk_sources.append(chunk.source)
-                                per_chunk_pages.append(chunk.page)
-                                per_chunk_indices.append(chunk.chunk_index)
-                                if chunk.source not in sources:
-                                    sources.append(chunk.source)
+                            _resolve(
+                                getattr(chunk, "chunk_id", None),
+                                fused_score,
+                                chunk.text,
+                                chunk.source,
+                                chunk.chunk_index,
+                                chunk.page,
+                                getattr(chunk, "doc_id", None),
+                                getattr(chunk, "pack_id", None),
+                                getattr(chunk, "pack_version", None),
+                                getattr(chunk, "pack_published_at", None),
+                            )
                     else:
                         # Vector result — resolve against vector_results list
                         vec_idx = fused_id
@@ -1384,18 +1523,70 @@ class VectorStore:
                             # Apply min_similarity (currently bypassed in hybrid — fixed here)
                             if score < min_similarity:
                                 continue
-                            source = meta.get("source", "Unknown")
-                            chunk_idx = meta.get("chunk_index", vec_idx)
-                            page = meta.get("page")
-                            key = (source, chunk_idx)
-                            if key not in seen_keys:
-                                seen_keys.add(key)
-                                context_parts.append(doc)
-                                per_chunk_sources.append(source)
-                                per_chunk_pages.append(page)
-                                per_chunk_indices.append(chunk_idx)
-                                if source not in sources:
-                                    sources.append(source)
+                            _resolve(
+                                None,
+                                fused_score,
+                                doc,
+                                meta.get("source", "Unknown"),
+                                meta.get("chunk_index", vec_idx),
+                                meta.get("page"),
+                                meta.get("doc_id"),
+                                meta.get("pack_id"),
+                                meta.get("pack_version"),
+                                meta.get("pack_published_at"),
+                            )
+
+                ranked = apply_recency_prior(
+                    [(entry["rank_key"], entry["score"]) for entry in resolved],
+                    claims_by_chunk,
+                    floor=self.recency_floor,
+                    floor_months=self.recency_floor_months,
+                )
+
+                context_parts = []
+                per_chunk_sources = []  # one source per chunk, NOT deduplicated
+                per_chunk_pages = []
+                per_chunk_indices = []
+                per_chunk_doc_ids = []
+                per_chunk_source_paths = []
+                per_chunk_pack: List[Dict[str, Optional[str]]] = []
+                sources = []  # deduplicated for display
+
+                for rank_key, _adjusted in ranked[:n_results]:
+                    entry = resolved_by_key[rank_key]
+                    context_parts.append(entry["text"])
+                    per_chunk_sources.append(entry["source"])
+                    per_chunk_pages.append(entry["page"])
+                    per_chunk_indices.append(entry["chunk_index"])
+                    per_chunk_doc_ids.append(entry["doc_id"])
+                    per_chunk_source_paths.append(None)
+                    # Citation attribution: the precedence WINNER among the
+                    # active claims, not the physical row's (possibly stale)
+                    # chunk metadata -- install-order independence (issue #71
+                    # AC1: both-versions-active engineered state).
+                    claims = claims_by_chunk.get(rank_key)
+                    winner = winning_claim(claims) if claims else None
+                    per_chunk_pack.append(
+                        {
+                            "pack_id": (
+                                winner["pack_id"]
+                                if winner is not None
+                                else entry["pack_id"]
+                            ),
+                            "pack_version": (
+                                winner.get("version")
+                                if winner is not None
+                                else entry["pack_version"]
+                            ),
+                            "pack_published_at": (
+                                winner.get("published_at")
+                                if winner is not None
+                                else entry["pack_published_at"]
+                            ),
+                        }
+                    )
+                    if entry["source"] not in sources:
+                        sources.append(entry["source"])
 
                 # Expand with neighbors if window > 0
                 if retrieval_window > 0 and context_parts:
@@ -1405,6 +1596,10 @@ class VectorStore:
                             source=per_chunk_sources[i],
                             chunk_index=per_chunk_indices[i],
                             page=per_chunk_pages[i],
+                            doc_id=per_chunk_doc_ids[i],
+                            pack_id=per_chunk_pack[i]["pack_id"],
+                            pack_version=per_chunk_pack[i]["pack_version"],
+                            pack_published_at=per_chunk_pack[i]["pack_published_at"],
                         )
                         for i, text in enumerate(context_parts)
                     ]
@@ -1417,16 +1612,73 @@ class VectorStore:
                     per_chunk_sources = [c.source for c in expanded]
                     per_chunk_pages = [c.page for c in expanded]
                     per_chunk_indices = [c.chunk_index for c in expanded]
+                    # Neighbor chunks fetched by (source, index) lack pack
+                    # attribution; neighbors of a cited chunk share its doc,
+                    # so inherit the cited entry's pack fields by source.
+                    pack_by_source = {
+                        entry["source"]: {
+                            "pack_id": entry["pack_id"],
+                            "pack_version": entry["pack_version"],
+                            "pack_published_at": entry["pack_published_at"],
+                        }
+                        for entry in resolved
+                    }
+                    per_chunk_doc_ids = [getattr(c, "doc_id", None) for c in expanded]
+                    per_chunk_source_paths = [
+                        getattr(c, "source_path", None) for c in expanded
+                    ]
+                    per_chunk_pack = []
+                    for c in expanded:
+                        attrs = {
+                            "pack_id": getattr(c, "pack_id", None),
+                            "pack_version": getattr(c, "pack_version", None),
+                            "pack_published_at": getattr(c, "pack_published_at", None),
+                        }
+                        if attrs["pack_id"] is None:
+                            attrs = pack_by_source.get(
+                                c.source,
+                                {
+                                    "pack_id": None,
+                                    "pack_version": None,
+                                    "pack_published_at": None,
+                                },
+                            )
+                        per_chunk_pack.append(attrs)
                     sources = list(dict.fromkeys(c.source for c in expanded))
 
                 # Build result chunks for structured return
+                while len(per_chunk_doc_ids) < len(context_parts):
+                    per_chunk_doc_ids.append(None)
+                while len(per_chunk_source_paths) < len(context_parts):
+                    per_chunk_source_paths.append(None)
+                while len(per_chunk_pack) < len(context_parts):
+                    per_chunk_pack.append(
+                        {
+                            "pack_id": None,
+                            "pack_version": None,
+                            "pack_published_at": None,
+                        }
+                    )
                 result_chunks = [
-                    DocumentChunk(text=text, source=src, chunk_index=idx, page=pg)
-                    for text, src, idx, pg in zip(
+                    DocumentChunk(
+                        text=text,
+                        source=src,
+                        chunk_index=idx,
+                        page=pg,
+                        doc_id=did,
+                        source_path=sp,
+                        pack_id=pk["pack_id"],
+                        pack_version=pk["pack_version"],
+                        pack_published_at=pk["pack_published_at"],
+                    )
+                    for text, src, idx, pg, did, sp, pk in zip(
                         context_parts,
                         per_chunk_sources,
                         per_chunk_indices,
                         per_chunk_pages,
+                        per_chunk_doc_ids,
+                        per_chunk_source_paths,
+                        per_chunk_pack,
                     )
                 ]
 
@@ -1440,6 +1692,37 @@ class VectorStore:
             filtered = [
                 (doc, meta, sim) for doc, meta, sim in matches if sim >= min_similarity
             ]
+
+            # C4 (issue #71): the same version-precedence screen as the
+            # hybrid path — inactive-pack orphans are excluded from the
+            # candidate set and duplicate content-hash identities collapse
+            # to the first hit — but NO recency multiplier here: the prior
+            # is defined on fused RRF scores and this branch ranks by raw
+            # similarity (ADR-0004 amendment).
+            if self.pack_status_provider is not None:
+                snapshot = self._pack_claims_snapshot()
+                screened = []
+                seen_ids = set()
+                for doc, meta, sim in filtered:
+                    pack_id = meta.get("pack_id")
+                    if pack_id:
+                        doc_id = meta.get("doc_id")
+                        claims = [
+                            c
+                            for c in snapshot
+                            if doc_id and doc_id in c.get("doc_shas", [])
+                        ]
+                        if not claims:
+                            continue  # inactive-pack orphan: excluded
+                        chunk_id = self._derived_chunk_id(
+                            doc_id, meta.get("chunk_index", 0), doc
+                        )
+                        if chunk_id is not None:
+                            if chunk_id in seen_ids:
+                                continue  # cross-pack duplicate: keep first
+                            seen_ids.add(chunk_id)
+                    screened.append((doc, meta, sim))
+                filtered = screened
 
             if not filtered:
                 return "", [], []

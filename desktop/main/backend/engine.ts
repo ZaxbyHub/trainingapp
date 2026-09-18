@@ -161,7 +161,16 @@ export class StubEngine implements EngineSurface {
       // (rows whose surface predates chunkId are simply absent from cited).
       cited: rows
         .filter((row): row is typeof row & { chunkId: string } => typeof row.chunkId === 'string')
-        .map((row) => ({ chunkId: row.chunkId, score: row.similarity })),
+        .map((row) => ({
+          chunkId: row.chunkId,
+          score: row.similarity,
+          source: row.source,
+          // C4 (issue #71): pack attribution rides the cited chunk so the
+          // server can serialize citations without re-querying the store.
+          packId: row.packId ?? null,
+          packVersion: row.packVersion ?? null,
+          packPublishedAt: row.packPublishedAt ?? null,
+        })),
     };
   }
 
@@ -191,6 +200,9 @@ export class StubEngine implements EngineSurface {
       sources: context?.sources ?? [],
       context_length: context?.contextLength ?? 0,
       inference_time: (Date.now() - started) / 1000,
+      // C4 (issue #71): cited chunks ride the internal result so the server
+      // serializes pack-attributed citations (never serialized verbatim).
+      ...(context !== null ? { cited: context.cited } : {}),
       // D6 (issue #82): learn rows when the assembler is attached and
       // retrieval produced cited chunks; the assembler's null (store closed)
       // and the assembler-less fixtures both omit the field.

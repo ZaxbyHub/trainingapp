@@ -70,6 +70,13 @@ class DocumentChunk:
     chunk_index: int = 0
     doc_id: Optional[str] = None  # Stable hash-based document identifier
     source_path: Optional[str] = None  # Full file path for deduplication
+    # C4 (issue #71): pack attribution carried through the BM25 leg (the
+    # vector leg reads it from ChromaDB metadata directly). None for
+    # unpackaged chunks — the recency prior treats them as neutral.
+    chunk_id: Optional[str] = None
+    pack_id: Optional[str] = None
+    pack_version: Optional[str] = None
+    pack_published_at: Optional[str] = None
 
 
 class DocumentProcessor:

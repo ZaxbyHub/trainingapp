@@ -214,6 +214,24 @@ export interface LearnResultRow {
 export interface CitedChunk {
   chunkId: string;
   score: number;
+  /** C4 (issue #71): pack attribution of the precedence-winning claim; absent/null for unpackaged chunks. */
+  source?: string;
+  packId?: string | null;
+  packVersion?: string | null;
+  packPublishedAt?: string | null;
+}
+
+/**
+ * C4 (issue #71): one /ask citation as serialized on the wire (mirror of the
+ * OpenAPI Citation schema; `page` is always null on this backend, which has
+ * no page column).
+ */
+export interface Citation {
+  source: string;
+  page: number | null;
+  pack_id: string | null;
+  pack_version: string | null;
+  pack_published_at: string | null;
 }
 
 /**
