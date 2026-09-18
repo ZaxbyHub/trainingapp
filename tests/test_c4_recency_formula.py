@@ -46,6 +46,13 @@ def test_ac3_multiplier_boundaries_and_neutral():
     assert recency_multiplier("not-a-date", now=NOW) == 1.0
     # Naive datetime is treated as UTC, not an error.
     assert recency_multiplier(datetime(2026, 9, 18, 12, 0, 0), now=NOW) == 1.0
+    # Naive ISO STRING parses as UTC (PRR-005 Python parity with recency.ts):
+    # identical to the explicit-Z form (184 days is NOT exactly 6x30.44, so
+    # pin parity, not a round multiplier value).
+    assert recency_multiplier("2026-03-18T12:00:00", now=NOW) == pytest.approx(
+        recency_multiplier("2026-03-18T12:00:00Z", now=NOW), rel=1e-12
+    )
+    assert recency_multiplier("2026-03-18T12:00:00", now=NOW) < 1.0
     # Configurable horizon: floor reached at floorMonths.
     assert recency_multiplier(
         months_ago(6), now=NOW, floor=0.5, floor_months=6

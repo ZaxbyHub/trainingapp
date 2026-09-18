@@ -8,6 +8,7 @@ import {
   precedenceWinner,
   recencyMultiplier,
 } from '../../main/backend/retrieval/recency';
+// (precedenceWinner re-exported above; naive-UTC coverage added PRR-005)
 
 const NOW = new Date('2026-09-18T12:00:00.000Z');
 
@@ -23,6 +24,32 @@ describe('c4 recency multiplier (AC3, issue #71)', () => {
     expect(recencyMultiplier(monthsAgo(18), { now: NOW })).toBeCloseTo(0.85, 9);
     // The floor holds past the horizon.
     expect(recencyMultiplier(monthsAgo(36), { now: NOW })).toBeCloseTo(0.85, 9);
+  });
+
+  it('treats timezone-less ISO datetimes as UTC (Python parity, PRR-005)', () => {
+    const naive = '2026-03-18T12:00:00';
+    const explicit = '2026-03-18T12:00:00.000Z';
+    // Naive must equal the explicit-UTC form exactly (184 days is not 6
+    // x 30.44 months, so pin the parity, not a round multiplier value).
+    expect(recencyMultiplier(naive, { now: NOW })).toBeCloseTo(
+      recencyMultiplier(explicit, { now: NOW }),
+      12,
+    );
+    expect(recencyMultiplier(naive, { now: NOW })).toBeLessThan(1);
+    // A naive claim must not lose precedence to its explicit-UTC twin.
+    const claims = new Map([
+      [
+        'chunkH',
+        [
+          { packId: 'pack-a', version: '1.0.0', publishedAt: naive, active: true },
+          { packId: 'pack-b', version: '1.0.0', publishedAt: explicit, active: true },
+        ],
+      ],
+    ]);
+    // Equal instants => publishedAt tie => semver tie => pack-b by id —
+    // proving the naive value parsed to the SAME instant, not local time.
+    const winner = precedenceWinner(claims.get('chunkH') as never);
+    expect(winner?.packId).toBe('pack-b');
   });
 
   it('is neutral for missing/unparseable/future published_at', () => {

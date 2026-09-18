@@ -1712,17 +1712,20 @@ class VectorStore:
             # similarity (ADR-0004 amendment). A None snapshot (no provider
             # or provider failure) leaves the results fully untouched.
             vo_snapshot = self._pack_claims_snapshot()
-            vo_pack_fields: List[Dict[str, Optional[str]]] = []
+            vo_pack_fields: List[Dict[str, Optional[str]]] = [
+                {
+                    "pack_id": meta.get("pack_id"),
+                    "pack_version": meta.get("pack_version"),
+                    "pack_published_at": meta.get("pack_published_at"),
+                }
+                for _doc, meta, _sim in filtered
+            ]
             if vo_snapshot is not None:
                 screened = []
                 seen_ids = set()
-                for doc, meta, sim in filtered:
+                for entry_index, (doc, meta, sim) in enumerate(filtered):
                     pack_id = meta.get("pack_id")
-                    entry_pack = {
-                        "pack_id": pack_id,
-                        "pack_version": meta.get("pack_version"),
-                        "pack_published_at": meta.get("pack_published_at"),
-                    }
+                    entry_pack = vo_pack_fields[entry_index]
                     if pack_id:
                         doc_id = meta.get("doc_id")
                         claims = [

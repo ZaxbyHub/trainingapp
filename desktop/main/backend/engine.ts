@@ -57,9 +57,18 @@ const SETTING_BOUNDS = {
   rag_retrieval_window: { min: 0, max: Number.POSITIVE_INFINITY, type: 'int' },
   rag_initial_retrieval_top_k: { min: 1, max: 50, type: 'int' },
   rag_rerank_top_k: { min: 1, max: 20, type: 'int' },
-  // C4 (issue #71): mirror api_server.py SettingsUpdateRequest bounds.
-  rag_packs_recency_half_life_months: { min: 1, max: 1200, type: 'int' },
-  rag_packs_recency_floor_months: { min: 1, max: 1200, type: 'int' },
+  // C4 (issue #71): mirror api_server.py SettingsUpdateRequest bounds
+  // (ge=1 on the month fields, no upper bound; floor within [0, 1]).
+  rag_packs_recency_half_life_months: {
+    min: 1,
+    max: Number.POSITIVE_INFINITY,
+    type: 'int',
+  },
+  rag_packs_recency_floor_months: {
+    min: 1,
+    max: Number.POSITIVE_INFINITY,
+    type: 'int',
+  },
   rag_packs_recency_floor: { min: 0, max: 1, type: 'float' },
 } as const;
 

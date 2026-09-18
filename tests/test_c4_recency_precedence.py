@@ -483,3 +483,22 @@ def test_provider_failure_degrades_to_neutral_and_latches_once(tmp_path, caplog)
     _ctx, _sources, chunks = store.get_context(query, n_results=5, hybrid_search=True)
     assert store._pack_provider_warned is False
     assert chunks and chunks[0].pack_version == "1.0.0"
+
+
+def test_vector_only_provider_failure_also_degrades_to_neutral(tmp_path):
+    """PRR-012 combination gap (final critic): a raising provider on the
+    vector-only path must leave results untouched, never exclude."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    pm = make_manager(ws)
+    pm.install(copy_fixture("versioned-a-1.0.0", ws / "src"))
+    store = pm.store
+
+    def raising_provider():
+        raise RuntimeError("registry exploded")
+
+    store.pack_status_provider = raising_provider
+    query = fixture_query_text("versioned-a-1.0.0")[:200]
+    _ctx, _sources, chunks = store.get_context(query, n_results=5, hybrid_search=False)
+    assert chunks, "vector-only + provider failure must degrade to neutral"
+    assert any(c.pack_id == "versioned-a" for c in chunks)
