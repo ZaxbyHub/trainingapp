@@ -17,6 +17,7 @@ import { createLoopbackGuard } from '../../main/security/loopback-guard';
 import { openStore, type StoreHandle } from '../../main/backend/store/sqlite-store';
 import { HashEmbedder } from '../../main/backend/ingest/embedder';
 import { createRetrievalSurface } from '../../main/backend/retrieval/hybrid';
+import { CALIBRATED_RELEVANCE_FLOOR } from '../../main/backend/retrieval/config';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -103,7 +104,18 @@ async function startServer(): Promise<Fixture> {
   seed('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)', 'ch-cite', PACK_TEXT);
   seed('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)', 'ch-plain', 'citationszebra plain unpackaged notes zebra');
 
-  const surface = createRetrievalSurface({ store, embedder });
+  // C5 (issue #72): attach a floor-passing reranker so the surface is on
+// the calibrated-floor (rerank) path — the production default — keeping
+// the evidence floor-qualified (grounding 'grounded') and the D6 learn
+// flow unsuppressed.
+  const surface = createRetrievalSurface({
+    store,
+    embedder,
+    // descending-by-window-index: preserves fused rank order (citations/
+    // learn expectations) while keeping every window chunk above the floor
+    reranker: { score: async (_q: string, texts: string[]) => texts.map((_, i) => 0.9 - i * 0.001) },
+    config: { relevanceFloor: CALIBRATED_RELEVANCE_FLOOR },
+  });
   const engine = new StubEngine();
   engine.attachRetrievalSurface(surface);
 

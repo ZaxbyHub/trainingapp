@@ -80,6 +80,16 @@ export interface RetrievalSurface {
       chunkId?: string;
     } & RetrievedChunkAttribution>
   >;
+  /**
+   * C5 (issue #72): true while this surface's returned scores are
+   * floor-qualified — i.e. the calibrated relevance floor actually gated
+   * them (the reranker ran). False when the surface is on a fused,
+   * floor-free path (rerank disabled, no reranker attached, or the reranker
+   * failure latch degraded it), in which case no score proves relevance and
+   * grounding must resolve "general". Optional: engines treat a custom
+   * surface without the flag as floor-qualified (pre-C5 behavior).
+   */
+  readonly floorActive?: boolean;
 }
 
 /** Reciprocal Rank Fusion over ranked chunk-id legs; dedup by chunk id. */
@@ -310,7 +320,15 @@ export function createRetrievalSurface(options: {
   // broken worker on each query while only the log line latched (PRR-004,
   // PR #102 review).
   let reranker = effectiveReranker;
+  // C5 (issue #72): scores are relevance-floor-qualified exactly while the
+  // reranker path is live; the failure latch below flips this off so the
+  // grounding value can never claim a floor decision the pipeline did not
+  // make (see RetrievalSurface.floorActive).
+  let floorActive = effectiveReranker !== null;
   return {
+    get floorActive() {
+      return floorActive;
+    },
     async search(query, nResults) {
       const topK = config.topK ?? 10;
       if (reranker !== null) {
@@ -328,6 +346,7 @@ export function createRetrievalSurface(options: {
             );
           }
           reranker = null;
+          floorActive = false;
         }
       }
       return runSearch(query, nResults, topK, reranker, config, options);

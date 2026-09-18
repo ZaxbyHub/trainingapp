@@ -494,6 +494,52 @@ describe('SSEStreamConsumer', () => {
       });
     });
 
+    it('forwards grounding from the done payload to onDone (issue #72)', async () => {
+      const donePromise = new Promise<any>((resolve) => {
+        consumer.onDone((data) => resolve(data));
+      });
+
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              'data: {"done":true,"sources":["doc1.pdf"],"context_length":100,"inference_time":5,"grounding":"grounded","learn":[],"citations":[]}\n'
+            )
+          );
+          controller.close();
+        },
+      });
+      mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+
+      consumer.start();
+      const received = await donePromise;
+
+      expect(received.grounding).toBe('grounded');
+    });
+
+    it('omits grounding when an older server does not send it (issue #72)', async () => {
+      const donePromise = new Promise<any>((resolve) => {
+        consumer.onDone((data) => resolve(data));
+      });
+
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              'data: {"sources":["doc1.pdf"],"context_length":100,"inference_time":5}\n'
+            )
+          );
+          controller.close();
+        },
+      });
+      mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+
+      consumer.start();
+      const received = await donePromise;
+
+      expect('grounding' in received).toBe(false);
+    });
+
     it('parses error event when data has error field', async () => {
       const errorCallback = vi.fn();
       const errorPromise = new Promise<string>((resolve) => {

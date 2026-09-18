@@ -379,6 +379,9 @@ export class SSEStreamConsumer {
             sources: data.sources,
             context_length: data.context_length,
             inference_time: data.inference_time || 0,
+            // C5 (issue #72): forward the server's grounded/general
+            // provenance when present (older servers omit the field).
+            ...(data.grounding !== undefined ? { grounding: data.grounding } : {}),
             // D6 (issue #82): forward the server's learn rows when present
             // (older servers omit the field; LearnResult[] per contract).
             ...(data.learn !== undefined ? { learn: data.learn } : {}),

@@ -453,11 +453,15 @@ export class LlamaEngine implements EngineSurface {
         };
         if (result.cancelled) out.cancelled = true;
         // C5 (issue #72): grounded/general provenance — non-empty
-        // post-ranking evidence set on a non-cancelled query (hybridRetrieve
-        // already applied the calibrated floor to `cited`; see types.ts
-        // EngineQueryResult.grounding for the no-reranker caveat).
+        // FLOOR-QUALIFIED evidence set on a non-cancelled query. The floor
+        // gates scores only on the reranker path (context.floorActive), so a
+        // fused-path result resolves "general" instead of claiming a
+        // relevance decision the pipeline never made.
         out.grounding =
-          !result.cancelled && context !== null && context.cited.length > 0
+          !result.cancelled &&
+          context !== null &&
+          context.cited.length > 0 &&
+          context.floorActive
             ? 'grounded'
             : 'general';
         // C4 (issue #71): cited chunks ride the internal result so the

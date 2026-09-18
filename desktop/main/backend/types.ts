@@ -261,11 +261,13 @@ export interface EngineQueryResult {
   cited?: CitedChunk[];
   /**
    * C5 (issue #72): grounded/general provenance of the answer's evidence set.
-   * "grounded" iff the final post-ranking evidence set (cited) is non-empty
-   * on a non-cancelled query — hybridRetrieve already applied the calibrated
-   * relevance floor to that set (when the reranker ran, which is the default
-   * and the only path where a floor exists on this backend). Engines stamp
-   * it; the server falls back to "general" for engine doubles that omit it.
+   * "grounded" iff the final post-ranking evidence set is non-empty AND
+   * floor-qualified on a non-cancelled query — the calibrated relevance
+   * floor gates scores only while the reranker path is live
+   * (RetrievalSurface.floorActive), so a fused/rerank-disabled result
+   * resolves "general" rather than claiming a relevance decision the
+   * pipeline did not make. Engines stamp it; the server falls back to
+   * "general" for engine doubles that omit it.
    */
   grounding?: Grounding;
 }

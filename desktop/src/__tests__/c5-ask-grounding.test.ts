@@ -159,9 +159,16 @@ async function askStreamTerminals(port: number, question: string): Promise<Array
 }
 
 describe('c5 /ask grounding (issue #72)', () => {
-  itReal('emits grounding "grounded" when the evidence set survives retrieval', async () => {
+  itReal('emits grounding "grounded" when floor-qualified evidence survives', async () => {
+    // Grounded requires the calibrated-floor (rerank) path: reranker scores
+    // above CALIBRATED_RELEVANCE_FLOOR qualify the evidence.
     const engine = new StubEngine();
-    const { port } = await startServerWith(engine, { seed: true });
+    const reranker: RerankerSurface = { score: async () => [CALIBRATED_RELEVANCE_FLOOR + 0.01] };
+    const { port } = await startServerWith(engine, {
+      seed: true,
+      reranker,
+      surfaceConfig: { relevanceFloor: CALIBRATED_RELEVANCE_FLOOR },
+    });
     const body = await askJson(port, SEEDED_TEXT);
     expect(body['grounding']).toBe('grounded');
 
@@ -169,6 +176,16 @@ describe('c5 /ask grounding (issue #72)', () => {
     expect(terminals).toHaveLength(1);
     expect(terminals[0]['done']).toBe(true);
     expect(terminals[0]['grounding']).toBe('grounded');
+  });
+
+  itReal('emits grounding "general" on the fused (rerank-less) path even with retrieved rows', async () => {
+    // No reranker attached -> no relevance floor ever gated the raw-RRF
+    // scores, so a non-empty result must NOT claim "grounded" (final-critic
+    // revision: floor-qualified evidence only).
+    const engine = new StubEngine();
+    const { port } = await startServerWith(engine, { seed: true });
+    const body = await askJson(port, SEEDED_TEXT);
+    expect(body['grounding']).toBe('general');
   });
 
   itReal('emits grounding "general" when the store yields no evidence', async () => {
