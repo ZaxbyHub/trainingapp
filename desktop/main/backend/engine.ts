@@ -12,6 +12,7 @@ import type {
   EngineQueryOptions,
   EngineQueryResult,
   EngineSurface,
+  Grounding,
   IngestFileInput,
   IngestResult,
   LearnAssembler,
@@ -214,6 +215,11 @@ export class StubEngine implements EngineSurface {
       opts.streamCallback?.(token);
       await delay(tokenDelayMs);
     }
+    // C5 (issue #72): non-empty post-ranking evidence set => "grounded"
+    // (hybridRetrieve already applied the calibrated floor to `cited`;
+    // see types.ts EngineQueryResult.grounding for the no-reranker caveat).
+    const grounding: Grounding =
+      context !== null && context.cited.length > 0 ? 'grounded' : 'general';
     return {
       // STUB answer text is deliberately explicit that this is not real
       // inference yet (B4 #62); the wire shape is what B3 certifies.
@@ -221,15 +227,17 @@ export class StubEngine implements EngineSurface {
       sources: context?.sources ?? [],
       context_length: context?.contextLength ?? 0,
       inference_time: (Date.now() - started) / 1000,
+      grounding,
       // C4 (issue #71): cited chunks ride the internal result so the server
       // serializes pack-attributed citations (never serialized verbatim).
       ...(context !== null ? { cited: context.cited } : {}),
       // D6 (issue #82): learn rows when the assembler is attached and
       // retrieval produced cited chunks; the assembler's null (store closed)
-      // and the assembler-less fixtures both omit the field.
+      // and the assembler-less fixtures both omit the field. C5: the
+      // grounding value rides along so "general" suppresses learn to [].
       ...(context !== null && context.cited.length > 0 && this.learnAssembler !== null
         ? (() => {
-            const learn = this.learnAssembler(context.cited);
+            const learn = this.learnAssembler(context.cited, grounding);
             return learn === null ? {} : { learn };
           })()
         : {}),

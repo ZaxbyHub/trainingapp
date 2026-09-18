@@ -21,10 +21,16 @@ info:
       response payloads since D6 — optional per response, empty when no
       training-slide content contributed or when grounding is "general".
       Clients MUST tolerate its absence on older servers.
-    - Reserved field: `grounding` (object) is RESERVED on ask/ask-stream
-      response payloads for the OpMed learning companion (WS-C #72
-      grounded/general provenance). Servers MUST NOT rely on it and clients
-      MUST tolerate its absence. It is not emitted in this version.
+    - Emitted field: `grounding` (string enum, C5 issue #72) is emitted on
+      ask/ask-stream response payloads (QuestionResponse and every terminal
+      `done` event, including cancelled ones) since C5. Value semantics:
+      "grounded" when at least one chunk of the final evidence set (post
+      version-precedence/dedup/recency ranking) scored at or above the active
+      relevance floor for the current reranker/embedding pair; "general"
+      otherwise (the answer came from general knowledge, or nothing was
+      retrieved). The floor VALUE is owned by retrieval config; this field
+      only surfaces its decision. The Python and Node backends and the
+      browser orchestrator all emit the same enum.
 servers:
   - url: http://127.0.0.1:8080
     description: Local loopback server (default bind)
@@ -489,7 +495,7 @@ components:
           description: Prior conversation turns for contextualized retrieval
     QuestionResponse:
       type: object
-      required: [question, answer, sources, context_length, inference_time]
+      required: [question, answer, sources, context_length, inference_time, grounding]
       properties:
         question:
           type: string
@@ -538,9 +544,9 @@ components:
                 type: string
                 description: Owning training pack id, when known
         grounding:
-          type: object
-          description: RESERVED for WS-C #72 (grounded/general provenance). Not emitted yet.
-          additionalProperties: true
+          type: string
+          enum: [grounded, general]
+          description: Grounded/general provenance (C5, issue #72) - "grounded" when at least one chunk of the final post-ranking evidence set cleared the active relevance floor; "general" otherwise. Required on every response since C5.
     Citation:
       type: object
       description: One cited chunk with knowledge-pack attribution (C4, issue #71).
@@ -580,7 +586,7 @@ components:
               type: string
         - type: object
           title: DoneEvent
-          required: [done, sources, context_length]
+          required: [done, sources, context_length, grounding]
           properties:
             done:
               type: boolean
@@ -630,9 +636,9 @@ components:
               items:
                 $ref: '#/components/schemas/Citation'
             grounding:
-              type: object
-              description: RESERVED for WS-C #72. Not emitted yet.
-              additionalProperties: true
+              type: string
+              enum: [grounded, general]
+              description: Grounded/general provenance (C5, issue #72) on every terminal done event (success and cancelled) - same computation as QuestionResponse.grounding. Required since C5.
         - type: object
           title: ErrorEvent
           required: [error]

@@ -237,9 +237,17 @@ export interface Citation {
 /**
  * Learn assembler (issue #82): derives learn[] rows from the cited chunk
  * ids. Synchronous (better-sqlite3); returns null when learn cannot be
- * computed (store closed) so callers omit the field.
+ * computed (store closed) so callers omit the field. C5 (issue #72): the
+ * second argument carries the answer's grounding value — "general" yields []
+ * (mirrors learn_panel.py and web_ui learn-kernel.ts).
  */
-export type LearnAssembler = (cited: CitedChunk[]) => LearnResultRow[] | null;
+export type LearnAssembler = (
+  cited: CitedChunk[],
+  grounding?: Grounding,
+) => LearnResultRow[] | null;
+
+/** C5 (issue #72): grounded/general provenance (mirrors the OpenAPI enum). */
+export type Grounding = 'grounded' | 'general';
 
 export interface EngineQueryResult {
   answer: string;
@@ -251,6 +259,15 @@ export interface EngineQueryResult {
   learn?: LearnResultRow[];
   /** D6 (issue #82): internal only — NEVER serialized (server builds explicit payloads). */
   cited?: CitedChunk[];
+  /**
+   * C5 (issue #72): grounded/general provenance of the answer's evidence set.
+   * "grounded" iff the final post-ranking evidence set (cited) is non-empty
+   * on a non-cancelled query — hybridRetrieve already applied the calibrated
+   * relevance floor to that set (when the reranker ran, which is the default
+   * and the only path where a floor exists on this backend). Engines stamp
+   * it; the server falls back to "general" for engine doubles that omit it.
+   */
+  grounding?: Grounding;
 }
 
 /**

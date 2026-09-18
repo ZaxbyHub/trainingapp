@@ -474,8 +474,8 @@ export class NodeBackendHost implements BackendHost {
             // packsRoot enriches titles/sections from the installed pack's
             // slide docs; without it the store-derived fallbacks are used.
             if (typeof this.engine.attachLearnAssembler === 'function') {
-              this.engine.attachLearnAssembler((cited) =>
-                assembleLearnResults({ db: this.store !== null ? this.store.db : null, cited, packsRoot: this.config.packsRoot }),
+              this.engine.attachLearnAssembler((cited, grounding) =>
+                assembleLearnResults({ db: this.store !== null ? this.store.db : null, cited, packsRoot: this.config.packsRoot, grounding }),
               );
             }
             // C3 (#70): the pack lifecycle shares the store handle and the

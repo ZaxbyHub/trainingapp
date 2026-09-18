@@ -183,7 +183,7 @@ describe('D7 C5: a stale pin is never silently reused (issue #83 AC5)', () => {
   it('[AC5-RED] a question sent against a stale pin carries NO slide context (never silently reused)', async () => {
     // A fresh generator per call so multiple sends each get events.
     mockOrchestratorInstance.query.mockImplementation(() =>
-      mockRAGEvents([{ type: 'complete', data: { answer: 'ok', sources: [], chunks: [] } }])
+      mockRAGEvents([{ type: 'complete', data: { answer: 'ok', sources: [], chunks: [], grounding: 'grounded' } }])
     );
 
     // CONTROL LEG (red at base, before the feature exists): with a LIVE pin,

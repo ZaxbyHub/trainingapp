@@ -381,6 +381,8 @@ class TestRunEvalMetricMath:
         #   q6: HTTP 500 -> error row, excluded from every denominator
         # recall@1 = 1/3, recall@3 = 2/3, recall@5 = 2/3
         # MRR = (0.5 + 1.0 + 0.0) / 3 = 0.5 ; abstain = 1/2
+        # badge accuracy (C5): 5/5 successful rows carry the expected
+        # grounded/general value (q6 is an error row, excluded).
         scripted = {
             "q1 text": (
                 200,
@@ -390,6 +392,7 @@ class TestRunEvalMetricMath:
                     "sources": ["docB.md", "docA.md"],
                     "context_length": 10,
                     "inference_time": 0.1,
+                    "grounding": "grounded",
                 },
             ),
             "q2 text": (
@@ -400,6 +403,7 @@ class TestRunEvalMetricMath:
                     "sources": ["docB.md", "docC.md"],
                     "context_length": 10,
                     "inference_time": 0.1,
+                    "grounding": "grounded",
                 },
             ),
             "q3 text": (
@@ -411,6 +415,7 @@ class TestRunEvalMetricMath:
                     "sources": ["docC.md", "docB.md"],
                     "context_length": 10,
                     "inference_time": 0.1,
+                    "grounding": "grounded",
                 },
             ),
             "q4 text": (
@@ -422,6 +427,7 @@ class TestRunEvalMetricMath:
                     "sources": [],
                     "context_length": 0,
                     "inference_time": 0.1,
+                    "grounding": "general",
                 },
             ),
             "q5 text": (
@@ -432,6 +438,7 @@ class TestRunEvalMetricMath:
                     "sources": ["docA.md"],
                     "context_length": 10,
                     "inference_time": 0.1,
+                    "grounding": "general",
                 },
             ),
             "q6 text": (500, {"detail": "boom"}),

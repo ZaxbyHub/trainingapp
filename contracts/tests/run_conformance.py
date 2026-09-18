@@ -169,10 +169,18 @@ class Conformance:
                 "sources",
                 "context_length",
                 "inference_time",
+                # C5 (issue #72): grounded/general provenance is required on
+                # every ask response since C5, on every backend.
+                "grounding",
             }
             missing = required - set(body)
             ok = not missing
             detail += f" missing={sorted(missing)}" if missing else " all keys present"
+        if ok:
+            # C5: the value must be the contract enum, not just present.
+            grounding_ok = body.get("grounding") in ("grounded", "general")
+            detail += f" grounding={body.get('grounding')!r}"
+            ok = grounding_ok
         self.record("ask", ok, detail)
 
     @staticmethod
@@ -236,6 +244,8 @@ class Conformance:
                 and terminals[0].get("done") is True
                 and "sources" in terminals[0]
                 and "context_length" in terminals[0]
+                # C5 (issue #72): terminal done events carry provenance.
+                and terminals[0].get("grounding") in ("grounded", "general")
             )
             ok = len(tokens) >= 1 and done_ok
             malformed = sum(1 for e, _ in events if e == "malformed")

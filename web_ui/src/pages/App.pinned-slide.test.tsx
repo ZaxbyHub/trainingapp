@@ -257,7 +257,7 @@ async function* mockRAGEvents(events: RAGEvent[]): AsyncGenerator<RAGEvent> {
 }
 
 const completeEvents = () =>
-  mockRAGEvents([{ type: 'complete', data: { answer: 'ok', sources: [], chunks: [] } }]);
+  mockRAGEvents([{ type: 'complete', data: { answer: 'ok', sources: [], chunks: [], grounding: 'grounded' } }]);
 
 const originalPathname = window.location.pathname;
 const originalSearch = window.location.search;

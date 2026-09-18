@@ -591,9 +591,14 @@ Response:
   "answer": "The main findings indicate...",
   "sources": ["report.pdf"],
   "context_length": 1500,
-  "inference_time": 1.23
+  "inference_time": 1.23,
+  "grounding": "grounded"
 }
 ```
+
+`grounding` (C5, issue #72) is `"grounded"` when at least one chunk of the
+final evidence set cleared the active relevance floor, `"general"` otherwise;
+the chat UI renders it as a per-answer badge.
 
 ---
 

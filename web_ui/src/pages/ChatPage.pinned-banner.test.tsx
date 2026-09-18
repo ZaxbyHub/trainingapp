@@ -260,7 +260,7 @@ describe('D7 C1 (banner): ChatPage pinned-slide banner (issue #83 AC1)', () => {
     );
     mockOrchestratorInstance.query.mockReturnValue(
       mockRAGEvents([
-        { type: 'complete', data: { answer: 'This step welcomes you.', sources: [], chunks: [] } },
+        { type: 'complete', data: { answer: 'This step welcomes you.', sources: [], chunks: [], grounding: 'grounded' } },
       ])
     );
 

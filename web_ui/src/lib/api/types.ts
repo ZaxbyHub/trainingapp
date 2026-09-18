@@ -94,12 +94,17 @@ export interface Citation {
   pack_published_at: string | null;
 }
 
+/** C5 (issue #72): grounded/general provenance (mirror of the OpenAPI enum). */
+export type Grounding = 'grounded' | 'general';
+
 export interface AskResponse {
   question: string;
   answer: string;
   sources: string[];
   context_length: number;
   inference_time: number;
+  /** C5 (issue #72): provenance of the answer's evidence set; tolerate absence on older servers. */
+  grounding?: Grounding;
   learn?: LearnResult[];
   /** C4 (issue #71): pack-attributed per-chunk citations; additive — tolerate absence on older servers. */
   citations?: Citation[];
@@ -196,6 +201,8 @@ export interface StreamDoneEvent {
   sources: string[];
   context_length: number;
   inference_time: number;
+  /** C5 (issue #72): provenance on every terminal done event; tolerate absence on older servers. */
+  grounding?: Grounding;
   /** D6 (issue #82): Learn-panel rows; clients must tolerate absence on older servers. */
   learn?: LearnResult[];
   /** C4 (issue #71): pack-attributed per-chunk citations; additive — tolerate absence on older servers. */

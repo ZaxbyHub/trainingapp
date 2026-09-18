@@ -413,6 +413,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                 page: c.page,
                 text: c.text,
               })),
+              // C5 (issue #72): provenance from either surface (badge input).
+              grounding: data.grounding,
               // D6 (issue #82): Learn-panel rows from either surface.
               learn: data.learn,
               abstain: data.abstain,
@@ -566,6 +568,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
                 streamManager.complete({
                   sources,
                   chunks: event.data.chunks,
+                  grounding: event.data.grounding,
                   learn: event.data.learn,
                   abstain: event.data.abstain,
                   abstainReason: event.data.abstainReason,

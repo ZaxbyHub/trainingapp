@@ -47,6 +47,11 @@ the schema (a validator enforces this header).
 | `expected_training_slide_id` | string or null | raw Storyline slide id; populated since D6 (issue #82) for `training` rows whose doc is a slide fixture under `corpus/slides/` — the Learn hit@3 metric is computed over exactly these rows |
 | `category` | string | one of the taxonomy values below |
 
+Expected grounding (C5, issue #72) is DERIVED, not stored: a row with an
+`expected_doc_id` expects `grounding: "grounded"`; an out-of-corpus row
+expects `grounding: "general"`. The badge-accuracy metric is computed over
+that derived label.
+
 Contract: 50-80 rows total; at least 5 out-of-corpus rows
 (`expected_doc_id` null, `category` `"out-of-corpus"`); every category value
 must appear in this README; ids unique.
@@ -103,6 +108,12 @@ One `POST /ask` per question with `n_results=10` (contract maximum).
   `fallback_count`. A `[Cancelled]` answer is an error row.
 - **latency p50/p95**: milliseconds over SUCCESSFUL requests only; error rows
   are excluded from every metric denominator and reported via `error_count`.
+- **badge accuracy** (C5, issue #72): fraction of successful questions where
+  the emitted `grounding` equals the derived expected label above.
+  **Report-only** — the initial target is `>= 0.80` and is deliberately
+  NON-BLOCKING: the run reports the number, it does not gate on it. A
+  response missing the `grounding` key is a contract error row (excluded from
+  the denominator).
 
 Exit codes: 0 = run completed (scores are informational — a low score is a
 measurement, not a failure); 1 = structural failure (backend unreachable,

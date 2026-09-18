@@ -121,6 +121,10 @@ export type RAGEvent =
         /** The exact contextChunks array passed to buildContext, in order. The
          *  model's [1],[2] citations map onto this array by index. */
         chunks: SearchResult[];
+        /** C5 (issue #72): "grounded" when at least one chunk survived the
+         *  relevance floor AND the token budget (the same decision that
+         *  gates abstention); "general" otherwise. Mirrors the API enum. */
+        grounding: 'grounded' | 'general';
         /** Learn-panel rows (issue #82): "where to learn this" deep links. */
         learn?: LearnResult[];
         /** True when the pipeline abstained instead of answering (F2). */
@@ -505,6 +509,13 @@ export class RAGOrchestrator {
     }
     contextChunks = budgeted;
 
+    // C5 (issue #72): grounded/general provenance. Stamped AFTER the F11
+    // budget trim and BEFORE the abstention check so every complete event
+    // (abstain short-circuit included, and the image-question fall-through
+    // with zero text chunks) carries the same decision the abstention gate
+    // just made: non-empty surviving evidence => "grounded".
+    const grounding: 'grounded' | 'general' = contextChunks.length > 0 ? 'grounded' : 'general';
+
     // F2: abstention. If no chunks survive the floor AND budget, short-circuit
     // BEFORE generation so the model never answers from pretrained knowledge
     // with no source. The UI renders a visually distinct abstention state.
@@ -520,6 +531,7 @@ export class RAGOrchestrator {
           answer: '',
           sources: [],
           chunks: [],
+          grounding,
           // D6 (issue #82): no cited chunks → no learn results.
           learn: [],
           abstain: true,
@@ -595,13 +607,14 @@ export class RAGOrchestrator {
     // linked slides of the cited chunks (browser surface: no links store —
     // the linked half is the documented #76 divergence), ranked and deduped
     // by the same kernel the other surfaces run.
-    const learn = buildLearnResults(contextChunks);
+    const learn = buildLearnResults(contextChunks, { grounding });
     yield {
       type: 'complete',
       data: {
         answer: fullAnswer,
         sources,
         chunks: contextChunks,
+        grounding,
         learn,
         retrievalDegraded,
         contextTrimmed: droppedForBudget > 0 ? droppedForBudget : undefined,
