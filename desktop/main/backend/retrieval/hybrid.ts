@@ -56,6 +56,10 @@ export interface HybridRetrievalOptions {
   relevanceFloor?: number;
   /** Recency multiplier per fused chunk; default recencyWeight (inert until C4/#71). */
   recency?: (chunk: RetrievedChunk) => number;
+  /** C4 (issue #71) packs.recency.floor override; default 0.85 (recency.ts). */
+  packsRecencyFloor?: number;
+  /** C4 (issue #71) packs.recency.floorMonths override; default 18 (recency.ts). */
+  packsRecencyFloorMonths?: number;
 }
 
 export interface RetrievedChunkAttribution {
@@ -218,7 +222,10 @@ export async function hybridRetrieve(
       }));
     packMetadataByChunk.set(chunkId, claims);
   }
-  const ranked = applyRecencyPrior([...fused.entries()], packMetadataByChunk);
+  const ranked = applyRecencyPrior([...fused.entries()], packMetadataByChunk, {
+    floor: options.packsRecencyFloor,
+    floorMonths: options.packsRecencyFloorMonths,
+  });
 
   // Winning claim per surviving chunk for citation attribution.
   const winnerByChunk = new Map<string, PackClaim>();
@@ -290,6 +297,8 @@ export function createRetrievalSurface(options: {
     rerank?: boolean;
     rrfK?: number;
     relevanceFloor?: number;
+    packsRecencyFloor?: number;
+    packsRecencyFloorMonths?: number;
   };
 }): RetrievalSurface {
   const config = options.config ?? {};
@@ -331,7 +340,14 @@ async function runSearch(
   nResults: number | undefined,
   topK: number,
   reranker: RerankerSurface | null,
-  config: { candidateMultiplier?: number; rerank?: boolean; rrfK?: number; relevanceFloor?: number },
+  config: {
+    candidateMultiplier?: number;
+    rerank?: boolean;
+    rrfK?: number;
+    relevanceFloor?: number;
+    packsRecencyFloor?: number;
+    packsRecencyFloorMonths?: number;
+  },
   options: { store: StoreHandle; embedder: EmbeddingSurface },
 ): Promise<Array<{ text: string; source: string; similarity: number }>> {
   const chunks = await hybridRetrieve(query, {
@@ -344,6 +360,10 @@ async function runSearch(
     // The floor is meaningful only when a reranker will run (hybridRetrieve
     // enforces the same rule internally; passing it unconditionally is safe).
     relevanceFloor: config.relevanceFloor,
+    // C4 (issue #71): resolved packs.recency.* values reach the prior so the
+    // env contract is honored end to end, not merely parsed.
+    packsRecencyFloor: config.packsRecencyFloor,
+    packsRecencyFloorMonths: config.packsRecencyFloorMonths,
   });
   return chunks.slice(0, nResults ?? topK).map((chunk) => ({
     text: chunk.text,
