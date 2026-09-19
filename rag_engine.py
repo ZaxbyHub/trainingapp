@@ -266,6 +266,13 @@ class RAGEngine:
         self._save_config()
         self._log_init_banner("RAG Engine Ready")
 
+    def set_pack_manager(self, pack_manager) -> None:
+        """C7 (issue #74): share ONE PackManager between the API /packs routes
+        and the engine's recency-prior provider (the module-level registry
+        lock already spans instances; the shared handle gives the routes and
+        the provider the same view)."""
+        self._shared_pack_manager = pack_manager
+
     def _pack_status_provider(self):
         """Active pack claims for the C4 recency/precedence prior (issue #71).
 
@@ -275,6 +282,9 @@ class RAGEngine:
         """
         from pack_manager import PackManager
 
+        shared = getattr(self, "_shared_pack_manager", None)
+        if shared is not None:
+            return shared.active_pack_claims()
         return PackManager(self.vector_store).active_pack_claims()
 
     def _init_llm(self, gguf_path: Optional[str]):

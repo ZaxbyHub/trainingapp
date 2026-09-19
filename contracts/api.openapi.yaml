@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Document Q&A API
-  version: "2.5.0"
+  version: "2.6.0"
   description: |
     RAG-based document question answering API.
 
@@ -387,6 +387,134 @@ paths:
                 $ref: "#/components/schemas/StatusModelsResponse"
         "503":
           description: Model status is not wired on this host
+
+  /packs:
+    get:
+      tags: [packs]
+      summary: List installed knowledge pack versions (C7, issue #74)
+      description: >
+        One entry per installed (pack id, version) row of the pack registry,
+        with the manifest display fields the renderer's Knowledge Packs panel
+        shows. `active` marks the currently served version of a pack; every
+        other installed version lists as superseded. `name`/`source_class`
+        are nullable for registries written before those manifest fields were
+        persisted (the C4 published_at additive pattern); live installs carry
+        them. Transport-token-guarded like every route. A host without a pack
+        manager answers 503 (the path is known, never 404).
+      operationId: listPacks
+      responses:
+        "200":
+          description: Installed pack versions (possibly empty)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PacksListResponse"
+        "503":
+          description: Pack management is not wired on this host
+
+  /packs/install:
+    post:
+      tags: [packs]
+      summary: Install a knowledge pack from an uploaded .zip (C7, issue #74)
+      description: >
+        Accepts a zipped pack folder (manifest `pack.json` at the archive
+        root). The server safely extracts the archive to a temporary folder
+        (relative forward-slash paths only, no symlink entries, total
+        uncompressed size capped, manifest presence required) and drives the
+        pack manager's folder install — schema validation, sha256
+        verification, embedding compatibility and chunk ingestion all behave
+        exactly as a folder install. Installation semantics (supersede,
+        downgrade refusal, update-in-place) are the C2/C3 lifecycle.
+        Transport-token-guarded like every route.
+      operationId: installPack
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: ".zip knowledge pack archive, max 50MB"
+      responses:
+        "200":
+          description: Installation outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstallPackResponse"
+        "400":
+          description: Missing/invalid file part or not a zip archive
+        "409":
+          description: Pack manager refused the install (downgrade, already active, invalid pack)
+        "413":
+          description: File exceeds the 50MB limit
+        "503":
+          description: Pack management is not wired on this host
+
+  /packs/rollback:
+    post:
+      tags: [packs]
+      summary: Roll a pack back to an installed older version (C7, issue #74)
+      description: >
+        Deactivates the currently active version of the pack and reactivates
+        the requested installed version (C2/C3 lifecycle semantics). Reversible
+        by rolling forward again.
+      operationId: rollbackPack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackRollbackRequest"
+      responses:
+        "200":
+          description: Rollback applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackRollbackResponse"
+        "409":
+          description: Rollback refused (target version not installed, store unavailable)
+        "422":
+          description: Request validation failed
+        "503":
+          description: Pack management is not wired on this host
+
+  /packs/remove:
+    post:
+      tags: [packs]
+      summary: Remove an installed pack version (or all versions) (C7, issue #74)
+      description: >
+        Deletes the pack's documents, chunks and registry row(s) — the
+        irreversible removal of the C2/C3 lifecycle. With `version` the
+        removal targets that installed version; without it every installed
+        version of the pack is removed. `removed` counts the registry rows
+        deleted.
+      operationId: removePack
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PackRemoveRequest"
+      responses:
+        "200":
+          description: Removal applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PackRemoveResponse"
+        "409":
+          description: Removal refused (store unavailable)
+        "422":
+          description: Request validation failed
+        "503":
+          description: Pack management is not wired on this host
+
 components:
   securitySchemes:
     bearerAuth:
@@ -572,6 +700,103 @@ components:
           nullable: true
           format: date-time
           description: Pack manifest published_at (RFC3339) used by the recency prior; null for unpackaged documents
+    PackInfo:
+      type: object
+      description: One installed knowledge pack version (C7, issue #74).
+      required: [pack_id, version, name, source_class, published_at, active, supersedes]
+      properties:
+        pack_id:
+          type: string
+          description: Pack manifest id
+        version:
+          type: string
+          description: Pack version (semver 2.0.0)
+        name:
+          type: string
+          nullable: true
+          description: Pack manifest display name; null for registries written before the field was persisted
+        source_class:
+          type: string
+          nullable: true
+          enum: [bundled, training, user]
+          description: Pack manifest source class; null for registries written before the field was persisted
+        published_at:
+          type: string
+          nullable: true
+          format: date-time
+          description: Pack manifest published_at (RFC3339); null when not recorded
+        active:
+          type: boolean
+          description: True when this version is the pack's currently served version
+        supersedes:
+          type: array
+          items:
+            type: string
+          description: "id@version entries this installation superseded at install time"
+    PacksListResponse:
+      type: object
+      required: [packs]
+      properties:
+        packs:
+          type: array
+          items:
+            $ref: "#/components/schemas/PackInfo"
+    InstallPackResponse:
+      type: object
+      description: Result of installing an uploaded .zip pack (C7, issue #74). Server-filesystem paths are deliberately not exposed.
+      required: [pack_id, version, docs_installed, chunks_added, superseded, warnings]
+      properties:
+        pack_id:
+          type: string
+        version:
+          type: string
+        docs_installed:
+          type: integer
+          description: Number of manifest docs installed
+        chunks_added:
+          type: integer
+          description: Number of chunks embedded and added to the store
+        superseded:
+          type: array
+          items:
+            type: string
+          description: "id@version rows deactivated by this install"
+        warnings:
+          type: array
+          items:
+            type: string
+          description: Non-fatal install notes (e.g. unresolved supersedes entries)
+    PackRollbackRequest:
+      type: object
+      required: [pack_id, to_version]
+      properties:
+        pack_id:
+          type: string
+        to_version:
+          type: string
+          description: Installed version to reactivate
+    PackRollbackResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+    PackRemoveRequest:
+      type: object
+      required: [pack_id]
+      properties:
+        pack_id:
+          type: string
+        version:
+          type: string
+          description: Remove only this installed version; omit to remove every installed version of the pack
+    PackRemoveResponse:
+      type: object
+      required: [removed]
+      properties:
+        removed:
+          type: integer
+          description: Number of registry rows (pack versions) deleted
     StreamEvent:
       description: |
         One SSE `data` payload (JSON). Discriminated by field presence, NOT by a

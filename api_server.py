@@ -8,6 +8,7 @@ import contextlib
 import json
 import logging
 import os
+import shutil
 import sys
 import threading
 import unicodedata
@@ -27,6 +28,7 @@ from auth import get_auth_status, require_auth
 from config import get_settings, settings
 from learn_panel import build_learn_results
 from llm_interface import QueryCancelled
+from pack_manager import PackManager, PackManagerError
 from rag_engine import GROUNDING_GENERAL, RAGConfig, RAGEngine, grounding_for_result
 
 # rag_engine converts a cancelled query into a normal QueryResult whose answer
@@ -179,6 +181,12 @@ def sanitize_filename(filename: str) -> Tuple[str, str]:
 
 # Global engine instance
 engine: Optional[RAGEngine] = None
+
+# C7 (issue #74): shared PackManager over the engine's vector store. Constructed
+# in the lifespan once the engine owns its store; when construction fails (or
+# under conformance stubs, where the lifespan does not run) the /packs routes
+# answer their documented unwired 503.
+pack_manager: Optional[PackManager] = None
 
 
 class QuestionRequest(BaseModel):
@@ -438,7 +446,7 @@ class StatsResponse(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan handler for startup/shutdown."""
-    global engine
+    global engine, pack_manager
 
     print("Starting Document Q&A API Server...")
 
@@ -489,6 +497,16 @@ async def lifespan(app: FastAPI):
             config=config,
             gguf_path=gguf_path,
         )
+
+        # C7 (issue #74): one shared PackManager for the /packs routes and the
+        # engine's recency-prior provider. Non-fatal: a failed construction
+        # leaves the routes at their documented unwired 503.
+        try:
+            pack_manager = PackManager(engine.vector_store)
+            engine.set_pack_manager(pack_manager)
+        except Exception as e:  # pragma: no cover - degraded packs surface
+            logger.warning("Pack management unavailable: %s", e)
+            pack_manager = None
 
         yield
 
@@ -663,6 +681,201 @@ async def get_status_models(auth: dict = Security(require_auth())):
     raise HTTPException(
         status_code=503, detail="Model status is not wired on this host"
     )
+
+
+# --- C7 (issue #74): knowledge pack lifecycle -------------------------------
+# Same wire shapes as the Node backend (desktop/main/backend/server.ts) and
+# the same zip-extraction guard matrix as
+# desktop/main/backend/packs/zip-install.ts — keep the two matrices identical
+# (G1 manifest presence, G2 relative forward-slash contained paths, G3 symlink
+# refusal, G4 uncompressed size cap); deep hardening stays C8 (#75).
+
+PACK_ZIP_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+PACK_ZIP_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+PACK_ZIP_MAX_ENTRIES = 2000
+
+
+class PackRollbackRequest(BaseModel):
+    """POST /packs/rollback body."""
+
+    pack_id: str = Field(..., min_length=1, max_length=200)
+    to_version: str = Field(..., min_length=1, max_length=50)
+
+
+class PackRemoveRequest(BaseModel):
+    """POST /packs/remove body."""
+
+    pack_id: str = Field(..., min_length=1, max_length=200)
+    version: Optional[str] = Field(default=None, min_length=1, max_length=50)
+
+
+def _require_pack_manager() -> PackManager:
+    if pack_manager is None:
+        raise HTTPException(
+            status_code=503, detail="Pack management is not wired on this host"
+        )
+    return pack_manager
+
+
+def _extract_pack_zip(content: bytes, filename: str) -> str:
+    """Extract an uploaded pack zip into a temp dir (guard matrix as above).
+    Returns the temp dir; the caller removes it. Refusals raise
+    PackManagerError so the route maps them to the contract's 409."""
+    import io
+    import tempfile
+    import zipfile
+
+    if not filename.lower().endswith(".zip"):
+        raise PackManagerError(f"{filename}: pack install accepts .zip archives only")
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(content))
+    except zipfile.BadZipFile as e:
+        raise PackManagerError(f"{filename}: not a readable zip archive: {e}") from e
+
+    names = archive.namelist()
+    if len(names) > PACK_ZIP_MAX_ENTRIES:
+        raise PackManagerError(
+            f"{filename}: archive has {len(names)} entries, over the "
+            f"{PACK_ZIP_MAX_ENTRIES} entry cap"
+        )
+
+    # Safest-first ordering: validate every entry path (G2/G3) before the
+    # manifest-presence check (G1), so a hostile archive is refused on its
+    # path shape regardless of what else it carries.
+    for info in archive.infolist():
+        name = info.filename
+        if not name or "\\" in name or name.startswith("/") or ".." in name.split("/"):
+            raise PackManagerError(f"{filename}: unsafe archive entry path {name}")
+        if ((info.external_attr >> 16) & 0o170000) == 0o120000:
+            raise PackManagerError(
+                f"{filename}: symlink archive entry {name} is not allowed"
+            )
+
+    if "pack.json" not in names and "./pack.json" not in names:
+        raise PackManagerError(f"{filename}: no pack.json manifest at the archive root")
+
+    # Cheap pre-filter on declared sizes (central-directory metadata is
+    # spoofable, so this is an early-abort only — G4 below counts the bytes
+    # ACTUALLY written, which is what an attacker cannot lie about).
+    if sum(i.file_size for i in archive.infolist()) > PACK_ZIP_MAX_UNCOMPRESSED_BYTES:
+        raise PackManagerError(
+            f"{filename}: archive expands beyond the "
+            f"{PACK_ZIP_MAX_UNCOMPRESSED_BYTES} byte cap"
+        )
+
+    total = 0
+    tmp_root = tempfile.mkdtemp(prefix="pack-install-")
+    try:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            target = os.path.join(tmp_root, *info.filename.split("/"))
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with archive.open(info) as src, open(target, "wb") as dst:
+                while True:
+                    chunk = src.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > PACK_ZIP_MAX_UNCOMPRESSED_BYTES:
+                        raise PackManagerError(
+                            f"{filename}: archive expands beyond the "
+                            f"{PACK_ZIP_MAX_UNCOMPRESSED_BYTES} byte cap"
+                        )
+                    dst.write(chunk)
+    except Exception:
+        shutil.rmtree(tmp_root, ignore_errors=True)
+        raise
+    return tmp_root
+
+
+@app.get("/packs")
+async def list_packs(auth: dict = Security(require_auth())):
+    """List installed knowledge pack versions (issue #74, C7)."""
+    pm = _require_pack_manager()
+    try:
+        records = pm.list_installed()
+    except PackManagerError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {
+        "packs": [
+            {
+                "pack_id": r.pack_id,
+                "version": r.version,
+                "name": r.name,
+                "source_class": r.source_class,
+                "published_at": r.published_at,
+                "active": r.active,
+                "supersedes": list(r.supersedes),
+            }
+            for r in records
+        ]
+    }
+
+
+@app.post("/packs/install")
+async def install_pack(
+    file: UploadFile = File(...), auth: dict = Security(require_auth())
+):
+    """Install a knowledge pack from an uploaded .zip (issue #74, C7)."""
+    pm = _require_pack_manager()
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename is required")
+    content = await file.read()
+    if len(content) > PACK_ZIP_MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="File too large. Maximum size is 50MB. Uploaded file is "
+            f"{len(content) / (1024 * 1024):.1f}MB",
+        )
+    try:
+        tmp_dir = await asyncio.to_thread(_extract_pack_zip, content, file.filename)
+    except PackManagerError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    try:
+        try:
+            # Off-loop: extraction+ingest are CPU/IO bound sync work; run them
+            # in a worker thread so concurrent /ask requests are not starved
+            # (review round: the other long-running engine ops already do this).
+            result = await asyncio.to_thread(pm.install, tmp_dir)
+        except PackManagerError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return {
+        "pack_id": result.pack_id,
+        "version": result.version,
+        "docs_installed": result.docs_installed,
+        "chunks_added": result.chunks_added,
+        "superseded": result.superseded,
+        "warnings": result.warnings,
+    }
+
+
+@app.post("/packs/rollback")
+async def rollback_pack(
+    request: PackRollbackRequest, auth: dict = Security(require_auth())
+):
+    """Roll a pack back to an installed older version (issue #74, C7)."""
+    pm = _require_pack_manager()
+    try:
+        pm.rollback(request.pack_id, request.to_version)
+    except PackManagerError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"ok": True}
+
+
+@app.post("/packs/remove")
+async def remove_pack(
+    request: PackRemoveRequest, auth: dict = Security(require_auth())
+):
+    """Remove an installed pack version, or every version of a pack (C7)."""
+    pm = _require_pack_manager()
+    try:
+        removed = pm.remove(request.pack_id, request.version)
+    except PackManagerError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return {"removed": removed}
 
 
 @app.post("/ask", response_model=QuestionResponse)

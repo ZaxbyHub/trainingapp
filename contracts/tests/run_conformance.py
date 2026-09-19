@@ -370,6 +370,57 @@ class Conformance:
             ok = {"document_count", "chunk_count", "embedding_model"} <= set(body)
         self.record("stats", ok, detail)
 
+    async def check_packs_list(self):
+        """C7 (issue #74): GET /packs lists installed pack versions, or the
+        documented 503 when the host has no pack manager wired. Route-body
+        behavior for install/rollback/remove is pinned by tests/test_c7_packs.py;
+        this check pins the list shape and the degradation shape so a drift to
+        404/500 cannot pass silently."""
+        r = await self.get("/packs")
+        if r.status_code == 503:
+            # Unwired host: contract-conformant degradation (same convention
+            # as /status/models on the Python surface).
+            body = {}
+            try:
+                body = r.json()
+            except ValueError:
+                pass
+            ok = "detail" in body
+            self.record(
+                "packs_list",
+                ok,
+                "unwired-503" if ok else "unwired-503 missing detail",
+            )
+            return
+        ok = r.status_code == 200
+        detail = f"status={r.status_code}"
+        if ok:
+            body = r.json()
+            packs = body.get("packs")
+            # Full required-key set from the PackInfo schema (name/source_class/
+            # published_at are nullable, so presence is what's asserted).
+            required = {
+                "pack_id",
+                "version",
+                "name",
+                "source_class",
+                "published_at",
+                "active",
+                "supersedes",
+            }
+            ok = isinstance(packs, list) and all(
+                isinstance(p, dict)
+                and isinstance(p.get("pack_id"), str)
+                and isinstance(p.get("version"), str)
+                and isinstance(p.get("active"), bool)
+                and isinstance(p.get("supersedes"), list)
+                and required <= set(p.keys())
+                for p in packs
+            )
+            if not ok:
+                detail += " packs entries missing required PackInfo fields"
+        self.record("packs_list", ok, detail)
+
     async def check_contract_drift(self, app=None):
         """Spec paths must equal the app's live OpenAPI paths (asgi only)."""
         if not self.asgi or app is None:
@@ -453,6 +504,7 @@ async def run(
             await results.check_documents_delete(safe)
             await results.check_settings_roundtrip()
             await results.check_stats()
+            await results.check_packs_list()
             await results.check_contract_drift(app)
         else:
             await results.check_health()
@@ -466,6 +518,7 @@ async def run(
             await results.check_documents_delete(safe)
             await results.check_settings_roundtrip()
             await results.check_stats()
+            await results.check_packs_list()
             results.skip("contract_drift", "--base-url mode")
 
     if asgi_target:

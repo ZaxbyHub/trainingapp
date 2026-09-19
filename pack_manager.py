@@ -54,6 +54,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -183,6 +184,10 @@ class PackRecord:
     # recency prior can rank without re-reading managed manifests. Registries
     # written before C4 load as None -> neutral multiplier.
     published_at: Optional[str] = None
+    # C7 (issue #74): manifest display fields surfaced by GET /packs, persisted
+    # additively with the same None-fallback pattern for pre-C7 registry rows.
+    name: Optional[str] = None
+    source_class: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -193,6 +198,8 @@ class PackRecord:
             "supersedes": list(self.supersedes),
             "docs": {path: dict(info) for path, info in self.docs.items()},
             "published_at": self.published_at,
+            "name": self.name,
+            "source_class": self.source_class,
         }
 
     @classmethod
@@ -205,6 +212,8 @@ class PackRecord:
             supersedes=list(data.get("supersedes", [])),
             docs={path: dict(info) for path, info in data.get("docs", {}).items()},
             published_at=data.get("published_at"),
+            name=data.get("name"),
+            source_class=data.get("source_class"),
         )
 
 
@@ -527,7 +536,17 @@ class PackManager:
                 if target not in outgoing:
                     outgoing.append(target)
 
-            # managed copy; source path is never referenced again
+            # managed copy; source path is never referenced again.
+            # Refuse symlinked sources BEFORE copying (parity with the Node
+            # install path's copyPackTreeRejectingLinks): default copytree
+            # would follow links and copy their targets into the managed dir.
+            for root, dirs, files in os.walk(source):
+                for entry in dirs + files:
+                    full = os.path.join(root, entry)
+                    if os.path.islink(full):
+                        raise PackManagerError(
+                            f"{source}: refusing symlink/junction in pack source: {full}"
+                        )
             managed = self.packs_root / pack_id / version
             try:
                 if managed.exists():
@@ -577,6 +596,9 @@ class PackManager:
                     # C4 (issue #71): additive; queried per-keystroke by the
                     # recency prior instead of re-reading the manifest.
                     "published_at": manifest.get("published_at"),
+                    # C7 (issue #74): display fields for GET /packs.
+                    "name": manifest.get("name"),
+                    "source_class": manifest.get("source_class"),
                 }
             )
             self._save_rows(rows)
@@ -674,7 +696,4 @@ class PackManager:
 
     def list_installed(self) -> List[PackRecord]:
         with _registry_lock:
-            return [
-                PackRecord.from_dict(row)  # type: ignore[arg-type]
-                for row in self._rows()
-            ]
+            return [PackRecord.from_dict(row) for row in self._rows()]  # type: ignore[arg-type]

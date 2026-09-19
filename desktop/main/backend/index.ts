@@ -23,6 +23,7 @@ import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
 import { StoreDocumentSurface } from './store/document-surface.js';
 import { PackManager } from './store/pack-manager.js';
+import { createPackSurface } from './packs/surface.js';
 import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
@@ -350,6 +351,10 @@ export class NodeBackendHost implements BackendHost {
       modelStatus: typeof this.engine.modelStatus === 'function'
         ? () => this.engine.modelStatus!()
         : undefined,
+      // C7 (issue #74): pack lifecycle surface. Provider shape — the
+      // PackManager is constructed lazily with the store (see the recovery
+      // path below), so resolve it per request; null -> contract-safe 503.
+      packs: () => (this.packManager === null ? null : createPackSurface(this.packManager)),
       persistSettings,
     });
     try {

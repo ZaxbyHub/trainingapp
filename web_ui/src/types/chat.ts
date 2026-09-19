@@ -25,6 +25,12 @@ export interface CitationRef {
   page?: number;
   /** Chunk text (or a snippet) shown on click-through. */
   text?: string;
+  /** C7 (issue #74): owning knowledge pack id, when the chunk came from a pack. */
+  packId?: string;
+  /** C7 (issue #74): active pack version the cited chunk is attributed to. */
+  packVersion?: string;
+  /** C7 (issue #74): pack manifest published_at (RFC3339), when known. */
+  packPublishedAt?: string;
 }
 
 /** Cross-page navigation into the embedded training player (D6, issue #82). */

@@ -10,6 +10,12 @@ import type {
   UploadBatchResponse,
   IngestDirectoryResponse,
   DeleteDocumentsResponse,
+  PackInfo,
+  PacksListResponse,
+  InstallPackResult,
+  InstallPackWireResponse,
+  PackRollbackResponse,
+  PackRemoveResponse,
   AskResponse,
   SearchResponse,
   SettingsUpdate,
@@ -265,6 +271,120 @@ export class ApiClient {
     const response = await fetch(`${this.baseUrl}/documents`, {
       method: 'DELETE',
       headers: this.requestHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await parseErrorResponse(response));
+    }
+
+    return response.json();
+  }
+
+  /**
+   * C7 (issue #74): list installed knowledge pack versions.
+   * @returns Promise resolving to every installed (pack, version) row
+   * @throws ApiError if the request fails (503 when packs are unwired)
+   */
+  async listPacks(): Promise<PackInfo[]> {
+    if (!isOnline()) {
+      throw new ApiError(0, 'Network unavailable. Please check your connection.');
+    }
+
+    const response = await fetch(`${this.baseUrl}/packs`, {
+      headers: this.requestHeaders(),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await parseErrorResponse(response));
+    }
+
+    // Map the wire rows to the UI's camelCase PackInfo at this boundary —
+    // everything above the ApiClient consumes PackInfo, never wire shapes.
+    const body = (await response.json()) as PacksListResponse;
+    return body.packs.map((p) => ({
+      packId: p.pack_id,
+      version: p.version,
+      name: p.name,
+      sourceClass: p.source_class,
+      publishedAt: p.published_at,
+      active: p.active,
+      supersedes: p.supersedes,
+    }));
+  }
+
+  /**
+   * C7 (issue #74): install a knowledge pack from a .zip file.
+   * @param file - The .zip pack archive (validated server-side)
+   * @returns Promise resolving to the install outcome
+   * @throws ApiError if the request fails (409 on manager refusal)
+   */
+  async installPack(file: File): Promise<InstallPackResult> {
+    if (!isOnline()) {
+      throw new ApiError(0, 'Network unavailable. Please check your connection.');
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`${this.baseUrl}/packs/install`, {
+      method: 'POST',
+      headers: this.multipartHeaders(),
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await parseErrorResponse(response));
+    }
+
+    const body = (await response.json()) as InstallPackWireResponse;
+    return { packId: body.pack_id, version: body.version };
+  }
+
+  /**
+   * C7 (issue #74): roll a pack back to an installed older version.
+   * @param packId - The pack manifest id
+   * @param toVersion - The installed version to reactivate
+   * @throws ApiError if the request fails (409 on manager refusal)
+   */
+  async rollbackPack(packId: string, toVersion: string): Promise<PackRollbackResponse> {
+    if (!isOnline()) {
+      throw new ApiError(0, 'Network unavailable. Please check your connection.');
+    }
+
+    const response = await fetch(`${this.baseUrl}/packs/rollback`, {
+      method: 'POST',
+      headers: this.requestHeaders(),
+      body: JSON.stringify({ pack_id: packId, to_version: toVersion }),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await parseErrorResponse(response));
+    }
+
+    return response.json();
+  }
+
+  /**
+   * C7 (issue #74): remove an installed pack version (or all versions).
+   * @param packId - The pack manifest id
+   * @param version - Optional version; omitted removes every installed version
+   * @returns Promise resolving to the number of registry rows removed
+   * @throws ApiError if the request fails (409 on manager refusal)
+   */
+  async removePack(packId: string, version?: string): Promise<PackRemoveResponse> {
+    if (!isOnline()) {
+      throw new ApiError(0, 'Network unavailable. Please check your connection.');
+    }
+
+    const body: { pack_id: string; version?: string } = { pack_id: packId };
+    if (version !== undefined) {
+      body.version = version;
+    }
+
+    const response = await fetch(`${this.baseUrl}/packs/remove`, {
+      method: 'POST',
+      headers: this.requestHeaders(),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

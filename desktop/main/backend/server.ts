@@ -19,10 +19,15 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { originAllowed, type LoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from '../security/defaults.js';
-import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type Citation, type CitedChunk, type EngineQueryResult, type EngineSurface, type Grounding, type IngestFileInput, type ModelStatus } from './types.js';
+import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type Citation, type CitedChunk, type EngineQueryResult, type EngineSurface, type Grounding, type IngestFileInput, type ModelStatus, type PackSurface } from './types.js';
+import { PackManagerError } from './store/pack-manager.js';
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)
+/** C7 review round: the /packs/install CONTRACT cap is 50MB — enforced here
+ * explicitly after the buffer read (the 60MB multipart headroom absorbs form
+ * boundaries) so both backends refuse the same oversized uploads. */
+const PACK_ZIP_UPLOAD_CAP_BYTES = 50 * 1024 * 1024;
 
 export interface BackendServerOptions {
   guard: LoopbackGuard;
@@ -57,6 +62,14 @@ export interface BackendServerOptions {
    */
   modelStatus?: () => ModelStatus;
   /**
+   * C7 (issue #74): the pack lifecycle surface behind the /packs routes.
+   * Provider FUNCTION shape (`() => PackSurface | null`) because the host
+   * constructs its PackManager lazily with the store. When absent (or the
+   * provider returns null) the known routes degrade to a contract-safe 503 —
+   * never 404 (same convention as telemetry/modelStatus).
+   */
+  packs?: () => PackSurface | null;
+  /**
    * B9 (issue #67): persistence sink for accepted PUT /settings snapshots.
    * Host wires an atomic writer (settings.json beside the profile store).
    * Called ONLY after the engine accepted the patch; when absent, settings
@@ -87,6 +100,12 @@ export const CONTRACT_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map
   ['/stats', new Set(['GET'])],
   ['/telemetry/memory', new Set(['GET'])],
   ['/status/models', new Set(['GET'])],
+  // C7 (issue #74): pack lifecycle surface. POST-for-action subpaths match
+  // the /ingest* convention — the dispatch has no parameterized routes.
+  ['/packs', new Set(['GET'])],
+  ['/packs/install', new Set(['POST'])],
+  ['/packs/rollback', new Set(['POST'])],
+  ['/packs/remove', new Set(['POST'])],
 ]);
 
 function sendJson(res: ServerResponse, status: number, body: unknown, cors?: CorsContext): void {
@@ -244,6 +263,74 @@ function parseSearchRequest(body: Buffer | null): { ok: true; value: { query: st
 
 function validationError(res: ServerResponse, errors: string[], cors?: CorsContext): void {
   sendJson(res, 422, { detail: 'Request validation failed', errors }, cors);
+}
+
+/**
+ * C7 (issue #74): parse a JSON body of two optional string fields
+ * (pack_id required non-empty; version/to_version rules vary per route).
+ */
+function parsePackActionBody(
+  body: Buffer | null,
+): { ok: true; value: { pack_id: string; version?: string; to_version?: string } } | { ok: false; errors: string[] } {
+  if (body === null || body.length === 0) return { ok: false, errors: ['body: request body is required'] };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body.toString('utf8'));
+  } catch {
+    return { ok: false, errors: ['body: invalid JSON'] };
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return { ok: false, errors: ['body: expected a JSON object'] };
+  }
+  const obj = parsed as Record<string, unknown>;
+  const errors: string[] = [];
+  let packId = '';
+  if (typeof obj.pack_id === 'string' && obj.pack_id.trim().length > 0 && obj.pack_id.length <= 200) {
+    packId = obj.pack_id;
+  } else {
+    errors.push('pack_id: required non-empty string (max 200 chars)');
+  }
+  let version: string | undefined;
+  if (obj.version !== undefined) {
+    if (typeof obj.version === 'string' && obj.version.length > 0 && obj.version.length <= 50) {
+      version = obj.version;
+    } else {
+      errors.push('version: optional non-empty string (max 50 chars)');
+    }
+  }
+  let toVersion: string | undefined;
+  if (obj.to_version !== undefined) {
+    if (typeof obj.to_version === 'string' && obj.to_version.length > 0 && obj.to_version.length <= 50) {
+      toVersion = obj.to_version;
+    } else {
+      errors.push('to_version: optional non-empty string (max 50 chars)');
+    }
+  }
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value: { pack_id: packId, version, to_version: toVersion } };
+}
+
+/** C7 (issue #74): map PackManager refusals to the contract's 409 conflict. */
+function packConflict(res: ServerResponse, error: unknown, cors?: CorsContext): boolean {
+  if (error instanceof PackManagerError) {
+    sendJson(res, 409, { detail: error.message }, cors);
+    return true;
+  }
+  return false;
+}
+
+/** C7 (issue #74): resolve the host-wired pack surface or answer the 503. */
+function requirePackSurface(
+  res: ServerResponse,
+  packs: (() => PackSurface | null) | undefined,
+  cors?: CorsContext,
+): PackSurface | null {
+  const surface = packs?.() ?? null;
+  if (surface === null) {
+    sendJson(res, 503, { detail: 'Pack management is not wired on this host' }, cors);
+    return null;
+  }
+  return surface;
 }
 
 /**
@@ -746,6 +833,117 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               return;
             }
             sendJson(res, 200, opts.modelStatus(), cors);
+            return;
+          }
+          case 'GET /packs': {
+            // C7 (issue #74): installed pack versions for the renderer's
+            // Knowledge Packs panel. Unwired hosts degrade to a contract-safe
+            // 503 (same convention as telemetry/modelStatus above).
+            const packs = requirePackSurface(res, opts.packs, cors);
+            if (packs === null) return;
+            try {
+              sendJson(res, 200, { packs: await packs.list() }, cors);
+            } catch (err) {
+              if (packConflict(res, err, cors)) return;
+              throw err;
+            }
+            return;
+          }
+          case 'POST /packs/install': {
+            // C7 (issue #74): multipart zip upload (field `file`, 50MB
+            // contract cap via the shared body cap). The surface extracts
+            // safely and drives PackManager.install(folder).
+            const packs = requirePackSurface(res, opts.packs, cors);
+            if (packs === null) return;
+            const zipBody = await readBody(req, MULTIPART_BODY_CAP_BYTES);
+            if (zipBody === null) {
+              sendJson(res, 413, { detail: 'File too large. Maximum size is 50MB.' }, cors);
+              return;
+            }
+            if (zipBody.length > PACK_ZIP_UPLOAD_CAP_BYTES) {
+              sendJson(res, 413, { detail: 'File too large. Maximum size is 50MB.' }, cors);
+              return;
+            }
+            let zipFile: { name: string; data: Uint8Array } | undefined;
+            try {
+              const form = await new Request('http://127.0.0.1/', {
+                method: 'POST',
+                headers: { 'content-type': req.headers['content-type'] ?? 'multipart/form-data' },
+                body: new Uint8Array(zipBody),
+              }).formData();
+              const file = form.get('file');
+              if (file instanceof File && file.size > 0) {
+                zipFile = { name: file.name || 'pack.zip', data: new Uint8Array(await file.arrayBuffer()) };
+              }
+            } catch {
+              // Malformed multipart falls through to the 400 below.
+            }
+            if (zipFile === undefined) {
+              sendJson(res, 400, { detail: 'Missing/invalid file part (multipart field "file")' }, cors);
+              return;
+            }
+            try {
+              sendJson(res, 200, await packs.installZip(zipFile.data, zipFile.name), cors);
+            } catch (err) {
+              if (packConflict(res, err, cors)) return;
+              if (err instanceof RangeError || (err instanceof Error && err.message.includes('accepts .zip'))) {
+                validationError(res, [err.message], cors);
+                return;
+              }
+              throw err;
+            }
+            return;
+          }
+          case 'POST /packs/rollback': {
+            // C7 (issue #74): reactivate an installed older version of a pack.
+            const packs = requirePackSurface(res, opts.packs, cors);
+            if (packs === null) return;
+            const body = await readBody(req, JSON_BODY_CAP_BYTES);
+            if (body === null) {
+              sendJson(res, 413, { detail: 'Request body too large' }, cors);
+              return;
+            }
+            const parsed = parsePackActionBody(body);
+            if (!parsed.ok) {
+              validationError(res, parsed.errors, cors);
+              return;
+            }
+            if (!parsed.value.to_version) {
+              validationError(res, ['to_version: required non-empty string'], cors);
+              return;
+            }
+            try {
+              await packs.rollback(parsed.value.pack_id, parsed.value.to_version);
+            } catch (err) {
+              if (packConflict(res, err, cors)) return;
+              throw err;
+            }
+            sendJson(res, 200, { ok: true }, cors);
+            return;
+          }
+          case 'POST /packs/remove': {
+            // C7 (issue #74): remove one version (version given) or every
+            // installed version of a pack. Irreversible from the UI — the
+            // renderer gates it behind its confirmation dialog.
+            const packs = requirePackSurface(res, opts.packs, cors);
+            if (packs === null) return;
+            const body = await readBody(req, JSON_BODY_CAP_BYTES);
+            if (body === null) {
+              sendJson(res, 413, { detail: 'Request body too large' }, cors);
+              return;
+            }
+            const parsed = parsePackActionBody(body);
+            if (!parsed.ok) {
+              validationError(res, parsed.errors, cors);
+              return;
+            }
+            try {
+              const removed = await packs.remove(parsed.value.pack_id, parsed.value.version);
+              sendJson(res, 200, { removed }, cors);
+            } catch (err) {
+              if (packConflict(res, err, cors)) return;
+              throw err;
+            }
             return;
           }
           default:

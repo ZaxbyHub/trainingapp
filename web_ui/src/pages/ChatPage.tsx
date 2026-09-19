@@ -4,7 +4,8 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react';
-import type { ChatMessage, TrainingTarget } from '../types/chat';
+import type { ChatMessage, TrainingTarget, CitationRef } from '../types/chat';
+import type { SearchResult } from '../types/search';
 import { ChatMessageList } from '../components/ChatMessageList';
 import { ChatInput } from '../components/ChatInput';
 import { StreamingIndicator } from '../components/StreamingIndicator';
@@ -21,6 +22,8 @@ import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessC
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
 import { getToken } from '../lib/api/auth';
+import { citationsToRefs } from '../lib/api/citations';
+import type { Citation } from '../lib/api/types';
 import type { AttachedImage } from '../lib/processing/image-input';
 import { presetOptions } from '../lib/rag/rag-presets';
 import { downloadConversation } from '../lib/export/conversation-export';
@@ -98,6 +101,32 @@ const exportButtonStyle: CSSProperties = {
   cursor: 'pointer',
   transition: 'all 0.15s ease',
 };
+
+/**
+ * C7 (issue #74): citations for a finished answer, from whichever surface
+ * produced it. Electron/SSE answers carry the contract's pack-attributed
+ * `citations` (mapped through the citationsToRefs choke point so pack
+ * provenance cannot be silently dropped); browser-RAG answers carry retrieval
+ * `chunks` (mapped explicitly so the retrieval-only `score` field is not
+ * persisted into the message / Dexie, PRR-008). Browser-RAG chunks carry no
+ * pack fields — packs are an Electron-surface concept (C9 owns the browser
+ * adapter).
+ */
+function citationsFromDone(data: {
+  citations?: Citation[];
+  chunks?: SearchResult[];
+}): CitationRef[] | undefined {
+  if (data.citations !== undefined) {
+    return data.citations.length > 0 ? citationsToRefs(data.citations) : [];
+  }
+  return data.chunks?.map((c) => ({
+    docId: c.docId,
+    chunkIndex: c.chunkIndex,
+    source: c.source,
+    page: c.page,
+    text: c.text,
+  }));
+}
 
 function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments, onOpenTraining, pinnedSlide, onDismissPinnedSlide }: ChatPageProps) {
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
@@ -402,17 +431,15 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
               ...msg,
               isStreaming: false,
               sources: data.sources,
-              // Structured citations from the retrieved chunks (F7). Map
-              // explicitly to CitationRef so the retrieval-only `score` field
-              // is not persisted into the message / Dexie (PRR-008), and keep
-              // the array in context order so pill [i+1] maps to chunks[i].
-              citations: data.chunks?.map((c) => ({
-                docId: c.docId,
-                chunkIndex: c.chunkIndex,
-                source: c.source,
-                page: c.page,
-                text: c.text,
-              })),
+              // Structured citations (F7). Two surfaces: the Electron/SSE
+              // done event carries the contract's pack-attributed `citations`
+              // (C7, issue #74 — mapped via the citationsToRefs choke point so
+              // pack provenance cannot be dropped), while the browser-RAG
+              // surface carries retrieval `chunks` (mapped explicitly so the
+              // retrieval-only `score` field is not persisted into the
+              // message / Dexie, PRR-008). Either way the array stays in
+              // context order so pill [i+1] maps to entry i.
+              citations: citationsFromDone(data),
               // C5 (issue #72): provenance from either surface (badge input).
               grounding: data.grounding,
               // D6 (issue #82): Learn-panel rows from either surface.

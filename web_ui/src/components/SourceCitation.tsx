@@ -104,6 +104,11 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
           const key = `cite-${index}-${cite.docId}-${cite.chunkIndex}`;
           const label = cite.source ? getBasename(cite.source) : cite.docId;
           const pageSuffix = typeof cite.page === 'number' ? ` (p. ${cite.page})` : '';
+          // C7 (issue #74): pack provenance — `<pack> v<version>` for chunks
+          // attributed to a knowledge pack (mirrored into the accessible
+          // label and the hover title so screen readers get the provenance).
+          const packSuffix =
+            cite.packId && cite.packVersion ? ` — ${cite.packId} v${cite.packVersion}` : '';
           const isExpanded = expandedKey === key;
           const isCopied = copiedKey === key;
 
@@ -146,7 +151,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
               role="button"
               tabIndex={0}
               aria-expanded={isExpanded}
-              aria-label={`Source ${index + 1}: ${label}${pageSuffix}`}
+              aria-label={`Source ${index + 1}: ${label}${pageSuffix}${packSuffix}`}
               style={pillStyle}
               onClick={() => handleToggleExpand(key)}
               onKeyDown={(e) => {
@@ -162,10 +167,15 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
               <span style={{ fontWeight: 600 }}>[{index + 1}]</span>
               <span
                 style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                title={`${label}${pageSuffix}`}
+                title={`${label}${pageSuffix}${packSuffix}`}
               >
                 {label}
                 {pageSuffix}
+                {packSuffix && (
+                  <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
+                    {packSuffix}
+                  </span>
+                )}
               </span>
               {cite.text && (
                 <button
