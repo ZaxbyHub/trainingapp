@@ -10,12 +10,13 @@
 // package; D4 pinned the same pattern with mirrored golden tests) — keep the
 // three in lockstep.
 //
-// grounding (#72) is a reserved, not-yet-emitted field: when it lands, the
-// assembler takes it as an optional input and "general" yields [].
+// C5 (issue #72) landed the grounding field: the assembler takes it as an
+// optional input and "general" yields [] (mirrors learn_panel.py:93 and
+// web_ui/src/lib/rag/learn-kernel.ts).
 import fs from 'node:fs';
 import path from 'node:path';
 import { queryLinksForChunks, slideIdFromDocPath, type LinksDb } from './store/links.js';
-import type { CitedChunk, LearnResultRow } from './types.js';
+import type { CitedChunk, Grounding, LearnResultRow } from './types.js';
 
 export const MAX_LEARN_RESULTS = 5;
 
@@ -66,6 +67,12 @@ export interface AssembleLearnOptions {
   cited: CitedChunk[];
   packsRoot?: string | null;
   maxResults?: number;
+  /**
+   * C5 (issue #72): the answer's grounded/general provenance. "general"
+   * suppresses every row (contract: learn is empty when grounding is
+   * "general"); omitted keeps the pre-C5 behavior.
+   */
+  grounding?: Grounding | null;
 }
 
 /**
@@ -77,6 +84,8 @@ export function assembleLearnResults(options: AssembleLearnOptions): LearnResult
   const db = options.db;
   const maxResults = options.maxResults ?? MAX_LEARN_RESULTS;
   if (db === null) return null;
+  // C5 (issue #72): no qualifying evidence -> nothing to learn from.
+  if (options.grounding === 'general') return [];
   if (cited.length === 0) return [];
   try {
     const placeholders = cited.map(() => '?').join(', ');

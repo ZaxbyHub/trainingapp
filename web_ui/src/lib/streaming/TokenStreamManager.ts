@@ -5,7 +5,7 @@
 
 import { SSEStreamConsumer } from '../api/streaming';
 import type { SearchResult } from '../../types/search';
-import type { LearnResult } from '../api/types';
+import type { Grounding, LearnResult } from '../api/types';
 
 type TokenCallback = (token: string) => void;
 
@@ -17,6 +17,8 @@ type DoneCallback = (data: {
   sources: string[];
   contextLength: number;
   inferenceTime: number;
+  /** C5 (issue #72): grounded/general provenance when the answering surface emitted it. */
+  grounding?: Grounding;
   /** Structured per-chunk citations aligned with the model's [1],[2] order (F7). */
   chunks?: SearchResult[];
   /** Learn-panel rows (issue #82); present when the answering surface computed them. */
@@ -151,6 +153,8 @@ export class TokenStreamManager {
     sources: string[];
     contextLength: number;
     inferenceTime: number;
+    /** C5 (issue #72): grounded/general provenance when the surface emitted it. */
+    grounding?: Grounding;
     chunks?: SearchResult[];
     learn?: LearnResult[];
     abstain?: boolean;
@@ -234,6 +238,8 @@ export class TokenStreamManager {
         sources: data.sources,
         contextLength: data.context_length,
         inferenceTime: data.inference_time,
+        // C5 (issue #72): forward the server's provenance value when present.
+        ...(data.grounding !== undefined ? { grounding: data.grounding } : {}),
         // D6 (issue #82): forward the server's learn rows when present.
         ...(data.learn !== undefined ? { learn: data.learn } : {}),
       });

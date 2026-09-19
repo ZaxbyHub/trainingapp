@@ -8,6 +8,7 @@ import type { ChatMessage } from '../types/chat';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { SourceCitation } from './SourceCitation';
 import { LearnPanel } from './LearnPanel';
+import { GroundingBadge } from './GroundingBadge';
 import { formatRelativeTime } from '../utils/relativeTime';
 
 interface ChatMessageBubbleProps {
@@ -308,6 +309,9 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
                 </button>
               )}
             </div>
+            {/* C5 (issue #72): per-answer provenance badge (above the
+                citations it describes); accessible, never color-only. */}
+            <GroundingBadge grounding={message.grounding} />
             {/* F7: prefer structured numbered citations; fall back to legacy
                 sources string array for older persisted messages. */}
             {message.citations && message.citations.length > 0 ? (

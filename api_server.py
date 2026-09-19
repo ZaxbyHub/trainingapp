@@ -14,7 +14,7 @@ import unicodedata
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 from urllib.parse import unquote
 
 from fastapi import FastAPI, File, HTTPException, Request, Security, UploadFile
@@ -27,7 +27,7 @@ from auth import get_auth_status, require_auth
 from config import get_settings, settings
 from learn_panel import build_learn_results
 from llm_interface import QueryCancelled
-from rag_engine import RAGConfig, RAGEngine
+from rag_engine import GROUNDING_GENERAL, RAGConfig, RAGEngine, grounding_for_result
 
 # rag_engine converts a cancelled query into a normal QueryResult whose answer
 # is this sentinel instead of re-raising QueryCancelled, so the stream handler
@@ -298,6 +298,11 @@ class QuestionResponse(BaseModel):
     sources: List[str]
     context_length: int
     inference_time: float
+    # C5 (issue #72): grounded/general provenance for the answer's evidence
+    # set ("grounded" = at least one final evidence chunk cleared the active
+    # relevance floor). Resolved by grounding_for_result, so engines that
+    # bypass rag_engine.query still emit a faithful value.
+    grounding: Literal["grounded", "general"]
     learn: Optional[List[LearnResult]] = None
     citations: Optional[List[Citation]] = None
 
@@ -314,7 +319,14 @@ def _learn_for(result) -> List[dict]:
     """
     learn = getattr(result, "learn", None)
     if learn is None:
-        learn = build_learn_results(getattr(result, "retrieved_chunks", None) or [])
+        # C5 (issue #72): the kernel suppresses learn to [] when grounding is
+        # "general" (contract: "empty when grounding is general"); resolve
+        # grounding the same way the response field does so engines that
+        # bypass rag_engine.query get the identical suppression.
+        learn = build_learn_results(
+            getattr(result, "retrieved_chunks", None) or [],
+            grounding=grounding_for_result(result),
+        )
     return [dict(entry) for entry in learn]
 
 
@@ -695,6 +707,7 @@ async def ask_question(request: QuestionRequest, auth: dict = Security(require_a
             sources=result.sources,
             context_length=result.context_length,
             inference_time=result.inference_time,
+            grounding=grounding_for_result(result),
             learn=_learn_for(result),
             citations=_citations_for(result),
         )
@@ -935,6 +948,10 @@ if HAS_SSE:
                 context_length = result.context_length
                 inference_time = result.inference_time
                 learn = _learn_for(result)
+                # C5 (issue #72): every terminal done payload carries the
+                # grounded/general provenance value (contract enum on
+                # DoneEvent), resolved uniformly for real and stub engines.
+                grounding = grounding_for_result(result)
                 # C4 (issue #71): pack-attributed citations ride the terminal
                 # event; additive key, existing consumers unaffected.
                 citations = [c.model_dump() for c in _citations_for(result)]
@@ -957,6 +974,7 @@ if HAS_SSE:
                                     "sources": sources,
                                     "context_length": context_length,
                                     "inference_time": inference_time,
+                                    "grounding": grounding,
                                     "learn": learn,
                                     "citations": citations,
                                 }
@@ -971,6 +989,7 @@ if HAS_SSE:
                                 "sources": sources,
                                 "context_length": context_length,
                                 "inference_time": inference_time,
+                                "grounding": grounding,
                                 "learn": learn,
                                 "citations": citations,
                             }
@@ -978,7 +997,9 @@ if HAS_SSE:
                     }
             except QueryCancelled:
                 # Renderer done-detection (streaming.ts) requires sources AND
-                # context_length in the terminal payload.
+                # context_length in the terminal payload. No result survived
+                # the cancellation, so the provenance value is "general"
+                # (nothing qualified — C5, issue #72).
                 if stream_open:
                     yield {
                         "event": "message",
@@ -989,6 +1010,7 @@ if HAS_SSE:
                                 "sources": sources,
                                 "context_length": 0,
                                 "inference_time": 0.0,
+                                "grounding": GROUNDING_GENERAL,
                             }
                         ),
                     }

@@ -19,7 +19,7 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { originAllowed, type LoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from '../security/defaults.js';
-import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type Citation, type CitedChunk, type EngineSurface, type IngestFileInput, type ModelStatus } from './types.js';
+import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type Citation, type CitedChunk, type EngineQueryResult, type EngineSurface, type Grounding, type IngestFileInput, type ModelStatus } from './types.js';
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)
@@ -269,6 +269,15 @@ function citationsFromResult(result: { cited?: CitedChunk[] }): Citation[] {
   }));
 }
 
+/**
+ * C5 (issue #72): grounded/general provenance of one query result. Engines
+ * stamp it (see EngineQueryResult.grounding); the "general" fallback keeps
+ * engine doubles that predate the field contract-faithful.
+ */
+function groundingFromResult(result: EngineQueryResult): Grounding {
+  return result.grounding ?? 'general';
+}
+
 export async function runAskStream(
   res: ServerResponse,
   engine: EngineSurface,
@@ -304,7 +313,9 @@ export async function runAskStream(
   res.on('close', () => {
     clientGone = true;
     if (streamOpen) {
-      emit({ done: true, cancelled: true, sources: [], context_length: 0 });
+      // C5 (issue #72): every terminal done event carries provenance; the
+      // client disappeared before any evidence reached it -> "general".
+      emit({ done: true, cancelled: true, sources: [], context_length: 0, grounding: 'general' });
       finish();
     }
   });
@@ -325,6 +336,9 @@ export async function runAskStream(
         sources: result.sources,
         context_length: result.context_length,
         inference_time: result.inference_time,
+        // C5 (issue #72): required on every terminal done event (cancelled
+        // answers resolve to "general" — nothing was delivered).
+        grounding: groundingFromResult(result),
       });
     } else {
       emit({
@@ -332,6 +346,8 @@ export async function runAskStream(
         sources: result.sources,
         context_length: result.context_length,
         inference_time: result.inference_time,
+        // C5 (issue #72): grounded/general provenance on every terminal.
+        grounding: groundingFromResult(result),
         learn: result.learn ?? [],
         // C4 (issue #71): pack-attributed citations on the success terminal.
         citations: citationsFromResult(result),
@@ -513,6 +529,8 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                   sources: result.sources,
                   context_length: result.context_length,
                   inference_time: result.inference_time,
+                  // C5 (issue #72): grounded/general provenance (required).
+                  grounding: groundingFromResult(result),
                   // D6 (issue #82): always emitted on success (possibly []),
                   // per the contract wording. Explicit-payload construction —
                   // only the serializable learn rows cross the wire, never

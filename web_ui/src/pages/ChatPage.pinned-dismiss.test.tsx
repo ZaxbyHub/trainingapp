@@ -187,7 +187,7 @@ describe('D7 C4: dismissing the pinned slide clears the context (issue #83 AC4)'
   it('[AC4-RED] while the pin is active, a typed question carries the pinned context', async () => {
     mockOrchestratorInstance.query.mockReturnValue(
       mockRAGEvents([
-        { type: 'complete', data: { answer: 'ok', sources: [], chunks: [] } },
+        { type: 'complete', data: { answer: 'ok', sources: [], chunks: [], grounding: 'grounded' } },
       ])
     );
     render(
@@ -219,7 +219,7 @@ describe('D7 C4: dismissing the pinned slide clears the context (issue #83 AC4)'
   it('[AC4-RED] dismissing the pin removes the banner and the next question carries NO slide context', async () => {
     mockOrchestratorInstance.query.mockReturnValue(
       mockRAGEvents([
-        { type: 'complete', data: { answer: 'ok', sources: [], chunks: [] } },
+        { type: 'complete', data: { answer: 'ok', sources: [], chunks: [], grounding: 'grounded' } },
       ])
     );
     render(

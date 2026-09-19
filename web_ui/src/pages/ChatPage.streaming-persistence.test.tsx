@@ -133,7 +133,7 @@ function makeDeferredStream(gate: { promise: Promise<void>; resolve: () => void 
     await gate.promise;
     yield {
       type: 'complete',
-      data: { answer: 'A-answer', sources: ['doc-a'], chunks: [] },
+      data: { answer: 'A-answer', sources: ['doc-a'], chunks: [], grounding: 'grounded' },
     };
   };
 }
@@ -415,7 +415,7 @@ describe('ChatPage F1: first-turn fast-complete does not create a duplicate conv
       yield { type: 'token', data: 'FAST-' };
       yield {
         type: 'complete',
-        data: { answer: 'FAST-ANSWER', sources: [], chunks: [] },
+        data: { answer: 'FAST-ANSWER', sources: [], chunks: [], grounding: 'grounded' },
       };
     });
 
@@ -666,7 +666,7 @@ function makeParkingStream(
     yield { type: 'token', data: token };
     await gate.promise;
     // Unreachable in the interrupted tests — the gate is never resolved.
-    yield { type: 'complete', data: { answer: token, sources: [], chunks: [] } };
+    yield { type: 'complete', data: { answer: token, sources: [], chunks: [], grounding: 'grounded' } };
   };
 }
 

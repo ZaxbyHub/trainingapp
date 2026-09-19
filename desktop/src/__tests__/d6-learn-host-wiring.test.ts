@@ -94,7 +94,11 @@ describe('d6 host wiring: NodeBackendHost.start() attaches the learn assembler (
         storePath: dbPath,
         storeEmbeddingDims: DIMS,
         packsRoot,
-        env: { TRAININGAPP_DESKTOP_EMBEDDER: 'hash' },
+        // C5 (issue #72): the reranker-stub fixture keeps the host on the
+        // calibrated-floor (rerank) path so the evidence is floor-qualified
+        // and the D6 learn flow (suppressed when grounding is "general")
+        // stays exercisable on a hash-embedder CI host.
+        env: { TRAININGAPP_DESKTOP_EMBEDDER: 'hash', TRAININGAPP_DESKTOP_RERANKER_STUB: '1' },
         engine: new StubEngine(),
       });
       const handle = await host.start();

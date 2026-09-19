@@ -237,9 +237,17 @@ export interface Citation {
 /**
  * Learn assembler (issue #82): derives learn[] rows from the cited chunk
  * ids. Synchronous (better-sqlite3); returns null when learn cannot be
- * computed (store closed) so callers omit the field.
+ * computed (store closed) so callers omit the field. C5 (issue #72): the
+ * second argument carries the answer's grounding value — "general" yields []
+ * (mirrors learn_panel.py and web_ui learn-kernel.ts).
  */
-export type LearnAssembler = (cited: CitedChunk[]) => LearnResultRow[] | null;
+export type LearnAssembler = (
+  cited: CitedChunk[],
+  grounding?: Grounding,
+) => LearnResultRow[] | null;
+
+/** C5 (issue #72): grounded/general provenance (mirrors the OpenAPI enum). */
+export type Grounding = 'grounded' | 'general';
 
 export interface EngineQueryResult {
   answer: string;
@@ -251,6 +259,17 @@ export interface EngineQueryResult {
   learn?: LearnResultRow[];
   /** D6 (issue #82): internal only — NEVER serialized (server builds explicit payloads). */
   cited?: CitedChunk[];
+  /**
+   * C5 (issue #72): grounded/general provenance of the answer's evidence set.
+   * "grounded" iff the final post-ranking evidence set is non-empty AND
+   * floor-qualified on a non-cancelled query — the calibrated relevance
+   * floor gates scores only while the reranker path is live
+   * (RetrievalSurface.floorActive), so a fused/rerank-disabled result
+   * resolves "general" rather than claiming a relevance decision the
+   * pipeline did not make. Engines stamp it; the server falls back to
+   * "general" for engine doubles that omit it.
+   */
+  grounding?: Grounding;
 }
 
 /**

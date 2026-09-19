@@ -41,6 +41,9 @@ export interface ChatMessage {
   sources?: string[];
   /** Structured numbered citations, aligned with the model's [1],[2] order (F7). */
   citations?: CitationRef[];
+  /** C5 (issue #72): grounded/general provenance of this answer; present when
+   *  the answering surface emitted it (badge render input). */
+  grounding?: 'grounded' | 'general';
   /** Learn-panel rows (issue #82): "where to learn this" deep links. */
   learn?: LearnResult[];
   /** True when the pipeline abstained (no usable evidence) instead of answering (F2). */

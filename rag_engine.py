@@ -59,6 +59,37 @@ class QueryResult:
     # learn_panel.build_learn_results. Empty until the Python stack gains a
     # links source (documented divergence); grounding=general keeps it [].
     learn: Optional[List[Dict[str, Any]]] = None
+    # C5 (issue #72): grounded/general provenance, stamped by query() from
+    # the final evidence set. Optional so engine doubles that bypass query()
+    # (tests, sidecar-style adapters) can omit it; api_server then derives it
+    # from evidence emptiness via grounding_for_result.
+    grounding: Optional[str] = None
+
+
+# C5 (issue #72): grounded/general provenance. "grounded" iff at least one
+# chunk of the final post-C4 evidence set cleared the active relevance floor
+# (min_similarity, enforced inside vector_store retrieval on every path);
+# "general" otherwise — the LLM answered without qualifying evidence or with
+# nothing retrieved. The floor VALUE stays owned by the B7/A5 retrieval
+# config; this field only surfaces the decision retrieval already made.
+GROUNDING_GROUNDED = "grounded"
+GROUNDING_GENERAL = "general"
+
+
+def grounding_for_result(result) -> str:
+    """Resolve the C5 provenance value for one query result.
+
+    Prefers an explicit engine stamp (query() sets it from the final
+    evidence set); falls back to evidence emptiness so stub engines that
+    never pass through query() still emit a faithful value.
+    """
+    stamped = getattr(result, "grounding", None)
+    if stamped in (GROUNDING_GROUNDED, GROUNDING_GENERAL):
+        return stamped
+    has_evidence = bool(
+        getattr(result, "sources", None) or getattr(result, "retrieved_chunks", None)
+    )
+    return GROUNDING_GROUNDED if has_evidence else GROUNDING_GENERAL
 
 
 class RAGConfig:
@@ -795,6 +826,16 @@ class RAGEngine:
             for chunk, score in final_chunks_with_scores
         ]
 
+        # C5 (issue #72): the final post-C4 evidence set IS
+        # final_chunks_with_scores — every member already cleared the active
+        # relevance floor (min_similarity) inside vector_store retrieval, so
+        # non-empty means "grounded". The greeting/no-context/cancelled
+        # early returns above all carry an empty evidence set and resolve to
+        # "general" via grounding_for_result.
+        grounding = (
+            GROUNDING_GROUNDED if final_chunks_with_scores else GROUNDING_GENERAL
+        )
+
         return QueryResult(
             question=question,
             answer=answer,
@@ -803,7 +844,11 @@ class RAGEngine:
             inference_time=time.time() - start_time,
             chunks_retrieved=chunks_retrieved,
             retrieved_chunks=chunk_details,
-            learn=build_learn_results(chunk_details),
+            grounding=grounding,
+            # Contract (api.openapi.yaml): learn is [] when grounding is
+            # "general" (unreachable here — general implies no chunks — but
+            # kept explicit so the kernel suppression is uniform).
+            learn=build_learn_results(chunk_details, grounding=grounding),
         )
 
     def search_documents(

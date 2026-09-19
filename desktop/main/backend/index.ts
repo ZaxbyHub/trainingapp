@@ -458,6 +458,16 @@ export class NodeBackendHost implements BackendHost {
             },
           }, this.scheduler);
           if (this.embedder !== null) {
+            // C5 (issue #72): CI/dev fixture seam — TRAININGAPP_DESKTOP_RERANKER_STUB=1
+            // attaches a constant-high reranker so hash-embedder hosts (no ONNX
+            // reranker model) still run the calibrated-floor path. Same spirit as
+            // TRAININGAPP_DESKTOP_EMBEDDER=hash / TRAININGAPP_STUB_TOKEN_DELAY_MS:
+            // a deterministic test fixture, never set in production.
+            if (this.config.env?.TRAININGAPP_DESKTOP_RERANKER_STUB === '1' && this.reranker === null) {
+              this.reranker = {
+                score: async (_query: string, texts: string[]) => texts.map(() => 0.9),
+              };
+            }
             // B7: attach the hybrid retrieval surface AFTER the document
             // surface, reusing the same (possibly worker-proxied) embedder.
             this.retrieval = createRetrievalSurface({
@@ -474,8 +484,8 @@ export class NodeBackendHost implements BackendHost {
             // packsRoot enriches titles/sections from the installed pack's
             // slide docs; without it the store-derived fallbacks are used.
             if (typeof this.engine.attachLearnAssembler === 'function') {
-              this.engine.attachLearnAssembler((cited) =>
-                assembleLearnResults({ db: this.store !== null ? this.store.db : null, cited, packsRoot: this.config.packsRoot }),
+              this.engine.attachLearnAssembler((cited, grounding) =>
+                assembleLearnResults({ db: this.store !== null ? this.store.db : null, cited, packsRoot: this.config.packsRoot, grounding }),
               );
             }
             // C3 (#70): the pack lifecycle shares the store handle and the

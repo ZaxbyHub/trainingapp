@@ -12,6 +12,7 @@ import type {
   EngineQueryOptions,
   EngineQueryResult,
   EngineSurface,
+  Grounding,
   IngestFileInput,
   IngestResult,
   LearnAssembler,
@@ -165,7 +166,16 @@ export class StubEngine implements EngineSurface {
   async retrieveContext(
     question: string,
     nResults?: number,
-  ): Promise<{ sources: string[]; contextLength: number; texts: string[]; cited: CitedChunk[] } | null> {
+  ): Promise<{
+    sources: string[];
+    contextLength: number;
+    texts: string[];
+    cited: CitedChunk[];
+    /** C5 (issue #72): whether the returned scores were gated by the
+     *  calibrated relevance floor (reranker path live). Custom surfaces
+     *  without the flag count as qualified (pre-C5 behavior). */
+    floorActive: boolean;
+  } | null> {
     if (this.retrievalSurface === null) return null;
     const n = nResults ?? (Number(this.settings.rag_n_results) || 4);
     const rows = await this.retrievalSurface.search(question, n);
@@ -178,6 +188,7 @@ export class StubEngine implements EngineSurface {
       sources,
       contextLength: rows.reduce((total, row) => total + row.text.length, 0),
       texts: rows.map((row) => row.text),
+      floorActive: this.retrievalSurface.floorActive !== false,
       // D6 (issue #82): cited chunk ids + scores for the learn assembler
       // (rows whose surface predates chunkId are simply absent from cited).
       cited: rows
@@ -214,6 +225,17 @@ export class StubEngine implements EngineSurface {
       opts.streamCallback?.(token);
       await delay(tokenDelayMs);
     }
+    // C5 (issue #72): "grounded" requires FLOOR-QUALIFIED evidence — at
+    // least one chunk of the final set scored at/above the active relevance
+    // floor. hybridRetrieve applies that floor only on the reranker path, so
+    // the floorActive flag (false when rerank is disabled, no reranker is
+    // attached, or the failure latch degraded the surface) forces "general"
+    // rather than letting raw-RRF results claim a relevance decision that
+    // was never made.
+    const grounding: Grounding =
+      context !== null && context.cited.length > 0 && context.floorActive
+        ? 'grounded'
+        : 'general';
     return {
       // STUB answer text is deliberately explicit that this is not real
       // inference yet (B4 #62); the wire shape is what B3 certifies.
@@ -221,15 +243,17 @@ export class StubEngine implements EngineSurface {
       sources: context?.sources ?? [],
       context_length: context?.contextLength ?? 0,
       inference_time: (Date.now() - started) / 1000,
+      grounding,
       // C4 (issue #71): cited chunks ride the internal result so the server
       // serializes pack-attributed citations (never serialized verbatim).
       ...(context !== null ? { cited: context.cited } : {}),
       // D6 (issue #82): learn rows when the assembler is attached and
       // retrieval produced cited chunks; the assembler's null (store closed)
-      // and the assembler-less fixtures both omit the field.
+      // and the assembler-less fixtures both omit the field. C5: the
+      // grounding value rides along so "general" suppresses learn to [].
       ...(context !== null && context.cited.length > 0 && this.learnAssembler !== null
         ? (() => {
-            const learn = this.learnAssembler(context.cited);
+            const learn = this.learnAssembler(context.cited, grounding);
             return learn === null ? {} : { learn };
           })()
         : {}),

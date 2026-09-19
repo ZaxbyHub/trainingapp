@@ -66,6 +66,9 @@ REQUIRED_RESPONSE_KEYS = (
     "sources",
     "context_length",
     "inference_time",
+    # C5 (issue #72): grounded/general provenance is part of the frozen /ask
+    # contract since C5; the harness treats it as a required response key.
+    "grounding",
 )
 
 
@@ -246,8 +249,17 @@ def run_eval(
                 "fallback_phrase": False,
                 "rank": None,
                 "learn_rank": None,
+                # C5 (issue #72): expected grounding derives from corpus
+                # coverage (a question with an expected document is expected
+                # to ground; an out-of-corpus question is expected general).
+                "expected_grounding": (
+                    "grounded" if row["expected_doc_id"] is not None else "general"
+                ),
+                "grounding": None,
             }
             if body is not None:
+                grounding = body.get("grounding")
+                entry["grounding"] = grounding if isinstance(grounding, str) else None
                 answer = str(body.get("answer", ""))
                 sources = body.get("sources")
                 sources = [str(s) for s in sources] if isinstance(sources, list) else []
@@ -313,6 +325,19 @@ def run_eval(
         else 0.0
     )
 
+    # Badge accuracy (C5, issue #72): fraction of successful questions where
+    # the emitted grounding value matches the expected grounded/general
+    # label. Report-only metric — no hard gate is enforced (the initial
+    # target is documented as non-blocking).
+    badge_rows = successful
+    badge_matches = sum(
+        1
+        for r in badge_rows
+        if r.get("grounding") in ("grounded", "general")
+        and r["grounding"] == r["expected_grounding"]
+    )
+    badge_accuracy = badge_matches / len(badge_rows) if badge_rows else 0.0
+
     per_category = {}
     for category, rows in Counter(r["category"] for r in ok_in).items():
         subset = [r for r in ok_in if r["category"] == category]
@@ -350,6 +375,9 @@ def run_eval(
             "abstain_hits": abstain_hits,
             "learn_hit_at_3": learn_hit_at_3,
             "learn_slide_question_count": len(learn_rows),
+            "badge_accuracy": badge_accuracy,
+            "badge_matches": badge_matches,
+            "badge_total": len(badge_rows),
             "latency_ms": {
                 "p50": round(percentile(latencies, 50), 1),
                 "p95": round(percentile(latencies, 95), 1),
@@ -388,6 +416,10 @@ def render_markdown(report: dict) -> str:
         f"| Learn hit@3 | {metrics.get('learn_hit_at_3', 0.0):.3f} "
         f"(over {metrics.get('learn_slide_question_count', 0)} slide-target questions; "
         f"initial target >= 0.70) |",
+        f"| badge accuracy | {metrics.get('badge_accuracy', 0.0):.3f} "
+        f"({metrics.get('badge_matches', 0)}/{metrics.get('badge_total', 0)}; "
+        f"emitted grounding matches the expected grounded/general label; "
+        f"report-only, initial target >= 0.80 non-blocking) |",
         f"| latency p50 (ms) | {metrics['latency_ms']['p50']:.1f} |",
         f"| latency p95 (ms) | {metrics['latency_ms']['p95']:.1f} |",
         f"| fallback-phrase answers | {report['fallback_count']} |",

@@ -452,13 +452,26 @@ export class LlamaEngine implements EngineSurface {
           inference_time: (Date.now() - started) / 1000,
         };
         if (result.cancelled) out.cancelled = true;
+        // C5 (issue #72): grounded/general provenance — non-empty
+        // FLOOR-QUALIFIED evidence set on a non-cancelled query. The floor
+        // gates scores only on the reranker path (context.floorActive), so a
+        // fused-path result resolves "general" instead of claiming a
+        // relevance decision the pipeline never made.
+        out.grounding =
+          !result.cancelled &&
+          context !== null &&
+          context.cited.length > 0 &&
+          context.floorActive
+            ? 'grounded'
+            : 'general';
         // C4 (issue #71): cited chunks ride the internal result so the
         // server serializes pack-attributed citations (internal only).
         if (context !== null) out.cited = context.cited;
         // D6 (issue #82): learn rows from the attached assembler when real
         // retrieval produced cited chunks (null assembler result → omitted).
+        // C5: the grounding value rides along so "general" suppresses to [].
         if (!result.cancelled && context !== null && context.cited.length > 0 && this.learnAssembler !== null) {
-          const learn = this.learnAssembler(context.cited);
+          const learn = this.learnAssembler(context.cited, out.grounding);
           if (learn !== null) out.learn = learn;
         }
         return out;

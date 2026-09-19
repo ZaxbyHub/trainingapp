@@ -688,6 +688,7 @@ response = requests.post("http://localhost:8080/ask", json={
 result = response.json()
 print(f"Answer: {result['answer']}")
 print(f"Sources: {result['sources']}")
+print(f"Grounding: {result['grounding']}")  # "grounded" or "general" (C5, issue #72)
 print(f"Inference time: {result['inference_time']:.2f}s")
 ```
 

@@ -494,6 +494,104 @@ describe('SSEStreamConsumer', () => {
       });
     });
 
+    it('forwards grounding from the done payload to onDone (issue #72)', async () => {
+      const donePromise = new Promise<any>((resolve) => {
+        consumer.onDone((data) => resolve(data));
+      });
+
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              'data: {"done":true,"sources":["doc1.pdf"],"context_length":100,"inference_time":5,"grounding":"grounded","learn":[],"citations":[]}\n'
+            )
+          );
+          controller.close();
+        },
+      });
+      mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+
+      consumer.start();
+      const received = await donePromise;
+
+      expect(received.grounding).toBe('grounded');
+    });
+
+    it('parses the CRLF server wire: token frames + terminal done with grounding (issue #72)', async () => {
+      const donePromise = new Promise<any>((resolve) => {
+        consumer.onDone((data) => resolve(data));
+      });
+
+      const wire = [
+        'event: message\r\ndata: {"token": "# Expense Reimbursement "}\r\n\r\n',
+        'event: message\r\ndata: {"token": "Guide"}\r\n\r\n',
+        'event: message\r\ndata: {"done": true, "sources": ["expenses-guide.md"], "context_length": 5126, "inference_time": 0.07, "grounding": "grounded", "learn": [], "citations": [{"source": "expenses-guide.md", "page": -1, "pack_id": null, "pack_version": null, "pack_published_at": null}]}\r\n\r\n',
+      ].join('');
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode(wire));
+          controller.close();
+        },
+      });
+      mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+
+      consumer.start();
+      const received = await donePromise;
+
+      expect(received.grounding).toBe('grounded');
+      expect(received.citations).toHaveLength(1);
+    });
+
+    it('forwards non-enum grounding values untouched (consumer tolerance, issue #72 PRR-007)', async () => {
+      // The consumer is deliberately tolerant: it forwards whatever string the
+      // server sent; enum enforcement lives at the conformance layer and the
+      // badge renders null for unknown values.
+      for (const bad of ['Grounded', '', '123', 'sort-of']) {
+        // Fresh consumer per value: a terminated consumer cannot re-emit.
+        const c = new SSEStreamConsumer('/ask/stream', { question: 'x' });
+        const donePromise = new Promise<any>((resolve) => {
+          c.onDone((data) => resolve(data));
+        });
+        const wireLine =
+          'data: {"sources":["doc1.pdf"],"context_length":100,"inference_time":5,"grounding":' +
+          JSON.stringify(bad) +
+          '}\n';
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(wireLine));
+            controller.close();
+          },
+        });
+        mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+        c.start();
+        const received = await donePromise;
+        expect(received.grounding).toBe(bad);
+      }
+    });
+
+    it('omits grounding when an older server does not send it (issue #72)', async () => {
+      const donePromise = new Promise<any>((resolve) => {
+        consumer.onDone((data) => resolve(data));
+      });
+
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              'data: {"sources":["doc1.pdf"],"context_length":100,"inference_time":5}\n'
+            )
+          );
+          controller.close();
+        },
+      });
+      mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+
+      consumer.start();
+      const received = await donePromise;
+
+      expect('grounding' in received).toBe(false);
+    });
+
     it('parses error event when data has error field', async () => {
       const errorCallback = vi.fn();
       const errorPromise = new Promise<string>((resolve) => {

@@ -155,7 +155,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   test('handleSend creates RAGOrchestrator and calls query() with user text', async () => {
     const userText = 'What is machine learning?';
     const events: RAGEvent[] = [
-      { type: 'complete', data: { answer: 'ML is great.', sources: ['doc-1'], chunks: [] } },
+      { type: 'complete', data: { answer: 'ML is great.', sources: ['doc-1'], chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
@@ -191,7 +191,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
       { type: 'token', data: ', ' },
       { type: 'token', data: 'world' },
       { type: 'token', data: '!' },
-      { type: 'complete', data: { answer: 'Hello, world!', sources: [], chunks: [] } },
+      { type: 'complete', data: { answer: 'Hello, world!', sources: [], chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
@@ -231,7 +231,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     const userText = 'Tell me about AI';
     const sources = ['doc-1', 'doc-2'];
     const events: RAGEvent[] = [
-      { type: 'complete', data: { answer: 'AI is artificial intelligence.', sources, chunks: [] } },
+      { type: 'complete', data: { answer: 'AI is artificial intelligence.', sources, chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
@@ -306,7 +306,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   test('User message and empty assistant message are added to state immediately', async () => {
     const userText = 'Hello there';
     const events: RAGEvent[] = [
-      { type: 'complete', data: { answer: 'Hi!', sources: [], chunks: [] } },
+      { type: 'complete', data: { answer: 'Hi!', sources: [], chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
@@ -340,7 +340,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     const events: RAGEvent[] = [
       { type: 'token', data: 'Loading' },
       { type: 'token', data: '...' },
-      { type: 'complete', data: { answer: 'Loading...', sources: [], chunks: [] } },
+      { type: 'complete', data: { answer: 'Loading...', sources: [], chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
@@ -421,7 +421,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     const userText2 = 'Second question';
     const events: RAGEvent[] = [
       { type: 'token', data: 'Answer 1' },
-      { type: 'complete', data: { answer: 'Answer 1', sources: [], chunks: [] } },
+      { type: 'complete', data: { answer: 'Answer 1', sources: [], chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
@@ -480,7 +480,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     const userText = 'Give me sources';
     const sources = ['doc-alpha', 'doc-beta', 'doc-gamma'];
     const events: RAGEvent[] = [
-      { type: 'complete', data: { answer: 'Here are sources.', sources, chunks: [] } },
+      { type: 'complete', data: { answer: 'Here are sources.', sources, chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
@@ -563,7 +563,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
   test('onDone invokes onSaveConversation with finalized messages including streamed tokens', async () => {
     const userText = 'Persist me';
     const events: RAGEvent[] = [
-      { type: 'complete', data: { answer: 'Saved.', sources: ['doc-x'], chunks: [] } },
+      { type: 'complete', data: { answer: 'Saved.', sources: ['doc-x'], chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
@@ -639,7 +639,7 @@ describe('ChatPage RAG Pipeline Integration', () => {
     const userText = 'To be cleared';
     const events: RAGEvent[] = [
       { type: 'token', data: 'partial' },
-      { type: 'complete', data: { answer: 'partial', sources: [], chunks: [] } },
+      { type: 'complete', data: { answer: 'partial', sources: [], chunks: [], grounding: 'grounded' } },
     ];
     vi.mocked(mockOrchestratorInstance.query).mockReturnValue(mockRAGEvents(events));
 
