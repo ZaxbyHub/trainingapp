@@ -24,6 +24,10 @@ import { PackManagerError } from './store/pack-manager.js';
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)
+/** C7 review round: the /packs/install CONTRACT cap is 50MB — enforced here
+ * explicitly after the buffer read (the 60MB multipart headroom absorbs form
+ * boundaries) so both backends refuse the same oversized uploads. */
+const PACK_ZIP_UPLOAD_CAP_BYTES = 50 * 1024 * 1024;
 
 export interface BackendServerOptions {
   guard: LoopbackGuard;
@@ -853,6 +857,10 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
             if (packs === null) return;
             const zipBody = await readBody(req, MULTIPART_BODY_CAP_BYTES);
             if (zipBody === null) {
+              sendJson(res, 413, { detail: 'File too large. Maximum size is 50MB.' }, cors);
+              return;
+            }
+            if (zipBody.length > PACK_ZIP_UPLOAD_CAP_BYTES) {
               sendJson(res, 413, { detail: 'File too large. Maximum size is 50MB.' }, cors);
               return;
             }

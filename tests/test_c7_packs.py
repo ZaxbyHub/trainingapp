@@ -70,19 +70,21 @@ def zip_pack_dir(pack_dir: Path) -> bytes:
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     """TestClient with the api_server pack manager pointed at a real
-    PackManager over a stub store. The patch lands AFTER TestClient startup
-    because entering the context runs the lifespan, which constructs (and
-    would otherwise overwrite) the module global."""
+    PackManager over a stub store. Deliberately does NOT enter the TestClient
+    context manager (mirrors tests/test_c5_grounding.py): entering it runs the
+    FastAPI lifespan, which constructs the REAL engine against the repo's
+    checked-in doc_qa_db — a chroma file CI's pinned chromadb cannot parse.
+    Requests work without the lifespan; the routes read the module global."""
     manager = make_manager(tmp_path)
-    with TestClient(api_server.app) as test_client:
-        monkeypatch.setattr(api_server, "pack_manager", manager)
-        yield test_client
+    test_client = TestClient(api_server.app)
+    monkeypatch.setattr(api_server, "pack_manager", manager)
+    return test_client
 
 
 def test_packs_unwired_answers_documented_503(monkeypatch):
-    with TestClient(api_server.app) as test_client:
-        monkeypatch.setattr(api_server, "pack_manager", None)
-        response = test_client.get("/packs")
+    test_client = TestClient(api_server.app)
+    monkeypatch.setattr(api_server, "pack_manager", None)
+    response = test_client.get("/packs")
     assert response.status_code == 503
     assert "detail" in response.json()
 

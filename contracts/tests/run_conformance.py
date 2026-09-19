@@ -397,15 +397,28 @@ class Conformance:
         if ok:
             body = r.json()
             packs = body.get("packs")
+            # Full required-key set from the PackInfo schema (name/source_class/
+            # published_at are nullable, so presence is what's asserted).
+            required = {
+                "pack_id",
+                "version",
+                "name",
+                "source_class",
+                "published_at",
+                "active",
+                "supersedes",
+            }
             ok = isinstance(packs, list) and all(
                 isinstance(p, dict)
                 and isinstance(p.get("pack_id"), str)
                 and isinstance(p.get("version"), str)
                 and isinstance(p.get("active"), bool)
+                and isinstance(p.get("supersedes"), list)
+                and required <= set(p.keys())
                 for p in packs
             )
             if not ok:
-                detail += " packs entries missing pack_id/version/active"
+                detail += " packs entries missing required PackInfo fields"
         self.record("packs_list", ok, detail)
 
     async def check_contract_drift(self, app=None):

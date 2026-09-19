@@ -692,6 +692,7 @@ async def get_status_models(auth: dict = Security(require_auth())):
 
 PACK_ZIP_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 PACK_ZIP_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+PACK_ZIP_MAX_ENTRIES = 2000
 
 
 class PackRollbackRequest(BaseModel):
@@ -732,13 +733,18 @@ def _extract_pack_zip(content: bytes, filename: str) -> str:
         raise PackManagerError(f"{filename}: not a readable zip archive: {e}") from e
 
     names = archive.namelist()
+    if len(names) > PACK_ZIP_MAX_ENTRIES:
+        raise PackManagerError(
+            f"{filename}: archive has {len(names)} entries, over the "
+            f"{PACK_ZIP_MAX_ENTRIES} entry cap"
+        )
 
     # Safest-first ordering: validate every entry path (G2/G3) before the
     # manifest-presence check (G1), so a hostile archive is refused on its
     # path shape regardless of what else it carries.
     for info in archive.infolist():
         name = info.filename
-        if "\\" in name or name.startswith("/") or ".." in name.split("/"):
+        if not name or "\\" in name or name.startswith("/") or ".." in name.split("/"):
             raise PackManagerError(f"{filename}: unsafe archive entry path {name}")
         if ((info.external_attr >> 16) & 0o170000) == 0o120000:
             raise PackManagerError(
@@ -748,23 +754,35 @@ def _extract_pack_zip(content: bytes, filename: str) -> str:
     if "pack.json" not in names and "./pack.json" not in names:
         raise PackManagerError(f"{filename}: no pack.json manifest at the archive root")
 
+    # Cheap pre-filter on declared sizes (central-directory metadata is
+    # spoofable, so this is an early-abort only — G4 below counts the bytes
+    # ACTUALLY written, which is what an attacker cannot lie about).
+    if sum(i.file_size for i in archive.infolist()) > PACK_ZIP_MAX_UNCOMPRESSED_BYTES:
+        raise PackManagerError(
+            f"{filename}: archive expands beyond the "
+            f"{PACK_ZIP_MAX_UNCOMPRESSED_BYTES} byte cap"
+        )
+
     total = 0
     tmp_root = tempfile.mkdtemp(prefix="pack-install-")
     try:
         for info in archive.infolist():
-            name = info.filename
             if info.is_dir():
                 continue
-            total += info.file_size
-            if total > PACK_ZIP_MAX_UNCOMPRESSED_BYTES:
-                raise PackManagerError(
-                    f"{filename}: archive expands beyond the "
-                    f"{PACK_ZIP_MAX_UNCOMPRESSED_BYTES} byte cap"
-                )
-            target = os.path.join(tmp_root, *name.split("/"))
+            target = os.path.join(tmp_root, *info.filename.split("/"))
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with archive.open(info) as src, open(target, "wb") as dst:
-                shutil.copyfileobj(src, dst)
+                while True:
+                    chunk = src.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > PACK_ZIP_MAX_UNCOMPRESSED_BYTES:
+                        raise PackManagerError(
+                            f"{filename}: archive expands beyond the "
+                            f"{PACK_ZIP_MAX_UNCOMPRESSED_BYTES} byte cap"
+                        )
+                    dst.write(chunk)
     except Exception:
         shutil.rmtree(tmp_root, ignore_errors=True)
         raise
@@ -811,12 +829,15 @@ async def install_pack(
             f"{len(content) / (1024 * 1024):.1f}MB",
         )
     try:
-        tmp_dir = _extract_pack_zip(content, file.filename)
+        tmp_dir = await asyncio.to_thread(_extract_pack_zip, content, file.filename)
     except PackManagerError as e:
         raise HTTPException(status_code=409, detail=str(e))
     try:
         try:
-            result = pm.install(tmp_dir)
+            # Off-loop: extraction+ingest are CPU/IO bound sync work; run them
+            # in a worker thread so concurrent /ask requests are not starved
+            # (review round: the other long-running engine ops already do this).
+            result = await asyncio.to_thread(pm.install, tmp_dir)
         except PackManagerError as e:
             raise HTTPException(status_code=409, detail=str(e))
     finally:

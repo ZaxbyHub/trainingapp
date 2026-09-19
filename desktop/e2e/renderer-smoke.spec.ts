@@ -122,7 +122,9 @@ test.describe.serial('renderer smoke (AC1)', () => {
     // Give the freshly-mounted page a beat to settle its async load.
     await page.waitForTimeout(1_000);
     const upload = async (): Promise<void> => {
-      await page.setInputFiles('input[type="file"]', {
+      // C7 (issue #74): the Documents page now has a SECOND file input (the
+      // packs panel's zip installer). Scope to the document DropZone input.
+      await page.setInputFiles('input[type="file"]:not([data-testid="pack-install-input"])', {
         name: 'training-notes.txt',
         mimeType: 'text/plain',
         buffer: Buffer.from(DOC_TEXT, 'utf8'),

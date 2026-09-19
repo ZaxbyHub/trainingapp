@@ -54,6 +54,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import threading
@@ -535,7 +536,17 @@ class PackManager:
                 if target not in outgoing:
                     outgoing.append(target)
 
-            # managed copy; source path is never referenced again
+            # managed copy; source path is never referenced again.
+            # Refuse symlinked sources BEFORE copying (parity with the Node
+            # install path's copyPackTreeRejectingLinks): default copytree
+            # would follow links and copy their targets into the managed dir.
+            for root, dirs, files in os.walk(source):
+                for entry in dirs + files:
+                    full = os.path.join(root, entry)
+                    if os.path.islink(full):
+                        raise PackManagerError(
+                            f"{source}: refusing symlink/junction in pack source: {full}"
+                        )
             managed = self.packs_root / pack_id / version
             try:
                 if managed.exists():

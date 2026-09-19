@@ -42,7 +42,12 @@ function isZip(file: File): boolean {
 function formatDate(value: string | null): string {
   if (!value) return '';
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+  // UTC on purpose: published_at is a date-only manifest field; rendering in
+  // the viewer's timezone shifted UTC-midnight timestamps a day for anyone
+  // west of UTC.
+  return Number.isNaN(date.getTime())
+    ? ''
+    : date.toLocaleDateString(undefined, { timeZone: 'UTC' });
 }
 
 export function PacksPanel({ apiClient }: PacksPanelProps) {
@@ -50,8 +55,19 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState(false);
+  const [working, setWorking] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState<RowKey | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  /** Focus restoration for the two-step remove flow (WCAG focus order):
+   * after Confirm/Cancel collapses the dialog, keyboard focus returns to the
+   * row's Remove control instead of dropping to <body>. */
+  const focusRemoveControl = useCallback((key: RowKey) => {
+    const control = document.querySelector(
+      `[data-testid="pack-remove-${key.packId}-${key.version}"]`,
+    );
+    (control as HTMLElement | null)?.focus();
+  }, []);
 
   const refresh = useCallback(async (): Promise<PackInfo[]> => {
     const list = await apiClient.listPacks();
@@ -80,6 +96,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         return;
       }
       setInstalling(true);
+      setWorking(true);
       try {
         const result = await apiClient.installPack(file);
         await refresh();
@@ -88,6 +105,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         showToast(err instanceof Error ? err.message : 'Pack install failed', 'error');
       } finally {
         setInstalling(false);
+        setWorking(false);
       }
     },
     [apiClient, refresh, showToast],
@@ -95,6 +113,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
 
   const handleRemove = useCallback(
     async (key: RowKey) => {
+      setWorking(true);
       try {
         await apiClient.removePack(key.packId, key.version);
         await refresh();
@@ -103,19 +122,24 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         showToast(err instanceof Error ? err.message : 'Pack removal failed', 'error');
       } finally {
         setConfirmingRemove(null);
+        setWorking(false);
+        focusRemoveControl(key);
       }
     },
-    [apiClient, refresh, showToast],
+    [apiClient, focusRemoveControl, refresh, showToast],
   );
 
   const handleRollback = useCallback(
     async (key: RowKey) => {
+      setWorking(true);
       try {
         await apiClient.rollbackPack(key.packId, key.version);
         await refresh();
         showToast(`Rolled back ${key.packId} to v${key.version}`, 'success');
       } catch (err: unknown) {
         showToast(err instanceof Error ? err.message : 'Rollback failed', 'error');
+      } finally {
+        setWorking(false);
       }
     },
     [apiClient, refresh, showToast],
@@ -144,9 +168,13 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
       }}
       onDrop={(e) => {
         e.preventDefault();
-        for (const file of Array.from(e.dataTransfer.files)) {
-          void installFile(file);
-        }
+        // Sequential on purpose: parallel installs interleave refresh() and
+        // race the shared installing/working flags.
+        void (async () => {
+          for (const file of Array.from(e.dataTransfer.files)) {
+            await installFile(file);
+          }
+        })();
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm, 8px)' }}>
@@ -156,7 +184,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          disabled={installing}
+          disabled={working}
         >
           {installing ? 'Installing…' : 'Install pack .zip'}
         </button>
@@ -226,6 +254,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
                     type="button"
                     data-testid={`pack-rollback-${rowId(pack)}`}
                     aria-label={`Rollback ${pack.packId} to ${pack.version}`}
+                    disabled={working}
                     onClick={() => void handleRollback(key)}
                   >
                     Rollback
@@ -236,6 +265,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
                     <button
                       type="button"
                       data-testid="pack-remove-confirm"
+                      disabled={working}
                       onClick={() => void handleRemove(key)}
                     >
                       Confirm
@@ -243,7 +273,10 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
                     <button
                       type="button"
                       data-testid="pack-remove-cancel"
-                      onClick={() => setConfirmingRemove(null)}
+                      onClick={() => {
+                        setConfirmingRemove(null);
+                        focusRemoveControl(key);
+                      }}
                     >
                       Cancel
                     </button>
@@ -253,6 +286,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
                     type="button"
                     data-testid={`pack-remove-${rowId(pack)}`}
                     aria-label={`Remove ${pack.packId} ${pack.version}`}
+                    disabled={working}
                     onClick={() => setConfirmingRemove(key)}
                   >
                     Remove

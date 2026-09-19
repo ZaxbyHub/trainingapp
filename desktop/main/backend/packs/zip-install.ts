@@ -21,6 +21,9 @@ import JSZip from 'jszip';
 import { PackManagerError } from '../store/pack-manager.js';
 
 export const PACK_ZIP_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024;
+/** G5 (review round): bound entry count — millions of tiny entries are an
+ * extraction DoS even when every entry passes the path and size guards. */
+export const PACK_ZIP_MAX_ENTRIES = 2000;
 
 export function isZipFilename(filename: string): boolean {
   return filename.toLowerCase().endsWith('.zip');
@@ -55,6 +58,11 @@ export async function extractPackZip(zip: Uint8Array, filename: string): Promise
   }
 
   const entries = Object.values(loaded.files);
+  if (entries.length > PACK_ZIP_MAX_ENTRIES) {
+    throw new PackManagerError(
+      `${filename}: archive has ${entries.length} entries, over the ${PACK_ZIP_MAX_ENTRIES} entry cap`,
+    );
+  }
 
   // Safest-first ordering (mirrors api_server.py _extract_pack_zip): validate
   // every entry path (G2/G3) before the manifest-presence check (G1), so a
@@ -62,7 +70,12 @@ export async function extractPackZip(zip: Uint8Array, filename: string): Promise
   for (const entry of entries) {
     // G2: normalize and re-verify containment before writing anything.
     const parts = entry.name.split('/');
-    if (entry.name.includes('\\') || path.isAbsolute(entry.name) || parts.includes('..')) {
+    if (
+      entry.name === '' ||
+      entry.name.includes('\\') ||
+      path.isAbsolute(entry.name) ||
+      parts.includes('..')
+    ) {
       throw new PackManagerError(`${filename}: unsafe archive entry path ${entry.name}`);
     }
     // G3: unix symlink modes are refused outright.
