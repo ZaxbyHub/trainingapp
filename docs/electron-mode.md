@@ -60,10 +60,16 @@ environment-specific decision funnels through two modules so pages stay small:
 
 - `App.tsx` — `DesktopBootGate` (discovery, model status, mode seeding) and
   the `skip` flag for `useServiceInitialization`.
-- `DocumentsPage.tsx` — load/upload/delete handlers.
+- `DocumentsPage.tsx` — load/upload/delete handlers, plus the C7 Knowledge
+  Packs surface (issue #74): the `PacksPanel` mounts only in Electron mode,
+  a dropped `.zip` routes to `POST /packs/install`, and pack operations never
+  touch the browser-profile IndexedDB namespaces (the C9 browser adapter is a
+  separate, undecided surface).
 - `SettingsPage.tsx` — settings load/save via the backend, "Desktop backend"
   status section; server-URL + browser-model sections hidden.
-- `ChatPage.tsx` — SSE URL/token/header from the session; model gate.
+- `ChatPage.tsx` — SSE URL/token/header from the session; model gate. C7
+  (issue #74): the SSE done event's pack-attributed `citations` render as
+  `<pack> v<version>` provenance in the citation pills.
 - `useDocumentCount.ts` — count from `GET /documents`; `recount()` exposed
   for same-tab refresh after upload/clear.
 - `InferenceModeContext.tsx` — connectivity probe carries the session header.

@@ -94,6 +94,63 @@ export interface Citation {
   pack_published_at: string | null;
 }
 
+/**
+ * C7 (issue #74): one installed pack version, as the ApiClient surfaces it to
+ * the UI — camelCase mirrors of the wire's pack_id/source_class/published_at
+ * (the frozen check stubs define this shape; see
+ * DocumentsPage.packs.test.tsx).
+ */
+export interface PackInfo {
+  packId: string;
+  version: string;
+  name: string | null;
+  sourceClass: string | null;
+  publishedAt: string | null;
+  active: boolean;
+  supersedes: string[];
+}
+
+/** C7 (issue #74): install outcome as the ApiClient surfaces it to the UI. */
+export interface InstallPackResult {
+  packId: string;
+  version: string;
+}
+
+/** C7 (issue #74): wire row exactly as the /packs route emits it. */
+export interface PackInfoWire {
+  pack_id: string;
+  version: string;
+  name: string | null;
+  source_class: string | null;
+  published_at: string | null;
+  active: boolean;
+  supersedes: string[];
+}
+
+/** C7 (issue #74): GET /packs wire response. */
+export interface PacksListResponse {
+  packs: PackInfoWire[];
+}
+
+/** C7 (issue #74): POST /packs/install wire response (server paths deliberately not exposed). */
+export interface InstallPackWireResponse {
+  pack_id: string;
+  version: string;
+  docs_installed: number;
+  chunks_added: number;
+  superseded: string[];
+  warnings: string[];
+}
+
+/** C7 (issue #74): POST /packs/rollback + /packs/remove bodies/responses. */
+export interface PackRollbackResponse {
+  ok: boolean;
+}
+
+export interface PackRemoveResponse {
+  removed: number;
+}
+
 /** C5 (issue #72): grounded/general provenance (mirror of the OpenAPI enum). */
 export type Grounding = 'grounded' | 'general';
 

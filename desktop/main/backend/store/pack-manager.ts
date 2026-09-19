@@ -101,6 +101,16 @@ export interface PackRecord {
   installPath: string | null;
   supersedes: string[];
   docs: Record<string, { doc_sha256: string; doc_id: string }>;
+  /**
+   * C7 (issue #74): manifest display fields surfaced for GET /packs. Nullable
+   * mirrors of the packs-table columns (NOT NULL in the v3 schema, so live
+   * rows always carry them) to keep literal-construction sites honest about
+   * the additive widening; the Python registry rows use the same Optional
+   * pattern for pre-existing rows (pack_manager.py published_at precedent).
+   */
+  name: string | null;
+  sourceClass: string | null;
+  publishedAt: string | null;
 }
 
 export interface InstallResult {
@@ -683,6 +693,9 @@ export class PackManager {
         installPath: row.install_path,
         supersedes,
         docs: this.docsMapForRow(row),
+        name: row.name,
+        sourceClass: row.source_class,
+        publishedAt: row.published_at,
       };
       }),
     );

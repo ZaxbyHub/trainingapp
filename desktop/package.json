@@ -18,6 +18,7 @@
     "test:e2e": "playwright test --config playwright.config.ts"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.63.0",
     "@types/node": "^24.9.0",
     "concurrently": "^10.0.5",

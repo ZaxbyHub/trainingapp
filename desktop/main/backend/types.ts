@@ -235,6 +235,49 @@ export interface Citation {
 }
 
 /**
+ * C7 (issue #74): one installed pack version as listed by GET /packs (mirror
+ * of the OpenAPI PackInfo schema). `name`/`source_class` are nullable so the
+ * shape also covers registry rows written before those manifest fields were
+ * persisted (the C4 `published_at` additive precedent); live packs-table rows
+ * always carry them (NOT NULL columns).
+ */
+export interface PackInfo {
+  pack_id: string;
+  version: string;
+  name: string | null;
+  source_class: string | null;
+  published_at: string | null;
+  active: boolean;
+  supersedes: string[];
+}
+
+/**
+ * C7 (issue #74): POST /packs/install response body (mirror of the OpenAPI
+ * InstallPackResponse schema). Server-filesystem paths are deliberately NOT
+ * exposed to the renderer.
+ */
+export interface InstallPackResponse {
+  pack_id: string;
+  version: string;
+  docs_installed: number;
+  chunks_added: number;
+  superseded: string[];
+  warnings: string[];
+}
+
+/**
+ * C7 (issue #74): the host-wired pack lifecycle surface behind the /packs
+ * routes. The adapter wraps PackManager; the transport layer stays
+ * storage-agnostic (and zip extraction lives in the adapter, not here).
+ */
+export interface PackSurface {
+  list(): Promise<PackInfo[]>;
+  installZip(zip: Uint8Array, filename: string): Promise<InstallPackResponse>;
+  rollback(packId: string, toVersion: string): Promise<void>;
+  remove(packId: string, version?: string): Promise<number>;
+}
+
+/**
  * Learn assembler (issue #82): derives learn[] rows from the cited chunk
  * ids. Synchronous (better-sqlite3); returns null when learn cannot be
  * computed (store closed) so callers omit the field. C5 (issue #72): the

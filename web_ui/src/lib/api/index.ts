@@ -30,6 +30,8 @@ export type {
   ApiErrorResponse,
   StreamTokenEvent,
   StreamDoneEvent,
+  PackInfo,
+  InstallPackResult,
 } from './types';
 
 export { ApiError } from './types';

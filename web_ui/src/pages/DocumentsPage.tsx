@@ -17,6 +17,7 @@ import { ensureEmbeddingServiceReady } from '../hooks/useServiceInitialization';
 import { getVectorIndex } from '../lib/search/vector-index';
 import { getKeywordIndex } from '../lib/search/keyword-index';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
+import { PacksPanel } from '../components/PacksPanel';
 import type { DocumentInfo } from '../lib/api';
 
 function generateId(): string {
@@ -447,11 +448,26 @@ export function DocumentsPage() {
       // (/ingest/file) — extraction, chunking, embedding and indexing all
       // happen server-side. The browser-local pipeline below is untouched.
       if (electronMode && desktopSession) {
+        // C7 (issue #74): a dropped .zip is a knowledge pack — route it to
+        // the pack install API instead of the document pipeline. Plain files
+        // keep the existing upload path unchanged (C3 preserving).
+        const zipFiles = files.filter((f) => f.name.toLowerCase().endsWith('.zip'));
+        const docFiles = files.filter((f) => !f.name.toLowerCase().endsWith('.zip'));
+        for (const zip of zipFiles) {
+          try {
+            const result = await desktopSession.apiClient.installPack(zip);
+            showToast(`Installed ${result.packId} v${result.version}`, 'success');
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            showToast(`Failed to install pack "${zip.name}": ${message}`, 'error');
+          }
+        }
+        if (docFiles.length === 0) return;
         // F5 parity: same fileName+fileSize dedupe as the browser-local branch.
         const existing = latestDocumentsRef.current;
         const accepted: { file: File; entry: DocumentEntry }[] = [];
         const skipped: string[] = [];
-        for (const file of files) {
+        for (const file of docFiles) {
           const isDuplicate =
             existing.some((doc) => doc.fileName === file.name && doc.fileSize === file.size) ||
             accepted.some((a) => a.entry.fileName === file.name && a.entry.fileSize === file.size);
@@ -835,11 +851,20 @@ export function DocumentsPage() {
         </div>
       )}
 
+      {/* Knowledge Packs panel (Electron mode only — C7, issue #74). The
+          browser surface keeps its IndexedDB pipeline untouched (C9 owns the
+          browser adapter). Mounted above the document drop zone. */}
+      {electronMode && desktopSession && (
+        <div style={{ flexShrink: 0 }}>
+          <PacksPanel apiClient={desktopSession.apiClient} />
+        </div>
+      )}
+
       {/* Drop zone */}
       <div style={{ flexShrink: 0 }}>
         <DropZone
           onFilesSelected={handleFilesSelected}
-          accept={SUPPORTED_EXTENSIONS.join(',')}
+          accept={[...SUPPORTED_EXTENSIONS, ...(electronMode ? ['.zip'] : [])].join(',')}
           onFilesRejected={(fileNames) => {
             // U7a: surface skipped filenames so the user knows files were
             // discarded (previously DropZone filtered silently).

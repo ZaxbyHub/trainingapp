@@ -5,7 +5,7 @@
 
 import { SSEStreamConsumer } from '../api/streaming';
 import type { SearchResult } from '../../types/search';
-import type { Grounding, LearnResult } from '../api/types';
+import type { Citation, Grounding, LearnResult } from '../api/types';
 
 type TokenCallback = (token: string) => void;
 
@@ -156,6 +156,9 @@ export class TokenStreamManager {
     /** C5 (issue #72): grounded/general provenance when the surface emitted it. */
     grounding?: Grounding;
     chunks?: SearchResult[];
+    /** C7 (issue #74): pack-attributed wire citations from the SSE done event
+     *  (the Electron surface); mapped into CitationRef by the ChatPage handler. */
+    citations?: Citation[];
     learn?: LearnResult[];
     abstain?: boolean;
     abstainReason?: 'insufficient_evidence' | 'retrieval_degraded';
@@ -242,6 +245,10 @@ export class TokenStreamManager {
         ...(data.grounding !== undefined ? { grounding: data.grounding } : {}),
         // D6 (issue #82): forward the server's learn rows when present.
         ...(data.learn !== undefined ? { learn: data.learn } : {}),
+        // C7 (issue #74): forward the server's pack-attributed citations when
+        // present — WITHOUT this forward the structured citations (with their
+        // pack provenance) never reach the ChatPage handler in Electron mode.
+        ...(data.citations !== undefined ? { citations: data.citations } : {}),
       });
     });
 
