@@ -41,14 +41,19 @@ jobs:
       - name: Install desktop dependencies
         run: npm --prefix desktop ci --no-audit --no-fund
 
+      # Issue #73: packtool must be built BEFORE the desktop vitest run — the
+      # c6-prebuilt-install test shells out to node packtool/dist/cli.js to
+      # build a real fixture pack for the zero-re-embed install test.
+      - name: Build packtool (issue #73 dependency of the desktop tests)
+        run: |
+          npm --prefix packtool ci --no-audit --no-fund
+          npm --prefix packtool run build
+
       - name: Acceptance tests (vitest, stubbed electron)
         run: npm --prefix desktop test
 
       - name: Storyline extractor tests (packtool, fixture-only)
-        run: |
-          npm --prefix packtool ci --no-audit --no-fund
-          npm --prefix packtool run build
-          npm --prefix packtool test
+        run: npm --prefix packtool test
 
       - name: Build installer (unsigned NSIS x64)
         run: npm --prefix desktop run desktop:build
@@ -201,3 +206,36 @@ jobs:
         run: |
           python -m pip install chromadb
           python contracts/tests/test_pack_parity.py
+
+  packtool-fixture-pack:
+    name: packtool build-docs fixture pack (issue #73)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: packtool/package-lock.json
+
+      - name: Install + build packtool
+        run: |
+          npm --prefix packtool ci --no-audit --no-fund
+          npm --prefix packtool run build
+
+      - name: Build the C1 fixture pack from the committed source docs
+        run: |
+          mkdir -p knowledge-pack-fixture
+          node packtool/dist/cli.js build-docs contracts/fixtures/source-docs/ --id test-pack --version 1.0.0 -o knowledge-pack-fixture/out.zip
+
+      - name: Verify the built pack
+        run: node packtool/dist/cli.js verify knowledge-pack-fixture/out.zip
+
+      - name: Upload the fixture pack artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledge-pack-fixture
+          path: knowledge-pack-fixture/out.zip
+          if-no-files-found: error

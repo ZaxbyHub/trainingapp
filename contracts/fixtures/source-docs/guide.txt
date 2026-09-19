@@ -1,0 +1,8 @@
+Packing guide
+
+This plain-text guide walks through the three packtool verbs added for
+issue 73. build-docs extracts, chunks, and embeds every supported document
+in a source folder and writes a conformant pack.json plus a prebuilt
+index.sqlite with FTS. verify re-hashes every document and confirms the
+index stamps. diff reports added, removed, and changed documents plus the
+chunk-count delta between two packs.

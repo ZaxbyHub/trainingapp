@@ -223,3 +223,70 @@ lifecycle (#70) composes the same operations.
 - `links/link-pack.ts` — the pack-level `links` operation (dual zip/dir
   sources, embedding-comparability guards, transactional link rewrite,
   atomic publish).
+
+## `packtool build-docs` (issue #73)
+
+```bash
+node packtool/dist/cli.js build-docs <sourceDir> -o <pack.zip> \
+  [--embedder hash|onnx] [--embedding-model <dir>] [--id <pack-id>] \
+  [--version <semver>] [--name <name>] [--published-at <iso>] \
+  [--source-class bundled|training|user]
+# build first: npm --prefix packtool run build
+```
+
+Turns a folder of PLAIN documents (`.md`, `.txt`, `.json` — the JSON docs use
+the bundled-min `{title, text}` convention) into one installable Knowledge
+Pack with a PREBUILT `index.sqlite` (embeddings + FTS5), so installing the
+pack requires zero client-side re-embedding. Defaults: `source_class
+"bundled"`, `chunking.strategy "fixed-words"` (the C1 fixture convention;
+same shared TextChunker), pack id from `--id` or a slug of the folder name.
+
+- **Determinism**: with `--published-at` fixed, two builds of the same source
+  folder are byte-identical (pack.json AND zip) on the same tool version and
+  platform. `published_at` defaults to build time — it is the one volatile
+  field. Unsupported extensions are skipped with a stderr note (never
+  silently embedded); symlinks/junctions are refused; `.json` docs without a
+  string `text` field fail loudly. Fixture sources live in
+  `contracts/fixtures/source-docs/` (byte-stable via `.gitattributes`).
+- **Module map (issue #73 additions)**: `docs/extract.ts` (source scanning +
+  text/title extraction), `docs/build-docs.ts` (the orchestrator; reuses the
+  generic chunker/embedder/index-writer/zip plumbing),
+  `build/zip.ts` (the deterministic zip writer extracted from compose.ts so
+  both build verbs emit identical conventions).
+- **CI**: the `packtool-fixture-pack` job in `desktop-build.yml` builds and
+  verifies the committed fixture pack and uploads the artifact on every PR
+  touching `packtool/`. Build-time notes: `RESULTS.md`.
+
+## `packtool diff` (issue #73)
+
+```bash
+node packtool/dist/cli.js diff <packA> <packB>
+```
+
+Reports added/removed/changed docs (by manifest `path` + `sha256`) and the
+chunk-count delta between two packs (zips or directories), for release notes
+and CI review of pack changes. Pinned output shape (asserted byte-exactly by
+`docs/__tests__/build-docs.test.ts`):
+
+```
+added: docs/x.md (sha256 <hash>)
+removed: docs/y.txt (sha256 <hash>)
+changed: docs/z.json (sha256 <old> -> <new>)
+chunks: <nA> -> <nB> (delta <±k>)      # `chunks: n/a` when either pack has no index
+summary: <a> added, <r> removed, <c> changed
+```
+
+Exit 0 for any valid comparison (a report, not a gate); exit 1 on load or
+manifest errors. Module: `docs/diff.ts`.
+
+## `packtool verify` changes (issue #73)
+
+- `--embedding-model <model_id>`: print a `warning: embedding model mismatch`
+  line when the pack's `embedding.model_id` differs from the expected model
+  (exit code unchanged — the hard runtime refusal is C8's job).
+- `index.sqlite_vec_version` must equal the pinned `SQLITE_VEC_PIN`
+  (`0.1.9`); a mismatch is a verify `problem` (exit 1).
+- The `assets/player/story.html` anchor applies to `source_class: "training"`
+  packs only; bundled/user packs verify without player assets.
+- `chunking.strategy` validation accepts the C1 enum
+  (`fixed-words|fixed-tokens|page-aware|slide-aware`).

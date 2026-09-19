@@ -1,11 +1,9 @@
 // build/pack-json.ts — the Knowledge Pack manifest (issue #79, D3).
 //
-// pack.json field shapes follow the DRAFT manifest schema quoted in issue
-// #68 (C1, still open): required top-level id/name/version/published_at/
-// source_class/embedding/chunking/docs, optional index. When #68 lands with
-// contracts/pack.schema.json, validate against that file and adopt any field
-// drift as an additive re-plug (schema-version bump) — do not silently widen
-// this type.
+// pack.json field shapes follow contracts/pack.schema.json (landed by #68/C1;
+// this file is the Node-side structural mirror used by build and verify).
+// Issue #73: chunking.strategy follows the C1 enum instead of the D3-era
+// 'slide-aware' literal, so non-training packs stamp their real strategy.
 //
 // Determinism: serializePackJson emits fields in a fixed key order with the
 // same JSON style as the extractor (2-space indent + trailing newline), and
@@ -29,8 +27,18 @@ export interface PackEmbedding {
   normalize: boolean;
 }
 
+/**
+ * Chunking strategies accepted in a manifest — the frozen C1 schema's enum
+ * (contracts/pack.schema.json). Issue #73: widened from the build-storyline
+ * literal 'slide-aware' so non-training packs can stamp their real strategy
+ * ('fixed-words' is the plain-documents convention used by build-docs and
+ * the bundled-min fixture).
+ */
+export const CHUNKING_STRATEGIES = ['fixed-words', 'fixed-tokens', 'page-aware', 'slide-aware'] as const;
+export type ChunkingStrategy = (typeof CHUNKING_STRATEGIES)[number];
+
 export interface PackChunking {
-  strategy: 'slide-aware';
+  strategy: ChunkingStrategy;
   size: number;
   overlap: number;
 }
@@ -129,7 +137,8 @@ export function serializePackOutlineDoc(outline: PackOutlineDoc): string {
   return `${JSON.stringify(ordered, null, 2)}\n`;
 }
 
-const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/;
+/** Issue #73: exported so build-docs validates a caller-supplied --id. */
+export const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/;
 export const SEMVER_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 
@@ -255,8 +264,11 @@ export function validatePackManifest(value: unknown): ManifestProblems {
     add('chunking block is missing');
   } else {
     const chunk = chunking as Record<string, unknown>;
-    if (chunk['strategy'] !== 'slide-aware') {
-      add('chunking.strategy must be "slide-aware" for training packs');
+    if (
+      typeof chunk['strategy'] !== 'string' ||
+      !(CHUNKING_STRATEGIES as readonly string[]).includes(chunk['strategy'])
+    ) {
+      add(`chunking.strategy must be one of ${CHUNKING_STRATEGIES.join('|')}`);
     }
     if (typeof chunk['size'] !== 'number' || (chunk['size'] as number) < 1) {
       add('chunking.size must be a positive integer');

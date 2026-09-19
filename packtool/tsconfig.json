@@ -15,6 +15,6 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["cli.ts", "build/**/*.ts", "storyline/**/*.ts"],
-  "exclude": ["storyline/__tests__"]
+  "include": ["cli.ts", "build/**/*.ts", "storyline/**/*.ts", "docs/**/*.ts"],
+  "exclude": ["storyline/__tests__", "docs/__tests__"]
 }

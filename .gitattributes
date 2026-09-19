@@ -11,3 +11,7 @@ tests/fixtures/storyline-mini/** -text
 packtool/** -text
 desktop/e2e/fixtures/storyline-nav/** -text
 contracts/fixtures/packs/** -text
+
+# Issue #73: the build-docs fixture sources hash into docs[].sha256 at build
+# time; byte-stable checkouts keep two builds reproducible cross-machine.
+contracts/fixtures/source-docs/** -text
