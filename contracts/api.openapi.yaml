@@ -126,7 +126,8 @@ paths:
         - token: `{"token": "<text>"}`
         - done:  `{"done": true, "sources": [...], "context_length": n,
                   "inference_time": t, "cancelled": true (only when cancelled),
-                  "learn": reserved, "grounding": reserved}`
+                  "grounding": "grounded" | "general" (required, C5 issue #72),
+                  "learn": [...], "citations": [...]}`
         - error: `{"error": "<message>"}` on `event: error`
         Exactly one terminal (done or error) per stream. Client disconnect
         cancels generation server-side; the cancelled stream still ends with a

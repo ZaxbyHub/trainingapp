@@ -113,7 +113,10 @@ One `POST /ask` per question with `n_results=10` (contract maximum).
   **Report-only** — the initial target is `>= 0.80` and is deliberately
   NON-BLOCKING: the run reports the number, it does not gate on it. A
   response missing the `grounding` key is a contract error row (excluded from
-  the denominator).
+  the denominator); a NON-ENUM `grounding` value (e.g. wrong case or a
+  non-string) stays in the denominator but can never match — it deflates the
+  score rather than failing the run (hard enum enforcement lives in the
+  conformance suite, not this report-only metric).
 
 Exit codes: 0 = run completed (scores are informational — a low score is a
 measurement, not a failure); 1 = structural failure (backend unreachable,

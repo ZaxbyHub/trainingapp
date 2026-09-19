@@ -542,6 +542,33 @@ describe('SSEStreamConsumer', () => {
       expect(received.citations).toHaveLength(1);
     });
 
+    it('forwards non-enum grounding values untouched (consumer tolerance, issue #72 PRR-007)', async () => {
+      // The consumer is deliberately tolerant: it forwards whatever string the
+      // server sent; enum enforcement lives at the conformance layer and the
+      // badge renders null for unknown values.
+      for (const bad of ['Grounded', '', '123', 'sort-of']) {
+        // Fresh consumer per value: a terminated consumer cannot re-emit.
+        const c = new SSEStreamConsumer('/ask/stream', { question: 'x' });
+        const donePromise = new Promise<any>((resolve) => {
+          c.onDone((data) => resolve(data));
+        });
+        const wireLine =
+          'data: {"sources":["doc1.pdf"],"context_length":100,"inference_time":5,"grounding":' +
+          JSON.stringify(bad) +
+          '}\n';
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(wireLine));
+            controller.close();
+          },
+        });
+        mockFetch.mockResolvedValue({ ok: true, body: stream } as unknown as Response);
+        c.start();
+        const received = await donePromise;
+        expect(received.grounding).toBe(bad);
+      }
+    });
+
     it('omits grounding when an older server does not send it (issue #72)', async () => {
       const donePromise = new Promise<any>((resolve) => {
         consumer.onDone((data) => resolve(data));

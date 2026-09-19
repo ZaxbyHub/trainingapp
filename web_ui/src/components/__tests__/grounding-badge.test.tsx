@@ -19,14 +19,14 @@ function messageWith(grounding: ChatMessage['grounding']): ChatMessage {
 describe('GroundingBadge render in ChatMessageBubble', () => {
   it('renders the grounded badge for grounding="grounded"', () => {
     render(<ChatMessageBubble message={messageWith('grounded')} />);
-    const badge = screen.getByLabelText('Answer grounded in your documents');
+    const badge = screen.getByRole('status');
     expect(badge).toBeDefined();
     expect(badge.textContent).toContain('Grounded in your documents');
   });
 
   it('renders the general badge for grounding="general"', () => {
     render(<ChatMessageBubble message={messageWith('general')} />);
-    const badge = screen.getByLabelText('Answer from general knowledge — no document evidence');
+    const badge = screen.getByRole('status');
     expect(badge).toBeDefined();
     expect(badge.textContent).toContain('General knowledge');
   });

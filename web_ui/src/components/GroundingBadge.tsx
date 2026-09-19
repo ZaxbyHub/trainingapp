@@ -8,9 +8,9 @@
 // value stays distinguishable in a grayscale screenshot or for screen readers.
 import type { Grounding } from '../lib/api/types';
 
-const COPY: Record<Grounding, { label: string; ariaLabel: string }> = {
-  grounded: { label: 'Grounded in your documents', ariaLabel: 'Answer grounded in your documents' },
-  general: { label: 'General knowledge', ariaLabel: 'Answer from general knowledge — no document evidence' },
+const COPY: Record<Grounding, { label: string }> = {
+  grounded: { label: 'Grounded in your documents' },
+  general: { label: 'General knowledge' },
 };
 
 /** Distinct glyph shapes (not color) carry the variant: a check-dot for
@@ -54,7 +54,7 @@ export function GroundingBadge({ grounding }: { grounding: Grounding | undefined
   return (
     <span
       role="status"
-      aria-label={copy.ariaLabel}
+      aria-live="polite"
       style={{
         display: 'inline-flex',
         alignItems: 'center',
@@ -68,6 +68,8 @@ export function GroundingBadge({ grounding }: { grounding: Grounding | undefined
       }}
     >
       <BadgeIcon variant={grounding} />
+      {/* No aria-label: the visible text IS the accessible name (accName
+          computation would otherwise suppress it — PRR-012). */}
       <span>{copy.label}</span>
     </span>
   );

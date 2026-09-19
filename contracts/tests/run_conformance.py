@@ -276,6 +276,10 @@ class Conformance:
                 and terminals[0].get("cancelled") is True
                 and "sources" in terminals[0]
                 and "context_length" in terminals[0]
+                # C5 (issue #72): the schema requires grounding on EVERY
+                # terminal done event, cancelled included — same enum
+                # assertion as check_ask / check_ask_stream.
+                and terminals[0].get("grounding") in ("grounded", "general")
             )
             detail += f" terminals={terminals!r:.200}"
         self.record("ask_stream_cancelled", ok, detail)

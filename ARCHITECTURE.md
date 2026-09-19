@@ -597,8 +597,9 @@ Response:
 ```
 
 `grounding` (C5, issue #72) is `"grounded"` when at least one chunk of the
-final evidence set cleared the active relevance floor, `"general"` otherwise;
-the chat UI renders it as a per-answer badge.
+final evidence set cleared the active relevance floor, `"general"` otherwise
+(on the desktop's rerank-less fused path no floor exists, so it resolves
+`"general"`); the chat UI renders it as a per-answer badge.
 
 ---
 

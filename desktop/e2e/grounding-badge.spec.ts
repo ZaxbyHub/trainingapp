@@ -19,7 +19,7 @@
 // Fixture gating (mirrors the c4/d6 vitest convention): skipped when the
 // python venv or the built renderer bundle is absent.
 import { expect, test } from '@playwright/test';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -39,7 +39,14 @@ function findRepoRoot(dir: string): string {
 }
 
 const REPO_ROOT = findRepoRoot(THIS_DIR);
-const PYTHON = process.env.TRAININGAPP_PYTHON ?? path.join(REPO_ROOT, '.venv', 'Scripts', 'python.exe');
+// PRR-013: resolve the venv interpreter on BOTH layouts (Windows Scripts/, POSIX bin/)
+const PYTHON_CANDIDATES = process.env.TRAININGAPP_PYTHON
+  ? [process.env.TRAININGAPP_PYTHON]
+  : [
+      path.join(REPO_ROOT, '.venv', 'Scripts', 'python.exe'),
+      path.join(REPO_ROOT, '.venv', 'bin', 'python'),
+    ];
+const PYTHON = PYTHON_CANDIDATES.find((p) => fs.existsSync(p)) ?? PYTHON_CANDIDATES[0];
 const PYTHON_READY = fs.existsSync(PYTHON);
 const RENDERER_BUILT = fs.existsSync(path.join(REPO_ROOT, 'web_ui', 'dist', 'index.html'));
 
@@ -91,15 +98,21 @@ test.beforeAll(async () => {
   backendPort = await freePort();
   backend = spawn(
     PYTHON,
-    [path.join(REPO_ROOT, 'eval', 'ci_serve.py'), '--port', String(backendPort), '--label', 'c5-e2e'],
+    [path.join(REPO_ROOT, 'eval', 'ci_serve.py'), '--port', String(backendPort)],
     { cwd: REPO_ROOT, stdio: 'ignore' },
   );
   await waitForHealth(`http://127.0.0.1:${backendPort}/health`);
 });
 
 test.afterAll(async () => {
-  if (backend !== null) {
-    backend.kill();
+  if (backend !== null && backend.pid) {
+    if (process.platform === 'win32') {
+      // Windows tree-kill: uvicorn may hold worker children; bare kill() can
+      // orphan them (same pattern as renderer-smoke.spec.ts).
+      spawnSync('taskkill', ['/PID', String(backend.pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      backend.kill('SIGTERM');
+    }
   }
 });
 
@@ -124,7 +137,10 @@ test.describe('C5 grounding badge in the real chat UI (issue #72)', () => {
     await ask(page, CORPUS_QUESTION);
     await ask(page, CORPUS_QUESTION);
 
-    const groundedBadge = page.getByText('Grounded in your documents').first();
+    // PRR-004: scope to the LAST badge in DOM order so the assertion tracks
+    // the most recent answer (robust even after #118 makes the bootstrap ask
+    // render its own badge).
+    const groundedBadge = page.getByText('Grounded in your documents').last();
     await expect(groundedBadge).toBeVisible();
     await groundedBadge.scrollIntoViewIfNeeded();
     await page.screenshot({
@@ -132,8 +148,17 @@ test.describe('C5 grounding badge in the real chat UI (issue #72)', () => {
       fullPage: true,
     });
 
+    // PRR-008: prove the no-color-only a11y contract from committed code —
+    // the same UI with a grayscale filter must stay fully readable.
+    await page.addStyleTag({ content: 'html { filter: grayscale(100%); }' });
+    await page.screenshot({
+      path: path.join(SCREENSHOT_DIR, 'grounded-badge-grayscale.png'),
+      fullPage: true,
+    });
+    await page.addStyleTag({ content: 'html { filter: none; }' });
+
     await ask(page, OUT_OF_CORPUS_QUESTION);
-    const generalBadge = page.getByText('General knowledge').first();
+    const generalBadge = page.getByText('General knowledge').last();
     await expect(generalBadge).toBeVisible();
     await generalBadge.scrollIntoViewIfNeeded();
     await page.screenshot({

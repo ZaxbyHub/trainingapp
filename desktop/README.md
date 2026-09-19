@@ -319,6 +319,13 @@ main/event-loop thread) -> the calibrated relevance floor (ADR-0007) -> topK.
   same vector space as the recorded parity baseline
   (eval/samples/report-devstation-weighted.json); see ADR-0007 for the
   re-baseline condition if that changes.
+- **Reranker stub fixture** (C5, issue #72): on hash-embedder dev/CI hosts
+  there is no ONNX reranker model, so `TRAININGAPP_DESKTOP_RERANKER_STUB=1`
+  attaches a constant-high stub reranker, keeping the pipeline on the
+  calibrated-floor path (evidence is floor-qualified and the C5 `grounding`
+  provenance value is meaningful). Dev/CI-only — never set in production;
+  with neither a real reranker nor the stub the surface runs fused (no floor)
+  and grounding resolves `"general"` (see `RetrievalSurface.floorActive`).
 - **Detached mode**: with no store configured (or no embedder resolvable) the
   host attaches no retrieval surface and engines keep the B3 deterministic
   behavior; attaching/detaching is the `attachRetrievalSurface` seam,

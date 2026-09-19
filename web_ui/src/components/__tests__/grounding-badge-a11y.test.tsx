@@ -8,18 +8,19 @@ import { render, screen } from '@testing-library/react';
 import { GroundingBadge } from '../GroundingBadge';
 import type { Grounding } from '../../lib/api/types';
 
-const VARIANTS: Array<{ grounding: Grounding; text: string; aria: string }> = [
-  { grounding: 'grounded', text: 'Grounded in your documents', aria: 'Answer grounded in your documents' },
-  { grounding: 'general', text: 'General knowledge', aria: 'Answer from general knowledge — no document evidence' },
+const VARIANTS: Array<{ grounding: Grounding; text: string }> = [
+  { grounding: 'grounded', text: 'Grounded in your documents' },
+  { grounding: 'general', text: 'General knowledge' },
 ];
 
 describe('GroundingBadge accessibility (no color-only signal)', () => {
   for (const variant of VARIANTS) {
     it(`"${variant.grounding}" exposes text + icon + accessible name`, () => {
       render(<GroundingBadge grounding={variant.grounding} />);
-      const badge = screen.getByLabelText(variant.aria);
-      // role=status so assistive tech announces provenance.
-      expect(badge.getAttribute('role')).toBe('status');
+      // role=status + aria-live=polite (codebase precedent: the badge is a
+      // polite live region; visible text IS the accessible name — PRR-012).
+      const badge = screen.getByRole('status');
+      expect(badge.getAttribute('aria-live')).toBe('polite');
       // Visible text label (grayscale-safe: text survives color removal).
       expect(badge.textContent).toContain(variant.text);
       // A distinct SVG icon shape accompanies the text (grounded => one glyph
@@ -32,7 +33,6 @@ describe('GroundingBadge accessibility (no color-only signal)', () => {
 
   it('the two variants carry DIFFERENT text labels (shape+text distinguish them)', () => {
     expect(VARIANTS[0].text).not.toBe(VARIANTS[1].text);
-    expect(VARIANTS[0].aria).not.toBe(VARIANTS[1].aria);
   });
 
   it('renders nothing (no empty chip) when grounding is absent or unknown', () => {

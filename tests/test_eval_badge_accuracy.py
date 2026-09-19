@@ -132,6 +132,8 @@ def test_badge_accuracy_all_match(monkeypatch):
 
 
 def test_badge_accuracy_counts_mismatches(monkeypatch):
+    """Asymmetric 1-match/3-miss fixture (PRR-006): inverting the match
+    predicate would yield 0.75, distinguishable from the correct 0.25."""
     report = _run(
         monkeypatch,
         {
@@ -140,13 +142,14 @@ def test_badge_accuracy_counts_mismatches(monkeypatch):
             "b2 text": _payload("b2 text", "grounded"),
             # b3 emits grounded although expected general -> miss
             "b3 text": _payload("b3 text", "grounded", sources=()),
-            "b4 text": _payload("b4 text", "general", sources=()),
+            # b4 emits grounded although expected general -> miss
+            "b4 text": _payload("b4 text", "grounded", sources=()),
         },
     )
     metrics = report["metrics"]
     assert metrics["badge_total"] == 4
-    assert metrics["badge_matches"] == 2
-    assert metrics["badge_accuracy"] == 0.5
+    assert metrics["badge_matches"] == 1
+    assert metrics["badge_accuracy"] == 0.25
 
 
 def test_badge_accuracy_excludes_error_rows_and_invalid_values(monkeypatch):
