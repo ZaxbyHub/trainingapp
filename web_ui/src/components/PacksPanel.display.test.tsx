@@ -76,7 +76,10 @@ describe('PacksPanel display contract (issue #74)', () => {
       .fn(async () => PACKS)
       .mockImplementationOnce(async () => PACKS)
       .mockImplementationOnce(async () => PACKS.filter((p) => p.packId !== 'legacy-pack'));
-    renderPanel({ listPacks, removePack: vi.fn(async () => undefined) });
+    renderPanel({
+      listPacks,
+      removePack: vi.fn(async () => ({ removed: 1 })),
+    });
 
     const row = await screen.findByTestId('pack-row-legacy-pack-0.9.0');
     fireEvent.click(screen.getByTestId('pack-remove-legacy-pack-0.9.0'));
