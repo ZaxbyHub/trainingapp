@@ -21,6 +21,8 @@ type DoneCallback = (data: {
   grounding?: Grounding;
   /** Structured per-chunk citations aligned with the model's [1],[2] order (F7). */
   chunks?: SearchResult[];
+  /** C7 (issue #74): pack-attributed wire citations from the SSE done event; present on the Electron surface. */
+  citations?: Citation[];
   /** Learn-panel rows (issue #82); present when the answering surface computed them. */
   learn?: LearnResult[];
   /** True when the pipeline abstained instead of answering (F2). */
