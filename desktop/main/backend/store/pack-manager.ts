@@ -482,9 +482,9 @@ export class PackManager {
     let imported: ImportedPrebuilt | null = null;
     let chunks: ChunkPayload[];
     let vectors: number[][];
-    const declaredIndex = manifest.index !== undefined ? path.join(managed, ...manifest.index.path.split('/')) : null;
-    if (declaredIndex !== null && fs.existsSync(declaredIndex)) {
-      imported = this.readPrebuiltIndex(declaredIndex);
+    const declaredIndex = this.resolveContainedPrebuiltIndex(managed, manifest);
+    if (declaredIndex !== null) {
+      imported = this.readPrebuiltIndex(declaredIndex, manifest);
       chunks = imported.chunks;
       vectors = imported.vectors;
     } else {
@@ -757,6 +757,13 @@ export class PackManager {
       }
     }
 
+    // PRR-120-F6: a manifest-declared index path is pack-controlled — pin it
+    // to the same path-safety rules as docs[] entries (the C1 JSON schema
+    // alone does not constrain it).
+    if (manifest.index !== undefined) {
+      assertSafeDocPath(manifest.index.path);
+    }
+
     // AC4: a pack that carries a prebuilt index block must match the store's
     // schema version — a mismatch is an explicit refusal, never silent.
     if (manifest.index !== undefined && manifest.index.schema_version !== this.store.schemaVersion) {
@@ -983,12 +990,34 @@ export class PackManager {
     this.stmt("UPDATE meta SET value = ? WHERE key = 'embedding_model_id'").run(imported.modelId);
   }
 
+  /** Issue #73 / PRR-120-F6: resolve a pack's shipped index path with
+   * containment. The manifest-declared path is pack-controlled: it is
+   * assertSafeDocPath-checked, and the existing file is realpath-resolved so
+   * a symlinked index.sqlite cannot be followed outside the managed dir.
+   * Returns null when the pack declares no index or the file is absent (the
+   * classic rebuild path). */
+  private resolveContainedPrebuiltIndex(managedDir: string, manifest: PackManifest): string | null {
+    if (manifest.index === undefined) return null;
+    assertSafeDocPath(manifest.index.path);
+    const declared = path.join(managedDir, ...manifest.index.path.split('/'));
+    if (!fs.existsSync(declared)) return null;
+    const real = fs.realpathSync(declared);
+    const managedReal = fs.realpathSync(managedDir);
+    const rel = path.relative(managedReal, real);
+    if (rel.length === 0 || rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new PackManagerError(
+        `${manifest.id}@${manifest.version}: prebuilt index resolves outside the managed pack directory (refusing): ${manifest.index.path}`,
+      );
+    }
+    return real;
+  }
+
   /** Issue #73 (C6 consumption, ADR-0004): read a pack's shipped index.sqlite
    * wholesale. Guards refuse a mismatched embedding space BEFORE any write:
    * vec dims must equal the live store's, and a store already holding chunks
    * under a different model must never silently mix embedding spaces (an
    * empty store adopts the pack's model). */
-  private readPrebuiltIndex(indexPath: string): ImportedPrebuilt {
+  private readPrebuiltIndex(indexPath: string, manifest: PackManifest): ImportedPrebuilt {
     const db = new IndexDatabase(indexPath, { readonly: true });
     try {
       indexSqliteVec.load(db);
@@ -1097,6 +1126,31 @@ export class PackManager {
           );
         }
       }
+      // PRR-120-F7: chunk identity is content-derived (ADR-0004) — re-derive
+      // each chunk's id and content hash from its stored text instead of
+      // trusting the shipped rows, and bind every chunk to a doc the manifest
+      // actually carries. Without this, a crafted index could claim an
+      // already-installed pack's chunk ids and silently overwrite its text.
+      const manifestDocShas = new Set(manifest.docs.map((entry) => entry.sha256.toLowerCase()));
+      for (const row of chunkRows) {
+        if (!manifestDocShas.has(row.doc_id.toLowerCase())) {
+          throw new PackManagerError(
+            `prebuilt index chunk ${row.id} references doc ${row.doc_id}, which the manifest does not carry; refusing install`,
+          );
+        }
+        const expectedId = chunkIdFor(row.doc_id, row.chunk_index, normalizeText(row.text));
+        if (row.id !== expectedId) {
+          throw new PackManagerError(
+            `prebuilt index chunk ${row.id} identity does not match its content (want ${expectedId}); refusing install`,
+          );
+        }
+        const expectedHash = sha256Hex(normalizeText(row.text));
+        if (row.content_hash !== expectedHash) {
+          throw new PackManagerError(
+            `prebuilt index chunk ${row.id} content_hash does not match its text; refusing install`,
+          );
+        }
+      }
       return { chunks, vectors, links, modelId };
     } finally {
       try {
@@ -1137,12 +1191,9 @@ export class PackManager {
       );
     }
     const manifest = this.validatedManifest(row.install_path);
-    const declaredIndex =
-      manifest.index !== undefined
-        ? path.join(row.install_path, ...manifest.index.path.split('/'))
-        : null;
-    if (declaredIndex !== null && fs.existsSync(declaredIndex)) {
-      const imported = this.readPrebuiltIndex(declaredIndex);
+    const declaredIndex = this.resolveContainedPrebuiltIndex(row.install_path, manifest);
+    if (declaredIndex !== null) {
+      const imported = this.readPrebuiltIndex(declaredIndex, manifest);
       return { row, manifest, chunks: imported.chunks, vectors: imported.vectors, imported };
     }
     const chunks = this.buildChunks(row.install_path, manifest);

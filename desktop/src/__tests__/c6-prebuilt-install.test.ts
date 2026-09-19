@@ -511,4 +511,157 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
       expect(activeOf('1.0.0')).toBe(0);
     },
   );
+
+  itReal(
+    'refuses a manifest-declared index path escaping the pack (PRR-120-F6 traversal)',
+    { timeout: 60_000 },
+    async () => {
+      const { openStore, PackManager, HashEmbedder, PackManagerError } = await loadModules();
+      const packDir = await buildAndUnpackPack('c6-traversal', '1.0.0');
+      const manifestPath = path.join(packDir, 'pack.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+        index: { path: string };
+      };
+      manifest.index.path = '../outside.sqlite';
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+      const root = makeTempDir('c6-ws-');
+      const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
+      openStores.push(store);
+      const manager = new PackManager({
+        store,
+        embedder: new HashEmbedder({ dims: 384 }),
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+      });
+      await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
+      await expect(manager.install(packDir)).rejects.toThrow(/dot segment/);
+    },
+  );
+
+  itReal(
+    'drops a symlinked index.sqlite in the source pack and rebuilds instead of importing (PRR-120-F6)',
+    { timeout: 60_000 },
+    async () => {
+      const { openStore, PackManager, HashEmbedder } = await loadModules();
+      const packDir = await buildAndUnpackPack('c6-symlink', '1.0.0');
+      // A second, unrelated store file outside the pack with DIFFERENT content
+      // (different content-hash chunk ids): the junction target.
+      const outsidePack = await buildAndUnpackPack('c6-outside', '1.0.0', 'unique outside marker');
+      const outsideIndex = path.join(outsidePack, 'index.sqlite');
+      fs.rmSync(path.join(packDir, 'index.sqlite'), { force: true });
+      fs.symlinkSync(outsideIndex, path.join(packDir, 'index.sqlite'), 'junction');
+
+      const spy = new HashEmbedder({ dims: 384 });
+      let embedCalls = 0;
+      const original = spy.embed.bind(spy);
+      spy.embed = (texts: string[]) => {
+        embedCalls += 1;
+        return original(texts);
+      };
+      const root = makeTempDir('c6-ws-');
+      const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
+      openStores.push(store);
+      const manager = new PackManager({
+        store,
+        embedder: spy,
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+      });
+      // cpSync drops the junction, so the managed copy carries no index and
+      // the install takes the rebuild path: it embeds (spy counts > 0) and
+      // imports ONLY the pack's own manifest content — never the outside
+      // index's rows. realpath containment in resolveContainedPrebuiltIndex
+      // remains as defense-in-depth for any future path that preserves links.
+      const result = await manager.install(packDir);
+      expect(result.chunksAdded).toBeGreaterThan(0);
+      // One batched embed call for the rebuild path (both texts in one call).
+      expect(embedCalls).toBe(1);
+      const outsideIds = (() => {
+        const Database = desktopRequire('better-sqlite3') as new (p: string) => {
+          prepare(sql: string): { all(...params: unknown[]): unknown[] };
+          close(): void;
+        };
+        const db = new Database(outsideIndex);
+        try {
+          return (db.prepare('SELECT id FROM chunks').all() as Array<{ id: string }>).map((r) => r.id);
+        } finally {
+          db.close();
+        }
+      })();
+      const db = store.db as unknown as SqlDb;
+      for (const id of outsideIds) {
+        const hit = db.prepare('SELECT COUNT(*) AS n FROM chunks WHERE id = ?').get(id) as { n: number };
+        expect(hit.n).toBe(0);
+      }
+    },
+  );
+
+  itReal(
+    'refuses shipped chunks whose identity does not match their content (PRR-120-F7)',
+    { timeout: 60_000 },
+    async () => {
+      const { openStore, PackManager, HashEmbedder, PackManagerError } = await loadModules();
+      const packDir = await buildAndUnpackPack('c6-tamper', '1.0.0');
+      const Database = desktopRequire('better-sqlite3') as new (p: string) => {
+        prepare(sql: string): { run(...params: unknown[]): unknown };
+        exec(sql: string): void;
+        close(): void;
+      };
+      const indexDb = new Database(path.join(packDir, 'index.sqlite'));
+      try {
+        indexDb.exec("UPDATE chunks SET text = text || ' tampered with evil content'");
+      } finally {
+        indexDb.close();
+      }
+      const root = makeTempDir('c6-ws-');
+      const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
+      openStores.push(store);
+      const manager = new PackManager({
+        store,
+        embedder: new HashEmbedder({ dims: 384 }),
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+      });
+      await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
+      await expect(manager.install(packDir)).rejects.toThrow(/identity does not match its content/);
+    },
+  );
+
+  itReal(
+    'refuses shipped chunks referencing a doc the manifest does not carry (PRR-120-F7)',
+    { timeout: 60_000 },
+    async () => {
+      const { openStore, PackManager, HashEmbedder, PackManagerError } = await loadModules();
+      const packDir = await buildAndUnpackPack('c6-foreigndoc', '1.0.0');
+      const foreignSha = 'f'.repeat(64);
+      const Database = desktopRequire('better-sqlite3') as new (p: string) => {
+        prepare(sql: string): { run(...params: unknown[]): unknown };
+        exec(sql: string): void;
+        close(): void;
+      };
+      const indexDb = new Database(path.join(packDir, 'index.sqlite'));
+      try {
+        // Deliberately craft an invalid pack: disable FK enforcement so the
+        // UPDATE can point chunks at a doc the manifest does not carry.
+        indexDb.exec('PRAGMA foreign_keys = OFF');
+        indexDb
+          .prepare('UPDATE chunks SET doc_id = ? WHERE rowid = (SELECT MIN(rowid) FROM chunks)')
+          .run(foreignSha);
+      } finally {
+        indexDb.close();
+      }
+      const root = makeTempDir('c6-ws-');
+      const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
+      openStores.push(store);
+      const manager = new PackManager({
+        store,
+        embedder: new HashEmbedder({ dims: 384 }),
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+      });
+      await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
+      await expect(manager.install(packDir)).rejects.toThrow(/the manifest does not carry/);
+    },
+  );
 });
