@@ -4,7 +4,7 @@
 // these vitest cases are the permanent suite that keeps the behavior honest
 // after the trace closes.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync as fs_renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ import { buildDocsPack } from '../build-docs';
 import { diffPacks, formatPackDiff } from '../diff';
 import { verifyPack } from '../../build/verify';
 import { resolveBuildEmbedder } from '../../build/embedder';
+import { validatePackManifest } from '../../build/pack-json';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKTOOL_ROOT = path.resolve(THIS_DIR, '..', '..');
@@ -229,7 +230,11 @@ describe('build-docs (issue #73)', () => {
     ).rejects.toThrow(/string "text"/);
   });
 
-  it('refuses a symlink/junction inside the source tree', { timeout: 30_000 }, async () => {
+  // Junctions are a Windows concept; on POSIX the same refusal is exercised
+  // by extract.ts's lstat check with a real symlink (no POSIX CI leg runs
+  // this suite today, but keep the suite portable).
+  const itJunction = process.platform === 'win32' ? it : it.skip;
+  itJunction('refuses a symlink/junction inside the source tree', { timeout: 30_000 }, async () => {
     const src = makeTempDir('bd-link-');
     writeSource(src, 'real.md', '# Real\n\nBody.\n');
     const outside = makeTempDir('bd-outside-');
@@ -321,5 +326,64 @@ describe('CI fixture-pack command parity (issue #73 final-critic Round 1)', () =
     expect(() =>
       resolveBuildEmbedder({ embedder: 'onnx', modelDir: poisonedModelDir(), repoRoot: emptyRepo }),
     ).toThrow(/No embedding model staged/);
+  });
+});
+
+describe('manifest control-character rejection (PRR-120-F1)', () => {
+  function validManifest(pathValue: string, modelId: string): Record<string, unknown> {
+    return {
+      id: 'bd-cc',
+      name: 'Control-char probe',
+      version: '1.0.0',
+      published_at: FIXED_TIME,
+      source_class: 'bundled',
+      embedding: { model_id: modelId, dims: 384, normalize: true },
+      chunking: { strategy: 'fixed-words', size: 256, overlap: 100 },
+      docs: [{ path: pathValue, sha256: 'a'.repeat(64), title: 'T', mime: 'text/plain' }],
+    };
+  }
+
+  it('rejects a control character in a doc path (C1 validator parity, diff-report injection)', () => {
+    const problems = validatePackManifest(validManifest('docs/x\ny.md', 'hash'));
+    expect(problems.ok).toBe(false);
+    expect(problems.problems.some((p) => p.includes('control character'))).toBe(true);
+  });
+
+  it('rejects an escape character in a doc path (terminal injection)', () => {
+    const problems = validatePackManifest(validManifest('docs/x\u001b[31m.md', 'hash'));
+    expect(problems.ok).toBe(false);
+    expect(problems.problems.some((p) => p.includes('control character'))).toBe(true);
+  });
+
+  it('rejects control characters in embedding.model_id (verify warning-line injection)', () => {
+    const problems = validatePackManifest(validManifest('docs/ok.md', 'm\u001b[31mHACK'));
+    expect(problems.ok).toBe(false);
+    expect(problems.problems.some((p) => p.includes('control character'))).toBe(true);
+  });
+
+  it('accepts printable non-ASCII model ids (only control characters are refused)', () => {
+    const problems = validatePackManifest(validManifest('docs/ok.md', 'modele-étiquette-v1'));
+    expect(problems.ok).toBe(true);
+  });
+});
+
+describe('diff honors a manifest-declared index path (PRR-120-F4)', () => {
+  it('reads chunk counts from a non-default index location', { timeout: 30_000 }, async () => {
+    const src = makeTempDir('bd-idxfp-');
+    writeSource(src, 'solo.md', '# Solo\n\nOne chunk body.\n');
+    const outZip = path.join(makeTempDir('bd-out-'), 'built.zip');
+    await buildDocsPack({ sourceDir: src, out: outZip, embedder: 'hash', publishedAt: FIXED_TIME, id: 'bd-idxfp', version: '1.0.0' });
+    const unpacked = makeTempDir('bd-idxfp-dir-');
+    await unzip(outZip, unpacked);
+    // Relocate the index and point the manifest at the new location.
+    mkdirSync(path.join(unpacked, 'data'), { recursive: true });
+    fs_renameSync(path.join(unpacked, 'index.sqlite'), path.join(unpacked, 'data', 'custom.sqlite'));
+    const manifestPath = path.join(unpacked, 'pack.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { index: { path: string } };
+    manifest.index.path = 'data/custom.sqlite';
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+    const lines = formatPackDiff(await diffPacks(unpacked, unpacked));
+    expect(lines).toContain('chunks: 1 -> 1 (delta +0)');
   });
 });

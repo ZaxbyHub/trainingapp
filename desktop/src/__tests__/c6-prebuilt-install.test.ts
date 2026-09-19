@@ -98,16 +98,16 @@ async function loadModules() {
 
 /** Build a real doc pack with the packtool CLI (hash embedder: deterministic,
  * no model weights) and unpack it — the folder form PackManager installs. */
-async function buildAndUnpackPack(id: string, version: string): Promise<string> {
+async function buildAndUnpackPack(id: string, version: string, marker = 'prebuilt install test'): Promise<string> {
   const src = makeTempDir('c6-src-');
   fs.writeFileSync(
     path.join(src, 'alpha.md'),
-    '# Alpha\n\nAlpha body used by the prebuilt install test.\n',
+    `# Alpha\n\nAlpha body used by the ${marker}.\n`,
     'utf8',
   );
   fs.writeFileSync(
     path.join(src, 'beta.json'),
-    JSON.stringify({ title: 'Beta', text: 'Beta body for the prebuilt install test.' }),
+    JSON.stringify({ title: 'Beta', text: `Beta body for the ${marker}.` }),
     'utf8',
   );
   const zipPath = path.join(makeTempDir('c6-zip-'), 'pack.zip');
@@ -414,4 +414,101 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
     ).prepare('SELECT active FROM packs WHERE id = ? AND version = ?').all('c6-rollback', '1.0.0') as Array<{ active: number }>;
     expect(rows[0]?.active).toBe(1);
   });
+
+  itReal(
+    'refuses a prebuilt pack whose shipped links rows violate verify bounds (PRR-120-F2)',
+    { timeout: 60_000 },
+    async () => {
+      const { openStore, PackManager, HashEmbedder, PackManagerError } = await loadModules();
+      const packDir = await buildAndUnpackPack('c6-badlink', '1.0.0');
+      // Inject a link row whose score is not a cosine in [-1, 1].
+      const Database = desktopRequire('better-sqlite3') as new (p: string) => {
+        prepare(sql: string): { get(...params: unknown[]): unknown; run(...params: unknown[]): unknown };
+        close(): void;
+      };
+      const indexDb = new Database(path.join(packDir, 'index.sqlite'));
+      try {
+        const chunk = indexDb.prepare('SELECT id FROM chunks LIMIT 1').get() as { id: string } | undefined;
+        if (chunk === undefined) throw new Error('pack index has no chunks to link from');
+        indexDb
+          .prepare('INSERT INTO links (chunk_id, slide_id, pack_id, score, rank, computed_at) VALUES (?, ?, ?, ?, ?, ?)')
+          .run(chunk.id, 'slide-BAD', null, 5, 1, '2026-09-19T00:00:00.000Z');
+      } finally {
+        indexDb.close();
+      }
+
+      const spy = new HashEmbedder({ dims: 384 });
+      let embedCalls = 0;
+      const original = spy.embed.bind(spy);
+      spy.embed = (texts: string[]) => {
+        embedCalls += 1;
+        return original(texts);
+      };
+      const root = makeTempDir('c6-ws-');
+      const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
+      openStores.push(store);
+      const manager = new PackManager({
+        store,
+        embedder: spy,
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+      });
+      await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
+      await expect(manager.install(packDir)).rejects.toThrow(/not a finite cosine/);
+      // Refusal happens before any write: no embed, no rows.
+      expect(embedCalls).toBe(0);
+      const count = (
+        store.db as unknown as SqlDb
+      ).prepare('SELECT COUNT(*) AS n FROM chunks').get() as { n: number };
+      expect(count.n).toBe(0);
+    },
+  );
+
+  itReal(
+    'supersede between prebuilt versions re-imports with zero embeds and deactivates only the from-version (PRR-120-F3)',
+    { timeout: 90_000 },
+    async () => {
+      const { openStore, PackManager, HashEmbedder } = await loadModules();
+      const spy = new HashEmbedder({ dims: 384 });
+      let embedCalls = 0;
+      const original = spy.embed.bind(spy);
+      spy.embed = (texts: string[]) => {
+        embedCalls += 1;
+        return original(texts);
+      };
+      const root = makeTempDir('c6-ws-');
+      const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
+      openStores.push(store);
+      const manager = new PackManager({
+        store,
+        embedder: spy,
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+      });
+
+      const v1 = await buildAndUnpackPack('c6-super', '1.0.0', 'supersede marker one');
+      const v2 = await buildAndUnpackPack('c6-super', '1.0.1', 'supersede marker two');
+      const v3 = await buildAndUnpackPack('c6-super', '1.0.2', 'supersede marker three');
+      await manager.install(v1);
+      await manager.install(v2);
+      await manager.install(v3);
+      expect(embedCalls).toBe(0);
+
+      // Supersede rolls the active claim from 1.0.2 back to the installed-but
+      // -inactive 1.0.1 through the prebuilt re-import path, deactivating ONLY
+      // the from-version (1.0.0 must stay inactive, untouched).
+      await manager.supersede('c6-super', '1.0.2', '1.0.1');
+      expect(embedCalls).toBe(0);
+      const db = store.db as unknown as SqlDb;
+      const activeOf = (version: string): number | undefined => {
+        const rows = db
+          .prepare('SELECT active FROM packs WHERE id = ? AND version = ?')
+          .all('c6-super', version) as Array<{ active: number }>;
+        return rows[0]?.active;
+      };
+      expect(activeOf('1.0.1')).toBe(1);
+      expect(activeOf('1.0.2')).toBe(0);
+      expect(activeOf('1.0.0')).toBe(0);
+    },
+  );
 });

@@ -199,6 +199,16 @@ export function assertSafeDocPath(value: string): void {
       throw new Error(`doc path contains a NUL byte (refused): ${JSON.stringify(value)}`);
     }
   }
+  // PR #120 review (PRR-120-F1): parity with the authoritative C1 validator
+  // (contracts/validate_pack.py rejects ord < 0x20), extended to DEL: a \n or
+  // ESC surviving into docs[].path forges/erases lines in the diff report and
+  // problem output that CI greps consume.
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error(`doc path contains a control character (refused): ${JSON.stringify(value)}`);
+    }
+  }
 }
 
 export interface ManifestProblems {
@@ -250,6 +260,11 @@ export function validatePackManifest(value: unknown): ManifestProblems {
     const emb = embedding as Record<string, unknown>;
     if (typeof emb['model_id'] !== 'string' || (emb['model_id'] as string).length === 0) {
       add('embedding.model_id is missing or empty');
+    } else if (/[\u0000-\u001f\u007f-\u009f]/.test(emb['model_id'] as string)) {
+      // PRR-120-F1: model_id reaches the verify --embedding-model warning line
+      // verbatim; control characters would inject into terminal and CI-log
+      // output. Printable non-ASCII stays legal.
+      add('embedding.model_id contains a control character');
     }
     if (typeof emb['dims'] !== 'number' || !Number.isInteger(emb['dims']) || (emb['dims'] as number) < 1) {
       add('embedding.dims must be a positive integer');

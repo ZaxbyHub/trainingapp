@@ -1075,6 +1075,28 @@ export class PackManager {
       const links = db
         .prepare('SELECT chunk_id, slide_id, pack_id, score, rank, computed_at FROM links')
         .all() as PrebuiltLinkRow[];
+      // PRR-120-F2: imported link rows must satisfy the same per-row bounds
+      // verify.ts enforces — a tampered/malformed index must be refused, not
+      // imported into the live store where learn.ts consumes score directly.
+      for (const link of links) {
+        const score = Number(link.score);
+        if (!Number.isFinite(score) || score < -1 || score > 1) {
+          throw new PackManagerError(
+            `prebuilt index link row (${link.chunk_id} -> ${link.slide_id}): score ${String(link.score)} is not a finite cosine in [-1, 1]`,
+          );
+        }
+        const rank = Number(link.rank);
+        if (!Number.isInteger(rank) || rank < 1) {
+          throw new PackManagerError(
+            `prebuilt index link row (${link.chunk_id} -> ${link.slide_id}): rank ${String(link.rank)} is not a positive integer`,
+          );
+        }
+        if (typeof link.computed_at !== 'string' || Number.isNaN(Date.parse(link.computed_at))) {
+          throw new PackManagerError(
+            `prebuilt index link row (${link.chunk_id} -> ${link.slide_id}): computed_at is not a parseable timestamp`,
+          );
+        }
+      }
       return { chunks, vectors, links, modelId };
     } finally {
       try {

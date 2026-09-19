@@ -65,23 +65,26 @@ async function readManifestBytes(sourcePath: string): Promise<Buffer> {
   return raw;
 }
 
-async function openIndex(sourcePath: string, scratchDir: string): Promise<ReadonlyDatabase | null> {
+async function openIndex(
+  sourcePath: string,
+  scratchDir: string,
+  indexEntry: string,
+): Promise<ReadonlyDatabase | null> {
   let indexFile: string | null = null;
-  let fromZip = false;
   const stat = fs.statSync(sourcePath);
   if (stat.isFile()) {
     const zip = await JSZip.loadAsync(fs.readFileSync(sourcePath));
-    const entry = zip.file(INDEX_FILE_NAME);
+    const entry = zip.file(indexEntry);
     if (entry === null) return null;
     indexFile = path.join(scratchDir, 'index.sqlite');
     fs.writeFileSync(indexFile, Buffer.from(await entry.async('nodebuffer')));
-    fromZip = true;
   } else {
-    const direct = path.join(sourcePath, INDEX_FILE_NAME);
+    // indexEntry is manifest-declared and passes assertSafeDocPath via
+    // validatePackManifest, so the join cannot escape the pack root.
+    const direct = path.join(sourcePath, ...indexEntry.split('/'));
     if (!fs.existsSync(direct)) return null;
     indexFile = direct;
   }
-  void fromZip;
   const db = new Database(indexFile, { readonly: true });
   sqliteVec.load(db);
   return db;
@@ -110,7 +113,9 @@ async function openPack(sourcePath: string): Promise<PackHandle> {
   let chunkCount: number | null = null;
   let db: ReadonlyDatabase | null = null;
   try {
-    db = await openIndex(resolved, scratchDir);
+    // Honor the manifest's declared index location (parity with verify);
+    // packs without an index block still get the conventional default name.
+    db = await openIndex(resolved, scratchDir, manifest.index?.path ?? INDEX_FILE_NAME);
     if (db !== null) {
       const row = db.prepare('SELECT COUNT(*) AS n FROM chunks').get() as { n: number } | undefined;
       chunkCount = row?.n ?? null;
