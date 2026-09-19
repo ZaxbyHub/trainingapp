@@ -540,10 +540,10 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
   );
 
   itReal(
-    'drops a symlinked index.sqlite in the source pack and rebuilds instead of importing (PRR-120-F6)',
+    'refuses a symlinked index.sqlite in the source pack (PRR-120-F6)',
     { timeout: 60_000 },
     async () => {
-      const { openStore, PackManager, HashEmbedder } = await loadModules();
+      const { openStore, PackManager, HashEmbedder, PackManagerError } = await loadModules();
       const packDir = await buildAndUnpackPack('c6-symlink', '1.0.0');
       // A second, unrelated store file outside the pack with DIFFERENT content
       // (different content-hash chunk ids): the junction target.
@@ -552,48 +552,62 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
       fs.rmSync(path.join(packDir, 'index.sqlite'), { force: true });
       fs.symlinkSync(outsideIndex, path.join(packDir, 'index.sqlite'), 'junction');
 
-      const spy = new HashEmbedder({ dims: 384 });
-      let embedCalls = 0;
-      const original = spy.embed.bind(spy);
-      spy.embed = (texts: string[]) => {
-        embedCalls += 1;
-        return original(texts);
-      };
       const root = makeTempDir('c6-ws-');
       const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
       openStores.push(store);
       const manager = new PackManager({
         store,
-        embedder: spy,
+        embedder: new HashEmbedder({ dims: 384 }),
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
       });
-      // cpSync drops the junction, so the managed copy carries no index and
-      // the install takes the rebuild path: it embeds (spy counts > 0) and
-      // imports ONLY the pack's own manifest content — never the outside
-      // index's rows. realpath containment in resolveContainedPrebuiltIndex
-      // remains as defense-in-depth for any future path that preserves links.
-      const result = await manager.install(packDir);
-      expect(result.chunksAdded).toBeGreaterThan(0);
-      // One batched embed call for the rebuild path (both texts in one call).
-      expect(embedCalls).toBe(1);
-      const outsideIds = (() => {
-        const Database = desktopRequire('better-sqlite3') as new (p: string) => {
-          prepare(sql: string): { all(...params: unknown[]): unknown[] };
-          close(): void;
-        };
-        const db = new Database(outsideIndex);
-        try {
-          return (db.prepare('SELECT id FROM chunks').all() as Array<{ id: string }>).map((r) => r.id);
-        } finally {
-          db.close();
-        }
-      })();
-      const db = store.db as unknown as SqlDb;
-      for (const id of outsideIds) {
-        const hit = db.prepare('SELECT COUNT(*) AS n FROM chunks WHERE id = ?').get(id) as { n: number };
-        expect(hit.n).toBe(0);
-      }
+      // The refusing walker rejects the junction at the managed-copy step, so
+      // neither the outside content nor any rebuilt content reaches the store.
+      await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
+      await expect(manager.install(packDir)).rejects.toThrow(/refusing symlink\/junction in pack source/);
+      const count = (
+        store.db as unknown as SqlDb
+      ).prepare('SELECT COUNT(*) AS n FROM chunks').get() as { n: number };
+      expect(count.n).toBe(0);
+      void outsideIndex;
+    },
+  );
+
+  itReal(
+    'refuses a directory junction in the pack source (PRR-120-F6 round 4: cpSync follows dir junctions)',
+    { timeout: 60_000 },
+    async () => {
+      const { openStore, PackManager, HashEmbedder, PackManagerError } = await loadModules();
+      const packDir = await buildAndUnpackPack('c6-dirjunction', '1.0.0');
+      // A junctioned subdirectory whose target carries an index the manifest
+      // then declares: cpSync would follow the junction and copy the outside
+      // bytes into the managed copy as regular files, so the copy itself must
+      // refuse.
+      const outsidePack = await buildAndUnpackPack('c6-dirjunction-target', '1.0.0', 'junction target marker');
+      fs.symlinkSync(outsidePack, path.join(packDir, 'foreign'), 'junction');
+      const manifestPath = path.join(packDir, 'pack.json');
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+        index: { path: string };
+      };
+      manifest.index.path = 'foreign/index.sqlite';
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+      const root = makeTempDir('c6-ws-');
+      const store = openStore({ dbPath: path.join(root, 'store.db'), dims: 384 });
+      openStores.push(store);
+      const manager = new PackManager({
+        store,
+        embedder: new HashEmbedder({ dims: 384 }),
+        packsRoot: path.join(root, 'packs'),
+        repoRoot: REPO_ROOT,
+      });
+      await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
+      await expect(manager.install(packDir)).rejects.toThrow(/refusing symlink\/junction in pack source/);
+      // Nothing leaked into the store from the junction target.
+      const count = (
+        store.db as unknown as SqlDb
+      ).prepare('SELECT COUNT(*) AS n FROM chunks').get() as { n: number };
+      expect(count.n).toBe(0);
     },
   );
 

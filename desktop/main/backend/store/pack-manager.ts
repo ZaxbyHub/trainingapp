@@ -464,7 +464,7 @@ export class PackManager {
     try {
       fs.rmSync(managed, { recursive: true, force: true }); // failed-attempt residue
       fs.mkdirSync(path.dirname(managed), { recursive: true });
-      fs.cpSync(source, managed, { recursive: true });
+      this.copyPackTreeRejectingLinks(source, managed);
     } catch (error) {
       throw new PackManagerError(
         `failed to stage managed copy of ${packId}@${version}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1010,6 +1010,30 @@ export class PackManager {
       );
     }
     return real;
+  }
+
+  /** PRR-120-F6 (round 4): recursive copy that REFUSES symlinks and Windows
+   * junctions instead of following them. fs.cpSync cannot be used here: on
+   * Windows it dereferences directory junctions even with dereference:false
+   * (dropping file junctions entirely), so a junctioned subdirectory would
+   * pull outside files into the managed pack copy as regular files — invisible
+   * to the realpath containment check downstream. Same stance as packtool's
+   * copyTreeRejectingLinks (build/compose.ts). */
+  private copyPackTreeRejectingLinks(src: string, dest: string): void {
+    const stat = fs.lstatSync(src);
+    if (stat.isSymbolicLink()) {
+      throw new PackManagerError(`refusing symlink/junction in pack source: ${src}`);
+    }
+    if (stat.isDirectory()) {
+      fs.mkdirSync(dest, { recursive: true });
+      for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        this.copyPackTreeRejectingLinks(path.join(src, entry.name), path.join(dest, entry.name));
+      }
+    } else if (stat.isFile()) {
+      fs.copyFileSync(src, dest);
+    } else {
+      throw new PackManagerError(`refusing non-regular pack source entry: ${src}`);
+    }
   }
 
   /** Issue #73 (C6 consumption, ADR-0004): read a pack's shipped index.sqlite
