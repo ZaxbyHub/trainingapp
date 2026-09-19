@@ -228,7 +228,9 @@ jobs:
       - name: Build the C1 fixture pack from the committed source docs
         run: |
           mkdir -p knowledge-pack-fixture
-          node packtool/dist/cli.js build-docs contracts/fixtures/source-docs/ --id test-pack --version 1.0.0 -o knowledge-pack-fixture/out.zip
+          # --embedder hash: CI checkouts carry LFS pointer files, not model
+          # weights; the deterministic embedder needs none (issue #73).
+          node packtool/dist/cli.js build-docs contracts/fixtures/source-docs/ --id test-pack --version 1.0.0 --embedder hash -o knowledge-pack-fixture/out.zip
 
       - name: Verify the built pack
         run: node packtool/dist/cli.js verify knowledge-pack-fixture/out.zip

@@ -13,9 +13,11 @@ import JSZip from 'jszip';
 import { buildDocsPack } from '../build-docs';
 import { diffPacks, formatPackDiff } from '../diff';
 import { verifyPack } from '../../build/verify';
+import { resolveBuildEmbedder } from '../../build/embedder';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PACKTOOL_ROOT = path.resolve(THIS_DIR, '..', '..');
+const REPO_ROOT = path.resolve(PACKTOOL_ROOT, '..');
 const DIST_CLI = path.join(PACKTOOL_ROOT, 'dist', 'cli.js');
 
 const scratchRoots: string[] = [];
@@ -267,5 +269,57 @@ describe('build-docs CLI parse-time refusals (issue #73)', () => {
     });
     expect(run.status).toBe(2);
     expect(run.stderr).toContain('usage: packtool build-docs');
+  });
+});
+
+describe('CI fixture-pack command parity (issue #73 final-critic Round 1)', () => {
+  const itCli = existsSync(DIST_CLI) ? it : it.skip;
+
+  /** A 134-byte fake model dir: the size class of a Git LFS pointer file that
+   * a default CI checkout carries when lfs is not enabled. */
+  function makeLfsPointerModelDir(): string {
+    const dir = makeTempDir('bd-lfsptr-');
+    mkdirSync(path.join(dir, 'fake-model', 'onnx'), { recursive: true });
+    writeFileSync(
+      path.join(dir, 'fake-model', 'onnx', 'model.onnx'),
+      'version https://git-lfs.github.com/spec/v1\noid sha256:0000000000000000000000000000000000000000000000000000000000000000\nsize 402505222\n',
+      'utf8',
+    );
+    return path.join(dir, 'fake-model');
+  }
+
+  const poisonedModelDir = (): string => makeLfsPointerModelDir();
+  const poisonedEnv = (): NodeJS.ProcessEnv => ({
+    ...process.env,
+    TRAININGAPP_EMBEDDING_MODEL_DIR: poisonedModelDir(),
+  });
+
+  itCli('the CI fixture command (hash embedder) builds under an LFS-pointer model dir', { timeout: 60_000 }, () => {
+    const out = path.join(makeTempDir('bd-out-'), 'out.zip');
+    const run = spawnSync(
+      process.execPath,
+      [DIST_CLI, 'build-docs', 'contracts/fixtures/source-docs/', '--id', 'test-pack', '--version', '1.0.0', '--embedder', 'hash', '-o', out],
+      { encoding: 'utf8', env: poisonedEnv(), cwd: REPO_ROOT },
+    );
+    expect(run.status).toBe(0);
+    expect(existsSync(out)).toBe(true);
+    const verify = spawnSync(process.execPath, [DIST_CLI, 'verify', out], {
+      encoding: 'utf8',
+      env: poisonedEnv(),
+      cwd: REPO_ROOT,
+    });
+    expect(verify.status).toBe(0);
+    expect(verify.stderr).toContain('verify: OK');
+  });
+
+  it('onnx resolution refuses to stage when no valid model exists anywhere (the CI LFS-pointer condition)', () => {
+    // Deterministic stand-in for the CLI-level behavior: a repo root with no
+    // models/ plus an invalid env dir must make onnx resolution throw the
+    // loud staging error (dev boxes with pulled LFS weights cannot exercise
+    // this through the CLI, but CI always looks like this).
+    const emptyRepo = makeTempDir('bd-emptyrepo-');
+    expect(() =>
+      resolveBuildEmbedder({ embedder: 'onnx', modelDir: poisonedModelDir(), repoRoot: emptyRepo }),
+    ).toThrow(/No embedding model staged/);
   });
 });
