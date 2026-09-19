@@ -1,0 +1,4 @@
+{
+  "title": "FAQ",
+  "text": "Frequently asked questions for the source-docs fixture. How do I build a pack? Run packtool build-docs on this folder. How do I check a pack? Run packtool verify on the output zip. How do I compare two packs? Run packtool diff."
+}

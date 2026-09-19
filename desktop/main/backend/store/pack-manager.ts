@@ -49,6 +49,39 @@ const Ajv2020 = require('ajv/dist/2020') as new (opts?: {
 }) => { compile(schema: object): (data: unknown) => boolean };
 const addFormats = require('ajv-formats') as (ajv: unknown) => unknown;
 
+// Issue #73 (C6): the prebuilt-index install path opens a pack's shipped
+// index.sqlite read-only through the same native stack as the live store.
+type ReadonlyIndexDb = {
+  prepare(sql: string): { get(...params: unknown[]): unknown; all(...params: unknown[]): unknown[] };
+  close(): void;
+};
+const IndexDatabase = require('better-sqlite3') as new (
+  path: string,
+  options?: { readonly?: boolean },
+) => ReadonlyIndexDb;
+const indexSqliteVec = require('sqlite-vec') as { load(db: ReadonlyIndexDb): void };
+
+/** One doc->slide link row as shipped inside a prebuilt pack index. */
+interface PrebuiltLinkRow {
+  chunk_id: string;
+  slide_id: string;
+  pack_id: string | null;
+  score: number;
+  rank: number;
+  computed_at: string;
+}
+
+/** Rows imported wholesale from a pack's prebuilt index.sqlite (issue #73).
+ * Zero embedder involvement: the vectors arrive as the JSON strings the
+ * store already persists (packtool's index-writer writes the same shape). */
+interface ImportedPrebuilt {
+  chunks: ChunkPayload[];
+  vectors: number[][];
+  links: PrebuiltLinkRow[];
+  /** The embedding model the shipped index was built with (meta). */
+  modelId: string;
+}
+
 /** The authoritative pack manifest schema, relative to the repository root. */
 export const PACK_SCHEMA_RELATIVE_PATH = 'contracts/pack.schema.json';
 
@@ -431,7 +464,7 @@ export class PackManager {
     try {
       fs.rmSync(managed, { recursive: true, force: true }); // failed-attempt residue
       fs.mkdirSync(path.dirname(managed), { recursive: true });
-      fs.cpSync(source, managed, { recursive: true });
+      this.copyPackTreeRejectingLinks(source, managed);
     } catch (error) {
       throw new PackManagerError(
         `failed to stage managed copy of ${packId}@${version}: ${error instanceof Error ? error.message : String(error)}`,
@@ -441,8 +474,23 @@ export class PackManager {
     // Build chunks + embed BEFORE any write: an embedder that cannot produce
     // one correctly-sized vector per chunk fails the install explicitly, so a
     // pack is never recorded as complete with borrowed or missing vectors.
-    const chunks = this.buildChunks(managed, manifest);
-    const vectors = await this.embedChecked(chunks);
+    // Issue #73: a pack that SHIPS a prebuilt index (manifest.index pointing
+    // at an index file that is actually present) imports its rows wholesale
+    // instead — zero client-side re-embedding. A declared-but-absent index
+    // falls back to the classic rebuild path (existing C3 fixtures set the
+    // index block while carrying no index file and must keep installing).
+    let imported: ImportedPrebuilt | null = null;
+    let chunks: ChunkPayload[];
+    let vectors: number[][];
+    const declaredIndex = this.resolveContainedPrebuiltIndex(managed, manifest);
+    if (declaredIndex !== null) {
+      imported = this.readPrebuiltIndex(declaredIndex, manifest);
+      chunks = imported.chunks;
+      vectors = imported.vectors;
+    } else {
+      chunks = this.buildChunks(managed, manifest);
+      vectors = await this.embedChecked(chunks);
+    }
 
     // Outgoing docs maps (derived from each row's retained managed manifest —
     // sha values are the install-validated ones).
@@ -466,7 +514,7 @@ export class PackManager {
         }
       }
 
-      this.writeLiveChunksLocked(manifest, chunks, vectors);
+      this.writeLiveOrImportedChunksLocked(manifest, chunks, vectors, imported);
 
       // Deactivate outgoing rows (files retained on disk).
       for (const row of outgoing) {
@@ -475,7 +523,9 @@ export class PackManager {
       }
 
       // Drop any residue row for this exact id@version (failed attempt), then
-      // record the new row active.
+      // record the new row active. install_path stays the managed dir for
+      // prebuilt rows too (NOT packtool's wholesale NULL): deactivate and
+      // activate are managed-dir-based and must keep working.
       this.stmt('DELETE FROM packs WHERE id = ? AND version = ?').run(packId, version);
       this.stmt(
         'INSERT INTO packs (id, version, name, published_at, source_class, active, install_path, supersedes) VALUES (?, ?, ?, ?, ?, 1, ?, ?)',
@@ -490,9 +540,11 @@ export class PackManager {
       );
 
       // D4 contract: link maintenance inside the same transaction — prune the
-      // orphans the deletions left, recompute for the incoming docs.
+      // orphans the deletions left, recompute for the incoming docs. A
+      // prebuilt index ships AUTHORITATIVE links; recomputing would clobber
+      // them, so recompute runs only for the rebuild path (issue #73).
       pruneOrphanLinks(this.db);
-      if (docIds.length > 0) recomputeLinksForDocs(this.db, docIds);
+      if (imported === null && docIds.length > 0) recomputeLinksForDocs(this.db, docIds);
     });
 
     for (const warning of warnings) {
@@ -705,6 +757,13 @@ export class PackManager {
       }
     }
 
+    // PRR-120-F6: a manifest-declared index path is pack-controlled — pin it
+    // to the same path-safety rules as docs[] entries (the C1 JSON schema
+    // alone does not constrain it).
+    if (manifest.index !== undefined) {
+      assertSafeDocPath(manifest.index.path);
+    }
+
     // AC4: a pack that carries a prebuilt index block must match the store's
     // schema version — a mismatch is an explicit refusal, never silent.
     if (manifest.index !== undefined && manifest.index.schema_version !== this.store.schemaVersion) {
@@ -881,6 +940,251 @@ export class PackManager {
     this.stmt("UPDATE meta SET value = ? WHERE key = 'embedding_model_id'").run(this.embedder.modelId);
   }
 
+  /** Issue #73: dispatch between the classic rebuild write and the wholesale
+   * prebuilt-index import. Kept as one call site so the install and
+   * activation transactions cannot drift apart. */
+  private writeLiveOrImportedChunksLocked(
+    manifest: PackManifest,
+    chunks: ChunkPayload[],
+    vectors: number[][],
+    imported: ImportedPrebuilt | null,
+  ): void {
+    if (imported === null) {
+      this.writeLiveChunksLocked(manifest, chunks, vectors);
+      return;
+    }
+    // Docs rows FIRST (chunks.doc_id references docs(id); foreign keys on).
+    for (const entry of manifest.docs) {
+      this.stmt(
+        'INSERT OR IGNORE INTO docs (id, source_class, path, sha256, title, published_at, pack_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      ).run(entry.sha256, manifest.source_class, entry.path, entry.sha256, entry.title, manifest.published_at ?? null, manifest.id);
+    }
+    for (let i = 0; i < imported.chunks.length; i += 1) {
+      const chunk = imported.chunks[i]!;
+      this.stmt('DELETE FROM embeddings WHERE chunk_id = ?').run(chunk.chunkId);
+      this.stmt('DELETE FROM chunks_fts WHERE chunk_id = ?').run(chunk.chunkId);
+      this.stmt('DELETE FROM links WHERE chunk_id = ?').run(chunk.chunkId);
+      this.stmt('DELETE FROM chunks WHERE id = ?').run(chunk.chunkId);
+      this.stmt('INSERT INTO chunks (id, doc_id, chunk_index, text, content_hash) VALUES (?, ?, ?, ?, ?)').run(
+        chunk.chunkId,
+        chunk.docId,
+        chunk.chunkIndex,
+        chunk.text,
+        chunk.contentHash,
+      );
+      this.stmt('INSERT INTO embeddings (chunk_id, embedding) VALUES (?, ?)').run(
+        chunk.chunkId,
+        JSON.stringify(imported.vectors[i]),
+      );
+      this.stmt('INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)').run(chunk.chunkId, chunk.text);
+    }
+    // Shipped links are authoritative (the shipped chunks just landed with
+    // the same ids, so every reference resolves).
+    for (const link of imported.links) {
+      this.stmt(
+        'INSERT OR REPLACE INTO links (chunk_id, slide_id, pack_id, score, rank, computed_at) VALUES (?, ?, ?, ?, ?, ?)',
+      ).run(link.chunk_id, link.slide_id, link.pack_id, link.score, link.rank, link.computed_at);
+    }
+    // Stamp the model the SHIPPED index was built with (never this.embedder's):
+    // meta must describe where the stored vectors came from.
+    this.stmt("UPDATE meta SET value = ? WHERE key = 'embedding_model_id'").run(imported.modelId);
+  }
+
+  /** Issue #73 / PRR-120-F6: resolve a pack's shipped index path with
+   * containment. The manifest-declared path is pack-controlled: it is
+   * assertSafeDocPath-checked, and the existing file is realpath-resolved so
+   * a symlinked index.sqlite cannot be followed outside the managed dir.
+   * Returns null when the pack declares no index or the file is absent (the
+   * classic rebuild path). */
+  private resolveContainedPrebuiltIndex(managedDir: string, manifest: PackManifest): string | null {
+    if (manifest.index === undefined) return null;
+    assertSafeDocPath(manifest.index.path);
+    const declared = path.join(managedDir, ...manifest.index.path.split('/'));
+    if (!fs.existsSync(declared)) return null;
+    const real = fs.realpathSync(declared);
+    const managedReal = fs.realpathSync(managedDir);
+    const rel = path.relative(managedReal, real);
+    if (rel.length === 0 || rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new PackManagerError(
+        `${manifest.id}@${manifest.version}: prebuilt index resolves outside the managed pack directory (refusing): ${manifest.index.path}`,
+      );
+    }
+    return real;
+  }
+
+  /** PRR-120-F6 (round 4): recursive copy that REFUSES symlinks and Windows
+   * junctions instead of following them. fs.cpSync cannot be used here: on
+   * Windows it dereferences directory junctions even with dereference:false
+   * (dropping file junctions entirely), so a junctioned subdirectory would
+   * pull outside files into the managed pack copy as regular files — invisible
+   * to the realpath containment check downstream. Same stance as packtool's
+   * copyTreeRejectingLinks (build/compose.ts). */
+  private copyPackTreeRejectingLinks(src: string, dest: string): void {
+    const stat = fs.lstatSync(src);
+    if (stat.isSymbolicLink()) {
+      throw new PackManagerError(`refusing symlink/junction in pack source: ${src}`);
+    }
+    if (stat.isDirectory()) {
+      fs.mkdirSync(dest, { recursive: true });
+      for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+        this.copyPackTreeRejectingLinks(path.join(src, entry.name), path.join(dest, entry.name));
+      }
+    } else if (stat.isFile()) {
+      fs.copyFileSync(src, dest);
+    } else {
+      throw new PackManagerError(`refusing non-regular pack source entry: ${src}`);
+    }
+  }
+
+  /** Issue #73 (C6 consumption, ADR-0004): read a pack's shipped index.sqlite
+   * wholesale. Guards refuse a mismatched embedding space BEFORE any write:
+   * vec dims must equal the live store's, and a store already holding chunks
+   * under a different model must never silently mix embedding spaces (an
+   * empty store adopts the pack's model). */
+  private readPrebuiltIndex(indexPath: string, manifest: PackManifest): ImportedPrebuilt {
+    const db = new IndexDatabase(indexPath, { readonly: true });
+    try {
+      indexSqliteVec.load(db);
+      const meta = (key: string): string | undefined => {
+        const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
+          | { value: string }
+          | undefined;
+        return row?.value;
+      };
+      const dimsRaw = meta('embedding_dims');
+      if (dimsRaw === undefined || Number(dimsRaw) !== this.store.dims) {
+        throw new PackManagerError(
+          `prebuilt index embedding_dims ${String(dimsRaw)} does not match store dims ${this.store.dims}; refusing install`,
+        );
+      }
+      const modelId = meta('embedding_model_id') ?? '';
+      const storeModelRow = this.stmt("SELECT value FROM meta WHERE key = 'embedding_model_id'").get() as
+        | { value: string }
+        | undefined;
+      const storeModel = storeModelRow?.value ?? '';
+      const storeChunkRow = this.stmt('SELECT COUNT(*) AS n FROM chunks').get() as { n: number };
+      if (storeChunkRow.n > 0 && modelId.length > 0 && storeModel.length > 0 && storeModel !== modelId) {
+        throw new PackManagerError(
+          `prebuilt index was built with embedding model '${modelId}' but the store already holds chunks for '${storeModel}'; refusing to mix embedding spaces`,
+        );
+      }
+      const chunkRows = db
+        .prepare('SELECT id, doc_id, chunk_index, text, content_hash FROM chunks ORDER BY doc_id, chunk_index')
+        .all() as Array<{
+        id: string;
+        doc_id: string;
+        chunk_index: number;
+        text: string;
+        content_hash: string;
+      }>;
+      const vectorRows = db
+        .prepare('SELECT chunk_id, embedding FROM embeddings')
+        .all() as Array<{ chunk_id: string; embedding: unknown }>;
+      // vec0 returns stored vectors as float32 blobs (links.ts decodeVector
+      // semantics), even though writers insert JSON strings — handle both.
+      const decodeVector = (value: unknown): number[] => {
+        if (value instanceof Uint8Array) {
+          if (value.byteLength % 4 !== 0) {
+            throw new PackManagerError('prebuilt index embedding blob is not a float32 vector');
+          }
+          const floats = new Float32Array(value.buffer, value.byteOffset, value.byteLength / 4);
+          return Array.from(floats);
+        }
+        if (typeof value === 'string') {
+          const parsed: unknown = JSON.parse(value);
+          if (!Array.isArray(parsed)) {
+            throw new PackManagerError('prebuilt index embedding JSON is not a vector');
+          }
+          return parsed.map((component) => Number(component));
+        }
+        throw new PackManagerError(`prebuilt index embedding has unsupported type ${typeof value}`);
+      };
+      const vectorsByChunk = new Map<string, number[]>();
+      for (const row of vectorRows) {
+        const vector = decodeVector(row.embedding);
+        if (vector.length !== this.store.dims) {
+          throw new PackManagerError(
+            `prebuilt index embedding width ${vector.length} does not match store dims ${this.store.dims}`,
+          );
+        }
+        vectorsByChunk.set(row.chunk_id, vector);
+      }
+      const chunks: ChunkPayload[] = [];
+      const vectors: number[][] = [];
+      for (const row of chunkRows) {
+        const vector = vectorsByChunk.get(row.id);
+        if (vector === undefined) {
+          throw new PackManagerError(`prebuilt index has no embedding for chunk ${row.id}`);
+        }
+        chunks.push({
+          chunkId: row.id,
+          docId: row.doc_id,
+          chunkIndex: row.chunk_index,
+          text: row.text,
+          contentHash: row.content_hash,
+        });
+        vectors.push(vector);
+      }
+      const links = db
+        .prepare('SELECT chunk_id, slide_id, pack_id, score, rank, computed_at FROM links')
+        .all() as PrebuiltLinkRow[];
+      // PRR-120-F2: imported link rows must satisfy the same per-row bounds
+      // verify.ts enforces — a tampered/malformed index must be refused, not
+      // imported into the live store where learn.ts consumes score directly.
+      for (const link of links) {
+        const score = Number(link.score);
+        if (!Number.isFinite(score) || score < -1 || score > 1) {
+          throw new PackManagerError(
+            `prebuilt index link row (${link.chunk_id} -> ${link.slide_id}): score ${String(link.score)} is not a finite cosine in [-1, 1]`,
+          );
+        }
+        const rank = Number(link.rank);
+        if (!Number.isInteger(rank) || rank < 1) {
+          throw new PackManagerError(
+            `prebuilt index link row (${link.chunk_id} -> ${link.slide_id}): rank ${String(link.rank)} is not a positive integer`,
+          );
+        }
+        if (typeof link.computed_at !== 'string' || Number.isNaN(Date.parse(link.computed_at))) {
+          throw new PackManagerError(
+            `prebuilt index link row (${link.chunk_id} -> ${link.slide_id}): computed_at is not a parseable timestamp`,
+          );
+        }
+      }
+      // PRR-120-F7: chunk identity is content-derived (ADR-0004) — re-derive
+      // each chunk's id and content hash from its stored text instead of
+      // trusting the shipped rows, and bind every chunk to a doc the manifest
+      // actually carries. Without this, a crafted index could claim an
+      // already-installed pack's chunk ids and silently overwrite its text.
+      const manifestDocShas = new Set(manifest.docs.map((entry) => entry.sha256.toLowerCase()));
+      for (const row of chunkRows) {
+        if (!manifestDocShas.has(row.doc_id.toLowerCase())) {
+          throw new PackManagerError(
+            `prebuilt index chunk ${row.id} references doc ${row.doc_id}, which the manifest does not carry; refusing install`,
+          );
+        }
+        const expectedId = chunkIdFor(row.doc_id, row.chunk_index, normalizeText(row.text));
+        if (row.id !== expectedId) {
+          throw new PackManagerError(
+            `prebuilt index chunk ${row.id} identity does not match its content (want ${expectedId}); refusing install`,
+          );
+        }
+        const expectedHash = sha256Hex(normalizeText(row.text));
+        if (row.content_hash !== expectedHash) {
+          throw new PackManagerError(
+            `prebuilt index chunk ${row.id} content_hash does not match its text; refusing install`,
+          );
+        }
+      }
+      return { chunks, vectors, links, modelId };
+    } finally {
+      try {
+        db.close();
+      } catch {
+        // A close failure must not mask the import result.
+      }
+    }
+  }
+
   /** Deactivate inside a transaction: delete the version's live chunks; the
    * packs row and managed files stay (C2 _deactivate contract). */
   private deactivateLocked(row: PacksRow): void {
@@ -896,12 +1200,14 @@ export class PackManager {
     }
   }
 
-  /** Activation payload prepared OUTSIDE any transaction (async embed). */
+  /** Activation payload prepared OUTSIDE any transaction (async embed — or,
+   * for a prebuilt-index row (issue #73), the wholesale import read). */
   private async prepareActivation(row: PacksRow): Promise<{
     row: PacksRow;
     manifest: PackManifest;
     chunks: ChunkPayload[];
     vectors: number[][];
+    imported: ImportedPrebuilt | null;
   }> {
     if (row.install_path === null) {
       throw new PackManagerError(
@@ -909,9 +1215,14 @@ export class PackManager {
       );
     }
     const manifest = this.validatedManifest(row.install_path);
+    const declaredIndex = this.resolveContainedPrebuiltIndex(row.install_path, manifest);
+    if (declaredIndex !== null) {
+      const imported = this.readPrebuiltIndex(declaredIndex, manifest);
+      return { row, manifest, chunks: imported.chunks, vectors: imported.vectors, imported };
+    }
     const chunks = this.buildChunks(row.install_path, manifest);
     const vectors = await this.embedChecked(chunks);
-    return { row, manifest, chunks, vectors };
+    return { row, manifest, chunks, vectors, imported: null };
   }
 
   /** Apply a prepared activation inside the caller's transaction. */
@@ -920,9 +1231,14 @@ export class PackManager {
     manifest: PackManifest;
     chunks: ChunkPayload[];
     vectors: number[][];
+    imported: ImportedPrebuilt | null;
   }): void {
-    this.writeLiveChunksLocked(activation.manifest, activation.chunks, activation.vectors);
-    recomputeLinksForDocs(this.db, activation.manifest.docs.map((entry) => entry.sha256));
+    this.writeLiveOrImportedChunksLocked(activation.manifest, activation.chunks, activation.vectors, activation.imported);
+    // Recompute only for the rebuild path: a shipped prebuilt index carries
+    // authoritative links that the import already restored (issue #73).
+    if (activation.imported === null) {
+      recomputeLinksForDocs(this.db, activation.manifest.docs.map((entry) => entry.sha256));
+    }
   }
 
   /** Run `work` inside one BEGIN IMMEDIATE..COMMIT; ROLLBACK preserves the

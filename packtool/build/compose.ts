@@ -13,25 +13,23 @@
 // carry fixed dates derived from --published-at (epoch otherwise) and are
 // added in sorted order with fixed compression. published_at (defaulting to
 // build time) is the one volatile field.
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import JSZip from 'jszip';
 import { chunkIdFor, chunkSlideText, contentHashFor, docIdFor, normalizedText } from './chunk.js';
 import { resolveBuildEmbedder } from './embedder.js';
 import { findRepoRoot, writePackIndex } from './index-writer.js';
+import { writeDeterministicZip } from './zip.js';
 import {
   DOC_MIME,
   INDEX_FILE_NAME,
   OUTLINE_DOC_PATH,
-  PACK_JSON_NAME,
   PLAYER_ASSETS_PREFIX,
   SOURCE_CLASS_TRAINING,
   SQLITE_VEC_PIN,
   STORE_SCHEMA_VERSION,
   defaultPackId,
-  serializePackJson,
   serializePackOutlineDoc,
   type PackDocEntry,
   type PackManifest,
@@ -265,46 +263,17 @@ export async function buildStorylinePack(options: BuildStorylineOptions): Promis
       chunks: chunkRows,
     });
 
-    // 7. Zip: pack.json first, then every directory entry, then the files —
-    // all with the fixed date. JSZip auto-creates parent folders with the
-    // CURRENT time when createFolders is left on, which is the one thing
-    // that would make two builds of identical input differ byte-wise.
-    const zip = new JSZip();
-    const zipDate = new Date(publishedAt);
-    const entryPaths = listFilesRelative(staging);
-    const dirEntries = new Set<string>();
-    for (const rel of entryPaths) {
-      const parts = rel.split('/');
-      for (let i = 1; i < parts.length; i += 1) {
-        dirEntries.add(`${parts.slice(0, i).join('/')}/`);
-      }
-    }
-    for (const dir of [...dirEntries].sort((x, y) => x.localeCompare(y))) {
-      zip.file(dir, null, { date: zipDate, createFolders: false, dir: true });
-    }
-    zip.file(PACK_JSON_NAME, serializePackJson(manifest), { date: zipDate, createFolders: false });
-    const entryPathsSorted = entryPaths.sort((a, b) => a.localeCompare(b));
-    for (const rel of entryPathsSorted) {
-      zip.file(rel, readFileSync(path.join(staging, rel)), { date: zipDate, createFolders: false });
-    }
-    const buffer = await zip.generateAsync({
-      type: 'nodebuffer',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 9 },
-    });
-    // Atomic publish (PR review C3): write to a sibling temp file and rename
-    // over --out, so a crash mid-write can never leave a torn zip at the
-    // user-visible path.
-    const tempOut = `${outPath}.tmp-${process.pid}`;
-    writeFileSync(tempOut, buffer);
-    renameSync(tempOut, outPath);
+    // 7. Zip via the shared deterministic writer (issue #73 extracted this
+    // block verbatim into build/zip.ts so build-docs emits byte-identical
+    // conventions; C9's ac4 byte-identity test pins this path).
+    const bytes = await writeDeterministicZip(staging, manifest, outPath);
 
     return {
       packPath: outPath,
       packId,
       docs: docBuilds.length,
       chunks: chunkRows.length,
-      bytes: buffer.length,
+      bytes,
     };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -312,19 +281,6 @@ export async function buildStorylinePack(options: BuildStorylineOptions): Promis
 }
 
 const SCHEMA_HINT = 'contracts/store.schema.sql';
-
-function listFilesRelative(root: string, dir: string = root): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...listFilesRelative(root, full));
-    } else if (entry.isFile()) {
-      out.push(path.relative(root, full).split(path.sep).join('/'));
-    }
-  }
-  return out;
-}
 
 /**
  * Recursive copy that REFUSES symlinks and Windows junctions instead of

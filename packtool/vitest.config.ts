@@ -16,7 +16,7 @@ if (ac !== '' && !/^ac[1-8]$/.test(ac)) {
   throw new Error(`invalid PACKTOOL_AC "${ac}" (expected ac1..ac8 or unset)`);
 }
 const include = ac === ''
-  ? ['storyline/__tests__/**/*.test.ts']
+  ? ['storyline/__tests__/**/*.test.ts', 'docs/__tests__/**/*.test.ts']
   : [
       `storyline/__tests__/extract.${ac}.test.ts`,
       `storyline/__tests__/build-storyline.${ac}.test.ts`,

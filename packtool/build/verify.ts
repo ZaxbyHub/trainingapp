@@ -13,7 +13,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import JSZip from 'jszip';
-import { assertSafeDocPath, validatePackManifest, STORE_SCHEMA_VERSION } from './pack-json.js';
+import { assertSafeDocPath, validatePackManifest, SQLITE_VEC_PIN, STORE_SCHEMA_VERSION } from './pack-json.js';
 
 const require = createRequire(import.meta.url);
 type ReadonlyDatabase = {
@@ -29,7 +29,16 @@ const sqliteVec = require('sqlite-vec') as { load(db: ReadonlyDatabase): void };
 export interface VerifyResult {
   ok: boolean;
   problems: string[];
+  /** Issue #73 AC5: non-fatal observations (wrong expected embedding model).
+   * Warnings never flip the exit code — the hard refusal is C8's job. */
+  warnings: string[];
   docs: number;
+}
+
+export interface VerifyOptions {
+  /** AC5: the model id the installing runtime is configured for; a pack
+   * built with a different model gets a clear warning (not a silent pass). */
+  expectedModelId?: string;
 }
 
 interface PackSource {
@@ -89,11 +98,12 @@ async function zipSource(zipPath: string, scratchDir: string): Promise<PackSourc
   };
 }
 
-export async function verifyPack(packPath: string): Promise<VerifyResult> {
+export async function verifyPack(packPath: string, options?: VerifyOptions): Promise<VerifyResult> {
   const problems: string[] = [];
+  const warnings: string[] = [];
   const resolved = path.resolve(packPath);
   if (!fs.existsSync(resolved)) {
-    return { ok: false, problems: [`pack not found: ${packPath}`], docs: 0 };
+    return { ok: false, problems: [`pack not found: ${packPath}`], warnings, docs: 0 };
   }
   const isZip = fs.statSync(resolved).isFile();
   const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'packtool-verify-'));
@@ -102,7 +112,7 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
     // 1. Manifest present, parses, conforms to the #68 draft shape.
     const packJsonBytes = await source.readEntry('pack.json');
     if (packJsonBytes === undefined) {
-      return { ok: false, problems: ['pack.json is missing from the pack'], docs: 0 };
+      return { ok: false, problems: ['pack.json is missing from the pack'], warnings, docs: 0 };
     }
     let manifest: unknown;
     try {
@@ -111,13 +121,14 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
       return {
         ok: false,
         problems: [`pack.json is not valid JSON: ${error instanceof Error ? error.message : String(error)}`],
+        warnings,
         docs: 0,
       };
     }
     const shape = validatePackManifest(manifest);
     problems.push(...shape.problems);
     if (!shape.ok) {
-      return { ok: false, problems, docs: 0 };
+      return { ok: false, problems, warnings, docs: 0 };
     }
     const pack = manifest as {
       id: string;
@@ -125,9 +136,29 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
       version: string;
       source_class: string;
       embedding: { model_id: string; dims: number; normalize: boolean };
+      chunking: { strategy: string; size: number; overlap: number };
       docs: Array<{ path: string; sha256: string; title: string; mime: string }>;
       index?: { path: string; schema_version: number; sqlite_vec_version: string };
     };
+
+    // Issue #73 AC5: a pack whose embedding model differs from the model the
+    // installing runtime is configured for still verifies structurally, but
+    // the mismatch must be loud (a warning line, never a silent pass) — the
+    // hard runtime refusal is C8's job.
+    if (options?.expectedModelId !== undefined && pack.embedding.model_id !== options.expectedModelId) {
+      warnings.push(
+        `embedding model mismatch: pack built with '${pack.embedding.model_id}' but expected '${options.expectedModelId}'`,
+      );
+    }
+
+    // Issue #73 AC6: the manifest's declared sqlite-vec version must equal
+    // the currently pinned value (pack-json.ts SQLITE_VEC_PIN) — a pack built
+    // against a different vec0 must not pass verify silently.
+    if (pack.index !== undefined && pack.index.sqlite_vec_version !== SQLITE_VEC_PIN) {
+      problems.push(
+        `index.sqlite_vec_version ${pack.index.sqlite_vec_version} != pinned ${SQLITE_VEC_PIN}`,
+      );
+    }
 
     // 2. Per-doc re-hash (the tamper detector).
     for (const doc of pack.docs) {
@@ -156,7 +187,7 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
       assertSafeDocPath(indexPath);
     } catch (error) {
       problems.push(`${indexPath}: ${error instanceof Error ? error.message : String(error)}`);
-      return { ok: false, problems, docs: pack.docs.length };
+      return { ok: false, problems, warnings, docs: pack.docs.length };
     }
     if (!source.entryExists(indexPath)) {
       problems.push(`${indexPath}: prebuilt index is missing from the pack`);
@@ -312,12 +343,14 @@ export async function verifyPack(packPath: string): Promise<VerifyResult> {
       }
     }
 
-    // 4. Player-assets anchor.
-    if (!source.entryExists('assets/player/story.html')) {
+    // 4. Player-assets anchor — training packs only (issue #73): the
+    // Storyline player bundle is what the anchor exists for; bundled/user
+    // packs built by build-docs carry no player and must verify without it.
+    if (pack.source_class === 'training' && !source.entryExists('assets/player/story.html')) {
       problems.push('assets/player/story.html is missing from the pack');
     }
 
-    return { ok: problems.length === 0, problems, docs: pack.docs.length };
+    return { ok: problems.length === 0, problems, warnings, docs: pack.docs.length };
   } finally {
     source.dispose();
   }

@@ -2,6 +2,8 @@
 // issue #78 adds the optional --asr-dir <dir> ASR transcript store.
 // issue #79 adds: packtool build-storyline <publishDir> --out <pack.zip> and
 // packtool verify <packPath>.
+// issue #73 (C6) adds: packtool build-docs <sourceDir> ..., packtool diff
+// <packA> <packB>, and packtool verify --embedding-model <model_id>.
 
 import { existsSync } from 'node:fs';
 import { extractPublishDir } from './storyline/extract.js';
@@ -9,6 +11,8 @@ import { buildStorylinePack } from './build/compose.js';
 import { verifyPack } from './build/verify.js';
 import { SEMVER_PATTERN } from './build/pack-json.js';
 import { computeAndWriteLinks } from './links/link-pack.js';
+import { buildDocsPack, SOURCE_CLASSES } from './docs/build-docs.js';
+import { diffPacks, formatPackDiff } from './docs/diff.js';
 
 interface ExtractArgs {
   publishDir: string;
@@ -28,12 +32,26 @@ interface BuildStorylineArgs {
   publishedAt?: string;
 }
 
+interface BuildDocsArgs {
+  sourceDir: string;
+  out: string;
+  embedder: 'hash' | 'onnx';
+  modelDir?: string;
+  id?: string;
+  version?: string;
+  name?: string;
+  publishedAt?: string;
+  sourceClass?: string;
+}
+
 function usage(): never {
   // The FIRST usage line is the frozen acceptance sentinel for the pre-#79
   // tree (trace 79-build-storyline-training-pack, C1/C9/C11); keep it stable.
   console.error('usage: packtool storyline extract <publishDir> --out <dir> [--asr-dir <dir>]');
   console.error('usage: packtool build-storyline <publishDir> --out <pack.zip> [--asr-dir <dir>] [--embedder hash|onnx] [--embedding-model <dir>] [--id <pack-id>] [--version <semver>] [--name <name>] [--published-at <iso>]');
-  console.error('usage: packtool verify <packPath>');
+  console.error('usage: packtool build-docs <sourceDir> -o <pack.zip> [--embedder hash|onnx] [--embedding-model <dir>] [--id <pack-id>] [--version <semver>] [--name <name>] [--published-at <iso>] [--source-class bundled|training|user]');
+  console.error('usage: packtool verify <packPath> [--embedding-model <model_id>]');
+  console.error('usage: packtool diff <packA> <packB>');
   console.error('usage: packtool links --pack <docPackPath> --training <trainingPackPath> [--threshold <cosine>] [--top <k>]');
   process.exit(2);
 }
@@ -180,12 +198,119 @@ async function runBuildStoryline(argv: string[]): Promise<number> {
   }
 }
 
-async function runVerify(argv: string[]): Promise<number> {
-  // argv[0] is the verb; exactly one positional pack path may follow.
-  const positional = argv.slice(1).filter((arg) => arg !== undefined && !arg.startsWith('--'));
-  if (argv.length !== 2 || positional.length !== 1) usage();
+function parseBuildDocsArgs(argv: string[]): BuildDocsArgs {
+  // argv[0] is the verb.
+  let sourceDir: string | undefined;
+  let out: string | undefined;
+  let embedder: 'hash' | 'onnx' = 'onnx';
+  let modelDir: string | undefined;
+  let id: string | undefined;
+  let version: string | undefined;
+  let name: string | undefined;
+  let publishedAt: string | undefined;
+  let sourceClass: string | undefined;
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === undefined) break;
+    if (arg === '--out' || arg === '-o') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      out = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--embedder') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      if (flagged.value !== 'hash' && flagged.value !== 'onnx') usage();
+      embedder = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--embedding-model') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      modelDir = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--id') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      id = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--version') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      version = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--name') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      name = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--published-at') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      publishedAt = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--source-class') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      if (!(SOURCE_CLASSES as readonly string[]).includes(flagged.value)) usage();
+      sourceClass = flagged.value;
+      i = flagged.next;
+    } else if (!arg.startsWith('--') && arg !== '-o') {
+      if (sourceDir !== undefined) usage();
+      sourceDir = arg;
+    } else {
+      usage();
+    }
+  }
+  if (sourceDir === undefined || out === undefined) usage();
+  // Parse-time validation parity with build-storyline (RB-3/RB-6).
+  if (publishedAt !== undefined && Number.isNaN(Date.parse(publishedAt))) usage();
+  if (version !== undefined && !SEMVER_PATTERN.test(version)) usage();
+  return { sourceDir, out, embedder, modelDir, id, version, name, publishedAt, sourceClass };
+}
+
+async function runBuildDocs(argv: string[]): Promise<number> {
+  const args = parseBuildDocsArgs(argv);
   try {
-    const result = await verifyPack(positional[0] ?? '');
+    const result = await buildDocsPack(args);
+    console.error(
+      `build-docs: ${result.docs} docs, ${result.chunks} chunks, ${result.bytes} bytes -> ${args.out}`,
+    );
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`packtool build-docs failed: ${message}`);
+    return 1;
+  }
+}
+
+async function runVerify(argv: string[]): Promise<number> {
+  // argv[0] is the verb; exactly one positional pack path may follow, plus
+  // the issue #73 expected-model flag.
+  const positional: string[] = [];
+  let expectedModelId: string | undefined;
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === undefined) break;
+    if (arg === '--embedding-model') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      expectedModelId = flagged.value;
+      i = flagged.next;
+    } else if (!arg.startsWith('--')) {
+      if (positional.length > 0) usage();
+      positional.push(arg);
+    } else {
+      usage();
+    }
+  }
+  if (positional.length !== 1) usage();
+  try {
+    const result = await verifyPack(positional[0] ?? '', {
+      ...(expectedModelId !== undefined ? { expectedModelId } : {}),
+    });
+    for (const warning of result.warnings) {
+      console.error(`warning: ${warning}`);
+    }
     for (const problem of result.problems) {
       console.error(`problem: ${problem}`);
     }
@@ -198,6 +323,23 @@ async function runVerify(argv: string[]): Promise<number> {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`packtool verify failed: ${message}`);
+    return 1;
+  }
+}
+
+async function runDiff(argv: string[]): Promise<number> {
+  // argv[0] is the verb; exactly two positional pack paths.
+  const positional = argv.slice(1).filter((arg) => arg !== undefined && !arg.startsWith('--'));
+  if (argv.length !== 3 || positional.length !== 2) usage();
+  try {
+    const diff = await diffPacks(positional[0] ?? '', positional[1] ?? '');
+    for (const line of formatPackDiff(diff)) {
+      console.log(line);
+    }
+    return 0;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`packtool diff failed: ${message}`);
     return 1;
   }
 }
@@ -278,7 +420,9 @@ export function main(argv: string[]): number | Promise<number> {
   const verb = argv[0];
   if (verb === 'storyline') return runExtract(argv);
   if (verb === 'build-storyline') return runBuildStoryline(argv);
+  if (verb === 'build-docs') return runBuildDocs(argv);
   if (verb === 'verify') return runVerify(argv);
+  if (verb === 'diff') return runDiff(argv);
   if (verb === 'links') return runLinks(argv);
   usage();
 }
