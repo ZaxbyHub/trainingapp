@@ -548,4 +548,62 @@ describe('c8 pack security (issue #75) — install gates', () => {
       expect(chunkCount(store2)).toBe(0);
     }
   });
+
+  itReal('signature negative arms: cross-key-type signature, RSA trusted key, and malformed base64 are refused fail-closed (PRR-009)', async () => {
+    const { canonicalManifestBytes } = await loadModules();
+    const edPair = generateKeyPairSync('ed25519');
+    const trustedKeys = [
+      { key_id: 'c8key', public_key: edPair.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') },
+    ];
+
+    // Arm 1: a pack signed by an RSA key but claiming the trusted ed25519
+    // key id — the wrong private key simply fails verification.
+    {
+      const dir = makeTempDir('c8-sig-rsasig-');
+      const made = makePackDir(dir, 'c8-rsasig');
+      const { privateKey: rsaPrivate } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+      const signature = cryptoSign(
+        null,
+        canonicalManifestBytes(fs.readFileSync(path.join(made.pack, 'pack.json'))),
+        rsaPrivate,
+      );
+      made.manifest['signature'] = { algorithm: 'ed25519', key_id: 'c8key', value: signature.toString('base64') };
+      fs.writeFileSync(path.join(made.pack, 'pack.json'), JSON.stringify(made.manifest, null, 2), 'utf8');
+      const { store, manager } = await makeManager(dir, { requireSignature: true, trustedKeys });
+      await expect(manager.install(made.pack)).rejects.toThrow(/signature/);
+      expect(chunkCount(store)).toBe(0);
+    }
+
+    // Arm 2: an RSA-SPKI entry in trustedKeys — createPublicKey accepts it
+    // (no key-type check), crypto.verify fails closed, no chunk lands.
+    {
+      const dir = makeTempDir('c8-sig-rsakey-');
+      const made = makePackDir(dir, 'c8-rsakey');
+      const { privateKey: rsaPrivate, publicKey: rsaSpki } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+      const signature = cryptoSign(
+        null,
+        canonicalManifestBytes(fs.readFileSync(path.join(made.pack, 'pack.json'))),
+        rsaPrivate,
+      );
+      made.manifest['signature'] = { algorithm: 'ed25519', key_id: 'c8rsakey', value: signature.toString('base64') };
+      fs.writeFileSync(path.join(made.pack, 'pack.json'), JSON.stringify(made.manifest, null, 2), 'utf8');
+      const rsaTrusted = [
+        { key_id: 'c8rsakey', public_key: rsaSpki.export({ format: 'der', type: 'spki' }).toString('base64') },
+      ];
+      const { store, manager } = await makeManager(dir, { requireSignature: true, trustedKeys: rsaTrusted });
+      await expect(manager.install(made.pack)).rejects.toThrow(/signature/);
+      expect(chunkCount(store)).toBe(0);
+    }
+
+    // Arm 3: a malformed base64 signature value — refused fail-closed.
+    {
+      const dir = makeTempDir('c8-sig-b64-');
+      const made = makePackDir(dir, 'c8-b64');
+      made.manifest['signature'] = { algorithm: 'ed25519', key_id: 'c8key', value: '!!!not-base64!!!' };
+      fs.writeFileSync(path.join(made.pack, 'pack.json'), JSON.stringify(made.manifest, null, 2), 'utf8');
+      const { store, manager } = await makeManager(dir, { requireSignature: true, trustedKeys });
+      await expect(manager.install(made.pack)).rejects.toThrow(/signature/);
+      expect(chunkCount(store)).toBe(0);
+    }
+  });
 });

@@ -204,6 +204,12 @@ front of these decompression-side limits.
   fails Pydantic parsing at Python startup (set an explicit value or unset
   the variable). The desktop `TRAININGAPP_PACKS_*` reader instead falls back
   to the default. (PRR-020, repo-wide Pydantic convention.)
+- The desktop install-path central-directory parser anchors its walk at
+  `eocd - centralSize` and does not consume the declared `cdOffset` (and so
+  has no cdOffset-consistency refusal); `packtool verify`'s parser additionally
+  checks `cdOffset <= eocd - cdSize` and exact region consumption. Both are
+  immune to the prepended-decoy layout; the difference is defense-in-depth
+  depth only.
 - Containment wording, Node twin: `ensureContained` derives containment from
   `path.relative` (which is case-insensitive on win32) rather than an explicit
   case fold; the safety property is identical to the Python
