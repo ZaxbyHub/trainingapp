@@ -4,7 +4,7 @@ Scope: the Knowledge Pack installation surface — every path that turns
 pack bytes into an installed pack: the Python `PackManager`
 (`pack_manager.py`, whose zip-upload extractor lives behind the
 `POST /packs/install` route in `api_server.py` and shares `pack_extract.py`),
-the Node `PackManager` (`desktop/main/backend/packs/pack-manager.ts` with
+the Node `PackManager` (`desktop/main/backend/store/pack-manager.ts` with
 its zip extractor `pack-extract.ts`), and `packtool verify` (the offline
 gate over the same dispositions). This document cross-references
 `docs/security/desktop.md` (the desktop transport threat model, issue #60)
@@ -19,8 +19,12 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
    both the api_server zip route and `pack_manager.install`) and the Node
    twin `desktop/main/backend/packs/pack-extract.ts` (consumed by both the
    zip-upload surface and `pack-manager.ts`) — with `packtool verify`
-   sharing the same dispositions via the `packtool/build/pack-json.ts`
-   core. A new check goes into the shared core, never into a caller.
+   enforcing the same entry-safety and limit rules on ZIP-form packs via
+   `packtool/build/zip-safety.ts` and the manifest-level rules via
+   `packtool/build/pack-json.ts`. (packtool and desktop are separate npm
+   packages with no workspace root; cross-package parity is pinned by the
+   frozen C8/C11 checks.) A new check goes into a shared core, never into a
+   caller only.
 2. **Containment is proven on the RESOLVED path, never on token shape
    alone.** An entry name is first rejected by `safeEntryName` /
    `safe_entry_name` (empty, backslash, leading `/`, drive-relative or

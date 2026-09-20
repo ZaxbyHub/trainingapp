@@ -13,6 +13,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import JSZip from 'jszip';
+import { assertArchiveSafety } from './zip-safety.js';
 import {
   assertSafeDocPath,
   validatePackManifest,
@@ -121,6 +122,20 @@ export async function verifyPack(packPath: string, options?: VerifyOptions): Pro
     return { ok: false, problems: [`pack not found: ${packPath}`], warnings, docs: 0 };
   }
   const isZip = fs.statSync(resolved).isFile();
+  // C8 (issue #75): enforce the install gate matrix on the raw archive
+  // BEFORE any manifest-addressed validation — entry-name safety (incl.
+  // drive-relative variants), symlink entries, entry count, and declared
+  // size/ratio limits, mirroring the desktop extractor and pack_extract.py.
+  if (isZip) {
+    try {
+      assertArchiveSafety(resolved);
+    } catch (error) {
+      problems.push(
+        `archive safety: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { ok: false, problems, warnings, docs: 0 };
+    }
+  }
   const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'packtool-verify-'));
   const source = isZip ? await zipSource(resolved, scratchDir) : dirSource(resolved);
   try {
