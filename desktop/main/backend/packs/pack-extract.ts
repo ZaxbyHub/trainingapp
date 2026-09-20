@@ -396,7 +396,12 @@ export function enforceDeclaredLimits(
   // Skip dir/zero entries (plan G5): only real payloads count toward the
   // ratio. A declared payload with zero compressed bytes is not compressible
   // input — it is a malformed or crafted record; fail closed.
-  if (ratioUncompressed > 0 && (ratioCompressed === 0 || ratioUncompressed / ratioCompressed > limits.maxCompressionRatio)) {
+  // Ratio is enforced only above an absolute floor: the byte cap bounds
+  // small archives absolutely, and legitimate sqlite vector pages compress
+  // far beyond 100:1 on tiny indexes.
+  const RATIO_FLOOR_BYTES = 16 * 1024 * 1024;
+  const ratioEnforced = ratioUncompressed >= RATIO_FLOOR_BYTES;
+  if (ratioEnforced && (ratioCompressed === 0 || ratioUncompressed / ratioCompressed > limits.maxCompressionRatio)) {
     const ratio = ratioCompressed === 0 ? Number.POSITIVE_INFINITY : ratioUncompressed / ratioCompressed;
     throw new PackManagerError(
       `${filename}: archive declares a ${ratio.toFixed(1)}:1 compression ratio, over the ${limits.maxCompressionRatio}:1 cap (possible zip bomb)`,

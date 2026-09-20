@@ -41,6 +41,7 @@ STORE_SCHEMA_VERSION = 3
 DEFAULT_MAX_UNCOMPRESSED_BYTES = 2147483648
 DEFAULT_MAX_ENTRIES = 5000
 DEFAULT_MAX_COMPRESSION_RATIO = 100.0
+_RATIO_FLOOR_BYTES = 16 * 1024 * 1024
 
 _DRIVE_PREFIX = re.compile(r"^[A-Za-z]:")
 
@@ -210,7 +211,13 @@ def safe_extract_pack_zip(
             raise PackExtractError(
                 f"{filename}: archive declares compressed sizes of zero"
             )
-    elif declared_total / declared_compressed > limits.max_compression_ratio:
+    elif (
+        declared_total >= _RATIO_FLOOR_BYTES
+        and declared_total / declared_compressed > limits.max_compression_ratio
+    ):
+        # Ratio is enforced only above an absolute floor: the byte cap bounds
+        # small archives absolutely, and legitimate sqlite vector pages
+        # compress far beyond 100:1 on tiny indexes.
         raise PackExtractError(
             f"{filename}: archive compression ratio exceeds the "
             f"{limits.max_compression_ratio:g}:1 cap"
