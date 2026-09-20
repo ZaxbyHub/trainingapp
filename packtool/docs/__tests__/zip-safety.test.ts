@@ -176,3 +176,33 @@ describe('packtool verify archive safety (issue #75)', () => {
     });
   });
 });
+
+describe('packtool verify archive safety: prepended decoy central directory (4.6 round 2)', () => {
+  it('rejects a hostile archive that prepends a safe decoy central directory', () => {
+    // Attack shape (4.6 critic round 2): [decoy CD with safe names][real
+    // local sections incl. an E:../ entry][real CD][EOCD]. A parser that
+    // walks the raw cdOffset (0 → the decoy) inspects safe names and passes;
+    // one anchored at eocd - cdSize walks the REAL central directory and
+    // must refuse the hostile entry.
+    const real = buildZip([
+      { name: 'pack.json', data: Buffer.from('{"id":"x"}') },
+      { name: 'E:../p75-prefix-escape.txt', data: Buffer.from('pwn') },
+    ]);
+    const eocdPos = real.length - 22;
+    const cdSize = real.readUInt32LE(eocdPos + 12);
+    const cdStart = eocdPos - cdSize;
+    const localArea = real.subarray(0, cdStart);
+    const realCd = real.subarray(cdStart, eocdPos);
+    const eocd = real.subarray(eocdPos);
+    const decoy = buildZip([
+      { name: 'pack.json', data: Buffer.from('{"id":"x"}') },
+      { name: 'docs/harmless.txt', data: Buffer.from('decoy') },
+    ]);
+    const decoyCd = decoy.subarray(decoy.length - 22 - (46 + 'docs/harmless.txt'.length) - (46 + 'pack.json'.length), decoy.length - 22);
+    const attack = Buffer.concat([decoyCd, localArea, realCd, eocd]);
+    const p = path.join(PACKTOOL_ROOT, '.agents-tmp', 'prefixed.zip');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, attack);
+    expect(() => assertArchiveSafety(p)).toThrow(/unsafe archive entry path/);
+  });
+});

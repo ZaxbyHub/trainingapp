@@ -86,10 +86,21 @@ export function assertArchiveSafety(zipPath: string, buffer?: Buffer): void {
   if (locator >= 0 && data.readUInt32LE(locator) === ZIP64_EOCD_LOCATOR_SIG) {
     throw new Error('pack archives above 4 GiB / 65535 entries are not accepted (ZIP64)');
   }
+  // Anchor the walk at eocd - cdSize, NOT at the raw cdOffset: in a
+  // prepended (SFX-style) archive cdOffset is relative to the ZIP payload,
+  // and an attacker can prepend a DECOY central directory for naive parsers
+  // while JSZip reads the real one. Deriving the start from the EOCD
+  // position (mirroring the desktop twin) always lands on the true central
+  // directory; the walk below must then consume EXACTLY cdSize bytes.
+  const cdStart = eocd - cdSize;
+  if (cdSize === 0 || cdStart < 0 || cdOffset > cdStart) {
+    throw new Error('archive central directory is malformed (inconsistent size/offset)');
+  }
 
   let totalUncompressed = 0;
   let totalCompressed = 0;
-  let cursor = cdOffset;
+  let cursor = cdStart;
+  const cdEnd = eocd;
   for (let index = 0; index < entryCount; index += 1) {
     if (cursor + 46 > data.length || data.readUInt32LE(cursor) !== 0x02014b50) {
       throw new Error('archive central directory is malformed');
@@ -117,6 +128,9 @@ export function assertArchiveSafety(zipPath: string, buffer?: Buffer): void {
       totalCompressed += compressedSize;
     }
     cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  if (cursor !== cdEnd) {
+    throw new Error('archive central directory is malformed (size mismatch)');
   }
   if (totalUncompressed > VERIFY_MAX_UNCOMPRESSED_BYTES) {
     throw new Error(
