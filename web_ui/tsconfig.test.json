@@ -3,8 +3,21 @@
   "compilerOptions": {
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "types": ["vitest/globals", "@testing-library/jest-dom", "node", "@webgpu/types", "vite/client"]
+    "types": [
+      "vitest/globals",
+      "@testing-library/jest-dom",
+      "node",
+      "@webgpu/types",
+      "vite/client"
+    ]
   },
-  "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/__mocks__/**/*", "src/test/**/*"],
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/__mocks__/**/*",
+    "src/test/**/*",
+    "e2e/**/*.ts",
+    "playwright.config.ts"
+  ],
   "exclude": []
 }

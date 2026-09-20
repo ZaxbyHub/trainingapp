@@ -10,13 +10,15 @@ interface DropZoneProps {
   accept?: string;
   disabled?: boolean;
   /**
-   * U7a: optional callback invoked with the names of dropped files that were
-   * rejected by the `accept` filter, so callers can surface rejection
-   * feedback. When omitted the filter stays silent (preserves existing
+   * U7a: optional callback invoked with the files dropped on the zone that
+   * were rejected by the `accept` filter, so callers can surface rejection
+   * feedback (or recognize specific file types — e.g. the ADR-0009 pack
+   * gate). When omitted the filter stays silent (preserves existing
    * behavior). Only fires for the drag-and-drop path — the native file picker
-   * already enforces `accept` and never offers unsupported files.
+   * already enforces `accept` and never offers unsupported files. Callers
+   * derive display names via `file.name`.
    */
-  onFilesRejected?: (fileNames: string[]) => void;
+  onFilesRejected?: (files: File[]) => void;
 }
 
 /**
@@ -92,9 +94,7 @@ export const DropZone: React.FC<DropZoneProps> = React.memo(
         // U7a: surface the rejected files so callers can show feedback instead
         // of silently dropping them. Silent when the callback isn't provided.
         if (onFilesRejected) {
-          const rejected = allDropped
-            .filter((f) => !matchesAccept(f, accept))
-            .map((f) => f.name);
+          const rejected = allDropped.filter((f) => !matchesAccept(f, accept));
           if (rejected.length > 0) {
             onFilesRejected(rejected);
           }

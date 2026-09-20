@@ -114,3 +114,48 @@ jobs:
             echo "prepare-models did not write the embedding exclusion marker to .env.production"; \
             exit 1; }
           rm -f .env.production
+
+  # C9 (issue #76 / ADR-0009): browser-mode pack-gate e2e. Runs the frozen
+  # acceptance check's Playwright spec (web_ui/e2e/packs-gate.spec.ts) against
+  # the production renderer build via vite preview. Deliberately does NOT run
+  # prepare-models: CI never stages the operator-acquired weights (see the
+  # main job above), and the gate path never loads model code.
+  web-ui-e2e:
+    name: browser-mode pack gate e2e (Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web_ui
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: web_ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright chromium
+        run: npx playwright install --with-deps chromium
+
+      # Builds the production renderer (dist/), then starts the vite preview
+      # webServer pinned to 127.0.0.1:4174 (desktop's harness owns 4173) and
+      # runs the packs-gate spec: gate notice appears for a schema-honest
+      # fixture pack zip, no IndexedDB writes occur, non-pack zips stay on the
+      # generic unsupported-type path.
+      - name: Run pack-gate e2e
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-ui-e2e-playwright-report
+          path: web_ui/playwright-report/
+          retention-days: 7
