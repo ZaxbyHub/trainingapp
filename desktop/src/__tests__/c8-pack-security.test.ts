@@ -574,8 +574,8 @@ describe('c8 pack security (issue #75) — install gates', () => {
       expect(chunkCount(store)).toBe(0);
     }
 
-    // Arm 2: an RSA-SPKI entry in trustedKeys — createPublicKey accepts it
-    // (no key-type check), crypto.verify fails closed, no chunk lands.
+    // Arm 2: an RSA-SPKI entry in trustedKeys — the key-type gate refuses it
+    // (a null-digest RSA signature would otherwise VERIFY; PRR-022).
     {
       const dir = makeTempDir('c8-sig-rsakey-');
       const made = makePackDir(dir, 'c8-rsakey');

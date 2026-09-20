@@ -299,6 +299,16 @@ export function verifyPackSignature(
       format: 'der',
       type: 'spki',
     });
+    // Key-type gate (PRR-022, parity with the desktop twin): without this, an
+    // RSA SPKI in the trusted-keys file plus an RSA signature VERIFIES via
+    // Node's null-digest RSA round-trip, silently widening the documented
+    // ed25519-only scheme.
+    if (key.asymmetricKeyType !== 'ed25519') {
+      return {
+        ok: false,
+        detail: `trusted key ${trusted.key_id} is not an ed25519 public key (${String(key.asymmetricKeyType)})`,
+      };
+    }
     return { ok: cryptoVerify(null, canonical, key, sig), detail: undefined };
   } catch (error) {
     return { ok: false, detail: error instanceof Error ? error.message : String(error) };

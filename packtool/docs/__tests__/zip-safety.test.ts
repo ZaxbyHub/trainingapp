@@ -234,3 +234,26 @@ describe('packtool verify archive safety: prepended decoy central directory (4.6
     expect(() => assertArchiveSafety(p)).toThrow(/unsafe archive entry path/);
   });
 });
+
+describe('packtool verifyPackSignature key-type gate (PRR-022 follow-up)', () => {
+  it('refuses a non-ed25519 trusted key instead of verifying via a null-digest RSA round-trip', async () => {
+    const { generateKeyPairSync } = await import('node:crypto');
+    const { verifyPackSignature } = await import('../../build/pack-json.js');
+    const { privateKey: rsaPrivate, publicKey: rsaSpki } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+    });
+    const manifestBytes = Buffer.from(JSON.stringify({ id: 'x' }), 'utf8');
+    const signature = require('node:crypto').sign(
+      null,
+      manifestBytes,
+      rsaPrivate,
+    );
+    const result = verifyPackSignature(
+      manifestBytes,
+      { algorithm: 'ed25519', key_id: 'rsakey', value: signature.toString('base64') },
+      [{ key_id: 'rsakey', public_key: rsaSpki.export({ format: 'der', type: 'spki' }).toString('base64') }],
+    );
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/not an ed25519 public key/);
+  });
+});
