@@ -212,17 +212,17 @@ async function listIndexedDbNames(page: Page): Promise<string[]> {
 }
 
 /**
- * For every `${prefix}-doc-qa-documents` database: count the records in its
- * "documents" object store. Returns { dbName: count }; count is -1 when the
- * database exists but the store has not been created yet (vacuously empty).
+ * Full storage inventory for this context: every `-doc-qa-*` database, every
+ * object store in it, with per-store record counts. The gate invariant is
+ * compared as a before/after BYTE-IDENTICAL map, so an in-place write to ANY
+ * existing store (documents, vector mapping, vector index, keywords) is
+ * caught — not just new database names or the documents store.
  *
  * Opens versionless (indexedDB.open(name) with no version), which opens the
  * EXISTING version without any upgrade — the read itself cannot mutate the
  * database.
  */
-async function countDocumentsStoreRecords(
-  page: Page
-): Promise<Record<string, number>> {
+async function storageInventory(page: Page): Promise<Record<string, number>> {
   return page.evaluate(async () => {
     const idb = indexedDB as unknown as {
       databases?: () => Promise<Array<{ name?: string }>>;
@@ -233,33 +233,46 @@ async function countDocumentsStoreRecords(
     const dbs = await idb.databases();
     const targets = dbs
       .map((d) => d.name ?? '')
-      .filter((n) => n.endsWith('-doc-qa-documents'));
-    const counts: Record<string, number> = {};
+      .filter((n) => n.includes('-doc-qa-'))
+      .sort();
+    const inventory: Record<string, number> = {};
     for (const name of targets) {
-      counts[name] = await new Promise<number>((resolve) => {
+      const storeNames = await new Promise<string[]>((resolve) => {
         const req = indexedDB.open(name);
         req.onsuccess = () => {
           const db = req.result;
-          if (!db.objectStoreNames.contains('documents')) {
-            db.close();
-            resolve(-1);
-            return;
-          }
-          const tx = db.transaction('documents', 'readonly');
-          const countReq = tx.objectStore('documents').count();
-          countReq.onsuccess = () => {
-            db.close();
-            resolve(countReq.result);
-          };
-          countReq.onerror = () => {
-            db.close();
-            resolve(-1);
-          };
+          const names = Array.from(db.objectStoreNames);
+          db.close();
+          resolve(names);
         };
-        req.onerror = () => resolve(-1);
+        req.onerror = () => resolve([]);
       });
+      for (const store of storeNames) {
+        inventory[`${name}::${store}`] = await new Promise<number>((resolve) => {
+          const req = indexedDB.open(name);
+          req.onsuccess = () => {
+            const db = req.result;
+            try {
+              const tx = db.transaction(store, 'readonly');
+              const countReq = tx.objectStore(store).count();
+              countReq.onsuccess = () => {
+                db.close();
+                resolve(countReq.result);
+              };
+              countReq.onerror = () => {
+                db.close();
+                resolve(-1);
+              };
+            } catch {
+              db.close();
+              resolve(-1);
+            }
+          };
+          req.onerror = () => resolve(-1);
+        });
+      }
     }
-    return counts;
+    return inventory;
   });
 }
 
@@ -277,6 +290,7 @@ test('C9-AC3 gate: dropping a pack zip shows the capability-gate notice and leav
   // after that churn is done.
   await page.waitForTimeout(800);
   const beforeNames = await listIndexedDbNames(page);
+  const beforeInventory = await storageInventory(page);
 
   await dropZipOnDropZone(page, zipBytes, 'browser-gate-poc-1.0.0.zip');
 
@@ -289,12 +303,12 @@ test('C9-AC3 gate: dropping a pack zip shows the capability-gate notice and leav
   const afterNames = await listIndexedDbNames(page);
   expect(afterNames).toEqual(beforeNames);
 
-  // Storage invariant 2: every documents store holds zero records
-  // (-1 = database exists but store not created — vacuously empty).
-  const counts = await countDocumentsStoreRecords(page);
-  for (const [dbName, count] of Object.entries(counts)) {
-    expect(count, `documents store in ${dbName}`).toBeLessThanOrEqual(0);
-  }
+  // Storage invariant 2 (PRR-002 strengthening): the FULL per-store inventory
+  // of every -doc-qa-* database is byte-identical after the drop — an
+  // in-place write to any existing store (documents, vector mapping, vector
+  // index, keywords) is caught, not just new databases.
+  const afterInventory = await storageInventory(page);
+  expect(afterInventory).toEqual(beforeInventory);
 });
 
 test('C9-AC3 guard: a non-pack zip does not trigger the gate notice', async ({ page }) => {
