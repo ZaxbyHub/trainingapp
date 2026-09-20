@@ -15,6 +15,7 @@
     "typecheck:all": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "npm run build && playwright test --config playwright.config.ts",
     "validate-build:no-llm": "node scripts/validate-build.mjs --no-llm"
   },
   "dependencies": {
@@ -47,6 +48,7 @@
     "jsdom": "^25.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "@playwright/test": "^1.63.0"
   }
 }

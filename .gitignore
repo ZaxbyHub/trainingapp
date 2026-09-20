@@ -63,6 +63,8 @@ desktop/store/
 # Playwright-under-Electron artifacts (issue #67 e2e)
 desktop/test-results/
 desktop/playwright-report/
+web_ui/test-results/
+web_ui/playwright-report/
 
 # packtool/build/ is SOURCE (the issue #79 pack builder modules), not output;
 # the generic `build/` pattern above is for compiled output dirs.

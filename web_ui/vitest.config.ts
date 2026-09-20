@@ -41,6 +41,11 @@ export default defineConfig({
     exclude: [
       '**/node_modules/**',
       '**/dist/**',
+      // C9 (issue #76): Playwright specs under e2e/ are driven by the
+      // playwright.config.ts harness (vite preview + chromium), never by
+      // vitest — the include glob's `.spec.` branch would otherwise collect
+      // them and fail at import.
+      'e2e/**',
       // Pre-existing behavioral failures (status-color and mode-switching
       // assertions that don't match the component's actual behavior). Not owned
       // by issue #25; left excluded pending a dedicated fix.
