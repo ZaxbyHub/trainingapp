@@ -208,6 +208,53 @@ describe('C9 gate — browser mode', () => {
   });
 });
 
+describe('C9 gate — picker path (selected, not dropped)', () => {
+  it('a pack zip selected via the file input is gated and writes nothing', async () => {
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+
+    // The DropZone input forwards selections to handleFilesSelected with no
+    // accept filtering — the HTML accept attribute is a chooser hint, not an
+    // enforcement boundary, so this is the path a "selected" pack takes.
+    const input = (await waitFor(() => {
+      const el = document.querySelector('input[type="file"]');
+      expect(el).toBeTruthy();
+      return el as HTMLInputElement;
+    })) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [await packZipFile()] } });
+
+    const gate = await screen.findByTestId('pack-gate-notice');
+    expect(gate).toHaveTextContent('Knowledge Packs require the desktop app');
+    expect(extractDocument).not.toHaveBeenCalled();
+    expect(saveDocuments).not.toHaveBeenCalled();
+  });
+
+  it('a pack zip selected in Electron mode is NOT gated; installPack owns it', async () => {
+    installDesktopBridge();
+    const session = makeElectronSession();
+    render(
+      <ToastProvider>
+        <DesktopSessionProvider value={{ session, models: null, loading: false, error: null }}>
+          <DocumentsPage />
+        </DesktopSessionProvider>
+      </ToastProvider>
+    );
+
+    const input = (await waitFor(() => {
+      const el = document.querySelector('input[type="file"]');
+      expect(el).toBeTruthy();
+      return el as HTMLInputElement;
+    })) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [await packZipFile()] } });
+
+    await waitFor(() => expect(installPack).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId('pack-gate-notice')).toBeNull();
+  });
+});
+
 describe('C9 gate — Electron mode negative', () => {
   it('a dropped pack zip is NOT gated; the C7 install path owns it', async () => {
     installDesktopBridge();

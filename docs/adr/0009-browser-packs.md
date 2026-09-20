@@ -56,8 +56,8 @@ equivalent of `pack-extract.ts` today.
 
 ### Option B — Explicit capability gate
 
-The browser Documents page detects a dropped file that carries the C1 pack
-manifest signature (a zip whose root `pack.json` matches the schema's
+The browser Documents page detects a dropped or selected file that carries
+the C1 pack manifest signature (a zip whose root `pack.json` matches the schema's
 required shape — the same recognition signal desktop guard G1 uses) and
 shows a persistent message: **"Knowledge Packs require the desktop app —
 install the Electron build to use bundled/training packs; plain documents
@@ -111,8 +111,11 @@ and UX claims: `web_ui/src/lib/packs/pack-detect.ts` (the bounded manifest-
 signature sniffer: size cap, root `pack.json` read, minimal required-field
 shape mirroring `contracts/pack.schema.json` — a trigger, not a validator)
 and a persistent gate notice on the browser Documents page
-(`data-testid="pack-gate-notice"`) shown when a pack zip is dropped, with
-the generic unsupported-type toast preserved for everything else. The
+(`data-testid="pack-gate-notice"`) shown when a pack zip is dropped OR
+selected — both entry points are classified with the same content-based
+signature check, because the file picker's `accept` attribute is a chooser
+hint, not an enforcement boundary. The generic unsupported-type toast is
+preserved for everything else. The
 behavior is pinned by the frozen Playwright check
 (`web_ui/e2e/packs-gate.spec.ts`: gate appears for a real fixture pack zip,
 no IndexedDB namespaces are created or written, and a non-pack zip does not

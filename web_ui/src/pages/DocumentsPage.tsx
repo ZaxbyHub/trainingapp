@@ -539,6 +539,31 @@ export function DocumentsPage() {
         return;
       }
 
+      // C9 (ADR-0009): browser mode — a pack zip can also arrive through the
+      // PICKER path (the HTML accept attribute is a chooser hint, not an
+      // enforcement boundary; a programmatic or overridden selection bypasses
+      // it). Classify selected files with the same content-based signature
+      // check as the drop-rejection path and gate packs here, before any
+      // document processing or storage write can happen.
+      if (!electronMode) {
+        const packNames: string[] = [];
+        const documentables: File[] = [];
+        for (const file of files) {
+          if (await isKnowledgePackZip(file)) {
+            packNames.push(file.name);
+          } else {
+            documentables.push(file);
+          }
+        }
+        if (packNames.length > 0) {
+          setPackGateFiles((prev) => Array.from(new Set([...prev, ...packNames])));
+        }
+        if (documentables.length === 0) {
+          return;
+        }
+        files = documentables;
+      }
+
       const existing = latestDocumentsRef.current;
       const accepted: { file: File; entry: DocumentEntry }[] = [];
       const skipped: string[] = [];
@@ -930,7 +955,7 @@ export function DocumentsPage() {
               }
             }
             if (packNames.length > 0) {
-              setPackGateFiles(packNames);
+              setPackGateFiles((prev) => Array.from(new Set([...prev, ...packNames])));
             }
             if (unsupportedNames.length > 0) {
               const preview = unsupportedNames.slice(0, 3).join(', ');
