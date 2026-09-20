@@ -492,6 +492,23 @@ class PackManager:
             )
         with _registry_lock:
             manifest = self._validated_manifest(source)
+
+            # C8 (issue #75): hardening gate — opt-in signature verification
+            # and embedding/schema compatibility, both fail-closed BEFORE any
+            # copy, chunk, or insert so a refused pack leaves no partial
+            # state. Lazy imports keep the pack_extract <-> pack_manager
+            # import graph acyclic.
+            from config import get_settings
+            from pack_extract import (
+                check_pack_compat,
+                check_signature_gate,
+                limits_from_settings,
+            )
+
+            limits = limits_from_settings()
+            check_signature_gate(manifest, (source / "pack.json").read_bytes(), limits)
+            check_pack_compat(manifest, get_settings().rag_embedding_model)
+
             pack_id = manifest["id"]
             version = manifest["version"]
 

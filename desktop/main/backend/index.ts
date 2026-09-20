@@ -24,6 +24,7 @@ import { createBackup } from './store/backup.js';
 import { StoreDocumentSurface } from './store/document-surface.js';
 import { PackManager } from './store/pack-manager.js';
 import { createPackSurface } from './packs/surface.js';
+import { resolvePacksSecurity } from './packs/pack-extract.js';
 import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
@@ -499,11 +500,17 @@ export class NodeBackendHost implements BackendHost {
             // Managed copies default to a profile-local packs/ dir; the
             // packsRoot config knob overrides. Attach to the engine via the
             // established optional-attach pattern when the seam exists.
+            // Issue #75 (C8): the install gates (extraction limits,
+            // embedding-model pin, opt-in signatures) resolve from
+            // BackendHostConfig.packsSecurity over the TRAININGAPP_PACKS_*
+            // env seam over the pinned defaults — one surface for the
+            // extractor and the manager.
             try {
               this.packManager = new PackManager({
                 store: this.store,
                 embedder: this.embedder,
                 packsRoot: this.config.packsRoot ?? path.join(path.dirname(this.config.storePath ?? this.store.dbPath), 'packs'),
+                packsSecurity: resolvePacksSecurity(env, this.config.packsSecurity),
               });
               if (typeof (this.engine as { attachPackManager?: unknown }).attachPackManager === 'function') {
                 (this.engine as unknown as { attachPackManager: (pm: PackManager) => void }).attachPackManager(this.packManager);

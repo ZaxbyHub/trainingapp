@@ -14,6 +14,7 @@ import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { createBackendHost, resolveBackendMode } from './index.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
+import { resolvePacksSecurity } from './packs/pack-extract.js';
 import type { BackendMode } from './types.js';
 
 interface DevServerArgs {
@@ -99,6 +100,10 @@ async function main(): Promise<void> {
     mode: resolveBackendMode({ mode: args.mode }),
     engine,
     storePath: args.storePath ?? process.env.TRAININGAPP_DESKTOP_STORE_PATH,
+    // Issue #75 (C8): headless hosts resolve the pack-installation security
+    // limits from the TRAININGAPP_PACKS_* env seam (same resolution the
+    // Electron host performs from its config + env).
+    packsSecurity: resolvePacksSecurity(engineEnv),
     // B6 (issue #64): backups default next to the store; corruption without a
     // prompt seam auto-recovers (restore from the latest backup, else fresh).
     storeBackupsDir:

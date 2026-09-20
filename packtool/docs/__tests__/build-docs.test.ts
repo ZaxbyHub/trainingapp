@@ -190,15 +190,31 @@ describe('build-docs (issue #73)', () => {
     expect(verify.problems.some((p => p.includes('sqlite_vec')))).toBe(true);
   });
 
-  it('verify warns on a wrong expected model and stays ok', { timeout: 30_000 }, async () => {
+  // Issue #75 (C8): with --embedding-model supplied, a model mismatch is a
+  // FAILING problem (the install-side gates refuse the same pack; verify must
+  // not call it healthy). Without the flag the model is not gated — the
+  // advisory path stays ok.
+  it('verify fails closed on a wrong expected model (packtool remedy in the problem)', { timeout: 30_000 }, async () => {
     const src = makeTempDir('bd-warn-');
     writeSource(src, 'doc.md', '# Warn\n\nBody.\n');
     const outZip = path.join(makeTempDir('bd-out-'), 'pack.zip');
     await buildDocsPack({ sourceDir: src, out: outZip, embedder: 'hash', publishedAt: FIXED_TIME, id: 'bd-warn', version: '1.0.0' });
     const verify = await verifyPack(outZip, { expectedModelId: 'bge-small-en-v1.5' });
+    expect(verify.ok).toBe(false);
+    const mismatch = verify.problems.find((p) => p.includes('embedding model mismatch'));
+    expect(mismatch).toBeDefined();
+    expect(mismatch).toContain('build-docs --embedding-model');
+  });
+
+  it('verify without --embedding-model does not gate the model (advisory path preserved)', { timeout: 30_000 }, async () => {
+    const src = makeTempDir('bd-advisory-');
+    writeSource(src, 'doc.md', '# Advisory\n\nBody.\n');
+    const outZip = path.join(makeTempDir('bd-out-'), 'pack.zip');
+    await buildDocsPack({ sourceDir: src, out: outZip, embedder: 'hash', publishedAt: FIXED_TIME, id: 'bd-advisory', version: '1.0.0' });
+    const verify = await verifyPack(outZip);
     expect(verify.ok).toBe(true);
-    expect(verify.warnings).toHaveLength(1);
-    expect(verify.warnings[0]).toContain('embedding model mismatch');
+    expect(verify.problems).toEqual([]);
+    expect(verify.warnings).toEqual([]);
   });
 
   it('refuses an empty source directory', { timeout: 30_000 }, async () => {
@@ -385,5 +401,76 @@ describe('diff honors a manifest-declared index path (PRR-120-F4)', () => {
 
     const lines = formatPackDiff(await diffPacks(unpacked, unpacked));
     expect(lines).toContain('chunks: 1 -> 1 (delta +0)');
+  });
+});
+
+// Issue #75 (C8/C11): verify's hardening dispositions — the manifest index
+// schema stamp and the opt-in detached-signature gate share the pack-json
+// core the desktop installers twin.
+describe('verify hardening dispositions (issue #75)', () => {
+  it('flags a manifest index.schema_version that misses the pin', { timeout: 30_000 }, async () => {
+    const src = makeTempDir('bd-schemastamp-');
+    writeSource(src, 'doc.md', '# Stamp\n\nBody.\n');
+    const outZip = path.join(makeTempDir('bd-out-'), 'pack.zip');
+    await buildDocsPack({ sourceDir: src, out: outZip, embedder: 'hash', publishedAt: FIXED_TIME, id: 'bd-schemastamp', version: '1.0.0' });
+    const unpacked = makeTempDir('bd-schemastamp-dir-');
+    await unzip(outZip, unpacked);
+    const manifestPath = path.join(unpacked, 'pack.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { index: { schema_version: number } };
+    manifest.index.schema_version = 4;
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    const verify = await verifyPack(unpacked);
+    expect(verify.ok).toBe(false);
+    expect(verify.problems.some((p) => p.includes('index.schema_version'))).toBe(true);
+  });
+
+  it('requireSignature refuses an unsigned pack', { timeout: 30_000 }, async () => {
+    const src = makeTempDir('bd-unsigned-');
+    writeSource(src, 'doc.md', '# Unsigned\n\nBody.\n');
+    const outZip = path.join(makeTempDir('bd-out-'), 'pack.zip');
+    await buildDocsPack({ sourceDir: src, out: outZip, embedder: 'hash', publishedAt: FIXED_TIME, id: 'bd-unsigned', version: '1.0.0' });
+    const verify = await verifyPack(outZip, { requireSignature: true, trustedKeys: [] });
+    expect(verify.ok).toBe(false);
+    expect(verify.problems.some((p) => p.includes('signature'))).toBe(true);
+  });
+
+  it('requireSignature accepts a pack signed over the canonical manifest bytes', { timeout: 30_000 }, async () => {
+    const { generateKeyPairSync, sign } = await import('node:crypto');
+    const { canonicalManifestBytes } = await import('../../build/pack-json');
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+    const trustedKeys = [
+      {
+        key_id: 'bd-test-key',
+        public_key: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+      },
+    ];
+
+    const src = makeTempDir('bd-signed-');
+    writeSource(src, 'doc.md', '# Signed\n\nBody.\n');
+    const outZip = path.join(makeTempDir('bd-out-'), 'pack.zip');
+    await buildDocsPack({ sourceDir: src, out: outZip, embedder: 'hash', publishedAt: FIXED_TIME, id: 'bd-signed', version: '1.0.0' });
+    const unpacked = makeTempDir('bd-signed-dir-');
+    await unzip(outZip, unpacked);
+    // Sign the canonical form of the CURRENT manifest, then attach the block.
+    const manifestPath = path.join(unpacked, 'pack.json');
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
+    const signature = sign(null, canonicalManifestBytes(readFileSync(manifestPath)), privateKey);
+    manifest['signature'] = {
+      algorithm: 'ed25519',
+      key_id: 'bd-test-key',
+      value: signature.toString('base64'),
+    };
+    writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+
+    const verify = await verifyPack(unpacked, { requireSignature: true, trustedKeys });
+    expect(verify.ok).toBe(true);
+    expect(verify.problems).toEqual([]);
+    // The same pack under an UNTRUSTED keyset is refused.
+    const untrusted = await verifyPack(unpacked, {
+      requireSignature: true,
+      trustedKeys: [{ key_id: 'other-key', public_key: trustedKeys[0]!.public_key }],
+    });
+    expect(untrusted.ok).toBe(false);
+    expect(untrusted.problems.some((p) => p.includes('not in the trusted keyset'))).toBe(true);
   });
 });

@@ -13,7 +13,16 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import JSZip from 'jszip';
-import { assertSafeDocPath, validatePackManifest, SQLITE_VEC_PIN, STORE_SCHEMA_VERSION } from './pack-json.js';
+import {
+  assertSafeDocPath,
+  validatePackManifest,
+  SQLITE_VEC_PIN,
+  STORE_SCHEMA_VERSION,
+  modelIdMatches,
+  verifyPackSignature,
+  type PacksSecurityConfig,
+  type TrustedKey,
+} from './pack-json.js';
 
 const require = createRequire(import.meta.url);
 type ReadonlyDatabase = {
@@ -36,9 +45,15 @@ export interface VerifyResult {
 }
 
 export interface VerifyOptions {
-  /** AC5: the model id the installing runtime is configured for; a pack
-   * built with a different model gets a clear warning (not a silent pass). */
+  /** AC5 / issue #75 C5: the model id the installing runtime is configured
+   * for. A pack built with a different model FAILS verification with the
+   * packtool remedy (fail-closed semantics; without this flag the model is
+   * not gated — the advisory path). */
   expectedModelId?: string;
+  /** Issue #75 C7/C11: require a valid trusted signature on the pack. */
+  requireSignature?: boolean;
+  /** Issue #75 C7/C11: the trusted keyset for --trusted-keys-file. */
+  trustedKeys?: TrustedKey[];
 }
 
 interface PackSource {
@@ -141,13 +156,26 @@ export async function verifyPack(packPath: string, options?: VerifyOptions): Pro
       index?: { path: string; schema_version: number; sqlite_vec_version: string };
     };
 
-    // Issue #73 AC5: a pack whose embedding model differs from the model the
-    // installing runtime is configured for still verifies structurally, but
-    // the mismatch must be loud (a warning line, never a silent pass) — the
-    // hard runtime refusal is C8's job.
-    if (options?.expectedModelId !== undefined && pack.embedding.model_id !== options.expectedModelId) {
-      warnings.push(
-        `embedding model mismatch: pack built with '${pack.embedding.model_id}' but expected '${options.expectedModelId}'`,
+    // Issue #75 C5 (was #73 AC5's advisory warning): when the installing
+    // runtime's model is supplied (--embedding-model), a pack built with a
+    // DIFFERENT model fails verification with the packtool remedy — the
+    // install-side gates refuse the same pack, so verify must not call it
+    // healthy. Without the flag the model is not gated (advisory path kept).
+    if (
+      options?.expectedModelId !== undefined &&
+      !modelIdMatches(pack.embedding.model_id, options.expectedModelId)
+    ) {
+      problems.push(
+        `embedding model mismatch: pack built with '${pack.embedding.model_id}' but expected '${options.expectedModelId}'; rebuild via packtool build-docs --embedding-model`,
+      );
+    }
+
+    // Issue #75 C6: the manifest's declared index schema stamp must equal the
+    // pinned store schema when an index block is present (packs without an
+    // index block are the rebuild path and are not stamp-gated).
+    if (pack.index !== undefined && pack.index.schema_version !== STORE_SCHEMA_VERSION) {
+      problems.push(
+        `index.schema_version ${pack.index.schema_version} != pinned ${STORE_SCHEMA_VERSION}`,
       );
     }
 
@@ -158,6 +186,20 @@ export async function verifyPack(packPath: string, options?: VerifyOptions): Pro
       problems.push(
         `index.sqlite_vec_version ${pack.index.sqlite_vec_version} != pinned ${SQLITE_VEC_PIN}`,
       );
+    }
+
+    // Issue #75 C7/C11: optional signature gate mirroring the install-side
+    // config semantics — with --require-signature, a pack without a valid
+    // trusted signature fails verification.
+    if (options?.requireSignature === true) {
+      const trustedKeys: readonly TrustedKey[] = options.trustedKeys ?? [];
+      const rawSignature = (manifest as { signature?: unknown }).signature;
+      const verification = verifyPackSignature(packJsonBytes, rawSignature, trustedKeys);
+      if (!verification.ok) {
+        problems.push(
+          `signature verification failed (${verification.detail ?? 'unknown reason'}); a trusted ed25519 signature is required`,
+        );
+      }
     }
 
     // 2. Per-doc re-hash (the tamper detector).
