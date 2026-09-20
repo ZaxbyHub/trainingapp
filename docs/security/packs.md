@@ -191,6 +191,8 @@ front of these decompression-side limits.
 
 ## Known limits (explicit, not silent)
 
+- Entry names may contain a non-drive colon (e.g. `name:stream`): it does not escape the extraction root — the file lands inside it — but on NTFS a colon is ADS syntax, so such entries are best treated as opaque. The manifest-level `docs[].path` validators share this gap; a strict `":" in name` rejection is a possible future tightening (4.5 review, 2026-09-20).
+
 - Node/JSZip decompresses one entry fully before the unspoofable
   written-bytes cap counts it: the declared-metadata pre-filter rejects
   spoofed declarations early, but a single entry with a spoofed (small)
