@@ -32,6 +32,9 @@ covered by `docs/security_hardening_guide.md`; renderer feature work is B9
 
 ## Threats and mitigations
 
+Knowledge-pack installation (zip extraction, bombs, tampering, signature
+gating) has its own threat model in `docs/security/packs.md` (#75).
+
 ### Token theft
 - **Threat:** any renderer script (or anything that can read renderer
   storage/history) learns the transport token.

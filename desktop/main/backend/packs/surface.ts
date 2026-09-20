@@ -1,6 +1,9 @@
 // C7 (issue #74): the Node host's PackSurface adapter over PackManager.
 // One mapping used by BOTH the Electron host wiring (backend/index.ts) and
 // the /packs route tests, so the tests exercise the exact production wiring.
+// Issue #75 (C8): the zip-upload extraction runs under the SAME resolved
+// packs-security limits the manager gates installs with (one config surface,
+// no per-caller drift).
 import fs from 'node:fs';
 import type { InstallPackResponse, PackInfo, PackSurface } from '../types.js';
 import type { PackManager } from '../store/pack-manager.js';
@@ -19,7 +22,12 @@ export function createPackSurface(manager: PackManager): PackSurface {
         supersedes: record.supersedes,
       })),
     installZip: async (zip, filename): Promise<InstallPackResponse> => {
-      const dir = await extractPackZip(zip, filename);
+      const security = manager.packsSecurity;
+      const dir = await extractPackZip(zip, filename, {
+        maxUncompressedBytes: security.maxUncompressedBytes,
+        maxEntries: security.maxEntries,
+        maxCompressionRatio: security.maxCompressionRatio,
+      });
       try {
         const result = await manager.install(dir);
         return {

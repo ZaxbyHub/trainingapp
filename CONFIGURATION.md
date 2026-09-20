@@ -696,3 +696,25 @@ deduped deterministically. Unpackaged documents are neutral (multiplier 1.0).
 
 The same three keys are exposed via `GET/PUT /settings`
 (`packs_recency_*` / `rag_packs_recency_*` fields) on the Python API.
+
+## Knowledge Pack Install Security (packs.security.*)
+
+Install-time hardening gates for Knowledge Packs (issue #75 / C8): resolved-path
+containment, zip bomb / entry-count / compression-ratio caps, mandatory doc
+sha256 verification, embedding-model and schema compatibility gates, and opt-in
+ed25519 signature verification. Threat model: `docs/security/packs.md`.
+
+| Key (logical) | Env variable (Python `RAG_*` / desktop `TRAININGAPP_*`) | Default | Meaning |
+| --- | --- | --- | --- |
+| `packs.security.maxUncompressedBytes` | `RAG_PACKS_SECURITY_MAX_UNCOMPRESSED_BYTES` / `TRAININGAPP_PACKS_MAX_UNCOMPRESSED_BYTES` | `2147483648` | Declared + written-bytes cap; ZIP64 archives are refused outright on the Node verify path |
+| `packs.security.maxEntries` | `RAG_PACKS_SECURITY_MAX_ENTRIES` / `TRAININGAPP_PACKS_MAX_ENTRIES` | `5000` | Entry-count cap |
+| `packs.security.maxCompressionRatio` | `RAG_PACKS_SECURITY_MAX_COMPRESSION_RATIO` / `TRAININGAPP_PACKS_MAX_COMPRESSION_RATIO` | `100` | Declared ratio cap, enforced only for archives >= 16 MiB uncompressed (small archives are bounded by the byte cap) |
+| `packs.security.requireSignature` | `RAG_PACKS_SECURITY_REQUIRE_SIGNATURE` / `TRAININGAPP_PACKS_REQUIRE_SIGNATURE` | `false` | Refuse unsigned packs (opt-in until E5 ships trusted-key distribution) |
+| `packs.security.trustedKeys` | `RAG_PACKS_SECURITY_TRUSTED_KEYS` / `TRAININGAPP_PACKS_TRUSTED_KEYS` | `[]` | JSON array of `{"key_id","public_key"}` (public_key = base64 DER SPKI) |
+| `packs.security.embeddingModelId` | — / `TRAININGAPP_PACKS_EMBEDDING_MODEL_ID` | `bge-small-en-v1.5` | Canonical embedding-model gate target (desktop config/env override) |
+
+Note: an empty-string value for a numeric `RAG_PACKS_SECURITY_*` variable fails
+Pydantic parsing at Python startup (set an explicit value or unset the
+variable); the desktop `TRAININGAPP_PACKS_*` reader falls back to defaults
+instead. Set `packs.security.requireSignature=true` only together with a
+`trustedKeys` entry, or every install is refused.

@@ -10,6 +10,7 @@
 // This module must stay electron-free: it is imported by the headless
 // dev-server entry that CI and the acceptance checks run under plain node.
 import type { RetrievalSurface } from './retrieval/hybrid.js';
+import type { PacksSecurityOverrides } from './packs/pack-extract.js';
 
 export type { RetrievalSurface };
 
@@ -138,6 +139,16 @@ export interface BackendHostConfig {
    *  fall back to store-derived titles and empty sections. The Electron
    *  bootstrap passes resolvePacksRoot(). */
   packsRoot?: string;
+  /** Node mode only (issue #75, C8): pack-installation security overrides —
+   *  extraction limits (maxUncompressedBytes / maxEntries /
+   *  maxCompressionRatio), the embedding-model gate target
+   *  (embeddingModelId), and the opt-in signature policy (requireSignature +
+   *  trustedKeys, ed25519 over the canonical manifest). Every field is
+   *  optional; unset fields fall back to the TRAININGAPP_PACKS_* env seam and
+   *  then the pinned defaults (2 GiB / 5000 entries / 100:1 / pin
+   *  'bge-small-en-v1.5' / signatures off). Shared by the zip-upload
+   *  extractor and PackManager's install gates. */
+  packsSecurity?: PacksSecurityOverrides;
   /** Node mode only (B6): ingest progress sink. The Electron bootstrap
    *  forwards these to the renderer as `ingest:progress` IPC events. */
   onIngestProgress?: (event: IngestProgressEvent) => void;

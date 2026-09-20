@@ -90,6 +90,12 @@ async function makeWorkspace(): Promise<Workspace> {
     embedder: new embedderMod.HashEmbedder({ dims: 8 }),
     packsRoot: path.join(root, 'packs'),
     repoRoot: REPO_ROOT,
+    // #75 harness alignment (same class as the c6 alignment): stageFixture
+    // rewrites the fixture manifests to model_id 'hash-test' — declare that
+    // model so the #75 embedding gate targets what these packs were built
+    // with. Mirrors production wiring where the host passes the configured
+    // model.
+    packsSecurity: { embeddingModelId: 'hash-test' },
   });
   return { root, manager };
 }

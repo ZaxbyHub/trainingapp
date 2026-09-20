@@ -211,6 +211,10 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
         embedder: spy,
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
+        // Hash-built pack (packtool --embedder hash): declare its model so the
+        // #75 embedding gate targets it (harness alignment, mirroring the
+        // production wiring where the host passes the configured model).
+        packsSecurity: { embeddingModelId: 'hash' },
       });
       const result = await manager.install(packDir);
       expect(result.chunksAdded).toBe(sourceCounts.chunks);
@@ -280,6 +284,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
       embedder: spy,
       packsRoot: path.join(root, 'packs'),
       repoRoot: REPO_ROOT,
+      packsSecurity: { embeddingModelId: 'hash' },
     });
     await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
     await expect(manager.install(packDir)).rejects.toThrow(/embedding_dims/);
@@ -302,6 +307,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
       embedder: spy,
       packsRoot: path.join(root, 'packs'),
       repoRoot: REPO_ROOT,
+      packsSecurity: { embeddingModelId: 'hash' },
     });
 
     const first = await buildAndUnpackPack('c6-model', '1.0.0');
@@ -343,6 +349,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
       embedder: spy,
       packsRoot: path.join(root, 'packs'),
       repoRoot: REPO_ROOT,
+      packsSecurity: { embeddingModelId: 'hash' },
     });
     const packDir = await buildAndUnpackPack('c6-equal', '1.0.0');
     await manager.install(packDir);
@@ -367,6 +374,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
       embedder: spy,
       packsRoot: path.join(root, 'packs'),
       repoRoot: REPO_ROOT,
+      packsSecurity: { embeddingModelId: 'hash' },
     });
 
     const v1 = await buildAndUnpackPack('c6-rollback', '1.0.0');
@@ -452,6 +460,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
         embedder: spy,
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
       });
       await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
       await expect(manager.install(packDir)).rejects.toThrow(/not a finite cosine/);
@@ -484,6 +493,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
         embedder: spy,
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
       });
 
       const v1 = await buildAndUnpackPack('c6-super', '1.0.0', 'supersede marker one');
@@ -533,6 +543,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
         embedder: new HashEmbedder({ dims: 384 }),
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
       });
       await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
       await expect(manager.install(packDir)).rejects.toThrow(/dot segment/);
@@ -560,6 +571,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
         embedder: new HashEmbedder({ dims: 384 }),
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
       });
       // The refusing walker rejects the junction at the managed-copy step, so
       // neither the outside content nor any rebuilt content reaches the store.
@@ -600,6 +612,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
         embedder: new HashEmbedder({ dims: 384 }),
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
       });
       await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
       await expect(manager.install(packDir)).rejects.toThrow(/refusing symlink\/junction in pack source/);
@@ -636,6 +649,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
         embedder: new HashEmbedder({ dims: 384 }),
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
       });
       await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
       await expect(manager.install(packDir)).rejects.toThrow(/identity does not match its content/);
@@ -673,6 +687,7 @@ describe('c6 PackManager prebuilt-index install (issue #73 AC2)', () => {
         embedder: new HashEmbedder({ dims: 384 }),
         packsRoot: path.join(root, 'packs'),
         repoRoot: REPO_ROOT,
+        packsSecurity: { embeddingModelId: 'hash' },
       });
       await expect(manager.install(packDir)).rejects.toThrow(PackManagerError);
       await expect(manager.install(packDir)).rejects.toThrow(/the manifest does not carry/);

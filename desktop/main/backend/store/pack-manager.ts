@@ -38,6 +38,13 @@ import {
 } from './links.js';
 import type { EmbeddingSurface } from '../ingest/embedder.js';
 import { findRepoRoot } from './sqlite-store.js';
+import {
+  modelIdMatches,
+  resolvePacksSecurity,
+  verifyPackSignature,
+  type PacksSecurityOverrides,
+  type ResolvedPacksSecurity,
+} from '../packs/pack-extract.js';
 
 // Ajv's 2020-12 compiler and the format pack are CJS without an exports map;
 // they resolve through createRequire exactly like the native addons in
@@ -84,6 +91,13 @@ interface ImportedPrebuilt {
 
 /** The authoritative pack manifest schema, relative to the repository root. */
 export const PACK_SCHEMA_RELATIVE_PATH = 'contracts/pack.schema.json';
+
+/**
+ * The sqlite-vec runtime pin packs' shipped indexes must match (issue #75 C6;
+ * mirrors requirements.txt and packtool's SQLITE_VEC_PIN). Carried by the
+ * manifest's index block since C1 but first CONSUMED here.
+ */
+export const PACKS_SQLITE_VEC_PIN = '0.1.9';
 
 /** Raised for refused or failed pack lifecycle operations (C2 parity name). */
 export class PackManagerError extends Error {
@@ -347,6 +361,15 @@ export interface PackManagerOptions {
   packsRoot: string;
   /** Repository root (where contracts/ lives); auto-discovered by default. */
   repoRoot?: string;
+  /**
+   * Issue #75 (C8): pack-installation security overrides — the embedding-
+   * model gate target, extraction limits, and the opt-in signature policy.
+   * Unset fields fall back to the TRAININGAPP_PACKS_* env seam and then the
+   * pinned defaults (see packs/pack-extract.ts). The hosts pass the
+   * fully-resolved config; tests declare the model their fixtures were built
+   * with.
+   */
+  packsSecurity?: PacksSecurityOverrides;
 }
 
 export class PackManager {
@@ -360,6 +383,12 @@ export class PackManager {
   private readonly embedder: EmbeddingSurface;
   readonly packsRoot: string;
   private readonly repoRoot: string;
+  /**
+   * Issue #75 (C8): the resolved pack-installation security config (public —
+   * the packs surface passes the extraction limits from the SAME resolution,
+   * so the zip-upload path and the install gates cannot drift).
+   */
+  readonly packsSecurity: ResolvedPacksSecurity;
   private validateManifestSchema: ((data: unknown) => boolean) | null = null;
   /**
    * C2 parity for `pack_manager.py:82 _registry_lock`: every public lifecycle
@@ -376,6 +405,7 @@ export class PackManager {
     this.embedder = opts.embedder;
     this.packsRoot = opts.packsRoot;
     this.repoRoot = opts.repoRoot ?? findRepoRoot();
+    this.packsSecurity = resolvePacksSecurity(process.env, opts.packsSecurity);
   }
 
   /** Rebind after a store swap (host clear-cache / recovery paths). */
@@ -723,7 +753,17 @@ export class PackManager {
     return this.validateManifestSchema;
   }
 
-  private validatedManifest(packPath: string): PackManifest {
+  /** Activation paths (rollback/supersede) re-validate an ALREADY-INSTALLED
+   * pack, so they run the pre-existing C1/C3 gates only. The C8 policy gates
+   * (embedding model, sqlite-vec stamp, opt-in signature) evaluate CURRENT
+   * config against a pack whose content was already validated at install
+   * time — re-running them here would let a later config flip brick rollback
+   * of a previously accepted pack (PRR-001), and the Python twin gates only
+   * in install(). */
+  private validatedManifest(
+    packPath: string,
+    options: { activation?: boolean } = {},
+  ): PackManifest {
     const manifestPath = path.join(packPath, 'pack.json');
     let raw: Buffer;
     try {
@@ -783,6 +823,43 @@ export class PackManager {
       throw new PackManagerError(
         `pack index schema_version ${manifest.index.schema_version} does not match store schema_version ${this.store.schemaVersion}; refusing install`,
       );
+    }
+
+    // Issue #75 C6: the shipped-index sqlite-vec stamp must match the runtime
+    // pin — under the SAME index-block qualifier as the schema gate (packs
+    // without an index block take the rebuild path and are not stamp-gated).
+    // The field was schema-required-when-present since C1 with zero
+    // consumers; this is that consumer.
+    if (!options.activation && manifest.index !== undefined && manifest.index.sqlite_vec_version !== PACKS_SQLITE_VEC_PIN) {
+      throw new PackManagerError(
+        `pack index sqlite_vec_version ${manifest.index.sqlite_vec_version} does not match the pinned ${PACKS_SQLITE_VEC_PIN}; refusing install (rebuild the pack with the current toolchain)`,
+      );
+    }
+
+    // Issue #75 C5: embedding-model gate for EVERY manifest (the rebuild path
+    // never compared the declared model; a wrong-model pack would silently
+    // mis-align the index). The gate target is the resolved packs-security
+    // config — never the attached embedder instance — so the pin default
+    // ('bge-small-en-v1.5', ADR-0006) holds even in embedder-less harnesses.
+    // Canonical comparison (basename + casefold): packtool stamps basenames,
+    // full ids like 'BAAI/bge-small-en-v1.5' agree with them.
+    if (!options.activation && !modelIdMatches(manifest.embedding.model_id, this.packsSecurity.embeddingModelId)) {
+      throw new PackManagerError(
+        `refusing to mix embedding spaces: ${manifest.id}@${manifest.version} was built with embedding model '${manifest.embedding.model_id}' but '${this.packsSecurity.embeddingModelId}' is configured; rebuild the pack via packtool build-docs --embedding-model`,
+      );
+    }
+
+    // Issue #75 C7: opt-in detached-signature gate. When requireSignature is
+    // enabled, a pack without a valid trusted ed25519 signature over the
+    // canonical manifest bytes is refused; unsigned installs stay fine when
+    // the policy is off (the default).
+    if (!options.activation && this.packsSecurity.requireSignature) {
+      const verification = verifyPackSignature(raw, manifest.signature, this.packsSecurity.trustedKeys);
+      if (!verification.ok) {
+        throw new PackManagerError(
+          `${manifest.id}@${manifest.version} failed signature verification (${verification.detail ?? 'unknown reason'}); a trusted ed25519 pack signature is required`,
+        );
+      }
     }
     return manifest;
   }
@@ -1227,7 +1304,7 @@ export class PackManager {
         `${row.id}@${row.version} has no managed folder (prebuilt-index rows cannot be activated by the folder-form PackManager)`,
       );
     }
-    const manifest = this.validatedManifest(row.install_path);
+    const manifest = this.validatedManifest(row.install_path, { activation: true });
     const declaredIndex = this.resolveContainedPrebuiltIndex(row.install_path, manifest);
     if (declaredIndex !== null) {
       const imported = this.readPrebuiltIndex(declaredIndex, manifest);

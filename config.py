@@ -92,6 +92,26 @@ class RAGSettings(BaseSettings):
         default=0.85, validation_alias="RAG_PACKS_RECENCY_FLOOR"
     )
 
+    # Knowledge-pack install hardening (C8, issue #75; logical names
+    # packs.security.maxUncompressedBytes / maxEntries / maxCompressionRatio /
+    # requireSignature / trustedKeys). trusted_keys is a JSON array of
+    # {"key_id","public_key"} objects, public_key = base64 DER SPKI.
+    rag_packs_security_max_uncompressed_bytes: int = Field(
+        default=2147483648, validation_alias="RAG_PACKS_SECURITY_MAX_UNCOMPRESSED_BYTES"
+    )
+    rag_packs_security_max_entries: int = Field(
+        default=5000, validation_alias="RAG_PACKS_SECURITY_MAX_ENTRIES"
+    )
+    rag_packs_security_max_compression_ratio: float = Field(
+        default=100.0, validation_alias="RAG_PACKS_SECURITY_MAX_COMPRESSION_RATIO"
+    )
+    rag_packs_security_require_signature: bool = Field(
+        default=False, validation_alias="RAG_PACKS_SECURITY_REQUIRE_SIGNATURE"
+    )
+    rag_packs_security_trusted_keys: str = Field(
+        default="[]", validation_alias="RAG_PACKS_SECURITY_TRUSTED_KEYS"
+    )
+
     # GGUF model settings
     rag_gguf_n_ctx: int = Field(
         default=4096, validation_alias=AliasChoices("rag_gguf_n_ctx", "RAG_GGUF_N_CTX")

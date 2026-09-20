@@ -57,6 +57,7 @@ import logging
 import os
 import re
 import shutil
+import stat
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,6 +82,22 @@ _REGISTRY_VERSION = 1
 # db_path share one pack_registry.json and one Chroma collection, so the
 # registry read-modify-write critical section must be process-global.
 _registry_lock = threading.RLock()
+
+
+def _is_link_or_junction(path: str) -> bool:
+    """True for symlinks AND Windows directory junctions.
+
+    os.path.islink misses junctions on Python < 3.12 (os.path.isjunction was
+    added in 3.12), and shutil.copytree follows junctions — so the walk uses
+    the reparse-point attribute, which covers both, where available."""
+    if os.path.islink(path):
+        return True
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    attributes = getattr(st, "st_file_attributes", 0)
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
 
 
 class PackManagerError(Exception):
@@ -492,6 +509,23 @@ class PackManager:
             )
         with _registry_lock:
             manifest = self._validated_manifest(source)
+
+            # C8 (issue #75): hardening gate — opt-in signature verification
+            # and embedding/schema compatibility, both fail-closed BEFORE any
+            # copy, chunk, or insert so a refused pack leaves no partial
+            # state. Lazy imports keep the pack_extract <-> pack_manager
+            # import graph acyclic.
+            from config import get_settings
+            from pack_extract import (
+                check_pack_compat,
+                check_signature_gate,
+                limits_from_settings,
+            )
+
+            limits = limits_from_settings()
+            check_signature_gate(manifest, (source / "pack.json").read_bytes(), limits)
+            check_pack_compat(manifest, get_settings().rag_embedding_model)
+
             pack_id = manifest["id"]
             version = manifest["version"]
 
@@ -543,7 +577,7 @@ class PackManager:
             for root, dirs, files in os.walk(source):
                 for entry in dirs + files:
                     full = os.path.join(root, entry)
-                    if os.path.islink(full):
+                    if _is_link_or_junction(full):
                         raise PackManagerError(
                             f"{source}: refusing symlink/junction in pack source: {full}"
                         )

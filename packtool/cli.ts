@@ -5,7 +5,7 @@
 // issue #73 (C6) adds: packtool build-docs <sourceDir> ..., packtool diff
 // <packA> <packB>, and packtool verify --embedding-model <model_id>.
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extractPublishDir } from './storyline/extract.js';
 import { buildStorylinePack } from './build/compose.js';
 import { verifyPack } from './build/verify.js';
@@ -50,7 +50,7 @@ function usage(): never {
   console.error('usage: packtool storyline extract <publishDir> --out <dir> [--asr-dir <dir>]');
   console.error('usage: packtool build-storyline <publishDir> --out <pack.zip> [--asr-dir <dir>] [--embedder hash|onnx] [--embedding-model <dir>] [--id <pack-id>] [--version <semver>] [--name <name>] [--published-at <iso>]');
   console.error('usage: packtool build-docs <sourceDir> -o <pack.zip> [--embedder hash|onnx] [--embedding-model <dir>] [--id <pack-id>] [--version <semver>] [--name <name>] [--published-at <iso>] [--source-class bundled|training|user]');
-  console.error('usage: packtool verify <packPath> [--embedding-model <model_id>]');
+  console.error('usage: packtool verify <packPath> [--embedding-model <model_id>] [--require-signature] [--trusted-keys-file <keys.json>]');
   console.error('usage: packtool diff <packA> <packB>');
   console.error('usage: packtool links --pack <docPackPath> --training <trainingPackPath> [--threshold <cosine>] [--top <k>]');
   process.exit(2);
@@ -285,16 +285,26 @@ async function runBuildDocs(argv: string[]): Promise<number> {
 
 async function runVerify(argv: string[]): Promise<number> {
   // argv[0] is the verb; exactly one positional pack path may follow, plus
-  // the issue #73 expected-model flag.
+  // the issue #73 expected-model flag and the issue #75 signature flags.
   const positional: string[] = [];
   let expectedModelId: string | undefined;
-  for (let i = 1; i < argv.length; i++) {
+  let requireSignature = false;
+  let trustedKeysFile: string | undefined;
+  for (let i = 1; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === undefined) break;
     if (arg === '--embedding-model') {
       const flagged = flagValue(argv, i);
       if (flagged === undefined) usage();
       expectedModelId = flagged.value;
+      i = flagged.next;
+    } else if (arg === '--require-signature') {
+      // Boolean flag (issue #75 C7): no value follows.
+      requireSignature = true;
+    } else if (arg === '--trusted-keys-file') {
+      const flagged = flagValue(argv, i);
+      if (flagged === undefined) usage();
+      trustedKeysFile = flagged.value;
       i = flagged.next;
     } else if (!arg.startsWith('--')) {
       if (positional.length > 0) usage();
@@ -304,9 +314,48 @@ async function runVerify(argv: string[]): Promise<number> {
     }
   }
   if (positional.length !== 1) usage();
+  if (
+    trustedKeysFile !== undefined &&
+    (!existsSync(trustedKeysFile) || !statSync(trustedKeysFile).isFile())
+  ) {
+    console.error(
+      `packtool verify: --trusted-keys-file is not a readable file: ${trustedKeysFile}`,
+    );
+    return 2;
+  }
+  let trustedKeys: Array<{ key_id: string; public_key: string }> | undefined;
+  if (trustedKeysFile !== undefined) {
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(trustedKeysFile, 'utf8'));
+      if (!Array.isArray(parsed)) throw new Error('not a JSON array');
+      trustedKeys = parsed.map((entry) => {
+        if (
+          typeof entry !== 'object' ||
+          entry === null ||
+          typeof (entry as Record<string, unknown>)['key_id'] !== 'string' ||
+          typeof (entry as Record<string, unknown>)['public_key'] !== 'string'
+        ) {
+          throw new Error('every entry must be {"key_id": string, "public_key": string}');
+        }
+        return {
+          key_id: (entry as { key_id: string }).key_id,
+          public_key: (entry as { public_key: string }).public_key,
+        };
+      });
+    } catch (error) {
+      console.error(
+        `packtool verify: --trusted-keys-file is not a valid trusted-key JSON array: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return 2;
+    }
+  }
   try {
     const result = await verifyPack(positional[0] ?? '', {
       ...(expectedModelId !== undefined ? { expectedModelId } : {}),
+      ...(requireSignature ? { requireSignature } : {}),
+      ...(trustedKeys !== undefined ? { trustedKeys } : {}),
     });
     for (const warning of result.warnings) {
       console.error(`warning: ${warning}`);

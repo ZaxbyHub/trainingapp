@@ -28,6 +28,7 @@ from auth import get_auth_status, require_auth
 from config import get_settings, settings
 from learn_panel import build_learn_results
 from llm_interface import QueryCancelled
+from pack_extract import limits_from_settings, safe_extract_pack_zip
 from pack_manager import PackManager, PackManagerError
 from rag_engine import GROUNDING_GENERAL, RAGConfig, RAGEngine, grounding_for_result
 
@@ -684,15 +685,12 @@ async def get_status_models(auth: dict = Security(require_auth())):
 
 
 # --- C7 (issue #74): knowledge pack lifecycle -------------------------------
-# Same wire shapes as the Node backend (desktop/main/backend/server.ts) and
-# the same zip-extraction guard matrix as
-# desktop/main/backend/packs/zip-install.ts — keep the two matrices identical
-# (G1 manifest presence, G2 relative forward-slash contained paths, G3 symlink
-# refusal, G4 uncompressed size cap); deep hardening stays C8 (#75).
+# Same wire shapes as the Node backend (desktop/main/backend/server.ts).
+# C8 (issue #75): zip extraction is delegated to the shared pack_extract
+# library (guard matrix G1-G6), whose limits are config-driven via
+# RAG_PACKS_SECURITY_*; deep hardening is no longer deferred.
 
-PACK_ZIP_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 PACK_ZIP_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
-PACK_ZIP_MAX_ENTRIES = 2000
 
 
 class PackRollbackRequest(BaseModel):
@@ -718,75 +716,14 @@ def _require_pack_manager() -> PackManager:
 
 
 def _extract_pack_zip(content: bytes, filename: str) -> str:
-    """Extract an uploaded pack zip into a temp dir (guard matrix as above).
-    Returns the temp dir; the caller removes it. Refusals raise
-    PackManagerError so the route maps them to the contract's 409."""
-    import io
-    import tempfile
-    import zipfile
-
-    if not filename.lower().endswith(".zip"):
-        raise PackManagerError(f"{filename}: pack install accepts .zip archives only")
-    try:
-        archive = zipfile.ZipFile(io.BytesIO(content))
-    except zipfile.BadZipFile as e:
-        raise PackManagerError(f"{filename}: not a readable zip archive: {e}") from e
-
-    names = archive.namelist()
-    if len(names) > PACK_ZIP_MAX_ENTRIES:
-        raise PackManagerError(
-            f"{filename}: archive has {len(names)} entries, over the "
-            f"{PACK_ZIP_MAX_ENTRIES} entry cap"
-        )
-
-    # Safest-first ordering: validate every entry path (G2/G3) before the
-    # manifest-presence check (G1), so a hostile archive is refused on its
-    # path shape regardless of what else it carries.
-    for info in archive.infolist():
-        name = info.filename
-        if not name or "\\" in name or name.startswith("/") or ".." in name.split("/"):
-            raise PackManagerError(f"{filename}: unsafe archive entry path {name}")
-        if ((info.external_attr >> 16) & 0o170000) == 0o120000:
-            raise PackManagerError(
-                f"{filename}: symlink archive entry {name} is not allowed"
-            )
-
-    if "pack.json" not in names and "./pack.json" not in names:
-        raise PackManagerError(f"{filename}: no pack.json manifest at the archive root")
-
-    # Cheap pre-filter on declared sizes (central-directory metadata is
-    # spoofable, so this is an early-abort only — G4 below counts the bytes
-    # ACTUALLY written, which is what an attacker cannot lie about).
-    if sum(i.file_size for i in archive.infolist()) > PACK_ZIP_MAX_UNCOMPRESSED_BYTES:
-        raise PackManagerError(
-            f"{filename}: archive expands beyond the "
-            f"{PACK_ZIP_MAX_UNCOMPRESSED_BYTES} byte cap"
-        )
-
-    total = 0
-    tmp_root = tempfile.mkdtemp(prefix="pack-install-")
-    try:
-        for info in archive.infolist():
-            if info.is_dir():
-                continue
-            target = os.path.join(tmp_root, *info.filename.split("/"))
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with archive.open(info) as src, open(target, "wb") as dst:
-                while True:
-                    chunk = src.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    total += len(chunk)
-                    if total > PACK_ZIP_MAX_UNCOMPRESSED_BYTES:
-                        raise PackManagerError(
-                            f"{filename}: archive expands beyond the "
-                            f"{PACK_ZIP_MAX_UNCOMPRESSED_BYTES} byte cap"
-                        )
-                    dst.write(chunk)
-    except Exception:
-        shutil.rmtree(tmp_root, ignore_errors=True)
-        raise
-    return tmp_root
+    """Extract an uploaded pack zip via the shared C8 hardening library
+    (pack_extract.safe_extract_pack_zip, guard matrix G1-G6: manifest
+    presence, per-entry path safety + resolved containment before any write,
+    symlink refusal, declared size/ratio pre-filters, streaming written-bytes
+    cap). Returns the temp dir; the caller removes it. Refusals raise
+    PackExtractError (a PackManagerError) so the route maps them to the
+    contract's 409."""
+    return safe_extract_pack_zip(content, filename, limits_from_settings())
 
 
 @app.get("/packs")
