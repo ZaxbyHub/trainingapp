@@ -90,39 +90,59 @@ async function listIndexedDbNames(page: Page): Promise<string[]> {
   });
 }
 
-async function countDocumentsStoreRecords(page: Page): Promise<Record<string, number>> {
+/**
+ * Full storage inventory for this context: every `-doc-qa-*` database, every
+ * object store in it, with per-store record counts. Used to compare the
+ * snapshot before the selection against after — an in-place write to ANY
+ * existing store (documents, vector index, keywords) changes the map, not
+ * just the database-name list. Vector stores hold their own row shapes;
+ * count() is engine-agnostic.
+ */
+async function storageInventory(page: Page): Promise<Record<string, number>> {
   return page.evaluate(async () => {
     const idb = indexedDB as unknown as {
       databases?: () => Promise<Array<{ name?: string }>>;
     };
     const dbs = (await idb.databases?.()) ?? [];
-    const targets = dbs.map((d) => d.name ?? '').filter((n) => n.endsWith('-doc-qa-documents'));
-    const counts: Record<string, number> = {};
+    const targets = dbs.map((d) => d.name ?? '').filter((n) => n.includes('-doc-qa-')).sort();
+    const inventory: Record<string, number> = {};
     for (const name of targets) {
-      counts[name] = await new Promise<number>((resolve) => {
+      const storeNames = await new Promise<string[]>((resolve) => {
         const req = indexedDB.open(name);
         req.onsuccess = () => {
           const db = req.result;
-          if (!db.objectStoreNames.contains('documents')) {
-            db.close();
-            resolve(-1);
-            return;
-          }
-          const tx = db.transaction('documents', 'readonly');
-          const countReq = tx.objectStore('documents').count();
-          countReq.onsuccess = () => {
-            db.close();
-            resolve(countReq.result);
-          };
-          countReq.onerror = () => {
-            db.close();
-            resolve(-1);
-          };
+          const names = Array.from(db.objectStoreNames);
+          db.close();
+          resolve(names);
         };
-        req.onerror = () => resolve(-1);
+        req.onerror = () => resolve([]);
       });
+      for (const store of storeNames) {
+        inventory[`${name}::${store}`] = await new Promise<number>((resolve) => {
+          const req = indexedDB.open(name);
+          req.onsuccess = () => {
+            const db = req.result;
+            try {
+              const tx = db.transaction(store, 'readonly');
+              const countReq = tx.objectStore(store).count();
+              countReq.onsuccess = () => {
+                db.close();
+                resolve(countReq.result);
+              };
+              countReq.onerror = () => {
+                db.close();
+                resolve(-1);
+              };
+            } catch {
+              db.close();
+              resolve(-1);
+            }
+          };
+          req.onerror = () => resolve(-1);
+        });
+      }
     }
-    return counts;
+    return inventory;
   });
 }
 
@@ -138,6 +158,7 @@ test('C9-AC3 picker gate: a SELECTED pack zip shows the gate and leaves IndexedD
   await openDocumentsPage(page);
   await page.waitForTimeout(800);
   const beforeNames = await listIndexedDbNames(page);
+  const beforeInventory = await storageInventory(page);
 
   // setInputFiles bypasses accept exactly like a programmatic selection —
   // the runtime must not rely on the chooser hint for the capability gate.
@@ -153,10 +174,9 @@ test('C9-AC3 picker gate: a SELECTED pack zip shows the gate and leaves IndexedD
 
   const afterNames = await listIndexedDbNames(page);
   expect(afterNames).toEqual(beforeNames);
-  const counts = await countDocumentsStoreRecords(page);
-  for (const [dbName, count] of Object.entries(counts)) {
-    expect(count, `documents store in ${dbName}`).toBeLessThanOrEqual(0);
-  }
+  // Stronger invariant: no in-place writes to ANY existing `-doc-qa-*`
+  // store either — the full per-store inventory must be byte-identical.
+  expect(await storageInventory(page)).toEqual(beforeInventory);
 });
 
 test('C9-AC3 picker guard: a SELECTED non-pack zip does not trigger the gate', async ({

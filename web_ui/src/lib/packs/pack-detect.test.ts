@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import JSZip from 'jszip';
-import { isKnowledgePackZip, looksLikePackManifest, MAX_PACK_DETECT_BYTES } from './pack-detect';
+import { isKnowledgePackZip, looksLikePackManifest, MAX_MANIFEST_CHARS, MAX_PACK_DETECT_BYTES } from './pack-detect';
 import { fileFromBytes } from '../../test/pack-test-utils';
 
 /** A schema-honest minimal C1 manifest (mirrors web_ui/e2e/packs-gate.spec.ts). */
@@ -97,6 +97,13 @@ describe('isKnowledgePackZip', () => {
 
   it('rejects a manifest with pattern-invalid fields inside a real zip', async () => {
     const file = fileFromBytes(await zipBytesWith(manifestJson({ id: 'Bad ID' })), 'badid.zip');
+    await expect(isKnowledgePackZip(file)).resolves.toBe(false);
+  });
+
+  it('rejects a zip whose pack.json exceeds MAX_MANIFEST_CHARS', async () => {
+    const zip = new JSZip();
+    zip.file('pack.json', JSON.stringify(manifestJson()) + ' '.repeat(5 * 1024 * 1024));
+    const file = fileFromBytes(await zip.generateAsync({ type: 'uint8array' }), 'hugemanifest.zip');
     await expect(isKnowledgePackZip(file)).resolves.toBe(false);
   });
 

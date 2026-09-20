@@ -73,6 +73,12 @@ export function DocumentsPage() {
   // app; the browser surface shows a persistent notice instead of attempting
   // any import (and never writes storage for them).
   const [packGateFiles, setPackGateFiles] = useState<string[]>([]);
+  // Dismiss race guard (PRR-003): an isKnowledgePackZip classification that
+  // was already in flight when the user clicked Dismiss must not resurrect
+  // the notice. Handlers capture the generation before classifying; results
+  // are only applied while the generation is still current. New drops after
+  // a dismissal capture the newer generation and show normally.
+  const packGateGenerationRef = useRef(0);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // F4/F13: latest documents mirror so the debounced save reads CURRENT state
   // at fire-time (not the schedule-time snapshot) and the unmount flush can
@@ -546,6 +552,7 @@ export function DocumentsPage() {
       // check as the drop-rejection path and gate packs here, before any
       // document processing or storage write can happen.
       if (!electronMode) {
+        const generation = packGateGenerationRef.current;
         const packNames: string[] = [];
         const documentables: File[] = [];
         for (const file of files) {
@@ -555,7 +562,7 @@ export function DocumentsPage() {
             documentables.push(file);
           }
         }
-        if (packNames.length > 0) {
+        if (packNames.length > 0 && generation === packGateGenerationRef.current) {
           setPackGateFiles((prev) => Array.from(new Set([...prev, ...packNames])));
         }
         if (documentables.length === 0) {
@@ -918,12 +925,18 @@ export function DocumentsPage() {
               </div>
               <div style={{ marginTop: 'var(--spacing-xs)' }}>
                 Detected pack file{packGateFiles.length > 1 ? 's' : ''}:{' '}
-                {packGateFiles.join(', ')} — not imported.
+                {packGateFiles.length > 3
+                  ? `${packGateFiles.slice(0, 3).join(', ')} and ${packGateFiles.length - 3} more`
+                  : packGateFiles.join(', ')}{' '}
+                — not imported.
               </div>
             </div>
             <button
               type="button"
-              onClick={() => setPackGateFiles([])}
+              onClick={() => {
+                packGateGenerationRef.current += 1;
+                setPackGateFiles([]);
+              }}
               style={{ flexShrink: 0, cursor: 'pointer' }}
             >
               Dismiss
@@ -938,6 +951,7 @@ export function DocumentsPage() {
           onFilesSelected={handleFilesSelected}
           accept={[...SUPPORTED_EXTENSIONS, ...(electronMode ? ['.zip'] : [])].join(',')}
           onFilesRejected={async (rejectedFiles) => {
+            const generation = packGateGenerationRef.current;
             // U7a: surface skipped filenames so the user knows files were
             // discarded (previously DropZone filtered silently).
             // C9 (ADR-0009): among the rejected files, recognize Knowledge
@@ -954,7 +968,7 @@ export function DocumentsPage() {
                 unsupportedNames.push(file.name);
               }
             }
-            if (packNames.length > 0) {
+            if (packNames.length > 0 && generation === packGateGenerationRef.current) {
               setPackGateFiles((prev) => Array.from(new Set([...prev, ...packNames])));
             }
             if (unsupportedNames.length > 0) {

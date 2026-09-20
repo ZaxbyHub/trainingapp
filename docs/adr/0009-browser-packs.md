@@ -124,11 +124,20 @@ CI leg. Electron mode is untouched: there, PacksPanel and the C7 install
 path continue to own `.zip` files.
 
 Residual risk accepted for this PoC: the detector reads a user-supplied zip
-in the renderer. It is size-capped (`MAX_PACK_DETECT_BYTES`), reads only the
-central directory and the single root `pack.json` entry, extracts nothing to
-disk, and treats every read/parse failure as "not a pack". A malicious zip
-can at worst cost parse time bounded by the size cap. The full C8 guard set
-remains a desktop-install concern and is explicitly out of scope here.
+in the renderer. The compressed input is size-capped
+(`MAX_PACK_DETECT_BYTES`), only the central directory and the single root
+`pack.json` entry are read, nothing is extracted to disk, and every
+read/parse failure is treated as "not a pack". Two bounds must be stated
+precisely: the size cap bounds the COMPRESSED input only — a zip entry's
+decompressed size is not known until JSZip materializes it (JSZip does not
+stream), so a hostile small archive can inflate a `pack.json` entry to a
+large in-memory string; the detector therefore rejects oversized manifest
+text before `JSON.parse` (`MAX_MANIFEST_CHARS`), but the materialization
+residual itself remains, exactly as the desktop path already accepts for
+JSZip-based extraction (docs/security/packs.md). A manifest within bounds
+can at worst cost one linear parse. The full C8 guard set (ratio and
+declared-size ceilings, written-bytes backstop) remains a desktop-install
+concern and is explicitly out of scope here.
 
 ## Consequences
 

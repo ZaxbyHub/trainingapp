@@ -24,6 +24,13 @@ import JSZip from 'jszip';
 /** Files above this size are not inspected (renderer-memory bound). */
 export const MAX_PACK_DETECT_BYTES = 256 * 1024 * 1024;
 
+/**
+ * Upper bound on the root pack.json text this detector will parse. A real
+ * manifest is a few KB; anything near this bound is hostile, and the correct
+ * answer for a gate trigger is "not confidently a pack".
+ */
+export const MAX_MANIFEST_CHARS = 4 * 1024 * 1024;
+
 const PACK_MANIFEST_NAME = 'pack.json';
 
 // The two cheap, load-bearing shape guards from contracts/pack.schema.json.
@@ -80,6 +87,13 @@ export async function isKnowledgePackZip(file: File): Promise<boolean> {
     const manifestEntry = zip.file(PACK_MANIFEST_NAME);
     if (!manifestEntry) return false;
     const manifestText = await manifestEntry.async('string');
+    // Bound the parse cost too: the file-size cap bounds only the COMPRESSED
+    // input — a zip entry's decompressed size is not known until after
+    // materialization (JSZip does not stream), so reject oversized manifests
+    // before JSON.parse. The residual string-materialization cost is
+    // disclosed in docs/adr/0009-browser-packs.md (same JSZip non-streaming
+    // residual the desktop path accepts per docs/security/packs.md).
+    if (manifestText.length > MAX_MANIFEST_CHARS) return false;
     return looksLikePackManifest(JSON.parse(manifestText));
   } catch {
     return false;

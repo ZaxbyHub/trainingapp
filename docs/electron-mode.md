@@ -63,8 +63,9 @@ environment-specific decision funnels through two modules so pages stay small:
 - `DocumentsPage.tsx` — load/upload/delete handlers, plus the C7 Knowledge
   Packs surface (issue #74): the `PacksPanel` mounts only in Electron mode,
   a dropped `.zip` routes to `POST /packs/install`, and pack operations never
-  touch the browser-profile IndexedDB namespaces (the C9 browser adapter is a
-  separate, undecided surface).
+  touch the browser-profile IndexedDB namespaces (on the browser surface,
+  C9/ADR-0009 decided the explicit capability gate: a recognized pack zip
+  shows a "requires the desktop app" notice and is never imported).
 - `SettingsPage.tsx` — settings load/save via the backend, "Desktop backend"
   status section; server-URL + browser-model sections hidden.
 - `ChatPage.tsx` — SSE URL/token/header from the session; model gate. C7

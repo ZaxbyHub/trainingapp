@@ -208,6 +208,89 @@ describe('C9 gate — browser mode', () => {
   });
 });
 
+describe('C9 gate — coverage gaps from review round pr123-20260920', () => {
+  it('a mixed drop (pack zip + plain doc) gates the pack and processes the plain doc', async () => {
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+
+    const plainTxt = new File(['plain body'], 'notes.txt', { type: 'text/plain' });
+    await dropOnDropZone([await packZipFile(), plainTxt]);
+
+    // The pack is gated...
+    expect(await screen.findByTestId('pack-gate-notice')).toHaveTextContent(
+      'Knowledge Packs require the desktop app'
+    );
+    // ...while the plain document still enters the pipeline.
+    await waitFor(() => expect(extractDocument).toHaveBeenCalledWith(plainTxt));
+  });
+
+  it('Dismiss clears the gate notice', async () => {
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+
+    await dropOnDropZone([await packZipFile()]);
+    expect(await screen.findByTestId('pack-gate-notice')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
+    await waitFor(() => expect(screen.queryByTestId('pack-gate-notice')).toBeNull());
+  });
+
+  it('two distinct pack zips in one drop appear (deduped) in the notice', async () => {
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+
+    const zipA = new JSZip();
+    zipA.file('pack.json', JSON.stringify({ ...manifestJson(), id: 'opmed-core' }));
+    zipA.file('docs/a.md', '# A');
+    const zipB = new JSZip();
+    zipB.file('pack.json', JSON.stringify({ ...manifestJson(), id: 'opmed-extra' }));
+    zipB.file('docs/b.md', '# B');
+    const bytesA = await zipA.generateAsync({ type: 'uint8array' });
+    const bytesB = await zipB.generateAsync({ type: 'uint8array' });
+
+    await dropOnDropZone([
+      fileFromBytes(bytesA, 'pack-a.zip'),
+      fileFromBytes(bytesB, 'pack-b.zip'),
+    ]);
+
+    const gate = await screen.findByTestId('pack-gate-notice');
+    expect(gate).toHaveTextContent('pack-a.zip');
+    expect(gate).toHaveTextContent('pack-b.zip');
+  });
+
+  it('a plain-file selection after the gate is shown processes normally (gate persists)', async () => {
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+
+    const input = (await waitFor(() => {
+      const el = document.querySelector('input[type="file"]');
+      expect(el).toBeTruthy();
+      return el as HTMLInputElement;
+    })) as HTMLInputElement;
+
+    fireEvent.change(input, { target: { files: [await packZipFile()] } });
+    expect(await screen.findByTestId('pack-gate-notice')).toBeTruthy();
+
+    const plainTxt = new File(['later doc'], 'later.txt', { type: 'text/plain' });
+    fireEvent.change(input, { target: { files: [plainTxt] } });
+    await waitFor(() => expect(extractDocument).toHaveBeenCalledWith(plainTxt));
+    // The earlier gate notice persists alongside the new processing.
+    expect(screen.queryByTestId('pack-gate-notice')).toBeTruthy();
+  });
+});
+
 describe('C9 gate — picker path (selected, not dropped)', () => {
   it('a pack zip selected via the file input is gated and writes nothing', async () => {
     render(
