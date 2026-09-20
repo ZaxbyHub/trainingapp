@@ -60,11 +60,11 @@ def find_model(assets: Path, entry: dict) -> Path | None:
     return None
 
 
-def make_session(model_path: Path):
+def make_session(model_path: Path, threads: int | None = None):
     import onnxruntime as ort
 
     opts = ort.SessionOptions()
-    opts.intra_op_num_threads = THREADS
+    opts.intra_op_num_threads = threads if threads else THREADS
     opts.inter_op_num_threads = 1
     return ort.InferenceSession(
         str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
@@ -114,13 +114,13 @@ def find_tokenizer(model_path: Path) -> Path | None:
     return None
 
 
-def bench_embed(assets: Path, entry: dict) -> dict:
+def bench_embed(assets: Path, entry: dict, threads: int | None = None) -> dict:
     row = {
         "surface": "onnx-embed",
         "model": entry["model"],
         "kind": "embed",
         "machine": machine_tag(),
-        "threads": THREADS,
+        "threads": threads if threads else THREADS,
     }
     model_path = find_model(assets, entry)
     if model_path is None:
@@ -143,7 +143,7 @@ def bench_embed(assets: Path, entry: dict) -> dict:
     try:
         from tokenizers import Tokenizer
 
-        session = make_session(model_path)
+        session = make_session(model_path, threads)
         tokenizer = Tokenizer.from_file(str(tok_path))
 
         query = "How do I reset my training password?"
@@ -215,13 +215,13 @@ def bench_embed(assets: Path, entry: dict) -> dict:
     return row
 
 
-def bench_rerank(assets: Path, entry: dict) -> dict:
+def bench_rerank(assets: Path, entry: dict, threads: int | None = None) -> dict:
     row = {
         "surface": "onnx-rerank",
         "model": entry["model"],
         "kind": "rerank",
         "machine": machine_tag(),
-        "threads": THREADS,
+        "threads": threads if threads else THREADS,
     }
     model_path = find_model(assets, entry)
     if model_path is None:
@@ -244,7 +244,7 @@ def bench_rerank(assets: Path, entry: dict) -> dict:
     try:
         from tokenizers import Tokenizer
 
-        session = make_session(model_path)
+        session = make_session(model_path, threads)
         tokenizer = Tokenizer.from_file(str(tok_path))
 
         query = "How do I reset my training password?"
@@ -286,6 +286,14 @@ def main(argv=None) -> int:
     )
     parser.add_argument("--assets-dir", type=str, default=str(REPO_ROOT / "models"))
     parser.add_argument(
+        "--threads",
+        type=int,
+        default=THREADS,
+        help="intra-op thread count for onnxruntime sessions "
+        "(default %(default)s, the desktop n_threads default; issue #55's "
+        "bake-off pins 8 to mimic end-user hardware)",
+    )
+    parser.add_argument(
         "--json",
         nargs="?",
         const="-",
@@ -296,8 +304,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     assets = Path(args.assets_dir)
-    rows = [bench_embed(assets, e) for e in EMBED_MODELS]
-    rows += [bench_rerank(assets, e) for e in RERANK_MODELS]
+    rows = [bench_embed(assets, e, threads=args.threads) for e in EMBED_MODELS]
+    rows += [bench_rerank(assets, e, threads=args.threads) for e in RERANK_MODELS]
     text = json.dumps({"rows": rows}, ensure_ascii=True, indent=2)
     print(text)
     if args.json and args.json != "-":

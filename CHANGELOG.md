@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added — A5: Embedding and reranker bake-off, ADR-0001 (issue #55)
+
+- `eval/bakeoff/` bake-off package: candidate registry with per-model canonical prompting (`candidates.py`), quality driver measuring all 4 embedding and 3 reranker candidates on the A4 tier-0 eval set with `eval/runner.py`-identical metrics (`bakeoff_quality.py`), CPU-cost driver reusing the #52 ONNX microbenchmark at an 8-thread cap (`bakeoff_cost.py`), asset fetcher with license/revision provenance (`fetch_assets.py`), schema validator shared with CI (`schema.py`), and collector emitting the committed decision artifact `eval/bakeoff/results/bakeoff-results.json`.
+- `docs/adr/0001-embedding-reranker.md`: names `Qwen/Qwen3-Embedding-0.6B` (dims 1024) and `cross-encoder/ettin-reranker-32m-v1` for all surfaces, with the full measured decision table, consequences (1024-dim store widening, query-instruction requirement, floor recalibration), and follow-ups — including the discovered defect that the shipped ettin ONNX artifacts (`models/ettin-reranker-32m-v1/onnx/*`, used by web and Electron) emit logits from an untrained head, and the correction that the configured `cross-encoder/ms-marco-MiniLM-L6-v2` id IS the canonical HF id (the audit report's hyphen claim was backwards).
+- `bench/onnx_bench_driver.py` gained an additive `--threads` flag (default 4 unchanged).
+- `tests/test_bakeoff_artifacts.py`: CI guardrail validating the committed results artifact and ADR Decision consistency.
+
 ### Added — C8: Knowledge Pack installation hardening (issue #75)
 
 - Shared extraction-safety cores (`pack_extract.py`, `desktop/main/backend/packs/pack-extract.ts`) and a `packtool verify` archive gate (`packtool/build/zip-safety.ts`): resolved-path containment (incl. drive-relative `E:..` entries), symlink/junction refusal, duplicate-entry refusal, entry-count / declared-size / declared-ratio caps (ratio enforced above a 16 MiB uncompressed floor), ZIP64 refusal.
