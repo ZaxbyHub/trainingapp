@@ -185,9 +185,20 @@ def safe_extract_pack_zip(
 
     # Safest-first ordering: validate every entry path (G2/G3) before the
     # manifest-presence check (G1), so a hostile archive is refused on its
-    # path shape regardless of what else it carries.
+    # path shape regardless of what else it carries. Duplicate entry names
+    # are refused: extraction is last-write-wins, so a benign first entry
+    # must not be allowed to mask a hostile duplicate.
+    seen_names = set()
     for info in archive.infolist():
-        safe_entry_name(info.filename)
+        try:
+            safe_entry_name(info.filename)
+        except PackExtractError as error:
+            raise PackExtractError(f"{filename}: {error}") from error
+        if info.filename in seen_names:
+            raise PackExtractError(
+                f"{filename}: duplicate archive entry {info.filename} is not allowed"
+            )
+        seen_names.add(info.filename)
         if _is_symlink_entry(info):
             raise PackExtractError(
                 f"{filename}: symlink archive entry {info.filename} is not allowed"
@@ -229,7 +240,10 @@ def safe_extract_pack_zip(
         for info in archive.infolist():
             if info.is_dir():
                 continue
-            target = ensure_contained(tmp_root, *info.filename.split("/"))
+            try:
+                target = ensure_contained(tmp_root, *info.filename.split("/"))
+            except PackExtractError as error:
+                raise PackExtractError(f"{filename}: {error}") from error
             parent = os.path.dirname(target)
             if parent:
                 ensure_contained(tmp_root, os.path.relpath(parent, tmp_root) or ".")

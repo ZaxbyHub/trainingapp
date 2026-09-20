@@ -16,7 +16,6 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 
@@ -180,6 +179,141 @@ def test_traversal_escape_target_absent_on_disk(monkeypatch):
     assert not probe.exists(), f"escape artifact landed at {probe}"
 
 
+def test_duplicate_entry_names_refused(monkeypatch):
+    import config as config_module
+
+    set_limits(monkeypatch, config_module)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("pack.json", "{}")
+        archive.writestr("docs/doc-1.json", '{"good": true}')
+        archive.writestr("docs/doc-1.json", '{"evil": true}')
+    with pytest.raises(PackExtractError) as excinfo:
+        safe_extract_pack_zip(buffer.getvalue(), "dup.zip", limits_from_settings())
+    assert "duplicate archive entry" in str(excinfo.value)
+
+
+def test_ratio_floor_small_high_ratio_archive_accepted(monkeypatch):
+    import config as config_module
+
+    set_limits(monkeypatch, config_module, max_uncompressed=512 * 1024 * 1024)
+    # 1 MiB of zeros at far beyond 100:1 declared ratio, but BELOW the
+    # 16 MiB floor: the byte cap bounds it absolutely, so no refusal.
+    payload = "0" * (1024 * 1024)
+    content = zip_bytes({"pack.json": "{}", "docs/small.bin": payload})
+    out = safe_extract_pack_zip(content, "small.zip", limits_from_settings())
+    shutil.rmtree(out, ignore_errors=True)
+
+
+def test_ratio_enforced_above_floor(monkeypatch):
+    import config as config_module
+
+    set_limits(monkeypatch, config_module, max_uncompressed=512 * 1024 * 1024)
+    # 17 MiB declared (above the 16 MiB floor) at >100:1 declared ratio:
+    # refused by the ratio gate, not the byte cap.
+    payload = "0" * (17 * 1024 * 1024)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("pack.json", "{}")
+        archive.writestr("docs/big.bin", payload)
+    content = buffer.getvalue()
+    with pytest.raises(PackExtractError) as excinfo:
+        safe_extract_pack_zip(content, "floorbomb.zip", limits_from_settings())
+    assert "ratio" in str(excinfo.value)
+
+
+def test_signature_rejects_wrong_algorithm(monkeypatch):
+    import base64
+    import json
+
+    import config as config_module
+    from pack_extract import verify_pack_signature
+
+    set_limits(monkeypatch, config_module, require_signature=True)
+    _, der_b64 = _generate_trusted_key()
+    set_limits(
+        monkeypatch,
+        config_module,
+        require_signature=True,
+        trusted_keys=[{"key_id": "test-key", "public_key": der_b64}],
+    )
+    limits = limits_from_settings()
+    manifest = {
+        "id": "x",
+        "signature": {
+            "algorithm": "RS256",
+            "value": base64.b64encode(b"sig").decode("ascii"),
+            "key_id": "test-key",
+        },
+    }
+    with pytest.raises(PackExtractError) as excinfo:
+        verify_pack_signature(
+            json.dumps(manifest).encode("utf-8"),
+            manifest["signature"],
+            limits.trusted_keys,
+        )
+    assert "algorithm" in str(excinfo.value)
+
+
+def test_signature_rejects_malformed_base64(monkeypatch):
+    import json
+
+    import config as config_module
+    from pack_extract import verify_pack_signature
+
+    set_limits(monkeypatch, config_module, require_signature=True)
+    _, der_b64 = _generate_trusted_key()
+    set_limits(
+        monkeypatch,
+        config_module,
+        require_signature=True,
+        trusted_keys=[{"key_id": "test-key", "public_key": der_b64}],
+    )
+    limits = limits_from_settings()
+    manifest = {
+        "id": "x",
+        "signature": {
+            "algorithm": "ed25519",
+            "value": "!!!not-base64!!!",
+            "key_id": "test-key",
+        },
+    }
+    with pytest.raises(PackExtractError) as excinfo:
+        verify_pack_signature(
+            json.dumps(manifest).encode("utf-8"),
+            manifest["signature"],
+            limits.trusted_keys,
+        )
+    assert "base64" in str(excinfo.value).lower()
+
+
+def test_folder_junction_refused(monkeypatch, tmp_path):
+    import subprocess
+    import sys
+
+    import config as config_module
+
+    if sys.platform != "win32":
+        pytest.skip("junctions are Windows-only")
+    set_limits(monkeypatch, config_module)
+    secret = tmp_path / "outside"
+    secret.mkdir()
+    (secret / "stolen.txt").write_text("secret", encoding="utf-8")
+    pack = make_pack_dir(tmp_path / "src")
+    link = pack / "docs" / "junction"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(secret)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"junction creation unavailable: {result.stderr[:80]}")
+    manager = make_manager(tmp_path / "ws")
+    with pytest.raises(PackManagerError) as excinfo:
+        manager.install(pack)
+    assert "symlink/junction" in str(excinfo.value)
+
+
 def test_symlink_entry_refused(monkeypatch):
     import config as config_module
 
@@ -216,7 +350,6 @@ def test_valid_zip_extracts_contained(monkeypatch, tmp_path):
     import config as config_module
 
     set_limits(monkeypatch, config_module)
-    before = set(os.listdir(tempfile.gettempdir()))
     out = safe_extract_pack_zip(
         zip_bytes({"pack.json": "{}", "docs/doc-1.json": "{}"}),
         "pack.zip",
@@ -224,8 +357,6 @@ def test_valid_zip_extracts_contained(monkeypatch, tmp_path):
     )
     try:
         assert Path(out, "docs", "doc-1.json").exists()
-        for name in set(os.listdir(tempfile.gettempdir())) - before:
-            shutil.rmtree(Path(tempfile.gettempdir(), name), ignore_errors=True)
     finally:
         shutil.rmtree(out, ignore_errors=True)
 
@@ -391,9 +522,9 @@ def test_model_id_matches_canonicalization():
     assert model_id_matches("Org/m", "org/m")
     assert not model_id_matches("wrong-model-75", "bge-small-en-v1.5")
     assert not model_id_matches("", "bge-small-en-v1.5")
-    assert not model_id_matches("org1/m", "org2/m") or model_id_matches(
-        "org1/m", "org2/m"
-    )
+    # By design, canonicalization strips the org prefix, so cross-org ids
+    # with the same basename collide (documented in the C8 plan).
+    assert model_id_matches("org1/m", "org2/m")
 
 
 # ----------------------------------------------------------------------- #

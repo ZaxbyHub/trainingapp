@@ -21,7 +21,6 @@ import {
   STORE_SCHEMA_VERSION,
   modelIdMatches,
   verifyPackSignature,
-  type PacksSecurityConfig,
   type TrustedKey,
 } from './pack-json.js';
 
@@ -136,9 +135,13 @@ export async function verifyPack(packPath: string, options?: VerifyOptions): Pro
       return { ok: false, problems, warnings, docs: 0 };
     }
   }
-  const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), 'packtool-verify-'));
-  const source = isZip ? await zipSource(resolved, scratchDir) : dirSource(resolved);
+  // dir-form packs never touch the scratch dir, and zipSource can throw
+  // before the try/finally below — allocate lazily and dispose whatever was
+  // created so neither path leaks a temp dir (PRR-021).
+  let scratchDir: string | null = isZip ? fs.mkdtempSync(path.join(os.tmpdir(), 'packtool-verify-')) : null;
+  let source: PackSource | null = null;
   try {
+    source = isZip ? await zipSource(resolved, scratchDir as string) : dirSource(resolved);
     // 1. Manifest present, parses, conforms to the #68 draft shape.
     const packJsonBytes = await source.readEntry('pack.json');
     if (packJsonBytes === undefined) {
@@ -409,6 +412,9 @@ export async function verifyPack(packPath: string, options?: VerifyOptions): Pro
 
     return { ok: problems.length === 0, problems, warnings, docs: pack.docs.length };
   } finally {
-    source.dispose();
+    source?.dispose();
+    if (scratchDir !== null) {
+      fs.rmSync(scratchDir, { recursive: true, force: true });
+    }
   }
 }

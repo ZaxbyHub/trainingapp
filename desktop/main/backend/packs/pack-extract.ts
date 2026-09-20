@@ -329,6 +329,7 @@ export function parseZip32CentralDirectory(buf: Buffer, filename: string): Centr
     throw new PackManagerError(`${filename}: malformed zip central directory (declared size overruns the archive)`);
   }
   const entries: CentralDirectoryEntry[] = [];
+  const seenNames = new Set<string>();
   let pos = centralStart;
   for (let i = 0; i < totalEntries; i += 1) {
     if (pos + CENTRAL_HEADER_SIZE > eocd) {
@@ -350,6 +351,15 @@ export function parseZip32CentralDirectory(buf: Buffer, filename: string): Centr
       throw new PackManagerError(`${filename}: malformed zip central directory (truncated name)`);
     }
     const name = buf.subarray(nameStart, nameStart + nameLength).toString('utf8');
+    // Duplicate entry names are refused: extraction is last-write-wins (and
+    // JSZip collapses duplicates at load), so a benign first entry must not
+    // mask a hostile duplicate (PRR-004).
+    if (seenNames.has(name)) {
+      throw new PackManagerError(
+        `${filename}: duplicate archive entry ${name} is not allowed`,
+      );
+    }
+    seenNames.add(name);
     const externalAttrs = buf.readUInt32LE(pos + 38);
     const mode = externalAttrs >>> 16;
     entries.push({
@@ -418,7 +428,7 @@ export function enforceDeclaredLimits(
 export function modelIdMatches(declared: string, expected: string): boolean {
   const canonical = (value: string): string => {
     const slash = value.lastIndexOf('/');
-    return (slash >= 0 ? value.slice(slash + 1) : value).toLowerCase();
+    return (slash >= 0 ? value.slice(slash + 1) : value).trim().toLowerCase();
   };
   return canonical(declared) === canonical(expected);
 }

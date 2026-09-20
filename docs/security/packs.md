@@ -195,6 +195,21 @@ front of these decompression-side limits.
 
 ## Known limits (explicit, not silent)
 
+- The declared compression-ratio cap (default 100:1) is enforced only for
+  archives at or above 16 MiB uncompressed (`RATIO_FLOOR_BYTES` in all three
+  implementations). Below the floor the absolute byte cap bounds the archive,
+  so the ratio is not applied; legitimate sqlite vector pages compress far
+  beyond 100:1 on small indexes.
+- An empty-string value for a numeric `RAG_PACKS_SECURITY_*` env variable
+  fails Pydantic parsing at Python startup (set an explicit value or unset
+  the variable). The desktop `TRAININGAPP_PACKS_*` reader instead falls back
+  to the default. (PRR-020, repo-wide Pydantic convention.)
+- Containment wording, Node twin: `ensureContained` derives containment from
+  `path.relative` (which is case-insensitive on win32) rather than an explicit
+  case fold; the safety property is identical to the Python
+  `os.path.normcase` form. (PRR-016 wording fix.)
+
+More known limits:
 - Entry names may contain a non-drive colon (e.g. `name:stream`): it does not escape the extraction root — the file lands inside it — but on NTFS a colon is ADS syntax, so such entries are best treated as opaque. The manifest-level `docs[].path` validators share this gap; a strict `":" in name` rejection is a possible future tightening (4.5 review, 2026-09-20).
 
 - Node/JSZip decompresses one entry fully before the unspoofable

@@ -753,7 +753,17 @@ export class PackManager {
     return this.validateManifestSchema;
   }
 
-  private validatedManifest(packPath: string): PackManifest {
+  /** Activation paths (rollback/supersede) re-validate an ALREADY-INSTALLED
+   * pack, so they run the pre-existing C1/C3 gates only. The C8 policy gates
+   * (embedding model, sqlite-vec stamp, opt-in signature) evaluate CURRENT
+   * config against a pack whose content was already validated at install
+   * time — re-running them here would let a later config flip brick rollback
+   * of a previously accepted pack (PRR-001), and the Python twin gates only
+   * in install(). */
+  private validatedManifest(
+    packPath: string,
+    options: { activation?: boolean } = {},
+  ): PackManifest {
     const manifestPath = path.join(packPath, 'pack.json');
     let raw: Buffer;
     try {
@@ -820,7 +830,7 @@ export class PackManager {
     // without an index block take the rebuild path and are not stamp-gated).
     // The field was schema-required-when-present since C1 with zero
     // consumers; this is that consumer.
-    if (manifest.index !== undefined && manifest.index.sqlite_vec_version !== PACKS_SQLITE_VEC_PIN) {
+    if (!options.activation && manifest.index !== undefined && manifest.index.sqlite_vec_version !== PACKS_SQLITE_VEC_PIN) {
       throw new PackManagerError(
         `pack index sqlite_vec_version ${manifest.index.sqlite_vec_version} does not match the pinned ${PACKS_SQLITE_VEC_PIN}; refusing install (rebuild the pack with the current toolchain)`,
       );
@@ -833,7 +843,7 @@ export class PackManager {
     // ('bge-small-en-v1.5', ADR-0006) holds even in embedder-less harnesses.
     // Canonical comparison (basename + casefold): packtool stamps basenames,
     // full ids like 'BAAI/bge-small-en-v1.5' agree with them.
-    if (!modelIdMatches(manifest.embedding.model_id, this.packsSecurity.embeddingModelId)) {
+    if (!options.activation && !modelIdMatches(manifest.embedding.model_id, this.packsSecurity.embeddingModelId)) {
       throw new PackManagerError(
         `refusing to mix embedding spaces: ${manifest.id}@${manifest.version} was built with embedding model '${manifest.embedding.model_id}' but '${this.packsSecurity.embeddingModelId}' is configured; rebuild the pack via packtool build-docs --embedding-model`,
       );
@@ -843,7 +853,7 @@ export class PackManager {
     // enabled, a pack without a valid trusted ed25519 signature over the
     // canonical manifest bytes is refused; unsigned installs stay fine when
     // the policy is off (the default).
-    if (this.packsSecurity.requireSignature) {
+    if (!options.activation && this.packsSecurity.requireSignature) {
       const verification = verifyPackSignature(raw, manifest.signature, this.packsSecurity.trustedKeys);
       if (!verification.ok) {
         throw new PackManagerError(
@@ -1294,7 +1304,7 @@ export class PackManager {
         `${row.id}@${row.version} has no managed folder (prebuilt-index rows cannot be activated by the folder-form PackManager)`,
       );
     }
-    const manifest = this.validatedManifest(row.install_path);
+    const manifest = this.validatedManifest(row.install_path, { activation: true });
     const declaredIndex = this.resolveContainedPrebuiltIndex(row.install_path, manifest);
     if (declaredIndex !== null) {
       const imported = this.readPrebuiltIndex(declaredIndex, manifest);

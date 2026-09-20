@@ -137,7 +137,6 @@ describe('packtool verify archive safety (issue #75)', () => {
   it('end-to-end: verify rejects a valid pack with a hostile extra entry', async () => {
     // Build a minimal valid pack dir, zip it with a hostile extra entry, and
     // run the built CLI. JSZip preserves drive-relative names here.
-    (async () => {})();
     const work = path.join(PACKTOOL_ROOT, '.agents-tmp', 'e2e');
     fs.mkdirSync(path.join(work, 'src', 'docs'), { recursive: true });
     fs.writeFileSync(
@@ -174,6 +173,35 @@ describe('packtool verify archive safety (issue #75)', () => {
       expect(verify.status).not.toBe(0);
       expect(`${verify.stdout}\n${verify.stderr}`).toMatch(/unsafe archive entry path/);
     });
+  });
+});
+
+describe('packtool verify archive safety: consistency checks (PRR-008)', () => {
+  it('rejects cdOffset beyond the anchored central-directory start', () => {
+    const buf = buildZip([{ name: 'pack.json', data: Buffer.from('{"id":"x"}') }]);
+    const eocdPos = buf.length - 22;
+    const cdSize = buf.readUInt32LE(eocdPos + 12);
+    const cdStart = eocdPos - cdSize;
+    // cdOffset must be <= eocd - cdSize; pushing it past that anchor is an
+    // inconsistent/attacker-controlled layout.
+    buf.writeUInt32LE(cdStart + 1, eocdPos + 16);
+    const p = path.join(PACKTOOL_ROOT, '.agents-tmp', 'cdoffset.zip');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, buf);
+    expect(() => assertArchiveSafety(p)).toThrow(/inconsistent size\/offset/);
+  });
+
+  it('rejects a central-directory size that makes the walk end early', () => {
+    const buf = buildZip([{ name: 'pack.json', data: Buffer.from('{"id":"x"}') }]);
+    const eocdPos = buf.length - 22;
+    // Shrink cdSize so the anchored walk cannot consume the declared region:
+    // the walk then ends before the EOCD (cursor !== cdEnd).
+    const realCdSize = buf.readUInt32LE(eocdPos + 12);
+    buf.writeUInt32LE(realCdSize - 10, eocdPos + 12);
+    const p = path.join(PACKTOOL_ROOT, '.agents-tmp', 'cdsize.zip');
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, buf);
+    expect(() => assertArchiveSafety(p)).toThrow(/malformed/);
   });
 });
 

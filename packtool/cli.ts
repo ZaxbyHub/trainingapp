@@ -5,7 +5,7 @@
 // issue #73 (C6) adds: packtool build-docs <sourceDir> ..., packtool diff
 // <packA> <packB>, and packtool verify --embedding-model <model_id>.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extractPublishDir } from './storyline/extract.js';
 import { buildStorylinePack } from './build/compose.js';
 import { verifyPack } from './build/verify.js';
@@ -314,8 +314,13 @@ async function runVerify(argv: string[]): Promise<number> {
     }
   }
   if (positional.length !== 1) usage();
-  if (trustedKeysFile !== undefined && !existsSync(trustedKeysFile)) {
-    console.error(`packtool verify: --trusted-keys-file does not exist: ${trustedKeysFile}`);
+  if (
+    trustedKeysFile !== undefined &&
+    (!existsSync(trustedKeysFile) || !statSync(trustedKeysFile).isFile())
+  ) {
+    console.error(
+      `packtool verify: --trusted-keys-file is not a readable file: ${trustedKeysFile}`,
+    );
     return 2;
   }
   let trustedKeys: Array<{ key_id: string; public_key: string }> | undefined;

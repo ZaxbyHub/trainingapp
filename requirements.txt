@@ -24,6 +24,7 @@ uvicorn>=0.27.0,<1.0.0
 sse-starlette>=2.0.0,<4.0.0  # required: /ask/stream route is gated on HAS_SSE
 PyYAML>=6.0,<7.0  # contracts route-drift check in contracts/tests/run_conformance.py
 python-jose[cryptography]>=3.4.0,<4.0.0  # JWT authentication
+cryptography>=42.0.0  # ed25519 pack-signature verification (C8); direct import in pack_extract.py
 pydantic-settings>=2.0.0,<3.0.0  # Pydantic v2 settings management
 python-multipart>=0.0.18  # FastAPI form data parsing
 
