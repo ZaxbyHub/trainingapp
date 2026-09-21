@@ -163,9 +163,10 @@ time.
 ## Consequences
 
 1. **Quant re-pin pull-through is #84's bundling work.** Until it lands,
-   `app_paths.py:17` `DEFAULT_BUNDLED_GGUF`, `app_gui.py:828-835`, `INSTALL.md`, and
-   several test pins still say `Q5_K_M`; the drift is made observable by an
-   xfail-marked conformance test rather than left silent. Separately verified:
+   `app_paths.py:17` `DEFAULT_BUNDLED_GGUF`, `app_gui.py:828-835`, `INSTALL.md`
+   (lines 208/213/306), `ARCHITECTURE.md:98`, `CONFIGURATION.md:138` and `:561`,
+   `README.md:54` and `:266`, and several test pins still say `Q5_K_M`; the drift is
+   made observable by an xfail-marked conformance test rather than left silent. Separately verified:
    `desktop/electron-builder.yml` today copies no `docs/` into packaged resources, so
    the #85 gate's packaged path (`process.resourcesPath/docs/licenses.md`) stays empty
    until #84 wires packaging — both packaging-side gaps are #84 acceptance items.

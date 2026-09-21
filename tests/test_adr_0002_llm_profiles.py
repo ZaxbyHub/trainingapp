@@ -3,16 +3,19 @@ license review (issue #56).
 
 Validates the committed docs/adr/0002-llm-profiles.md and docs/licenses.md with a
 column-aware validator that is strictly stronger than the trace's frozen
-acceptance checks: cited tok/s numbers must equal the `decode_tok_s` column of a
-matching machine-tagged row in bench/RESULTS.md (the frozen checks only require
-the number to appear somewhere on the matching row), and the Gemma license
+acceptance checks: every "<n> tok/s" figure cited in a decision-table cell must
+equal the `decode_tok_s` column of a matching machine-tagged row in one of the
+recorded results tables in bench/RESULTS.md (native llama.cpp, Vulkan, and
+wllama — the frozen checks only require the number to appear somewhere on a
+matching row), and the Gemma license
 outcome must be stated inside the "License review outcome" section (the frozen
-check accepts it anywhere in the file).
+check accepts it anywhere in the file). First-token and peak-RSS cells are
+narrative provenance and are not cross-validated against bench rows.
 
 Also pins the consumption surface the decision lands on (the #85 first-run gate
 reads docs/licenses.md via desktop/main/index.ts), the corrected license facts in
 INSTALL.md, and two tracked drifts with explicit dispositions:
-  - the bundled-QGUF quant string still says Q5_K_M while ADR-0002 selects the
+  - the bundled-GGUF quant string still says Q5_K_M while ADR-0002 selects the
     measured Q4_K_M — xfail until #84 re-pins the artifact;
   - desktop/electron-builder.yml copies no docs/ into packaged resources, so the
     wizard's packaged licenses path stays empty until #84 wires packaging.
@@ -167,56 +170,66 @@ def _cell(cells: list[str], header_cells: list[str], label: str) -> str:
     return ""
 
 
-def _bench_native_rows(results_text: str) -> list[dict[str, str]]:
-    """Rows of the native llama.cpp results table, keyed by header label."""
+def _bench_rows(results_text: str) -> list[tuple[dict[str, str], str]]:
+    """(row-dict, raw-line) for every results table in bench/RESULTS.md whose
+    header carries a machine column and a decode_tok_s column — the native
+    llama.cpp table, the Vulkan table, and the wllama table all qualify."""
+    out: list[tuple[dict[str, str], str]] = []
     for block in _pipe_blocks(results_text):
         header_cells = _row_cells(block[0])
         labels = [_norm(c) for c in header_cells]
         if "machine" not in labels or "decode tok s" not in labels:
             continue
-        rows = []
         for line in block[1:]:
             cells = _row_cells(line)
             if _is_separator(cells):
                 continue
-            rows.append(dict(zip(labels, cells)))
-        return rows
-    return []
+            out.append((dict(zip(labels, cells)), line))
+    return out
 
 
 def _citation_violation(profile: str, row: list[str], header_cells, results_text: str):
-    """Column-aware: the cited tok/s number must equal the decode_tok_s column
-    of a matching (machine, model, quant) recorded row."""
+    """Column-aware: EVERY "<n> tok/s" figure cited in the cell must equal the
+    decode_tok_s column of a matching recorded bench row (machine cell equal to
+    the cited machine tag, the model slug present on the row, and — when the row
+    carries a quant token at all — the same quant)."""
     model = _cell(row, header_cells, "model")
     quant = _cell(row, header_cells, "quant")
     toks = _cell(row, header_cells, "tok/s")
     qm = QUANT_RE.search(quant)
     tm = MACHINE_TAG_RE.search(" | ".join(row))
-    fm = re.search(r"\d+(?:\.\d+)?", toks)
-    if not (qm and tm and fm and MODEL_SLUG_RE.search(model.lower())):
+    figures = re.findall(r"(\d+(?:\.\d+)?)\s*tok/s", toks)
+    if not (qm and tm and figures and MODEL_SLUG_RE.search(model.lower())):
         return (
             f"{profile} row missing model slug / Q*_K_* quant / cited tok/s / "
             f"(machine tag): model={model!r} quant={quant!r} tok/s={toks!r}"
         )
     slug = max(MODEL_SLUG_RE.findall(model.lower()), key=len)
-    tag, number = tm.group(1), fm.group(0)
-    for bench in _bench_native_rows(results_text):
-        if bench.get("machine", "").lower() != tag.lower():
-            continue
-        if slug not in bench.get("model", "").lower():
-            continue
-        if qm.group(0) != bench.get("quant", ""):
-            continue
-        try:
-            decode = float(bench["decode tok s"])
-        except (KeyError, ValueError):
-            continue
-        if decode == float(number):
-            return None
-    return (
-        f"{profile} row cites tok/s={number} but no recorded bench row with "
-        f"machine={tag}, model={slug}, quant={qm.group(0)} has decode_tok_s={number}"
-    )
+    tag = tm.group(1)
+    bench_rows = _bench_rows(results_text)
+    for number in figures:
+        matched = False
+        for bench, raw in bench_rows:
+            if bench.get("machine", "").strip().lower() != tag.lower():
+                continue
+            if slug not in raw.lower():
+                continue
+            row_quant = QUANT_RE.search(raw)
+            if row_quant and row_quant.group(0) != qm.group(0):
+                continue
+            try:
+                decode = float(bench["decode tok s"])
+            except (KeyError, ValueError):
+                continue
+            if decode == float(number):
+                matched = True
+                break
+        if not matched:
+            return (
+                f"{profile} row cites tok/s={number} but no recorded bench row with "
+                f"machine={tag}, model={slug}, quant={qm.group(0)} has decode_tok_s={number}"
+            )
+    return None
 
 
 def validate_documents(
@@ -439,7 +452,7 @@ def test_packaged_licenses_gap_tracked_until_84():
     Consequences 1). When #84 adds that extraResources entry, UPDATE this pin —
     its failure is the signal the packaging contract changed."""
     builder = _load(BUILDER_REL)
-    assert not re.search(r"extraResources:[\s\S]*?from:\s*docs\b", builder), (
+    assert not re.search(r"extraResources:[\s\S]*?from:\s*['\"]?docs\b", builder), (
         "electron-builder.yml now copies docs/ — update ADR-0002 Consequences 1 "
         "and the first-run wizard packaged-path expectations"
     )
@@ -460,6 +473,15 @@ def test_validator_rejects_tampered_citation_number():
     tampered = _mutated(adr, "| 3.65 tok/s", "| 3.66 tok/s")
     v = validate_documents(tampered, _load(LICENSES_REL), _load(RESULTS_REL))
     assert any("cites tok/s=3.66" in x for x in v), v
+
+
+def test_validator_rejects_tampered_secondary_toks_figure():
+    """PRR-001: EVERY tok/s figure in a multi-number cell is validated, not just
+    the first — corrupting the Quality row's secondary citation (a realistic
+    copy-paste drift between recorded rows) must be rejected."""
+    adr = _mutated(_load(ADR_REL), "2.12 tok/s @8", "9.99 tok/s @8")
+    v = validate_documents(adr, _load(LICENSES_REL), _load(RESULTS_REL))
+    assert any("cites tok/s=9.99" in x for x in v), v
 
 
 def test_validator_rejects_first_token_ms_quoted_as_toks():
