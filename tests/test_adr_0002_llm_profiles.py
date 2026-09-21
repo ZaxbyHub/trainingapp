@@ -51,6 +51,15 @@ REQUIRED_COLUMNS = (
 PROFILES = ("quality", "fast")
 UNMEASURED_NAMES = ("LFM2.5-1.2B-Instruct", "gemma-3-1b-it")
 UNMEASURED_RE = re.compile(r"(no recorded rows|unmeasured|not measured|PENDING)", re.I)
+# Lowercase model slugs with no recorded bench rows — a decision row selecting
+# one of these violates the measured-numbers rule (ADR-0002 Options section).
+UNMEASURED_SLUGS = ("lfm2.5-1.2b-instruct", "gemma-3-1b-it")
+# Model-family prefix -> regex the license cell must match, per the licenses
+# verified in ADR-0002 (gemma-4* = Apache-2.0; lfm2.5* = LFM Open License v1.0).
+LICENSE_BY_MODEL_PREFIX = (
+    ("gemma-4", re.compile(r"apache", re.I)),
+    ("lfm2.5", re.compile(r"lfm open license|lfm1\.0", re.I)),
+)
 MODEL_SLUG_RE = re.compile(r"[a-z0-9]+(?:[.\-][a-z0-9]+)+")
 QUANT_RE = re.compile(r"Q[0-9]_K_[MS]")
 MACHINE_TAG_RE = re.compile(r"\(machine ([a-z0-9][a-z0-9-]*)\)")
@@ -215,6 +224,7 @@ def validate_documents(
             f"decision table header missing required columns: {', '.join(REQUIRED_COLUMNS)}"
         ]
     header_cells, rows = table
+    profile_slugs: dict[str, str] = {}
     for profile in PROFILES:
         prow = [r for r in rows if _cell(r, header_cells, "profile").lower() == profile]
         if not prow:
@@ -224,13 +234,49 @@ def validate_documents(
             defect = _citation_violation(profile, row, header_cells, results_text)
             if defect:
                 v.append(defect)
-            if not _cell(row, header_cells, "license"):
+            license_cell = _cell(row, header_cells, "license")
+            if not license_cell:
                 v.append(f"{profile} row license cell empty")
             if not _cell(row, header_cells, "risk"):
                 v.append(f"{profile} row risk cell empty")
+            # Model-identity hardening (implementation-review Round 1): the row's
+            # model must be measured (not one of the issue's unmeasured
+            # candidates), its license cell must match that model family's
+            # verified license, and the two profiles must not name one model.
+            slugs = MODEL_SLUG_RE.findall(_cell(row, header_cells, "model").lower())
+            if slugs:
+                slug = max(slugs, key=len)
+                profile_slugs[profile] = slug
+                if slug in UNMEASURED_SLUGS:
+                    v.append(f"{profile} row names an unmeasured candidate {slug}")
+                for prefix, license_rx in LICENSE_BY_MODEL_PREFIX:
+                    if slug.startswith(prefix) and not license_rx.search(license_cell):
+                        v.append(
+                            f"{profile} row license cell does not match {prefix} "
+                            f"licensing (expected /{license_rx.pattern}/)"
+                        )
+    if len(profile_slugs) == len(PROFILES) and len(set(profile_slugs.values())) < len(
+        PROFILES
+    ):
+        v.append(
+            "quality and fast rows name the same model "
+            f"({sorted(set(profile_slugs.values()))[0]})"
+        )
 
     if not any(line.strip() == "## Decision" for line in adr_text.splitlines()):
         v.append("no '## Decision' heading")
+    else:
+        # Decision-narrative cross-check (implementation-review Round 1): the
+        # ## Decision prose must name exactly the models the table selected.
+        dm = re.search(r"^## Decision\s*$", adr_text, re.M)
+        tail = adr_text[dm.end() :]
+        nxt = re.search(r"^## ", tail, re.M)
+        decision_body = (tail[: nxt.start()] if nxt else tail).lower()
+        for profile, slug in profile_slugs.items():
+            if slug and slug not in decision_body:
+                v.append(
+                    f"Decision section does not name the {profile}-profile model {slug}"
+                )
 
     lines = adr_text.splitlines()
     hits = [i for i, l in enumerate(lines) if any(n in l for n in UNMEASURED_NAMES)]
@@ -457,3 +503,72 @@ def test_validator_rejects_fast_section_without_threshold_language():
     )
     v = validate_documents(_load(ADR_REL), lic, _load(RESULTS_REL))
     assert any("threshold language" in x for x in v), v
+
+
+def _swap_quality_model(adr: str, new_model: str, new_toks: str) -> str:
+    """Point the quality decision row at a different model (with a real recorded
+    tok/s value for `new_model`) while leaving everything else intact."""
+    header_cells, rows = _decision_table(adr)
+    qline = next(
+        line
+        for line in adr.splitlines()
+        if line.lstrip().startswith("|")
+        and _row_cells(line)
+        and _cell(_row_cells(line), header_cells, "profile").lower() == "quality"
+    )
+    cells = _row_cells(qline)
+    mi = next(i for i, h in enumerate(header_cells) if _norm(h) == "model")
+    ti = next(i for i, h in enumerate(header_cells) if _norm(h) == "tok/s")
+    cells[mi] = new_model
+    cells[ti] = re.sub(r"\d+(?:\.\d+)? tok/s", f"{new_toks} tok/s", cells[ti], count=1)
+    return adr.replace(qline, "|" + " | ".join(cells) + "|")
+
+
+def test_validator_rejects_same_model_for_both_profiles():
+    """Implementation-review Round 1 variant 1: pointing the Quality row at the
+    Fast model (citing a real lfm bench row) must be rejected."""
+    adr = _swap_quality_model(_load(ADR_REL), "lfm2.5-vl-450m", "95.97")
+    v = validate_documents(adr, _load(LICENSES_REL), _load(RESULTS_REL))
+    assert any("same model" in x for x in v), v
+
+
+def test_validator_rejects_unmeasured_model_in_quality_row():
+    adr = _swap_quality_model(_load(ADR_REL), "gemma-3-1b-it", "95.97")
+    v = validate_documents(adr, _load(LICENSES_REL), _load(RESULTS_REL))
+    assert any(
+        "quality row names an unmeasured candidate gemma-3-1b-it" in x for x in v
+    ), v
+
+
+def test_validator_rejects_license_model_mismatch():
+    """Implementation-review Round 1 variant 2: a Quality row claiming the LFM
+    license for an Apache-2.0 gemma-4 model must be rejected."""
+    adr = _mutated(
+        _load(ADR_REL),
+        "| Apache-2.0 (Gemma 4 license) |",
+        "| LFM Open License v1.0 (non-OSI) |",
+    )
+    v = validate_documents(adr, _load(LICENSES_REL), _load(RESULTS_REL))
+    assert any(
+        "quality row license cell does not match gemma-4 licensing" in x for x in v
+    ), v
+
+
+def test_validator_rejects_decision_prose_model_swap():
+    """The ## Decision prose must name exactly the models the table selected."""
+    adr = _load(ADR_REL)
+    dm = re.search(r"^## Decision\s*$", adr, re.M)
+    tail = adr[dm.end() :]
+    nxt = re.search(r"^## ", tail, re.M)
+    body = tail[: nxt.start()] if nxt else tail
+    assert "gemma-4-e2b-it" in body, "mutation anchor missing in Decision prose"
+    swapped = (
+        adr[: dm.end()]
+        + body.replace("gemma-4-e2b-it", "gemma-3-1b-it")
+        + adr[dm.end() + len(body) :]
+    )
+    v = validate_documents(swapped, _load(LICENSES_REL), _load(RESULTS_REL))
+    assert any(
+        "Decision section does not name the quality-profile model gemma-4-e2b-it" in x
+        for x in v
+    ), v
