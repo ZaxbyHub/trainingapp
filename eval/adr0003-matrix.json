@@ -3,47 +3,51 @@
   "metrics": {
     "install_size_mb": {
       "node": 1373.7,
-      "python-sidecar": 1965
+      "python-sidecar": 2066.9
     },
     "cold_start_s": {
-      "node": 0.766,
-      "python-sidecar": 4.7
+      "node": 0.54,
+      "python-sidecar": 5.247
     },
     "first_token_latency_s": {
-      "node": 1.287,
+      "node": 1.295,
       "python-sidecar": {
         "blocked_by": "blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally"
       }
     },
     "decode_tok_s": {
-      "node": 0.93,
+      "node": 0.94,
       "python-sidecar": {
         "blocked_by": "blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally"
       }
     },
     "peak_rss_mb": {
-      "node": 2124.6,
-      "python-sidecar": 322
+      "node": 2145.1,
+      "python-sidecar": 459.5
     },
     "ci_build_reliability": {
-      "node": "1/1 runs green (run 35641461760)",
-      "python-sidecar": "build green 1/1; artifact upload 403 flake passed on retry (run 35641461760)"
+      "node": "1/1 runs green (run 35666173313)",
+      "python-sidecar": "build green 1/1 (plus one upload-403 retry on the earlier run); LLM runtime-blocked at measurement (run 35666173313)"
     },
     "cancellation_stop": {
-      "node": "111 ms (CPU idle confirmed within 5 s)",
+      "node": "110 ms (CPU idle confirmed within 5 s)",
       "python-sidecar": "blocked: no generation to cancel (LLM unavailable in the frozen build)"
     }
   },
   "reranker_local_files_only_reproduced": true,
   "provenance": {
-    "measured_at_utc": "2026-09-21T19:55:50.328Z",
+    "measured_at_utc": "2026-09-21T23:42:30.727Z",
+    "measured_at_utc_per_slice": {
+      "node": "2026-09-21T23:40:01.727Z",
+      "python-sidecar": "2026-09-21T23:42:30.727Z"
+    },
     "machine": {
       "tag": "devstation",
       "os": "Windows_NT 10.0.26200",
       "cpu": "AMD Ryzen 9 5950X 16-Core Processor            "
     },
-    "git_commit": "bbe7921705c698352d61602b4a90ad59346b44ae",
-    "script_sha256": "71c9ba067d9e89e160e8e6dbc444c7beec60c2466032f247343c9a04ba144b87",
+    "git_commit": "6fed74d4311d7308cc61851ea4c4735ab9e7a83f",
+    "script_sha256": "90dd39ac3fe1749c184d74e47b52b9fdfa5c96cdee20281dbcf078da74129a6e",
     "raw": {
       "node": "spike/measure/results/node.json",
       "python": "spike/measure/results/python.json",

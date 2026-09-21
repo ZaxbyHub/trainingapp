@@ -12,9 +12,9 @@
     "node": {
       "installer": {
         "filename": "SpikeNodeBackend-Setup-0.0.1.exe",
-        "sha256": "b302b5adecca23dc1369ace6b0a9fa8f0c1722e647769a7f33a3565a2e6a9b06",
-        "size_bytes": 489071378,
-        "ci_run_url": "https://github.com/ZaxbyHub/trainingapp/actions/runs/35641461760"
+        "sha256": "86d2e54d41b2587afaf882c5664a31e87fb87e2f05d3978f5ffb363501a3e674",
+        "size_bytes": 489071376,
+        "ci_run_url": "https://github.com/ZaxbyHub/trainingapp/actions/runs/35666173313"
       },
       "streamed_answer": {
         "streamed": true,
@@ -23,18 +23,18 @@
         "grounding": "general"
       },
       "cancellation": {
-        "stop_latency_s": 0.111
+        "stop_latency_s": 0.11
       }
     },
     "python-sidecar": {
       "installer": {
         "filename": "SpikePythonSidecar-Setup-0.0.1.exe",
-        "sha256": "94a13d99b865c68463c75435dcf8e12c15b3a59bfcbe31aa9e16dfe5dd903675",
-        "size_bytes": 776567572,
-        "ci_run_url": "https://github.com/ZaxbyHub/trainingapp/actions/runs/35641461760"
+        "sha256": "4f6cb5839a487778e531eed3edf5ec7a155fbcdb52c7b709f54fedd0b75d61ee",
+        "size_bytes": 841415091,
+        "ci_run_url": "https://github.com/ZaxbyHub/trainingapp/actions/runs/35666173313"
       },
       "llm_failure": {
-        "error": "{\"detail\":\"No GGUF backend available: loading GGUF model 'model.gguf' failed: llama-cpp-python not installed. Run: pip install llama-cpp-python\"}",
+        "error": "{\"detail\":\"No GGUF backend available: loading GGUF model 'model.gguf' failed: [WinError -1073741795] Windows Error 0xc000001d\"}",
         "reason": "llama-cpp-python is not importable in the packaged runtime (PyInstaller freezing breaks its module layout); the deeper bundled-variant failure (model-load access violation) is recorded in the ADR findings",
         "blocked_metrics": [
           "first_token_latency_s",
@@ -60,14 +60,18 @@
     "leg_c": "outcome=LOADED_STAGED detail=C:\\Users\\Brett\\AppData\\Local\\Programs\\spike-python-sidecar-shell\\resources\\probe\\spike-probe\\_internal\\bundled_reranker"
   },
   "provenance": {
-    "measured_at_utc": "2026-09-21T19:55:50.328Z",
+    "measured_at_utc": "2026-09-21T23:42:30.727Z",
+    "measured_at_utc_per_slice": {
+      "node": "2026-09-21T23:40:01.727Z",
+      "python-sidecar": "2026-09-21T23:42:30.727Z"
+    },
     "machine": {
       "tag": "devstation",
       "os": "Windows_NT 10.0.26200",
       "cpu": "AMD Ryzen 9 5950X 16-Core Processor            "
     },
-    "git_commit": "bbe7921705c698352d61602b4a90ad59346b44ae",
-    "script_sha256": "71c9ba067d9e89e160e8e6dbc444c7beec60c2466032f247343c9a04ba144b87",
+    "git_commit": "6fed74d4311d7308cc61851ea4c4735ab9e7a83f",
+    "script_sha256": "90dd39ac3fe1749c184d74e47b52b9fdfa5c96cdee20281dbcf078da74129a6e",
     "raw": {
       "node": "spike/measure/results/node.json",
       "python": "spike/measure/results/python.json",

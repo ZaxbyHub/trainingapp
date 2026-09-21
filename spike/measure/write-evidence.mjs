@@ -73,7 +73,8 @@ const matrix = {
   },
   reranker_local_files_only_reproduced: reproduced,
   provenance: {
-    measured_at_utc: node.measured_at_utc,
+    measured_at_utc: [node.measured_at_utc, py.measured_at_utc].sort().pop(),
+    measured_at_utc_per_slice: { node: node.measured_at_utc, 'python-sidecar': py.measured_at_utc },
     machine: { tag: 'devstation', os: `${os.type()} ${os.release()}`, cpu: os.cpus()[0]?.model ?? 'unknown' },
     git_commit: commit,
     script_sha256: scriptSha,

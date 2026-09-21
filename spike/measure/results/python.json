@@ -1,25 +1,25 @@
 {
   "slice": "python",
   "models_staging": "pre-staged",
-  "install_size_mb": 1965,
+  "install_size_mb": 2066.9,
   "cold_starts_ms": [
-    4671,
-    4700,
-    4732
+    4714,
+    5247,
+    18615
   ],
   "runs": {
     "ask_2k": {
       "failed": true,
-      "error": "{\"detail\":\"No GGUF backend available: loading GGUF model 'model.gguf' failed: llama-cpp-python not installed. Run: pip install llama-cpp-python\"}"
+      "error": "{\"detail\":\"No GGUF backend available: loading GGUF model 'model.gguf' failed: [WinError -1073741795] Windows Error 0xc000001d\"}"
     },
     "cancellation": {
       "failed": true,
       "reason": "LLM unavailable"
     }
   },
-  "cold_start_s": 4.7,
-  "peak_rss_mb": 322,
-  "measured_at_utc": "2026-09-21T22:18:51.106Z",
+  "cold_start_s": 5.247,
+  "peak_rss_mb": 459.5,
+  "measured_at_utc": "2026-09-21T23:42:30.727Z",
   "models_dir": "C:\\Users\\Brett\\.trainingapp\\models",
   "port": 8795
 }
