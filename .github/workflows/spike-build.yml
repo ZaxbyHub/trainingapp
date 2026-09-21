@@ -1,0 +1,85 @@
+name: Spike Build (issue #57 A7)
+
+# Builds both throwaway spike slices' NSIS installers + the PyInstaller
+# sidecar onedirs and uploads them as artifacts. This is the CI-build-
+# reliability producer for ADR-0003. Path-gated on spike/** so it stops
+# triggering once the spike/ trees are deleted post-merge (the workflow file
+# is removed in the same fast-follow commit).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['**']
+    paths:
+      - 'spike/**'
+      - '.github/workflows/spike-build.yml'
+  pull_request:
+    paths:
+      - 'spike/**'
+      - '.github/workflows/spike-build.yml'
+
+jobs:
+  node-backend:
+    name: node-backend installer (electron-builder)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Build NSIS installer
+        run: npm --prefix spike/node-backend ci && npm --prefix spike/node-backend run build
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-node-installer
+          path: spike/node-backend/spike-release/*.exe
+          if-no-files-found: error
+      - name: Echo run URL
+        run: echo "run-url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+  python-sidecar:
+    name: python-sidecar installer (PyInstaller + electron-builder)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Create sidecar venv (repo pins)
+        run: |
+          python -m venv spike/python-sidecar/.venv-sidecar
+          spike/python-sidecar/.venv-sidecar/Scripts/python -m pip install --upgrade pip
+          spike/python-sidecar/.venv-sidecar/Scripts/pip install -r spike/python-sidecar/requirements-sidecar.txt
+      - name: Stage reranker model files (probe leg B)
+        run: spike/python-sidecar/.venv-sidecar/Scripts/python spike/python-sidecar/stage_reranker.py
+        env:
+          HF_HOME: ${{ runner.temp }}/hf-home
+      - name: Build sidecar onedir (api_server)
+        run: spike/python-sidecar/.venv-sidecar/Scripts/pyinstaller spike/python-sidecar/api_server_sidecar.spec --noconfirm --distpath spike/python-sidecar/shell/sidecar --workpath build/pyinstaller-sidecar
+      - name: Build probe onedir (reranker probe)
+        run: spike/python-sidecar/.venv-sidecar/Scripts/pyinstaller spike/python-sidecar/probe_reranker.spec --noconfirm --distpath spike/python-sidecar/shell/probe --workpath build/pyinstaller-probe
+      - name: Run reranker probe (records leg outcomes)
+        run: |
+          spike/python-sidecar/shell/probe/spike-probe/spike-probe-reranker.exe | Tee-Object -FilePath spike/measure/results/probe.txt
+      - name: Build NSIS installer (shell bundling sidecar)
+        run: npm --prefix spike/python-sidecar/shell ci && npm --prefix spike/python-sidecar/shell run build
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-python-installer
+          path: spike/python-sidecar/shell/spike-release/*.exe
+          if-no-files-found: error
+      - name: Upload probe log
+        uses: actions/upload-artifact@v4
+        with:
+          name: spike-probe-log
+          path: spike/measure/results/probe.txt
+          if-no-files-found: error
+      - name: Echo run URL
+        run: echo "run-url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
