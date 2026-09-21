@@ -51,7 +51,21 @@ from candidates import EMBEDDING_CANDIDATES, RERANKER_CANDIDATES  # noqa: E402
 ASSETS_DIR = REPO_ROOT / "eval" / "bakeoff" / "assets"
 META_REL = "eval/bakeoff/assets/assets-meta.json"
 # Staged models the git worktree does not carry (main-tree-only, git-excluded).
-MAIN_TREE_STAGED = Path(r"E:\ZCode\trainingapp") / "models"
+# Resolution: $TRAININGAPP_MAIN_CHECKOUT, else the conventional sibling dir.
+
+
+def _resolve_main_models():
+    import os
+
+    override = os.environ.get("TRAININGAPP_MAIN_CHECKOUT")
+    if override:
+        candidate = Path(override)
+        return candidate / "models" if candidate.is_dir() else None
+    sibling = REPO_ROOT.parent / "trainingapp"
+    return sibling / "models" if (sibling / "models").is_dir() else None
+
+
+MAIN_TREE_STAGED = _resolve_main_models()
 
 TOKENIZER_FILES = (
     "tokenizer.json",
@@ -140,7 +154,10 @@ def stage_tokenizers(repo_id: str, target_dir: Path) -> None:
 
 def staged_file(rel: str) -> Path | None:
     """Resolve a staged models/ file: worktree first, then main tree."""
-    for base in (REPO_ROOT / "models", MAIN_TREE_STAGED):
+    bases = [REPO_ROOT / "models"]
+    if MAIN_TREE_STAGED:
+        bases.append(MAIN_TREE_STAGED)
+    for base in bases:
         candidate = base / rel
         if candidate.is_file():
             return candidate
@@ -152,9 +169,17 @@ def ensure_cost_asset(entry: dict, plan: dict) -> None:
     target_dir = ASSETS_DIR / name / "onnx"
     final = target_dir / "model_quantized.onnx"
     if final.is_file():
-        entry["onnx_path"] = "eval/bakeoff/assets/%s/onnx/model_quantized.onnx" % name
-        entry.setdefault("onnx_quant", plan.get("quant_note", "dynamic-int8"))
-        return
+        if (
+            plan["cost_kind"] == "mirror-pair"
+            and not (target_dir / "model_quantized.onnx_data").is_file()
+        ):
+            log("  incomplete mirror pair for %s: re-fetching" % name)
+        else:
+            entry["onnx_path"] = (
+                "eval/bakeoff/assets/%s/onnx/model_quantized.onnx" % name
+            )
+            entry.setdefault("onnx_quant", plan.get("quant_note", "dynamic-int8"))
+            return
 
     kind = plan["cost_kind"]
     if kind == "mirror-pair":  # graph + external data, both shipped quantized
@@ -170,9 +195,17 @@ def ensure_cost_asset(entry: dict, plan: dict) -> None:
     elif kind == "local-quantize":  # fp32 source, quantize here
         target_dir.mkdir(parents=True, exist_ok=True)
         src = plan["source"]()
+        if src is None:
+            raise RuntimeError(
+                "local-quantize source missing for %s: staged models/ tree not"
+                " found (set TRAININGAPP_MAIN_CHECKOUT or run from the main"
+                " checkout)" % name
+            )
         fp32 = target_dir / "model_fp32_src.onnx"
         if plan.get("source_pair"):
             pair = plan["source_pair"]()
+            if pair is None:
+                raise RuntimeError("source_pair missing for %s" % name)
             fp32_data = target_dir / (fp32.name + "_data")
             shutil.copyfile(pair, fp32_data)
         shutil.copyfile(src, fp32)
@@ -183,10 +216,51 @@ def ensure_cost_asset(entry: dict, plan: dict) -> None:
         entry["onnx_quant"] = "dynamic-int8 (local)"
     elif kind == "copy-staged":
         src = plan["source"]()
+        if src is None:
+            raise RuntimeError(
+                "copy-staged source missing for %s: staged models/ tree not"
+                " found (set TRAININGAPP_MAIN_CHECKOUT or run from the main"
+                " checkout)" % name
+            )
         target_dir.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, final)
         entry["onnx_quant"] = "shipped q8 (staged models/)"
     entry["onnx_path"] = "eval/bakeoff/assets/%s/onnx/model_quantized.onnx" % name
+
+
+def stage_ettin_compat() -> None:
+    """Build the ettin modules-pipeline directory: encoder files plus the
+    trained ST head modules (1_Pooling/2_Dense/3_LayerNorm/4_Dense) from the
+    canonical repo, so bakeoff_quality.EttinModulesCrossEncoder loads without
+    any manual staging step."""
+    from huggingface_hub import snapshot_download
+
+    compat = ASSETS_DIR / "ettin-reranker-32m-v1-compat"
+    snap = Path(
+        snapshot_download(
+            repo_id="cross-encoder/ettin-reranker-32m-v1",
+            allow_patterns=[
+                "*.json",
+                "*.safetensors",
+                "1_Pooling/*",
+                "2_Dense/*",
+                "3_LayerNorm/*",
+                "4_Dense/*",
+            ],
+        )
+    )
+    compat.mkdir(parents=True, exist_ok=True)
+    for item in snap.iterdir():
+        if item.is_file():
+            shutil.copyfile(item, compat / item.name)
+    for sub in ("1_Pooling", "2_Dense", "3_LayerNorm", "4_Dense"):
+        src = snap / sub
+        dst = compat / sub
+        dst.mkdir(parents=True, exist_ok=True)
+        for f in src.iterdir():
+            if f.is_file():
+                shutil.copyfile(f, dst / f.name)
+    log("  staged ettin compat modules under %s" % compat)
 
 
 def build_plans() -> dict[str, dict]:
@@ -227,6 +301,7 @@ def build_plans() -> dict[str, dict]:
             "ettin-reranker-32m-v1/onnx/model_quantized.onnx"
         ),
         "quality": "canonical-st",
+        "stages_compat": True,
     }
     plans["cross-encoder/ms-marco-MiniLM-L6-v2"] = {
         "asset_name": "ms-marco-minilm-l6-v2",
@@ -280,6 +355,9 @@ def main(argv=None) -> int:
         if plan["quality"] == "canonical-st":
             log("  snapshot weights (canonical)")
             entry["weights_cache"] = snapshot_weights(hf_id)
+        if plan.get("stages_compat"):
+            stage_ettin_compat()
+            entry["compat_dir"] = "eval/bakeoff/assets/ettin-reranker-32m-v1-compat"
         elif plan["quality"] == "canonical-transformers":
             log("  snapshot weights (canonical, transformers path)")
             entry["weights_cache"] = snapshot_weights(hf_id)

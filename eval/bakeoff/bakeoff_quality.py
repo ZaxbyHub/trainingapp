@@ -56,7 +56,26 @@ from candidates import (  # noqa: E402
 QUESTIONS_REL = "eval/questions.jsonl"
 CORPUS_REL = "eval/corpus"
 OUT_REL = "eval/bakeoff/results/quality.json"
-MAIN_TREE = Path(r"E:\ZCode\trainingapp")
+
+
+def _resolve_main_checkout() -> Path | None:
+    """Sibling main checkout used for locally staged models (git-excluded).
+
+    Resolution: $TRAININGAPP_MAIN_CHECKOUT, else the conventional sibling
+    directory next to this worktree, when it exists. Never required -- the
+    drivers fall back to hub downloads when staged models are absent.
+    """
+    import os
+
+    override = os.environ.get("TRAININGAPP_MAIN_CHECKOUT")
+    if override:
+        candidate = Path(override)
+        return candidate if candidate.is_dir() else None
+    sibling = REPO_ROOT.parent / "trainingapp"
+    return sibling if sibling.is_dir() else None
+
+
+MAIN_TREE = _resolve_main_checkout()
 
 
 def log(message: str) -> None:
@@ -122,12 +141,14 @@ class TransformersLastTokenEncoder:
                 )
                 result = self.model(**encoded)
                 hidden = result.last_hidden_state
-                left_pad = self.tokenizer.padding_side == "left"
-                if left_pad:
-                    # last real token is position 0 after left padding
-                    seq = hidden[:, 0]
+                # Last-token pooling (Qwen3-Embedding reference last_token_pool):
+                # under LEFT padding the final position holds the last real
+                # token; under RIGHT padding it sits at attention_mask.sum-1.
+                # The mask-derived index below is correct for both sides.
+                mask = encoded["attention_mask"]
+                if self.tokenizer.padding_side == "left":
+                    seq = hidden[:, -1]
                 else:
-                    mask = encoded["attention_mask"]
                     last_index = mask.sum(dim=1) - 1
                     seq = hidden[self.torch.arange(hidden.size(0)), last_index]
                 seq = self.torch.nn.functional.normalize(seq, p=2, dim=1)
@@ -207,9 +228,9 @@ def build_encoder(
     hf_id: str, spec: dict, threads: int, quality_plan: str, quality_onnx=None
 ):
     staged = spec.get("staged_dir")
-    staged_paths = []
-    if staged:
-        staged_paths = [str(REPO_ROOT / staged), str(MAIN_TREE / staged)]
+    staged_paths = [str(REPO_ROOT / staged)]
+    if MAIN_TREE:
+        staged_paths.append(str(MAIN_TREE / staged))
     if quality_plan == "staged-st":
         return STEncoder(staged_paths or [hf_id])
     if quality_plan == "canonical-st":
@@ -239,7 +260,9 @@ def load_cross_encoder_compat(hf_id: str, spec: dict):
     staged = spec.get("staged_dir")
     targets = []
     if staged:
-        targets += [str(REPO_ROOT / staged), str(MAIN_TREE / staged)]
+        targets.append(str(REPO_ROOT / staged))
+        if MAIN_TREE:
+            targets.append(str(MAIN_TREE / staged))
     targets.append(hf_id)
 
     def attempt(target):
@@ -418,8 +441,10 @@ def rank_metrics(questions, ranked_sources_by_qid, k_values=(1, 3, 5)):
         sources = ranked_sources_by_qid.get(qid, [])
         rank = None
         if expected is not None:
+            expected_name = str(expected).replace(chr(92), "/").rsplit("/", 1)[-1]
             for index, source in enumerate(sources, start=1):
-                if source == expected or str(source).rsplit("/", 1)[-1] == expected:
+                basename = str(source).replace(chr(92), "/").rsplit("/", 1)[-1]
+                if source == expected or basename == expected_name:
                     rank = index
                     break
         ranks[qid] = rank

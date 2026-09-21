@@ -1,6 +1,16 @@
 {
   "threads": 8,
   "hardware": "AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD",
+  "machine_tag": "bakeoff-i55",
+  "generated_by": {
+    "git_rev": "1938d36707ee478d6fef928993cac42f461c401c",
+    "collect": "eval/bakeoff/collect.py",
+    "drivers": [
+      "eval/bakeoff/bakeoff_quality.py",
+      "eval/bakeoff/bakeoff_cost.py",
+      "eval/bakeoff/fetch_assets.py"
+    ]
+  },
   "in_corpus": 54,
   "out_of_corpus": 6,
   "chunks": 18,
@@ -75,9 +85,40 @@
         "recall@5": 0.5555555555555556,
         "mrr": 0.2980379188712522
       },
+      "per_embedding": [
+        {
+          "embedding": "BAAI/bge-small-en-v1.5",
+          "recall@1": 0.1111111111111111,
+          "recall@3": 0.3148148148148148,
+          "recall@5": 0.5555555555555556,
+          "mrr": 0.2980379188712522
+        },
+        {
+          "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+          "recall@1": 0.14814814814814814,
+          "recall@3": 0.3148148148148148,
+          "recall@5": 0.6111111111111112,
+          "mrr": 0.32283950617283935
+        },
+        {
+          "embedding": "google/embeddinggemma-300m",
+          "recall@1": 0.1111111111111111,
+          "recall@3": 0.35185185185185186,
+          "recall@5": 0.6111111111111112,
+          "mrr": 0.310405643738977
+        },
+        {
+          "embedding": "Qwen/Qwen3-Embedding-0.6B",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.3333333333333333,
+          "recall@5": 0.6111111111111112,
+          "mrr": 0.30315255731922397
+        }
+      ],
       "cpu": {
         "top15_ms_p50": 79.303,
-        "top30_ms_p50": 136.069
+        "top30_ms_p50": 136.069,
+        "pair_mean_ms_top15": 5.287
       }
     },
     "cross-encoder/ms-marco-MiniLM-L6-v2": {
@@ -88,9 +129,40 @@
         "recall@5": 0.5740740740740741,
         "mrr": 0.26640211640211636
       },
+      "per_embedding": [
+        {
+          "embedding": "BAAI/bge-small-en-v1.5",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.25925925925925924,
+          "recall@5": 0.5740740740740741,
+          "mrr": 0.26640211640211636
+        },
+        {
+          "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.3148148148148148,
+          "recall@5": 0.5555555555555556,
+          "mrr": 0.26795267489711944
+        },
+        {
+          "embedding": "google/embeddinggemma-300m",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.37037037037037035,
+          "recall@5": 0.5925925925925926,
+          "mrr": 0.292688124632569
+        },
+        {
+          "embedding": "Qwen/Qwen3-Embedding-0.6B",
+          "recall@1": 0.14814814814814814,
+          "recall@3": 0.3333333333333333,
+          "recall@5": 0.6851851851851852,
+          "mrr": 0.34222516166960587
+        }
+      ],
       "cpu": {
         "top15_ms_p50": 37.787,
-        "top30_ms_p50": 75.638
+        "top30_ms_p50": 75.638,
+        "pair_mean_ms_top15": 2.519
       }
     },
     "BAAI/bge-reranker-v2-m3": {
@@ -101,9 +173,40 @@
         "recall@5": 0.5740740740740741,
         "mrr": 0.26640211640211636
       },
+      "per_embedding": [
+        {
+          "embedding": "BAAI/bge-small-en-v1.5",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.25925925925925924,
+          "recall@5": 0.5740740740740741,
+          "mrr": 0.26640211640211636
+        },
+        {
+          "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.3148148148148148,
+          "recall@5": 0.5555555555555556,
+          "mrr": 0.26795267489711944
+        },
+        {
+          "embedding": "google/embeddinggemma-300m",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.37037037037037035,
+          "recall@5": 0.5925925925925926,
+          "mrr": 0.292688124632569
+        },
+        {
+          "embedding": "Qwen/Qwen3-Embedding-0.6B",
+          "recall@1": 0.14814814814814814,
+          "recall@3": 0.3333333333333333,
+          "recall@5": 0.6851851851851852,
+          "mrr": 0.34222516166960587
+        }
+      ],
       "cpu": {
         "top15_ms_p50": 482.846,
-        "top30_ms_p50": 878.987
+        "top30_ms_p50": 878.987,
+        "pair_mean_ms_top15": 32.19
       }
     }
   },

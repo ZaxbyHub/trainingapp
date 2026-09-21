@@ -30,7 +30,6 @@ EMBEDDING_CANDIDATES = {
         "query_prompt": "Represent this sentence for searching relevant passages: {text}",
         "passage_prompt": "{text}",
         "prompt_source": "BAAI bge-small-en-v1.5 model card retrieval usage",
-        "onnx_repo": None,  # staged fp32 onnx/model.onnx
     },
     "Snowflake/snowflake-arctic-embed-m-v1.5": {
         "kind": "embed",
@@ -39,7 +38,6 @@ EMBEDDING_CANDIDATES = {
         "query_prompt": "Represent this sentence for searching relevant passages: {text}",
         "passage_prompt": "{text}",
         "prompt_source": "Snowflake arctic-embed model card retrieval usage",
-        "onnx_repo": None,  # staged onnx/model_quantized.onnx + fp32
     },
     "google/embeddinggemma-300m": {
         "kind": "embed",
@@ -48,7 +46,6 @@ EMBEDDING_CANDIDATES = {
         "query_prompt": "task: search result | query: {text}",
         "passage_prompt": "title: none | text: {text}",
         "prompt_source": "google/embeddinggemma-300m model card retrieval prompts",
-        "onnx_repo": "onnx-community/embeddinggemma-300m-ONNX",
     },
     "Qwen/Qwen3-Embedding-0.6B": {
         "kind": "embed",
@@ -60,7 +57,6 @@ EMBEDDING_CANDIDATES = {
         ),
         "passage_prompt": "{text}",
         "prompt_source": "Qwen3-Embedding model card retrieval usage",
-        "onnx_repo": "onnx-community/Qwen3-Embedding-0.6B-ONNX",
     },
 }
 
@@ -68,18 +64,14 @@ RERANKER_CANDIDATES = {
     "cross-encoder/ettin-reranker-32m-v1": {
         "kind": "rerank",
         "staged_dir": "models/ettin-reranker-32m-v1",
-        "onnx_repo": None,  # staged onnx/model_quantized.onnx + fp32
     },
     "cross-encoder/ms-marco-MiniLM-L6-v2": {
         "kind": "rerank",
         "staged_dir": None,
-        "onnx_repo": "cross-encoder/ms-marco-MiniLM-L6-v2",  # in-repo onnx/ tree
-        "onnx_repo_is_canonical": True,
     },
     "BAAI/bge-reranker-v2-m3": {
         "kind": "rerank",
         "staged_dir": None,
-        "onnx_repo": "onnx-community/bge-reranker-v2-m3-ONNX",
     },
 }
 
@@ -87,7 +79,10 @@ RERANKER_CANDIDATES = {
 # desktop pair member), kept fixed so reranker rows are comparable to each other.
 CONTROL_EMBEDDING = "BAAI/bge-small-en-v1.5"
 
-THREADS = 8  # end-user CPU profile per the interactive user's instruction
+# Bake-off thread cap (end-user CPU profile per the interactive user's
+# instruction). Distinct from bench/onnx_bench_driver.THREADS=4, the stock
+# #52 driver's default; bakeoff_cost passes this value explicitly.
+THREADS = 8
 
 RETRIEVAL_POOL = 30  # candidate chunks fed to a reranker stage
 FINAL_CUT = 10  # contract-max sources kept for ranking metrics (eval/runner default)

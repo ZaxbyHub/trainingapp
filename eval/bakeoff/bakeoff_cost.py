@@ -28,6 +28,24 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_main_checkout():
+    """Sibling main checkout holding locally staged (git-excluded) models.
+
+    $TRAININGAPP_MAIN_CHECKOUT, else the conventional sibling directory.
+    Optional: every consumer falls back to hub downloads without it.
+    """
+    import os
+
+    override = os.environ.get("TRAININGAPP_MAIN_CHECKOUT")
+    if override:
+        candidate = Path(override)
+        return candidate if candidate.is_dir() else None
+    sibling = REPO_ROOT.parent / "trainingapp"
+    return sibling if sibling.is_dir() else None
+
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO_ROOT / "bench"))
 
@@ -53,7 +71,11 @@ def load_tokenizer(tokenizer_dir: Path, hf_id: str = "", staged_dir: str | None 
         tokenizer_dir.parent / "tokenizer.json",
     ]
     if staged_dir:
-        for base in (REPO_ROOT / staged_dir, Path(r"E:\ZCode	rainingapp") / staged_dir):
+        bases = [REPO_ROOT / staged_dir]
+        main_checkout = _resolve_main_checkout()
+        if main_checkout:
+            bases.append(main_checkout / "models" / staged_dir)
+        for base in bases:
             candidates += [base / "tokenizer.json", base / "onnx" / "tokenizer.json"]
     for candidate in candidates:
         if candidate.is_file():
@@ -135,12 +157,15 @@ def measure_rerank(session, tokenizer, query: str, corpus: list[str], n: int) ->
         start = time.perf_counter()
         for passage in corpus[:n]:
             enc = tokenizer.encode(query, passage)
-            feed = bench_driver.feed_inputs(session, enc)
+            try:
+                feed = bench_driver.feed_inputs(session, enc)
+            except RuntimeError:
+                feed = {"input_ids": [enc.ids], "attention_mask": [enc.attention_mask]}
             feed = augment_decoder_feed(session, feed, len(enc.ids))
             session.run(None, feed)
         return (time.perf_counter() - start) * 1000.0
 
-    for _ in range(2):
+    for _ in range(WARMUP_TRIALS):
         once()
     return percentile_50([once() for _ in range(TRIALS)])
 

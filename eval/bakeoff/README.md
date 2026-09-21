@@ -15,9 +15,15 @@ rules are enforced in CI by `tests/test_bakeoff_artifacts.py`).
   defaults: chunk_size 256, overlap 100) → 18 chunks, shared by all candidates.
   Slide JSON fixtures are embedded as `slide_title + on_screen_text +
   transcript_source`.
-- **Metrics:** identical semantics to `eval/runner.py` — recall@k
-  (k ∈ 1,3,5) over the ranked unique-source list (doc-id-or-basename match,
-  top-10 cut = contract max), MRR with unmatched in-corpus rows contributing 0.
+- **Metrics:** the same metric math as `eval/runner.py` — recall@k
+  (k ∈ 1,3,5) over the ranked source list (doc-id-or-basename match, now with
+  runner's backslash normalization; top-10 cut = contract max), MRR with
+  unmatched in-corpus rows contributing 0 (runner divides by successful rows
+  only; equivalent here because the offline drivers have no error rows).
+  One disclosed pipeline difference from a production `/ask` call: the
+  reranker stage scores a shared top-30 chunk pool (deduplicated to unique
+  sources AFTER re-ranking), whereas the backend reranks its own retrieved
+  pool — with an 18-chunk corpus both see effectively the whole index.
 - **Retrieval pipeline:** cosine over candidate embeddings, top-30 pool; the
   reranker stage re-scores the pool and re-ranks (cut to 10). Reranker summary
   rows are measured on the fixed control embedding (`BAAI/bge-small-en-v1.5`,
@@ -43,7 +49,7 @@ rules are enforced in CI by `tests/test_bakeoff_artifacts.py`).
 | `google/embeddinggemma-300m` | official `onnx-community/embeddinggemma-300m-ONNX` fp32 graph — the canonical Google repo is **gated** (no token on the bake-off machine); graph outputs `sentence_embedding` directly | mirror's shipped int8 pair |
 | `Qwen/Qwen3-Embedding-0.6B` | canonical Qwen repo via transformers + model-card last-token pooling (its ST config declares `pooling_mode_lasttoken`, unsupported by the pinned sentence-transformers 2.7) | mirror `model_quantized.onnx` (decoder-with-cache export; fed empty KV caches + position ids) |
 | `cross-encoder/ettin-reranker-32m-v1` | **trained ST modules pipeline** (see below) | staged shipped q8 graph (encoder cost; see caveat) |
-| `cross-encoder/ms-marco-MiniLM-L6-v2` | canonical repo via CrossEncoder | in-repo fp32 graph, dynamic-int8 quantized locally |
+| `cross-encoder/ms-marco-MiniLM-L6-v2` | canonical repo via CrossEncoder | canonical hub repo's in-repo `onnx/` graph (downloaded), dynamic-int8 quantized locally |
 | `BAAI/bge-reranker-v2-m3` | canonical repo via CrossEncoder | `onnx-community/bge-reranker-v2-m3-ONNX` int8 |
 
 The ettin model is a sentence-transformers **modules-based** cross-encoder
@@ -82,6 +88,10 @@ ONNX graphs at 8 threads:
 - **Rerankers, `top15/top30_ms_p50`:** wall time to sequentially score 15/30
   (query, passage) pairs; `pair_mean_ms_top15` keeps the #52 driver's
   per-pair mean for continuity.
+- `p50` is the upper median over 20 trials (element 11 of the sorted list).
+  Embedding measurements use 3 warm-up trials, reranker measurements 2 (the
+  #52 driver's own values, kept for continuity); embed vs rerank latencies
+  are therefore measured under slightly different warm-up conditions.
 
 ## Reproduction
 
@@ -96,8 +106,16 @@ python bench/onnx_bench_driver.py --threads 8 --assets-dir models   # stock #52 
 ```
 
 `fetch_assets.py` needs `HF_HUB_DISABLE_SYMLINKS=1` on Windows without the
-symlink privilege. The quality driver reads the main checkout's `models/`
-directory for staged candidates when run from a linked worktree.
+symlink privilege. Drivers resolve locally staged (git-excluded) `models/`
+trees via `$TRAININGAPP_MAIN_CHECKOUT`, falling back to the conventional
+sibling checkout `../trainingapp` when it exists; with neither, every candidate
+falls back to hub downloads. ONNX sourcing trust: canonical repos are preferred
+and community `onnx-community/*` mirrors are used only where the canonical
+author publishes no ONNX; the exact revision fetched is recorded post-hoc per
+candidate in `assets/assets-meta.json` (mirrored to
+`results/assets-meta.json` by `collect.py`), not pinned at download time.
+The ettin quality leg additionally stages the trained ST head modules into
+`assets/ettin-reranker-32m-v1-compat/` (fetch_assets does this automatically).
 
 ## Deviation log (recorded in `results/bakeoff-results.json`)
 
@@ -122,8 +140,8 @@ Single-machine run (2026-09-20, `bakeoff-i55`, 8-thread cap,
 |---|---|---|
 | `fetch_assets.py` (weights + ONNX + licenses) | ~19 min (3 rounds; symlink fallback) | `assets/assets-meta.json` per-candidate timings |
 | feasibility gate (7/7 candidates load) | ~14 s | trace `evidence/feasibility.log`, `results/feasibility.json` |
-| `bakeoff_quality.py` (corrected ettin) | 1 m 10 s | `execution_log` in results JSON (per-candidate seconds) |
-| `bakeoff_cost.py` | 4 m 15 s | `execution_log` in results JSON |
+| `bakeoff_quality.py` (corrected ettin) | 2.6 min (155.9 s sum of per-candidate entries) | `execution_log` in results JSON |
+| `bakeoff_cost.py` | 0.95 min (56.7 s sum of per-candidate entries) | `execution_log` in results JSON |
 | reranker-validity probes (staged-artifact defect) | ~2 min | trace `evidence/reranker-probe.log` |
 
 Quality rows are deterministic given the pinned assets (no sampling; exact

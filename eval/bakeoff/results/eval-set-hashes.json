@@ -1,0 +1,20 @@
+{
+  "eval/ci_serve.py": "4ccee462ead3e6242ac01b46e7ea97fa663b6149e93b5cdb4ee4b921250c5659",
+  "eval/corpus/compliance-basics.md": "aa8bc483945270895e0f5a683550e791ab6e2e661b1bfa3e2681f59a27e88af6",
+  "eval/corpus/employee-handbook.md": "cec9b061c6063b13aa2613b82961bccd9c395677af8d9dee98a6f7266e1100ad",
+  "eval/corpus/expenses-guide.md": "636aa9f5621c5682c43f0fc57f9cf13a406aee83e3d70dca14842e8d3d6c6b4f",
+  "eval/corpus/it-helpdesk.md": "32937ad0d4df4cc1ffba8ced2d305ca97ce151346f765dbb02cbfc1ec2872fc1",
+  "eval/corpus/product-training.md": "1f7232870e7fd0e2c7a56b4f88eeba6779d1608ab978a2ec0b9f3c75392da671",
+  "eval/corpus/security-basics.md": "05651d5724d28299c965528b3d1afb502fc1c7e9d8f34917e738736d28813cd3",
+  "eval/corpus/slides/PROVENANCE.md": "915dc79a5d1267c59932b9ada383f0e570480aba1a75e01183f5615438631b3f",
+  "eval/corpus/slides/slide-001-5rN4PvXJM5d.json": "4619e8968522515987787d0d51916cb0425f1672fba33b858e3bbe85f0bc0518",
+  "eval/corpus/slides/slide-002-5b8obQzpBWu.json": "fe31c4b391833cac60cc7416789bd341232c4f1402388341e7a1fe2c8a1670ff",
+  "eval/corpus/slides/slide-003-6fxKq2mV8bR.json": "59c8f95a7aec5dc2b0ca2c7a6d6e9ec8461ea274816d26d99ddc599cbdf0f2b4",
+  "eval/corpus/slides/slide-004-7bLnWpQxT4s.json": "518eb4157bd46c93fedf41a71223dbeffe7efff4b81304c2b56330ed951565ff",
+  "eval/corpus/slides/slide-005-8cMoXyRz5Jq.json": "f354e325bca641002dfb05d38f56094fb30927739e1b266282c302fbbbd97898",
+  "eval/corpus/slides/slide-006-9dNpYzSa6Kr.json": "d6ccbf3da816f5a051d84b065ab59f0e6a6823702d5689f0c189b8abd2dbfc67",
+  "eval/corpus/travel-policy.md": "f5683812401040600b8baaa398808de8bab27acd38869863016056d3f9a779b2",
+  "eval/corpus/workplace-safety.md": "34d1aa49bf507cdf9b97feafc5ca97ec03c977309b9053dea1b2387c072e4133",
+  "eval/questions.jsonl": "285c7c29944b587ecc4ae42ca0a7d182abe24bec00e8c85c2eb29b18ac6cdf58",
+  "eval/runner.py": "028e4d275bf6421c1920428d7ba81b66ba0ddbc9ceb80ede596e4a67ba2185b9"
+}

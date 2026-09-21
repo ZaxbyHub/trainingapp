@@ -39,6 +39,15 @@ def main(argv=None) -> int:
     cost = json.loads(Path(args.cost).read_text(encoding="utf-8"))
     meta = json.loads(Path(args.meta).read_text(encoding="utf-8"))
 
+    def cost_row(hf_id: str) -> dict:
+        if hf_id not in cost["rows"]:
+            raise SystemExit(
+                "collect: %s is present in %s but missing from %s -- the two"
+                " inputs come from mismatched candidate sets; re-run both"
+                " drivers against the same registry" % (hf_id, args.quality, args.cost)
+            )
+        return cost["rows"][hf_id]
+
     embeddings: dict[str, dict] = {}
     for hf_id, record in quality["embeddings"].items():
         embeddings[hf_id] = {
@@ -46,8 +55,8 @@ def main(argv=None) -> int:
             "license": meta[hf_id]["license"],
             "quality": record["quality"],
             "cpu": {
-                "top15_ms_p50": cost["rows"][hf_id]["top15_ms_p50"],
-                "top30_ms_p50": cost["rows"][hf_id]["top30_ms_p50"],
+                "top15_ms_p50": cost_row(hf_id)["top15_ms_p50"],
+                "top30_ms_p50": cost_row(hf_id)["top30_ms_p50"],
             },
         }
 
@@ -56,15 +65,44 @@ def main(argv=None) -> int:
         rerankers[hf_id] = {
             "license": meta[hf_id]["license"],
             "quality": record["quality"],
+            "per_embedding": record.get("per_embedding", []),
             "cpu": {
-                "top15_ms_p50": cost["rows"][hf_id]["top15_ms_p50"],
-                "top30_ms_p50": cost["rows"][hf_id]["top30_ms_p50"],
+                "top15_ms_p50": cost_row(hf_id)["top15_ms_p50"],
+                "top30_ms_p50": cost_row(hf_id)["top30_ms_p50"],
+                "pair_mean_ms_top15": cost_row(hf_id).get("pair_mean_ms_top15"),
             },
         }
+
+    git_rev = None
+    try:
+        import subprocess
+
+        git_rev = (
+            subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(REPO_ROOT),
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
+            or None
+        )
+    except Exception:
+        git_rev = None  # provenance stamp is best-effort; never blocks the merge
 
     merged = {
         "threads": quality["threads"],
         "hardware": quality["hardware"],
+        "machine_tag": cost.get("machine_tag"),
+        "generated_by": {
+            "git_rev": git_rev,
+            "collect": "eval/bakeoff/collect.py",
+            "drivers": [
+                "eval/bakeoff/bakeoff_quality.py",
+                "eval/bakeoff/bakeoff_cost.py",
+                "eval/bakeoff/fetch_assets.py",
+            ],
+        },
         "in_corpus": quality["in_corpus"],
         "out_of_corpus": quality["out_of_corpus"],
         "chunks": quality["chunks"],
@@ -112,6 +150,13 @@ def main(argv=None) -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     print("collect: wrote %s (schema-valid)" % out_path)
+
+    # PRR-019: commit the asset provenance (licenses + revisions) alongside the
+    # decision artifact; the working copy under the gitignored assets dir stays
+    # the execution-time original.
+    meta_copy = out_path.parent / "assets-meta.json"
+    meta_copy.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    print("collect: wrote %s" % meta_copy)
 
     def q(record):
         quality_block = record["quality"]
