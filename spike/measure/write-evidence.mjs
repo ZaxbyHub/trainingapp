@@ -52,13 +52,13 @@ const matrix = {
     first_token_latency_s: {
       node: node.runs.ask_2k.first_token_latency_s,
       'python-sidecar': py.runs.ask_2k.failed
-        ? { blocked_by: 'frozen llama-cpp-python access-violates in llama_model_load (PyInstaller onedir); retrieval and health serve normally' }
+        ? { blocked_by: 'blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally' }
         : py.runs.ask_2k.first_token_latency_s,
     },
     decode_tok_s: {
       node: node.runs.ask_2k.decode_tok_s,
       'python-sidecar': py.runs.ask_2k.failed
-        ? { blocked_by: 'frozen llama-cpp-python access-violates in llama_model_load (PyInstaller onedir); retrieval and health serve normally' }
+        ? { blocked_by: 'blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally' }
         : py.runs.ask_2k.decode_tok_s,
     },
     peak_rss_mb: { node: node.peak_rss_mb, 'python-sidecar': py.peak_rss_mb },
@@ -94,7 +94,7 @@ function sliceEvidence(res, exe, ciUrl) {
       installer,
       llm_failure: {
         error: res.runs.ask_2k.error,
-        reason: 'PyInstaller-frozen llama-cpp-python access-violates on GGUF model load',
+        reason: 'llama-cpp-python is not importable in the packaged runtime (PyInstaller freezing breaks its module layout); the deeper bundled-variant failure (model-load access violation) is recorded in the ADR findings',
         blocked_metrics: ['first_token_latency_s', 'decode_tok_s', 'cancellation_stop'],
       },
       streamed_answer: {

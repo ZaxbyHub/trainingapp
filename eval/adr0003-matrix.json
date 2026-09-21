@@ -3,27 +3,27 @@
   "metrics": {
     "install_size_mb": {
       "node": 1373.7,
-      "python-sidecar": 1908.8
+      "python-sidecar": 1965
     },
     "cold_start_s": {
       "node": 0.766,
-      "python-sidecar": 4.755
+      "python-sidecar": 4.7
     },
     "first_token_latency_s": {
       "node": 1.287,
       "python-sidecar": {
-        "blocked_by": "frozen llama-cpp-python access-violates in llama_model_load (PyInstaller onedir); retrieval and health serve normally"
+        "blocked_by": "blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally"
       }
     },
     "decode_tok_s": {
       "node": 0.93,
       "python-sidecar": {
-        "blocked_by": "frozen llama-cpp-python access-violates in llama_model_load (PyInstaller onedir); retrieval and health serve normally"
+        "blocked_by": "blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally"
       }
     },
     "peak_rss_mb": {
       "node": 2124.6,
-      "python-sidecar": 327.9
+      "python-sidecar": 322
     },
     "ci_build_reliability": {
       "node": "1/1 runs green (run 35641461760)",
@@ -42,8 +42,8 @@
       "os": "Windows_NT 10.0.26200",
       "cpu": "AMD Ryzen 9 5950X 16-Core Processor            "
     },
-    "git_commit": "952ae142661917bb760f56b7ae75de649dda23fb",
-    "script_sha256": "e6d868e5f8bb9399c443c1cb4f1bc457160d9e2e56354ecc7442cb1e0ff94a9f",
+    "git_commit": "bbe7921705c698352d61602b4a90ad59346b44ae",
+    "script_sha256": "71c9ba067d9e89e160e8e6dbc444c7beec60c2466032f247343c9a04ba144b87",
     "raw": {
       "node": "spike/measure/results/node.json",
       "python": "spike/measure/results/python.json",

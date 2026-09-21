@@ -1,11 +1,11 @@
 {
   "slice": "python",
   "models_staging": "pre-staged",
-  "install_size_mb": 1908.8,
+  "install_size_mb": 1965,
   "cold_starts_ms": [
-    4734,
-    4755,
-    20191
+    4671,
+    4700,
+    4732
   ],
   "runs": {
     "ask_2k": {
@@ -17,9 +17,9 @@
       "reason": "LLM unavailable"
     }
   },
-  "cold_start_s": 4.755,
-  "peak_rss_mb": 327.9,
-  "measured_at_utc": "2026-09-21T19:58:19.524Z",
+  "cold_start_s": 4.7,
+  "peak_rss_mb": 322,
+  "measured_at_utc": "2026-09-21T22:18:51.106Z",
   "models_dir": "C:\\Users\\Brett\\.trainingapp\\models",
   "port": 8795
 }

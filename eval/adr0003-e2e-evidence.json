@@ -35,7 +35,7 @@
       },
       "llm_failure": {
         "error": "{\"detail\":\"No GGUF backend available: loading GGUF model 'model.gguf' failed: llama-cpp-python not installed. Run: pip install llama-cpp-python\"}",
-        "reason": "PyInstaller-frozen llama-cpp-python access-violates on GGUF model load",
+        "reason": "llama-cpp-python is not importable in the packaged runtime (PyInstaller freezing breaks its module layout); the deeper bundled-variant failure (model-load access violation) is recorded in the ADR findings",
         "blocked_metrics": [
           "first_token_latency_s",
           "decode_tok_s",
@@ -66,8 +66,8 @@
       "os": "Windows_NT 10.0.26200",
       "cpu": "AMD Ryzen 9 5950X 16-Core Processor            "
     },
-    "git_commit": "952ae142661917bb760f56b7ae75de649dda23fb",
-    "script_sha256": "e6d868e5f8bb9399c443c1cb4f1bc457160d9e2e56354ecc7442cb1e0ff94a9f",
+    "git_commit": "bbe7921705c698352d61602b4a90ad59346b44ae",
+    "script_sha256": "71c9ba067d9e89e160e8e6dbc444c7beec60c2466032f247343c9a04ba144b87",
     "raw": {
       "node": "spike/measure/results/node.json",
       "python": "spike/measure/results/python.json",

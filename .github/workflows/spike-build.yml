@@ -62,6 +62,11 @@ jobs:
           HF_HOME: ${{ runner.temp }}/hf-home
       - name: Build sidecar onedir (api_server)
         run: spike/python-sidecar/.venv-sidecar/Scripts/pyinstaller spike/python-sidecar/api_server_sidecar.spec --noconfirm --distpath spike/python-sidecar/shell/sidecar --workpath build/pyinstaller-sidecar
+      # llama_cpp ships as real on-disk runtime files beside the onedir
+      # (excluded from the PYZ by the spec; see the ADR's frozen-llama finding).
+      - name: Bundle llama_cpp runtime files
+        shell: bash
+        run: cp -r spike/python-sidecar/.venv-sidecar/Lib/site-packages/llama_cpp spike/python-sidecar/shell/sidecar/spike-sidecar/_internal/llama_cpp
       - name: Build probe onedir (reranker probe)
         run: spike/python-sidecar/.venv-sidecar/Scripts/pyinstaller spike/python-sidecar/probe_reranker.spec --noconfirm --distpath spike/python-sidecar/shell/probe --workpath build/pyinstaller-probe
       - name: Run reranker probe (records leg outcomes)
