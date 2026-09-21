@@ -60,6 +60,13 @@ LICENSE_BY_MODEL_PREFIX = (
     ("gemma-4", re.compile(r"apache", re.I)),
     ("lfm2.5", re.compile(r"lfm open license|lfm1\.0", re.I)),
 )
+# The ADR-0002 decision itself: which model each profile pins. This is the
+# regression pin — a re-decision requires a deliberate update here (with the
+# ADR revision), never a silent document edit.
+EXPECTED_PROFILE_MODELS = {
+    "quality": "gemma-4-e2b-it",
+    "fast": "lfm2.5-vl-450m",
+}
 MODEL_SLUG_RE = re.compile(r"[a-z0-9]+(?:[.\-][a-z0-9]+)+")
 QUANT_RE = re.compile(r"Q[0-9]_K_[MS]")
 MACHINE_TAG_RE = re.compile(r"\(machine ([a-z0-9][a-z0-9-]*)\)")
@@ -247,6 +254,13 @@ def validate_documents(
             if slugs:
                 slug = max(slugs, key=len)
                 profile_slugs[profile] = slug
+                # Final-critic Round 1: the profile-to-model assignment is the
+                # decision itself — pin it. A future ADR revision updates this
+                # pin deliberately; a silent swap (even a consistent one citing
+                # real bench rows) must fail.
+                expected = EXPECTED_PROFILE_MODELS.get(profile)
+                if expected and slug != expected:
+                    v.append(f"{profile} row names {slug} but ADR-0002 pins {expected}")
                 if slug in UNMEASURED_SLUGS:
                     v.append(f"{profile} row names an unmeasured candidate {slug}")
                 for prefix, license_rx in LICENSE_BY_MODEL_PREFIX:
@@ -276,6 +290,21 @@ def validate_documents(
             if slug and slug not in decision_body:
                 v.append(
                     f"Decision section does not name the {profile}-profile model {slug}"
+                )
+        # Final-critic Round 1: both models being named somewhere in the prose
+        # is not enough — the prose must BIND each profile keyword to its
+        # pinned model, so a cross-swapped narrative fails too.
+        for profile, expected in EXPECTED_PROFILE_MODELS.items():
+            pair_rx = re.compile(
+                re.escape(profile)
+                + r"\s+profile[^*]{0,120}`"
+                + re.escape(expected)
+                + r"`",
+                re.I,
+            )
+            if not pair_rx.search(decision_body):
+                v.append(
+                    f"Decision prose does not bind the {profile} profile to {expected}"
                 )
 
     lines = adr_text.splitlines()
@@ -572,3 +601,71 @@ def test_validator_rejects_decision_prose_model_swap():
         "Decision section does not name the quality-profile model gemma-4-e2b-it" in x
         for x in v
     ), v
+
+
+def test_validator_rejects_full_tier_cross_swap():
+    """Final-critic Round 1: a CONSISTENT cross-swap of both complete decision
+    rows (each citing a real recorded bench row, each license cell matching its
+    new model family, prose naming both models) must be rejected — the
+    profile-to-model assignment is the pinned decision."""
+    adr = _load(ADR_REL)
+    header_cells, _ = _decision_table(adr)
+    mi = next(i for i, h in enumerate(header_cells) if _norm(h) == "model")
+    ti = next(i for i, h in enumerate(header_cells) if _norm(h) == "tok/s")
+    li = next(i for i, h in enumerate(header_cells) if _norm(h) == "license")
+    swaps = {
+        "quality": (
+            "lfm2.5-vl-450m",
+            "95.97 tok/s @4 threads, 1024-token prompt (machine devstation)",
+            "LFM Open License v1.0 (non-OSI)",
+        ),
+        "fast": (
+            "gemma-4-e2b-it",
+            "3.65 tok/s @4 threads, 1024-token prompt (machine devstation)",
+            "Apache-2.0 (Gemma 4 license)",
+        ),
+    }
+    lines = adr.splitlines()
+    out = []
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("|"):
+            cells = _row_cells(line)
+            if len(cells) > max(mi, ti, li):
+                profile_cell = _cell(cells, header_cells, "profile").lower()
+                if profile_cell in swaps:
+                    model, toks, lic = swaps[profile_cell]
+                    cells[mi] = model
+                    cells[ti] = re.sub(
+                        r"\d+(?:\.\d+)? tok/s",
+                        toks.split(" ")[0] + " tok/s",
+                        cells[ti],
+                        count=1,
+                    )
+                    cells[li] = lic
+                    out.append("|" + " | ".join(cells) + "|")
+                    continue
+        out.append(line)
+    swapped = "\n".join(out)
+    v = validate_documents(swapped, _load(LICENSES_REL), _load(RESULTS_REL))
+    assert any(
+        "quality row names lfm2.5-vl-450m but ADR-0002 pins gemma-4-e2b-it" in x
+        for x in v
+    ), v
+    assert any(
+        "fast row names gemma-4-e2b-it but ADR-0002 pins lfm2.5-vl-450m" in x for x in v
+    ), v
+    # And a cross-swapped NARRATIVE must fail the prose binding too.
+    dm = re.search(r"^## Decision\s*$", swapped, re.M)
+    tail = swapped[dm.end() :]
+    nxt = re.search(r"^## ", tail, re.M)
+    body = tail[: nxt.start()] if nxt else tail
+    prose = (
+        body.replace("`gemma-4-e2b-it`", "@@SWAP-Q@@")
+        .replace("`lfm2.5-vl-450m`", "`gemma-4-e2b-it`")
+        .replace("@@SWAP-Q@@", "`lfm2.5-vl-450m`")
+    )
+    fully_swapped = swapped[: dm.end()] + prose + swapped[dm.end() + len(body) :]
+    v2 = validate_documents(fully_swapped, _load(LICENSES_REL), _load(RESULTS_REL))
+    assert any("Decision prose does not bind the quality profile" in x for x in v2), v2
+    assert any("Decision prose does not bind the fast profile" in x for x in v2), v2
