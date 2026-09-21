@@ -5,10 +5,8 @@ build/
 .venv-sidecar/
 staged_reranker/
 local/
-spike-data/
 *.log
 python-sidecar/shell/sidecar/
 python-sidecar/shell/probe/
 python-sidecar/shell/renderer/
 python-sidecar/shell/import-probe/
-spike-data/
