@@ -27,8 +27,8 @@ covered by `docs/security_hardening_guide.md`; renderer feature work is B9
    exactly why the desktop transport carries its own token gate: **a loopback
    port is reachable by every local process**, so origin+token enforcement
    must not depend on the backend's own auth settings. This guard sits in
-   front of the B3 backend regardless of which side of ADR-0003 (#57) wins
-   (Node main or Electron-hosted Python sidecar).
+   front of the B3 backend regardless of which backend mode is active
+   (Node main per ADR-0003, or the Electron-hosted Python sidecar).
 
 ## Threats and mitigations
 
@@ -136,8 +136,7 @@ the contract above as follows:
   fetch `Headers` implementation. A vitest guard-spy spec pins that every
   request crosses the gate exactly once before any handler.
 - **Mode selection.** `backend.mode` (`"node" | "sidecar"`, env
-  `TRAININGAPP_DESKTOP_BACKEND_MODE`, default `"node"` while ADR-0003 #57 is
-  open) selects between two implementations of the ONE `BackendHost`
+  `TRAININGAPP_DESKTOP_BACKEND_MODE`, default `"node"` per ADR-0003) selects between two implementations of the ONE `BackendHost`
   interface: the node host (guarded listener + local stub engine) or the
   sidecar host (the SAME guarded listener fronting a loopback proxy to the
   spawned backend child). Flipping the ADR decision is a one-line default

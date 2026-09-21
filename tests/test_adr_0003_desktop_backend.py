@@ -429,6 +429,32 @@ def test_c1_decision():
             "the Decision section binds BOTH options as chosen (%s); exactly "
             "one may be positively bound" % sorted(bound)
         )
+    # Sanctioned AMEND (CHECK_WRONG, 2026-09-21): the Decision must agree with
+    # the recorded measurements - a slice whose packaged generation is BLOCKED
+    # in eval/adr0003-matrix.json cannot be the chosen backend. This is what
+    # makes a swapped Decision fail instead of merely binding "some" option.
+    try:
+        matrix = _load_json(MATRIX_REL)
+        metrics = matrix.get("metrics", {}) if isinstance(matrix, dict) else {}
+    except Exception:
+        metrics = {}
+    for sl in ("node", "python-sidecar"):
+        blocked = False
+        for mk in NUMERIC_METRICS:
+            val = (
+                metrics.get(mk, {}).get(sl)
+                if isinstance(metrics.get(mk), dict)
+                else None
+            )
+            if isinstance(val, dict) and val.get("blocked_by"):
+                blocked = True
+                break
+        if blocked and bound and sl in bound:
+            v.append(
+                "the Decision binds %s as chosen but eval/adr0003-matrix.json "
+                "records blocked generation metrics for it - a blocked backend "
+                "cannot be the chosen one" % sl
+            )
     assert not v, "ADR-0003 decision-record violations: %s" % v
     assert len(bound) == 1, "expected exactly one chosen option, got %s" % sorted(bound)
 

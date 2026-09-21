@@ -97,11 +97,11 @@ frozen API contract (`contracts/api.openapi.yaml`). B4-B9 import ONLY
 `desktop/main/backend/index.ts` (`createBackendHost`, `resolveBackendMode`,
 `resolveNodeEngine`).
 
-- **Modes**: `backend.mode` selects `"node"` (default while ADR-0003 #57 is
-  open; guarded listener + in-memory stub engine — real inference arrives with
-  B4 #62, ingestion B6 #64, retrieval B7 #65) or `"sidecar"` (the same guarded
-  listener fronting a loopback proxy to a spawned backend child managed by
-  `SidecarManager`). Env override: `TRAININGAPP_DESKTOP_BACKEND_MODE`.
+- **Modes**: `backend.mode` selects `"node"` (default per ADR-0003; guarded
+  listener + real native inference via B4 #62, ingestion B6 #64, retrieval
+  B7 #65) or `"sidecar"` (the same guarded listener fronting a loopback proxy
+  to a spawned backend child managed by `SidecarManager`). Env override:
+  `TRAININGAPP_DESKTOP_BACKEND_MODE`.
 - **Security**: binds `127.0.0.1` on a random free port; the B2 loopback guard
   sits in front of EVERY route (see `docs/security/desktop.md`, "B3
   integration contract"); the reserved `X-Profile-Id` header is accepted on
@@ -117,7 +117,7 @@ frozen API contract (`contracts/api.openapi.yaml`). B4-B9 import ONLY
 The node-mode default engine is `LlamaEngine`
 (`desktop/main/backend/inference/`): REAL llama.cpp inference via
 `node-llama-cpp` (prebuilt binaries ship in the npm package; the library
-choice is recorded as an assumption pending ADR-0003 #57), with Quality/Fast
+choice is recorded as an assumption, confirmed by ADR-0003), with Quality/Fast
 profile auto-selection.
 
 - **Profiles**: `auto` (default) picks Quality when free RAM >=
@@ -178,13 +178,13 @@ desktop change.
   with the training CSP profile; see `docs/training-player.md`. The pack
   routes dispatch before the generic renderer file mapping.
 
-## ADR-0003 note (issue #57, still open)
+## ADR-0003 note (issue #57, decided)
 
-No backend-host code exists in the main bootstrap, on purpose. When ADR-0003
-decides Node-main vs Electron-hosted Python sidecar, #61 adds backend hosting
-in its own module — this bootstrap does not need to change shape. If the ADR
-adds a sidecar executable, re-verify `electron-builder.yml` `extraResources`
-against it (per the issue's invalidation clause).
+ADR-0003 (`docs/adr/0003-desktop-backend.md`) chose the Node main-process
+backend on measured evidence; the `node` default in `backend.mode` is that
+decision. The sidecar mode remains available behind `backend.mode` /
+`SidecarManager` for a future packaged-Python capability (its PyInstaller +
+frozen-llama blockers are recorded in the ADR).
 
 ## B5 store (issue #63)
 
