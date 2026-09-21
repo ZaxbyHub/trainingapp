@@ -1,0 +1,544 @@
+{
+  "threads": 8,
+  "hardware": "AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD",
+  "machine_tag": "bakeoff-i55",
+  "generated_by": {
+    "git_rev": "c3f0bd265c152d1a93602c63b9bf2f11c75523f9",
+    "generated_at": "2026-09-21T04:31:32+00:00",
+    "collect": "eval/bakeoff/collect.py",
+    "drivers": [
+      "eval/bakeoff/bakeoff_quality.py",
+      "eval/bakeoff/bakeoff_cost.py",
+      "eval/bakeoff/fetch_assets.py"
+    ]
+  },
+  "in_corpus": 54,
+  "out_of_corpus": 6,
+  "chunks": 18,
+  "chunker": {
+    "chunk_size": 256,
+    "chunk_overlap": 100
+  },
+  "embeddings": {
+    "BAAI/bge-small-en-v1.5": {
+      "dims": 384,
+      "license": "mit",
+      "quality": {
+        "recall@1": 0.09259259259259259,
+        "recall@3": 0.25925925925925924,
+        "recall@5": 0.5740740740740741,
+        "mrr": 0.26640211640211636
+      },
+      "cpu": {
+        "top15_ms_p50": 2.73,
+        "top30_ms_p50": 2.345
+      }
+    },
+    "Snowflake/snowflake-arctic-embed-m-v1.5": {
+      "dims": 768,
+      "license": "apache-2.0",
+      "quality": {
+        "recall@1": 0.09259259259259259,
+        "recall@3": 0.3148148148148148,
+        "recall@5": 0.5555555555555556,
+        "mrr": 0.26795267489711944
+      },
+      "cpu": {
+        "top15_ms_p50": 6.773,
+        "top30_ms_p50": 6.545
+      }
+    },
+    "google/embeddinggemma-300m": {
+      "dims": 768,
+      "license": "gemma",
+      "quality": {
+        "recall@1": 0.09259259259259259,
+        "recall@3": 0.37037037037037035,
+        "recall@5": 0.5925925925925926,
+        "mrr": 0.292688124632569
+      },
+      "cpu": {
+        "top15_ms_p50": 152.784,
+        "top30_ms_p50": 144.855
+      }
+    },
+    "Qwen/Qwen3-Embedding-0.6B": {
+      "dims": 1024,
+      "license": "apache-2.0",
+      "quality": {
+        "recall@1": 0.14814814814814814,
+        "recall@3": 0.3333333333333333,
+        "recall@5": 0.6851851851851852,
+        "mrr": 0.34222516166960587
+      },
+      "cpu": {
+        "top15_ms_p50": 36.104,
+        "top30_ms_p50": 34.497
+      }
+    }
+  },
+  "rerankers": {
+    "cross-encoder/ettin-reranker-32m-v1": {
+      "license": "apache-2.0",
+      "quality": {
+        "recall@1": 0.1111111111111111,
+        "recall@3": 0.3148148148148148,
+        "recall@5": 0.5555555555555556,
+        "mrr": 0.2980379188712522
+      },
+      "per_embedding": [
+        {
+          "embedding": "BAAI/bge-small-en-v1.5",
+          "recall@1": 0.1111111111111111,
+          "recall@3": 0.3148148148148148,
+          "recall@5": 0.5555555555555556,
+          "mrr": 0.2980379188712522
+        },
+        {
+          "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+          "recall@1": 0.14814814814814814,
+          "recall@3": 0.3148148148148148,
+          "recall@5": 0.6111111111111112,
+          "mrr": 0.32283950617283935
+        },
+        {
+          "embedding": "google/embeddinggemma-300m",
+          "recall@1": 0.1111111111111111,
+          "recall@3": 0.35185185185185186,
+          "recall@5": 0.6111111111111112,
+          "mrr": 0.310405643738977
+        },
+        {
+          "embedding": "Qwen/Qwen3-Embedding-0.6B",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.3333333333333333,
+          "recall@5": 0.6111111111111112,
+          "mrr": 0.30315255731922397
+        }
+      ],
+      "cpu": {
+        "top15_ms_p50": 79.303,
+        "top30_ms_p50": 136.069,
+        "pair_mean_ms_top15": 5.287
+      }
+    },
+    "cross-encoder/ms-marco-MiniLM-L6-v2": {
+      "license": "apache-2.0",
+      "quality": {
+        "recall@1": 0.09259259259259259,
+        "recall@3": 0.25925925925925924,
+        "recall@5": 0.5740740740740741,
+        "mrr": 0.26640211640211636
+      },
+      "per_embedding": [
+        {
+          "embedding": "BAAI/bge-small-en-v1.5",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.25925925925925924,
+          "recall@5": 0.5740740740740741,
+          "mrr": 0.26640211640211636
+        },
+        {
+          "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.3148148148148148,
+          "recall@5": 0.5555555555555556,
+          "mrr": 0.26795267489711944
+        },
+        {
+          "embedding": "google/embeddinggemma-300m",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.37037037037037035,
+          "recall@5": 0.5925925925925926,
+          "mrr": 0.292688124632569
+        },
+        {
+          "embedding": "Qwen/Qwen3-Embedding-0.6B",
+          "recall@1": 0.14814814814814814,
+          "recall@3": 0.3333333333333333,
+          "recall@5": 0.6851851851851852,
+          "mrr": 0.34222516166960587
+        }
+      ],
+      "cpu": {
+        "top15_ms_p50": 37.787,
+        "top30_ms_p50": 75.638,
+        "pair_mean_ms_top15": 2.519
+      }
+    },
+    "BAAI/bge-reranker-v2-m3": {
+      "license": "apache-2.0",
+      "quality": {
+        "recall@1": 0.09259259259259259,
+        "recall@3": 0.25925925925925924,
+        "recall@5": 0.5740740740740741,
+        "mrr": 0.26640211640211636
+      },
+      "per_embedding": [
+        {
+          "embedding": "BAAI/bge-small-en-v1.5",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.25925925925925924,
+          "recall@5": 0.5740740740740741,
+          "mrr": 0.26640211640211636
+        },
+        {
+          "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.3148148148148148,
+          "recall@5": 0.5555555555555556,
+          "mrr": 0.26795267489711944
+        },
+        {
+          "embedding": "google/embeddinggemma-300m",
+          "recall@1": 0.09259259259259259,
+          "recall@3": 0.37037037037037035,
+          "recall@5": 0.5925925925925926,
+          "mrr": 0.292688124632569
+        },
+        {
+          "embedding": "Qwen/Qwen3-Embedding-0.6B",
+          "recall@1": 0.14814814814814814,
+          "recall@3": 0.3333333333333333,
+          "recall@5": 0.6851851851851852,
+          "mrr": 0.34222516166960587
+        }
+      ],
+      "cpu": {
+        "top15_ms_p50": 482.846,
+        "top30_ms_p50": 878.987,
+        "pair_mean_ms_top15": 32.19
+      }
+    }
+  },
+  "combos": [
+    {
+      "embedding": "BAAI/bge-small-en-v1.5",
+      "reranker": "cross-encoder/ettin-reranker-32m-v1",
+      "recall@1": 0.1111111111111111,
+      "recall@3": 0.3148148148148148,
+      "recall@5": 0.5555555555555556,
+      "mrr": 0.2980379188712522
+    },
+    {
+      "embedding": "BAAI/bge-small-en-v1.5",
+      "reranker": "cross-encoder/ms-marco-MiniLM-L6-v2",
+      "recall@1": 0.09259259259259259,
+      "recall@3": 0.25925925925925924,
+      "recall@5": 0.5740740740740741,
+      "mrr": 0.26640211640211636
+    },
+    {
+      "embedding": "BAAI/bge-small-en-v1.5",
+      "reranker": "BAAI/bge-reranker-v2-m3",
+      "recall@1": 0.09259259259259259,
+      "recall@3": 0.25925925925925924,
+      "recall@5": 0.5740740740740741,
+      "mrr": 0.26640211640211636
+    },
+    {
+      "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+      "reranker": "cross-encoder/ettin-reranker-32m-v1",
+      "recall@1": 0.14814814814814814,
+      "recall@3": 0.3148148148148148,
+      "recall@5": 0.6111111111111112,
+      "mrr": 0.32283950617283935
+    },
+    {
+      "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+      "reranker": "cross-encoder/ms-marco-MiniLM-L6-v2",
+      "recall@1": 0.09259259259259259,
+      "recall@3": 0.3148148148148148,
+      "recall@5": 0.5555555555555556,
+      "mrr": 0.26795267489711944
+    },
+    {
+      "embedding": "Snowflake/snowflake-arctic-embed-m-v1.5",
+      "reranker": "BAAI/bge-reranker-v2-m3",
+      "recall@1": 0.09259259259259259,
+      "recall@3": 0.3148148148148148,
+      "recall@5": 0.5555555555555556,
+      "mrr": 0.26795267489711944
+    },
+    {
+      "embedding": "google/embeddinggemma-300m",
+      "reranker": "cross-encoder/ettin-reranker-32m-v1",
+      "recall@1": 0.1111111111111111,
+      "recall@3": 0.35185185185185186,
+      "recall@5": 0.6111111111111112,
+      "mrr": 0.310405643738977
+    },
+    {
+      "embedding": "google/embeddinggemma-300m",
+      "reranker": "cross-encoder/ms-marco-MiniLM-L6-v2",
+      "recall@1": 0.09259259259259259,
+      "recall@3": 0.37037037037037035,
+      "recall@5": 0.5925925925925926,
+      "mrr": 0.292688124632569
+    },
+    {
+      "embedding": "google/embeddinggemma-300m",
+      "reranker": "BAAI/bge-reranker-v2-m3",
+      "recall@1": 0.09259259259259259,
+      "recall@3": 0.37037037037037035,
+      "recall@5": 0.5925925925925926,
+      "mrr": 0.292688124632569
+    },
+    {
+      "embedding": "Qwen/Qwen3-Embedding-0.6B",
+      "reranker": "cross-encoder/ettin-reranker-32m-v1",
+      "recall@1": 0.09259259259259259,
+      "recall@3": 0.3333333333333333,
+      "recall@5": 0.6111111111111112,
+      "mrr": 0.30315255731922397
+    },
+    {
+      "embedding": "Qwen/Qwen3-Embedding-0.6B",
+      "reranker": "cross-encoder/ms-marco-MiniLM-L6-v2",
+      "recall@1": 0.14814814814814814,
+      "recall@3": 0.3333333333333333,
+      "recall@5": 0.6851851851851852,
+      "mrr": 0.34222516166960587
+    },
+    {
+      "embedding": "Qwen/Qwen3-Embedding-0.6B",
+      "reranker": "BAAI/bge-reranker-v2-m3",
+      "recall@1": 0.14814814814814814,
+      "recall@3": 0.3333333333333333,
+      "recall@5": 0.6851851851851852,
+      "mrr": 0.34222516166960587
+    }
+  ],
+  "prompts_used": {
+    "BAAI/bge-small-en-v1.5": {
+      "query": "Represent this sentence for searching relevant passages: {text}",
+      "passage": "{text}",
+      "origin": "BAAI bge-small-en-v1.5 model card retrieval usage"
+    },
+    "Snowflake/snowflake-arctic-embed-m-v1.5": {
+      "query": "Represent this sentence for searching relevant passages: ",
+      "passage": "{text}",
+      "origin": "sentence-transformers-config"
+    },
+    "google/embeddinggemma-300m": {
+      "query": "task: search result | query: {text}",
+      "passage": "title: none | text: {text}",
+      "origin": "google/embeddinggemma-300m model card retrieval prompts"
+    },
+    "Qwen/Qwen3-Embedding-0.6B": {
+      "query": "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: {text}",
+      "passage": "{text}",
+      "origin": "Qwen3-Embedding model card retrieval usage"
+    }
+  },
+  "quality_sources": {
+    "BAAI/bge-small-en-v1.5": {
+      "path": "staged-st",
+      "load_source": "E:\\ZCode\\trainingapp\\models\\bge-small-en-v1.5"
+    },
+    "Snowflake/snowflake-arctic-embed-m-v1.5": {
+      "path": "canonical-st",
+      "load_source": "Snowflake/snowflake-arctic-embed-m-v1.5"
+    },
+    "google/embeddinggemma-300m": {
+      "path": "mirror-onnx-fp32",
+      "load_source": "E:\\ZCode\\trainingapp-i55\\eval\\bakeoff\\assets\\embeddinggemma-300m\\onnx\\model.onnx"
+    },
+    "Qwen/Qwen3-Embedding-0.6B": {
+      "path": "canonical-transformers",
+      "load_source": "Qwen/Qwen3-Embedding-0.6B"
+    }
+  },
+  "reranker_summary_basis": {
+    "cross-encoder/ettin-reranker-32m-v1": "control embedding BAAI/bge-small-en-v1.5",
+    "cross-encoder/ms-marco-MiniLM-L6-v2": "control embedding BAAI/bge-small-en-v1.5",
+    "BAAI/bge-reranker-v2-m3": "control embedding BAAI/bge-small-en-v1.5"
+  },
+  "cost_assets": {
+    "BAAI/bge-small-en-v1.5": {
+      "onnx": "eval/bakeoff/assets/bge-small-en-v1.5/onnx/model_quantized.onnx",
+      "quant": "dynamic-int8 (local)"
+    },
+    "Snowflake/snowflake-arctic-embed-m-v1.5": {
+      "onnx": "eval/bakeoff/assets/snowflake-arctic-embed-m-v1.5/onnx/model_quantized.onnx",
+      "quant": "shipped q8 (staged models/)"
+    },
+    "google/embeddinggemma-300m": {
+      "onnx": "eval/bakeoff/assets/embeddinggemma-300m/onnx/model_quantized.onnx",
+      "quant": "shipped-int8 (mirror)"
+    },
+    "Qwen/Qwen3-Embedding-0.6B": {
+      "onnx": "eval/bakeoff/assets/qwen3-embedding-0.6b/onnx/model_quantized.onnx",
+      "quant": "shipped-int8 (mirror)"
+    },
+    "cross-encoder/ettin-reranker-32m-v1": {
+      "onnx": "eval/bakeoff/assets/ettin-reranker-32m-v1/onnx/model_quantized.onnx",
+      "quant": "shipped q8 (staged models/)"
+    },
+    "cross-encoder/ms-marco-MiniLM-L6-v2": {
+      "onnx": "eval/bakeoff/assets/ms-marco-minilm-l6-v2/onnx/model_quantized.onnx",
+      "quant": "dynamic-int8 (local)"
+    },
+    "BAAI/bge-reranker-v2-m3": {
+      "onnx": "eval/bakeoff/assets/bge-reranker-v2-m3/onnx/model_quantized.onnx",
+      "quant": "shipped-int8 (mirror)"
+    }
+  },
+  "provenance": {
+    "BAAI/bge-small-en-v1.5": {
+      "license": "mit",
+      "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+      "quality_source": "staged-st"
+    },
+    "Snowflake/snowflake-arctic-embed-m-v1.5": {
+      "license": "apache-2.0",
+      "revision": "e58a8f756156a1293d763f17e3aae643474e9b8a",
+      "quality_source": "canonical-st"
+    },
+    "google/embeddinggemma-300m": {
+      "license": "gemma",
+      "revision": "57c266a740f537b4dc058e1b0cda161fd15afa75",
+      "quality_source": "mirror-onnx-fp32"
+    },
+    "Qwen/Qwen3-Embedding-0.6B": {
+      "license": "apache-2.0",
+      "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "quality_source": "canonical-transformers"
+    },
+    "cross-encoder/ettin-reranker-32m-v1": {
+      "license": "apache-2.0",
+      "revision": "b33e5ceb5110773ea9cf5e00c9bedc83a8c2afdd",
+      "quality_source": "canonical-st"
+    },
+    "cross-encoder/ms-marco-MiniLM-L6-v2": {
+      "license": "apache-2.0",
+      "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+      "quality_source": "canonical-st"
+    },
+    "BAAI/bge-reranker-v2-m3": {
+      "license": "apache-2.0",
+      "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+      "quality_source": "canonical-st"
+    }
+  },
+  "deviations": [
+    "cross-encoder/ettin-reranker-32m-v1: scored through the trained ST modules pipeline (Transformer+CLS+Dense+LayerNorm+Dense) because ST 2.7 CrossEncoder cannot load the modules layout and no ONNX export carries the trained head; the repo-staged onnx graphs (browser/Electron artifacts) emit logits from an untrained appended head and are excluded from quality measurement -- see ADR-0001"
+  ],
+  "execution_log": [
+    {
+      "candidate": "BAAI/bge-small-en-v1.5",
+      "seconds": 4.5,
+      "kind": "embed-quality"
+    },
+    {
+      "candidate": "Snowflake/snowflake-arctic-embed-m-v1.5",
+      "seconds": 2.9,
+      "kind": "embed-quality"
+    },
+    {
+      "candidate": "google/embeddinggemma-300m",
+      "seconds": 3.2,
+      "kind": "embed-quality"
+    },
+    {
+      "candidate": "Qwen/Qwen3-Embedding-0.6B",
+      "seconds": 13.2,
+      "kind": "embed-quality"
+    },
+    {
+      "candidate": "BAAI/bge-small-en-v1.5 + cross-encoder/ettin-reranker-32m-v1",
+      "seconds": 2.2,
+      "kind": "combo"
+    },
+    {
+      "candidate": "BAAI/bge-small-en-v1.5 + cross-encoder/ms-marco-MiniLM-L6-v2",
+      "seconds": 1.4,
+      "kind": "combo"
+    },
+    {
+      "candidate": "BAAI/bge-small-en-v1.5 + BAAI/bge-reranker-v2-m3",
+      "seconds": 29.2,
+      "kind": "combo"
+    },
+    {
+      "candidate": "Snowflake/snowflake-arctic-embed-m-v1.5 + cross-encoder/ettin-reranker-32m-v1",
+      "seconds": 2.1,
+      "kind": "combo"
+    },
+    {
+      "candidate": "Snowflake/snowflake-arctic-embed-m-v1.5 + cross-encoder/ms-marco-MiniLM-L6-v2",
+      "seconds": 1.5,
+      "kind": "combo"
+    },
+    {
+      "candidate": "Snowflake/snowflake-arctic-embed-m-v1.5 + BAAI/bge-reranker-v2-m3",
+      "seconds": 30.0,
+      "kind": "combo"
+    },
+    {
+      "candidate": "google/embeddinggemma-300m + cross-encoder/ettin-reranker-32m-v1",
+      "seconds": 2.6,
+      "kind": "combo"
+    },
+    {
+      "candidate": "google/embeddinggemma-300m + cross-encoder/ms-marco-MiniLM-L6-v2",
+      "seconds": 1.5,
+      "kind": "combo"
+    },
+    {
+      "candidate": "google/embeddinggemma-300m + BAAI/bge-reranker-v2-m3",
+      "seconds": 28.8,
+      "kind": "combo"
+    },
+    {
+      "candidate": "Qwen/Qwen3-Embedding-0.6B + cross-encoder/ettin-reranker-32m-v1",
+      "seconds": 2.4,
+      "kind": "combo"
+    },
+    {
+      "candidate": "Qwen/Qwen3-Embedding-0.6B + cross-encoder/ms-marco-MiniLM-L6-v2",
+      "seconds": 1.6,
+      "kind": "combo"
+    },
+    {
+      "candidate": "Qwen/Qwen3-Embedding-0.6B + BAAI/bge-reranker-v2-m3",
+      "seconds": 28.8,
+      "kind": "combo"
+    },
+    {
+      "candidate": "BAAI/bge-small-en-v1.5",
+      "seconds": 0.5,
+      "kind": "cost"
+    },
+    {
+      "candidate": "Snowflake/snowflake-arctic-embed-m-v1.5",
+      "seconds": 1.2,
+      "kind": "cost"
+    },
+    {
+      "candidate": "google/embeddinggemma-300m",
+      "seconds": 9.5,
+      "kind": "cost"
+    },
+    {
+      "candidate": "Qwen/Qwen3-Embedding-0.6B",
+      "seconds": 4.8,
+      "kind": "cost"
+    },
+    {
+      "candidate": "cross-encoder/ettin-reranker-32m-v1",
+      "seconds": 5.5,
+      "kind": "cost"
+    },
+    {
+      "candidate": "cross-encoder/ms-marco-MiniLM-L6-v2",
+      "seconds": 2.7,
+      "kind": "cost"
+    },
+    {
+      "candidate": "BAAI/bge-reranker-v2-m3",
+      "seconds": 32.5,
+      "kind": "cost"
+    }
+  ]
+}

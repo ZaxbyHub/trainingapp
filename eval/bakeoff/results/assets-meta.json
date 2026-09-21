@@ -1,0 +1,79 @@
+{
+  "BAAI/bge-small-en-v1.5": {
+    "hf_id": "BAAI/bge-small-en-v1.5",
+    "kind": "embed",
+    "license": "mit",
+    "revision": "5c38ec7c405ec4b44b94cc5a9bb96e735b38267a",
+    "quality_source": "staged-st",
+    "staged_dir": "models/bge-small-en-v1.5",
+    "onnx_quant": "dynamic-int8 (local)",
+    "onnx_path": "eval/bakeoff/assets/bge-small-en-v1.5/onnx/model_quantized.onnx",
+    "fetched_seconds": 2.6
+  },
+  "Snowflake/snowflake-arctic-embed-m-v1.5": {
+    "hf_id": "Snowflake/snowflake-arctic-embed-m-v1.5",
+    "kind": "embed",
+    "license": "apache-2.0",
+    "revision": "e58a8f756156a1293d763f17e3aae643474e9b8a",
+    "quality_source": "canonical-st",
+    "weights_cache": "C:\\Users\\Brett\\.cache\\huggingface\\hub\\models--Snowflake--snowflake-arctic-embed-m-v1.5\\snapshots\\e58a8f756156a1293d763f17e3aae643474e9b8a",
+    "onnx_quant": "shipped q8 (staged models/)",
+    "onnx_path": "eval/bakeoff/assets/snowflake-arctic-embed-m-v1.5/onnx/model_quantized.onnx",
+    "fetched_seconds": 0.1
+  },
+  "google/embeddinggemma-300m": {
+    "hf_id": "google/embeddinggemma-300m",
+    "kind": "embed",
+    "license": "gemma",
+    "revision": "57c266a740f537b4dc058e1b0cda161fd15afa75",
+    "quality_source": "mirror-onnx-fp32",
+    "onnx_quant": "shipped-int8 (mirror)",
+    "onnx_path": "eval/bakeoff/assets/embeddinggemma-300m/onnx/model_quantized.onnx",
+    "quality_onnx": "eval/bakeoff/assets/embeddinggemma-300m/onnx/model.onnx",
+    "fetched_seconds": 22.3
+  },
+  "Qwen/Qwen3-Embedding-0.6B": {
+    "hf_id": "Qwen/Qwen3-Embedding-0.6B",
+    "kind": "embed",
+    "license": "apache-2.0",
+    "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+    "quality_source": "canonical-transformers",
+    "weights_cache": "C:\\Users\\Brett\\.cache\\huggingface\\hub\\models--Qwen--Qwen3-Embedding-0.6B\\snapshots\\97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+    "onnx_quant": "shipped-int8 (mirror)",
+    "onnx_path": "eval/bakeoff/assets/qwen3-embedding-0.6b/onnx/model_quantized.onnx",
+    "fetched_seconds": 39.1
+  },
+  "cross-encoder/ettin-reranker-32m-v1": {
+    "hf_id": "cross-encoder/ettin-reranker-32m-v1",
+    "kind": "rerank",
+    "license": "apache-2.0",
+    "revision": "b33e5ceb5110773ea9cf5e00c9bedc83a8c2afdd",
+    "quality_source": "canonical-st",
+    "weights_cache": "C:\\Users\\Brett\\.cache\\huggingface\\hub\\models--cross-encoder--ettin-reranker-32m-v1\\snapshots\\b33e5ceb5110773ea9cf5e00c9bedc83a8c2afdd",
+    "onnx_quant": "shipped q8 (staged models/)",
+    "onnx_path": "eval/bakeoff/assets/ettin-reranker-32m-v1/onnx/model_quantized.onnx",
+    "fetched_seconds": 0.0
+  },
+  "cross-encoder/ms-marco-MiniLM-L6-v2": {
+    "hf_id": "cross-encoder/ms-marco-MiniLM-L6-v2",
+    "kind": "rerank",
+    "license": "apache-2.0",
+    "revision": "233902d25c440f23af6f7d6e94d2946bac0bee0a",
+    "quality_source": "canonical-st",
+    "weights_cache": "C:\\Users\\Brett\\.cache\\huggingface\\hub\\models--cross-encoder--ms-marco-MiniLM-L6-v2\\snapshots\\233902d25c440f23af6f7d6e94d2946bac0bee0a",
+    "onnx_quant": "dynamic-int8 (local)",
+    "onnx_path": "eval/bakeoff/assets/ms-marco-minilm-l6-v2/onnx/model_quantized.onnx",
+    "fetched_seconds": 3.9
+  },
+  "BAAI/bge-reranker-v2-m3": {
+    "hf_id": "BAAI/bge-reranker-v2-m3",
+    "kind": "rerank",
+    "license": "apache-2.0",
+    "revision": "953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "quality_source": "canonical-st",
+    "weights_cache": "C:\\Users\\Brett\\.cache\\huggingface\\hub\\models--BAAI--bge-reranker-v2-m3\\snapshots\\953dc6f6f85a1b2dbfca4c34a2796e7dde08d41e",
+    "onnx_quant": "shipped-int8 (mirror)",
+    "onnx_path": "eval/bakeoff/assets/bge-reranker-v2-m3/onnx/model_quantized.onnx",
+    "fetched_seconds": 25.9
+  }
+}

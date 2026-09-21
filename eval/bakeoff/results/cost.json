@@ -1,0 +1,96 @@
+{
+  "threads": 8,
+  "hardware": "AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD",
+  "machine_tag": "bakeoff-i55",
+  "rows": {
+    "BAAI/bge-small-en-v1.5": {
+      "kind": "embed",
+      "top15_ms_p50": 2.73,
+      "top30_ms_p50": 2.345,
+      "onnx": "eval/bakeoff/assets/bge-small-en-v1.5/onnx/model_quantized.onnx",
+      "onnx_quant": "dynamic-int8 (local)"
+    },
+    "Snowflake/snowflake-arctic-embed-m-v1.5": {
+      "kind": "embed",
+      "top15_ms_p50": 6.773,
+      "top30_ms_p50": 6.545,
+      "onnx": "eval/bakeoff/assets/snowflake-arctic-embed-m-v1.5/onnx/model_quantized.onnx",
+      "onnx_quant": "shipped q8 (staged models/)"
+    },
+    "google/embeddinggemma-300m": {
+      "kind": "embed",
+      "top15_ms_p50": 152.784,
+      "top30_ms_p50": 144.855,
+      "onnx": "eval/bakeoff/assets/embeddinggemma-300m/onnx/model_quantized.onnx",
+      "onnx_quant": "shipped-int8 (mirror)"
+    },
+    "Qwen/Qwen3-Embedding-0.6B": {
+      "kind": "embed",
+      "top15_ms_p50": 36.104,
+      "top30_ms_p50": 34.497,
+      "onnx": "eval/bakeoff/assets/qwen3-embedding-0.6b/onnx/model_quantized.onnx",
+      "onnx_quant": "shipped-int8 (mirror)"
+    },
+    "cross-encoder/ettin-reranker-32m-v1": {
+      "kind": "rerank",
+      "top15_ms_p50": 79.303,
+      "top30_ms_p50": 136.069,
+      "pair_mean_ms_top15": 5.287,
+      "onnx": "eval/bakeoff/assets/ettin-reranker-32m-v1/onnx/model_quantized.onnx",
+      "onnx_quant": "shipped q8 (staged models/)"
+    },
+    "cross-encoder/ms-marco-MiniLM-L6-v2": {
+      "kind": "rerank",
+      "top15_ms_p50": 37.787,
+      "top30_ms_p50": 75.638,
+      "pair_mean_ms_top15": 2.519,
+      "onnx": "eval/bakeoff/assets/ms-marco-minilm-l6-v2/onnx/model_quantized.onnx",
+      "onnx_quant": "dynamic-int8 (local)"
+    },
+    "BAAI/bge-reranker-v2-m3": {
+      "kind": "rerank",
+      "top15_ms_p50": 482.846,
+      "top30_ms_p50": 878.987,
+      "pair_mean_ms_top15": 32.19,
+      "onnx": "eval/bakeoff/assets/bge-reranker-v2-m3/onnx/model_quantized.onnx",
+      "onnx_quant": "shipped-int8 (mirror)"
+    }
+  },
+  "execution_log": [
+    {
+      "candidate": "BAAI/bge-small-en-v1.5",
+      "seconds": 0.5,
+      "kind": "cost"
+    },
+    {
+      "candidate": "Snowflake/snowflake-arctic-embed-m-v1.5",
+      "seconds": 1.2,
+      "kind": "cost"
+    },
+    {
+      "candidate": "google/embeddinggemma-300m",
+      "seconds": 9.5,
+      "kind": "cost"
+    },
+    {
+      "candidate": "Qwen/Qwen3-Embedding-0.6B",
+      "seconds": 4.8,
+      "kind": "cost"
+    },
+    {
+      "candidate": "cross-encoder/ettin-reranker-32m-v1",
+      "seconds": 5.5,
+      "kind": "cost"
+    },
+    {
+      "candidate": "cross-encoder/ms-marco-MiniLM-L6-v2",
+      "seconds": 2.7,
+      "kind": "cost"
+    },
+    {
+      "candidate": "BAAI/bge-reranker-v2-m3",
+      "seconds": 32.5,
+      "kind": "cost"
+    }
+  ]
+}

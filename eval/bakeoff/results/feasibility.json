@@ -1,0 +1,47 @@
+{
+  "BAAI/bge-small-en-v1.5": {
+    "ok": true,
+    "dims": 384,
+    "seconds": 4.2,
+    "source": "E:\\ZCode\\trainingapp\\models\\bge-small-en-v1.5"
+  },
+  "Snowflake/snowflake-arctic-embed-m-v1.5": {
+    "ok": true,
+    "dims": 768,
+    "seconds": 1.7,
+    "source": "Snowflake/snowflake-arctic-embed-m-v1.5"
+  },
+  "google/embeddinggemma-300m": {
+    "ok": true,
+    "dims": 768,
+    "seconds": 2.0,
+    "source": "E:\\ZCode\\trainingapp-i55\\eval\\bakeoff\\assets\\embeddinggemma-300m\\onnx\\model.onnx"
+  },
+  "Qwen/Qwen3-Embedding-0.6B": {
+    "ok": true,
+    "dims": 1024,
+    "seconds": 1.5,
+    "source": "Qwen/Qwen3-Embedding-0.6B"
+  },
+  "cross-encoder/ettin-reranker-32m-v1": {
+    "ok": true,
+    "score": 0.893240749835968,
+    "seconds": 2.0,
+    "source": "E:\\ZCode\\trainingapp-i55\\eval\\bakeoff\\assets\\ettin-reranker-32m-v1-compat",
+    "compat": "tokenizer_class TokenizersBackend (transformers 5.x) not available under the pinned transformers 4.57; loaded via patched copy with PreTrainedTokenizerFast under eval/bakeoff/assets/ettin-reranker-32m-v1-compat"
+  },
+  "cross-encoder/ms-marco-MiniLM-L6-v2": {
+    "ok": true,
+    "score": 7.465337753295898,
+    "seconds": 0.3,
+    "source": "cross-encoder/ms-marco-MiniLM-L6-v2",
+    "compat": null
+  },
+  "BAAI/bge-reranker-v2-m3": {
+    "ok": true,
+    "score": 0.7703883647918701,
+    "seconds": 1.2,
+    "source": "BAAI/bge-reranker-v2-m3",
+    "compat": null
+  }
+}
