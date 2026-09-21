@@ -3,7 +3,8 @@
   "hardware": "AMD64 Family 25 Model 33 Stepping 0, AuthenticAMD",
   "machine_tag": "bakeoff-i55",
   "generated_by": {
-    "git_rev": "1938d36707ee478d6fef928993cac42f461c401c",
+    "git_rev": "c3f0bd265c152d1a93602c63b9bf2f11c75523f9",
+    "generated_at": "2026-09-21T04:31:32+00:00",
     "collect": "eval/bakeoff/collect.py",
     "drivers": [
       "eval/bakeoff/bakeoff_quality.py",

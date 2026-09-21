@@ -43,6 +43,10 @@ def test_bakeoff_results_schema_and_adr_consistency():
     violations, data = schema.load_and_validate(str(REPO_ROOT))
     assert not violations, "bake-off artifact violations: %s" % violations
     assert data is not None and data["threads"] == 8
+    generated_by = data.get("generated_by")
+    assert isinstance(generated_by, dict), "generated_by provenance missing"
+    assert generated_by.get("git_rev"), "generated_by.git_rev missing"
+    assert generated_by.get("generated_at"), "generated_by.generated_at missing"
     # The full 4x3 grid must be present as scored combinations: every exact
     # (embedding, reranker) pair, not merely a count of unique pairs.
     expected_pairs = {
@@ -118,11 +122,24 @@ def test_schema_rejects_drifted_artifacts():
     mutated = copy.deepcopy(data)
     mutated["embeddings"][schema.EMBEDDING_IDS[0]]["dims"] = "384"
     assert any("dims" in v for v in violated(mutated))
-    # duplicate combo entries (the set-based count check would miss this)
+    # duplicate combo entries must be rejected by the schema itself
     mutated = copy.deepcopy(data)
     mutated["combos"].append(copy.deepcopy(mutated["combos"][0]))
-    unique_pairs = {(c["embedding"], c["reranker"]) for c in mutated["combos"]}
-    assert len(mutated["combos"]) > len(unique_pairs)
+    violations = violated(mutated)
+    assert any("exactly once required" in v for v in violations), (
+        "schema must reject duplicate scored pairs, got: %s" % violations
+    )
+    # a dropped pair must be rejected too
+    mutated = copy.deepcopy(data)
+    mutated["combos"] = [
+        c
+        for c in mutated["combos"]
+        if not (
+            c["embedding"] == "BAAI/bge-small-en-v1.5"
+            and c["reranker"].endswith("ettin-reranker-32m-v1")
+        )
+    ]
+    assert any("missing the scored pair" in v for v in violated(mutated))
 
 
 def test_adr_consistency_rejects_dims_drift():

@@ -96,6 +96,9 @@ def main(argv=None) -> int:
         "machine_tag": cost.get("machine_tag"),
         "generated_by": {
             "git_rev": git_rev,
+            "generated_at": __import__("datetime")
+            .datetime.now(__import__("datetime").timezone.utc)
+            .isoformat(timespec="seconds"),
             "collect": "eval/bakeoff/collect.py",
             "drivers": [
                 "eval/bakeoff/bakeoff_quality.py",

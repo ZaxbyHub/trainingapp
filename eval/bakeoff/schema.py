@@ -181,6 +181,33 @@ def validate_results(data, source_label=RESULTS_REL):
     if not isinstance(combos, list) or not combos:
         out.append("%s: combos must be a non-empty array" % source_label)
     else:
+        # The full 4x3 grid is required: exactly one record per canonical
+        # (embedding, reranker) pair -- duplicates and gaps both fail.
+        def _ettin_norm(reranker):
+            if isinstance(reranker, str) and reranker.endswith("/" + ETTIN_NAME):
+                return ETTIN_NAME
+            return reranker
+
+        seen_pairs = []
+        for combo in combos:
+            if isinstance(combo, dict):
+                seen_pairs.append(
+                    (combo.get("embedding"), _ettin_norm(combo.get("reranker")))
+                )
+        expected_pairs = {
+            (embedding, reranker)
+            for embedding in EMBEDDING_IDS
+            for reranker in (ETTIN_NAME, MINILM_ID, BGE_RERANKER_ID)
+        }
+        for pair in sorted(expected_pairs):
+            count = seen_pairs.count(pair)
+            if count == 0:
+                out.append("combos is missing the scored pair %s/%s" % pair)
+            elif count > 1:
+                out.append(
+                    "combos scores the pair %s/%s %d times (exactly once required)"
+                    % (pair[0], pair[1], count)
+                )
         for index, combo in enumerate(combos):
             if not isinstance(combo, dict):
                 out.append("combos[%d] must be an object" % index)
