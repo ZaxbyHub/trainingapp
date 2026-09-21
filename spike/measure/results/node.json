@@ -3,33 +3,33 @@
   "models_staging": "pre-staged",
   "install_size_mb": 1373.7,
   "cold_starts_ms": [
-    553,
-    576,
-    578
+    554,
+    766,
+    1577
   ],
   "runs": {
     "ask_2k": {
       "prompt_chars": 8135,
       "prompt_tokens_estimate": 2034,
-      "first_token_latency_s": 1.286,
+      "first_token_latency_s": 1.287,
       "decode_tok_s": 0.93,
       "token_count": 9,
       "done_terminal": true,
       "cancelled": false,
       "grounding": "general",
-      "total_ms": 131,
-      "server_metrics_line": "[metrics] status=done tokens=9 first_token_ms=1286 inference_ms=9629 total_ms=9629"
+      "total_ms": 144,
+      "server_metrics_line": "[metrics] status=done tokens=9 first_token_ms=1287 inference_ms=9697 total_ms=9697"
     },
     "cancellation": {
-      "disconnect_to_server_stop_ms": 104,
-      "metrics_line": "[metrics] status=cancelled tokens=11 first_token_ms=521 inference_ms=7674 total_ms=7674",
+      "disconnect_to_server_stop_ms": 111,
+      "metrics_line": "[metrics] status=cancelled tokens=11 first_token_ms=525 inference_ms=7711 total_ms=7711",
       "cpu_delta_after_2s": 0,
       "stopped_within_5s": true
     }
   },
-  "cold_start_s": 0.576,
-  "peak_rss_mb": 2142.5,
-  "measured_at_utc": "2026-09-21T18:45:02.918Z",
+  "cold_start_s": 0.766,
+  "peak_rss_mb": 2124.6,
+  "measured_at_utc": "2026-09-21T19:55:50.328Z",
   "models_dir": "C:\\Users\\Brett\\.trainingapp\\models",
-  "port": 8799
+  "port": 8791
 }

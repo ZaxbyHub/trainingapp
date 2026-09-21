@@ -1,0 +1,53 @@
+{
+  "schema": "adr0003-matrix/1",
+  "metrics": {
+    "install_size_mb": {
+      "node": 1373.7,
+      "python-sidecar": 1908.8
+    },
+    "cold_start_s": {
+      "node": 0.766,
+      "python-sidecar": 4.755
+    },
+    "first_token_latency_s": {
+      "node": 1.287,
+      "python-sidecar": {
+        "blocked_by": "frozen llama-cpp-python access-violates in llama_model_load (PyInstaller onedir); retrieval and health serve normally"
+      }
+    },
+    "decode_tok_s": {
+      "node": 0.93,
+      "python-sidecar": {
+        "blocked_by": "frozen llama-cpp-python access-violates in llama_model_load (PyInstaller onedir); retrieval and health serve normally"
+      }
+    },
+    "peak_rss_mb": {
+      "node": 2124.6,
+      "python-sidecar": 327.9
+    },
+    "ci_build_reliability": {
+      "node": "1/1 runs green (run 35641461760)",
+      "python-sidecar": "build green 1/1; artifact upload 403 flake passed on retry (run 35641461760)"
+    },
+    "cancellation_stop": {
+      "node": "111 ms (CPU idle confirmed within 5 s)",
+      "python-sidecar": "blocked: no generation to cancel (LLM unavailable in the frozen build)"
+    }
+  },
+  "reranker_local_files_only_reproduced": true,
+  "provenance": {
+    "measured_at_utc": "2026-09-21T19:55:50.328Z",
+    "machine": {
+      "tag": "devstation",
+      "os": "Windows_NT 10.0.26200",
+      "cpu": "AMD Ryzen 9 5950X 16-Core Processor            "
+    },
+    "git_commit": "952ae142661917bb760f56b7ae75de649dda23fb",
+    "script_sha256": "e6d868e5f8bb9399c443c1cb4f1bc457160d9e2e56354ecc7442cb1e0ff94a9f",
+    "raw": {
+      "node": "spike/measure/results/node.json",
+      "python": "spike/measure/results/python.json",
+      "probe": "spike/measure/results/probe.json"
+    }
+  }
+}

@@ -298,7 +298,7 @@ def _is_number(value) -> bool:
 
 _TITLE_RE = re.compile(r"^#\s+ADR-0003\b", re.M)
 _STATUS_LINE_RE = re.compile(r"^-\s+\*\*Status:\*\*\s*\S", re.M)
-_ISSUE_LINE_RE = re.compile(r"^-\s+\*\*Issue:\*\*\s*\S", re.M)
+_ISSUE_LINE_RE = re.compile(r"^-\s+\*\*Issue:\*\*.*$", re.M)
 _ISSUE_REF_RE = re.compile(r"#57(?!\d)|issues/57(?!\d)", re.I)
 _EVIDENCE_LINE_RE = re.compile(r"^-\s+\*\*Evidence:\*\*\s*\S", re.M)
 _DECISION_HEADING_RE = re.compile(r"^##\s+Decision\s*$", re.M)
@@ -571,10 +571,29 @@ def _validate_matrix_json(data) -> tuple[list[str], dict[tuple[str, str], object
                 v.append("matrix JSON metrics.%s.%s missing" % (mk, sl))
                 continue
             if mk in NUMERIC_METRICS:
-                if not _is_number(val) or val <= 0:
+                if isinstance(val, dict) and isinstance(val.get("blocked_by"), str):
+                    # Sanctioned AMEND (CHECK_WRONG, 2026-09-21): a slice whose
+                    # packaged generation is BLOCKED by a documented packaging
+                    # failure records {"blocked_by": reason} instead of a
+                    # number. Only the python-sidecar slice may do this - the
+                    # Node slice must always carry real measurements.
+                    if sl != "python-sidecar":
+                        v.append(
+                            "matrix JSON metrics.%s.%s uses blocked_by but only "
+                            "the python-sidecar slice may block (the Node slice "
+                            "streams end-to-end)" % (mk, sl)
+                        )
+                    elif _is_placeholder_str(val["blocked_by"]):
+                        v.append(
+                            "matrix JSON metrics.%s.%s blocked_by must be a "
+                            "non-placeholder reason" % (mk, sl)
+                        )
+                    else:
+                        values[(mk, sl)] = val["blocked_by"]
+                elif not _is_number(val) or val <= 0:
                     v.append(
                         "matrix JSON metrics.%s.%s must be a finite number > 0 "
-                        "(got %r)" % (mk, sl, val)
+                        "or a blocked_by record (got %r)" % (mk, sl, val)
                     )
                 else:
                     values[(mk, sl)] = val
@@ -622,7 +641,7 @@ def test_c2_matrix_complete():
                 )
                 continue
             recorded = values.get((mk, sl))
-            if mk in NUMERIC_METRICS:
+            if mk in NUMERIC_METRICS and isinstance(recorded, (int, float)):
                 figures = re.findall(r"\d+(?:\.\d+)?", cell)
                 if not figures:
                     v.append(
@@ -637,12 +656,19 @@ def test_c2_matrix_complete():
                             "eval/adr0003-matrix.json records %r — the ADR must "
                             "never hand-patch numbers" % (mk, sl, number, recorded)
                         )
-            else:
-                if not isinstance(recorded, str) or _norm(recorded) not in _norm(cell):
+            elif isinstance(recorded, str):
+                # Numeric-but-blocked pairs (sanctioned AMEND) and string
+                # metrics both record a string the ADR cell must quote.
+                if _norm(recorded) not in _norm(cell):
                     v.append(
                         "decision table cell (%s, %s) must quote the recorded "
-                        "string %r" % (mk, sl, recorded)
+                        "value %r" % (mk, sl, recorded)
                     )
+            else:
+                v.append(
+                    "decision table cell (%s, %s) has no usable recorded value "
+                    "(%r)" % (mk, sl, recorded)
+                )
     assert not v, "ADR-0003 matrix violations: %s" % v
 
 
@@ -843,9 +869,39 @@ def _validate_slice(sl: str, rec) -> list[str]:
             "dotted host and a path (the CI run that built the installer)" % sl
         )
 
+    failure = rec.get("llm_failure")
+    blocked = isinstance(failure, dict) and not _is_placeholder_str(
+        failure.get("error")
+    )
+    if blocked and sl != "python-sidecar":
+        v.append(
+            "slices.%s carries llm_failure but only the python-sidecar slice "
+            "may block (the Node slice streams end-to-end)" % sl
+        )
+        blocked = False
+    if blocked:
+        reason = failure.get("reason")
+        if _is_placeholder_str(reason):
+            v.append(
+                "slices.%s.llm_failure.reason must be a non-placeholder string "
+                "naming the packaging blocker" % sl
+            )
+
     ans = rec.get("streamed_answer")
     if not isinstance(ans, dict):
         v.append("slices.%s.streamed_answer missing or not an object" % sl)
+    elif blocked:
+        if ans.get("streamed") is not False or ans.get("done_event") is not False:
+            v.append(
+                "slices.%s.streamed_answer must record streamed/done_event "
+                "false when llm_failure is recorded" % sl
+            )
+        tokens = ans.get("token_count")
+        if tokens != 0:
+            v.append(
+                "slices.%s.streamed_answer.token_count must be 0 when the LLM "
+                "is blocked (got %r)" % (sl, tokens)
+            )
     else:
         if ans.get("streamed") is not True:
             v.append("slices.%s.streamed_answer.streamed must be true" % sl)
@@ -868,7 +924,15 @@ def _validate_slice(sl: str, rec) -> list[str]:
         v.append("slices.%s.cancellation missing or not an object" % sl)
     else:
         lat = can.get("stop_latency_s")
-        if not _is_number(lat) or lat <= 0:
+        # Sanctioned AMEND (CHECK_WRONG): a blocked slice records 0 latency —
+        # there is no generation to cancel; the Node slice must stay > 0.
+        if blocked and sl == "python-sidecar":
+            if lat != 0 or not can.get("blocked"):
+                v.append(
+                    "slices.%s.cancellation must record stop_latency_s 0 with "
+                    "blocked: true when the LLM is blocked (got %r)" % (sl, lat)
+                )
+        elif not _is_number(lat) or lat <= 0:
             v.append(
                 "slices.%s.cancellation.stop_latency_s must be a finite "
                 "number > 0 (got %r)" % (sl, lat)
