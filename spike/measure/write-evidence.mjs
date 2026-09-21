@@ -52,13 +52,13 @@ const matrix = {
     first_token_latency_s: {
       node: node.runs.ask_2k.first_token_latency_s,
       'python-sidecar': py.runs.ask_2k.failed
-        ? { blocked_by: 'blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally' }
+        ? { blocked_by: 'GGUF model load fails with Windows Error 0xc000001d (STATUS_ILLEGAL_INSTRUCTION) in the runtime-copied PyInstaller sidecar; retrieval and health serve normally' }
         : py.runs.ask_2k.first_token_latency_s,
     },
     decode_tok_s: {
       node: node.runs.ask_2k.decode_tok_s,
       'python-sidecar': py.runs.ask_2k.failed
-        ? { blocked_by: 'blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally' }
+        ? { blocked_by: 'GGUF model load fails with Windows Error 0xc000001d (STATUS_ILLEGAL_INSTRUCTION) in the runtime-copied PyInstaller sidecar; retrieval and health serve normally' }
         : py.runs.ask_2k.decode_tok_s,
     },
     peak_rss_mb: { node: node.peak_rss_mb, 'python-sidecar': py.peak_rss_mb },

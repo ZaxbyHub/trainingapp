@@ -21,10 +21,10 @@ Methodology: both slices installed from their NSIS installers on the same dev st
 
 | Metric | Node backend | Python sidecar |
 |---|---|---|
-| Install size (MB, app+deps; models external) | 1373.7 MB MB | 2066.9 MB MB |
-| Cold start to first-ready (s, median of 3) | 0.54 s s | 5.247 s s |
-| First-token latency (s, 2k-token prompt) | 1.295 s s | blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally |
-| Decode tok/s (2k-token prompt) | 0.94 | blocked in the packaged runtime: llama-cpp-python is not importable after PyInstaller freezing (module-layout failure); retrieval and health serve normally |
+| Install size (MB, app+deps; models external) | 1373.7 MB | 2066.9 MB |
+| Cold start to first-ready (s, median of 3) | 0.54 s | 5.247 s |
+| First-token latency (s, 2k-token prompt) | 1.295 s | blocked: GGUF model load fails with Windows Error 0xc000001d (STATUS_ILLEGAL_INSTRUCTION) in the runtime-copied PyInstaller sidecar; retrieval and health serve normally |
+| Decode tok/s (2k-token prompt) | 0.94 | blocked: GGUF model load fails with Windows Error 0xc000001d (STATUS_ILLEGAL_INSTRUCTION) in the runtime-copied PyInstaller sidecar; retrieval and health serve normally |
 | Peak RSS during generation (MB, process tree) | 2145.1 MB | 459.5 MB (LLM load fails — see the packaging finding below; no generation resident) |
 | CI build reliability (clean windows runner) | 1/1 runs green (run 35666173313) | build green 1/1 (plus one upload-403 retry on the earlier run); LLM runtime-blocked at measurement (run 35666173313) |
 | Cancellation stop (client disconnect → server stop) | 110 ms (CPU idle confirmed within 5 s) | blocked: no generation to cancel (LLM unavailable in the frozen build) |
@@ -37,9 +37,9 @@ We chose the node backend: the Electron main-process Node server (option 1) is t
 
 Why (from the matrix, all values above quoted from `eval/adr0003-matrix.json`):
 
-1. The Node slice is fully proven packaged: it installs, boots in 0.54 s (median of 3), streams a real answer through the frozen contract (first token 1.287 s on the 2k prompt, 2145.1 MB peak RSS), cancels in 110 ms with CPU work confirmed stopped, and builds green in a clean CI runner.
+1. The Node slice is fully proven packaged: it installs, boots in 0.54 s (median of 3), streams a real answer through the frozen contract (first token 1.295 s on the 2k prompt, 2145.1 MB peak RSS), cancels in 110 ms with CPU work confirmed stopped, and builds green in a clean CI runner.
 2. The Python sidecar is decisively blocked on packaged GGUF inference: llama-cpp-python 0.3.35 access-violates inside `llama_model_load` in ANY PyInstaller-frozen process on this toolchain, reproduced in a minimal probe and unaffected by every documented mitigation (32 MB PE stack reserve, OpenMP preloads and `KMP_DUPLICATE_LIB_OK`, real-file package layout outside the PYZ, explicit DLL search paths). The identical venv layout works, isolating the failure to the frozen environment. A desktop backend whose packaged LLM cannot load is not shippable, regardless of the remaining metrics.
-3. Supporting deltas favor Node: a 591.3 MB smaller installed footprint (1373.7 vs 1965.0 MB) and a 6.1× faster cold start (0.766 vs 4.700 s), both measured before any LLM load in either slice.
+3. Supporting deltas favor Node: a 693.2 MB smaller installed footprint (1373.7 vs 2066.9 MB) and a 9.7× faster cold start (0.540 vs 5.247 s), both measured before any LLM load in either slice.
 4. The Python pipeline's genuine advantage — its richer, already-tested RAG pipeline — is preserved by the decision: the Node host already implements the same frozen contract and store schema (#61, #63, #65), and sidecar-manager remains in tree should a future packaged-Python capability (e.g. a PyInstaller fix upstream or a non-llama Python service) justify revisiting.
 
 ### Packaging findings the decision rests on (all machine-recorded in `eval/` + `spike/measure/results/`)
