@@ -105,6 +105,12 @@ python eval/bakeoff/collect.py                 # validates schema, writes result
 python bench/onnx_bench_driver.py --threads 8 --assets-dir models   # stock #52 harness
 ```
 
+The committed `results/bakeoff-results.json` carries a `generated_by.git_rev`
+stamp recording the working-tree revision at collect time — i.e. the PARENT of
+the commit that added the artifact (a file cannot contain its own commit).
+Treat it as "numbers produced by these drivers at this revision", not as a
+self-reference.
+
 `fetch_assets.py` needs `HF_HUB_DISABLE_SYMLINKS=1` on Windows without the
 symlink privilege. Drivers resolve locally staged (git-excluded) `models/`
 trees via `$TRAININGAPP_MAIN_CHECKOUT`, falling back to the conventional
