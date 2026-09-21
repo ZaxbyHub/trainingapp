@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added — A6: Distributable LLM profiles decision, ADR-0002 + license review (issue #56)
+
+- `docs/adr/0002-llm-profiles.md`: names the Quality profile (`gemma-4-e2b-it`, quant `Q4_K_M` — the only measured quant per `bench/RESULTS.md`; the unmeasured Q5_K_M incumbent artifact is superseded at packaging time by #84) and the Fast profile (`lfm2.5-vl-450m` Q4_K_M, confirming the wired Electron `FAST_MODEL_SUBPATH`), with a decision table citing only recorded machine-tagged bench rows and the explicit downstream gate (#62/#84/#85 blocked until this ADR merges).
+- License review with a verified twist: the classic Gemma Terms of Use do NOT govern Gemma 4 — the terms page routes Gemma 4 to the stock Apache License 2.0 (`ai.google.dev/gemma/apache_2`), so no Apache-2.0 fallback was needed for the Quality profile. The Fast model carries the non-OSI LFM Open License v1.0 (Section 5(b) $10M-revenue Commercial-Use cap, license/NOTICE pass-through, automatic termination on breach) — obligations and the threshold-crossing operator contingency are recorded in the ADR and licenses.md.
+- `docs/licenses.md`: per-model license sections (LLM Quality, LLM Fast, embedding per ADR-0001 including transitional wired defaults bge-small MIT / arctic Apache-2.0, reranker) consumed by the #85 first-run wizard's `licensesPath()` (`desktop/main/index.ts`); INSTALL.md license-fact fixes (bge-small-en-v1.5 is MIT, was mislabeled Apache 2.0; Gemma 4 license line added), README + PACKAGING license pointers.
+- `tests/test_adr_0002_llm_profiles.py`: CI guardrail with a column-aware citation validator (stricter than the frozen trace checks — cited tok/s must equal the matched row's `decode_tok_s` column), fifteen mutation negatives, the wizard-wiring pin, and two tracked drift pins (Q5_K_M→Q4_K_M re-pin xfail; electron-builder packaged-docs gap) for #84.
+
 ### Added — A5: Embedding and reranker bake-off, ADR-0001 (issue #55)
 
 - `eval/bakeoff/` bake-off package: candidate registry with per-model canonical prompting (`candidates.py`), quality driver measuring all 4 embedding and 3 reranker candidates on the A4 tier-0 eval set with `eval/runner.py`-identical metrics (`bakeoff_quality.py`), CPU-cost driver reusing the #52 ONNX microbenchmark at an 8-thread cap (`bakeoff_cost.py`), asset fetcher with license/revision provenance (`fetch_assets.py`), schema validator shared with CI (`schema.py`), and collector emitting the committed decision artifact `eval/bakeoff/results/bakeoff-results.json`.

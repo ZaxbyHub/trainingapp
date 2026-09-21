@@ -212,6 +212,8 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 - Architecture: Gemma 4 (Google)
 - Quantization: Q5_K_M (high quality)
 - Language: English (primary)
+- License: Apache-2.0 — Gemma 4 ships under the stock Apache License 2.0 (not the
+  classic Gemma Terms of Use); see [docs/licenses.md](docs/licenses.md)
 
 **Alternative Models**:
 - Any GGUF format model from Hugging Face
@@ -225,7 +227,7 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 - Model Size: ~80MB
 - Dimensions: 384
 - Architecture: BERT-based
-- License: Apache 2.0
+- License: MIT (see [docs/licenses.md](docs/licenses.md))
 
 **Alternative Models**:
 - `all-MiniLM-L6-v2` (90MB, faster)

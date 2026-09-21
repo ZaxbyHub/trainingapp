@@ -11,6 +11,11 @@ Model **weight binaries are not committed to git** (they are large, mirroring th
 desktop app's GGUF policy). They are assembled into `web_ui/public/models/` at
 packaging time by `web_ui/scripts/prepare-models.mjs`.
 
+Bundled weights are distributed under their own licenses — the per-model review
+(license type, required notices, restrictions) lives in
+[docs/licenses.md](docs/licenses.md); keep it current when the packaged model set
+changes.
+
 > Status: **Phase 1** covers the embedding model + ONNX Runtime WASM. The
 > Gemma 4 E2B-it GGUF (browser LLM, wllama) lands in Phase 2 and is documented below as
 > the target procedure.

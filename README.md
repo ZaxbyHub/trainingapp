@@ -1046,6 +1046,9 @@ doc_qa_app/
 
 MIT License - See LICENSE for details.
 
+Bundled model weights carry their own licenses (LLM, embedding, reranker) —
+see [docs/licenses.md](docs/licenses.md) for the per-model review.
+
 ## 🤝 Contributing
 
 1. Fork the repository
