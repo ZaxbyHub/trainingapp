@@ -2,7 +2,7 @@
 
 - **Status:** accepted (2026-09-21)
 - **Issue:** [#57 — A7 spike: prove the packaged native stack and choose Node backend vs Electron-hosted Python sidecar](https://github.com/ZaxbyHub/trainingapp/issues/57)
-- **Evidence:** `eval/adr0003-matrix.json` (machine-written comparison matrix, provenance-stamped), `eval/adr0003-e2e-evidence.json` (installed-app end-to-end records, installer sha256s, CI run URLs), `spike/measure/measure.mjs` + raw per-run JSON under `spike/measure/results/`, frozen pinning tests `tests/test_adr_0003_desktop_backend.py`; CI build evidence in `.github/workflows/spike-build.yml` runs linked from the evidence JSON.
+- **Evidence:** `eval/adr0003-matrix.json` (machine-written comparison matrix, provenance-stamped), `eval/adr0003-e2e-evidence.json` (installed-app end-to-end records, installer sha256s, CI run URLs), `spike/measure/measure.mjs` + raw per-run JSON under `spike/measure/results/`, frozen pinning tests `tests/test_adr_0003_desktop_backend.py`; CI build evidence in `.github/workflows/spike-build.yml` runs linked from the evidence JSON. Note: the eval JSONs' `provenance.git_commit` (952ae14) is the spike/measurement commit; the JSONs themselves were committed afterwards in e8fecbb once measurement completed.
 
 ## Context
 
@@ -37,9 +37,9 @@ We chose the node backend: the Electron main-process Node server (option 1) is t
 
 Why (from the matrix, all values above quoted from `eval/adr0003-matrix.json`):
 
-1. The Node slice is fully proven packaged: it installs, boots in 0.543 s, streams a real answer through the frozen contract (first token 1.297 s on the 2k prompt, 2,120.9 MB peak RSS), cancels in 108 ms with CPU work confirmed stopped, and builds green in a clean CI runner.
+1. The Node slice is fully proven packaged: it installs, boots in 0.766 s (median of 3), streams a real answer through the frozen contract (first token 1.287 s on the 2k prompt, 2,124.6 MB peak RSS), cancels in 111 ms with CPU work confirmed stopped, and builds green in a clean CI runner.
 2. The Python sidecar is decisively blocked on packaged GGUF inference: llama-cpp-python 0.3.35 access-violates inside `llama_model_load` in ANY PyInstaller-frozen process on this toolchain, reproduced in a minimal probe and unaffected by every documented mitigation (32 MB PE stack reserve, OpenMP preloads and `KMP_DUPLICATE_LIB_OK`, real-file package layout outside the PYZ, explicit DLL search paths). The identical venv layout works, isolating the failure to the frozen environment. A desktop backend whose packaged LLM cannot load is not shippable, regardless of the remaining metrics.
-3. Supporting deltas favor Node: 654 MB smaller installed footprint (1373.7 vs 2027.2 MB) and an 8.7× faster cold start (0.543 vs 4.724 s), both measured before any LLM load in either slice.
+3. Supporting deltas favor Node: a 535.1 MB smaller installed footprint (1373.7 vs 1908.8 MB) and a 6.2× faster cold start (0.766 vs 4.755 s), both measured before any LLM load in either slice.
 4. The Python pipeline's genuine advantage — its richer, already-tested RAG pipeline — is preserved by the decision: the Node host already implements the same frozen contract and store schema (#61, #63, #65), and sidecar-manager remains in tree should a future packaged-Python capability (e.g. a PyInstaller fix upstream or a non-llama Python service) justify revisiting.
 
 ### Packaging findings the decision rests on (all machine-recorded in `eval/` + `spike/measure/results/`)
