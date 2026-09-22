@@ -1,0 +1,29 @@
+appId: com.zaxbyhub.spike-node-backend
+productName: SpikeNodeBackend
+copyright: Spike for issue #57 - throwaway, deleted after ADR-0003 merges
+directories:
+  output: spike-release
+files:
+  - dist/**/*
+  - package.json
+extraResources:
+  - from: renderer
+    to: renderer
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: true
+  perMachine: false
+  artifactName: ${productName}-Setup-${version}.${ext}
+  deleteAppDataOnUninstall: false
+npmRebuild: false
+compression: normal
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+  - "**/node_modules/sqlite-vec*/**"
+  - "**/node_modules/node-llama-cpp/**"
+  - "**/node_modules/@huggingface/transformers/**"
+  - "**/node_modules/onnxruntime*/**"

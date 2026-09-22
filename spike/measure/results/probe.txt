@@ -1,0 +1,3 @@
+PROBE leg=A outcome=INCOMPATIBLE_KWARG detail=TypeError: CrossEncoder.__init__() got an unexpected keyword argument 'local_files_only'
+PROBE leg=B outcome=REPRODUCED detail=OSError: We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files. Check your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.
+PROBE leg=C outcome=LOADED_STAGED detail=C:\Users\Brett\AppData\Local\Programs\spike-python-sidecar-shell\resources\probe\spike-probe\_internal\bundled_reranker

@@ -2,11 +2,11 @@
 //
 // `createBackendHost(config)` returns ONE of two implementations behind the
 // SAME BackendHost interface, chosen only by the resolved backend.mode:
-//   - "node" (default while ADR-0003 #57 is open): the guarded listener
+//   - "node" (default per ADR-0003): the guarded listener
 //     serves the frozen contract from the local StubEngine.
 //   - "sidecar": the SAME guarded listener fronts a transparent proxy to a
 //     spawned backend child managed by SidecarManager.
-// Flipping the default when ADR-0003 lands is a one-line change in types.ts.
+// ADR-0003 settled the default; flipping it remains a one-line change in types.ts.
 //
 // Electron-free: safe to import from the headless dev-server entry and CI.
 import net from 'node:net';
