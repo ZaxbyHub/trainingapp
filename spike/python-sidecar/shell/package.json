@@ -1,0 +1,18 @@
+{
+  "name": "spike-python-sidecar-shell",
+  "productName": "SpikePythonSidecar",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Issue #57 spike slice 2: minimal Electron shell that spawns the PyInstaller-built api_server sidecar and proxies /ask/stream over loopback. Throwaway - deleted after ADR-0003 merges.",
+  "main": "dist/main.js",
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "start": "npm run compile && electron . --spike",
+    "build": "npm run compile && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2"
+  }
+}

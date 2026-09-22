@@ -1,0 +1,24 @@
+{
+  "name": "spike-node-backend",
+  "productName": "SpikeNodeBackend",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Issue #57 spike slice 1: Electron main-process Node backend (node-llama-cpp + onnxruntime-node + better-sqlite3 + sqlite-vec) exposing /ask/stream. Throwaway - deleted after ADR-0003 merges.",
+  "main": "dist/main.js",
+  "scripts": {
+    "compile": "tsc -p tsconfig.json",
+    "start": "npm run compile && electron . --spike",
+    "build": "npm run compile && electron-builder --win nsis --x64"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
+    "better-sqlite3": "13.0.3",
+    "node-llama-cpp": "^3.20.0",
+    "sqlite-vec": "0.1.9"
+  },
+  "devDependencies": {
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.7.2"
+  }
+}
