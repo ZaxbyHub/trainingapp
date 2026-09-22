@@ -34,7 +34,7 @@ Electron has `os.freemem()`/`os.totalmem()`.
   process memory; never `/health`-style unauthenticated). A host without a telemetry provider
   answers a contract-safe 503 — the path is known, never 404-absent.
 
-### 2. Component attribution semantics (in-process Node backend; confirmed by ADR-0003)
+### 2. Component attribution semantics (in-process Node backend; ADR-0003 still open)
 
 | Component | Source | Semantics |
 |---|---|---|
@@ -109,6 +109,6 @@ recorded in the issue-trace/PR); re-run and update this table if B4/B7 change th
 
 - The renderer (B9) gains `memory:event` and `GET /telemetry/memory` for a live memory UI.
 - First-run validation (#85) and the low-RAM matrix (#86) consume the same thresholds.
-- A sidecar-mode host forwards `/telemetry/memory` to the child transparently; if a future ADR ever
+- A sidecar-mode host forwards `/telemetry/memory` to the child transparently; if ADR-0003 ever
   selects a Python sidecar, its PID's RSS joins the snapshot through the documented provider seam.
 - Rollback: revert the PR; no schema or data migration.

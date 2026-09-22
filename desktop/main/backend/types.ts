@@ -3,10 +3,9 @@
 // The selector contract (acceptance spec b3-backend-default.test.ts /
 // b3-backend-selector.test.ts): `createBackendHost(config)` returns ONE of two
 // implementations behind the SAME `BackendHost` interface, chosen only by
-// `backend.mode` (`"node"` default, or `"sidecar"` per ADR-0003 — that ADR
-// decided node on measured evidence (docs/adr/0003-desktop-backend.md); the
-// sidecar mode stays reachable and flipping the default is a one-line change
-// here).
+// `backend.mode` (`"node"` default, or `"sidecar"` per ADR-0003 #57 — that
+// ADR is still open, so this issue ships both and defaults to node; flipping
+// the default when the ADR lands is a one-line change here).
 //
 // This module must stay electron-free: it is imported by the headless
 // dev-server entry that CI and the acceptance checks run under plain node.
@@ -180,11 +179,10 @@ export const RESERVED_PROFILE_HEADER_NAME = 'X-Profile-Id';
 export const BACKEND_MODE_ENV = 'TRAININGAPP_DESKTOP_BACKEND_MODE';
 
 /**
- * Default backend mode. ADR-0003 (#57) decided node on measured evidence
- * (docs/adr/0003-desktop-backend.md): the spike measured the packaged Node
- * slice streaming end-to-end while the PyInstaller-frozen python-sidecar LLM
- * load is blocked; the selector keeps an ADR flip mechanical (config default
- * change only).
+ * Default backend mode. ADR-0003 (#57) is OPEN — recorded as assumption A1 in
+ * the issue trace: "node" is the default because it is self-contained and
+ * CI-testable without a PyInstaller build, and the selector makes an ADR flip
+ * mechanical (config default change only).
  */
 export const DEFAULT_BACKEND_MODE: BackendMode = 'node';
 

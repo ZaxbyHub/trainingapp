@@ -1,8 +1,8 @@
 // Loopback transport guard (issue #60, Workstream B2).
 //
 // A backend-agnostic request gate that sits in FRONT of whatever backend
-// Workstream B3 (#61) hosts, per ADR-0003 (decided: Node main-process server;
-// this guard must sit in front of the sidecar too if that mode is ever used).
+// Workstream B3 (#61) hosts, per ADR-0003 (still open — Node main vs Electron-
+// hosted Python sidecar; this guard must sit in front of the sidecar too).
 // It is a pure (request) => Response | null gate so any server surface can
 // compose it: `const verdict = guard(req); if (verdict) return verdict; /* backend */`.
 //
