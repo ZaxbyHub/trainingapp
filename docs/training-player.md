@@ -87,7 +87,7 @@ acceptance checks) pins the transcript's shape, the 11 screenshots, this
 doc's pointers, and the pinned player version, so drift fails CI. The probe
 re-ran the three A8 probes live: the iframe rendered under `require-corp`
 with **zero COOP/COEP console errors** (and zero console errors of any kind
-in the recorded run); the `GetPlayer()` facade enumerated 19 own keys plus
+in the recorded run); the `GetPlayer()` facade enumerated 20 own keys plus
 Object.prototype (`GetVar`, `SetVar`, `object`, `setVar`, `getVar`, `once`,
 `addForTriggers`, `addToTimeline`, `emphasis`, `pointerX`, `pointerY`,
 `slideWidth`, `slideHeight`, `hidePointer`, `showPointer`, `update`,
@@ -95,7 +95,7 @@ Object.prototype (`GetVar`, `SetVar`, `object`, `setVar`, `getVar`, `once`,
 confirming the DS-runtime recipe above is the only programmatic jump path;
 `GetVar('projectSlideNumber'|'projectSlideTitle')` returned `null` live
 (the refutation the fallback section records); and the 10 jumps (one per
-frozen-manifest row, 200–374 ms in the committed run) each landed with the
+frozen-manifest row, 200–315 ms in the committed run) each landed with the
 player's own state reporting the target id.
 
 ### Fallback findings (each proven, not assumed)
