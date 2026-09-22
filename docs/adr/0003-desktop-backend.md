@@ -33,7 +33,7 @@ The python-sidecar install-size cell includes the llama_cpp runtime copy require
 
 ## Decision
 
-We chose the node backend: the Electron main-process Node server (option 1) is the desktop backend architecture, confirmed as the production default for #61/#62 and the WS-B baseline going forward. `desktop/main/backend/backend/index.ts` keeps `mode: 'node'` as the default with the sidecar path remaining available for future need, now backed by measured evidence instead of an unproven assumption.
+We chose the node backend: the Electron main-process Node server (option 1) is the desktop backend architecture, confirmed as the production default for #61/#62 and the WS-B baseline going forward. `desktop/main/backend/index.ts` keeps `mode: 'node'` as the default with the sidecar path remaining available for future need, now backed by measured evidence instead of an unproven assumption.
 
 Why (from the matrix, all values above quoted from `eval/adr0003-matrix.json`):
 
