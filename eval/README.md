@@ -18,6 +18,8 @@ quality; it is the measuring instrument.
 | `corpus/*.md` | the 8 checked-in synthetic documents the questions target |
 | `runner.py` | scores a `--base-url` backend, writes `REPORT.md` + `report.json` |
 | `ci_serve.py` | deterministic no-weights backend for CI / smoke runs |
+| `a8-probe.mjs` | A8 probe harness (issue #58): serves a Storyline publish same-origin under COOP/COEP/CORP, drives the embed/read/jump probes via Playwright from `desktop/node_modules`, writes `a8-recipe-probe.json` + screenshots |
+| `a8-recipe-probe.json` / `a8-*.png` | committed A8 probe transcript + annotated screenshots (see `PROVENANCE.md`) |
 | `samples/` | committed sample reports, one per provenance label |
 | `REPORT.md` / `report.json` | default output paths of a local run (not committed) |
 
