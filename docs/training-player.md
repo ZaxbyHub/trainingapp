@@ -65,7 +65,38 @@ const s = DS.windowManager.getCurrentWindowSlide();
 
 Demonstration: 10 distinct slide ids across 3 course sections, all jumped
 programmatically and verified through the player's own state (220–314 ms per
-jump). Full transcript: the #81 trace `evidence/a8-recipe-probe.json`.
+jump). Full transcript: `eval/a8-recipe-probe.json`, machine-written by
+`eval/a8-probe.mjs` (the A8 probe harness: zero-dep Node HTTP host serving the
+publish same-origin with COOP `same-origin` + COEP `require-corp` + CORP
+`same-origin` on every response, host page embedding `story.html` in an
+iframe, driving the probes through `iframe.contentWindow`), with annotated
+per-jump screenshots `eval/a8-jump-01..10.png` and the embedding screenshot
+`eval/a8-embed-coep.png`. Regenerate any time:
+`node eval/a8-probe.mjs --root <publishDir>` (defaults to the committed
+fixture; the committed evidence is the real-publish run, provenance-stamped
+inside the transcript).
+
+### A8 evidence and provenance (issue #58)
+
+The committed transcript `eval/a8-recipe-probe.json` was produced by
+`eval/a8-probe.mjs` against the real OpMed publish (Storyline 360
+`3.114.36620.0`, courseid `5fox24EQH9w`, `slideCount` 384). Its
+`provenance` block records the git commit, timestamp, source path and player
+identity; `tests/test_a8_training_player_evidence.py` (the frozen #58
+acceptance checks) pins the transcript's shape, the 11 screenshots, this
+doc's pointers, and the pinned player version, so drift fails CI. The probe
+re-ran the three A8 probes live: the iframe rendered under `require-corp`
+with **zero COOP/COEP console errors** (and zero console errors of any kind
+in the recorded run); the `GetPlayer()` facade enumerated 19 own keys plus
+Object.prototype (`GetVar`, `SetVar`, `object`, `setVar`, `getVar`, `once`,
+`addForTriggers`, `addToTimeline`, `emphasis`, `pointerX`, `pointerY`,
+`slideWidth`, `slideHeight`, `hidePointer`, `showPointer`, `update`,
+`keyDown`, `getKeyDown`, `keydown`, `keyup`) — no jump-named method,
+confirming the DS-runtime recipe above is the only programmatic jump path;
+`GetVar('projectSlideNumber'|'projectSlideTitle')` returned `null` live
+(the refutation the fallback section records); and the 10 jumps (one per
+frozen-manifest row, 200–374 ms in the committed run) each landed with the
+player's own state reporting the target id.
 
 ### Fallback findings (each proven, not assumed)
 
@@ -84,6 +115,23 @@ jump). Full transcript: the #81 trace `evidence/a8-recipe-probe.json`.
 - **Re-opening a player may show a Resume/Restart prompt** instead of the
   cover (`PlayerMemoryEnhancements` persists course position). Host code must
   not assume the cover's Start button exists.
+
+### `txt__default` rasterized-text observation (issue #58, informational for D1/#77)
+
+Recorded live by the A8 probe (network capture across the 10 probed desktop
+jumps): the desktop (html5) rendering path **does** fetch `txt__default_*.png`
+rasterized-text assets — 10 fetches during the 10 jumps, every URL served
+from `mobile/` (e.g. `mobile/txt__default_5fNbkenJkh7.png`), and every
+fetched file exists and loads (200). Static ground truth for the same
+publish: **zero** `txt__default` files under `html5/`, 292 under `mobile/`
+(the committed e2e fixture carries 9 of them; its tolerated media-404 class
+covers the rest). Slide payloads reference the assets as `txt__default_*`
+`linkId`s on `textdata`/`acctext` entries. Consequence for the extractor's
+OCR follow-up (D1/#77): rasterized text boxes appear in the probed slides'
+desktop iframe rendering path (sourced from `mobile/`), so extracting
+on-screen text from `data.js` text fields alone misses exactly those boxes —
+OCR of the `txt__default` assets is required to recover their text. Full data:
+`probes.txt_default` in `eval/a8-recipe-probe.json`.
 
 ## Pack-local bridge
 

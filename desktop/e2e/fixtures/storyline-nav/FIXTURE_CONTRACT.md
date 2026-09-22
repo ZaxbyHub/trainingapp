@@ -13,7 +13,7 @@ E:\ClaudeCode\OpMed CDP MicroLearning Companion_7-10-26
 ```
 
 (Storyline 360 3.114.36620.0, published 2026-07-10, courseid `5fox24EQH9w`, `lmsPresent:false`
-— the same publish the A8 probe characterized; see trace evidence `a8-recipe-probe.json`.)
+— the same publish the A8 probe characterized; see committed evidence `eval/a8-recipe-probe.json`.)
 
 CI cannot use the external publish; that is why this trimmed copy is committed.
 
