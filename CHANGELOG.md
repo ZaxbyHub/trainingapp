@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Added — A7: Desktop backend architecture decision, ADR-0003 (issue #57)
+
+- `docs/adr/0003-desktop-backend.md`: chooses the Node main-process backend as the production desktop architecture on measured evidence from two packaged vertical slices (the Node slice streamed a real answer end-to-end through the frozen contract from its installed NSIS build; the Python sidecar's frozen llama-cpp-python could not load a GGUF in any PyInstaller variant attempted, recorded as a blocking finding with the complete mitigation history and working wheel-generation pins for any future revisit).
+- `eval/adr0003-matrix.json` + `eval/adr0003-e2e-evidence.json`: machine-written comparison matrices (7 metrics × 2 slices) measured from the CI-built installers on the dev station, provenance-stamped with per-slice timestamps and the measurement commit. Reference-i5 rows PENDING; a materially different laptop result reopens the decision.
+- `tests/test_adr_0003_desktop_backend.py`: five frozen acceptance checks pinning the ADR decision, matrix completeness, reranker-defect verdict, WS-B adjustment, and e2e evidence integrity (issue-tracer red-checkpoint protocol; three sanctioned CHECK_WRONG amendments documented).
+
 ### Added — A6: Distributable LLM profiles decision, ADR-0002 + license review (issue #56)
 
 - `docs/adr/0002-llm-profiles.md`: names the Quality profile (`gemma-4-e2b-it`, quant `Q4_K_M` — the only measured quant per `bench/RESULTS.md`; the unmeasured Q5_K_M incumbent artifact is superseded at packaging time by #84) and the Fast profile (`lfm2.5-vl-450m` Q4_K_M, confirming the wired Electron `FAST_MODEL_SUBPATH`), with a decision table citing only recorded machine-tagged bench rows and the explicit downstream gate (#62/#84/#85 blocked until this ADR merges).

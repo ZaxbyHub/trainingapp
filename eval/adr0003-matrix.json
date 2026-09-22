@@ -1,0 +1,57 @@
+{
+  "schema": "adr0003-matrix/1",
+  "metrics": {
+    "install_size_mb": {
+      "node": 1373.7,
+      "python-sidecar": 2066.9
+    },
+    "cold_start_s": {
+      "node": 0.54,
+      "python-sidecar": 5.247
+    },
+    "first_token_latency_s": {
+      "node": 1.295,
+      "python-sidecar": {
+        "blocked_by": "GGUF model load fails with Windows Error 0xc000001d (STATUS_ILLEGAL_INSTRUCTION) in the runtime-copied PyInstaller sidecar; retrieval and health serve normally"
+      }
+    },
+    "decode_tok_s": {
+      "node": 0.94,
+      "python-sidecar": {
+        "blocked_by": "GGUF model load fails with Windows Error 0xc000001d (STATUS_ILLEGAL_INSTRUCTION) in the runtime-copied PyInstaller sidecar; retrieval and health serve normally"
+      }
+    },
+    "peak_rss_mb": {
+      "node": 2145.1,
+      "python-sidecar": 459.5
+    },
+    "ci_build_reliability": {
+      "node": "1/1 runs green (run 35666173313)",
+      "python-sidecar": "build green 1/1 (plus one upload-403 retry on the earlier run); LLM runtime-blocked at measurement (run 35666173313)"
+    },
+    "cancellation_stop": {
+      "node": "110 ms (CPU idle confirmed within 5 s)",
+      "python-sidecar": "blocked: no generation to cancel (LLM unavailable in the frozen build)"
+    }
+  },
+  "reranker_local_files_only_reproduced": true,
+  "provenance": {
+    "measured_at_utc": "2026-09-21T23:42:30.727Z",
+    "measured_at_utc_per_slice": {
+      "node": "2026-09-21T23:40:01.727Z",
+      "python-sidecar": "2026-09-21T23:42:30.727Z"
+    },
+    "machine": {
+      "tag": "devstation",
+      "os": "Windows_NT 10.0.26200",
+      "cpu": "AMD Ryzen 9 5950X 16-Core Processor            "
+    },
+    "git_commit": "27a6f41877bc9f4edd99268af67dd9f9932ff6a8",
+    "script_sha256": "7755b4acf63de0b1b9091eb481ac1436de8b52e1d4182d4183f1aeca7a692800",
+    "raw": {
+      "node": "spike/measure/results/node.json",
+      "python": "spike/measure/results/python.json",
+      "probe": "spike/measure/results/probe.json"
+    }
+  }
+}

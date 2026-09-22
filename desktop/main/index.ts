@@ -2,9 +2,9 @@
 //
 // Scope guard (Workstream B1): this module is ONLY the window shell — single
 // instance, secure defaults, app:// renderer hosting. Backend hosting arrives
-// with Workstream B3 (#61) and MUST live in its own module (the ADR-0003
-// decision, issue #57, renames/replaces that file mechanically without
-// touching this bootstrap). Baseline transport hardening beyond the flags
+// with Workstream B3 (#61) and MUST live in its own module (ADR-0003, issue
+// #57, decided: the Node main-process backend; the module abstraction stays so
+// the sidecar mode remains reachable without touching this bootstrap). Baseline transport hardening beyond the flags
 // below is Workstream B2 / issue #60.
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -205,7 +205,7 @@ export function bootstrap(): void {
       return;
     }
     // Backend host (issue #61, B3): start the guarded loopback listener behind
-    // the B2 guard, selected by backend.mode (node default; ADR-0003 #57).
+    // the B2 guard, selected by backend.mode (node default per ADR-0003).
     // B4-B9 import ONLY desktop/main/backend/index.js — never this wiring.
     let backendHost: BackendHost | null = null;
     let backendHandle: BackendHandle | null = null;
