@@ -26,7 +26,14 @@
  * (desktop/e2e/fixtures/storyline-nav/story_content/trainingapp-bridge.js):
  * requestSlideForReview is issued only while the current slide reports
  * slideReady, never awaited unbounded (poll getCurrentWindowSlide for the
- * landing), with the landed-but-unready slideReady recovery after 4 s.
+ * landing), with the landed-but-unready slideReady recovery forced from the
+ * FIRST poll tick a landed slide reports not-ready (throttled to once per
+ * 4 s thereafter); every firing is recorded per jump as unstick_count.
+ *
+ * Dependency note: the host server itself uses only Node builtins, but the
+ * driver imports playwright-core from desktop/node_modules (the same tree
+ * the desktop e2e suite uses) — run `npm --prefix desktop ci` first, or the
+ * harness exits with MODULE_NOT_FOUND before probing.
  *
  * Usage:
  *   node eval/a8-probe.mjs [--root <publishDir>] [--out <transcript.json>]
@@ -212,6 +219,7 @@ function countTxtDefaultAssets(dir) {
   return n;
 }
 const MOBILE_TXT_ASSETS = countTxtDefaultAssets(path.join(ROOT, "mobile"));
+const HTML5_TXT_ASSETS = countTxtDefaultAssets(path.join(ROOT, "html5"));
 
 // ---- HTTP host (same-origin, COOP/COEP/CORP on every response) --------------
 
@@ -341,23 +349,30 @@ function hostPageHtml() {
 
   // The proven jump window (bridge mechanics): issue requestSlideForReview
   // only while the current slide reports slideReady, never await the promise
-  // unbounded, resolve on the player's own state, unstick landed-but-unready
-  // slides after 4 s (PlayerMemoryEnhancements eats htmlReady rAFs).
+  // unbounded, resolve on the player's own state. The landed-but-unready
+  // recovery (PlayerMemoryEnhancements eats htmlReady rAFs) fires from the
+  // FIRST poll tick a landed slide reports not-ready — lastUnstickAt starts
+  // at -Infinity, so the 4 s constant throttles REPEAT firings, it does not
+  // delay the first one. Every firing is counted and returned as
+  // unstick_count so a forced-readiness landing is distinguishable from a
+  // natural one in the transcript.
   function jumpWindow(target, targetId) {
     return new Promise(function (resolve) {
       var waited = 0;
       var lastRequestAt = -Infinity;
       var outstanding = 0;
       var lastUnstickAt = -Infinity;
+      var unstickCount = 0;
       var timer = setInterval(function () {
         waited += POLL_MS;
         var state = currentSlide();
         if (state !== null && state.ready === true && state.slideId === targetId) {
-          clearInterval(timer); resolve(true); return;
+          clearInterval(timer); resolve({ ok: true, unstickCount: unstickCount }); return;
         }
         if (state !== null && state.slideId === targetId && state.ready !== true &&
             waited - lastUnstickAt >= UNSTICK_AFTER_MS) {
           lastUnstickAt = waited;
+          unstickCount += 1;
           try {
             var wm = player().DS.windowManager;
             var model = wm.getCurrentWindowSlide();
@@ -381,7 +396,7 @@ function hostPageHtml() {
             } catch (err) { outstanding -= 1; }
           }
         }
-        if (waited >= JUMP_WINDOW_MS) { clearInterval(timer); resolve(false); }
+        if (waited >= JUMP_WINDOW_MS) { clearInterval(timer); resolve({ ok: false, unstickCount: unstickCount }); }
       }, POLL_MS);
     });
   }
@@ -437,8 +452,8 @@ function hostPageHtml() {
           var target = findSlide(slideId);
           if (!target) return { ok: false, reason: 'unknown-id' };
           var t0 = Date.now();
-          return jumpWindow(target, slideId).then(function (ok) {
-            return { ok: ok, ms: Date.now() - t0, reason: ok ? null : 'jump-window-timeout' };
+          return jumpWindow(target, slideId).then(function (res) {
+            return { ok: res.ok, ms: Date.now() - t0, unstickCount: res.unstickCount, reason: res.ok ? null : 'jump-window-timeout' };
           });
         })
         .catch(function (err) { return { ok: false, reason: String(err && err.message || err) }; });
@@ -463,7 +478,14 @@ function serveFile(res, filePath) {
 }
 
 const server = http.createServer((req, res) => {
-  const urlPath = decodeURIComponent(new URL(req.url, "http://127.0.0.1").pathname);
+  let urlPath;
+  try {
+    urlPath = decodeURIComponent(new URL(req.url, "http://127.0.0.1").pathname);
+  } catch {
+    res.writeHead(400, SECURITY_HEADERS);
+    res.end("bad request");
+    return;
+  }
   if (urlPath === "/__a8_host__.html") {
     res.writeHead(200, { ...SECURITY_HEADERS, "Content-Type": MIME[".html"] });
     res.end(hostPageHtml());
@@ -566,6 +588,7 @@ async function runProbe(headed) {
         ok: result.ok === true,
         readback_slideId: readback ? readback.slideId : null,
         ms: typeof result.ms === "number" ? result.ms : 0,
+        unstick_count: typeof result.unstickCount === "number" ? result.unstickCount : 0,
       });
       await page.evaluate(
         ([n, id, title, ok, ms]) =>
@@ -614,10 +637,21 @@ const getvarBlock = result.api.getvar ?? {
   projectSlideTitle: { value: null, result: "GetPlayer().GetVar('projectSlideTitle') returned null" },
 };
 
+let GIT_COMMIT;
+try {
+  GIT_COMMIT = execSync("git rev-parse HEAD", { cwd: REPO_ROOT }).toString().trim();
+} catch (err) {
+  // Abort WITHOUT writing: an evidence transcript without a verifiable commit
+  // id would fail the frozen checks anyway, and overwriting a previously
+  // committed-good transcript with a provenance-less one discards evidence.
+  console.error(`a8-probe: git rev-parse failed (${err.message}) — transcript NOT written`);
+  process.exit(1);
+}
+
 const transcript = {
   provenance: {
-    generated_by: "eval/a8-probe.mjs (issue #58 A8 probe harness; zero-dep Node HTTP host + Playwright Chromium)",
-    git_commit: execSync("git rev-parse HEAD", { cwd: REPO_ROOT }).toString().trim(),
+    generated_by: "eval/a8-probe.mjs (issue #58 A8 probe harness; Node-builtin HTTP host + Playwright Chromium from desktop/node_modules)",
+    git_commit: GIT_COMMIT,
     timestamp_utc: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
     harness: "eval/a8-probe.mjs",
     source: {
@@ -664,12 +698,14 @@ const transcript = {
       observed_desktop_fetch: txtDefaultRequests.length > 0,
       desktop_fetch_urls: txtDefaultRequests,
       mobile_assets_in_source: MOBILE_TXT_ASSETS,
+      html5_assets_in_source: HTML5_TXT_ASSETS,
       note:
         `Observed live while probing the ${result.jumps.length} desktop-rendered jumps: ` +
         `${txtDefaultRequests.length} txt__default asset fetch(es) hit the network from the DESKTOP ` +
         `(html5) rendering path${txtDefaultRequests.length === 0 ? " — none: the desktop player renders these text boxes as DOM text, not rasterized images" : ` — every fetched URL is served from mobile/ (${txtDefaultRequests.filter((u) => u.includes("/mobile/")).length}/${txtDefaultRequests.length} under /mobile/), i.e. the desktop player DOES display rasterized-text images sourced from the mobile tree`}. ` +
-        `Static ground truth: 0 txt__default files exist under html5/ in this publish root; ` +
-        `${MOBILE_TXT_ASSETS} exist under mobile/. ` +
+        `Static ground truth (counted by walking this publish root): ` +
+        `${HTML5_TXT_ASSETS} txt__default files under html5/, ` +
+        `${MOBILE_TXT_ASSETS} under mobile/. ` +
         `Slide payloads reference txt__default_* linkIds (textdata/acctext entries). Consequence for the D1 (#77) ` +
         `OCR follow-up: rasterized text boxes DO appear in the probed slides' desktop iframe rendering path ` +
         `(the fetched mobile/ PNGs load successfully), so on-screen-text extraction from data.js alone misses ` +

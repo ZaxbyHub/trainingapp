@@ -64,7 +64,7 @@ const s = DS.windowManager.getCurrentWindowSlide();
 ```
 
 Demonstration: 10 distinct slide ids across 3 course sections, all jumped
-programmatically and verified through the player's own state (220–314 ms per
+programmatically and verified through the player's own state (200–306 ms per
 jump). Full transcript: `eval/a8-recipe-probe.json`, machine-written by
 `eval/a8-probe.mjs` (the A8 probe harness: zero-dep Node HTTP host serving the
 publish same-origin with COOP `same-origin` + COEP `require-corp` + CORP
@@ -72,7 +72,8 @@ publish same-origin with COOP `same-origin` + COEP `require-corp` + CORP
 iframe, driving the probes through `iframe.contentWindow`), with annotated
 per-jump screenshots `eval/a8-jump-01..10.png` and the embedding screenshot
 `eval/a8-embed-coep.png`. Regenerate any time:
-`node eval/a8-probe.mjs --root <publishDir>` (defaults to the committed
+`node eval/a8-probe.mjs --root <publishDir>` (requires desktop's installed
+playwright-core — `npm --prefix desktop ci` first; defaults to the committed
 fixture; the committed evidence is the real-publish run, provenance-stamped
 inside the transcript).
 
@@ -95,8 +96,11 @@ Object.prototype (`GetVar`, `SetVar`, `object`, `setVar`, `getVar`, `once`,
 confirming the DS-runtime recipe above is the only programmatic jump path;
 `GetVar('projectSlideNumber'|'projectSlideTitle')` returned `null` live
 (the refutation the fallback section records); and the 10 jumps (one per
-frozen-manifest row, 200–315 ms in the committed run) each landed with the
-player's own state reporting the target id.
+frozen-manifest row, 200–306 ms in the committed run) each landed with the
+player's own state reporting the target id. Each jump record also carries
+`unstick_count` (the landed-but-unready recovery firings): the committed run
+recorded one firing (jump 4), making forced-readiness landings
+distinguishable from natural ones in the evidence.
 
 ### Fallback findings (each proven, not assumed)
 
@@ -234,7 +238,8 @@ scene entry; captured as `cur=<target>/false` for 150s with zero outstanding
 requests).
 
 The pack bridge carries a targeted recovery: when a jump has LANDED (the
-model reports the target as current) but readiness stays false for 4s, the
+model reports the target as current) but readiness stays false — forced from
+the FIRST poll tick it observes that state, throttled to once per 4s — the
 bridge sets the landed model's `slideReady` back to true, restoring the
 runtime's own synchronous stage-1 path (`requestSlideForReview` resolves
 immediately when the current slide reports ready). With the recovery, the

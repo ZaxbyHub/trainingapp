@@ -1,8 +1,8 @@
 {
   "provenance": {
-    "generated_by": "eval/a8-probe.mjs (issue #58 A8 probe harness; zero-dep Node HTTP host + Playwright Chromium)",
-    "git_commit": "a6e7426bac47ac3d6c91d74f49e569abee6703e0",
-    "timestamp_utc": "2026-09-22T10:54:21Z",
+    "generated_by": "eval/a8-probe.mjs (issue #58 A8 probe harness; Node-builtin HTTP host + Playwright Chromium from desktop/node_modules)",
+    "git_commit": "29fc03f5ed982ceb74b27cf0f58001e1e0931773",
+    "timestamp_utc": "2026-09-22T16:07:08Z",
     "harness": "eval/a8-probe.mjs",
     "source": {
       "kind": "real-publish",
@@ -78,8 +78,16 @@
           "slideTitle": "Patient Information Disclaimer"
         },
         {
-          "slideId": "5aekClXIESa",
-          "slideTitle": "Select Chief Complaint"
+          "slideId": "5rN4PvXJM5d",
+          "slideTitle": "Welcome"
+        },
+        {
+          "slideId": "6mEtFwFWVpq",
+          "slideTitle": "Main Menu"
+        },
+        {
+          "slideId": "6ZYUMez1qPq",
+          "slideTitle": "Select Confusion"
         }
       ],
       "poll_interval_ms": 1000
@@ -93,7 +101,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "5rN4PvXJM5d",
-        "ms": 202
+        "ms": 206,
+        "unstick_count": 0
       },
       {
         "seq": 2,
@@ -103,7 +112,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "6RdggQhakWc",
-        "ms": 212
+        "ms": 214,
+        "unstick_count": 0
       },
       {
         "seq": 3,
@@ -113,7 +123,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "5WPdDfMu1kK",
-        "ms": 205
+        "ms": 207,
+        "unstick_count": 0
       },
       {
         "seq": 4,
@@ -123,7 +134,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "6mEtFwFWVpq",
-        "ms": 315
+        "ms": 306,
+        "unstick_count": 1
       },
       {
         "seq": 5,
@@ -133,7 +145,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "6o652ZiseLC",
-        "ms": 200
+        "ms": 200,
+        "unstick_count": 0
       },
       {
         "seq": 6,
@@ -143,7 +156,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "6mZvfaT2voE",
-        "ms": 211
+        "ms": 204,
+        "unstick_count": 0
       },
       {
         "seq": 7,
@@ -153,7 +167,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "5aekClXIESa",
-        "ms": 207
+        "ms": 211,
+        "unstick_count": 0
       },
       {
         "seq": 8,
@@ -163,7 +178,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "6ZYUMez1qPq",
-        "ms": 208
+        "ms": 201,
+        "unstick_count": 0
       },
       {
         "seq": 9,
@@ -173,7 +189,8 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "6cdRMINdr9M",
-        "ms": 202
+        "ms": 200,
+        "unstick_count": 0
       },
       {
         "seq": 10,
@@ -183,25 +200,27 @@
         "outline_depth": 2,
         "ok": true,
         "readback_slideId": "5WB9cNnxOlq",
-        "ms": 205
+        "ms": 202,
+        "unstick_count": 0
       }
     ],
     "txt_default": {
       "observed_desktop_fetch": true,
       "desktop_fetch_urls": [
-        "http://127.0.0.1:52595/mobile/txt__default_63cdSDuRAbS.png",
-        "http://127.0.0.1:52595/mobile/txt__default_5iERRnKXjlb.png",
-        "http://127.0.0.1:52595/mobile/txt__default_5fNbkenJkh7.png",
-        "http://127.0.0.1:52595/mobile/txt__default_60Qxw9LYOKe.png",
-        "http://127.0.0.1:52595/mobile/txt__default_5lTkVtZipw7.png",
-        "http://127.0.0.1:52595/mobile/txt__default_5V6s6VmTrZ7.png",
-        "http://127.0.0.1:52595/mobile/txt__default_6Elq0xmb1iT.png",
-        "http://127.0.0.1:52595/mobile/txt__default_64Zi5orYy1o.png",
-        "http://127.0.0.1:52595/mobile/txt__default_5rjqtkqAJq4.png",
-        "http://127.0.0.1:52595/mobile/txt__default_6cIHLHB2mGL.png"
+        "http://127.0.0.1:51953/mobile/txt__default_63cdSDuRAbS.png",
+        "http://127.0.0.1:51953/mobile/txt__default_5iERRnKXjlb.png",
+        "http://127.0.0.1:51953/mobile/txt__default_5fNbkenJkh7.png",
+        "http://127.0.0.1:51953/mobile/txt__default_60Qxw9LYOKe.png",
+        "http://127.0.0.1:51953/mobile/txt__default_5lTkVtZipw7.png",
+        "http://127.0.0.1:51953/mobile/txt__default_5V6s6VmTrZ7.png",
+        "http://127.0.0.1:51953/mobile/txt__default_6Elq0xmb1iT.png",
+        "http://127.0.0.1:51953/mobile/txt__default_64Zi5orYy1o.png",
+        "http://127.0.0.1:51953/mobile/txt__default_5rjqtkqAJq4.png",
+        "http://127.0.0.1:51953/mobile/txt__default_6cIHLHB2mGL.png"
       ],
       "mobile_assets_in_source": 292,
-      "note": "Observed live while probing the 10 desktop-rendered jumps: 10 txt__default asset fetch(es) hit the network from the DESKTOP (html5) rendering path — every fetched URL is served from mobile/ (10/10 under /mobile/), i.e. the desktop player DOES display rasterized-text images sourced from the mobile tree. Static ground truth: 0 txt__default files exist under html5/ in this publish root; 292 exist under mobile/. Slide payloads reference txt__default_* linkIds (textdata/acctext entries). Consequence for the D1 (#77) OCR follow-up: rasterized text boxes DO appear in the probed slides' desktop iframe rendering path (the fetched mobile/ PNGs load successfully), so on-screen-text extraction from data.js alone misses exactly these rasterized boxes — OCR of the txt__default assets is required to recover their text."
+      "html5_assets_in_source": 0,
+      "note": "Observed live while probing the 10 desktop-rendered jumps: 10 txt__default asset fetch(es) hit the network from the DESKTOP (html5) rendering path — every fetched URL is served from mobile/ (10/10 under /mobile/), i.e. the desktop player DOES display rasterized-text images sourced from the mobile tree. Static ground truth (counted by walking this publish root): 0 txt__default files under html5/, 292 under mobile/. Slide payloads reference txt__default_* linkIds (textdata/acctext entries). Consequence for the D1 (#77) OCR follow-up: rasterized text boxes DO appear in the probed slides' desktop iframe rendering path (the fetched mobile/ PNGs load successfully), so on-screen-text extraction from data.js alone misses exactly these rasterized boxes — OCR of the txt__default assets is required to recover their text."
     }
   },
   "decisions": {
