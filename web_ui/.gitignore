@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .env.*
+!.env.desktop
 *.local
 
 # TypeScript incremental build cache (regenerated on every tsc -b)
