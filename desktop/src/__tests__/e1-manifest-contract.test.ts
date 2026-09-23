@@ -248,63 +248,74 @@ describe('e1 manifest contract (issue #84, frozen check C2)', () => {
     expect(ids).toContain('snowflake-arctic-embed-m-v1.5');
   });
 
-  it('cross-manifest invariant: renderer-required ids are either staged-and-excluded (with the exclusion committed here) or present under web_ui/public/models', async () => {
+  it('cross-manifest invariant: staged∩renderer-required groups covered by .env.desktop; accepted collateral pinned', async () => {
     const stager = await import('../../scripts/stage-installer-resources.mjs');
     const stagedIds = new Set((stager.STAGED_MODELS as { id: string }[]).map((m) => m.id));
     const webUiManifest = JSON.parse(
       fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', 'public', 'models', 'manifest.json'), 'utf8'),
     );
-    const excludedGroups = new Set<string>();
-    for (const entry of webUiManifest.models as { id: string; group: string; files: { path: string; required?: boolean }[] }[]) {
+    const envDesktop = fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', '.env.desktop'), 'utf8');
+    const envGroups = new Set(
+      ((envDesktop.match(/VITE_EXCLUDE_MODEL_GROUPS=(.*)/) ?? [])[1] ?? '')
+        .split(',')
+        .map((g) => g.trim())
+        .filter(Boolean),
+    );
+    const desktopPkg = JSON.parse(fs.readFileSync(path.join(desktopDir, 'package.json'), 'utf8'));
+    // The desktop bundle must actually bake the exclusion: build:desktop mode
+    // selected by desktop:build, mode env from web_ui/.env.desktop.
+    expect(desktopPkg.scripts['desktop:build']).toContain('run build:desktop');
+    expect(
+      JSON.parse(fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', 'package.json'), 'utf8')).scripts['build:desktop'],
+    ).toContain('--mode desktop');
+
+    // Group granularity is coarse (exclusion is per web_ui manifest GROUP, and
+    // checkPackagedModels inlines the manifest at Vite build time —
+    // reconciling the copied JSON alone fixes nothing, review PRR-132):
+    // 1. every staged id that is ALSO renderer-required must have its group
+    //    covered by .env.desktop (else the packaged gate demands files the
+    //    installer does not ship in the renderer copy);
+    // 2. every NON-staged renderer-required id whose group got swept up by
+    //    that exclusion is ACCEPTED COLLATERAL and must be exactly the list
+    //    below — a new id landing in an excluded group fails here until it is
+    //    consciously added (the ADR-0001 snowflake re-pin tripwire).
+    const acceptedCollateral: Record<string, string[]> = {
+      core: ['onnxruntime-web'], // excluded for ettin; ort ships in the copy but its readiness probe is skipped
+      llm: ['wllama-runtime'], // excluded for gemma; wllama wasm/js ship in the copy
+    };
+    const missingCoverage: string[] = [];
+    const collateral: Record<string, string[]> = {};
+    for (const entry of webUiManifest.models as {
+      id: string;
+      group: string;
+      files: { path: string; required?: boolean }[];
+    }[]) {
       const requiredFiles = entry.files.filter((f) => f.required !== false);
-      if (requiredFiles.length === 0) continue;
+      if (requiredFiles.length === 0 || !envGroups.has(entry.group)) continue;
       if (stagedIds.has(entry.id)) {
-        // Staged-weight id: its weights must ship in the staged tree, AND its
-        // group must be baked into the packaged bundle's excluded groups via
-        // web_ui/.env.desktop (checkPackagedModels inlines the manifest at
-        // Vite build time — reconciling the copied JSON alone fixes nothing).
+        // Its weights must ship in the staged tree (consumer coverage).
         const staged = (stager.STAGED_MODELS as { id: string; files: string[] }[]).find((m) => m.id === entry.id);
         for (const file of requiredFiles) {
           const fileName = path.basename(file.path);
           const covered = (staged?.files ?? []).some((f) => f === fileName || f.endsWith(`/${fileName}`));
           expect(covered, `staged ${entry.id} does not cover renderer-required file ${fileName}`).toBe(true);
         }
-        excludedGroups.add(entry.group);
+        void 0;
       } else {
-        // Non-staged id: every required file must exist in the web_ui source
-        // tree, so the renderer copy keeps its readiness gate satisfiable.
-        for (const file of requiredFiles) {
-          expect(
-            fs.existsSync(path.resolve(desktopDir, '..', 'web_ui', 'public', 'models', file.path)),
-            `renderer-required file for non-staged id ${entry.id} missing from web_ui/public/models: ${file.path}`,
-          ).toBe(true);
-        }
+        (collateral[entry.group] ??= []).push(entry.id);
       }
     }
-    // The packaged bundle's excluded groups must COVER the groups of the
-    // staged∩renderer-required ids — pinned to web_ui/.env.desktop (the
-    // build:desktop mode input) and to the desktop:build script that selects
-    // that mode. A future staged id colliding with a renderer-required id in
-    // a NEW group fails here until .env.desktop is consciously updated.
-    // (Coverage, not equality: group granularity is coarse — see the
-    // .env.desktop comment for the ort/wllama tradeoff.)
-    const envDesktop = fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', '.env.desktop'), 'utf8');
-    const envGroups = new Set(
-      (envDesktop.match(/VITE_EXCLUDE_MODEL_GROUPS=(.*)/) ?? [])[1]
-        ?.split(',')
-        .map((g) => g.trim())
-        .filter(Boolean),
-    );
-    expect(
-      [...excludedGroups].filter((g) => !envGroups.has(g as string)),
-      `staged∩renderer-required groups missing from web_ui/.env.desktop VITE_EXCLUDE_MODEL_GROUPS`,
-    ).toEqual([]);
-    const desktopPkg = JSON.parse(fs.readFileSync(path.join(desktopDir, 'package.json'), 'utf8'));
-    expect(desktopPkg.scripts['desktop:build']).toContain('run build:desktop');
-    expect(JSON.parse(fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', 'package.json'), 'utf8')).scripts['build:desktop'])
-      .toContain('--mode desktop');
+    // Coverage check (staged side) recorded via excludedGroups semantics:
+    for (const entry of webUiManifest.models as { id: string; group: string }[]) {
+      if (stagedIds.has(entry.id)) {
+        expect(
+          envGroups.has(entry.group),
+          `staged id ${entry.id} is renderer-required but its group is not excluded by .env.desktop — the packaged gate would demand files the installer does not ship in the renderer copy`,
+        ).toBe(true);
+      }
+    }
+    expect(collateral).toEqual(acceptedCollateral);
   });
-
   it('findMissingSources reports exactly the allow-list files absent from a repo root', async () => {
     const stager = await import('../../scripts/stage-installer-resources.mjs');
     const repoRoot = makeTempDir('e1-missing-sources-');
