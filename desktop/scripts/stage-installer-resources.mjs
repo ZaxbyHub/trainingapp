@@ -272,7 +272,14 @@ function copyRenderer() {
   walk(webUiDist, '');
   console.log(`${SCRIPT}: renderer copy complete (${kept} files kept, ${skipped} staged-weight files excluded)`);
   reconcileRendererManifest(rendererDir, RENDERER_EXCLUDED_MODEL_IDS);
-  assertRendererManifestComplete(rendererDir);
+  if (args.fixtureModels) {
+    // Fixture builds (CI) run without prepare-models, so the renderer copy
+    // has no weight files for the completeness guard to check — the guard is
+    // real-weights-mode only, same gating philosophy as findMissingSources.
+    console.log(`${SCRIPT}: renderer manifest completeness skipped in fixture mode (weights are operator-acquired)`);
+  } else {
+    assertRendererManifestComplete(rendererDir);
+  }
   assertNoWeightOverlap();
 }
 
