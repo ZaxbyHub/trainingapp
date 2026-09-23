@@ -248,6 +248,10 @@ export function bootstrap(): void {
     if (integrity.decision === 'report' && integrity.failures.length > 0) {
       console.error('[trainingapp-desktop] integrity (dev, non-fatal):');
       for (const failure of integrity.failures) console.error(`  ${formatFailure(failure)}`);
+    } else if (integrity.decision === 'report') {
+      // Clean dev-present verification: say so AND that the bridge stayed
+      // unarmed (review PRR-127 — silent no-output read as "honored").
+      console.log('[trainingapp-desktop] integrity (dev): manifest verified clean; packaged bridge NOT armed (packaged-only)');
     }
     if (integrity.decision === 'block') {
       console.error('[trainingapp-desktop] installed resources failed integrity verification; refusing to start the backend:');

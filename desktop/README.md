@@ -259,7 +259,8 @@ verified. Key facts for operators and reviewers:
 - **Staging** (`scripts/stage-installer-resources.mjs`, run by
   `desktop:build` before electron-builder): assembles
   `installer-resources/` as `models/{embedding,reranker,llm-quality,
-  llm-fast}/<id>/…`, `packs/{bundled-docs,training}/<packId>-<version>/  and `docs/licenses.md` from EXPLICIT allow-lists. The staged models are
+  llm-fast}/<id>/…`, `packs/{bundled-docs,training}/<packId>-<version>/`,
+  and `docs/licenses.md` from EXPLICIT allow-lists. The staged models are
   exactly what the packaged desktop runtime loads today (bge-small-en-v1.5
   fp32 embedder, ettin-reranker-32m-v1 q8 reranker, the ADR-0002 GGUF
   pairs); swapping any of those is a model-selection decision (A5/A6),
@@ -293,10 +294,21 @@ verified. Key facts for operators and reviewers:
   existing `resolveNodeEngine` `models` seam) and the embedder/reranker
   dirs (through their existing env seams — packaged manifest wins over a
   pre-set env value, logged when it overrides one).
+- **Trust model (stated honestly, review PRR-103)**: the gate is
+  CORRUPTION DETECTION, not tamper-proofing. The manifest ships beside the
+  files it hashes and the install root is user-writable (`perMachine: false`
+  → `%LOCALAPPDATA%\Programs`), so anyone who can replace a weight file can
+  equally replace the manifest. `TRAININGAPP_DESKTOP_MANIFEST` is honored
+  even in packaged builds (a dev/test seam that same-user env can redirect).
+  Tamper-evident updates are E5/#88's signed-channels scope.
 - **Integrity layering** (stated honestly): startup verifies every
   `required` file (models + docs); pack files are verified at build by the
   `--verify` gate and at install by the #68 pack schema per-doc sha256.
   Note `verifiedCount`-style counts include the `installer-docs` entry.
+- **`build` vs `desktop:build`**: plain `build` passes
+  `--skip-renderer-copy` — it neither rebuilds web_ui nor refreshes
+  `renderer/` (and skips the double-ship guard). Only `desktop:build` is the
+  full packaging chain; run it (not `build`) for installers.
 - **Size budget**: measured component table in `bench/RESULTS.md`
   (E1 section); staged resources 4,111,872,009 bytes ≈ 3.83 GiB, measured
   installed footprint 6,378,451,601 bytes ≈ 6.4 GB, vs the ≤7 GiB budget.

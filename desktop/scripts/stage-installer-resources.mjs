@@ -119,8 +119,9 @@ export const STAGED_MODELS = [
 ];
 
 /** Renderer-copy exclusion key: model-id directories whose staged weights
- *  must not ALSO ship inside the packaged web_ui renderer copy. */
-const RENDERER_EXCLUDED_MODEL_IDS = new Set(STAGED_MODELS.map((m) => m.id));
+ *  must not ALSO ship inside the packaged web_ui renderer copy. Exported for
+ *  the committed cross-manifest parity spec (review PRR-132). */
+export const RENDERER_EXCLUDED_MODEL_IDS = new Set(STAGED_MODELS.map((m) => m.id));
 
 const STAGED_PACKS = [
   { source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'), classDir: 'bundled-docs' },
@@ -155,7 +156,28 @@ function writeFixtureFile(to, relName) {
   fs.writeFileSync(to, out);
 }
 
+/** Missing-source detector for the staged allow-list (review PRR-115): the
+ *  sole allow-list-vs-disk guard in real-weights mode. Exported so the
+ *  committed specs can exercise it; the stager calls it before copying. */
+export function findMissingSources(repoRoot, stagedModels = STAGED_MODELS) {
+  const missing = [];
+  for (const model of stagedModels) {
+    for (const rel of model.files) {
+      const src = path.join(repoRoot, 'models', model.id, rel);
+      if (!fs.existsSync(src)) missing.push(path.join('models', model.id, rel));
+    }
+  }
+  return missing;
+}
+
 function stageModels() {
+  // The allow-list-vs-disk guard is REAL-WEIGHTS-MODE ONLY (review round 2):
+  // fixture mode derives the tree from the table itself and must stay green
+  // on weights-less checkouts (CI) — checking disk there broke --fixture-models.
+  const missing = args.fixtureModels ? [] : findMissingSources(repoRoot);
+  for (const rel of missing) {
+    fail(`required model file missing: ${rel} (stage it per PACKAGING.md, or pass --fixture-models for CI)`);
+  }
   let staged = 0;
   for (const model of STAGED_MODELS) {
     for (const rel of model.files) {
@@ -167,8 +189,7 @@ function stageModels() {
         continue;
       }
       if (!fs.existsSync(src)) {
-        fail(`required model file missing: ${path.relative(repoRoot, src)} (stage it per PACKAGING.md, or pass --fixture-models for CI)`);
-        continue;
+        continue; // already reported by findMissingSources above
       }
       copyFileSyncLoud(src, dst);
       staged += 1;
@@ -241,12 +262,89 @@ function copyRenderer() {
       } else if (entry.isFile()) {
         copyFileSyncLoud(childAbs, path.join(rendererDir, childRel));
         kept += 1;
+      } else {
+        // Fail loud (mirrors the generator's walk): a symlink/FIFO in the
+        // dist tree must never silently vanish from the packaged renderer.
+        fail(`renderer dist contains a non-file/non-directory entry (excluded from the copy): ${childRel}`);
       }
     }
   };
   walk(webUiDist, '');
   console.log(`${SCRIPT}: renderer copy complete (${kept} files kept, ${skipped} staged-weight files excluded)`);
+  reconcileRendererManifest(rendererDir, RENDERER_EXCLUDED_MODEL_IDS);
+  assertRendererManifestComplete(rendererDir);
   assertNoWeightOverlap();
+}
+
+/** Rewrite the COPIED renderer manifest (renderer/models/manifest.json) so it
+ *  no longer declares the weight entries this stager excludes. Without this,
+ *  the packaged renderer's readiness gate (checkPackagedModels) reports
+ *  "required model file(s) not found" for files that are staged and
+ *  gate-verified one directory over (review PRR-132). Non-excluded entries
+ *  (ort, wllama, the browser embedder) pass through untouched. Exported for
+ *  the committed cross-manifest parity spec. */
+export function reconcileRendererManifest(rendererRoot, excludedIds) {
+  const manifestPath = path.join(rendererRoot, 'models', 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    fail(`renderer manifest missing after the copy: ${manifestPath}`);
+    return;
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch (err) {
+    fail(`renderer manifest unreadable at ${manifestPath}: ${err instanceof Error ? err.message : err}`);
+    return;
+  }
+  if (!Array.isArray(manifest.models)) {
+    fail(`renderer manifest at ${manifestPath} has no models[] array`);
+    return;
+  }
+  const dropped = [];
+  const kept = [];
+  for (const entry of manifest.models) {
+    if (excludedIds.has(entry.id)) {
+      dropped.push(entry.id);
+    } else {
+      kept.push(entry);
+    }
+  }
+  manifest.models = kept;
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
+  console.log(
+    `${SCRIPT}: renderer manifest reconciled (${kept.length} entries kept` +
+      (dropped.length > 0 ? `; dropped staged-weight entries: ${dropped.join(', ')}` : '') +
+      ')',
+  );
+}
+
+/** Over-exclusion detector (the two-sided half of the double-ship guard):
+ *  after reconciliation, EVERY remaining required file in the renderer
+ *  manifest must exist under the renderer copy. A future staged model id
+ *  that collides with a renderer-required id would otherwise silently strip
+ *  renderer weights while every guard stays green (review PRR-132). */
+function assertRendererManifestComplete(rendererRoot) {
+  const manifestPath = path.join(rendererRoot, 'models', 'manifest.json');
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  } catch {
+    return; // reconcile already reported the unreadable/unshaped manifest
+  }
+  if (!Array.isArray(manifest.models)) return; // same: reconcile reported it
+  const missing = [];
+  for (const entry of manifest.models) {
+    for (const file of entry.files ?? []) {
+      if (file.required === false) continue;
+      const abs = path.join(rendererRoot, 'models', file.path);
+      if (!fs.existsSync(abs)) missing.push(`${entry.id}: ${file.path}`);
+    }
+  }
+  if (missing.length > 0) {
+    for (const item of missing) fail(`renderer manifest completeness: required file missing from the renderer copy: ${item}`);
+  } else {
+    console.log(`${SCRIPT}: renderer manifest completeness clean (every remaining required file present)`);
+  }
 }
 
 function countFiles(dir) {
@@ -311,7 +409,12 @@ function main() {
   console.log(`${SCRIPT}: staging complete -> ${path.relative(repoRoot, stageDir)}`);
 }
 
-// Run only when executed directly (not when imported by the specs).
-if (process.argv[1] !== undefined && process.argv[1].endsWith('stage-installer-resources.mjs')) {
+// Run only when executed directly (not when imported by the specs). Case
+// folded: Windows filesystems are case-insensitive, so a case-varied
+// invocation path must still count as a direct run (review PRR-122).
+if (
+  process.argv[1] !== undefined &&
+  process.argv[1].toLowerCase().endsWith('stage-installer-resources.mjs')
+) {
   main();
 }

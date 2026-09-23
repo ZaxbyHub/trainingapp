@@ -221,4 +221,111 @@ describe('e1 manifest contract (issue #84, frozen check C2)', () => {
       expect(byGroup.get(group) ?? []).toContain('model.gguf');
     }
   });
+
+  it('reconcileRendererManifest drops exactly the staged-id entries and keeps the rest', async () => {
+    const stager = await import('../../scripts/stage-installer-resources.mjs');
+    const rendererRoot = makeTempDir('e1-renderer-manifest-');
+    const modelsDir = path.join(rendererRoot, 'models');
+    fs.mkdirSync(modelsDir, { recursive: true });
+    const sourceManifest = {
+      version: '2',
+      models: [
+        { id: 'ettin-reranker-32m-v1', group: 'reranker', files: [{ path: 'reranker/ettin-reranker-32m-v1/onnx/model_quantized.onnx', required: true }] },
+        { id: 'gemma-4-e2b-it', group: 'llm', files: [{ path: 'llm/gemma-4-e2b-it/model.gguf', required: true }] },
+        { id: 'onnxruntime-web', group: 'core', files: [{ path: 'ort/ort-wasm-simd-threaded.jsep.wasm', required: true }] },
+        { id: 'snowflake-arctic-embed-m-v1.5', group: 'embedding', files: [{ path: 'embeddings/snowflake-arctic-embed-m-v1.5/onnx/model_quantized.onnx', required: true }] },
+      ],
+    };
+    fs.writeFileSync(path.join(modelsDir, 'manifest.json'), JSON.stringify(sourceManifest, null, 2));
+    stager.reconcileRendererManifest(rendererRoot, stager.RENDERER_EXCLUDED_MODEL_IDS as ReadonlySet<string>);
+    const reconciled = JSON.parse(fs.readFileSync(path.join(modelsDir, 'manifest.json'), 'utf8'));
+    const ids = reconciled.models.map((m: { id: string }) => m.id);
+    // Staged-weight entries are gone; the packaged renderer's readiness gate
+    // no longer demands files this installer deliberately does not ship.
+    expect(ids).not.toContain('ettin-reranker-32m-v1');
+    expect(ids).not.toContain('gemma-4-e2b-it');
+    expect(ids).toContain('onnxruntime-web');
+    expect(ids).toContain('snowflake-arctic-embed-m-v1.5');
+  });
+
+  it('cross-manifest invariant: renderer-required ids are either staged-and-excluded (with the exclusion committed here) or present under web_ui/public/models', async () => {
+    const stager = await import('../../scripts/stage-installer-resources.mjs');
+    const stagedIds = new Set((stager.STAGED_MODELS as { id: string }[]).map((m) => m.id));
+    const webUiManifest = JSON.parse(
+      fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', 'public', 'models', 'manifest.json'), 'utf8'),
+    );
+    const excludedGroups = new Set<string>();
+    for (const entry of webUiManifest.models as { id: string; group: string; files: { path: string; required?: boolean }[] }[]) {
+      const requiredFiles = entry.files.filter((f) => f.required !== false);
+      if (requiredFiles.length === 0) continue;
+      if (stagedIds.has(entry.id)) {
+        // Staged-weight id: its weights must ship in the staged tree, AND its
+        // group must be baked into the packaged bundle's excluded groups via
+        // web_ui/.env.desktop (checkPackagedModels inlines the manifest at
+        // Vite build time — reconciling the copied JSON alone fixes nothing).
+        const staged = (stager.STAGED_MODELS as { id: string; files: string[] }[]).find((m) => m.id === entry.id);
+        for (const file of requiredFiles) {
+          const fileName = path.basename(file.path);
+          const covered = (staged?.files ?? []).some((f) => f === fileName || f.endsWith(`/${fileName}`));
+          expect(covered, `staged ${entry.id} does not cover renderer-required file ${fileName}`).toBe(true);
+        }
+        excludedGroups.add(entry.group);
+      } else {
+        // Non-staged id: every required file must exist in the web_ui source
+        // tree, so the renderer copy keeps its readiness gate satisfiable.
+        for (const file of requiredFiles) {
+          expect(
+            fs.existsSync(path.resolve(desktopDir, '..', 'web_ui', 'public', 'models', file.path)),
+            `renderer-required file for non-staged id ${entry.id} missing from web_ui/public/models: ${file.path}`,
+          ).toBe(true);
+        }
+      }
+    }
+    // The packaged bundle's excluded groups must COVER the groups of the
+    // staged∩renderer-required ids — pinned to web_ui/.env.desktop (the
+    // build:desktop mode input) and to the desktop:build script that selects
+    // that mode. A future staged id colliding with a renderer-required id in
+    // a NEW group fails here until .env.desktop is consciously updated.
+    // (Coverage, not equality: group granularity is coarse — see the
+    // .env.desktop comment for the ort/wllama tradeoff.)
+    const envDesktop = fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', '.env.desktop'), 'utf8');
+    const envGroups = new Set(
+      (envDesktop.match(/VITE_EXCLUDE_MODEL_GROUPS=(.*)/) ?? [])[1]
+        ?.split(',')
+        .map((g) => g.trim())
+        .filter(Boolean),
+    );
+    expect(
+      [...excludedGroups].filter((g) => !envGroups.has(g as string)),
+      `staged∩renderer-required groups missing from web_ui/.env.desktop VITE_EXCLUDE_MODEL_GROUPS`,
+    ).toEqual([]);
+    const desktopPkg = JSON.parse(fs.readFileSync(path.join(desktopDir, 'package.json'), 'utf8'));
+    expect(desktopPkg.scripts['desktop:build']).toContain('run build:desktop');
+    expect(JSON.parse(fs.readFileSync(path.resolve(desktopDir, '..', 'web_ui', 'package.json'), 'utf8')).scripts['build:desktop'])
+      .toContain('--mode desktop');
+  });
+
+  it('findMissingSources reports exactly the allow-list files absent from a repo root', async () => {
+    const stager = await import('../../scripts/stage-installer-resources.mjs');
+    const repoRoot = makeTempDir('e1-missing-sources-');
+    const staged = stager.STAGED_MODELS as { id: string; files: string[] }[];
+    // Stage only the FIRST file of the FIRST model; everything else is missing.
+    const first = staged[0];
+    const firstAbs = path.join(repoRoot, 'models', first.id, first.files[0]);
+    fs.mkdirSync(path.dirname(firstAbs), { recursive: true });
+    fs.writeFileSync(firstAbs, 'x');
+    const missing = stager.findMissingSources(repoRoot) as string[];
+    const expectedTotal = staged.reduce((n, m) => n + m.files.length, 0);
+    expect(missing).toHaveLength(expectedTotal - 1);
+    expect(missing).not.toContain(path.join('models', first.id, first.files[0]));
+    // Complete fixture tree -> no missing sources.
+    for (const model of staged) {
+      for (const rel of model.files) {
+        const abs = path.join(repoRoot, 'models', model.id, rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
+        fs.writeFileSync(abs, 'x');
+      }
+    }
+    expect(stager.findMissingSources(repoRoot)).toEqual([]);
+  });
 });

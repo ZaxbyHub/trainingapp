@@ -19,12 +19,12 @@ latency, and embed/rerank cost for the candidate models, per machine.
    reference-laptop numbers (or vice versa); evidence is invalidated when the
    machine changes — re-run, do not hand-patch.
 3. A GPU fault during a Vulkan attempt is recorded as an outcome row, never hidden (fault rows carry the upstream issue link).
-5. E1 installer-size rows (issue #84) come from
+4. E1 installer-size rows (issue #84) come from
    `desktop/scripts/build-installer-manifest.mjs` (its stdout component
    summary) over the real staged tree, plus the packaged-output inspection
    recorded in the issue #84 trace; hand-measured `du` figures carry the
    command in the notes.
-4. Tests read machine-tagged thresholds from the `bench-floors` block at the
+5. Tests read machine-tagged thresholds from the `bench-floors` block at the
    bottom of this file (`bench/floors.py`); a machine with no floors rows
    simply falls back to legacy bounds rather than inventing thresholds.
 
@@ -136,7 +136,7 @@ Thread count: 4 (mirrors the desktop `n_threads` default, config.py:57).
 ### E1 component size budget (issue #84)
 
 Measured by `desktop/scripts/build-installer-manifest.mjs` (the E1 generator;
-see the provenance rule 5 below) on the real staged tree, machine-tagged:
+see the provenance rule 4 above) on the real staged tree, machine-tagged:
 
 | machine | component | bytes | notes |
 |---|---|---|---|
@@ -147,8 +147,8 @@ see the provenance rule 5 below) on the real staged tree, machine-tagged:
 | devstation | packs (bundled-docs + training fixtures) | 1,695 | contracts/fixtures/packs layout fixtures |
 | devstation | docs (licenses.md) | 6,240 | the first-run licensing seam |
 | devstation | staged resources total | 4,111,872,009 | 3.83 GiB (17 model files after the review round added the reranker root tokenizers) |
-| devstation | **TOTAL (measured installed footprint win-unpacked, the README figure)** | **≈ 6.4 GB (6,378,451,601 B)** | held: 6.38 GB <= 7 GiB (7,516,192,768 B) budget |
-| devstation | packaged resources dir (win-unpacked/resources incl. app+renderer+natives) | 5,993,150,933 | post-exclusion double-ship guard clean; still <= 7 GiB |
+| devstation | **TOTAL (measured installed footprint win-unpacked, the README figure)** | **≈ 6.4 GB (6,378,451,601 B)** | held: 6.38 GB <= 7 GiB (7,516,192,768 B) budget; measured by python os.walk byte-sum over win-unpacked (cross-checked `du -sb`) |
+| devstation | packaged resources dir (win-unpacked/resources incl. app+renderer+natives) | 5,993,150,933 | post-exclusion double-ship guard clean; still <= 7 GiB; measured by python os.walk byte-sum (cross-checked `du -sb`) |
 | devstation | startup integrity gate latency (streaming sha256 of the full staged tree) | 2,377 ms | packaged-mode pass, 0 failures, 2026-09-23 |
 | reference-i5 | all E1 size/latency rows | PENDING | operator runs the same commands (E3/#86 owns the matrix) |
 
