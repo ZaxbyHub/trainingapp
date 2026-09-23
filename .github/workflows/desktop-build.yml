@@ -55,8 +55,21 @@ jobs:
       - name: Storyline extractor tests (packtool, fixture-only)
         run: npm --prefix packtool test
 
-      - name: Build installer (unsigned NSIS x64)
+      # E1 (issue #84): CI has no multi-GB weights (models/ is git-excluded),
+      # so the staged model files are tiny deterministic fixtures. The mode is
+      # loud in the manifest description AND in the artifact name — a fixture
+      # installer must never be mistaken for a real-weights build.
+      - name: Build installer (unsigned NSIS x64, fixture models)
+        env:
+          TRAININGAPP_INSTALLER_FIXTURE_MODELS: '1'
+          TRAININGAPP_INSTALLER_MANIFEST_NOTE: 'MODE: fixture-models'
         run: npm --prefix desktop run desktop:build
+
+      # E1 (issue #84) AC5: the completeness gate — the build fails when any
+      # staged file is unlisted or any listed file is missing (read-only
+      # compare of the staged tree against the generated manifest).
+      - name: Verify installer manifest completeness (issue #84)
+        run: node desktop/scripts/build-installer-manifest.mjs --stage-dir desktop/installer-resources --out desktop/installer-resources/manifest.json --verify
 
       - name: Verify preload is CommonJS (sandbox requirement)
         run: node desktop/scripts/verify-preload-format.mjs
@@ -64,10 +77,10 @@ jobs:
       - name: Runtime preload smoke (real Electron, sandboxed bridge attach)
         run: npx --prefix desktop electron desktop/scripts/preload-runtime-smoke.cjs
 
-      - name: Upload installer artifact
+      - name: Upload installer artifact (fixture models - synthetic weights)
         uses: actions/upload-artifact@v4
         with:
-          name: trainingapp-desktop-windows-installer
+          name: trainingapp-desktop-windows-installer-fixture
           path: desktop/desktop-release/*.exe
           if-no-files-found: error
 

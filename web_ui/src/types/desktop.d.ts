@@ -24,7 +24,8 @@ export interface FirstRunManifestFailure {
     | 'size-mismatch'
     | 'sha256-required'
     | 'manifest-unreadable'
-    | 'traversal';
+    | 'traversal'
+    | 'unreadable';
   expected: string;
   actual: string;
 }

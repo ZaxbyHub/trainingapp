@@ -11,7 +11,7 @@
 // the generic-message defect class this wizard exists to close has no
 // representable shape here (reason is a closed union).
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 export interface ManifestFile {
@@ -35,8 +35,10 @@ export interface ManifestPackEntry {
   name?: string;
   /** Pack-schema fields carried per the #68 pack specification. */
   source_class?: string;
-  /** Relative dir (from the manifest's directory) of the staged pack folder;
-   *  defaults to `<packId>-<version>` beside the manifest. */
+  /** Dir of the staged pack folder, RELATIVE TO the manifest's packs/
+   *  directory (the runtime joins `<manifestDir>/packs/` + dir — see
+   *  packEntryDir in desktop/main/index.ts): `<classDir>/<packId>-<version>`
+   *  by the E1 generator convention. */
   dir?: string;
 }
 
@@ -53,7 +55,8 @@ export type ManifestFailureReason =
   | 'size-mismatch'
   | 'sha256-required'
   | 'manifest-unreadable'
-  | 'traversal';
+  | 'traversal'
+  | 'unreadable';
 
 /** Join `relative` under `base` and require the result to stay INSIDE `base`.
  *  Returns null when the relative path escapes (traversal attempt) — manifest
@@ -121,8 +124,29 @@ export function resolveManifestPath(options: {
   return null;
 }
 
+/** Chunk size for streaming-style hashing: the Quality LLM GGUF is ~2.6 GB,
+ *  far above any buffer a startup path should allocate whole (E1, issue #84).
+ *  Reading in fixed chunks keeps the hash synchronous (this module's API is
+ *  sync by contract) without a whole-file allocation. */
+const HASH_CHUNK_BYTES = 8 * 1024 * 1024;
+
 function sha256File(absolutePath: string): string {
-  return createHash('sha256').update(readFileSync(absolutePath)).digest('hex');
+  const hash = createHash('sha256');
+  const fd = openSync(absolutePath, 'r');
+  try {
+    const buffer = Buffer.alloc(HASH_CHUNK_BYTES);
+    for (;;) {
+      // readSync reads up to buffer.length bytes and returns 0 at EOF. Typed
+      // as any: Node's overload resolution for Buffer + BigInt offset is
+      // needlessly narrow in the DOM-lib-free tsconfig here.
+      const read = readSync(fd, buffer, 0, HASH_CHUNK_BYTES, null as unknown as any);
+      if (read === 0) break;
+      hash.update(read === HASH_CHUNK_BYTES ? buffer : buffer.subarray(0, read));
+    }
+  } finally {
+    closeSync(fd);
+  }
+  return hash.digest('hex');
 }
 
 /**
@@ -181,7 +205,20 @@ export function verifyManifest(manifest: ResourcesManifest, roots: string[]): Ve
         });
         continue;
       }
-      const actualHash = sha256File(found);
+      // Per-file error naming (E1, issue #84): a hashing/stat failure must
+      // name THIS file, never collapse to a generic manifest-unreadable.
+      let actualHash: string;
+      try {
+        actualHash = sha256File(found);
+      } catch (err) {
+        failures.push({
+          path: file.path,
+          reason: 'unreadable',
+          expected: `sha256 ${file.sha256}`,
+          actual: `could not read/hash ${found}: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        continue;
+      }
       if (actualHash !== file.sha256.toLowerCase()) {
         failures.push({
           path: file.path,
@@ -192,7 +229,18 @@ export function verifyManifest(manifest: ResourcesManifest, roots: string[]): Ve
         continue;
       }
       if (file.sizeBytes !== undefined) {
-        const actualSize = statSync(found).size;
+        let actualSize: number;
+        try {
+          actualSize = statSync(found).size;
+        } catch (err) {
+          failures.push({
+            path: file.path,
+            reason: 'unreadable',
+            expected: `${file.sizeBytes} bytes`,
+            actual: `could not stat ${found}: ${err instanceof Error ? err.message : String(err)}`,
+          });
+          continue;
+        }
         if (actualSize !== file.sizeBytes) {
           failures.push({
             path: file.path,

@@ -12,11 +12,25 @@ directories:
 files:
   - dist/**/*
   - package.json
-# The desktop:build script copies web_ui/dist into renderer/ before packaging;
-# the main process serves it from <resourcesPath>/web_ui via the app:// protocol.
+# The desktop:build script copies web_ui/dist into renderer/ before packaging
+# (stage-installer-resources.mjs excludes the weight files duplicated into
+# installer-resources); the main process serves it from <resourcesPath>/web_ui
+# via the app:// protocol.
+# E1 (issue #84): the installer's staged resources land at the resources root —
+# <resourcesPath>/{manifest.json, models/<group>/<id>/…, packs/<classDir>/
+# <packId>-<version>/…, docs/licenses.md} — exactly what resolveManifestPath,
+# verifyManifest, packEntryDir, and licensesPath read.
 extraResources:
   - from: renderer
     to: web_ui
+  - from: installer-resources/models
+    to: models
+  - from: installer-resources/packs
+    to: packs
+  - from: installer-resources/docs
+    to: docs
+  - from: installer-resources/manifest.json
+    to: manifest.json
 win:
   target:
     - target: nsis

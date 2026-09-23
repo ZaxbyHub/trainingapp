@@ -63,7 +63,7 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - Intel Core i5 11th generation or newer (or equivalent AMD Ryzen 5000+)
 - Intel integrated graphics (present on all 11th gen+ Intel CPUs) — no discrete GPU required
 - 16GB RAM
-- ~4GB free storage for model + app
+- ~4.2 GB free storage for models + app (measured staged-resources total 4,108,286,464 bytes + ~112.7 MB app shell; see bench/RESULTS.md)
 - **Performance**: measured numbers per model and quantization are recorded in [bench/RESULTS.md](bench/RESULTS.md)
 
 #### Recommended (Intel 12th Gen i7, 32GB RAM)

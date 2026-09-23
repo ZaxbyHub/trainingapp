@@ -251,6 +251,56 @@ A fresh install walks a deterministic six-state sequence: `detect-hardware` →
   just the headless dev-server), which is what gives the Playwright-under-
   Electron suite per-test store isolation.
 
+## Installer resources + startup integrity gate (E1, issue #84)
+
+The installer ships every model/pack the packaged app needs, enumerated and
+verified. Key facts for operators and reviewers:
+
+- **Staging** (`scripts/stage-installer-resources.mjs`, run by
+  `desktop:build` before electron-builder): assembles
+  `installer-resources/` as `models/{embedding,reranker,llm-quality,
+  llm-fast}/<id>/…`, `packs/{bundled-docs,training}/<packId>-<version>/  and `docs/licenses.md` from EXPLICIT allow-lists. The staged models are
+  exactly what the packaged desktop runtime loads today (bge-small-en-v1.5
+  fp32 embedder, ettin-reranker-32m-v1 q8 reranker, the ADR-0002 GGUF
+  pairs); swapping any of those is a model-selection decision (A5/A6),
+  not a packaging one. A missing required source file fails the build BY
+  NAME — electron-builder silently skips a missing extraResources `from:`,
+  so staging must not. `--fixture-models` (CI) substitutes deterministic
+  stand-ins; the mode is printed, embedded in the manifest description, and
+  carried in the CI artifact name (`…-installer-fixture`).
+- **Renderer copy anti-double-ship**: the same stager copies
+  `web_ui/dist` → `renderer/` EXCLUDING weight files whose model-id dir
+  is staged (keeping `models/ort`, `models/manifest.json`, wllama and
+  the snowflake browser embedder for the packaged renderer), then asserts
+  the (model-id, file) overlap between `renderer/models` and the staged
+  weights is empty — a hard build failure otherwise. Without this, a local
+  post-`prepare-models` build would ship the ~4 GB weights twice.
+- **Manifest** (`scripts/build-installer-manifest.mjs`): whole-tree
+  enumeration with streaming sha256 into `resources/manifest.json` (the
+  E2-pinned schema; packs`[].dir` is packs-root-relative — the value
+  `packEntryDir` joins under `<resourcesPath>/packs/`). `--verify` is
+  a read-only completeness gate (exit 1 naming each unlisted staged file
+  and each listed-but-missing one; the manifest at `--out` is exempt — a
+  manifest cannot hash itself). CI runs it as a required step after
+  `desktop:build`.
+- **Startup gate** (`main/integrity-check.ts`, wired BEFORE engine
+  construction in `main/index.ts`): verifies the shipped tree at the
+  packaged resources root; any failure BLOCKS backend start with a dialog
+  and logs naming path + expected/actual (packaged-without-manifest fails
+  closed; dev-without-manifest skips by design; dev-with-manifest verifies
+  and reports, never fatal). On pass it derives the runtime bridge from
+  the VERIFIED manifest: per-profile engine model overrides (through the
+  existing `resolveNodeEngine` `models` seam) and the embedder/reranker
+  dirs (through their existing env seams — packaged manifest wins over a
+  pre-set env value, logged when it overrides one).
+- **Integrity layering** (stated honestly): startup verifies every
+  `required` file (models + docs); pack files are verified at build by the
+  `--verify` gate and at install by the #68 pack schema per-doc sha256.
+  Note `verifiedCount`-style counts include the `installer-docs` entry.
+- **Size budget**: measured component table in `bench/RESULTS.md`
+  (E1 section); staged resources 4,108,286,464 bytes ≈ 3.83 GiB + shell vs
+  the ≤7 GiB budget.
+
 ## Ingestion, profiles, backup and recovery (B6, issue #64)
 
 Design decisions are frozen in ADR-0006 (`docs/adr/0006-profile-model.md`).
