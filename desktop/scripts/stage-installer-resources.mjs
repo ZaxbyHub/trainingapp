@@ -69,9 +69,10 @@ function fail(message) {
 /**
  * The staged model inventory. Files are repo-root-relative under models/.
  * Byte sizes recorded 2026-09-23 (informational; the manifest generator's
- * sizeBytes is the authority).
+ * sizeBytes is the authority). Exported so the committed specs can pin the
+ * consumer contract (root tokenizer files etc.) without executing the script.
  */
-const STAGED_MODELS = [
+export const STAGED_MODELS = [
   {
     group: 'embedding',
     id: 'bge-small-en-v1.5',
@@ -89,7 +90,19 @@ const STAGED_MODELS = [
     group: 'reranker',
     id: 'ettin-reranker-32m-v1',
     label: 'cross-encoder/ettin-reranker-32m-v1 (reranker, q8 ONNX)',
-    files: ['config.json', 'onnx/model_quantized.onnx', 'onnx/tokenizer.json', 'onnx/tokenizer_config.json'],
+    // Root tokenizer files are REQUIRED alongside onnx/: rerank-worker.ts
+    // loads AutoTokenizer.from_pretrained(modelDir) from the model ROOT (the
+    // implementation-review CRITICAL finding — a staged tree without them
+    // passes the hash gate but 500s every retrieval query after ingest).
+    files: [
+      'config.json',
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'onnx/model_quantized.onnx',
+      'onnx/config.json',
+      'onnx/tokenizer.json',
+      'onnx/tokenizer_config.json',
+    ],
   },
   {
     group: 'llm-quality',
@@ -298,4 +311,7 @@ function main() {
   console.log(`${SCRIPT}: staging complete -> ${path.relative(repoRoot, stageDir)}`);
 }
 
-main();
+// Run only when executed directly (not when imported by the specs).
+if (process.argv[1] !== undefined && process.argv[1].endsWith('stage-installer-resources.mjs')) {
+  main();
+}

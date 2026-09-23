@@ -196,4 +196,29 @@ describe('e1 manifest contract (issue #84, frozen check C2)', () => {
     runGeneratorVerify(stage, out);
     expect(fs.readFileSync(out).equals(before)).toBe(true);
   });
+
+  it('the stager allow-list satisfies each packaged consumer contract (root tokenizers etc.)', async () => {
+    // Import the stager's table (the import guard keeps main() from running).
+    const stager = await import('../../scripts/stage-installer-resources.mjs');
+    const staged = stager.STAGED_MODELS as { group: string; id: string; files: string[] }[];
+    const byGroup = new Map(staged.map((m) => [m.group, m.files]));
+    // Embedder (embedder.ts): onnx/model.onnx (fp32, isValidModelDir >=10 MB)
+    // + root tokenizer.json.
+    const embedding = byGroup.get('embedding') ?? [];
+    expect(embedding).toContain('onnx/model.onnx');
+    expect(embedding).toContain('tokenizer.json');
+    // Reranker (rerank-worker.ts): q8 onnx/model_quantized.onnx AND the ROOT
+    // tokenizer.json/tokenizer_config.json — AutoTokenizer.from_pretrained
+    // loads from the model ROOT; staging them only under onnx/ was the
+    // implementation-review CRITICAL finding (hash-gate passes, every
+    // retrieval query 500s after first ingest).
+    const reranker = byGroup.get('reranker') ?? [];
+    expect(reranker).toContain('onnx/model_quantized.onnx');
+    expect(reranker).toContain('tokenizer.json');
+    expect(reranker).toContain('tokenizer_config.json');
+    // LLM groups (llama-engine modelPathFor): model.gguf per ADR-0002 pair.
+    for (const group of ['llm-quality', 'llm-fast']) {
+      expect(byGroup.get(group) ?? []).toContain('model.gguf');
+    }
+  });
 });

@@ -298,8 +298,12 @@ verified. Key facts for operators and reviewers:
   `--verify` gate and at install by the #68 pack schema per-doc sha256.
   Note `verifiedCount`-style counts include the `installer-docs` entry.
 - **Size budget**: measured component table in `bench/RESULTS.md`
-  (E1 section); staged resources 4,108,286,464 bytes ≈ 3.83 GiB + shell vs
-  the ≤7 GiB budget.
+  (E1 section); staged resources 4,111,872,009 bytes ≈ 3.83 GiB, measured
+  installed footprint 6,378,451,601 bytes ≈ 6.4 GB, vs the ≤7 GiB budget.
+  The staged allow-lists are pinned by a committed consumer-contract test
+  (`e1-manifest-contract.test.ts` imports `STAGED_MODELS`): the reranker's
+  ROOT tokenizer files are load-bearing (`AutoTokenizer.from_pretrained`
+  reads the model root).
 
 ## Ingestion, profiles, backup and recovery (B6, issue #64)
 
