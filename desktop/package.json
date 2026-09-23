@@ -13,8 +13,8 @@
     "test:app-protocol": "vitest run src/__tests__/app-protocol.test.ts",
     "dev": "npm run compile && electron . --dev",
     "desktop:dev": "concurrently -k -n vite,electron \"npm --prefix ../web_ui run dev\" \"npm run compile && electron . --dev\"",
-    "build": "npm run compile && electron-builder --win nsis --x64",
-    "desktop:build": "npm --prefix ../web_ui run build && node -e \"require('fs').cpSync('../web_ui/dist', 'renderer', { recursive: true })\" && npm run compile && electron-builder --win nsis --x64",
+    "build": "npm run compile && node scripts/stage-installer-resources.mjs --skip-renderer-copy && node scripts/build-installer-manifest.mjs --stage-dir installer-resources --out installer-resources/manifest.json && electron-builder --win nsis --x64",
+    "desktop:build": "npm --prefix ../web_ui run build:desktop && node scripts/stage-installer-resources.mjs && npm run compile && node scripts/build-installer-manifest.mjs --stage-dir installer-resources --out installer-resources/manifest.json && electron-builder --win nsis --x64",
     "test:e2e": "playwright test --config playwright.config.ts"
   },
   "devDependencies": {

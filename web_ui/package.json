@@ -7,6 +7,7 @@
     "dev": "vite",
     "prepare-models": "node scripts/prepare-models.mjs",
     "build": "tsc -b && vite build",
+    "build:desktop": "tsc -b && vite build --mode desktop",
     "build:offline": "npm run prepare-models && npm run build && npm run validate-build",
     "build:airgap": "node scripts/build-airgap.mjs",
     "validate-build": "node scripts/validate-build.mjs",

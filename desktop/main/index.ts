@@ -36,6 +36,7 @@ import {
   saveFirstRunState,
 } from './first-run/first-run-store.js';
 import { assertCanComplete, manifestCompletionState, WizardBlockError } from './first-run/wizard.js';
+import { formatFailure, runStartupIntegrityCheck } from './integrity-check.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
 import {
   getLoopbackGuard,
@@ -232,9 +233,72 @@ export function bootstrap(): void {
       return;
     }
     const backupsDir = path.join(userDataPath, 'backups');
+    // E1 (issue #84): startup integrity gate. Runs BEFORE engine construction
+    // (the per-profile model overrides it derives are constructor-only seams)
+    // and refuses backend start on any packaged verification failure, naming
+    // the specific file with expected/actual. Dev builds without a staged
+    // manifest skip by design; a dev-present manifest (e.g.
+    // TRAININGAPP_DESKTOP_MANIFEST) is verified and REPORTED, never fatal.
+    const integrity = runStartupIntegrityCheck({
+      isPackaged: app.isPackaged,
+      resourcesPath: app.isPackaged ? process.resourcesPath : undefined,
+      repoRoot: process.env.TRAININGAPP_DESKTOP_REPO_ROOT ?? path.join(moduleDir(), '..', '..', '..'),
+      env: process.env,
+    });
+    if (integrity.decision === 'report' && integrity.failures.length > 0) {
+      console.error('[trainingapp-desktop] integrity (dev, non-fatal):');
+      for (const failure of integrity.failures) console.error(`  ${formatFailure(failure)}`);
+    } else if (integrity.decision === 'report') {
+      // Clean dev-present verification: say so AND that the bridge stayed
+      // unarmed (review PRR-127 — silent no-output read as "honored").
+      console.log('[trainingapp-desktop] integrity (dev): manifest verified clean; packaged bridge NOT armed (packaged-only)');
+    }
+    if (integrity.decision === 'block') {
+      console.error('[trainingapp-desktop] installed resources failed integrity verification; refusing to start the backend:');
+      for (const failure of integrity.failures) console.error(`  ${formatFailure(failure)}`);
+      // console.error alone is invisible in a packaged Electron app (the
+      // onGiveUp precedent below): surface the named failures audibly too.
+      const lines = integrity.failures
+        .slice(0, 5)
+        .map((failure) => `${failure.path}\n  ${failure.reason}\n  expected: ${failure.expected}\n  actual: ${failure.actual}`)
+        .join('\n\n');
+      const more =
+        integrity.failures.length > 5 ? `\n\n…and ${integrity.failures.length - 5} more (see logs)` : '';
+      dialog.showErrorBox(
+        'TrainingApp cannot start',
+        `Installed resource files failed integrity verification.\n\n${lines}${more}\n\nReinstall the application.`,
+      );
+      app.quit();
+      return;
+    }
+    if (integrity.decision === 'pass') {
+      // Packaged→runtime bridge (fail-closed precedence: in packaged builds
+      // the VERIFIED manifest locations win over any pre-set env override).
+      const seamValues: [string, string | undefined][] = [
+        ['TRAININGAPP_EMBEDDING_MODEL_DIR', integrity.modelDirs.embedder],
+        ['TRAININGAPP_RERANKER_MODEL_DIR', integrity.modelDirs.reranker],
+      ];
+      for (const [name, value] of seamValues) {
+        if (value === undefined) continue;
+        const existing = process.env[name];
+        if (existing !== undefined && existing.length > 0 && path.resolve(existing) !== path.resolve(value)) {
+          console.warn(`[trainingapp-desktop] integrity: packaged manifest overrides ${name} (was ${existing})`);
+        }
+        process.env[name] = value;
+      }
+    }
     // E2 (issue #85): the engine reference is kept so the wizard can read
     // per-profile model paths (modelStatus) for the RAM-gate estimate.
-    const engine = resolveNodeEngine(process.env, { userDataPath });
+    const engineOverrides: { userDataPath: string; models?: { quality?: string; fast?: string } } = {
+      userDataPath,
+    };
+    if (integrity.decision === 'pass') {
+      const models: { quality?: string; fast?: string } = {};
+      if (integrity.modelDirs.engineQuality !== undefined) models.quality = integrity.modelDirs.engineQuality;
+      if (integrity.modelDirs.engineFast !== undefined) models.fast = integrity.modelDirs.engineFast;
+      if (models.quality !== undefined || models.fast !== undefined) engineOverrides.models = models;
+    }
+    const engine = resolveNodeEngine(process.env, engineOverrides);
     try {
       backendHost = createBackendHost({
         token: getLaunchToken(),

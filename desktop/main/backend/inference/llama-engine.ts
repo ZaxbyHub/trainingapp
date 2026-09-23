@@ -239,7 +239,12 @@ export function parseEnvThreads(raw: string | undefined): number | undefined {
 /** Engine selection for the node backend host (B4). */
 export function resolveNodeEngine(
   env: Record<string, string | undefined> = process.env,
-  overrides?: { userDataPath?: string },
+  overrides?: {
+    userDataPath?: string;
+    /** E1 (issue #84): packaged per-profile model file overrides, derived by
+     *  the startup integrity gate from the VERIFIED installer manifest. */
+    models?: { quality?: string; fast?: string };
+  },
 ): EngineSurface {
   if (env.TRAININGAPP_DESKTOP_ENGINE === 'stub') {
     // Explicit dev/CI fixture: transport/conformance testing without weights.
@@ -254,6 +259,7 @@ export function resolveNodeEngine(
   return new LlamaEngine({
     modelDir: env.TRAININGAPP_INFERENCE_MODEL_DIR,
     userDataPath: overrides?.userDataPath,
+    ...(overrides?.models !== undefined ? { models: overrides.models } : {}),
     profile,
     ...(threads !== undefined ? { threads } : {}),
   });

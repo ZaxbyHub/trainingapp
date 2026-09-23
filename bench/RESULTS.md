@@ -19,7 +19,12 @@ latency, and embed/rerank cost for the candidate models, per machine.
    reference-laptop numbers (or vice versa); evidence is invalidated when the
    machine changes — re-run, do not hand-patch.
 3. A GPU fault during a Vulkan attempt is recorded as an outcome row, never hidden (fault rows carry the upstream issue link).
-4. Tests read machine-tagged thresholds from the `bench-floors` block at the
+4. E1 installer-size rows (issue #84) come from
+   `desktop/scripts/build-installer-manifest.mjs` (its stdout component
+   summary) over the real staged tree, plus the packaged-output inspection
+   recorded in the issue #84 trace; hand-measured `du` figures carry the
+   command in the notes.
+5. Tests read machine-tagged thresholds from the `bench-floors` block at the
    bottom of this file (`bench/floors.py`); a machine with no floors rows
    simply falls back to legacy bounds rather than inventing thresholds.
 
@@ -126,6 +131,39 @@ Thread count: 4 (mirrors the desktop `n_threads` default, config.py:57).
 | date | artifact | size | notes |
 |---|---|---|---|
 | 2026-09-07 | TrainingApp-Setup-0.1.0.exe | 112.7 MB | unsigned NSIS x64, empty Electron shell (renderer only, no models/packs - #84 packages those); electron-builder 26, measured on the dev workstation from the C4 acceptance-check build |
+
+
+### E1 component size budget (issue #84)
+
+Measured by `desktop/scripts/build-installer-manifest.mjs` (the E1 generator;
+see the provenance rule 4 above) on the real staged tree, machine-tagged:
+
+| machine | component | bytes | notes |
+|---|---|---|---|
+| devstation | models/embedding (bge-small-en-v1.5 fp32) | 134,098,874 | desktop embedder contract (embedder.ts); ADR-0001 q8 re-pin out of scope |
+| devstation | models/reranker (ettin-reranker-32m-v1 q8 + root tokenizers) | 39,611,408 | rerank-worker dtype q8; AutoTokenizer loads from the model ROOT |
+| devstation | models/llm-quality (gemma-4-e2b-it Q4_K_M + mmproj) | 3,606,025,056 | ADR-0002; mmproj has no native consumer at E1 |
+| devstation | models/llm-fast (lfm2.5-vl-450m Q4_K_M + mmproj) | 332,128,736 | ADR-0002 |
+| devstation | packs (bundled-docs + training fixtures) | 1,695 | contracts/fixtures/packs layout fixtures |
+| devstation | docs (licenses.md) | 6,240 | the first-run licensing seam |
+| devstation | staged resources total | 4,111,872,009 | 3.83 GiB (17 model files after the review round added the reranker root tokenizers) |
+| devstation | **TOTAL (measured installed footprint win-unpacked, the README figure)** | **≈ 6.4 GB (6,378,451,601 B)** | held: 6.38 GB <= 7 GiB (7,516,192,768 B) budget; measured by python os.walk byte-sum over win-unpacked (cross-checked `du -sb`) |
+| devstation | packaged resources dir (win-unpacked/resources incl. app+renderer+natives) | 5,993,150,933 | post-exclusion double-ship guard clean; still <= 7 GiB; measured by python os.walk byte-sum (cross-checked `du -sb`) |
+| devstation | startup integrity gate latency (streaming sha256 of the full staged tree) | 2,377 ms | packaged-mode pass, 0 failures, 2026-09-23 |
+| reference-i5 | all E1 size/latency rows | PENDING | operator runs the same commands (E3/#86 owns the matrix) |
+
+**Known limit (recorded, never hidden): the single-file NSIS target cannot
+embed the real-weights payload.** `makensis.exe` aborts with `File: failed
+creating mmap of …-x64.nsis.7z` because the app archive is 4,177,827,908
+bytes and NSIS's 32-bit installer format caps embedded files (and single
+files generally) at 2 GB — the gemma Q4_K_M GGUF alone is 2,620,370,976
+bytes, so no single-file NSIS exe can contain the ADR-0002 quality model.
+The verified real-weights artifact form is the `win-unpacked` directory
+target (full layout inspected: resources-root `manifest.json`, four model
+groups, packs, docs, renderer weights excluded, double-ship guard clean);
+the CI fixture-mode NSIS (~350 MB payload) builds normally. Resolution
+options (custom multi-volume NSIS machinery vs two-artifact bundle vs
+budget/ADR revisit) are a product-level fork surfaced in issue #84's PR.
 
 ## Desktop backend host cold start (issue #61)
 

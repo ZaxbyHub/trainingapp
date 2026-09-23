@@ -15,3 +15,10 @@ contracts/fixtures/packs/** -text
 # Issue #73: the build-docs fixture sources hash into docs[].sha256 at build
 # time; byte-stable checkouts keep two builds reproducible cross-machine.
 contracts/fixtures/source-docs/** -text
+
+# E1 staging scripts (issue #84): both carry a #!/usr/bin/env node shebang AND
+# are dynamically imported by desktop vitest specs (the consumer-contract
+# spec). Vite's SSR module runner throws SyntaxError on shebang + CRLF even
+# though plain node accepts it, and a fresh Windows CI checkout materializes
+# CRLF without an eol rule. LF everywhere, no exceptions.
+desktop/scripts/*.mjs text eol=lf
