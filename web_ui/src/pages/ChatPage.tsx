@@ -178,6 +178,15 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // owningConversationId===undefined and onDone later saves with undefined →
   // a DUPLICATE conversation is created.
   const owningConversationIdRef = useRef<string | undefined>(currentConversationId);
+  // Issue #118: live mirror of the current conversation id for the terminal
+  // stream callbacks. On a first turn the conversation id is adopted mid-send
+  // (below) AFTER runGeneration's memoized closure captured undefined — a
+  // closure compare in onDone/onError would then fail forever and the
+  // done-payload fields (sources/citations/grounding/learn) would never reach
+  // the live UI. Same pattern as pinnedSlideRef (D7): read through a ref so
+  // the check reflects the CURRENT conversation, never a stale closure.
+  const currentConversationIdRef = useRef<string | undefined>(currentConversationId);
+  currentConversationIdRef.current = currentConversationId;
   // PRR-001: owning-messages ref for the in-flight stream. Mirrors runGeneration's
   // local `snapshot` (the owning conversation's messages, updated on each token)
   // so the switch / unmount / engine-switch effects can read the OWNING
@@ -461,8 +470,11 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       // undefined on a first turn and would cause a duplicate conversation.
       const liveOwningId = owningConversationIdRef.current;
       // Only update live UI state if the user is still on the owning
-      // conversation; otherwise leave the switched-to view untouched.
-      if (currentConversationId === liveOwningId) {
+      // conversation; otherwise leave the switched-to view untouched. The
+      // comparison reads the live mirror ref (#118): the closure-captured
+      // currentConversationId goes stale on a first turn, where the id is
+      // adopted mid-send after this closure was created.
+      if (currentConversationIdRef.current === liveOwningId) {
         messagesRef.current = updated;
         setMessages(updated);
       }
@@ -487,7 +499,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       snapshot = updated;
       owningMessagesRef.current = snapshot;
       const liveOwningId = owningConversationIdRef.current;
-      if (currentConversationId === liveOwningId) {
+      if (currentConversationIdRef.current === liveOwningId) {
         messagesRef.current = updated;
         setMessages(updated);
       }
@@ -711,6 +723,10 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     }
     if (resolvedOwningId !== currentConversationId) {
       owningConversationIdRef.current = resolvedOwningId;
+      // Issue #118: mirror the adopted id into the live ref synchronously so
+      // the terminal callbacks' guard is correct even if no re-render has
+      // interleaved between the send-time save and done/error firing.
+      currentConversationIdRef.current = resolvedOwningId;
       setCurrentConversationId(resolvedOwningId);
     }
 
