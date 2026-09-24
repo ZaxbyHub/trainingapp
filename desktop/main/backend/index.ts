@@ -409,7 +409,12 @@ export class NodeBackendHost implements BackendHost {
             this.embedder = null;
             this.packLifecycleStatus = `embedder-unavailable: ${err instanceof Error ? err.message : String(err)}`;
           }
-          if (this.embedder === null) this.packLifecycleStatus = 'embedder-unavailable';
+          // Defensive default only: resolveEmbedder signals failure by
+          // throwing, so this fires only for a future null-returning change —
+          // and must not clobber the detailed catch message above.
+          if (this.embedder === null && !this.packLifecycleStatus.startsWith('embedder-unavailable')) {
+            this.packLifecycleStatus = 'embedder-unavailable';
+          }
           // B7 (issue #65), SINGLE-THREAD ORT OWNERSHIP: onnxruntime-node
           // aborts the whole process when one module instance is used from
           // two threads of one process (empirically probed 2026-09-09; trace

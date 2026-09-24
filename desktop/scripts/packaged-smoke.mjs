@@ -27,6 +27,7 @@ import { _electron } from '@playwright/test';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(here, '..');
+const repoRoot = path.resolve(desktopDir, '..');
 const exe = path.join(desktopDir, 'desktop-release', 'win-unpacked', 'TrainingApp.exe');
 
 const final = (code, line) => {
@@ -36,6 +37,33 @@ const final = (code, line) => {
 
 if (!fs.existsSync(exe)) {
   final(2, `SMOKE: INFRA - packaged exe missing: ${exe} (run the fixture desktop:build first)`);
+}
+
+// Stale-build guard (plan F6): never silently probe an exe built before the
+// current sources — a stale exe would fake a green (or red) verdict. In CI
+// the exe is built minutes earlier in this same job, so this only bites
+// local reuse of an old win-unpacked.
+const newestSource = (dirs) => {
+  let newest = null;
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full);
+      } else if (newest === null || fs.statSync(full).mtimeMs > fs.statSync(newest).mtimeMs) {
+        newest = full;
+      }
+    }
+  };
+  for (const dir of dirs) walk(dir);
+  return newest;
+};
+const exeMtime = fs.statSync(exe).mtimeMs;
+const newer = [path.join(repoRoot, 'desktop', 'main'), path.join(repoRoot, 'desktop', 'scripts'), path.join(repoRoot, 'web_ui', 'src')].filter(fs.existsSync)
+  .map((dir) => newestSource([dir]))
+  .find((file) => file !== null && fs.statSync(file).mtimeMs > exeMtime);
+if (newer !== undefined || fs.statSync(path.join(desktopDir, 'electron-builder.yml')).mtimeMs > exeMtime) {
+  final(2, `SMOKE: STALE BUILD - ${exe} predates the current sources${newer !== undefined ? ` (newest: ${newer})` : ' (electron-builder.yml)'}; rebuild before probing`);
 }
 
 const ws = fs.mkdtempSync(path.join(os.tmpdir(), 'trainingapp-smoke-'));

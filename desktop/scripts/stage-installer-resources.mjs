@@ -133,6 +133,24 @@ export const RENDERER_EXCLUDED_MODEL_IDS = new Set(STAGED_MODELS.map((m) => m.id
  *  for the C-suite tests. knowledge-pack-src/ deliberately lives OUTSIDE
  *  stageDir: main() wipes installer-resources/ wholesale before staging. */
 const KNOWLEDGE_PACK_SOURCE = path.join(desktopDir, 'knowledge-pack-src', 'opmed-initial-1.0.0');
+const KNOWLEDGE_PACK_SRC_ROOT = path.join(desktopDir, 'knowledge-pack-src');
+// Fail loud on version skew: the builder accepts --version but this stager
+// pins the expected dir name — a differently-versioned (or stale) pack dir
+// must abort the build, never silently fall back to the fixture set.
+function checkKnowledgePackSource() {
+  if (!fs.existsSync(KNOWLEDGE_PACK_SRC_ROOT)) return;
+  const dirs = fs
+    .readdirSync(KNOWLEDGE_PACK_SRC_ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  const unexpected = dirs.filter((name) => name !== 'opmed-initial-1.0.0');
+  if (unexpected.length > 0) {
+    for (const name of unexpected) {
+      fail(`unexpected pack dir desktop/knowledge-pack-src/${name} (this stager pins opmed-initial-1.0.0; rebuild with the pinned version or clear the dir — never silently stage a mismatched pack)`);
+    }
+  }
+}
+checkKnowledgePackSource();
 const STAGED_PACKS = fs.existsSync(path.join(KNOWLEDGE_PACK_SOURCE, 'pack.json'))
   ? [{ source: KNOWLEDGE_PACK_SOURCE, classDir: 'bundled-docs' }]
   : [{ source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'), classDir: 'bundled-docs' }];
