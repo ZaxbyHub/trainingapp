@@ -93,3 +93,8 @@ redistribution posture at build time (`packtool/README.md`: no redistribution ri
 asserted for embedded artifacts beyond what the pack's own metadata grants). Any pack
 shipped with an installer must record its content licenses in the pack manifest before
 #84 finalizes bundling.
+
+The initial `opmed-initial` knowledge pack (#133) is built from the operator-supplied
+`knowledgepack/` corpus — operator-local and git-excluded, like the model weights. The
+repository asserts no redistribution right over it; distributing an installer that
+carries it is the operator's responsibility under the source documents' own terms.

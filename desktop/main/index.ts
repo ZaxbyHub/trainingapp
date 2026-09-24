@@ -464,6 +464,12 @@ export function bootstrap(): void {
             ]
           : (wm.verify?.failures ?? []);
       const packTools = (backendHost as NodeBackendHost | null | undefined)?.getFirstRunPackTools?.() ?? null;
+      // #133: name WHY the pack lifecycle is down so the wizard's Complete
+      // gate can say so instead of silently disabling the button.
+      const packUnavailableReason =
+        packTools === null
+          ? ((backendHost as NodeBackendHost | null | undefined)?.getPackLifecycleStatus?.() ?? 'unavailable')
+          : null;
       const required = (wm.manifest?.packs ?? []).map((entry) => ({
         id: entry.id,
         ...(entry.version !== undefined ? { version: entry.version } : {}),
@@ -522,7 +528,7 @@ export function bootstrap(): void {
           failures,
           verifiedCount: wm.verify?.verifiedCount ?? 0,
         },
-        packs: { toolsAvailable: packTools !== null, required, installed },
+        packs: { toolsAvailable: packTools !== null, unavailableReason: packUnavailableReason, required, installed },
         licenses: {
           available: licensesAvailable,
           path: licensesAvailable ? licensesFile : null,

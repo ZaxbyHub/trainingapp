@@ -37,7 +37,7 @@ import {
   type LinksDb,
 } from './links.js';
 import type { EmbeddingSurface } from '../ingest/embedder.js';
-import { findRepoRoot } from './sqlite-store.js';
+import { findRepoRoot, unpackAsarPath } from './sqlite-store.js';
 import {
   modelIdMatches,
   resolvePacksSecurity,
@@ -60,13 +60,14 @@ const addFormats = require('ajv-formats') as (ajv: unknown) => unknown;
 // index.sqlite read-only through the same native stack as the live store.
 type ReadonlyIndexDb = {
   prepare(sql: string): { get(...params: unknown[]): unknown; all(...params: unknown[]): unknown[] };
+  loadExtension(path: string): void;
   close(): void;
 };
 const IndexDatabase = require('better-sqlite3') as new (
   path: string,
   options?: { readonly?: boolean },
 ) => ReadonlyIndexDb;
-const indexSqliteVec = require('sqlite-vec') as { load(db: ReadonlyIndexDb): void };
+const indexSqliteVec = require('sqlite-vec') as { getLoadablePath(): string };
 
 /** One doc->slide link row as shipped inside a prebuilt pack index. */
 interface PrebuiltLinkRow {
@@ -1134,7 +1135,9 @@ export class PackManager {
   private readPrebuiltIndex(indexPath: string, manifest: PackManifest): ImportedPrebuilt {
     const db = new IndexDatabase(indexPath, { readonly: true });
     try {
-      indexSqliteVec.load(db);
+      // Asar-safe native load (#133): same redirect as the live store — the
+      // resolved vec0 path lives inside the virtual app.asar when packaged.
+      db.loadExtension(unpackAsarPath(indexSqliteVec.getLoadablePath()));
       const meta = (key: string): string | undefined => {
         const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as
           | { value: string }

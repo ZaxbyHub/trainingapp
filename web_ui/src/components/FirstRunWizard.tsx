@@ -228,9 +228,35 @@ export function FirstRunWizard({
           (entry.version === undefined || record.version === entry.version),
       ),
   );
+  const inactivePackIds = inactivePacks.map((entry) => entry.id);
   const packsSatisfied = inactivePacks.length === 0;
   const completeEnabled =
     selectedProfile !== null && acknowledged && !manifestBlocking && packsSatisfied;
+
+  // #133 (AC4): a disabled Complete must NAME its gates — the same
+  // WizardBlockerReason vocabulary assertCanComplete returns over IPC, so the
+  // operator is never left toggling the checkbox against a silent button.
+  const completeBlockedReasons: string[] = [];
+  if (manifestBlocking) {
+    completeBlockedReasons.push(
+      'verify-manifest: integrity verification failed; resolve the named file failures first',
+    );
+  }
+  if (!packsSatisfied) {
+    let reason = `activate-packs: required packs are not active: ${inactivePackIds.join(', ')}`;
+    if (!status.packs.toolsAvailable) {
+      reason += ` (pack lifecycle unavailable: ${status.packs.unavailableReason ?? 'unknown reason'} — reinstall the app or check the logs)`;
+    }
+    completeBlockedReasons.push(reason);
+  }
+  if (selectedProfile === null) {
+    completeBlockedReasons.push('select-profile: no profile was selected');
+  }
+  if (!acknowledged) {
+    completeBlockedReasons.push(
+      'licensing-notices: the license acknowledgment checkbox is required and cannot be skipped',
+    );
+  }
 
   const goNext = (): void => setStepIndex((index) => Math.min(index + 1, WIZARD_STEPS.length - 2));
   const goBack = (): void => setStepIndex((index) => Math.max(index - 1, 0));
@@ -384,7 +410,10 @@ export function FirstRunWizard({
           <section data-testid="step-activate-packs">
             <h3 style={{ margin: '0 0 8px' }}>Knowledge packs</h3>
             {!status.packs.toolsAvailable && (
-              <p style={{ margin: 0 }}>Pack lifecycle is unavailable in this session.</p>
+              <p role="alert" style={{ margin: 0 }}>
+                Pack lifecycle is unavailable in this session ({status.packs.unavailableReason ?? 'unknown reason'}) —
+                completion requires the knowledge packs. Reinstall the application or check the logs if this persists.
+              </p>
             )}
             {status.packs.toolsAvailable && status.packs.required.length === 0 && (
               <p style={{ margin: 0 }}>No packs are required by the manifest.</p>
@@ -469,6 +498,19 @@ export function FirstRunWizard({
           <p role="alert" style={{ margin: 0, color: 'var(--color-danger, #d32f2f)' }} data-testid="complete-error">
             {completeError}
           </p>
+        )}
+
+        {completeBlockedReasons.length > 0 && (
+          <div role="alert" data-testid="complete-blocked-reasons" style={{ margin: 0 }}>
+            <p style={{ margin: '0 0 4px', color: 'var(--color-warning-strong, #eab308)', fontSize: 'var(--font-size-caption, 12px)' }}>
+              Setup cannot complete yet — resolve the named gates:
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 20, color: 'var(--color-warning-strong, #eab308)', fontSize: 'var(--font-size-caption, 12px)' }}>
+              {completeBlockedReasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          </div>
         )}
 
         <div style={buttonRowStyle}>

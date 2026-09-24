@@ -56,6 +56,9 @@ export interface FirstRunStatus {
   };
   packs: {
     toolsAvailable: boolean;
+    /** #133: why the pack lifecycle is down (named gates contract) — null
+     *  when tools are available; optional so older status literals compile. */
+    unavailableReason?: string | null;
     required: Array<{ id: string; version?: string; dir?: string; resolvedDir: string | null }>;
     installed: Array<{ id: string; version: string; active: boolean }>;
   };

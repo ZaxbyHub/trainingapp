@@ -123,10 +123,19 @@ export const STAGED_MODELS = [
  *  the committed cross-manifest parity spec (review PRR-132). */
 export const RENDERER_EXCLUDED_MODEL_IDS = new Set(STAGED_MODELS.map((m) => m.id));
 
-const STAGED_PACKS = [
-  { source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'), classDir: 'bundled-docs' },
-  { source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'training-stub'), classDir: 'training' },
-];
+/** The staged pack set (issue #133). When the operator has built the initial
+ *  knowledge pack from the local knowledgepack/ corpus
+ *  (desktop/scripts/build-knowledge-pack.mjs → desktop/knowledge-pack-src/),
+ *  it REPLACES the fixture as the staged content; otherwise (CI and
+ *  weights-less checkouts) the minimal bundled-min fixture ships. training-
+ *  stub was dropped from staging as a content decision — the real pack IS the
+ *  initial bundled content; the fixture stays in contracts/fixtures/packs/
+ *  for the C-suite tests. knowledge-pack-src/ deliberately lives OUTSIDE
+ *  stageDir: main() wipes installer-resources/ wholesale before staging. */
+const KNOWLEDGE_PACK_SOURCE = path.join(desktopDir, 'knowledge-pack-src', 'opmed-initial-1.0.0');
+const STAGED_PACKS = fs.existsSync(path.join(KNOWLEDGE_PACK_SOURCE, 'pack.json'))
+  ? [{ source: KNOWLEDGE_PACK_SOURCE, classDir: 'bundled-docs' }]
+  : [{ source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'), classDir: 'bundled-docs' }];
 
 function rmSyncBestEffort(target) {
   try {
@@ -231,6 +240,30 @@ function stageDocs() {
   }
   copyFileSyncLoud(src, path.join(stageDir, 'docs', 'licenses.md'));
   console.log(`${SCRIPT}: staged docs/licenses.md`);
+}
+
+/** Contract files the PACKAGED app must resolve from inside app.asar
+ *  (issue #133): openStore and PackManager both walk up from the compiled
+ *  dist/main/backend/store module looking for contracts/… — on a clean
+ *  install nothing outside the asar exists. Staged under desktop/dist/
+ *  contracts/ so the existing electron-builder "dist" files glob carries
+ *  them into the asar (and into reach of the walk); nothing lands in the
+ *  resources manifest tree, whose generator rejects unknown roots.
+ *  Byte-copies, so a stale copy can never drift from the repo contract
+ *  files at build time. Exported for the committed spec
+ *  (e133-stager-contracts.test.ts). */
+export const STAGED_CONTRACTS = ['contracts/store.schema.sql', 'contracts/pack.schema.json'];
+
+export function stageContracts(targetDesktopDir = desktopDir) {
+  for (const rel of STAGED_CONTRACTS) {
+    const src = path.join(repoRoot, rel);
+    if (!fs.existsSync(src)) {
+      fail(`required contract file missing: ${rel} (the packaged findRepoRoot walk reads dist/contracts — issue #133)`);
+      continue;
+    }
+    copyFileSyncLoud(src, path.join(targetDesktopDir, 'dist', rel));
+  }
+  console.log(`${SCRIPT}: staged ${STAGED_CONTRACTS.length} contract files into ${path.relative(repoRoot, path.join(targetDesktopDir, 'dist', 'contracts'))}/`);
 }
 
 /** Copy web_ui/dist -> desktop/renderer, excluding staged weight (model-id)
@@ -406,6 +439,7 @@ function main() {
   stageModels();
   stagePacks();
   stageDocs();
+  stageContracts();
   if (!args.skipRendererCopy) copyRenderer();
   if (args.fixtureModels) console.log('MODE: fixture-models');
   if (errors.length > 0) {

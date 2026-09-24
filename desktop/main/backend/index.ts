@@ -98,6 +98,10 @@ export class NodeBackendHost implements BackendHost {
   /** C3 (#70): pack lifecycle, constructed on start (instance field — the b3
    * duck-type pin reserves host prototypes for start/stop only). */
   private packManager: PackManager | null = null;
+
+  /** Issue #133: named reason the pack lifecycle is down ('ok' when live);
+   *  surfaced to the wizard via getPackLifecycleStatus → packs.unavailableReason. */
+  private packLifecycleStatus = 'no-store-path';
   private reranker: RerankerSurface | null = null;
   /** The embedder resolved for ingest — B7 reuses the SAME instance for query embedding. */
   private embedder: EmbeddingSurface | null = null;
@@ -249,6 +253,14 @@ export class NodeBackendHost implements BackendHost {
     };
   };
 
+  /**
+   * Issue #133: WHY the pack lifecycle is unavailable, for the wizard's
+   * named-gate surface (packs.unavailableReason). Updated at every
+   * degradation site during start(); 'ok' once PackManager is constructed.
+   * Own-property exposure mirrors getFirstRunPackTools; read-only.
+   */
+  getPackLifecycleStatus = (): string => this.packLifecycleStatus;
+
   constructor(
     private readonly config: BackendHostConfig,
     private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(config.env ?? process.env),
@@ -376,6 +388,7 @@ export class NodeBackendHost implements BackendHost {
         } catch (err) {
           this.store = await recoverOrDegradeStore(this.config, err);
         }
+        if (this.store === null) this.packLifecycleStatus = 'store-unavailable';
         if (this.store !== null) {
           const env = this.config.env ?? process.env;
           // Resolve the embedder FIRST (null when unavailable: weights not
@@ -394,7 +407,9 @@ export class NodeBackendHost implements BackendHost {
               `[trainingapp-backend] embedding model unavailable (store surface degrades to embedder-less): ${err instanceof Error ? err.message : String(err)}`,
             );
             this.embedder = null;
+            this.packLifecycleStatus = `embedder-unavailable: ${err instanceof Error ? err.message : String(err)}`;
           }
+          if (this.embedder === null) this.packLifecycleStatus = 'embedder-unavailable';
           // B7 (issue #65), SINGLE-THREAD ORT OWNERSHIP: onnxruntime-node
           // aborts the whole process when one module instance is used from
           // two threads of one process (empirically probed 2026-09-09; trace
@@ -515,10 +530,12 @@ export class NodeBackendHost implements BackendHost {
               if (typeof (this.engine as { attachPackManager?: unknown }).attachPackManager === 'function') {
                 (this.engine as unknown as { attachPackManager: (pm: PackManager) => void }).attachPackManager(this.packManager);
               }
+              this.packLifecycleStatus = 'ok';
             } catch (err) {
               // Degrade like the other surfaces: a pack-lifecycle failure must
               // not take the host down.
               this.packManager = null;
+              this.packLifecycleStatus = `pack-manager-error: ${err instanceof Error ? err.message : String(err)}`;
               console.error(
                 `[trainingapp-backend] pack lifecycle unavailable: ${err instanceof Error ? err.message : String(err)}`,
               );

@@ -317,6 +317,43 @@ verified. Key facts for operators and reviewers:
   ROOT tokenizer files are load-bearing (`AutoTokenizer.from_pretrained`
   reads the model root).
 
+## Packaged-boot runtime wiring + initial knowledge pack (#133)
+
+Two packaged-only runtime facts are wired deliberately (both invisible to
+every dev-mode suite; pinned by the `desktop-build` packaged-boot smoke):
+
+- **Native loads under asar**: `sqlite-vec` resolves `vec0.dll` through
+  `require.resolve`, which inside a packaged app points into the VIRTUAL
+  `app.asar`. `unpackAsarPath` (`main/backend/store/sqlite-store.ts`)
+  rewrites such paths to their `app.asar.unpacked` twin before
+  `loadExtension` — wired at BOTH consumers (the live store and the
+  pack-manager's prebuilt-index reads). `electron-builder.yml` `asarUnpack`
+  pins `sqlite-vec*`/`better-sqlite3` so the twin always exists.
+- **Contracts inside the asar**: `openStore`/`PackManager` find
+  `contracts/store.schema.sql` + `contracts/pack.schema.json` by walking up
+  from the compiled module; the stager byte-copies both into
+  `desktop/dist/contracts/`, which the `dist` files glob packs into
+  `app.asar` — no repo checkout needed on the target machine.
+
+**Initial knowledge pack** (operator-local content, exactly like model
+weights — nothing content-bearing is committed):
+
+1. Place the document corpus in `<repo>/knowledgepack/` (.docx/.pdf/.xlsx/
+   .md/.txt/.json; `packtool build-docs` ingests all six).
+2. `node desktop/scripts/build-knowledge-pack.mjs` → builds, verifies, and
+   unpacks the `opmed-initial` pack into `desktop/knowledge-pack-src/`
+   (OUTSIDE `installer-resources/`, which the stager wipes at start).
+3. `npm run desktop:build` — the stager stages the real pack when present
+   (fixture `bundled-min` otherwise, e.g. CI) and the manifest lists it; the
+   first-run wizard then installs+activates it from the packaged resources.
+
+`knowledgepack/` and `desktop/knowledge-pack-src/` are git-excluded local
+paths (`.git/info/exclude`, the `models/` precedent). The packaged-boot CI
+smoke (`desktop/scripts/packaged-smoke.mjs`) boots the fixture build's
+`win-unpacked` app with the hash-embedder seam and asserts the whole
+first-run ladder — store init, pack activation, wizard completion and
+persistence, `/packs` 200.
+
 ## Ingestion, profiles, backup and recovery (B6, issue #64)
 
 Design decisions are frozen in ADR-0006 (`docs/adr/0006-profile-model.md`).

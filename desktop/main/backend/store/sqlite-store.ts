@@ -38,7 +38,10 @@ const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-var-requires -- native addons resolved at runtime (see file header)
 const Database = require('better-sqlite3') as new (path: string) => BetterSqlite3Db;
 // eslint-disable-next-line @typescript-eslint/no-var-requires -- see above
-const sqliteVec = require('sqlite-vec') as { load(db: BetterSqlite3Db): void };
+const sqliteVec = require('sqlite-vec') as {
+  load(db: BetterSqlite3Db): void;
+  getLoadablePath(): string;
+};
 
 /** Structural subset of a better-sqlite3 Database this module uses. */
 interface BetterSqlite3Db {
@@ -48,7 +51,29 @@ interface BetterSqlite3Db {
     all(...params: unknown[]): unknown[];
     run(...params: unknown[]): { changes: number | bigint };
   };
+  loadExtension(path: string): void;
   close(): void;
+}
+
+/**
+ * Rewrite an in-asar native path to its app.asar.unpacked twin (issue #133).
+ * `require.resolve` inside a packaged app yields paths inside the virtual
+ * app.asar archive, but native loaders (better-sqlite3 loadExtension →
+ * SQLite LoadLibrary) can only open real files; electron-builder keeps the
+ * physical copy in app.asar.unpacked. Existence-checked so dev/plain-node
+ * (and an asar build without the twin) is a no-op passthrough.
+ */
+export function unpackAsarPath(loadablePath: string): string {
+  const marker = `${path.sep}app.asar${path.sep}`;
+  const idx = loadablePath.lastIndexOf(marker);
+  if (idx === -1) return loadablePath;
+  const twin =
+    loadablePath.slice(0, idx) + path.sep + 'app.asar.unpacked' + loadablePath.slice(idx + marker.length - 1);
+  try {
+    return fs.existsSync(twin) ? twin : loadablePath;
+  } catch {
+    return loadablePath;
+  }
 }
 
 export interface StoreOptions {
@@ -119,7 +144,10 @@ export function openStore(options: StoreOptions): StoreHandle {
   fs.mkdirSync(path.dirname(options.dbPath), { recursive: true });
   const db = new Database(options.dbPath);
   try {
-    sqliteVec.load(db); // must precede any vec0 DDL/DML
+    // Asar-safe native load (#133): the resolved vec0 path points inside the
+    // virtual app.asar in packaged builds; unpackAsarPath redirects to the
+    // real app.asar.unpacked twin (no-op in dev/plain node).
+    db.loadExtension(unpackAsarPath(sqliteVec.getLoadablePath())); // must precede any vec0 DDL/DML
     // Probe table EXISTENCE (not a meta read): on a fresh file the meta table
     // does not exist yet, and a SELECT against it would throw.
     const existing = db
