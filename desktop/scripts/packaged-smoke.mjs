@@ -75,9 +75,24 @@ const step = (n, name, ok, detail = '') => {
   return ok;
 };
 
+/** Launch output capture, dumped when a launch or ladder step fails (a
+ *  packaged GUI app that dies before its window is otherwise silent). */
+let consoleBuf = '';
+const dumpConsole = (prefix) => {
+  const lines = consoleBuf.split(/\r?\n/).filter((l) => l.length > 0);
+  console.log(`${prefix} — app process output (last 30 lines):`);
+  for (const line of lines.slice(-30)) console.log(`  ${line}`);
+  if (lines.length === 0) console.log('  (no output captured — the app died before any stream write)');
+};
+
 async function boot() {
   const app = await _electron.launch({
     executablePath: exe,
+    // --disable-gpu: GitHub windows runners have no usable GPU; Chromium
+    // compositing can stall ready-to-show without it (harmless locally).
+    // Longer timeout: the first window on a cold runner is slow.
+    args: ['--disable-gpu'],
+    timeout: 300_000,
     env: {
       ...process.env,
       TRAININGAPP_DESKTOP_EMBEDDER: 'hash',
@@ -85,6 +100,8 @@ async function boot() {
       TRAININGAPP_DESKTOP_PACKS_DIR: packsDir,
     },
   });
+  app.process().stdout?.on('data', (d) => { consoleBuf += d.toString(); });
+  app.process().stderr?.on('data', (d) => { consoleBuf += d.toString(); });
   const win = await app.firstWindow();
   await win.waitForLoadState('domcontentloaded');
   return { app, win };
@@ -117,6 +134,7 @@ try {
   console.log(`SMOKE: booting packaged exe (hash embedder, isolated store ${storePath})`);
   ({ app, win } = await boot());
 } catch (err) {
+  dumpConsole('SMOKE: launch failed');
   final(2, `SMOKE: INFRA - packaged launch failed: ${err instanceof Error ? err.message : String(err)}`);
 }
 
