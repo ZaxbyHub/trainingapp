@@ -95,6 +95,10 @@ async function boot() {
     timeout: 300_000,
     env: {
       ...process.env,
+      // Route the main process's console (degradation lines etc.) to stderr —
+      // a packaged GUI app otherwise has NO stdout and CI-only stalls are
+      // invisible. Proven safe for firstWindow locally.
+      ELECTRON_ENABLE_LOGGING: '1',
       TRAININGAPP_DESKTOP_EMBEDDER: 'hash',
       TRAININGAPP_DESKTOP_STORE_PATH: storePath,
       TRAININGAPP_DESKTOP_PACKS_DIR: packsDir,
