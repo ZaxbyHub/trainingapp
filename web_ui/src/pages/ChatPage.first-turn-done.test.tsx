@@ -320,4 +320,63 @@ describe('ChatPage terminal callbacks on a first turn (issue #118 guardrail)', (
     const ownerSave = (onSaveConversation as ReturnType<typeof vi.fn>).mock.calls.at(-1);
     expect(ownerSave?.[0]).toBe('conv-A');
   });
+
+  it('(d) done firing before ANY re-render still lands — pins the synchronous adoption-site ref write', async () => {
+    // Cases (a)/(b) await real timers before firing done, so React commits the
+    // setCurrentConversationId re-render and the render-phase mirror
+    // (ChatPage.tsx:188-189) has already synced the ref. This case closes that
+    // gap: the send-time save is held UNRESOLVED, then released and the done
+    // payload fired purely on the microtask chain — BEFORE React can commit
+    // the adoption re-render (React schedules that commit as a macrotask via
+    // the Scheduler, so it cannot run between microtasks; no timers are used).
+    // The terminal guard can therefore only pass via the SYNCHRONOUS
+    // adoption-site write of currentConversationIdRef (ChatPage.tsx:729) —
+    // removing that line makes this test fail while (a)-(c) still pass.
+    let releaseSave!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const onSaveConversation = vi.fn(async (
+      _id: string | undefined,
+      _messages: ChatMessage[],
+      _mode: 'api' | 'wllama',
+      _engine: 'wllama',
+      onCreate?: (newId: string) => void,
+    ) => {
+      onCreate?.('conv-created-4');
+      await gate;
+    }) as unknown as SaveConv;
+    render(<Harness initialConversationId={undefined} onSaveConversation={onSaveConversation} />);
+
+    // Send; the send-time save starts and holds on the gate (do NOT flush it).
+    const textarea = screen.getByRole('textbox', { name: 'Message input' });
+    fireEvent.change(textarea, { target: { value: 'What is the monthly deadline?' } });
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Release the save and fire done on the microtask chain only: drain just
+    // enough microtasks for the save promise to resolve, handleSend's await
+    // continuation to run the adoption writes + register the callbacks, and
+    // then invoke done — all before the Scheduler's macrotask can commit the
+    // adoption re-render.
+    await act(async () => {
+      releaseSave();
+      for (let i = 0; i < 8; i += 1) {
+        await Promise.resolve();
+      }
+      // runGeneration ran on this same microtask chain (still no render).
+      expect(mockStartSSEStream).toHaveBeenCalledTimes(1);
+      const done = getDoneCallback();
+      expect(done).toBeDefined();
+      done?.(DONE_PAYLOAD);
+    });
+    // Now let React commit (the terminal setMessages from the sync-write pass).
+    await flushUi();
+
+    // The first turn renders the payload even though done beat every render.
+    expect(screen.getByText('Grounded in your documents')).toBeInTheDocument();
+    expect(screen.getByLabelText('Learn panel — where to learn this')).toBeInTheDocument();
+  });
 });

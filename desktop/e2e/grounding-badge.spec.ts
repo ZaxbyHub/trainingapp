@@ -9,12 +9,12 @@
 // (allow_credentials=False rules out remote-origin browser clients). The
 // config's vite-preview webServer is unused by this spec.
 //
-// Flow note: the FIRST question of a brand-new conversation loses the
-// terminal done-payload fields on the client (pre-existing ChatPage
-// first-turn state bug, tracked as issue #118 — it drops sources/citations/
-// learn identically on master). The spec therefore bootstraps the
-// conversation with a throwaway ask, then asserts badge delivery on the
-// steady-state path, which is the path #72 owns.
+// Flow note: the FIRST question of a brand-new conversation used to lose the
+// terminal done-payload fields on the client (the ChatPage first-turn state
+// bug tracked as issue #118 — it dropped sources/citations/learn identically
+// on master). FIXED (PR #132): the first ask now renders its own badge, and
+// the throwaway bootstrap ask below is retained only for backward-compatible
+// coverage of the steady-state path that #72 owns.
 //
 // Fixture gating (mirrors the c4/d6 vitest convention): skipped when the
 // python venv or the built renderer bundle is absent.
@@ -131,9 +131,10 @@ test.describe('C5 grounding badge in the real chat UI (issue #72)', () => {
     await page.goto(`http://127.0.0.1:${backendPort}/`);
     fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
-    // Conversation bootstrap (issue #118 first-turn state bug): the first
-    // ask creates the conversation; its terminal payload fields are dropped
-    // client-side pre-#118-fix, so badge assertions start from the second ask.
+    // Conversation bootstrap: the first ask creates the conversation (and,
+    // post-#118-fix, renders its own badge); badge assertions key on the
+    // LAST badge so starting from the second ask keeps the spec robust in
+    // both directions (see PRR-004 below).
     await ask(page, CORPUS_QUESTION);
     await ask(page, CORPUS_QUESTION);
 
