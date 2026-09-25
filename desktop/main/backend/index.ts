@@ -261,6 +261,13 @@ export class NodeBackendHost implements BackendHost {
    */
   getPackLifecycleStatus = (): string => this.packLifecycleStatus;
 
+  /**
+   * #133: apply an engine settings patch through the validated settings seam
+   * (live apply + sidecar persistence). Assigned during start() once the
+   * persistence closure exists; undefined before start / for storeless hosts.
+   */
+  applyEngineSettings: ((patch: Record<string, unknown>) => { ok: true } | { ok: false; status: 400 | 422 | 500; detail: string; errors?: string[] }) | undefined;
+
   constructor(
     private readonly config: BackendHostConfig,
     private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(config.env ?? process.env),
@@ -335,6 +342,20 @@ export class NodeBackendHost implements BackendHost {
         storedPatch = merged;
       };
     }
+    // #133: the first-run wizard applies the operator's profile choice
+    // through the SAME validated seam the settings API uses — live apply +
+    // sidecar persistence — exposed to the bootstrap IPC layer as an own
+    // property (getFirstRunPackTools precedent; prototypes stay start/stop).
+    this.applyEngineSettings = (patch: Record<string, unknown>) => {
+      const applied = this.engine.applySettingsPatch(patch);
+      if (!applied.ok) return applied;
+      try {
+        persistSettings?.(patch);
+      } catch (err) {
+        return { ok: false as const, status: 500 as const, detail: `Settings were applied but could not be persisted: ${err instanceof Error ? err.message : String(err)}` };
+      }
+      return applied;
+    };
     const server = createBackendServer({
       guard: createLoopbackGuard({
         token: this.config.token,

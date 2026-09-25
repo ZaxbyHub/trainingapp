@@ -89,8 +89,16 @@ function isIpv6MetadataAddress(hostname: string): boolean {
  * Cancel click. This does NOT cap total stream duration — it is cleared as
  * soon as any data (or stream close) arrives, since generation itself may
  * legitimately run long once it has started.
+ *
+ * #133: in the DESKTOP app the first byte legitimately waits behind the
+ * engine's lazy cold start — model load + embedder warm-up run before the
+ * first token event, measured at minutes (not seconds) on the 2.6 GB quality
+ * profile. A 30 s watchdog turned every cold-start question into "Request
+ * timed out waiting for a response" while the backend kept working. 10 min
+ * bounds genuinely dead loopback connections while covering the measured
+ * cold start; warm questions are unaffected (timeout clears on first byte).
  */
-const FIRST_BYTE_TIMEOUT_MS = 30_000;
+const FIRST_BYTE_TIMEOUT_MS = 600_000;
 
 /**
  * Callback type for receiving token events

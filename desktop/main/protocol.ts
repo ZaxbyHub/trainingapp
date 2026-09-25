@@ -161,8 +161,13 @@ function resolveWithinRoot(rootAbs: string, requestUrl: string): string | Respon
  * Resolve a training-route request (`app://training/<packId>/<rest>`) against
  * the packs root. Returns `null` when the request is not a training-route
  * path (caller falls through to the renderer mapping), a `Response` refusal,
- * or the absolute file path to serve: <packsAbs>/<packId>/assets/player/<rest>
- * (the pack layout of `packtool build-storyline`, PLAYER_ASSETS_PREFIX).
+ * or the absolute file path to serve. `<rest>` maps under the pack directory
+ * three ways (#133 widened the first two so bundled DOCUMENT packs are
+ * readable from the Training tab, not just Storyline courses):
+ *   - `pack.json`            → <pack>/pack.json (the pack manifest)
+ *   - `docs/<rel>`           → <pack>/docs/<rel>  (the pack's source files)
+ *   - anything else          → <pack>/assets/player/<rest> (the pack layout
+ *     of `packtool build-storyline`, PLAYER_ASSETS_PREFIX — unchanged)
  * The validation discipline mirrors resolveWithinRoot exactly — decode
  * refusal, backslash/NUL refusal (catches percent-encoded backslashes too,
  * because the check runs AFTER decode), `.`/`..` segment refusal, containment
@@ -196,7 +201,15 @@ function resolveTrainingRequest(
   }
   if (decoded.includes('\\') || decoded.includes('\0')) return forbidden();
 
-  const relative = path.join(packId, 'assets', 'player', ...restSegments);
+  const first = restSegments[0];
+  let relative: string;
+  if (first === 'pack.json' && restSegments.length === 1) {
+    relative = path.join(packId, 'pack.json');
+  } else if (first === 'docs') {
+    relative = path.join(packId, 'docs', ...restSegments.slice(1));
+  } else {
+    relative = path.join(packId, 'assets', 'player', ...restSegments);
+  }
   const resolved = path.resolve(packsAbs, relative);
   if (resolved !== packsAbs && !resolved.startsWith(packsAbs + path.sep)) {
     return forbidden();

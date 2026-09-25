@@ -668,6 +668,19 @@ export function bootstrap(): void {
               manifestDigests: wm.verify?.digests ?? {},
             },
           });
+          // #133: the operator's profile choice must reach the ENGINE, not
+          // just first-run state — apply it through the validated settings
+          // seam (live reconfigure + sidecar persistence) so the first /ask
+          // loads the chosen model. Non-fatal on refusal (completion stands;
+          // Settings can still change it) but logged loudly by name.
+          const profileApplied = (backendHost as NodeBackendHost | null | undefined)?.applyEngineSettings?.({
+            'inference.profile': selectedProfile,
+          });
+          if (profileApplied !== undefined && !profileApplied.ok) {
+            console.error(
+              `[trainingapp-desktop] first-run profile could not be applied to the engine: ${profileApplied.detail}`,
+            );
+          }
           return { ok: true as const };
         } catch (err) {
           if (err instanceof WizardBlockError) return { ok: false as const, detail: err.message, reason: err.reason };
