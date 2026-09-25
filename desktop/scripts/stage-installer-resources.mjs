@@ -127,15 +127,14 @@ export const RENDERER_EXCLUDED_MODEL_IDS = new Set(STAGED_MODELS.map((m) => m.id
  *  knowledge pack from the local knowledgepack/ corpus
  *  (desktop/scripts/build-knowledge-pack.mjs → desktop/knowledge-pack-src/),
  *  it REPLACES the fixture as the staged content; otherwise (CI and
- *  weights-less checkouts) the minimal bundled-min fixture ships. training-
- *  stub was dropped from staging as a content decision — the real pack IS the
- *  initial bundled content; the fixture stays in contracts/fixtures/packs/
- *  for the C-suite tests. knowledge-pack-src/ deliberately lives OUTSIDE
- *  stageDir: main() wipes installer-resources/ wholesale before staging. */
-const KNOWLEDGE_PACK_SOURCE = path.join(desktopDir, 'knowledge-pack-src', 'opmed-initial-1.0.0');
-// #133 round 4: the BUNDLED Articulate course pack — the Training tab's
-// content, shipped with the installer exactly like the bundled documents.
-const TRAINING_PACK_SOURCE = path.join(desktopDir, 'knowledge-pack-src', 'opmed-cdp-mlc-1.0.0');
+ *  weights-less checkouts) the minimal bundled-min fixture ships. #133 round 4
+ *  added the BUNDLED Articulate course pack (build-training-pack.mjs → the
+ *  same knowledge-pack-src/ root) as the Training tab's content, shipped with
+ *  the installer exactly like the bundled documents; a half-built root (one
+ *  pack without the other) fails the build via resolveStagedPacks. The
+ *  fixture stays in contracts/fixtures/packs/ for the C-suite tests.
+ *  knowledge-pack-src/ deliberately lives OUTSIDE stageDir: main() wipes
+ *  installer-resources/ wholesale before staging. */
 const KNOWLEDGE_PACK_SRC_ROOT = path.join(desktopDir, 'knowledge-pack-src');
 // Fail loud on version skew: the builder accepts --version but this stager
 // pins the expected dir name — a differently-versioned (or stale) pack dir
@@ -173,12 +172,58 @@ function checkTrainingPackSource() {
   }
 }
 checkTrainingPackSource();
-const STAGED_PACKS = fs.existsSync(path.join(KNOWLEDGE_PACK_SOURCE, 'pack.json'))
-  ? [{ source: KNOWLEDGE_PACK_SOURCE, classDir: 'bundled-docs' }]
-  : [{ source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'), classDir: 'bundled-docs' }];
-if (fs.existsSync(path.join(TRAINING_PACK_SOURCE, 'pack.json'))) {
-  STAGED_PACKS.push({ source: TRAINING_PACK_SOURCE, classDir: 'training' });
+/**
+ * The bundled-pack selection (#133 round 4/5). Real-content mode —
+ * desktop/knowledge-pack-src/ EXISTS — requires BOTH packs: the docs pack AND
+ * the Articulate course. A docs-only tree used to stage silently and ship an
+ * installer with no Training content (round-5 review finding); now it fails
+ * the build by name. The fixture fallback applies ONLY when the root is
+ * absent entirely (CI, weights-less checkouts) — never as a half-built
+ * escape hatch. Exported with injected roots so the committed spec can pin
+ * every mode without machine-local state.
+ */
+export function resolveStagedPacks(opts) {
+  const {
+    knowledgePackSrcRoot,
+    docsPackDir,
+    trainingPackDir,
+    fixturePackSource,
+    onProblem = () => {},
+  } = opts;
+  if (!fs.existsSync(knowledgePackSrcRoot)) {
+    return [{ source: fixturePackSource, classDir: 'bundled-docs' }];
+  }
+  const packs = [];
+  const docsSource = path.join(knowledgePackSrcRoot, docsPackDir);
+  const trainingSource = path.join(knowledgePackSrcRoot, trainingPackDir);
+  const docsBuilt = fs.existsSync(path.join(docsSource, 'pack.json'));
+  const trainingBuilt = fs.existsSync(path.join(trainingSource, 'pack.json'));
+  if (docsBuilt) {
+    packs.push({ source: docsSource, classDir: 'bundled-docs' });
+  } else {
+    onProblem(
+      `docs pack missing: desktop/knowledge-pack-src/${docsPackDir}/pack.json not found ` +
+        `(run node desktop/scripts/build-knowledge-pack.mjs, or remove desktop/knowledge-pack-src to stage the fixture set)`,
+    );
+  }
+  if (trainingBuilt) {
+    packs.push({ source: trainingSource, classDir: 'training' });
+  } else {
+    onProblem(
+      `training pack missing: desktop/knowledge-pack-src/${trainingPackDir}/pack.json not found ` +
+        `(run node desktop/scripts/build-training-pack.mjs — the installer must bundle the Articulate course alongside the documents; ` +
+        `or remove desktop/knowledge-pack-src to stage the fixture set)`,
+    );
+  }
+  return packs;
 }
+const STAGED_PACKS = resolveStagedPacks({
+  knowledgePackSrcRoot: KNOWLEDGE_PACK_SRC_ROOT,
+  docsPackDir: 'opmed-initial-1.0.0',
+  trainingPackDir: `opmed-cdp-mlc-${TRAINING_PACK_VERSION}`,
+  fixturePackSource: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'),
+  onProblem: fail,
+});
 
 function rmSyncBestEffort(target) {
   try {

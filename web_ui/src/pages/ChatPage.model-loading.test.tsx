@@ -91,6 +91,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// The payload shape mirrors llama-engine's residentLoadStatus() exactly:
+// during 'loading' the engine reports the profile BEING loaded (its
+// loadingProfile capture — resident is null until ready), so the banner can
+// name the model; 'ready' reports the resident profile; 'idle' reports null.
 const resident = (state: 'idle' | 'loading' | 'ready', profile: string) => ({
   engine: 'llama.cpp',
   profile,
@@ -104,6 +108,7 @@ describe('ChatPage model-load gating (#133 round 4)', () => {
     render(<ChatPage {...baseProps} />);
     const banner = await screen.findByTestId('chat-model-loading');
     expect(banner.textContent).toContain('Loading the AI model');
+    expect(banner.textContent).toContain('quality profile');
     expect(banner.textContent).toContain('chat is disabled');
     expect(banner.textContent).toContain('Documents and Training');
     // Type text first so the ONLY remaining disabled reason is the load gate

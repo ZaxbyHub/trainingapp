@@ -174,8 +174,13 @@ describe('load-state surface + warmup (#133 round 4)', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(engine.modelStatus().resident?.state).toBe('loading');
     expect(engine.modelStatus().resident?.loadStartedAt).not.toBeNull();
+    // Round-5 finding: the profile must be visible DURING the load (the
+    // resident entry is null until ready) so the chat banner can say which
+    // model is loading instead of falling back to "auto".
+    expect(engine.modelStatus().resident?.profile).toBe('fast');
     release();
     await load;
     expect(engine.modelStatus().resident?.state).toBe('ready');
+    expect(engine.modelStatus().resident?.profile).toBe('fast');
   });
 });

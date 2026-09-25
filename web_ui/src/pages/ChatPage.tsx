@@ -148,8 +148,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
 
   // #133 (round 4): chat is DISABLED while the desktop backend reports a
   // resident-model load in flight — the honest state, not a time heuristic.
-  // Poll /status/models every 2s while loading (one fetch on mount, then
-  // only while state === 'loading'); a missing `resident` field never gates.
+  // Poll /status/models every 2s while eligible (a real engine with models
+  // present) so the banner also catches mid-session reloads after a profile
+  // switch; a missing `resident` field never gates.
   const residentLoad = modelLoad;
   const isModelLoading =
     desktopSession !== null && residentLoad?.state === 'loading';

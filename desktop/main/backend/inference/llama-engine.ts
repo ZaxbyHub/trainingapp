@@ -311,6 +311,14 @@ export class LlamaEngine implements EngineSurface {
   /** #133: resident-model load state surfaced to the renderer (chat gating). */
   private loadState: 'idle' | 'loading' | 'ready' = 'idle';
   private loadStartedAt: number | null = null;
+  /**
+   * The profile a load in flight is loading. `resident` is null from the
+   * moment a switch decision disposes the old backend until the new one is
+   * ready, so without this the status payload would report profile null for
+   * the whole 'loading' window and the chat banner could not say WHICH model
+   * is loading (round-5 review finding).
+   */
+  private loadingProfile: InferenceProfileName | null = null;
   /** Single-flight load: concurrent warmup + first query load ONE backend. */
   private loadInFlight: Promise<ResidentEntry> | null = null;
 
@@ -360,7 +368,11 @@ export class LlamaEngine implements EngineSurface {
 
   /** #133: resident-model load state for the renderer's chat gating. */
   residentLoadStatus(): { state: 'idle' | 'loading' | 'ready'; profile: InferenceProfileName | null; loadStartedAt: number | null } {
-    return { state: this.loadState, profile: this.resident?.profile ?? null, loadStartedAt: this.loadStartedAt };
+    return {
+      state: this.loadState,
+      profile: this.loadState === 'loading' ? this.loadingProfile : (this.resident?.profile ?? null),
+      loadStartedAt: this.loadStartedAt,
+    };
   }
 
   /**
@@ -478,6 +490,7 @@ export class LlamaEngine implements EngineSurface {
     let backend: LlamaEngineBackend;
     this.loadState = 'loading';
     this.loadStartedAt = Date.now();
+    this.loadingProfile = profile;
     try {
       backend = await this.llamaFactoryFn({
         modelPath,
@@ -488,6 +501,7 @@ export class LlamaEngine implements EngineSurface {
     } catch (err) {
       this.loadState = 'idle';
       this.loadStartedAt = null;
+      this.loadingProfile = null;
       // Corrupt/unloadable model: wrap into the 503-diagnostic error type,
       // carrying the underlying failure for the operator.
       throw new ModelNotConfiguredError(
@@ -497,6 +511,7 @@ export class LlamaEngine implements EngineSurface {
     this.loads += 1;
     this.loadState = 'ready';
     this.loadStartedAt = null;
+    this.loadingProfile = null;
     const entry: ResidentEntry = { backend, profile, inFlight: 0 };
     this.resident = entry;
     return entry;
