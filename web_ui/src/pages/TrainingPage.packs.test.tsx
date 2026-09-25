@@ -1,17 +1,16 @@
 /**
- * TrainingPage.packs.test.tsx — #133 feedback round: the Training tab is a
- * usable surface for the BUILT-IN knowledge content.
+ * TrainingPage.packs.test.tsx — #133 feedback round 3: the Training tab is
+ * the ARTICULATE/STORYLINE course player only. Knowledge-document packs are
+ * a different product (Chat/Documents) and must NOT appear here.
  *
  * Pins:
- *   1. A single installed active pack is AUTO-SELECTED (no ?pack= needed).
- *   2. A bundled (document) pack renders the docs reader: the pack manifest
- *      is fetched over the reserved app://training route and its documents
- *      are listed; a PDF renders inline (embed), other formats offer a
- *      download link.
- *   3. The pack picker lists installed packs and switching re-renders.
- *
- * The desktop session hook is mocked (Electron-only surface); fetch is
- * stubbed per-case.
+ *   1. A documents pack (sourceClass 'bundled') is NOT listed; with only it
+ *      installed the tab shows the articulate empty state.
+ *   2. A training pack is listed, auto-selected when sole, and renders the
+ *      player (iframe to app://training/<id>/<version>/story.html).
+ *   3. The picker switches courses (?pack= follows the <id>/<version> key).
+ *   4. Reviewer R3 F3: with a session present and the list still loading, a
+ *      stale ?pack= renders the LOADING state, not a player flash.
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,8 +19,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 const listPacks = vi.hoisted(() => vi.fn());
 // STABLE session object — the real DesktopSessionProvider memoizes its
 // context value, so the component's effects may safely depend on the
-// identity. Returning a fresh object per render (as an inline factory would)
-// thrashes every session-dependent effect.
+// identity.
 const stableSession = vi.hoisted(() => ({
   apiClient: { listPacks: null as unknown as ReturnType<typeof listPacks.call> },
 }));
@@ -32,7 +30,28 @@ vi.mock('../lib/desktop-session', () => ({
 
 import { TrainingPage } from './TrainingPage';
 
-const originalFetch = globalThis.fetch;
+const originalPathname = window.location.pathname;
+const originalSearch = window.location.search;
+
+const DOC_PACK = {
+  packId: 'opmed-initial',
+  version: '1.0.0',
+  name: 'OpMed Initial Knowledge Pack',
+  sourceClass: 'bundled',
+  publishedAt: null,
+  active: true,
+  supersedes: [],
+};
+
+const TRAINING_PACK = {
+  packId: 'opmed-course',
+  version: '1.0.0',
+  name: 'OpMed CDP Course',
+  sourceClass: 'training',
+  publishedAt: null,
+  active: true,
+  supersedes: [],
+};
 
 beforeEach(() => {
   stableSession.apiClient.listPacks = listPacks as unknown as ReturnType<typeof listPacks.call>;
@@ -45,75 +64,54 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
+  window.history.replaceState({}, '', originalPathname + originalSearch);
 });
 
-const DOC_PACK = {
-  packId: 'opmed-initial',
-  version: '1.0.0',
-  name: 'OpMed Initial Knowledge Pack',
-  sourceClass: 'bundled',
-  publishedAt: null,
-  active: true,
-  supersedes: [],
-};
-
-const manifestBody = {
-  id: 'opmed-initial',
-  version: '1.0.0',
-  docs: [
-    { path: 'docs/brief.pdf', title: 'BATDOK Brief', mime: 'application/pdf' },
-    { path: 'docs/manual.docx', title: 'Field Manual', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
-  ],
-};
-
-const stubManifestFetch = (): void => {
-  globalThis.fetch = vi.fn().mockResolvedValue({
-    ok: true,
-    json: async () => manifestBody,
-  }) as unknown as typeof fetch;
-};
-
-describe('TrainingPage pack surface (#133 feedback round)', () => {
-  it('auto-selects the sole installed pack and lists its documents', async () => {
+describe('TrainingPage is the articulate course surface only (#133 feedback round 3)', () => {
+  it('does NOT list document packs; shows the articulate empty state when only docs are installed', async () => {
     listPacks.mockResolvedValue([DOC_PACK]);
-    stubManifestFetch();
     render(<TrainingPage />);
-    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
-    await waitFor(() => {
-      expect(select.value).toBe('opmed-initial/1.0.0');
-    });
-    expect(await screen.findByTestId('training-doc-docs/brief.pdf')).toBeTruthy();
-    expect(screen.getByTestId('training-doc-docs/manual.docx')).toBeTruthy();
-  });
-
-  it('renders a selected PDF inline and offers download for other formats', async () => {
-    listPacks.mockResolvedValue([DOC_PACK]);
-    stubManifestFetch();
-    render(<TrainingPage />);
-    await screen.findByTestId('training-doc-docs/brief.pdf');
-    fireEvent.click(screen.getByTestId('training-doc-docs/brief.pdf'));
-    const embed = await screen.findByTestId('training-doc-viewer');
-    expect((embed as HTMLEmbedElement).src).toBe('app://training/opmed-initial/1.0.0/docs/brief.pdf');
-
-    fireEvent.click(screen.getByTestId('training-doc-docs/manual.docx'));
-    const link = await screen.findByTestId('training-doc-download');
-    expect((link as HTMLAnchorElement).getAttribute('href')).toBe(
-      'app://training/opmed-initial/1.0.0/docs/manual.docx',
-    );
-  });
-
-  it('lists installed packs in the picker and switches on selection', async () => {
-    listPacks.mockResolvedValue([DOC_PACK, { ...DOC_PACK, packId: 'field-updates', version: '2.0.0', name: 'Field Updates' }]);
-    stubManifestFetch();
-    render(<TrainingPage />);
-    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
-    // Two active packs and no stored choice => nothing auto-selected.
+    expect(await screen.findByTestId('training-empty-state')).toBeTruthy();
+    expect(screen.getByText('No training course is installed yet.')).toBeTruthy();
+    const select = screen.getByTestId('training-pack-select') as HTMLSelectElement;
     expect(select.value).toBe('');
-    fireEvent.change(select, { target: { value: 'field-updates/2.0.0' } });
+    // The documents pack is nowhere in the picker.
+    expect(select.textContent).not.toContain('opmed-initial');
+  });
+
+  it('lists and auto-plays the sole training pack via the versioned dir key', async () => {
+    listPacks.mockResolvedValue([DOC_PACK, TRAINING_PACK]);
+    render(<TrainingPage />);
+    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
     await waitFor(() => {
-      expect(new URLSearchParams(window.location.search).get('pack')).toBe('field-updates/2.0.0');
+      expect(select.value).toBe('opmed-course/1.0.0');
     });
+    const frame = screen.getByTestId('training-player-frame') as HTMLIFrameElement;
+    expect(frame.src.startsWith('app://training/opmed-course/1.0.0/story.html')).toBe(true);
+    // Documents pack stays out of the picker.
+    expect(select.textContent).not.toContain('opmed-initial');
+  });
+
+  it('switches courses from the picker (?pack= follows id/version)', async () => {
+    const second = { ...TRAINING_PACK, packId: 'field-course', version: '2.0.0', name: 'Field Course' };
+    listPacks.mockResolvedValue([TRAINING_PACK, second]);
+    render(<TrainingPage />);
+    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
+    expect(select.value).toBe(''); // two courses, no stored choice
+    fireEvent.change(select, { target: { value: 'field-course/2.0.0' } });
+    await waitFor(() => {
+      expect(new URLSearchParams(window.location.search).get('pack')).toBe('field-course/2.0.0');
+    });
+    const frame = screen.getByTestId('training-player-frame') as HTMLIFrameElement;
+    expect(frame.src.startsWith('app://training/field-course/2.0.0/story.html')).toBe(true);
+  });
+
+  it('renders the LOADING state (not a player flash) while the pack list resolves', () => {
+    listPacks.mockReturnValue(new Promise(() => undefined)); // never resolves
+    window.history.pushState({}, '', '/?pack=stale-pack');
+    render(<TrainingPage />);
+    expect(screen.getByText('Loading installed training packs…')).toBeTruthy();
+    expect(screen.queryByTestId('training-player-frame')).toBeNull();
   });
 });

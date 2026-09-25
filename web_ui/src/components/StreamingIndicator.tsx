@@ -88,12 +88,16 @@ export function StreamingIndicator({ isVisible, modelLoadProgress, modelLoadLabe
   const isLoadingModel = typeof modelLoadProgress === 'number' && modelLoadProgress >= 0 && modelLoadProgress < 100;
   const firstTokenPending = !isLoadingModel && typeof awaitingFirstTokenSince === 'number';
   // Tick while a send is pending so the threshold crossing and the elapsed
-  // counter both advance without any other render trigger.
+  // counter both advance without any other render trigger. ALWAYS tick —
+  // reduced motion only disables the spin ANIMATION below, never the state
+  // machine (gating the tick on the media query froze the notice on RDP
+  // sessions where Windows reports prefers-reduced-motion: reduce, which was
+  // the operator's "never happened at all").
   useEffect(() => {
-    if (!isVisible || !firstTokenPending || prefersReducedMotion) return undefined;
+    if (!isVisible || !firstTokenPending) return undefined;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [isVisible, firstTokenPending, prefersReducedMotion]);
+  }, [isVisible, firstTokenPending]);
   const awaitingFirstToken =
     firstTokenPending && now - awaitingFirstTokenSince > COLD_START_HINT_AFTER_MS;
 

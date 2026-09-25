@@ -1,22 +1,18 @@
 /**
- * TrainingPage — the Training tab surface.
+ * TrainingPage — the TRAINING tab surface: the embedded Articulate/Storyline
+ * course player (issue #81, D5). Training packs are a DISTINCT product from
+ * the knowledge-document packs (RAG content lives in Chat/Documents —
+ * #133 feedback round 3): this tab lists and plays `training` source-class
+ * packs only.
  *
- * Storyline player mount (issue #81, D5): a `training` source-class pack
- * opens the embedded player. The pack to open comes from the `pack` query
- * parameter of the current location (e.g. app://index.html?pack=opmed-cdp-mlc),
- * with the Learn panel (D6, issue #82) able to deep-link here: an
- * `initialPackId` prop (lifted navigation target from chat) takes precedence,
- * and a `pendingSlideId` is passed to the player as its initialSlideId so the
- * auto-jump fires exactly once, after the pack resolves.
- *
- * Document packs (#133): a `bundled`/`user` source-class pack (the built-in
- * knowledge content) has no player assets — it renders a document reader over
- * the pack's own files, served by the reserved app://training route. The tab
- * lists INSTALLED packs with a picker (the update path: install a newer pack
- * zip from the Documents page, then pick it here), auto-selects the sole
- * installed pack when nothing else is chosen, and remembers the last
- * selection. The `?pack=` value is the managed pack DIRECTORY path
- * (`<packId>/<version>`), matching what the player route serves.
+ * The pack to open comes from the `pack` query parameter of the current
+ * location (e.g. app://index.html?pack=opmed-cdp-mlc), with the Learn panel
+ * (D6, issue #82) able to deep-link here: an `initialPackId` prop (lifted
+ * navigation target from chat) takes precedence, and a `pendingSlideId` is
+ * passed to the player as its initialSlideId so the auto-jump fires exactly
+ * once, after the pack resolves. The picker lists INSTALLED training packs
+ * (install path: a Storyline pack zip on the Documents page, or staged with
+ * the installer), auto-selects the sole course, and remembers the last one.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { TrainingPlayer } from '../components/TrainingPlayer';
@@ -37,12 +33,6 @@ export interface TrainingPageProps {
   onSlideChange?: (event: TrainingPlayerSlideState) => void;
 }
 
-interface PackDocEntry {
-  path: string;
-  title: string;
-  mime: string;
-}
-
 const LAST_PACK_KEY = 'training.lastPackDir';
 
 /** Managed pack directory path (`<packId>/<version>`) — the form the reserved
@@ -50,16 +40,12 @@ const LAST_PACK_KEY = 'training.lastPackDir';
 const packDirKey = (pack: { packId: string; version: string }): string =>
   `${pack.packId}/${pack.version}`;
 
-const isPdf = (mime: string, path: string): boolean =>
-  mime === 'application/pdf' || path.toLowerCase().endsWith('.pdf');
+const isTrainingPack = (pack: PackInfo): boolean => pack.sourceClass === 'training';
 
 export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: TrainingPageProps) {
   const { session: desktopSession } = useDesktopSession();
   const [packs, setPacks] = useState<PackInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [docs, setDocs] = useState<PackDocEntry[] | null>(null);
-  const [docsError, setDocsError] = useState<string | null>(null);
-  const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   // ?pack= is read from the location ONCE plus on explicit picker changes —
   // a plain memo would not see pushState, so an override state mirrors it.
   const [packOverride, setPackOverride] = useState<string | null>(null);
@@ -82,7 +68,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     void desktopSession.apiClient
       .listPacks()
       .then((listing: PackInfo[]) => {
-        if (!cancelled) setPacks(listing.filter((pack) => pack.active));
+        if (!cancelled) setPacks(listing.filter(isTrainingPack));
       })
       .catch((err: unknown) => {
         if (!cancelled) setLoadError(err instanceof Error ? err.message : String(err));
@@ -94,17 +80,22 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
 
   const activePacks = packs ?? [];
   // A lifted target (D6/D7) or a ?pack= value that does not resolve to an
-  // INSTALLED pack is a training-pack deep link by construction (the Learn
+  // INSTALLED training pack is a course deep link by construction (the Learn
   // panel only emits training packs) — render the player for it directly,
   // without consulting the pack list (the frozen D7 wire contract; it must
   // work with no desktop session at all).
+  // Reviewer R3 F3: with a session present, only deep-link once the pack
+  // list has LOADED (before it resolves, some() is vacuously false and any
+  // stale ?pack= would flash the player). Without a session there is no list
+  // to wait for — the frozen D7 contract deep-links unconditionally.
+  const urlPackIsKnownCourse =
+    urlPack !== '' && activePacks.some((pack) => packDirKey(pack) === urlPack || pack.packId === urlPack);
   const deepLinkedPackDir =
     initialPackId !== undefined && initialPackId !== ''
       ? initialPackId
       : urlPack !== '' &&
-          !activePacks.some(
-            (pack) => packDirKey(pack) === urlPack || pack.packId === urlPack,
-          )
+          (desktopSession === null || packs !== null) &&
+          !urlPackIsKnownCourse
         ? urlPack
         : '';
   const selectedPack = useMemo(() => {
@@ -132,37 +123,6 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
       : selectedPack !== undefined
         ? packDirKey(selectedPack)
         : '';
-  const isStorylinePack = deepLinkedPackDir !== '' || selectedPack?.sourceClass === 'training';
-
-  // Document-pack reader data: the pack manifest over the reserved route.
-  useEffect(() => {
-    if (desktopSession === null || selectedDir === '' || isStorylinePack) {
-      setDocs(null);
-      setDocsError(null);
-      setSelectedDoc(null);
-      return;
-    }
-    let cancelled = false;
-    setDocs(null);
-    setDocsError(null);
-    setSelectedDoc(null);
-    fetch(`app://training/${selectedDir.split('/').map(encodeURIComponent).join('/')}/pack.json`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`pack manifest fetch failed (HTTP ${res.status})`);
-        return (await res.json()) as { docs?: PackDocEntry[] };
-      })
-      .then((manifest) => {
-        if (cancelled) return;
-        if (typeof window !== 'undefined') window.localStorage.setItem(LAST_PACK_KEY, selectedDir);
-        setDocs(Array.isArray(manifest.docs) ? manifest.docs : []);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setDocsError(err instanceof Error ? err.message : String(err));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [desktopSession, selectedDir, isStorylinePack]);
 
   const selectPack = (dir: string): void => {
     if (typeof window === 'undefined') return;
@@ -172,34 +132,6 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     window.history.pushState({}, '', url);
     setPackOverride(dir);
   };
-
-  const readerStyle: React.CSSProperties = {
-    flex: 1,
-    minHeight: 0,
-    display: 'flex',
-    gap: 'var(--spacing-md)',
-  };
-  const listStyle: React.CSSProperties = {
-    width: '300px',
-    overflowY: 'auto',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 'var(--spacing-xs)',
-    padding: 'var(--spacing-sm)',
-    border: '1px solid var(--color-border)',
-    borderRadius: 'var(--radius-md)',
-  };
-  const docButtonStyle = (active: boolean): React.CSSProperties => ({
-    textAlign: 'left',
-    padding: 'var(--spacing-sm)',
-    borderRadius: 'var(--radius-sm)',
-    border: '1px solid ' + (active ? 'var(--color-primary)' : 'transparent'),
-    background: active ? 'var(--color-bg-surface)' : 'transparent',
-    cursor: 'pointer',
-    fontFamily: 'var(--font-family)',
-    fontSize: 'var(--font-size-caption)',
-    color: 'var(--color-text-primary)',
-  });
 
   if (deepLinkedPackDir !== '') {
     // D6/D7 wire contract: a lifted target renders the player directly — no
@@ -213,7 +145,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   if (desktopSession === null) {
     return (
       <div style={{ padding: 'var(--spacing-md)', color: 'var(--color-text-muted)' }}>
-        Training packs are available in the desktop app.
+        Training courses are available in the desktop app.
       </div>
     );
   }
@@ -235,7 +167,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
           htmlFor="training-pack-select"
           style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}
         >
-          Pack:
+          Course:
         </label>
         <select
           id="training-pack-select"
@@ -244,7 +176,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
           onChange={(event) => selectPack(event.target.value)}
           style={{ fontFamily: 'var(--font-family)', padding: 'var(--spacing-xs)' }}
         >
-          <option value="">Select a pack…</option>
+          <option value="">Select a course…</option>
           {activePacks.map((pack) => {
             const dir = packDirKey(pack);
             return (
@@ -256,14 +188,14 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
         </select>
         {activePacks.length > 0 && (
           <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}>
-            To update the content, install a newer pack zip on the Documents page, then select it here.
+            To update the course, install a newer training pack zip on the Documents page, then select it here.
           </span>
         )}
       </div>
 
       {loadError !== null && (
         <p role="alert" data-testid="training-pack-error" style={{ margin: 0, color: 'var(--color-danger, #d32f2f)' }}>
-          Failed to load installed packs: {loadError}
+          Failed to load installed training packs: {loadError}
         </p>
       )}
 
@@ -277,101 +209,30 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
             color: 'var(--color-text-muted)',
             fontFamily: 'var(--font-family)',
             fontSize: 'var(--font-size-body)',
+            flexDirection: 'column',
+            gap: 'var(--spacing-sm)',
+            textAlign: 'center',
+            padding: '0 var(--spacing-xl)',
           }}
+          data-testid="training-empty-state"
         >
-          {packs === null
-            ? 'Loading installed packs…'
-            : activePacks.length === 0
-              ? 'No knowledge packs installed yet — complete first-run setup or install one from the Documents page.'
-              : 'No training pack selected. Pick one above.'}
-        </div>
-      ) : isStorylinePack ? (
-        <TrainingPlayer packId={selectedDir} initialSlideId={pendingSlideId} onSlideChange={onSlideChange} />
-      ) : (
-        <div style={readerStyle} data-testid="training-docs-reader">
-          <div style={listStyle} data-testid="training-docs-list">
-            {docsError !== null && (
-              <p role="alert" style={{ margin: 0, color: 'var(--color-danger, #d32f2f)', fontSize: 'var(--font-size-caption)' }}>
-                {docsError}
-              </p>
-            )}
-            {docs === null && docsError === null && (
-              <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-caption)' }}>
-                Loading pack contents…
+          {packs === null ? (
+            'Loading installed training packs…'
+          ) : activePacks.length === 0 ? (
+            <>
+              <span>No training course is installed yet.</span>
+              <span style={{ fontSize: 'var(--font-size-caption)' }}>
+                Training courses are Articulate Storyline packs — a separate product from the reference
+                documents (those live in Chat and Documents). Install a course pack zip from the Documents
+                page, or ship one with the installer, and it will appear here ready to play.
               </span>
-            )}
-            {docs?.map((doc) => {
-              return (
-                <button
-                  key={doc.path}
-                  type="button"
-                  style={docButtonStyle(selectedDoc === doc.path)}
-                  onClick={() => setSelectedDoc(doc.path)}
-                  data-testid={`training-doc-${doc.path}`}
-                >
-                  {doc.title}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 'var(--spacing-xs)' }}>
-            {selectedDoc !== null && docs !== null && (() => {
-              const doc = docs.find((entry) => entry.path === selectedDoc);
-              if (doc === undefined) return null;
-              const fileUrl = `app://training/${selectedDir.split('/').map(encodeURIComponent).join('/')}/${doc.path
-                .split('/')
-                .map(encodeURIComponent)
-                .join('/')}`;
-              return isPdf(doc.mime, doc.path) ? (
-                <embed
-                  src={fileUrl}
-                  type="application/pdf"
-                  style={{ flex: 1, minHeight: 0, borderRadius: 'var(--radius-md)' }}
-                  data-testid="training-doc-viewer"
-                />
-              ) : (
-                <div
-                  style={{
-                    flex: 1,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: 'var(--spacing-sm)',
-                    border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-md)',
-                  }}
-                >
-                  <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--font-size-caption)' }}>
-                    {doc.title} — this format opens externally (the extracted text is searchable in Chat).
-                  </span>
-                  <a
-                    href={fileUrl}
-                    download={doc.title}
-                    style={{ fontFamily: 'var(--font-family)', fontSize: 'var(--font-size-caption)' }}
-                    data-testid="training-doc-download"
-                  >
-                    Open / download {doc.title}
-                  </a>
-                </div>
-              );
-            })()}
-            {selectedDoc === null && (
-              <div
-                style={{
-                  flex: 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--color-text-muted)',
-                  fontSize: 'var(--font-size-caption)',
-                }}
-              >
-                Select a document to read it. PDFs render inline; all pack content is searchable from Chat.
-              </div>
-            )}
-          </div>
+            </>
+          ) : (
+            'No course selected. Pick one above.'
+          )}
         </div>
+      ) : (
+        <TrainingPlayer packId={selectedDir} initialSlideId={pendingSlideId} onSlideChange={onSlideChange} />
       )}
     </div>
   );

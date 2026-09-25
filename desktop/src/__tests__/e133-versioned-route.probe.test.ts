@@ -1,4 +1,6 @@
-// #133: versioned managed-layout resolution against the REAL install shape.
+// #133: versioned managed-layout resolution for the PLAYER route (PackManager
+// installs <packs>/<id>/<version>/assets/player/…). Flat layout (packtool zip
+// output / frozen d5 contract) stays authoritative when both exist.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,36 +16,43 @@ beforeAll(() => {
   mkdirSync(root, { recursive: true });
   writeFileSync(path.join(root, 'index.html'), '<html></html>');
   packsDir = path.join(base, 'packs');
-  // PackManager managed layout: <packs>/<id>/<version>/…
-  const v = path.join(packsDir, 'opmed-initial', '1.0.0');
-  mkdirSync(path.join(v, 'docs'), { recursive: true });
-  writeFileSync(path.join(v, 'pack.json'), '{"id":"opmed-initial","docs":[{"path":"docs/brief.pdf"}]}');
-  writeFileSync(path.join(v, 'docs', 'brief.pdf'), '%PDF-e133-versioned');
+  // PackManager managed layout: <packs>/<id>/<version>/assets/player/…
+  const v = path.join(packsDir, 'opmed-course', '1.0.0', 'assets', 'player');
+  mkdirSync(v, { recursive: true });
+  writeFileSync(path.join(v, 'story.html'), '<html>e133-versioned-story</html>');
+  writeFileSync(path.join(packsDir, 'secret.txt'), 'TOP-SECRET-OUTSIDE-PACK');
 });
 
 afterAll(() => rmSync(path.dirname(root), { recursive: true, force: true }));
 
 const handler = () => createAppFileHandler({ root, packsDir });
 
-describe('versioned managed layout (#133)', () => {
-  it('serves pack.json at <id>/<version>/pack.json', async () => {
-    const res = await handler()(new Request('app://training/opmed-initial/1.0.0/pack.json'));
+describe('versioned managed layout for the player route (#133)', () => {
+  it('serves story.html at training/<id>/<version>/story.html', async () => {
+    const res = await handler()(new Request('app://training/opmed-course/1.0.0/story.html'));
     expect(res.status).toBe(200);
-    expect(JSON.parse(await res.text()).id).toBe('opmed-initial');
+    expect(await res.text()).toContain('e133-versioned-story');
   });
-  it('serves docs under <id>/<version>/docs/', async () => {
-    const res = await handler()(new Request('app://training/opmed-initial/1.0.0/docs/brief.pdf'));
-    expect(res.status).toBe(200);
-    expect(await res.text()).toContain('e133-versioned');
-  });
-  it('keeps the flat player contract when the flat layout exists', async () => {
+
+  it('keeps the flat layout authoritative when it exists (frozen d5 contract)', async () => {
     const flat = path.join(packsDir, 'flat-pack', 'assets', 'player');
     mkdirSync(flat, { recursive: true });
-    writeFileSync(path.join(flat, 'story.html'), '<html>flat</html>');
-    const res = await handler()(new Request('app://training/flat-pack/2.0.0/story.html'));
-    // flat candidate is <packs>/flat-pack/assets/player/2.0.0/story.html (absent)
-    // -> versioned <packs>/flat-pack/2.0.0/assets/player/story.html (absent) -> 404;
-    // the point: no crash, no leak, containment holds.
-    expect([403, 404]).toContain(res.status);
+    writeFileSync(path.join(flat, 'story.html'), '<html>FLAT-WINS</html>');
+    const versioned = path.join(packsDir, 'flat-pack', '2.0.0', 'assets', 'player');
+    mkdirSync(versioned, { recursive: true });
+    writeFileSync(path.join(versioned, 'story.html'), '<html>VERSIONED-LOSES</html>');
+    // Flat candidate for <id>/<rest…> is assets/player/2.0.0/story.html
+    // (absent) — but the d5 flat form <id>/story.html must still win:
+    const d5 = await handler()(new Request('app://training/flat-pack/story.html'));
+    expect(d5.status).toBe(200);
+    expect(await d5.text()).toContain('FLAT-WINS');
+  });
+
+  it('refuses traversal through the version segment (no content leak)', async () => {
+    const escape = await handler()(
+      new Request('app://training/opmed-course/1.0.0/%2e%2e/%2e%2e/secret.txt'),
+    );
+    expect([403, 404]).toContain(escape.status);
+    expect(await escape.text()).not.toContain('TOP-SECRET');
   });
 });
