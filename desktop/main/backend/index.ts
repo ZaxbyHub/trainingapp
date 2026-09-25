@@ -395,6 +395,15 @@ export class NodeBackendHost implements BackendHost {
       const port = await listenOnRandomPort(server);
       this.server = server;
       this.handle = { mode: this.mode, port, url: `http://127.0.0.1:${port}` };
+      // #133: warm the model at app start (background) so the renderer can
+      // gate chat on the real load state instead of a time heuristic. The
+      // warmup itself never fails host start; single-flight in the engine
+      // merges it with a concurrent first query.
+      void this.engine.warmup?.().catch((err: unknown) => {
+        console.error(
+          `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
       // B6 store (issue #64): the store is now load-bearing for ingestion.
       // Corruption is recovered BEFORE serving (integrity check + restore/
       // fresh policy via config.onStoreCorruption; auto restore-else-fresh

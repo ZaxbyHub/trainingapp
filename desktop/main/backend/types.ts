@@ -342,6 +342,15 @@ export interface ModelStatus {
     quality: { present: boolean; path?: string };
     fast: { present: boolean; path?: string };
   };
+  /** #133: resident-model load state for the renderer's chat gating.
+   *  `loading` = a model load is in flight (chat disabled with a notice);
+   *  `ready` = resident and serving; `idle` = not loaded (dev/CI stub, or a
+   *  failed warmup — the first /ask retries the load lazily). */
+  resident?: {
+    state: 'idle' | 'loading' | 'ready';
+    profile: string | null;
+    loadStartedAt: number | null;
+  };
 }
 
 /**
@@ -381,6 +390,9 @@ export interface EngineSurface {
    * Optional: callers must tolerate its absence (test doubles).
    */
   modelStatus?(): ModelStatus;
+  /** #133: background model load at app start (chat gating UX). Optional —
+   *  hosts without a real engine (CI stub) simply never warm up. */
+  warmup?(): Promise<void>;
   search(query: string, nResults?: number): Promise<Array<{ text: string; source: string; similarity: number }>>;
   listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }>;
   clearDocuments(): Promise<void>;

@@ -133,6 +133,9 @@ export const RENDERER_EXCLUDED_MODEL_IDS = new Set(STAGED_MODELS.map((m) => m.id
  *  for the C-suite tests. knowledge-pack-src/ deliberately lives OUTSIDE
  *  stageDir: main() wipes installer-resources/ wholesale before staging. */
 const KNOWLEDGE_PACK_SOURCE = path.join(desktopDir, 'knowledge-pack-src', 'opmed-initial-1.0.0');
+// #133 round 4: the BUNDLED Articulate course pack — the Training tab's
+// content, shipped with the installer exactly like the bundled documents.
+const TRAINING_PACK_SOURCE = path.join(desktopDir, 'knowledge-pack-src', 'opmed-cdp-mlc-1.0.0');
 const KNOWLEDGE_PACK_SRC_ROOT = path.join(desktopDir, 'knowledge-pack-src');
 // Fail loud on version skew: the builder accepts --version but this stager
 // pins the expected dir name — a differently-versioned (or stale) pack dir
@@ -143,7 +146,9 @@ function checkKnowledgePackSource() {
     .readdirSync(KNOWLEDGE_PACK_SRC_ROOT, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
-  const unexpected = dirs.filter((name) => name !== 'opmed-initial-1.0.0');
+  // opmed-cdp-mlc-* is the TRAINING pack — governed by
+  // checkTrainingPackSource below, never a docs-pack mismatch.
+  const unexpected = dirs.filter((name) => name !== 'opmed-initial-1.0.0' && !name.startsWith('opmed-cdp-mlc-'));
   if (unexpected.length > 0) {
     for (const name of unexpected) {
       fail(`unexpected pack dir desktop/knowledge-pack-src/${name} (this stager pins opmed-initial-1.0.0; rebuild with the pinned version or clear the dir — never silently stage a mismatched pack)`);
@@ -151,9 +156,29 @@ function checkKnowledgePackSource() {
   }
 }
 checkKnowledgePackSource();
+// Real-build mode: docs pack + training pack (when the operator built them);
+// a mismatched training-pack dir fails loud exactly like the docs one. CI and
+// weights-less checkouts keep the fixture fallback (bundled-min only).
+const TRAINING_PACK_VERSION = '1.0.0';
+function checkTrainingPackSource() {
+  const trainingRoot = path.join(desktopDir, 'knowledge-pack-src');
+  if (!fs.existsSync(trainingRoot)) return;
+  const unexpectedTraining = fs
+    .readdirSync(trainingRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => name.startsWith('opmed-cdp-mlc') && name !== `opmed-cdp-mlc-${TRAINING_PACK_VERSION}`);
+  for (const name of unexpectedTraining) {
+    fail(`unexpected training pack dir desktop/knowledge-pack-src/${name} (this stager pins opmed-cdp-mlc-${TRAINING_PACK_VERSION}; rebuild with the pinned version or clear the dir — never silently stage a mismatched course)`);
+  }
+}
+checkTrainingPackSource();
 const STAGED_PACKS = fs.existsSync(path.join(KNOWLEDGE_PACK_SOURCE, 'pack.json'))
   ? [{ source: KNOWLEDGE_PACK_SOURCE, classDir: 'bundled-docs' }]
   : [{ source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'), classDir: 'bundled-docs' }];
+if (fs.existsSync(path.join(TRAINING_PACK_SOURCE, 'pack.json'))) {
+  STAGED_PACKS.push({ source: TRAINING_PACK_SOURCE, classDir: 'training' });
+}
 
 function rmSyncBestEffort(target) {
   try {

@@ -100,6 +100,10 @@ export interface LlamaEngineOptions {
 
 /** Generation params per profile, mirroring the browser RAG presets
  *  (web_ui/src/lib/rag/rag-presets.ts:16-28: quality/fast rows). */
+const GIB = 1024 ** 3;
+/** #133: quality->fast auto-downgrade margin below the threshold (GiB). */
+const AUTO_PROFILE_HYSTERESIS_GB = 2;
+
 const PROFILE_GENERATION: Record<InferenceProfileName, { maxTokens: number; temperature: number }> = {
   quality: { maxTokens: 1024, temperature: 0.2 },
   fast: { maxTokens: 384, temperature: 0.3 },
@@ -295,6 +299,20 @@ export class LlamaEngine implements EngineSurface {
    * profile upgrade path is explicit host policy between generations).
    */
   private profileOverride: InferenceProfileName | null = null;
+  /**
+   * #133: sticky resolution of the AUTO profile band. selectProfile() flips
+   * at a single 6 GiB boundary; on a loaded machine free RAM oscillates
+   * around it per query, and each flip swaps + fully reloads the resident
+   * model (the operator saw multi-minute EVERY request). The sticky value
+   * only crosses the band when the regime is decisive: fast -> quality at
+   * the full threshold, quality -> fast one hysteresis band below it.
+   */
+  private stickyAuto: InferenceProfileName | null = null;
+  /** #133: resident-model load state surfaced to the renderer (chat gating). */
+  private loadState: 'idle' | 'loading' | 'ready' = 'idle';
+  private loadStartedAt: number | null = null;
+  /** Single-flight load: concurrent warmup + first query load ONE backend. */
+  private loadInFlight: Promise<ResidentEntry> | null = null;
 
   constructor(options: LlamaEngineOptions = {}) {
     this.freeMemBytes = options.freeMemBytes ?? (() => os.freemem());
@@ -326,7 +344,43 @@ export class LlamaEngine implements EngineSurface {
    */
   effectiveProfile(): InferenceProfileName {
     if (this.profileOverride !== null) return this.profileOverride;
-    return selectProfile(this.profileSetting, this.freeMemBytes(), this.thresholdGb);
+    if (this.profileSetting !== 'auto') return this.profileSetting;
+    const free = this.freeMemBytes();
+    const hi = this.thresholdGb * GIB;
+    const lo = Math.max(0, this.thresholdGb - AUTO_PROFILE_HYSTERESIS_GB) * GIB;
+    if (this.stickyAuto === null) {
+      this.stickyAuto = free >= hi ? 'quality' : 'fast';
+    } else if (this.stickyAuto === 'quality' && free < lo) {
+      this.stickyAuto = 'fast';
+    } else if (this.stickyAuto === 'fast' && free >= hi) {
+      this.stickyAuto = 'quality';
+    }
+    return this.stickyAuto;
+  }
+
+  /** #133: resident-model load state for the renderer's chat gating. */
+  residentLoadStatus(): { state: 'idle' | 'loading' | 'ready'; profile: InferenceProfileName | null; loadStartedAt: number | null } {
+    return { state: this.loadState, profile: this.resident?.profile ?? null, loadStartedAt: this.loadStartedAt };
+  }
+
+  /**
+   * #133: load the effective-profile model at APP START (background) so the
+   * renderer can show "loading, chat disabled" with an honest ETA instead of
+   * the old lazy behavior where the first question ate the load. Never
+   * throws: a failed warmup leaves state idle and the first /ask retries.
+   */
+  async warmup(): Promise<void> {
+    try {
+      const profile = this.effectiveProfile();
+      const modelPath = this.assertModelAvailable(profile);
+      await this.ensureResident(profile, modelPath);
+    } catch (err) {
+      this.loadState = 'idle';
+      this.loadStartedAt = null;
+      console.error(
+        `[trainingapp-backend] model warmup failed (the first /ask will retry the load): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   /**
@@ -389,11 +443,29 @@ export class LlamaEngine implements EngineSurface {
       engine: 'llama.cpp',
       profile: this.effectiveProfile(),
       models: { quality: statusFor('quality'), fast: statusFor('fast') },
+      resident: this.residentLoadStatus(),
     };
   }
 
   private async ensureResident(profile: InferenceProfileName, modelPath: string): Promise<ResidentEntry> {
     if (this.resident !== null && this.resident.profile === profile) return this.resident;
+    if (this.loadInFlight !== null) {
+      // Single-flight: a warmup (or a concurrent query) already loading a
+      // backend — await it, then re-evaluate (it may even be the profile we
+      // want). The in-flight promise never re-enters this branch.
+      const loaded = await this.loadInFlight;
+      if (loaded.profile === profile) return loaded;
+    }
+    const load = this.loadBackend(profile, modelPath);
+    this.loadInFlight = load;
+    try {
+      return await load;
+    } finally {
+      this.loadInFlight = null;
+    }
+  }
+
+  private async loadBackend(profile: InferenceProfileName, modelPath: string): Promise<ResidentEntry> {
     const old = this.resident;
     if (old !== null) {
       this.resident = null;
@@ -404,6 +476,8 @@ export class LlamaEngine implements EngineSurface {
     }
     const threads = this.effectiveThreads();
     let backend: LlamaEngineBackend;
+    this.loadState = 'loading';
+    this.loadStartedAt = Date.now();
     try {
       backend = await this.llamaFactoryFn({
         modelPath,
@@ -412,6 +486,8 @@ export class LlamaEngine implements EngineSurface {
         profile,
       });
     } catch (err) {
+      this.loadState = 'idle';
+      this.loadStartedAt = null;
       // Corrupt/unloadable model: wrap into the 503-diagnostic error type,
       // carrying the underlying failure for the operator.
       throw new ModelNotConfiguredError(
@@ -419,6 +495,8 @@ export class LlamaEngine implements EngineSurface {
       );
     }
     this.loads += 1;
+    this.loadState = 'ready';
+    this.loadStartedAt = null;
     const entry: ResidentEntry = { backend, profile, inFlight: 0 };
     this.resident = entry;
     return entry;
@@ -577,9 +655,11 @@ export class LlamaEngine implements EngineSurface {
       switch (key) {
         case 'inference.profile':
           this.profileSetting = profile as ProfileSetting;
+          this.stickyAuto = null;
           break;
         case 'inference.profileThresholdGb':
           this.thresholdGb = thresholdGb as number;
+          this.stickyAuto = null;
           break;
         case 'inference.threads':
           this.threadsSetting = threads;

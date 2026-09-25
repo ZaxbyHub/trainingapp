@@ -285,8 +285,14 @@ export class StubEngine implements EngineSurface {
       engine: 'stub',
       profile: 'auto',
       models: { quality: { present: false }, fast: { present: false } },
+      // #133: the stub never loads a model — chat must stay enabled in
+      // dev/CI (idle, not loading).
+      resident: { state: 'idle', profile: null, loadStartedAt: null },
     };
   }
+
+  /** #133: no-op — the stub has nothing to warm up. */
+  async warmup(): Promise<void> {}
 
   async listDocuments(): Promise<{ documents: Array<{ id: string; chunk_count: number }>; total: number }> {
     if (this.documentSurface !== null) return this.documentSurface.listDocuments();

@@ -107,6 +107,13 @@ describe('TrainingPage is the articulate course surface only (#133 feedback roun
     expect(frame.src.startsWith('app://training/field-course/2.0.0/story.html')).toBe(true);
   });
 
+  it('resolves a BARE pack-id deep link (Learn panel form) to the versioned dir', async () => {
+    listPacks.mockResolvedValue([DOC_PACK, TRAINING_PACK]);
+    render(<TrainingPage initialPackId="opmed-course" />);
+    const frame = await screen.findByTestId('training-player-frame');
+    expect((frame as HTMLIFrameElement).src.startsWith('app://training/opmed-course/1.0.0/story.html')).toBe(true);
+  });
+
   it('renders the LOADING state (not a player flash) while the pack list resolves', () => {
     listPacks.mockReturnValue(new Promise(() => undefined)); // never resolves
     window.history.pushState({}, '', '/?pack=stale-pack');

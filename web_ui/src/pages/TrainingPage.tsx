@@ -90,13 +90,21 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   // to wait for — the frozen D7 contract deep-links unconditionally.
   const urlPackIsKnownCourse =
     urlPack !== '' && activePacks.some((pack) => packDirKey(pack) === urlPack || pack.packId === urlPack);
+  // A bare pack ID (what the Learn panel emits) resolves to the installed
+  // course's versioned dir key when one matches — #133 round 4 (bundled
+  // course): the player needs <id>/<version>, the deep link says <id>.
+  const resolveDeepLink = (value: string): string => {
+    if (value === '') return '';
+    const byId = activePacks.find((pack) => pack.packId === value);
+    return byId !== undefined ? packDirKey(byId) : value;
+  };
   const deepLinkedPackDir =
     initialPackId !== undefined && initialPackId !== ''
-      ? initialPackId
+      ? resolveDeepLink(initialPackId)
       : urlPack !== '' &&
           (desktopSession === null || packs !== null) &&
           !urlPackIsKnownCourse
-        ? urlPack
+        ? resolveDeepLink(urlPack)
         : '';
   const selectedPack = useMemo(() => {
     if (deepLinkedPackDir !== '') return undefined; // deep link bypasses the picker entirely

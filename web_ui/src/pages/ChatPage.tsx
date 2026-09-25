@@ -6,6 +6,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react';
 import type { ChatMessage, TrainingTarget, CitationRef } from '../types/chat';
 import type { SearchResult } from '../types/search';
+import type { ModelStatus } from '../lib/api/types';
 import { ChatMessageList } from '../components/ChatMessageList';
 import { ChatInput } from '../components/ChatInput';
 import { StreamingIndicator } from '../components/StreamingIndicator';
@@ -29,7 +30,7 @@ import { presetOptions } from '../lib/rag/rag-presets';
 import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
+import { fetchModelStatus, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
 
 function generateId(): string {
@@ -138,9 +139,51 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   const messages = messagesProp;
   const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
-  // #133: when the current send started (cleared on the first token) — drives
-  // the cold-load notice when the desktop engine is loading its model.
-  const [sendStartedAt, setSendStartedAt] = useState<number | null>(null);
+  // #133: the desktop backend's resident-model load state (polled while a
+  // load is in flight) — drives the "chat disabled while the model loads"
+  // banner. Null = unknown/not applicable (browser mode, or the backend
+  // predates the field) and never blocks input.
+  const [modelLoad, setModelLoad] = useState<ModelStatus['resident'] | null>(null);
+  const [modelLoadNow, setModelLoadNow] = useState(() => Date.now());
+
+  // #133 (round 4): chat is DISABLED while the desktop backend reports a
+  // resident-model load in flight — the honest state, not a time heuristic.
+  // Poll /status/models every 2s while loading (one fetch on mount, then
+  // only while state === 'loading'); a missing `resident` field never gates.
+  const residentLoad = modelLoad;
+  const isModelLoading =
+    desktopSession !== null && residentLoad?.state === 'loading';
+  // Poll only when a load is plausibly in flight: a real engine with models
+  // present. When the models are absent (blocked overlay already explains it)
+  // or in browser mode, no poll ever fires — the gate stays inert.
+  const modelsAbsent = desktopModels !== null && modelsAbsentForRealEngine(desktopModels);
+  const pollEligible = desktopSession !== null && !modelsAbsent;
+  useEffect(() => {
+    if (!pollEligible) return;
+    let cancelled = false;
+    const poll = (): void => {
+      void fetchModelStatus(desktopSession)
+        .then((status) => {
+          if (cancelled) return;
+          setModelLoad(status.resident ?? null);
+        })
+        .catch(() => {
+          if (!cancelled) setModelLoad(null);
+        });
+    };
+    poll();
+    const id = setInterval(poll, 2_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [pollEligible, desktopSession]);
+  // Elapsed counter for the loading banner (1s tick only while loading).
+  useEffect(() => {
+    if (!isModelLoading) return undefined;
+    const id = setInterval(() => setModelLoadNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [isModelLoading]);
   const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -254,7 +297,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
 
   const isBrowserMode = mode === 'browser-local';
   const isModelBlocked = isBrowserMode && !isModelReady;
-  const isInputDisabled = isLoading || isModelBlocked;
+  const isInputDisabled = isLoading || isModelBlocked || isModelLoading;
   // U8c: image upload requires the multimodal wllama engine AND the loaded
   // model's actual image-modality support. The previous check only verified
   // engine name + readiness, so a wllama build with a packaged GGUF but a
@@ -326,7 +369,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         tokenStreamManagerRef.current = null;
       }
       setIsLoading(false);
-      setSendStartedAt(null);
     }
   }, [browserEngine, mode, currentConversationId, onSaveConversation, setMessages]);
 
@@ -420,7 +462,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // commit it to the ref synchronously, and set state with the value form
     // (no updater function) so React never double-invokes a side-effect.
     streamManager.onToken((token) => {
-      setSendStartedAt(null); // first token arrived — cold load (if any) is over
       const next = messagesRef.current.map((msg) =>
         msg.id === assistantMessageId
           ? { ...msg, content: msg.content + token, timestamp: Date.now() }
@@ -487,7 +528,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       onSaveConversation(liveOwningId, updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
-        setSendStartedAt(null);
         tokenStreamManagerRef.current = null;
         owningMessagesRef.current = null;
       }
@@ -514,7 +554,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       onSaveConversation(liveOwningId, updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
-        setSendStartedAt(null);
         tokenStreamManagerRef.current = null;
         owningMessagesRef.current = null;
       }
@@ -695,7 +734,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     messagesRef.current = appended;
     setMessages(appended);
     setIsLoading(true);
-    setSendStartedAt(Date.now());
 
     // S1+S2: capture the owning conversation id + snapshot at send time, and
     // persist the user message + placeholder immediately so the turn survives
@@ -758,7 +796,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     messagesRef.current = regenerated;
     setMessages(regenerated);
     setIsLoading(true);
-    setSendStartedAt(Date.now());
     // F1: regenerate re-uses the current conversation; set the owning ref so
     // runGeneration's saves target it.
     owningConversationIdRef.current = currentConversationId;
@@ -992,9 +1029,40 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           isVisible={isLoading}
           modelLoadProgress={isLoading && modelLoadingProgress > 0 && modelLoadingProgress < 100 ? modelLoadingProgress : undefined}
           modelLoadLabel="Loading the AI model — one-time, may take a few minutes…"
-          awaitingFirstTokenSince={isLoading && sendStartedAt !== null ? sendStartedAt : undefined}
         />
       </div>
+
+      {isModelLoading && (
+        <div
+          role="status"
+          data-testid="chat-model-loading"
+          style={{
+            margin: '0 var(--spacing-lg)',
+            padding: 'var(--spacing-md)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--spacing-xs)',
+            fontFamily: 'var(--font-family)',
+            fontSize: 'var(--font-size-caption)',
+            color: 'var(--color-text-primary)',
+          }}
+        >
+          <span style={{ fontWeight: 600 }}>
+            Loading the AI model ({residentLoad?.profile ?? 'auto'} profile) — chat is disabled until it is ready.
+          </span>
+          <span>
+            Elapsed:{' '}
+            {residentLoad?.loadStartedAt != null
+              ? `${Math.max(0, Math.floor((modelLoadNow - residentLoad.loadStartedAt) / 1000))}s`
+              : '…'}
+            . This happens once per launch and typically takes a few minutes for the Quality model
+            (under a minute for Fast). You can keep using Documents and Training — your chat will be
+            ready here.
+          </span>
+        </div>
+      )}
 
       {/* Input */}
       <ChatInput
