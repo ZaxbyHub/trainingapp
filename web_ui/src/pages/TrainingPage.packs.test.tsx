@@ -82,7 +82,7 @@ describe('TrainingPage pack surface (#133 feedback round)', () => {
     render(<TrainingPage />);
     const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
     await waitFor(() => {
-      expect(select.value).toBe('opmed-initial-1.0.0');
+      expect(select.value).toBe('opmed-initial/1.0.0');
     });
     expect(await screen.findByTestId('training-doc-docs/brief.pdf')).toBeTruthy();
     expect(screen.getByTestId('training-doc-docs/manual.docx')).toBeTruthy();
@@ -95,12 +95,12 @@ describe('TrainingPage pack surface (#133 feedback round)', () => {
     await screen.findByTestId('training-doc-docs/brief.pdf');
     fireEvent.click(screen.getByTestId('training-doc-docs/brief.pdf'));
     const embed = await screen.findByTestId('training-doc-viewer');
-    expect((embed as HTMLEmbedElement).src).toBe('app://training/opmed-initial-1.0.0/docs/brief.pdf');
+    expect((embed as HTMLEmbedElement).src).toBe('app://training/opmed-initial/1.0.0/docs/brief.pdf');
 
     fireEvent.click(screen.getByTestId('training-doc-docs/manual.docx'));
     const link = await screen.findByTestId('training-doc-download');
     expect((link as HTMLAnchorElement).getAttribute('href')).toBe(
-      'app://training/opmed-initial-1.0.0/docs/manual.docx',
+      'app://training/opmed-initial/1.0.0/docs/manual.docx',
     );
   });
 
@@ -111,9 +111,9 @@ describe('TrainingPage pack surface (#133 feedback round)', () => {
     const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
     // Two active packs and no stored choice => nothing auto-selected.
     expect(select.value).toBe('');
-    fireEvent.change(select, { target: { value: 'field-updates-2.0.0' } });
+    fireEvent.change(select, { target: { value: 'field-updates/2.0.0' } });
     await waitFor(() => {
-      expect(new URLSearchParams(window.location.search).get('pack')).toBe('field-updates-2.0.0');
+      expect(new URLSearchParams(window.location.search).get('pack')).toBe('field-updates/2.0.0');
     });
   });
 });

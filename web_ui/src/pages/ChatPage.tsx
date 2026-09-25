@@ -138,6 +138,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   const messages = messagesProp;
   const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
+  // #133: when the current send started (cleared on the first token) — drives
+  // the cold-load notice when the desktop engine is loading its model.
+  const [sendStartedAt, setSendStartedAt] = useState<number | null>(null);
   const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -323,6 +326,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         tokenStreamManagerRef.current = null;
       }
       setIsLoading(false);
+      setSendStartedAt(null);
     }
   }, [browserEngine, mode, currentConversationId, onSaveConversation, setMessages]);
 
@@ -416,6 +420,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // commit it to the ref synchronously, and set state with the value form
     // (no updater function) so React never double-invokes a side-effect.
     streamManager.onToken((token) => {
+      setSendStartedAt(null); // first token arrived — cold load (if any) is over
       const next = messagesRef.current.map((msg) =>
         msg.id === assistantMessageId
           ? { ...msg, content: msg.content + token, timestamp: Date.now() }
@@ -482,6 +487,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       onSaveConversation(liveOwningId, updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
+        setSendStartedAt(null);
         tokenStreamManagerRef.current = null;
         owningMessagesRef.current = null;
       }
@@ -508,6 +514,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       onSaveConversation(liveOwningId, updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
+        setSendStartedAt(null);
         tokenStreamManagerRef.current = null;
         owningMessagesRef.current = null;
       }
@@ -688,6 +695,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     messagesRef.current = appended;
     setMessages(appended);
     setIsLoading(true);
+    setSendStartedAt(Date.now());
 
     // S1+S2: capture the owning conversation id + snapshot at send time, and
     // persist the user message + placeholder immediately so the turn survives
@@ -750,6 +758,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     messagesRef.current = regenerated;
     setMessages(regenerated);
     setIsLoading(true);
+    setSendStartedAt(Date.now());
     // F1: regenerate re-uses the current conversation; set the owning ref so
     // runGeneration's saves target it.
     owningConversationIdRef.current = currentConversationId;
@@ -983,6 +992,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           isVisible={isLoading}
           modelLoadProgress={isLoading && modelLoadingProgress > 0 && modelLoadingProgress < 100 ? modelLoadingProgress : undefined}
           modelLoadLabel="Loading the AI model — one-time, may take a few minutes…"
+          awaitingFirstTokenSince={isLoading && sendStartedAt !== null ? sendStartedAt : undefined}
         />
       </div>
 

@@ -15,7 +15,7 @@
 //
 // Deeper transport hardening (CSP, loopback token, renderer policy) is
 // Workstream B2 / issue #60; this handler only guarantees baseline path safety.
-import { promises as fsp, realpathSync } from 'node:fs';
+import fs, { promises as fsp, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { protocol } from 'electron';
 import { buildCspPolicy, buildTrainingCspPolicy } from './security/csp.js';
@@ -201,18 +201,41 @@ function resolveTrainingRequest(
   }
   if (decoded.includes('\\') || decoded.includes('\0')) return forbidden();
 
-  const first = restSegments[0];
-  let relative: string;
-  if (first === 'pack.json' && restSegments.length === 1) {
-    relative = path.join(packId, 'pack.json');
-  } else if (first === 'docs') {
-    relative = path.join(packId, 'docs', ...restSegments.slice(1));
-  } else {
-    relative = path.join(packId, 'assets', 'player', ...restSegments);
-  }
-  const resolved = path.resolve(packsAbs, relative);
-  if (resolved !== packsAbs && !resolved.startsWith(packsAbs + path.sep)) {
+  // Map a pack-relative URL tail onto <packRootDir>/<pack.json | docs/… |
+  // assets/player/…> for a given on-disk pack directory.
+  const relativeFor = (packDir: string, tail: string[]): string => {
+    const first = tail[0];
+    if (first === 'pack.json' && tail.length === 1) {
+      return path.join(packDir, 'pack.json');
+    }
+    if (first === 'docs') {
+      return path.join(packDir, 'docs', ...tail.slice(1));
+    }
+    return path.join(packDir, 'assets', 'player', ...tail);
+  };
+
+  // Two managed layouts exist: flat (<packs>/<id>/…, packtool zip output and
+  // the d5 player contract) and versioned (<packs>/<id>/<version>/…,
+  // PackManager managed copies — what first-run activation installs). When
+  // the segment after the id looks like a version and the flat candidate is
+  // absent, fall back to the versioned layout; flat stays authoritative when
+  // both exist (frozen d5 contract).
+  const VERSION_SEGMENT = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+  const contained = (candidate: string): boolean =>
+    candidate !== packsAbs && candidate.startsWith(packsAbs + path.sep);
+  let resolved = path.resolve(packsAbs, relativeFor(packId, restSegments));
+  if (!contained(resolved)) {
     return forbidden();
+  }
+  const versionDir = restSegments[0];
+  if (!fs.existsSync(resolved) && versionDir !== undefined && VERSION_SEGMENT.test(versionDir)) {
+    const versioned = path.resolve(
+      packsAbs,
+      relativeFor(path.join(packId, versionDir), restSegments.slice(1)),
+    );
+    if (contained(versioned) && fs.existsSync(versioned)) {
+      resolved = versioned;
+    }
   }
   return resolved;
 }

@@ -15,8 +15,8 @@
  * lists INSTALLED packs with a picker (the update path: install a newer pack
  * zip from the Documents page, then pick it here), auto-selects the sole
  * installed pack when nothing else is chosen, and remembers the last
- * selection. The `?pack=` value is the managed pack DIRECTORY name
- * (`<packId>-<version>`), matching what the player route serves.
+ * selection. The `?pack=` value is the managed pack DIRECTORY path
+ * (`<packId>/<version>`), matching what the player route serves.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { TrainingPlayer } from '../components/TrainingPlayer';
@@ -44,6 +44,11 @@ interface PackDocEntry {
 }
 
 const LAST_PACK_KEY = 'training.lastPackDir';
+
+/** Managed pack directory path (`<packId>/<version>`) — the form the reserved
+ * app://training route serves for PackManager-installed packs. */
+const packDirKey = (pack: { packId: string; version: string }): string =>
+  `${pack.packId}/${pack.version}`;
 
 const isPdf = (mime: string, path: string): boolean =>
   mime === 'application/pdf' || path.toLowerCase().endsWith('.pdf');
@@ -98,7 +103,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
       ? initialPackId
       : urlPack !== '' &&
           !activePacks.some(
-            (pack) => `${pack.packId}-${pack.version}` === urlPack || pack.packId === urlPack,
+            (pack) => packDirKey(pack) === urlPack || pack.packId === urlPack,
           )
         ? urlPack
         : '';
@@ -106,7 +111,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     if (deepLinkedPackDir !== '') return undefined; // deep link bypasses the picker entirely
     if (urlPack !== '') {
       const byUrl = activePacks.find(
-        (pack) => `${pack.packId}-${pack.version}` === urlPack || pack.packId === urlPack,
+        (pack) => packDirKey(pack) === urlPack || pack.packId === urlPack,
       );
       if (byUrl !== undefined) return byUrl;
     }
@@ -114,7 +119,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     if (typeof window !== 'undefined' && activePacks.length > 1) {
       const last = window.localStorage.getItem(LAST_PACK_KEY);
       if (last !== null) {
-        const byLast = activePacks.find((pack) => `${pack.packId}-${pack.version}` === last);
+        const byLast = activePacks.find((pack) => packDirKey(pack) === last);
         if (byLast !== undefined) return byLast;
       }
     }
@@ -125,7 +130,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     deepLinkedPackDir !== ''
       ? deepLinkedPackDir
       : selectedPack !== undefined
-        ? `${selectedPack.packId}-${selectedPack.version}`
+        ? packDirKey(selectedPack)
         : '';
   const isStorylinePack = deepLinkedPackDir !== '' || selectedPack?.sourceClass === 'training';
 
@@ -141,7 +146,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     setDocs(null);
     setDocsError(null);
     setSelectedDoc(null);
-    fetch(`app://training/${encodeURIComponent(selectedDir)}/pack.json`)
+    fetch(`app://training/${selectedDir.split('/').map(encodeURIComponent).join('/')}/pack.json`)
       .then(async (res) => {
         if (!res.ok) throw new Error(`pack manifest fetch failed (HTTP ${res.status})`);
         return (await res.json()) as { docs?: PackDocEntry[] };
@@ -241,7 +246,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
         >
           <option value="">Select a pack…</option>
           {activePacks.map((pack) => {
-            const dir = `${pack.packId}-${pack.version}`;
+            const dir = packDirKey(pack);
             return (
               <option key={dir} value={dir}>
                 {pack.name ?? pack.packId} ({dir})
@@ -313,7 +318,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
             {selectedDoc !== null && docs !== null && (() => {
               const doc = docs.find((entry) => entry.path === selectedDoc);
               if (doc === undefined) return null;
-              const fileUrl = `app://training/${encodeURIComponent(selectedDir)}/${doc.path
+              const fileUrl = `app://training/${selectedDir.split('/').map(encodeURIComponent).join('/')}/${doc.path
                 .split('/')
                 .map(encodeURIComponent)
                 .join('/')}`;
