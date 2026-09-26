@@ -82,7 +82,20 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   // One row per COURSE (packId): installing a newer bundled version
   // deactivates the old one but keeps it on disk (#133 round 6 upgrade), and
   // listing both reads as a duplicate course. Prefer the active row, then the
-  // highest version as a tiebreak.
+  // highest version as a tiebreak (segment-aware so 1.0.10 > 1.0.9 — the
+  // main process's semver comparator is the authority; this only orders a
+  // same-active pair the dropdown rarely shows).
+  const newerVersion = (a: string, b: string): string => {
+    const segsA = a.split(/[.+-]/);
+    const segsB = b.split(/[.+-]/);
+    for (let i = 0; i < Math.max(segsA.length, segsB.length); i += 1) {
+      const numA = Number(segsA[i]);
+      const numB = Number(segsB[i]);
+      if (!Number.isNaN(numA) && !Number.isNaN(numB) && numA !== numB) return numA > numB ? a : b;
+      if ((segsA[i] ?? '') !== (segsB[i] ?? '')) return (segsA[i] ?? '') > (segsB[i] ?? '') ? a : b;
+    }
+    return a;
+  };
   const courses = useMemo(() => {
     const byId = new Map<string, PackInfo>();
     for (const pack of activePacks) {
@@ -96,7 +109,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
           ? pack.active
             ? pack
             : current
-          : pack.version >= current.version
+          : newerVersion(pack.version, current.version) === pack.version
             ? pack
             : current;
       byId.set(pack.packId, preferred);
@@ -113,13 +126,22 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   // stale ?pack= would flash the player). Without a session there is no list
   // to wait for — the frozen D7 contract deep-links unconditionally.
   const urlPackIsKnownCourse =
-    urlPack !== '' && activePacks.some((pack) => packDirKey(pack) === urlPack || pack.packId === urlPack);
+    urlPack !== '' &&
+    (activePacks.some((pack) => packDirKey(pack) === urlPack) ||
+      courses.some((pack) => pack.packId === urlPack));
   // A bare pack ID (what the Learn panel emits) resolves to the installed
   // course's versioned dir key when one matches — #133 round 4 (bundled
   // course): the player needs <id>/<version>, the deep link says <id>.
+  // Round-7 review finding 1: after a bundled upgrade the retired version's
+  // row sorts FIRST for the id (listInstalled orders by id, version), so a
+  // bare id must resolve through the DEDUPED course rows (active preferred) —
+  // through activePacks it would play the retired version. An exact
+  // <id>/<version> URL still honors the explicitly named version.
   const resolveDeepLink = (value: string): string => {
     if (value === '') return '';
-    const byId = activePacks.find((pack) => pack.packId === value);
+    const byExact = activePacks.find((pack) => packDirKey(pack) === value);
+    if (byExact !== undefined) return packDirKey(byExact);
+    const byId = courses.find((pack) => pack.packId === value);
     return byId !== undefined ? packDirKey(byId) : value;
   };
   const deepLinkedPackDir =
@@ -133,10 +155,10 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   const selectedPack = useMemo(() => {
     if (deepLinkedPackDir !== '') return undefined; // deep link bypasses the picker entirely
     if (urlPack !== '') {
-      const byUrl = activePacks.find(
-        (pack) => packDirKey(pack) === urlPack || pack.packId === urlPack,
-      );
-      if (byUrl !== undefined) return byUrl;
+      const byExact = activePacks.find((pack) => packDirKey(pack) === urlPack);
+      if (byExact !== undefined) return byExact;
+      const byId = courses.find((pack) => pack.packId === urlPack);
+      if (byId !== undefined) return byId;
     }
     // Auto-select the sole course; with several, remember the last one —
     // matching the stored dir key first and, after a version upgrade retires
@@ -168,6 +190,14 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     if (dir === '') url.searchParams.delete('pack');
     else url.searchParams.set('pack', dir);
     window.history.pushState({}, '', url);
+    // Remember the course so the next visit auto-selects it (the LAST_PACK_KEY
+    // read in the selection memo was write-less dead code until this —
+    // round-7 review note).
+    try {
+      window.localStorage.setItem(LAST_PACK_KEY, dir);
+    } catch {
+      // storage may be unavailable (privacy mode); selection still works
+    }
     setPackOverride(dir);
   };
 

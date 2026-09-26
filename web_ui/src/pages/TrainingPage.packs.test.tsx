@@ -122,3 +122,53 @@ describe('TrainingPage is the articulate course surface only (#133 feedback roun
     expect(screen.queryByTestId('training-player-frame')).toBeNull();
   });
 });
+
+describe('bundled-course upgrade state: retired + active rows for ONE course id (#133 round 7)', () => {
+  // The boot-ensure upgrade deactivates the old version but keeps its row
+  // (listInstalled orders by id, then version — the RETIRED row sorts first).
+  const RETIRED = { ...TRAINING_PACK, version: '1.0.0', active: false };
+  const ACTIVE = { ...TRAINING_PACK, version: '1.0.1', active: true };
+
+  it('the picker shows ONE course and auto-selects the ACTIVE version', async () => {
+    listPacks.mockResolvedValue([RETIRED, ACTIVE]);
+    render(<TrainingPage />);
+    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select.value).toBe('opmed-course/1.0.1');
+    });
+    const options = Array.from(select.options).filter((o) => o.value !== '');
+    expect(options.map((o) => o.value)).toEqual(['opmed-course/1.0.1']);
+    const frame = screen.getByTestId('training-player-frame') as HTMLIFrameElement;
+    expect(frame.src.startsWith('app://training/opmed-course/1.0.1/story.html')).toBe(true);
+  });
+
+  it('a BARE-id deep link resolves to the ACTIVE version, not the first (retired) row', async () => {
+    listPacks.mockResolvedValue([RETIRED, ACTIVE]);
+    render(<TrainingPage initialPackId="opmed-course" />);
+    const frame = await screen.findByTestId('training-player-frame');
+    // Round-7 finding 1 regression pin: through activePacks.find this played
+    // the retired 1.0.0 (it sorts first for the id).
+    expect((frame as HTMLIFrameElement).src.startsWith('app://training/opmed-course/1.0.1/story.html')).toBe(true);
+  });
+
+  it('an EXPLICIT <id>/<version> URL still honors the named (retired) version', async () => {
+    listPacks.mockResolvedValue([RETIRED, ACTIVE]);
+    window.history.pushState({}, '', '/?pack=opmed-course/1.0.0');
+    render(<TrainingPage />);
+    const frame = await screen.findByTestId('training-player-frame');
+    expect((frame as HTMLIFrameElement).src.startsWith('app://training/opmed-course/1.0.0/story.html')).toBe(true);
+  });
+
+  it('picking a course persists it for the next visit (LAST_PACK_KEY)', async () => {
+    listPacks.mockResolvedValue([RETIRED, ACTIVE]);
+    render(<TrainingPage />);
+    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select.value).toBe('opmed-course/1.0.1');
+    });
+    // Auto-select does not persist; an explicit pick does (the write that was
+    // missing made the selection memo's localStorage read dead code).
+    fireEvent.change(select, { target: { value: 'opmed-course/1.0.1' } });
+    expect(window.localStorage.getItem('training.lastPackDir')).toBe('opmed-course/1.0.1');
+  });
+});

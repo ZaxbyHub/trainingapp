@@ -36,6 +36,7 @@ import {
   saveFirstRunState,
 } from './first-run/first-run-store.js';
 import { assertCanComplete, manifestCompletionState, WizardBlockError } from './first-run/wizard.js';
+import { isBundledPackSatisfied } from './first-run/bundled-packs.js';
 import { formatFailure, runStartupIntegrityCheck } from './integrity-check.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
 import {
@@ -574,12 +575,7 @@ export function bootstrap(): void {
         const dir = packEntryDir(manifestDir, entry);
         try {
           const installedNow = await packTools.listInstalled();
-          const satisfied = installedNow.some(
-            (record) =>
-              record.id === entry.id &&
-              record.active &&
-              (entry.version === undefined || record.version === entry.version),
-          );
+          const satisfied = isBundledPackSatisfied(entry, installedNow);
           if (satisfied) {
             results.push({ id: entry.id, ok: true, detail: 'already installed and active' });
             continue;
@@ -656,15 +652,7 @@ export function bootstrap(): void {
             failureCount: status.manifest.failures.length,
           });
           const inactiveRequiredPacks = status.packs.required
-            .filter(
-              (entry) =>
-                !status.packs.installed.some(
-                  (record) =>
-                    record.id === entry.id &&
-                    record.active &&
-                    (entry.version === undefined || record.version === entry.version),
-                ),
-            )
+            .filter((entry) => !isBundledPackSatisfied(entry, status.packs.installed))
             .map((entry) => entry.id);
           assertCanComplete({
             selectedProfile,
@@ -728,6 +716,12 @@ export function bootstrap(): void {
             console.error(
               `[trainingapp-desktop] bundled pack ensure failed: ${failed.map((x) => `${x.id}: ${x.detail}`).join('; ')}`,
             );
+          }
+          // Early exits (no pack lifecycle / no staged manifest) return no
+          // results — name the skip instead of failing silently (round-7
+          // review note). Dev trees without a manifest hit this every boot.
+          if (installedNow.length === 0 && failed.length === 0 && r.detail !== undefined) {
+            console.log(`[trainingapp-desktop] bundled pack ensure skipped: ${r.detail}`);
           }
         })
         .catch((err) => {
