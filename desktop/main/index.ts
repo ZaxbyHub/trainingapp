@@ -36,7 +36,7 @@ import {
   saveFirstRunState,
 } from './first-run/first-run-store.js';
 import { assertCanComplete, manifestCompletionState, WizardBlockError } from './first-run/wizard.js';
-import { isBundledPackSatisfied } from './first-run/bundled-packs.js';
+import { ensureBundledPacksAtBoot, isBundledPackSatisfied } from './first-run/bundled-packs.js';
 import { formatFailure, runStartupIntegrityCheck } from './integrity-check.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
 import {
@@ -578,10 +578,13 @@ export function bootstrap(): void {
       }
       const manifestDir = path.dirname(wm.manifestPath);
       const results: Array<{ id: string; ok: boolean; detail: string }> = [];
+      // Snapshot once and refresh only after an install (PRR-211): the
+      // all-satisfied fast path — the common case on every boot — costs one
+      // query instead of one per manifest pack.
+      let installedNow = await packTools.listInstalled();
       for (const entry of wm.manifest.packs ?? []) {
         const dir = packEntryDir(manifestDir, entry);
         try {
-          const installedNow = await packTools.listInstalled();
           const satisfied = isBundledPackSatisfied(entry, installedNow);
           if (satisfied) {
             results.push({ id: entry.id, ok: true, detail: 'already installed and active' });
@@ -600,6 +603,9 @@ export function bootstrap(): void {
             continue;
           }
           const installed = await packTools.install(dir);
+          // Refresh the snapshot so a later entry's satisfied check sees this
+          // install (keeps the hoisted query correct).
+          installedNow = await packTools.listInstalled();
           results.push({ id: installed.id, ok: true, detail: `installed ${installed.id}@${installed.version}` });
         } catch (err) {
           results.push({
@@ -689,6 +695,12 @@ export function bootstrap(): void {
             console.error(
               `[trainingapp-desktop] first-run profile could not be applied to the engine: ${profileApplied.detail}`,
             );
+          } else {
+            // Review F-09: the boot warmup loaded the STARTUP default profile;
+            // the operator just chose (possibly) a different one — re-warm so
+            // the first /ask doesn't pay a switch-reload. Fire-and-forget, and
+            // a no-op when the chosen profile is already resident.
+            void engine.warmup?.().catch(() => {});
           }
           return { ok: true as const };
         } catch (err) {
@@ -706,37 +718,14 @@ export function bootstrap(): void {
     pushFirstRunRequired();
     // #133 round 6: a store that completed the wizard before a pack was
     // bundled never sees that pack (the wizard was the only installer) —
-    // ensure the manifest's bundled packs on every completed boot. Idempotent
-    // (skips packs already installed+active); fire-and-forget with named logs,
-    // same discipline as the engine boot warmup.
-    if (loadFirstRunState(storePath).firstRun.completed) {
-      void ensureBundledPacks()
-        .then((r) => {
-          const installedNow = r.results.filter((x) => x.ok && x.detail.startsWith('installed '));
-          const failed = r.results.filter((x) => !x.ok);
-          if (installedNow.length > 0) {
-            console.log(
-              `[trainingapp-desktop] bundled packs ensured at boot: ${installedNow.map((x) => x.detail).join('; ')}`,
-            );
-          }
-          if (failed.length > 0) {
-            console.error(
-              `[trainingapp-desktop] bundled pack ensure failed: ${failed.map((x) => `${x.id}: ${x.detail}`).join('; ')}`,
-            );
-          }
-          // Early exits (no pack lifecycle / no staged manifest) return no
-          // results — name the skip instead of failing silently (round-7
-          // review note). Dev trees without a manifest hit this every boot.
-          if (installedNow.length === 0 && failed.length === 0 && r.detail !== undefined) {
-            console.log(`[trainingapp-desktop] bundled pack ensure skipped: ${r.detail}`);
-          }
-        })
-        .catch((err) => {
-          console.error(
-            `[trainingapp-desktop] bundled pack ensure crashed: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        });
-    }
+    // ensure the manifest's bundled packs on every completed boot. The gate
+    // predicate + log routing live in first-run/bundled-packs.ts so they stay
+    // unit-pinnable (review PRR-201/207).
+    ensureBundledPacksAtBoot(
+      loadFirstRunState(storePath).firstRun.completed,
+      ensureBundledPacks,
+      (line, level) => (level === 'error' ? console.error(line) : console.log(line)),
+    );
     let quitting = false;
     app.on('will-quit', (event) => {
       if (quitting || backendHost === null) return;

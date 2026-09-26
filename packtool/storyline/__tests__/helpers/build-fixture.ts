@@ -36,6 +36,9 @@ export function makeSyntheticPublish(targetDir: string): SyntheticFixture {
   mkdirSync(join(publishDir, 'html5', 'data', 'js'), { recursive: true });
   mkdirSync(join(publishDir, 'html5', 'lib', 'framework'), { recursive: true });
   mkdirSync(join(publishDir, 'story_content'), { recursive: true });
+  // Mobile image variants (the optional player sibling compose copies since
+  // review PRR-226): real Storyline publishes emit these for image assets.
+  mkdirSync(join(publishDir, 'mobile'), { recursive: true });
   mkdirSync(asrDir, { recursive: true });
 
   writeFileSync(
@@ -50,6 +53,7 @@ export function makeSyntheticPublish(targetDir: string): SyntheticFixture {
   );
   writeFileSync(join(publishDir, 'html5', 'lib', 'framework', 'nested.js'), '// synthetic nested player asset SYN79-NESTED-MARKER\n', 'utf8');
   writeFileSync(join(publishDir, 'html5', 'lib', 'loader.js'), '// synthetic player loader SYN79-LOADER-MARKER\n', 'utf8');
+  writeFileSync(join(publishDir, 'mobile', 'SYN79_slide_mobile.jpg'), 'synthetic mobile image variant SYN79-MOBILE-MARKER\n', 'utf8');
 
   const dataPayload = {
     slideCount: 3,

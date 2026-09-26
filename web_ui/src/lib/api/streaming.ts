@@ -98,7 +98,8 @@ function isIpv6MetadataAddress(hostname: string): boolean {
  * bounds genuinely dead loopback connections while covering the measured
  * cold start; warm questions are unaffected (timeout clears on first byte).
  */
-const FIRST_BYTE_TIMEOUT_MS = 600_000;
+export const DESKTOP_FIRST_BYTE_TIMEOUT_MS = 600_000;
+export const DEFAULT_FIRST_BYTE_TIMEOUT_MS = 30_000;
 
 /**
  * Callback type for receiving token events
@@ -162,12 +163,28 @@ export class SSEStreamConsumer {
    *   Python backend's 'Authorization: Bearer' convention. Electron mode
    *   passes the desktop loopback guard's 'X-Desktop-Token' (issue #67).
    */
-  constructor(url: string, body: object, token?: string, authHeaderName?: string) {
+  private firstByteTimeoutMs: number;
+
+  constructor(
+    url: string,
+    body: object,
+    token?: string,
+    authHeaderName?: string,
+    /**
+     * First-byte watchdog. Desktop (Electron loopback) legitimately waits
+     * behind the model cold start (DESKTOP_FIRST_BYTE_TIMEOUT_MS); browser
+     * deployments against api_server.py answer in seconds, so the default is
+     * the historical 30 s (review PRR-239 — the 10-minute value is no longer
+     * applied unconditionally to every deployment mode).
+     */
+    firstByteTimeoutMs: number = DEFAULT_FIRST_BYTE_TIMEOUT_MS,
+  ) {
     validateStreamUrl(url);
     this.url = url;
     this.body = body;
     this.token = token;
     this.authHeaderName = authHeaderName ?? 'Authorization';
+    this.firstByteTimeoutMs = firstByteTimeoutMs;
     this.decoder = new TextDecoder();
   }
 
@@ -231,7 +248,7 @@ export class SSEStreamConsumer {
       this.firstByteTimeoutId = setTimeout(() => {
         this._timedOut = true;
         this.controller?.abort();
-      }, FIRST_BYTE_TIMEOUT_MS);
+      }, this.firstByteTimeoutMs);
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',

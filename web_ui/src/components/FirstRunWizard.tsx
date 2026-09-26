@@ -428,13 +428,31 @@ export function FirstRunWizard({
             {status.packs.toolsAvailable && status.packs.required.length > 0 && (
               <>
                 <ul style={{ margin: '0 0 8px', paddingLeft: 20 }}>
-                  {status.packs.required.map((entry) => (
-                    <li key={entry.id}>
-                      {entry.id}
-                      {entry.version !== undefined ? `@${entry.version}` : ''} —{' '}
-                      {status.packs.installed.some((r) => r.id === entry.id && r.active) ? 'active' : 'not active'}
-                    </li>
-                  ))}
+                  {status.packs.required.map((entry) => {
+                    const installedRow = status.packs.installed.find((r) => r.id === entry.id && r.active);
+                    // Round-8 semantics: the backend's satisfied verdict accepts a
+                    // NEWER installed pack (>=). When the versions differ but the
+                    // entry is satisfied, say so — otherwise the manifest-pinned
+                    // version reads as if the user's newer pack was rejected.
+                    const satisfies =
+                      entry.satisfied !== undefined
+                        ? entry.satisfied
+                        : installedRow !== undefined &&
+                          (entry.version === undefined || installedRow.version === entry.version);
+                    return (
+                      <li key={entry.id}>
+                        {entry.id}
+                        {entry.version !== undefined ? `@${entry.version}` : ''} —{' '}
+                        {installedRow !== undefined ? 'active' : 'not active'}
+                        {satisfies &&
+                        installedRow !== undefined &&
+                        entry.version !== undefined &&
+                        installedRow.version !== entry.version
+                          ? ` (your installed ${installedRow.version} satisfies the manifest)`
+                          : ''}
+                      </li>
+                    );
+                  })}
                 </ul>
                 {packsSatisfied ? (
                   <p style={{ margin: 0 }}>All required packs are active.</p>
@@ -508,7 +526,7 @@ export function FirstRunWizard({
         )}
 
         {completeBlockedReasons.length > 0 && (
-          <div role="alert" data-testid="complete-blocked-reasons" style={{ margin: 0 }}>
+          <div role="alert" id="wizard-complete-blocked-reasons" data-testid="complete-blocked-reasons" style={{ margin: 0 }}>
             <p style={{ margin: '0 0 4px', color: 'var(--color-warning-strong, #eab308)', fontSize: 'var(--font-size-caption, 12px)' }}>
               Setup cannot complete yet — resolve the named gates:
             </p>
@@ -545,6 +563,7 @@ export function FirstRunWizard({
                 onClick={() => void runComplete()}
                 disabled={!completeEnabled}
                 data-testid="wizard-complete"
+                aria-describedby={completeEnabled ? undefined : 'wizard-complete-blocked-reasons'}
               >
                 Complete setup
               </button>

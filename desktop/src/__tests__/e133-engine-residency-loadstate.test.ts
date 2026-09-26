@@ -20,8 +20,11 @@ const GB = 1024 ** 3;
 let dummyQuality = '';
 let dummyFast = '';
 
+const tempRoots: string[] = [];
+
 function stageDummyModels(): { quality: string; fast: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e133-engine-'));
+  tempRoots.push(root);
   dummyQuality = path.join(root, 'quality-dummy.gguf');
   dummyFast = path.join(root, 'fast-dummy.gguf');
   fs.writeFileSync(dummyQuality, 'quality');
@@ -68,7 +71,15 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  // temp roots are cleaned by the OS; nothing to restore
+  // Review PRR-234: actually remove the per-test mkdtemp roots (the previous
+  // "cleaned by the OS" comment was false — dirs accumulated every run).
+  for (const root of tempRoots) {
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {
+      // best effort; the OS temp cleaner is the backstop
+    }
+  }
 });
 
 describe('auto-profile hysteresis (#133 round 4)', () => {

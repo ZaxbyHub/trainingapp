@@ -15,6 +15,10 @@ import { TokenStreamManager } from '../streaming/TokenStreamManager';
 
 // Mock the SSEStreamConsumer
 vi.mock('../api/streaming', () => ({
+  // PRR-239: TokenStreamManager imports these constants as the first-byte
+  // watchdog default — the explicit-shape mock must provide them.
+  DEFAULT_FIRST_BYTE_TIMEOUT_MS: 30_000,
+  DESKTOP_FIRST_BYTE_TIMEOUT_MS: 600_000,
   SSEStreamConsumer: vi.fn().mockImplementation(() => ({
     onToken: vi.fn(),
     onDone: vi.fn(),
@@ -453,7 +457,15 @@ describe('TokenStreamManager', () => {
 
       manager.startSSEStream('/api/chat', { question: 'test' }, 'Bearer token');
 
-      expect(SSEStreamConsumer).toHaveBeenCalledWith('/api/chat', { question: 'test' }, 'Bearer token');
+      // PRR-239: the manager forwards its first-byte watchdog as the 5th
+      // constructor arg (authHeaderName stays undefined when not supplied).
+      expect(SSEStreamConsumer).toHaveBeenCalledWith(
+        '/api/chat',
+        { question: 'test' },
+        'Bearer token',
+        undefined,
+        30_000,
+      );
     });
 
     it('wires token callback to consumer', async () => {

@@ -37,8 +37,18 @@ const desktopDir = path.resolve(here, '..');
 const repoRoot = path.resolve(desktopDir, '..');
 const publishDir = path.resolve(publishArg ?? process.env.TRAININGAPP_STORYLINE_PUBLISH ?? DEFAULT_PUBLISH);
 const outDir = path.join(desktopDir, 'knowledge-pack-src');
+// Review PRR-232: validate BEFORE any rmSync — versionArg reaches the paths
+// below, and a crafted value (e.g. `--version ../..`) must be refused before
+// it can point a recursive delete outside the output directory.
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+if (!SEMVER_PATTERN.test(versionArg)) {
+  die(`--version must be semver (X.Y.Z[-pre][+build]), got: ${versionArg}`);
+}
 const zipPath = path.join(outDir, `${PACK_ID}-${versionArg}.zip`);
 const packDir = path.join(outDir, `${PACK_ID}-${versionArg}`);
+if (path.resolve(packDir) !== path.resolve(outDir, path.basename(packDir))) {
+  die(`--version must not escape the output directory: ${versionArg}`);
+}
 const packtoolCli = path.join(repoRoot, 'packtool', 'dist', 'cli.js');
 const embedModelDir = path.join(repoRoot, 'models', 'bge-small-en-v1.5');
 

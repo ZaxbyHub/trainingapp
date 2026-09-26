@@ -60,6 +60,8 @@ interface PackSource {
   /** Entry bytes, or undefined when absent (pack.json, docs/*). */
   readEntry(relPath: string): Promise<Buffer | undefined>;
   entryExists(relPath: string): boolean;
+  /** True when the entry OR ANY entry beneath it exists (directory probe). */
+  hasEntryUnder(prefix: string): boolean;
   /** Materialize an entry as a real file (needed to open sqlite). */
   materialize(relPath: string): Promise<string | undefined>;
   dispose(): void;
@@ -77,6 +79,9 @@ function dirSource(root: string): PackSource {
     },
     entryExists(relPath) {
       return fs.existsSync(resolve(relPath));
+    },
+    hasEntryUnder(prefix) {
+      return fs.existsSync(resolve(prefix));
     },
     async materialize(relPath) {
       return resolve(relPath);
@@ -96,6 +101,10 @@ async function zipSource(zipPath: string, scratchDir: string): Promise<PackSourc
     },
     entryExists(relPath) {
       return zip.file(relPath) !== null;
+    },
+    hasEntryUnder(prefix) {
+      const withSlash = `${prefix}/`;
+      return Object.keys(zip.files).some((name) => name === prefix || name.startsWith(withSlash));
     },
     async materialize(relPath) {
       // Only ever called for index.sqlite: extract to a scratch file so
@@ -406,8 +415,17 @@ export async function verifyPack(packPath: string, options?: VerifyOptions): Pro
     // 4. Player-assets anchor — training packs only (issue #73): the
     // Storyline player bundle is what the anchor exists for; bundled/user
     // packs built by build-docs carry no player and must verify without it.
-    if (pack.source_class === 'training' && !source.entryExists('assets/player/story.html')) {
-      problems.push('assets/player/story.html is missing from the pack');
+    // Review PRR-226: anchor every REQUIRED player entry, not just
+    // story.html — a pack missing html5/ or story_content/ must fail verify
+    // exactly like a missing story.html. mobile/ stays OPTIONAL by design
+    // (absent from minimal publishes); when present, require it non-empty so
+    // a truncated copy cannot ship silently.
+    if (pack.source_class === 'training') {
+      for (const requiredEntry of ['assets/player/story.html', 'assets/player/html5', 'assets/player/story_content']) {
+        if (!source.hasEntryUnder(requiredEntry)) {
+          problems.push(`${requiredEntry} is missing from the pack`);
+        }
+      }
     }
 
     return { ok: problems.length === 0, problems, warnings, docs: pack.docs.length };

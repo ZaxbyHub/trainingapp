@@ -10,7 +10,7 @@
  * roots for every mode, and the manifest assertions run the REAL generator as
  * a subprocess over a temp staged tree.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,12 +21,27 @@ import { resolveStagedPacks } from '../../scripts/stage-installer-resources.mjs'
 const DESKTOP_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const REPO_ROOT = path.resolve(DESKTOP_DIR, '..');
 const DOCS_PACK_DIR = 'opmed-initial-1.0.0';
-const TRAINING_PACK_DIR = 'opmed-cdp-mlc-1.0.0';
+const TRAINING_PACK_DIR = 'opmed-cdp-mlc-1.0.1';
 const FIXTURE_PACK_SOURCE = path.join(REPO_ROOT, 'contracts', 'fixtures', 'packs', 'bundled-min');
 
+const tempRoots: string[] = [];
+
 function makeRoot(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'e133-stager-packs-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'e133-stager-packs-'));
+  tempRoots.push(root);
+  return root;
 }
+
+afterAll(() => {
+  // Review PRR-234: the first cut of this spec leaked every mkdtemp root.
+  for (const root of tempRoots) {
+    try {
+      fs.rmSync(root, { recursive: true, force: true });
+    } catch {
+      // best effort; the OS temp cleaner is the backstop
+    }
+  }
+});
 
 function writePackJson(root: string, dirName: string, id: string, sourceClass: string): string {
   const dir = path.join(root, dirName);
@@ -114,7 +129,7 @@ describe('bundled docs + training staging (#133 round 4/5)', () => {
       fs.writeFileSync(path.join(dir, 'index.bin'), 'x', 'utf8');
     };
     packFixture('bundled-docs', 'opmed-initial-1.0.0', 'opmed-initial', 'bundled');
-    packFixture('training', 'opmed-cdp-mlc-1.0.0', 'opmed-cdp-mlc', 'training');
+    packFixture('training', 'opmed-cdp-mlc-1.0.1', 'opmed-cdp-mlc', 'training');
     const modelsDir = path.join(stage, 'models', 'embedding', 'bge-small-en-v1.5');
     fs.mkdirSync(modelsDir, { recursive: true });
     fs.writeFileSync(path.join(modelsDir, 'config.json'), '{}', 'utf8');
@@ -128,6 +143,6 @@ describe('bundled docs + training staging (#133 round 4/5)', () => {
     expect(ids).toEqual(['opmed-cdp-mlc', 'opmed-initial']);
     const training = manifest.packs.find((entry) => entry.id === 'opmed-cdp-mlc');
     expect(training?.source_class).toBe('training');
-    expect(training?.dir).toBe('training/opmed-cdp-mlc-1.0.0');
+    expect(training?.dir).toBe('training/opmed-cdp-mlc-1.0.1');
   });
 });

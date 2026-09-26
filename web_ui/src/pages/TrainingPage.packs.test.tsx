@@ -171,4 +171,44 @@ describe('bundled-course upgrade state: retired + active rows for ONE course id 
     fireEvent.change(select, { target: { value: 'opmed-course/1.0.1' } });
     expect(window.localStorage.getItem('training.lastPackDir')).toBe('opmed-course/1.0.1');
   });
+
+  // PRR-205: the byLastId fallback — a remembered dir key that no longer
+  // exists (e.g. the exact version retired) falls back to the same course's
+  // preferred (active) row.
+  it('falls back by COURSE ID when the remembered version dir has retired', async () => {
+    listPacks.mockResolvedValue([RETIRED, ACTIVE]);
+    window.localStorage.setItem('training.lastPackDir', 'opmed-course/9.9.9');
+    render(<TrainingPage />);
+    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select.value).toBe('opmed-course/1.0.1');
+    });
+    const frame = screen.getByTestId('training-player-frame') as HTMLIFrameElement;
+    expect(frame.src.startsWith('app://training/opmed-course/1.0.1/story.html')).toBe(true);
+  });
+
+  // PRR-205: the newerVersion tiebreak — only reachable when two rows for the
+  // same id share an active flag; segment-aware compare must pick 1.0.10.
+  it('tiebreaks same-active rows by SEGMENT-AWARE version (1.0.10 > 1.0.9)', async () => {
+    listPacks.mockResolvedValue([
+      { ...TRAINING_PACK, version: '1.0.9', active: false },
+      { ...TRAINING_PACK, version: '1.0.10', active: false },
+    ]);
+    render(<TrainingPage />);
+    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select.value).toBe('opmed-course/1.0.10');
+    });
+  });
+
+  // PRR-236: a ?pack= value that matches NO installed pack must still render
+  // the player (deep-link passthrough) once the pack list RESOLVES — the
+  // loading state is only for the in-flight window.
+  it('renders the deep-link player after the list resolves for an unknown ?pack=', async () => {
+    listPacks.mockResolvedValue([TRAINING_PACK]);
+    window.history.pushState({}, '', '/?pack=stale-pack');
+    render(<TrainingPage />);
+    const frame = await screen.findByTestId('training-player-frame');
+    expect((frame as HTMLIFrameElement).src.startsWith('app://training/stale-pack/story.html')).toBe(true);
+  });
 });

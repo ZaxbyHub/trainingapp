@@ -200,6 +200,16 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     }
     setPackOverride(dir);
   };
+  // History navigation (back/forward) mutates location.search without going
+  // through selectPack — sync the override mirror so the URL and the picker
+  // agree (PRR-203).
+  useEffect(() => {
+    const onPopState = (): void => {
+      setPackOverride(new URLSearchParams(window.location.search).get('pack'));
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   if (deepLinkedPackDir !== '') {
     // D6/D7 wire contract: a lifted target renders the player directly — no

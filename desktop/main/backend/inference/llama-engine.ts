@@ -442,9 +442,13 @@ export class LlamaEngine implements EngineSurface {
 
   /**
    * B9 (issue #67): launch-time per-profile GGUF presence for
-   * GET /status/models. Purely a disk check at the SAME resolved paths
+   * GET /status/models. Disk presence at the SAME resolved paths
    * assertModelAvailable() enforces — presence here means a later /ask for
    * that profile will not 503 — and never whether a model is resident.
+   * NOTE (review PRR-240): this is NOT side-effect-free — the `profile`
+   * field comes from effectiveProfile(), which can advance the sticky AUTO
+   * hysteresis latch. The band bounds any poll-induced flip to a real
+   * threshold crossing, so telemetry cannot cause a reload by itself.
    */
   modelStatus(): ModelStatus {
     const statusFor = (profile: InferenceProfileName) => {

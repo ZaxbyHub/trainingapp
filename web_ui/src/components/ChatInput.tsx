@@ -15,6 +15,10 @@ interface ChatInputProps {
   isLoading: boolean;
   onCancel: () => void;
   disabled?: boolean;
+  /** Element id explaining WHY the input is disabled (e.g. the chat
+   *  model-loading banner) — wired to aria-describedby on the textarea and
+   *  send button so assistive tech announces the gate reason (PRR-229). */
+  disabledReasonId?: string;
   /** Show the image-attach control (only for multimodal engines, e.g. wllama). */
   imageUploadEnabled?: boolean;
   /** Max images attachable to a single message. */
@@ -32,6 +36,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   isLoading,
   onCancel,
   disabled = false,
+  disabledReasonId,
   imageUploadEnabled = false,
   maxImages = 3,
   onDraftChange,
@@ -292,6 +297,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               color: 'var(--color-text-on-bubble-user)',
             }}
             aria-label="Message input"
+            aria-describedby={disabledReasonId}
           />
           {value && !isLoading && (
             <button

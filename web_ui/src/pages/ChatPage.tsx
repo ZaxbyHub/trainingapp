@@ -16,6 +16,7 @@ import { PinnedSlideContext, pinnedSlideLabel, type PinnedSlide } from '../compo
 import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
+import { DESKTOP_FIRST_BYTE_TIMEOUT_MS, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../lib/api/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
 import { buildHistorySnapshot } from '../lib/chat/history-snapshot';
 import { getLLMService } from '../lib/llm/llm-factory';
@@ -169,7 +170,10 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           setModelLoad(status.resident ?? null);
         })
         .catch(() => {
-          if (!cancelled) setModelLoad(null);
+          // Transient poll failure (PRR-204): KEEP the last-known state — a
+          // hiccup during a heavy load must not fail the gate open. The next
+          // successful poll (2s) corrects; a failure on the very first poll
+          // leaves null, which never gates (older backends stay inert).
         });
     };
     poll();
@@ -184,8 +188,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     if (!isModelLoading) return undefined;
     const id = setInterval(() => setModelLoadNow(Date.now()), 1_000);
     return () => clearInterval(id);
-  }, [isModelLoading]);
-  const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
+  }, [isModelLoading]);  const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -444,7 +447,11 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     owningMessages: ChatMessage[]
   ) => {
     // Create TokenStreamManager for this request
-    const streamManager = new TokenStreamManager();
+    const streamManager = new TokenStreamManager(
+      desktopSession !== null
+        ? DESKTOP_FIRST_BYTE_TIMEOUT_MS
+        : DEFAULT_FIRST_BYTE_TIMEOUT_MS,
+    );
     tokenStreamManagerRef.current = streamManager;
 
     // A local accumulator for the owning snapshot. onToken writes to BOTH the
@@ -1035,8 +1042,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
 
       {isModelLoading && (
         <div
-          role="status"
           data-testid="chat-model-loading"
+          id="chat-model-loading-note"
           style={{
             margin: '0 var(--spacing-lg)',
             padding: 'var(--spacing-md)',
@@ -1050,10 +1057,15 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
             color: 'var(--color-text-primary)',
           }}
         >
-          <span style={{ fontWeight: 600 }}>
+          {/* Only the STABLE sentence is a live region. The 1s-ticking elapsed
+              span stays OUTSIDE it (review PRR-222): text mutations inside a
+              polite live region are announced by screen readers, so a ticking
+              counter in here would drip announcements every second for the
+              whole multi-minute cold load. */}
+          <span role="status" style={{ fontWeight: 600 }}>
             Loading the AI model ({residentLoad?.profile ?? 'auto'} profile) — chat is disabled until it is ready.
           </span>
-          <span>
+          <span aria-live="off">
             Elapsed:{' '}
             {residentLoad?.loadStartedAt != null
               ? `${Math.max(0, Math.floor((modelLoadNow - residentLoad.loadStartedAt) / 1000))}s`
@@ -1071,6 +1083,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         isLoading={isLoading}
         onCancel={handleCancel}
         disabled={isInputDisabled}
+        disabledReasonId={isModelLoading ? 'chat-model-loading-note' : undefined}
         imageUploadEnabled={canAttachImages}
         onDraftChange={(text) => { draftRef.current = text; }}
       />
