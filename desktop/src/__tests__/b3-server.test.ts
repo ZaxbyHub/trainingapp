@@ -91,19 +91,31 @@ describe('b3-server: SSE cancellation semantics', () => {
   }
 
   it('client disconnect mid-stream emits exactly ONE terminal done{cancelled:true,...} then closes', async () => {
-    const { res, writes, ended } = recordingResponse();
-    const promise = runAskStream(res as ServerResponse, engine, 'cancel me', {}, undefined);
-    // Let the first token land, then the client goes away.
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    (res as unknown as ServerResponse).emit('close');
-    await promise;
-    const payloads = writes.map((frame) => JSON.parse(frame.replace(/^data: /, '').replace(/\r\n$/, '')));
-    const terminals = payloads.filter((p) => 'done' in p || 'error' in p);
-    expect(terminals).toHaveLength(1);
-    expect(terminals[0]).toMatchObject({ done: true, cancelled: true });
-    expect('sources' in terminals[0]).toBe(true);
-    expect('context_length' in terminals[0]).toBe(true);
-    expect(ended()).toBe(true);
+    // Deterministic mid-stream disconnect (the fixed-5ms sleep raced the
+    // stub's 1ms token cadence: on a loaded CI runner the whole stream could
+    // complete inside the sleep window, so the terminal came back as success
+    // — hit twice on this PR's CI). Widen the stub's inter-token gap to 1s
+    // via the #67 seam and close at 50ms — no token can land before the
+    // disconnect (the engine's cancellation check then fires at the first
+    // token boundary ~1s in). runAskStream's cancellation path is identical
+    // whether a token preceded the close or not.
+    process.env.TRAININGAPP_STUB_TOKEN_DELAY_MS = '1000';
+    try {
+      const { res, writes, ended } = recordingResponse();
+      const promise = runAskStream(res as ServerResponse, engine, 'cancel me', {}, undefined);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      (res as unknown as ServerResponse).emit('close');
+      await promise;
+      const payloads = writes.map((frame) => JSON.parse(frame.replace(/^data: /, '').replace(/\r\n$/, '')));
+      const terminals = payloads.filter((p) => 'done' in p || 'error' in p);
+      expect(terminals).toHaveLength(1);
+      expect(terminals[0]).toMatchObject({ done: true, cancelled: true });
+      expect('sources' in terminals[0]).toBe(true);
+      expect('context_length' in terminals[0]).toBe(true);
+      expect(ended()).toBe(true);
+    } finally {
+      delete process.env.TRAININGAPP_STUB_TOKEN_DELAY_MS;
+    }
   });
 
   it('happy path: >=1 token payload and exactly ONE done terminal with sources+context_length, CRLF frames', async () => {
