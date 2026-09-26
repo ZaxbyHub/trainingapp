@@ -417,9 +417,11 @@ export async function verifyPack(packPath: string, options?: VerifyOptions): Pro
     // packs built by build-docs carry no player and must verify without it.
     // Review PRR-226: anchor every REQUIRED player entry, not just
     // story.html — a pack missing html5/ or story_content/ must fail verify
-    // exactly like a missing story.html. mobile/ stays OPTIONAL by design
-    // (absent from minimal publishes); when present, require it non-empty so
-    // a truncated copy cannot ship silently.
+    // exactly like a missing story.html. mobile/ stays OPTIONAL and is
+    // NOT enumerated or hashed by verify (the pack schema reserves docs[]
+    // for ingested documents and the zip source cannot count a prefix's
+    // entries) — its integrity is pinned at BUILD time by the ac5
+    // byte-compare spot-check, not at verify time.
     if (pack.source_class === 'training') {
       for (const requiredEntry of ['assets/player/story.html', 'assets/player/html5', 'assets/player/story_content']) {
         if (!source.hasEntryUnder(requiredEntry)) {

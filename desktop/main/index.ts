@@ -580,8 +580,20 @@ export function bootstrap(): void {
       const results: Array<{ id: string; ok: boolean; detail: string }> = [];
       // Snapshot once and refresh only after an install (PRR-211): the
       // all-satisfied fast path — the common case on every boot — costs one
-      // query instead of one per manifest pack.
-      let installedNow = await packTools.listInstalled();
+      // query instead of one per manifest pack. A THROWING snapshot (malformed
+      // supersedes row, DB error — review round 10) degrades to an empty set:
+      // every entry then falls into the not-satisfied → install-attempt →
+      // per-entry catch path, so the wizard sees named failure rows exactly
+      // as before the hoist instead of an unhandled rejection.
+      let installedNow: Awaited<ReturnType<typeof packTools.listInstalled>> = [];
+      try {
+        installedNow = await packTools.listInstalled();
+      } catch {
+        // Degrade to an empty snapshot: every entry then falls into the
+        // not-satisfied → install-attempt → per-entry catch path, which
+        // reports the real error as named failure rows (pre-hoist behavior).
+        installedNow = [];
+      }
       for (const entry of wm.manifest.packs ?? []) {
         const dir = packEntryDir(manifestDir, entry);
         try {

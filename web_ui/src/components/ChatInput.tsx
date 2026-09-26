@@ -16,8 +16,8 @@ interface ChatInputProps {
   onCancel: () => void;
   disabled?: boolean;
   /** Element id explaining WHY the input is disabled (e.g. the chat
-   *  model-loading banner) — wired to aria-describedby on the textarea and
-   *  send button so assistive tech announces the gate reason (PRR-229). */
+   *  model-loading banner) — wired to aria-describedby on the textarea so
+   *  assistive tech announces the gate reason (PRR-229). */
   disabledReasonId?: string;
   /** Show the image-attach control (only for multimodal engines, e.g. wllama). */
   imageUploadEnabled?: boolean;

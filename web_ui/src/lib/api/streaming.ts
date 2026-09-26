@@ -141,7 +141,7 @@ export class SSEStreamConsumer {
   private _terminated: boolean = false;
   /**
    * Timer that aborts the stream if no data (or stream close) is received
-   * within FIRST_BYTE_TIMEOUT_MS of starting the request. Cleared as soon as
+   * within this.firstByteTimeoutMs of starting the request. Cleared as soon as
    * the first `reader.read()` resolves, so it never caps the duration of an
    * in-progress stream — only the time to first response. (issue #21 F-NO-FETCH-TIMEOUT)
    */
@@ -241,7 +241,7 @@ export class SSEStreamConsumer {
 
       // Guard against a server that accepts the connection but never sends or
       // closes it: abort if no response data has arrived within
-      // FIRST_BYTE_TIMEOUT_MS. Cleared on the first `reader.read()` result in
+      // this.firstByteTimeoutMs. Cleared on the first `reader.read()` result in
       // readStream() (or by stop()), so it never caps the whole generation —
       // only the wait for the first chunk. (issue #21 F-NO-FETCH-TIMEOUT)
       this.clearFirstByteTimeout();
