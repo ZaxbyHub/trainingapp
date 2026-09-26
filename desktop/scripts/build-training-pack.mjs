@@ -13,7 +13,7 @@
 // env > the operator's known local path. The publish and the built pack are
 // operator-local content (same rule as the model weights and knowledgepack/).
 //
-// Usage: node desktop/scripts/build-training-pack.mjs [--publish <dir>] [--version 1.0.0]
+// Usage: node desktop/scripts/build-training-pack.mjs [--publish <dir>] [--version 1.0.1]
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,8 +26,8 @@ const PUBLISHED_AT = '2026-09-25T00:00:00Z';
 const DEFAULT_PUBLISH = 'E:\\ClaudeCode\\OpMed CDP MicroLearning Companion_7-10-26';
 
 const versionArg = process.argv.includes('--version')
-  ? process.argv[process.argv.indexOf('--version') + 1] ?? '1.0.0'
-  : '1.0.0';
+  ? process.argv[process.argv.indexOf('--version') + 1] ?? '1.0.1'
+  : '1.0.1';
 const publishArg = process.argv.includes('--publish')
   ? process.argv[process.argv.indexOf('--publish') + 1]
   : undefined;

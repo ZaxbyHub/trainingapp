@@ -158,7 +158,9 @@ checkKnowledgePackSource();
 // Real-build mode: docs pack + training pack (when the operator built them);
 // a mismatched training-pack dir fails loud exactly like the docs one. CI and
 // weights-less checkouts keep the fixture fallback (bundled-min only).
-const TRAINING_PACK_VERSION = '1.0.0';
+// 1.0.1 (#133 round 6): adds the publish's mobile/ player asset variants the
+// 1.0.0 build dropped; the boot-ensure upgrades stores holding 1.0.0.
+const TRAINING_PACK_VERSION = '1.0.1';
 function checkTrainingPackSource() {
   const trainingRoot = path.join(desktopDir, 'knowledge-pack-src');
   if (!fs.existsSync(trainingRoot)) return;

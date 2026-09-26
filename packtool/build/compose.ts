@@ -204,6 +204,16 @@ export async function buildStorylinePack(options: BuildStorylineOptions): Promis
       }
       copyTreeRejectingLinks(source, path.join(playerDir, entryName));
     }
+    // Optional mobile asset variants: Storyline emits a mobile/ sibling with
+    // small-screen image variants and the player REQUESTS mobile/<image> when
+    // the environment reports touch (observed on a touch-capable Windows
+    // session — #133 round 6). Dropping it 404s those requests and renders
+    // slides with missing images. Present in real publishes, absent from
+    // minimal test fixtures, so copy when found rather than require.
+    const mobileSource = path.join(publishDir, 'mobile');
+    if (existsSync(mobileSource)) {
+      copyTreeRejectingLinks(mobileSource, path.join(playerDir, 'mobile'));
+    }
 
     // 5. Chunk + embed per document (chunks never cross documents; zero-text
     // documents contribute zero chunks and no embed call).

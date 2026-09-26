@@ -79,6 +79,30 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   }, [desktopSession, packs, loadError]);
 
   const activePacks = packs ?? [];
+  // One row per COURSE (packId): installing a newer bundled version
+  // deactivates the old one but keeps it on disk (#133 round 6 upgrade), and
+  // listing both reads as a duplicate course. Prefer the active row, then the
+  // highest version as a tiebreak.
+  const courses = useMemo(() => {
+    const byId = new Map<string, PackInfo>();
+    for (const pack of activePacks) {
+      const current = byId.get(pack.packId);
+      if (current === undefined) {
+        byId.set(pack.packId, pack);
+        continue;
+      }
+      const preferred =
+        pack.active !== current.active
+          ? pack.active
+            ? pack
+            : current
+          : pack.version >= current.version
+            ? pack
+            : current;
+      byId.set(pack.packId, preferred);
+    }
+    return [...byId.values()];
+  }, [activePacks]);
   // A lifted target (D6/D7) or a ?pack= value that does not resolve to an
   // INSTALLED training pack is a course deep link by construction (the Learn
   // panel only emits training packs) — render the player for it directly,
@@ -114,16 +138,22 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
       );
       if (byUrl !== undefined) return byUrl;
     }
-    if (activePacks.length === 1) return activePacks[0];
-    if (typeof window !== 'undefined' && activePacks.length > 1) {
+    // Auto-select the sole course; with several, remember the last one —
+    // matching the stored dir key first and, after a version upgrade retires
+    // that dir, the same course's preferred (active) row.
+    if (courses.length === 1) return courses[0];
+    if (typeof window !== 'undefined' && courses.length > 1) {
       const last = window.localStorage.getItem(LAST_PACK_KEY);
       if (last !== null) {
-        const byLast = activePacks.find((pack) => packDirKey(pack) === last);
+        const byLast = courses.find((pack) => packDirKey(pack) === last);
         if (byLast !== undefined) return byLast;
+        const lastId = last.split('/')[0] ?? '';
+        const byLastId = courses.find((pack) => pack.packId === lastId);
+        if (byLastId !== undefined) return byLastId;
       }
     }
     return undefined;
-  }, [deepLinkedPackDir, urlPack, activePacks]);
+  }, [deepLinkedPackDir, urlPack, activePacks, courses]);
 
   const selectedDir =
     deepLinkedPackDir !== ''
@@ -185,7 +215,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
           style={{ fontFamily: 'var(--font-family)', padding: 'var(--spacing-xs)' }}
         >
           <option value="">Select a course…</option>
-          {activePacks.map((pack) => {
+          {courses.map((pack) => {
             const dir = packDirKey(pack);
             return (
               <option key={dir} value={dir}>
@@ -194,7 +224,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
             );
           })}
         </select>
-        {activePacks.length > 0 && (
+        {courses.length > 0 && (
           <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}>
             To update the course, install a newer training pack zip on the Documents page, then select it here.
           </span>

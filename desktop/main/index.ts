@@ -542,6 +542,72 @@ export function bootstrap(): void {
         },
       };
     };
+    /**
+     * Install every manifest-declared bundled pack that is not already
+     * installed+active at the manifest version. Idempotent, safe to run on
+     * every boot. Shared by the wizard's activate step (#85) and — #133
+     * round 6 — by a boot-time ensure: a store that completed the wizard
+     * BEFORE a pack was bundled never re-runs the wizard, so the wizard was
+     * the only path that ever installed bundled content into existing
+     * installs (the operator's Training tab stayed empty on the real store).
+     */
+    const ensureBundledPacks = async (): Promise<{
+      ok: boolean;
+      detail?: string;
+      results: Array<{ id: string; ok: boolean; detail: string }>;
+    }> => {
+      const packTools = (backendHost as NodeBackendHost | null | undefined)?.getFirstRunPackTools?.() ?? null;
+      if (packTools === null) {
+        return { ok: false as const, detail: 'pack lifecycle unavailable (no store or embedder)', results: [] };
+      }
+      const wm = wizardManifest();
+      if (wm.manifest === null || wm.manifestPath === null) {
+        return {
+          ok: false as const,
+          detail: 'no integrity manifest is staged, so no packs are required (dev tree?)',
+          results: [],
+        };
+      }
+      const manifestDir = path.dirname(wm.manifestPath);
+      const results: Array<{ id: string; ok: boolean; detail: string }> = [];
+      for (const entry of wm.manifest.packs ?? []) {
+        const dir = packEntryDir(manifestDir, entry);
+        try {
+          const installedNow = await packTools.listInstalled();
+          const satisfied = installedNow.some(
+            (record) =>
+              record.id === entry.id &&
+              record.active &&
+              (entry.version === undefined || record.version === entry.version),
+          );
+          if (satisfied) {
+            results.push({ id: entry.id, ok: true, detail: 'already installed and active' });
+            continue;
+          }
+          if (dir === null) {
+            results.push({
+              id: entry.id,
+              ok: false,
+              detail: `pack dir for ${entry.id} escapes the manifest packs directory (traversal refused)`,
+            });
+            continue;
+          }
+          if (!existsSync(dir)) {
+            results.push({ id: entry.id, ok: false, detail: `staged pack folder is missing: ${dir}` });
+            continue;
+          }
+          const installed = await packTools.install(dir);
+          results.push({ id: installed.id, ok: true, detail: `installed ${installed.id}@${installed.version}` });
+        } catch (err) {
+          results.push({
+            id: entry.id,
+            ok: false,
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      return { ok: results.every((r) => r.ok), results };
+    };
     const pushFirstRunRequired = (): void => {
       void buildFirstRunStatus()
         .then((status) => {
@@ -559,59 +625,7 @@ export function bootstrap(): void {
     ipcMain.handle('desktop:first-run:status', () => buildFirstRunStatus());
     ipcMain.handle(
       'desktop:first-run:activate-packs',
-      async () => {
-        const packTools = (backendHost as NodeBackendHost | null | undefined)?.getFirstRunPackTools?.() ?? null;
-        if (packTools === null) {
-          return { ok: false as const, detail: 'pack lifecycle unavailable (no store or embedder)', results: [] };
-        }
-        const wm = wizardManifest();
-        if (wm.manifest === null || wm.manifestPath === null) {
-          return {
-            ok: false as const,
-            detail: 'no integrity manifest is staged, so no packs are required (dev tree?)',
-            results: [],
-          };
-        }
-        const manifestDir = path.dirname(wm.manifestPath);
-        const results: Array<{ id: string; ok: boolean; detail: string }> = [];
-        for (const entry of wm.manifest.packs ?? []) {
-          const dir = packEntryDir(manifestDir, entry);
-          try {
-            const installedNow = await packTools.listInstalled();
-            const satisfied = installedNow.some(
-              (record) =>
-                record.id === entry.id &&
-                record.active &&
-                (entry.version === undefined || record.version === entry.version),
-            );
-            if (satisfied) {
-              results.push({ id: entry.id, ok: true, detail: 'already installed and active' });
-              continue;
-            }
-            if (dir === null) {
-              results.push({
-                id: entry.id,
-                ok: false,
-                detail: `pack dir for ${entry.id} escapes the manifest packs directory (traversal refused)`,
-              });
-              continue;
-            }
-            if (!existsSync(dir)) {
-              results.push({ id: entry.id, ok: false, detail: `staged pack folder is missing: ${dir}` });
-              continue;
-            }
-            const installed = await packTools.install(dir);
-            results.push({ id: installed.id, ok: true, detail: `installed ${installed.id}@${installed.version}` });
-          } catch (err) {
-            results.push({
-              id: entry.id,
-              ok: false,
-              detail: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
-        return { ok: results.every((r) => r.ok), results };
-      },
+      async () => ensureBundledPacks(),
     );
     ipcMain.handle(
       'desktop:first-run:complete',
@@ -695,6 +709,33 @@ export function bootstrap(): void {
     });
     // Fire the push once so a needed first run surfaces without renderer polling.
     pushFirstRunRequired();
+    // #133 round 6: a store that completed the wizard before a pack was
+    // bundled never sees that pack (the wizard was the only installer) —
+    // ensure the manifest's bundled packs on every completed boot. Idempotent
+    // (skips packs already installed+active); fire-and-forget with named logs,
+    // same discipline as the engine boot warmup.
+    if (loadFirstRunState(storePath).firstRun.completed) {
+      void ensureBundledPacks()
+        .then((r) => {
+          const installedNow = r.results.filter((x) => x.ok && x.detail.startsWith('installed '));
+          const failed = r.results.filter((x) => !x.ok);
+          if (installedNow.length > 0) {
+            console.log(
+              `[trainingapp-desktop] bundled packs ensured at boot: ${installedNow.map((x) => x.detail).join('; ')}`,
+            );
+          }
+          if (failed.length > 0) {
+            console.error(
+              `[trainingapp-desktop] bundled pack ensure failed: ${failed.map((x) => `${x.id}: ${x.detail}`).join('; ')}`,
+            );
+          }
+        })
+        .catch((err) => {
+          console.error(
+            `[trainingapp-desktop] bundled pack ensure crashed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+    }
     let quitting = false;
     app.on('will-quit', (event) => {
       if (quitting || backendHost === null) return;
