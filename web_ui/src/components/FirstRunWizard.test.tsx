@@ -128,4 +128,44 @@ describe('FirstRunWizard named completion gates (issue #133 AC4)', () => {
     expect(getByTestId('wizard-complete').hasAttribute('disabled')).toBe(false);
     expect(container.querySelector('[data-testid="complete-blocked-reasons"]')).toBeNull();
   });
+
+  // #133 round 8 review blocker: the backend's satisfaction verdict
+  // (installed+active at the manifest version OR NEWER) must drive the
+  // Complete gate — strict equality soft-locked the wizard when the operator
+  // had installed a newer pack zip than the manifest pins (the update flow
+  // the Training tab itself advertises), while the activate-packs step
+  // reported "already installed and active".
+  it('enables Complete when the backend says a NEWER installed pack satisfies the manifest', () => {
+    const status = stubStatus({
+      packs: {
+        toolsAvailable: true,
+        required: [{ id: 'bundled-min', version: '1.0.0', resolvedDir: null, satisfied: true }],
+        installed: [{ id: 'bundled-min', version: '1.0.2', active: true }],
+      },
+    });
+    const { getByTestId, container } = render(
+      <FirstRunWizard status={status} onClose={vi.fn()} onCompleted={vi.fn()} refreshStatus={vi.fn()} />,
+    );
+    reachCompleteStep(getByTestId);
+    fireEvent.click(getByTestId('license-ack'));
+    expect(getByTestId('wizard-complete').hasAttribute('disabled')).toBe(false);
+    expect(container.querySelector('[data-testid="complete-blocked-reasons"]')).toBeNull();
+  });
+
+  it('still blocks when the backend marks the entry NOT satisfied (legacy fallback intact)', () => {
+    const status = stubStatus({
+      packs: {
+        toolsAvailable: true,
+        required: [{ id: 'bundled-min', version: '1.0.1', resolvedDir: null, satisfied: false }],
+        installed: [{ id: 'bundled-min', version: '1.0.0', active: true }],
+      },
+    });
+    const { getByTestId, container } = render(
+      <FirstRunWizard status={status} onClose={vi.fn()} onCompleted={vi.fn()} refreshStatus={vi.fn()} />,
+    );
+    reachCompleteStep(getByTestId);
+    fireEvent.click(getByTestId('license-ack'));
+    expect(getByTestId('wizard-complete').hasAttribute('disabled')).toBe(true);
+    expect(reasonText(container)).toContain('bundled-min');
+  });
 });

@@ -471,15 +471,6 @@ export function bootstrap(): void {
         packTools === null
           ? ((backendHost as NodeBackendHost | null | undefined)?.getPackLifecycleStatus?.() ?? 'unavailable')
           : null;
-      const required = (wm.manifest?.packs ?? []).map((entry) => ({
-        id: entry.id,
-        ...(entry.version !== undefined ? { version: entry.version } : {}),
-        ...(entry.dir !== undefined ? { dir: entry.dir } : {}),
-        resolvedDir:
-          wm.manifest !== null && wm.manifestPath !== null
-            ? packEntryDir(path.dirname(wm.manifestPath), entry)
-            : null,
-      }));
       let installed: Array<{ id: string; version: string; active: boolean }> = [];
       if (packTools !== null) {
         try {
@@ -490,6 +481,22 @@ export function bootstrap(): void {
           );
         }
       }
+      const required = (wm.manifest?.packs ?? []).map((entry) => ({
+        id: entry.id,
+        ...(entry.version !== undefined ? { version: entry.version } : {}),
+        ...(entry.dir !== undefined ? { dir: entry.dir } : {}),
+        resolvedDir:
+          wm.manifest !== null && wm.manifestPath !== null
+            ? packEntryDir(path.dirname(wm.manifestPath), entry)
+            : null,
+        // #133 round 8: the backend is the single source of truth for pack
+        // satisfaction (installed+active at this version OR NEWER — semver via
+        // isBundledPackSatisfied). The renderer's Complete gate consumes this
+        // instead of re-deriving with a strict-equality check that soft-locked
+        // the wizard when the operator's installed pack was newer than the
+        // manifest's (the Documents-page update flow the UI itself advertises).
+        satisfied: isBundledPackSatisfied(entry, installed),
+      }));
       const licensesFile = licensesPath();
       const licensesAvailable = licensesFile !== null && existsSync(licensesFile);
       const licensesContent = licensesAvailable

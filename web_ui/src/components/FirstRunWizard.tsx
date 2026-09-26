@@ -219,14 +219,21 @@ export function FirstRunWizard({
   const step: Step = completed ? 'complete' : WIZARD_STEPS[stepIndex];
   const manifestBlocking =
     (status.manifest.packaged && !status.manifest.staged) || status.manifest.failures.length > 0;
-  const inactivePacks = status.packs.required.filter(
-    (entry) =>
-      !status.packs.installed.some(
-        (record) =>
-          record.id === entry.id &&
-          record.active &&
-          (entry.version === undefined || record.version === entry.version),
-      ),
+  const inactivePacks = status.packs.required.filter((entry) =>
+    // #133 round 8: the backend computes satisfaction per entry (installed+
+    // active at this version OR NEWER — a newer zip installed from the
+    // Documents page satisfies the manifest). Strict equality soft-locked the
+    // Complete button in exactly that state while activation reported
+    // "already installed and active". The legacy check remains only as a
+    // fallback for status payloads that predate the `satisfied` field.
+    entry.satisfied !== undefined
+      ? !entry.satisfied
+      : !status.packs.installed.some(
+          (record) =>
+            record.id === entry.id &&
+            record.active &&
+            (entry.version === undefined || record.version === entry.version),
+        ),
   );
   const inactivePackIds = inactivePacks.map((entry) => entry.id);
   const packsSatisfied = inactivePacks.length === 0;
