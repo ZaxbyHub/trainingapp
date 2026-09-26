@@ -89,8 +89,17 @@ function isIpv6MetadataAddress(hostname: string): boolean {
  * Cancel click. This does NOT cap total stream duration — it is cleared as
  * soon as any data (or stream close) arrives, since generation itself may
  * legitimately run long once it has started.
+ *
+ * #133: in the DESKTOP app the first byte legitimately waits behind the
+ * engine's lazy cold start — model load + embedder warm-up run before the
+ * first token event, measured at minutes (not seconds) on the 2.6 GB quality
+ * profile. A 30 s watchdog turned every cold-start question into "Request
+ * timed out waiting for a response" while the backend kept working. 10 min
+ * bounds genuinely dead loopback connections while covering the measured
+ * cold start; warm questions are unaffected (timeout clears on first byte).
  */
-const FIRST_BYTE_TIMEOUT_MS = 30_000;
+export const DESKTOP_FIRST_BYTE_TIMEOUT_MS = 600_000;
+export const DEFAULT_FIRST_BYTE_TIMEOUT_MS = 30_000;
 
 /**
  * Callback type for receiving token events
@@ -132,7 +141,7 @@ export class SSEStreamConsumer {
   private _terminated: boolean = false;
   /**
    * Timer that aborts the stream if no data (or stream close) is received
-   * within FIRST_BYTE_TIMEOUT_MS of starting the request. Cleared as soon as
+   * within this.firstByteTimeoutMs of starting the request. Cleared as soon as
    * the first `reader.read()` resolves, so it never caps the duration of an
    * in-progress stream — only the time to first response. (issue #21 F-NO-FETCH-TIMEOUT)
    */
@@ -154,12 +163,28 @@ export class SSEStreamConsumer {
    *   Python backend's 'Authorization: Bearer' convention. Electron mode
    *   passes the desktop loopback guard's 'X-Desktop-Token' (issue #67).
    */
-  constructor(url: string, body: object, token?: string, authHeaderName?: string) {
+  private firstByteTimeoutMs: number;
+
+  constructor(
+    url: string,
+    body: object,
+    token?: string,
+    authHeaderName?: string,
+    /**
+     * First-byte watchdog. Desktop (Electron loopback) legitimately waits
+     * behind the model cold start (DESKTOP_FIRST_BYTE_TIMEOUT_MS); browser
+     * deployments against api_server.py answer in seconds, so the default is
+     * the historical 30 s (review PRR-239 — the 10-minute value is no longer
+     * applied unconditionally to every deployment mode).
+     */
+    firstByteTimeoutMs: number = DEFAULT_FIRST_BYTE_TIMEOUT_MS,
+  ) {
     validateStreamUrl(url);
     this.url = url;
     this.body = body;
     this.token = token;
     this.authHeaderName = authHeaderName ?? 'Authorization';
+    this.firstByteTimeoutMs = firstByteTimeoutMs;
     this.decoder = new TextDecoder();
   }
 
@@ -216,14 +241,14 @@ export class SSEStreamConsumer {
 
       // Guard against a server that accepts the connection but never sends or
       // closes it: abort if no response data has arrived within
-      // FIRST_BYTE_TIMEOUT_MS. Cleared on the first `reader.read()` result in
+      // this.firstByteTimeoutMs. Cleared on the first `reader.read()` result in
       // readStream() (or by stop()), so it never caps the whole generation —
       // only the wait for the first chunk. (issue #21 F-NO-FETCH-TIMEOUT)
       this.clearFirstByteTimeout();
       this.firstByteTimeoutId = setTimeout(() => {
         this._timedOut = true;
         this.controller?.abort();
-      }, FIRST_BYTE_TIMEOUT_MS);
+      }, this.firstByteTimeoutMs);
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',

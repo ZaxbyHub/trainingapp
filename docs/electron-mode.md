@@ -39,7 +39,9 @@ environment-specific decision funnels through two modules so pages stay small:
    with `mode: 'api'` and the fresh backend URL before the provider mounts.
    Browser-local engine boot (`useServiceInitialization`) is skipped.
 5. **First-run model gate** — at boot the renderer reads
-   `GET /status/models` (`{ engine, profile, models: { quality, fast } }`).
+   `GET /status/models` (`{ engine, profile, models: { quality, fast },
+   resident?: { state: 'idle'|'loading'|'ready', profile, loadStartedAt } }`;
+   `resident` reports the model-load state the chat gate keys on).
    Chat send is blocked with an informative overlay ONLY when a REAL engine
    (`engine !== 'stub'`) has NO model file for either profile; the CI/dev
    stub answers `/ask` without weights and is never gated.

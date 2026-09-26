@@ -47,7 +47,12 @@ npmRebuild: false
 compression: normal
 # Native addons and wasm/worker assets cannot load from inside the asar
 # archive: unpack the inference/embedding/extraction runtimes (B4/B6).
+# sqlite-vec*/better-sqlite3 are pinned explicitly (#133): vec0.dll's path
+# is resolved via require.resolve and handed to native loadExtension, so the
+# app.asar.unpacked twin must exist even if smart-unpack heuristics change.
 asarUnpack:
   - '**/node_modules/@huggingface/transformers/**'
   - '**/node_modules/onnxruntime*/**'
   - '**/node_modules/pdfjs-dist/**'
+  - '**/node_modules/sqlite-vec*/**'
+  - '**/node_modules/better-sqlite3/**'

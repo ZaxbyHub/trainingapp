@@ -38,6 +38,9 @@ describe('build-storyline.ac5: player assets are byte-identical to the source', 
       'html5/lib/loader.js',
       'html5/lib/framework/nested.js',
       'story_content/vidSide1_transcripts.js',
+      // Review PRR-226: the optional mobile/ sibling must ride along
+      // byte-identically when the publish carries it.
+      'mobile/SYN79_slide_mobile.jpg',
     ];
     for (const rel of spotChecks) {
       const bundled = zip.file(`assets/player/${rel}`);

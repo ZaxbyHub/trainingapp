@@ -15,7 +15,7 @@
 //
 // Deeper transport hardening (CSP, loopback token, renderer policy) is
 // Workstream B2 / issue #60; this handler only guarantees baseline path safety.
-import { promises as fsp, realpathSync } from 'node:fs';
+import fs, { promises as fsp, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { protocol } from 'electron';
 import { buildCspPolicy, buildTrainingCspPolicy } from './security/csp.js';
@@ -162,7 +162,9 @@ function resolveWithinRoot(rootAbs: string, requestUrl: string): string | Respon
  * the packs root. Returns `null` when the request is not a training-route
  * path (caller falls through to the renderer mapping), a `Response` refusal,
  * or the absolute file path to serve: <packsAbs>/<packId>/assets/player/<rest>
- * (the pack layout of `packtool build-storyline`, PLAYER_ASSETS_PREFIX).
+ * (the pack layout of `packtool build-storyline`, PLAYER_ASSETS_PREFIX), with
+ * a versioned-layout fallback for PackManager-installed packs
+ * (<packsAbs>/<packId>/<version>/assets/player/<rest>, #133).
  * The validation discipline mirrors resolveWithinRoot exactly — decode
  * refusal, backslash/NUL refusal (catches percent-encoded backslashes too,
  * because the check runs AFTER decode), `.`/`..` segment refusal, containment
@@ -196,10 +198,33 @@ function resolveTrainingRequest(
   }
   if (decoded.includes('\\') || decoded.includes('\0')) return forbidden();
 
-  const relative = path.join(packId, 'assets', 'player', ...restSegments);
-  const resolved = path.resolve(packsAbs, relative);
-  if (resolved !== packsAbs && !resolved.startsWith(packsAbs + path.sep)) {
+  // Map a pack-relative URL tail onto <packRootDir>/assets/player/<tail>
+  // (the pack layout of `packtool build-storyline`, PLAYER_ASSETS_PREFIX).
+  const relativeFor = (packDir: string, tail: string[]): string =>
+    path.join(packDir, 'assets', 'player', ...tail);
+
+  // Two managed layouts exist: flat (<packs>/<id>/…, packtool zip output and
+  // the d5 player contract) and versioned (<packs>/<id>/<version>/…,
+  // PackManager managed copies — what pack installation creates). When the
+  // segment after the id looks like a version and the flat candidate is
+  // absent, fall back to the versioned layout; flat stays authoritative when
+  // both exist (frozen d5 contract) — #133 reviewer R3 Q1.
+  const VERSION_SEGMENT = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+  const contained = (candidate: string): boolean =>
+    candidate !== packsAbs && candidate.startsWith(packsAbs + path.sep);
+  let resolved = path.resolve(packsAbs, relativeFor(packId, restSegments));
+  if (!contained(resolved)) {
     return forbidden();
+  }
+  const versionDir = restSegments[0];
+  if (!fs.existsSync(resolved) && versionDir !== undefined && VERSION_SEGMENT.test(versionDir)) {
+    const versioned = path.resolve(
+      packsAbs,
+      relativeFor(path.join(packId, versionDir), restSegments.slice(1)),
+    );
+    if (contained(versioned) && fs.existsSync(versioned)) {
+      resolved = versioned;
+    }
   }
   return resolved;
 }

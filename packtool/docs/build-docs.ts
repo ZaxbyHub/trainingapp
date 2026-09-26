@@ -126,9 +126,9 @@ export async function buildDocsPack(options: BuildDocsOptions): Promise<BuildDoc
   }
   const publishedAt = options.publishedAt ?? new Date().toISOString();
 
-  const { docs, skipped } = extractSourceDocs(sourceDir);
+  const { docs, skipped } = await extractSourceDocs(sourceDir);
   if (docs.length === 0) {
-    throw new Error(`no supported documents (.md, .txt, .json) found in ${sourceDir}`);
+    throw new Error(`no supported documents (.md, .txt, .json, .docx, .pdf, .xlsx) found in ${sourceDir}`);
   }
   // Skipped non-docs are reported on stderr so a build that ignores content
   // is never silent (the pack itself stays deterministic — notes are not

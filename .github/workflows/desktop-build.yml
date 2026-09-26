@@ -21,6 +21,7 @@ jobs:
   desktop-build:
     name: Electron shell (unsigned NSIS x64)
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -83,6 +84,16 @@ jobs:
           name: trainingapp-desktop-windows-installer-fixture
           path: desktop/desktop-release/*.exe
           if-no-files-found: error
+
+      # Issue #133 (AC7, cf. #131 item 2): the only committed gate that boots
+      # the PACKAGED app — win-unpacked from this job's fixture build, hash
+      # embedder seam, isolated store — asserting the first-run ladder
+      # (manifest clean, pack lifecycle available, required packs activated,
+      # wizard completion + persistence, /packs 200). The packaged store-init
+      # regression this catches (vec0 path inside app.asar) is invisible to
+      # every dev-mode suite.
+      - name: Packaged-boot smoke (win-unpacked, hash embedder)
+        run: node desktop/scripts/packaged-smoke.mjs
 
   renderer-e2e:
     name: Playwright under Electron (issue #67 AC1 smoke)

@@ -6,6 +6,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react';
 import type { ChatMessage, TrainingTarget, CitationRef } from '../types/chat';
 import type { SearchResult } from '../types/search';
+import type { ModelStatus } from '../lib/api/types';
 import { ChatMessageList } from '../components/ChatMessageList';
 import { ChatInput } from '../components/ChatInput';
 import { StreamingIndicator } from '../components/StreamingIndicator';
@@ -15,6 +16,7 @@ import { PinnedSlideContext, pinnedSlideLabel, type PinnedSlide } from '../compo
 import { useInferenceMode } from '../lib/inference';
 import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
+import { DESKTOP_FIRST_BYTE_TIMEOUT_MS, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../lib/api/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
 import { buildHistorySnapshot } from '../lib/chat/history-snapshot';
 import { getLLMService } from '../lib/llm/llm-factory';
@@ -29,7 +31,7 @@ import { presetOptions } from '../lib/rag/rag-presets';
 import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
+import { fetchModelStatus, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
 
 function generateId(): string {
@@ -138,7 +140,55 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   const messages = messagesProp;
   const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
-  const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
+  // #133: the desktop backend's resident-model load state (polled while a
+  // load is in flight) — drives the "chat disabled while the model loads"
+  // banner. Null = unknown/not applicable (browser mode, or the backend
+  // predates the field) and never blocks input.
+  const [modelLoad, setModelLoad] = useState<ModelStatus['resident'] | null>(null);
+  const [modelLoadNow, setModelLoadNow] = useState(() => Date.now());
+
+  // #133 (round 4): chat is DISABLED while the desktop backend reports a
+  // resident-model load in flight — the honest state, not a time heuristic.
+  // Poll /status/models every 2s while eligible (a real engine with models
+  // present) so the banner also catches mid-session reloads after a profile
+  // switch; a missing `resident` field never gates.
+  const residentLoad = modelLoad;
+  const isModelLoading =
+    desktopSession !== null && residentLoad?.state === 'loading';
+  // Poll only when a load is plausibly in flight: a real engine with models
+  // present. When the models are absent (blocked overlay already explains it)
+  // or in browser mode, no poll ever fires — the gate stays inert.
+  const modelsAbsent = desktopModels !== null && modelsAbsentForRealEngine(desktopModels);
+  const pollEligible = desktopSession !== null && !modelsAbsent;
+  useEffect(() => {
+    if (!pollEligible) return;
+    let cancelled = false;
+    const poll = (): void => {
+      void fetchModelStatus(desktopSession)
+        .then((status) => {
+          if (cancelled) return;
+          setModelLoad(status.resident ?? null);
+        })
+        .catch(() => {
+          // Transient poll failure (PRR-204): KEEP the last-known state — a
+          // hiccup during a heavy load must not fail the gate open. The next
+          // successful poll (2s) corrects; a failure on the very first poll
+          // leaves null, which never gates (older backends stay inert).
+        });
+    };
+    poll();
+    const id = setInterval(poll, 2_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [pollEligible, desktopSession]);
+  // Elapsed counter for the loading banner (1s tick only while loading).
+  useEffect(() => {
+    if (!isModelLoading) return undefined;
+    const id = setInterval(() => setModelLoadNow(Date.now()), 1_000);
+    return () => clearInterval(id);
+  }, [isModelLoading]);  const [clearConfirmState, setClearConfirmState] = useState<'idle' | 'confirming'>('idle');
   const tokenStreamManagerRef = useRef<TokenStreamManager | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -251,7 +301,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
 
   const isBrowserMode = mode === 'browser-local';
   const isModelBlocked = isBrowserMode && !isModelReady;
-  const isInputDisabled = isLoading || isModelBlocked;
+  const isInputDisabled = isLoading || isModelBlocked || isModelLoading;
   // U8c: image upload requires the multimodal wllama engine AND the loaded
   // model's actual image-modality support. The previous check only verified
   // engine name + readiness, so a wllama build with a packaged GGUF but a
@@ -397,7 +447,11 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     owningMessages: ChatMessage[]
   ) => {
     // Create TokenStreamManager for this request
-    const streamManager = new TokenStreamManager();
+    const streamManager = new TokenStreamManager(
+      desktopSession !== null
+        ? DESKTOP_FIRST_BYTE_TIMEOUT_MS
+        : DEFAULT_FIRST_BYTE_TIMEOUT_MS,
+    );
     tokenStreamManagerRef.current = streamManager;
 
     // A local accumulator for the owning snapshot. onToken writes to BOTH the
@@ -986,12 +1040,50 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         />
       </div>
 
+      {isModelLoading && (
+        <div
+          data-testid="chat-model-loading"
+          id="chat-model-loading-note"
+          style={{
+            margin: '0 var(--spacing-lg)',
+            padding: 'var(--spacing-md)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--spacing-xs)',
+            fontFamily: 'var(--font-family)',
+            fontSize: 'var(--font-size-caption)',
+            color: 'var(--color-text-primary)',
+          }}
+        >
+          {/* Only the STABLE sentence is a live region. The 1s-ticking elapsed
+              span stays OUTSIDE it (review PRR-222): text mutations inside a
+              polite live region are announced by screen readers, so a ticking
+              counter in here would drip announcements every second for the
+              whole multi-minute cold load. */}
+          <span role="status" style={{ fontWeight: 600 }}>
+            Loading the AI model ({residentLoad?.profile ?? 'auto'} profile) — chat is disabled until it is ready.
+          </span>
+          <span aria-live="off">
+            Elapsed:{' '}
+            {residentLoad?.loadStartedAt != null
+              ? `${Math.max(0, Math.floor((modelLoadNow - residentLoad.loadStartedAt) / 1000))}s`
+              : '…'}
+            . This happens once per launch and typically takes a few minutes for the Quality model
+            (under a minute for Fast). You can keep using Documents and Training — your chat will be
+            ready here.
+          </span>
+        </div>
+      )}
+
       {/* Input */}
       <ChatInput
         onSend={handleSend}
         isLoading={isLoading}
         onCancel={handleCancel}
         disabled={isInputDisabled}
+        disabledReasonId={isModelLoading ? 'chat-model-loading-note' : undefined}
         imageUploadEnabled={canAttachImages}
         onDraftChange={(text) => { draftRef.current = text; }}
       />

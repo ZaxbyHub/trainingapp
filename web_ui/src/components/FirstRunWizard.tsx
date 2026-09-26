@@ -219,18 +219,51 @@ export function FirstRunWizard({
   const step: Step = completed ? 'complete' : WIZARD_STEPS[stepIndex];
   const manifestBlocking =
     (status.manifest.packaged && !status.manifest.staged) || status.manifest.failures.length > 0;
-  const inactivePacks = status.packs.required.filter(
-    (entry) =>
-      !status.packs.installed.some(
-        (record) =>
-          record.id === entry.id &&
-          record.active &&
-          (entry.version === undefined || record.version === entry.version),
-      ),
+  const inactivePacks = status.packs.required.filter((entry) =>
+    // #133 round 8: the backend computes satisfaction per entry (installed+
+    // active at this version OR NEWER — a newer zip installed from the
+    // Documents page satisfies the manifest). Strict equality soft-locked the
+    // Complete button in exactly that state while activation reported
+    // "already installed and active". The legacy check remains only as a
+    // fallback for status payloads that predate the `satisfied` field.
+    entry.satisfied !== undefined
+      ? !entry.satisfied
+      : !status.packs.installed.some(
+          (record) =>
+            record.id === entry.id &&
+            record.active &&
+            (entry.version === undefined || record.version === entry.version),
+        ),
   );
+  const inactivePackIds = inactivePacks.map((entry) => entry.id);
   const packsSatisfied = inactivePacks.length === 0;
   const completeEnabled =
     selectedProfile !== null && acknowledged && !manifestBlocking && packsSatisfied;
+
+  // #133 (AC4): a disabled Complete must NAME its gates — the same
+  // WizardBlockerReason vocabulary assertCanComplete returns over IPC, so the
+  // operator is never left toggling the checkbox against a silent button.
+  const completeBlockedReasons: string[] = [];
+  if (manifestBlocking) {
+    completeBlockedReasons.push(
+      'verify-manifest: integrity verification failed; resolve the named file failures first',
+    );
+  }
+  if (!packsSatisfied) {
+    let reason = `activate-packs: required packs are not active: ${inactivePackIds.join(', ')}`;
+    if (!status.packs.toolsAvailable) {
+      reason += ` (pack lifecycle unavailable: ${status.packs.unavailableReason ?? 'unknown reason'} — reinstall the app or check the logs)`;
+    }
+    completeBlockedReasons.push(reason);
+  }
+  if (selectedProfile === null) {
+    completeBlockedReasons.push('select-profile: no profile was selected');
+  }
+  if (!acknowledged) {
+    completeBlockedReasons.push(
+      'licensing-notices: the license acknowledgment checkbox is required and cannot be skipped',
+    );
+  }
 
   const goNext = (): void => setStepIndex((index) => Math.min(index + 1, WIZARD_STEPS.length - 2));
   const goBack = (): void => setStepIndex((index) => Math.max(index - 1, 0));
@@ -384,7 +417,10 @@ export function FirstRunWizard({
           <section data-testid="step-activate-packs">
             <h3 style={{ margin: '0 0 8px' }}>Knowledge packs</h3>
             {!status.packs.toolsAvailable && (
-              <p style={{ margin: 0 }}>Pack lifecycle is unavailable in this session.</p>
+              <p role="alert" style={{ margin: 0 }}>
+                Pack lifecycle is unavailable in this session ({status.packs.unavailableReason ?? 'unknown reason'}) —
+                completion requires the knowledge packs. Reinstall the application or check the logs if this persists.
+              </p>
             )}
             {status.packs.toolsAvailable && status.packs.required.length === 0 && (
               <p style={{ margin: 0 }}>No packs are required by the manifest.</p>
@@ -392,13 +428,31 @@ export function FirstRunWizard({
             {status.packs.toolsAvailable && status.packs.required.length > 0 && (
               <>
                 <ul style={{ margin: '0 0 8px', paddingLeft: 20 }}>
-                  {status.packs.required.map((entry) => (
-                    <li key={entry.id}>
-                      {entry.id}
-                      {entry.version !== undefined ? `@${entry.version}` : ''} —{' '}
-                      {status.packs.installed.some((r) => r.id === entry.id && r.active) ? 'active' : 'not active'}
-                    </li>
-                  ))}
+                  {status.packs.required.map((entry) => {
+                    const installedRow = status.packs.installed.find((r) => r.id === entry.id && r.active);
+                    // Round-8 semantics: the backend's satisfied verdict accepts a
+                    // NEWER installed pack (>=). When the versions differ but the
+                    // entry is satisfied, say so — otherwise the manifest-pinned
+                    // version reads as if the user's newer pack was rejected.
+                    const satisfies =
+                      entry.satisfied !== undefined
+                        ? entry.satisfied
+                        : installedRow !== undefined &&
+                          (entry.version === undefined || installedRow.version === entry.version);
+                    return (
+                      <li key={entry.id}>
+                        {entry.id}
+                        {entry.version !== undefined ? `@${entry.version}` : ''} —{' '}
+                        {installedRow !== undefined ? 'active' : 'not active'}
+                        {satisfies &&
+                        installedRow !== undefined &&
+                        entry.version !== undefined &&
+                        installedRow.version !== entry.version
+                          ? ` (your installed ${installedRow.version} satisfies the manifest)`
+                          : ''}
+                      </li>
+                    );
+                  })}
                 </ul>
                 {packsSatisfied ? (
                   <p style={{ margin: 0 }}>All required packs are active.</p>
@@ -471,6 +525,19 @@ export function FirstRunWizard({
           </p>
         )}
 
+        {completeBlockedReasons.length > 0 && (
+          <div role="alert" id="wizard-complete-blocked-reasons" data-testid="complete-blocked-reasons" style={{ margin: 0 }}>
+            <p style={{ margin: '0 0 4px', color: 'var(--color-warning-strong, #eab308)', fontSize: 'var(--font-size-caption, 12px)' }}>
+              Setup cannot complete yet — resolve the named gates:
+            </p>
+            <ul style={{ margin: 0, paddingLeft: 20, color: 'var(--color-warning-strong, #eab308)', fontSize: 'var(--font-size-caption, 12px)' }}>
+              {completeBlockedReasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div style={buttonRowStyle}>
           {completed ? (
             <span />
@@ -496,6 +563,7 @@ export function FirstRunWizard({
                 onClick={() => void runComplete()}
                 disabled={!completeEnabled}
                 data-testid="wizard-complete"
+                aria-describedby={completeEnabled ? undefined : 'wizard-complete-blocked-reasons'}
               >
                 Complete setup
               </button>

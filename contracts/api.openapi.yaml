@@ -535,6 +535,23 @@ components:
           enum: [stub, llama.cpp]
         profile:
           type: string
+        resident:
+          type: object
+          description: >-
+            Resident-model load state (#133). `profile` is the profile BEING
+            loaded while state is 'loading', and the loaded profile afterwards.
+          required: [state, profile, loadStartedAt]
+          properties:
+            state:
+              type: string
+              enum: [idle, loading, ready]
+            profile:
+              type: string
+              nullable: true
+            loadStartedAt:
+              type: number
+              nullable: true
+              description: Epoch ms when the in-flight load started; null otherwise.
         models:
           type: object
           required: [quality, fast]

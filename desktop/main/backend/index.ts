@@ -98,6 +98,10 @@ export class NodeBackendHost implements BackendHost {
   /** C3 (#70): pack lifecycle, constructed on start (instance field — the b3
    * duck-type pin reserves host prototypes for start/stop only). */
   private packManager: PackManager | null = null;
+
+  /** Issue #133: named reason the pack lifecycle is down ('ok' when live);
+   *  surfaced to the wizard via getPackLifecycleStatus → packs.unavailableReason. */
+  private packLifecycleStatus = 'no-store-path';
   private reranker: RerankerSurface | null = null;
   /** The embedder resolved for ingest — B7 reuses the SAME instance for query embedding. */
   private embedder: EmbeddingSurface | null = null;
@@ -249,6 +253,21 @@ export class NodeBackendHost implements BackendHost {
     };
   };
 
+  /**
+   * Issue #133: WHY the pack lifecycle is unavailable, for the wizard's
+   * named-gate surface (packs.unavailableReason). Updated at every
+   * degradation site during start(); 'ok' once PackManager is constructed.
+   * Own-property exposure mirrors getFirstRunPackTools; read-only.
+   */
+  getPackLifecycleStatus = (): string => this.packLifecycleStatus;
+
+  /**
+   * #133: apply an engine settings patch through the validated settings seam
+   * (live apply + sidecar persistence). Assigned during start() once the
+   * persistence closure exists; undefined before start / for storeless hosts.
+   */
+  applyEngineSettings: ((patch: Record<string, unknown>) => { ok: true } | { ok: false; status: 400 | 422 | 500; detail: string; errors?: string[] }) | undefined;
+
   constructor(
     private readonly config: BackendHostConfig,
     private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(config.env ?? process.env),
@@ -323,6 +342,20 @@ export class NodeBackendHost implements BackendHost {
         storedPatch = merged;
       };
     }
+    // #133: the first-run wizard applies the operator's profile choice
+    // through the SAME validated seam the settings API uses — live apply +
+    // sidecar persistence — exposed to the bootstrap IPC layer as an own
+    // property (getFirstRunPackTools precedent; prototypes stay start/stop).
+    this.applyEngineSettings = (patch: Record<string, unknown>) => {
+      const applied = this.engine.applySettingsPatch(patch);
+      if (!applied.ok) return applied;
+      try {
+        persistSettings?.(patch);
+      } catch (err) {
+        return { ok: false as const, status: 500 as const, detail: `Settings were applied but could not be persisted: ${err instanceof Error ? err.message : String(err)}` };
+      }
+      return applied;
+    };
     const server = createBackendServer({
       guard: createLoopbackGuard({
         token: this.config.token,
@@ -362,6 +395,15 @@ export class NodeBackendHost implements BackendHost {
       const port = await listenOnRandomPort(server);
       this.server = server;
       this.handle = { mode: this.mode, port, url: `http://127.0.0.1:${port}` };
+      // #133: warm the model at app start (background) so the renderer can
+      // gate chat on the real load state instead of a time heuristic. The
+      // warmup itself never fails host start; single-flight in the engine
+      // merges it with a concurrent first query.
+      void this.engine.warmup?.().catch((err: unknown) => {
+        console.error(
+          `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
       // B6 store (issue #64): the store is now load-bearing for ingestion.
       // Corruption is recovered BEFORE serving (integrity check + restore/
       // fresh policy via config.onStoreCorruption; auto restore-else-fresh
@@ -376,6 +418,7 @@ export class NodeBackendHost implements BackendHost {
         } catch (err) {
           this.store = await recoverOrDegradeStore(this.config, err);
         }
+        if (this.store === null) this.packLifecycleStatus = 'store-unavailable';
         if (this.store !== null) {
           const env = this.config.env ?? process.env;
           // Resolve the embedder FIRST (null when unavailable: weights not
@@ -394,6 +437,13 @@ export class NodeBackendHost implements BackendHost {
               `[trainingapp-backend] embedding model unavailable (store surface degrades to embedder-less): ${err instanceof Error ? err.message : String(err)}`,
             );
             this.embedder = null;
+            this.packLifecycleStatus = `embedder-unavailable: ${err instanceof Error ? err.message : String(err)}`;
+          }
+          // Defensive default only: resolveEmbedder signals failure by
+          // throwing, so this fires only for a future null-returning change —
+          // and must not clobber the detailed catch message above.
+          if (this.embedder === null && !this.packLifecycleStatus.startsWith('embedder-unavailable')) {
+            this.packLifecycleStatus = 'embedder-unavailable';
           }
           // B7 (issue #65), SINGLE-THREAD ORT OWNERSHIP: onnxruntime-node
           // aborts the whole process when one module instance is used from
@@ -515,10 +565,12 @@ export class NodeBackendHost implements BackendHost {
               if (typeof (this.engine as { attachPackManager?: unknown }).attachPackManager === 'function') {
                 (this.engine as unknown as { attachPackManager: (pm: PackManager) => void }).attachPackManager(this.packManager);
               }
+              this.packLifecycleStatus = 'ok';
             } catch (err) {
               // Degrade like the other surfaces: a pack-lifecycle failure must
               // not take the host down.
               this.packManager = null;
+              this.packLifecycleStatus = `pack-manager-error: ${err instanceof Error ? err.message : String(err)}`;
               console.error(
                 `[trainingapp-backend] pack lifecycle unavailable: ${err instanceof Error ? err.message : String(err)}`,
               );

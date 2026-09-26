@@ -123,10 +123,109 @@ export const STAGED_MODELS = [
  *  the committed cross-manifest parity spec (review PRR-132). */
 export const RENDERER_EXCLUDED_MODEL_IDS = new Set(STAGED_MODELS.map((m) => m.id));
 
-const STAGED_PACKS = [
-  { source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'), classDir: 'bundled-docs' },
-  { source: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'training-stub'), classDir: 'training' },
-];
+/** The staged pack set (issue #133). When the operator has built the initial
+ *  knowledge pack from the local knowledgepack/ corpus
+ *  (desktop/scripts/build-knowledge-pack.mjs → desktop/knowledge-pack-src/),
+ *  it REPLACES the fixture as the staged content; otherwise (CI and
+ *  weights-less checkouts) the minimal bundled-min fixture ships. #133 round 4
+ *  added the BUNDLED Articulate course pack (build-training-pack.mjs → the
+ *  same knowledge-pack-src/ root) as the Training tab's content, shipped with
+ *  the installer exactly like the bundled documents; a half-built root (one
+ *  pack without the other) fails the build via resolveStagedPacks. The
+ *  fixture stays in contracts/fixtures/packs/ for the C-suite tests.
+ *  knowledge-pack-src/ deliberately lives OUTSIDE stageDir: main() wipes
+ *  installer-resources/ wholesale before staging. */
+const KNOWLEDGE_PACK_SRC_ROOT = path.join(desktopDir, 'knowledge-pack-src');
+// Fail loud on version skew: the builder accepts --version but this stager
+// pins the expected dir name — a differently-versioned (or stale) pack dir
+// must abort the build, never silently fall back to the fixture set.
+function checkKnowledgePackSource() {
+  if (!fs.existsSync(KNOWLEDGE_PACK_SRC_ROOT)) return;
+  const dirs = fs
+    .readdirSync(KNOWLEDGE_PACK_SRC_ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  // opmed-cdp-mlc-* is the TRAINING pack — governed by
+  // checkTrainingPackSource below, never a docs-pack mismatch.
+  const unexpected = dirs.filter((name) => name !== 'opmed-initial-1.0.0' && !name.startsWith('opmed-cdp-mlc-'));
+  if (unexpected.length > 0) {
+    for (const name of unexpected) {
+      fail(`unexpected pack dir desktop/knowledge-pack-src/${name} (this stager pins opmed-initial-1.0.0; rebuild with the pinned version or clear the dir — never silently stage a mismatched pack)`);
+    }
+  }
+}
+checkKnowledgePackSource();
+// Real-build mode: docs pack + training pack (when the operator built them);
+// a mismatched training-pack dir fails loud exactly like the docs one. CI and
+// weights-less checkouts keep the fixture fallback (bundled-min only).
+// 1.0.1 (#133 round 6): adds the publish's mobile/ player asset variants the
+// 1.0.0 build dropped; the boot-ensure upgrades stores holding 1.0.0.
+const TRAINING_PACK_VERSION = '1.0.1';
+function checkTrainingPackSource() {
+  const trainingRoot = path.join(desktopDir, 'knowledge-pack-src');
+  if (!fs.existsSync(trainingRoot)) return;
+  const unexpectedTraining = fs
+    .readdirSync(trainingRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .filter((name) => name.startsWith('opmed-cdp-mlc') && name !== `opmed-cdp-mlc-${TRAINING_PACK_VERSION}`);
+  for (const name of unexpectedTraining) {
+    fail(`unexpected training pack dir desktop/knowledge-pack-src/${name} (this stager pins opmed-cdp-mlc-${TRAINING_PACK_VERSION}; rebuild with the pinned version or clear the dir — never silently stage a mismatched course)`);
+  }
+}
+checkTrainingPackSource();
+/**
+ * The bundled-pack selection (#133 round 4/5). Real-content mode —
+ * desktop/knowledge-pack-src/ EXISTS — requires BOTH packs: the docs pack AND
+ * the Articulate course. A docs-only tree used to stage silently and ship an
+ * installer with no Training content (round-5 review finding); now it fails
+ * the build by name. The fixture fallback applies ONLY when the root is
+ * absent entirely (CI, weights-less checkouts) — never as a half-built
+ * escape hatch. Exported with injected roots so the committed spec can pin
+ * every mode without machine-local state.
+ */
+export function resolveStagedPacks(opts) {
+  const {
+    knowledgePackSrcRoot,
+    docsPackDir,
+    trainingPackDir,
+    fixturePackSource,
+    onProblem = () => {},
+  } = opts;
+  if (!fs.existsSync(knowledgePackSrcRoot)) {
+    return [{ source: fixturePackSource, classDir: 'bundled-docs' }];
+  }
+  const packs = [];
+  const docsSource = path.join(knowledgePackSrcRoot, docsPackDir);
+  const trainingSource = path.join(knowledgePackSrcRoot, trainingPackDir);
+  const docsBuilt = fs.existsSync(path.join(docsSource, 'pack.json'));
+  const trainingBuilt = fs.existsSync(path.join(trainingSource, 'pack.json'));
+  if (docsBuilt) {
+    packs.push({ source: docsSource, classDir: 'bundled-docs' });
+  } else {
+    onProblem(
+      `docs pack missing: desktop/knowledge-pack-src/${docsPackDir}/pack.json not found ` +
+        `(run node desktop/scripts/build-knowledge-pack.mjs, or remove desktop/knowledge-pack-src to stage the fixture set)`,
+    );
+  }
+  if (trainingBuilt) {
+    packs.push({ source: trainingSource, classDir: 'training' });
+  } else {
+    onProblem(
+      `training pack missing: desktop/knowledge-pack-src/${trainingPackDir}/pack.json not found ` +
+        `(run node desktop/scripts/build-training-pack.mjs — the installer must bundle the Articulate course alongside the documents; ` +
+        `or remove desktop/knowledge-pack-src to stage the fixture set)`,
+    );
+  }
+  return packs;
+}
+const STAGED_PACKS = resolveStagedPacks({
+  knowledgePackSrcRoot: KNOWLEDGE_PACK_SRC_ROOT,
+  docsPackDir: 'opmed-initial-1.0.0',
+  trainingPackDir: `opmed-cdp-mlc-${TRAINING_PACK_VERSION}`,
+  fixturePackSource: path.join(repoRoot, 'contracts', 'fixtures', 'packs', 'bundled-min'),
+  onProblem: fail,
+});
 
 function rmSyncBestEffort(target) {
   try {
@@ -231,6 +330,30 @@ function stageDocs() {
   }
   copyFileSyncLoud(src, path.join(stageDir, 'docs', 'licenses.md'));
   console.log(`${SCRIPT}: staged docs/licenses.md`);
+}
+
+/** Contract files the PACKAGED app must resolve from inside app.asar
+ *  (issue #133): openStore and PackManager both walk up from the compiled
+ *  dist/main/backend/store module looking for contracts/… — on a clean
+ *  install nothing outside the asar exists. Staged under desktop/dist/
+ *  contracts/ so the existing electron-builder "dist" files glob carries
+ *  them into the asar (and into reach of the walk); nothing lands in the
+ *  resources manifest tree, whose generator rejects unknown roots.
+ *  Byte-copies, so a stale copy can never drift from the repo contract
+ *  files at build time. Exported for the committed spec
+ *  (e133-stager-contracts.test.ts). */
+export const STAGED_CONTRACTS = ['contracts/store.schema.sql', 'contracts/pack.schema.json'];
+
+export function stageContracts(targetDesktopDir = desktopDir) {
+  for (const rel of STAGED_CONTRACTS) {
+    const src = path.join(repoRoot, rel);
+    if (!fs.existsSync(src)) {
+      fail(`required contract file missing: ${rel} (the packaged findRepoRoot walk reads dist/contracts — issue #133)`);
+      continue;
+    }
+    copyFileSyncLoud(src, path.join(targetDesktopDir, 'dist', rel));
+  }
+  console.log(`${SCRIPT}: staged ${STAGED_CONTRACTS.length} contract files into ${path.relative(repoRoot, path.join(targetDesktopDir, 'dist', 'contracts'))}/`);
 }
 
 /** Copy web_ui/dist -> desktop/renderer, excluding staged weight (model-id)
@@ -406,6 +529,7 @@ function main() {
   stageModels();
   stagePacks();
   stageDocs();
+  stageContracts();
   if (!args.skipRendererCopy) copyRenderer();
   if (args.fixtureModels) console.log('MODE: fixture-models');
   if (errors.length > 0) {

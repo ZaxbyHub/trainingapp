@@ -23,6 +23,10 @@ interface StreamingIndicatorProps {
  * U1: when `modelLoadProgress` is provided (0-100), renders a determinate bar
  * with `modelLoadLabel` so a cold first-send model load is visible rather than
  * appearing as an indeterminate hang.
+ *
+ * #133 (round 4): the elapsed-time cold-load heuristic was REMOVED — it
+ * misfired on any generation whose first token took >8s. Chat gating is now
+ * driven by the BACKEND's resident load state (see ChatPage's banner).
  */
 export function StreamingIndicator({ isVisible, modelLoadProgress, modelLoadLabel }: StreamingIndicatorProps): React.ReactElement | null {
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);

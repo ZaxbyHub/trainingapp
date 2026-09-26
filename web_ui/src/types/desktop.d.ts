@@ -56,7 +56,21 @@ export interface FirstRunStatus {
   };
   packs: {
     toolsAvailable: boolean;
-    required: Array<{ id: string; version?: string; dir?: string; resolvedDir: string | null }>;
+    /** #133: why the pack lifecycle is down (named gates contract) — null
+     *  when tools are available; optional so older status literals compile. */
+    unavailableReason?: string | null;
+    required: Array<{
+      id: string;
+      version?: string;
+      dir?: string;
+      resolvedDir: string | null;
+      /** #133 round 8: the backend's single-source-of-truth satisfaction
+       *  verdict (installed+active at this version OR NEWER — a user who
+       *  updated via a newer zip satisfies the manifest). Optional so status
+       *  literals predating the field compile; the wizard falls back to its
+       *  legacy strict-equality check when absent. */
+      satisfied?: boolean;
+    }>;
     installed: Array<{ id: string; version: string; active: boolean }>;
   };
   licenses: { available: boolean; path: string | null; content: string | null };

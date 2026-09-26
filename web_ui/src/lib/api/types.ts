@@ -218,6 +218,13 @@ export interface ModelStatus {
     quality: { present: boolean; path?: string };
     fast: { present: boolean; path?: string };
   };
+  /** #133: resident-model load state ('loading' => chat disabled with a
+   *  notice; optional because older/backends may omit it). */
+  resident?: {
+    state: 'idle' | 'loading' | 'ready';
+    profile: string | null;
+    loadStartedAt: number | null;
+  };
 }
 
 export interface StatsResponse {

@@ -3,7 +3,7 @@
  * Provides unified token callback interface with RAF-batched DOM updates to prevent jank.
  */
 
-import { SSEStreamConsumer } from '../api/streaming';
+import { SSEStreamConsumer, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../api/streaming';
 import type { SearchResult } from '../../types/search';
 import type { Citation, Grounding, LearnResult } from '../api/types';
 
@@ -53,7 +53,16 @@ export class TokenStreamManager {
   private activeConsumer: SSEStreamConsumer | null;
   private cancelled: boolean;
 
-  constructor() {
+  private firstByteTimeoutMs: number;
+
+  /**
+   * @param firstByteTimeoutMs first-byte watchdog for the SSE consumer.
+   * Desktop (Electron loopback) callers pass DESKTOP_FIRST_BYTE_TIMEOUT_MS —
+   * the model cold start legitimately runs minutes (issue #133); every other
+   * deployment mode keeps the historical 30 s (PRR-239).
+   */
+  constructor(firstByteTimeoutMs: number = DEFAULT_FIRST_BYTE_TIMEOUT_MS) {
+    this.firstByteTimeoutMs = firstByteTimeoutMs;
     this.tokenBuffer = [];
     this.flushTimer = null;
     this.tokenCallback = null;
@@ -225,8 +234,8 @@ export class TokenStreamManager {
     try {
       consumer =
         authHeaderName !== undefined
-          ? new SSEStreamConsumer(url, body, token, authHeaderName)
-          : new SSEStreamConsumer(url, body, token);
+          ? new SSEStreamConsumer(url, body, token, authHeaderName, this.firstByteTimeoutMs)
+          : new SSEStreamConsumer(url, body, token, undefined, this.firstByteTimeoutMs);
     } catch (err) {
       this.error(err instanceof Error ? err.message : String(err));
       // Re-throw to preserve the synchronous contract; callers that care wrap
