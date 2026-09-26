@@ -1,0 +1,167 @@
+name: Conformance
+
+# Issue #87 (E4): path-scoped conformance + pack-fixture signals, required
+# for merge. The workflow trigger itself is deliberately UNFILTERED: a
+# workflow-level `paths:` filter leaves required checks Pending forever on
+# filtered PRs (GitHub docs, "Handling skipped but required checks"). Path
+# scoping lives at job level — jobs skipped by a conditional report Success,
+# so required checks stay satisfiable. The `changes` job fails OPEN (errors
+# emit all-true) and consumers use `!= 'false'` polarity so a broken changes
+# job can only make CI run more, never silently less.
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: "path-scope classification (issue #87)"
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.buckets.outputs.python }}
+      webui: ${{ steps.buckets.outputs.webui }}
+      conformance: ${{ steps.buckets.outputs.conformance }}
+      pack: ${{ steps.buckets.outputs.pack }}
+      eval: ${{ steps.buckets.outputs.eval }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute diff buckets (fail-open)
+        id: buckets
+        shell: bash
+        run: |
+          set +e
+          files=""
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags origin "$GITHUB_BASE_REF"
+            files="$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD")"
+          else
+            before="${{ github.event.before }}"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              files="$(git diff --name-only "$before" "$GITHUB_SHA")"
+            fi
+          fi
+          status=$?
+          # Fail-open: an unusable diff base (newborn branch, force-push,
+          # first commit, empty merge) runs every bucket.
+          if [ "$status" -ne 0 ] || [ -z "$(printf '%s' "$files" | tr -d '[:space:]')" ]; then
+            echo "diff unavailable or empty — failing open (all buckets true)"
+            for b in python webui conformance pack eval; do echo "$b=true" >> "$GITHUB_OUTPUT"; done
+            exit 0
+          fi
+          for b in python webui conformance pack eval; do
+            verdict="$(printf '%s\n' "$files" | python scripts/ci_paths.py --bucket "$b" --stdin)"; rc=$?
+            if [ "$rc" -eq 0 ] && [ "$verdict" = "false" ]; then
+              echo "$b=false" >> "$GITHUB_OUTPUT"
+            else
+              # A failing classifier (rc != 0 or no verdict) fails OPEN: a
+              # broken ci_paths.py must run CI, never silently skip it.
+              if [ "$rc" -ne 0 ] || [ -z "$verdict" ]; then
+                echo "ci_paths.py failed for bucket $b - failing open" >&2
+              fi
+              echo "$b=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          exit 0
+
+  python-conformance:
+    name: python-conformance
+    runs-on: windows-latest
+    timeout-minutes: 20
+    needs: [changes]
+    if: always() && needs.changes.outputs.conformance != 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-conformance-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-conformance-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install httpx
+
+      - name: "Check test collection completeness (issue #51 guardrail)"
+        run: python scripts/check_test_collection.py
+
+      - name: Run API contract conformance suite
+        run: python contracts/tests/run_conformance.py --asgi api_server:app
+
+  pack-fixture-build:
+    name: pack-fixture-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [changes]
+    if: always() && needs.changes.outputs.pack != 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: packtool/package-lock.json
+
+      - name: Install + build packtool
+        run: |
+          npm --prefix packtool ci --no-audit --no-fund
+          npm --prefix packtool run build
+
+      # Issue #73 (C6) leg, moved from desktop-build.yml: build-docs fixture
+      # from the committed source docs. --embedder hash: CI checkouts carry
+      # no model weights and the deterministic embedder needs none.
+      - name: Build the docs fixture pack (build-docs)
+        run: |
+          mkdir -p knowledge-pack-fixture
+          node packtool/dist/cli.js build-docs contracts/fixtures/source-docs/ --id test-pack --version 1.0.0 --embedder hash -o knowledge-pack-fixture/out.zip
+
+      - name: Verify the docs fixture pack
+        run: node packtool/dist/cli.js verify knowledge-pack-fixture/out.zip
+
+      # Issue #87 (E4): the build-storyline leg — assemble a publish dir
+      # from committed parts (the mini fixture has no player asset, so the
+      # committed stub supplies story.html; see 02-reproduction.md R8), then
+      # build + verify through the real CLI, exactly as a pack author would.
+      - name: Assemble the storyline fixture publish dir
+        run: |
+          mkdir -p storyline-fixture/pub
+          cp -r tests/fixtures/storyline-mini/. storyline-fixture/pub/
+          cp tests/fixtures/storyline-mini-story-html-stub.html storyline-fixture/pub/story.html
+
+      - name: Build the storyline fixture pack (build-storyline)
+        run: node packtool/dist/cli.js build-storyline storyline-fixture/pub --id ci-storyline-fixture --version 1.0.0 --embedder hash --out storyline-fixture/out.zip
+
+      - name: Verify the storyline fixture pack
+        run: node packtool/dist/cli.js verify storyline-fixture/out.zip
+
+      - name: Upload the docs fixture pack artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: knowledge-pack-fixture
+          path: knowledge-pack-fixture/out.zip
+          if-no-files-found: error
+
+      - name: Upload the storyline fixture pack artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: storyline-pack-fixture
+          path: storyline-fixture/out.zip
+          if-no-files-found: error
