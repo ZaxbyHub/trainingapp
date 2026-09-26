@@ -79,6 +79,26 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   }, [desktopSession, packs, loadError]);
 
   const activePacks = packs ?? [];
+  // PRR-202: a MOUNTED Training tab must learn about packs installed after
+  // mount — boot-ensure outcomes are console-only in the main process (no
+  // packs-changed push), so refetch when the window regains focus. A refetch
+  // failure keeps the current snapshot (never degrades to the empty state).
+  useEffect(() => {
+    if (desktopSession === null) return;
+    const refetch = (): void => {
+      void desktopSession.apiClient
+        .listPacks()
+        .then((listing: PackInfo[]) => {
+          setPacks(listing.filter(isTrainingPack));
+          setLoadError(null);
+        })
+        .catch(() => {
+          // keep the current snapshot; the next focus retries
+        });
+    };
+    window.addEventListener('focus', refetch);
+    return () => window.removeEventListener('focus', refetch);
+  }, [desktopSession]);
   // One row per COURSE (packId): installing a newer bundled version
   // deactivates the old one but keeps it on disk (#133 round 6 upgrade), and
   // listing both reads as a duplicate course. Prefer the active row, then the

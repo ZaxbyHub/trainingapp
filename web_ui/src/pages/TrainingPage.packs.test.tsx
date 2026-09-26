@@ -14,7 +14,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, act } from '@testing-library/react';
 
 const listPacks = vi.hoisted(() => vi.fn());
 // STABLE session object — the real DesktopSessionProvider memoizes its
@@ -210,5 +210,21 @@ describe('bundled-course upgrade state: retired + active rows for ONE course id 
     render(<TrainingPage />);
     const frame = await screen.findByTestId('training-player-frame');
     expect((frame as HTMLIFrameElement).src.startsWith('app://training/stale-pack/story.html')).toBe(true);
+  });
+
+  // PRR-202: a MOUNTED tab refetches on window focus, so a boot-ensure
+  // install that landed after mount appears without re-entering the tab.
+  it('refetches on window focus and surfaces late-installed courses', async () => {
+    listPacks.mockResolvedValue([]); // mounted before the boot-ensure landed
+    render(<TrainingPage />);
+    expect(await screen.findByTestId('training-empty-state')).toBeTruthy();
+    listPacks.mockResolvedValue([RETIRED, ACTIVE]); // the ensure landed
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    const select = await screen.findByTestId('training-pack-select') as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select.value).toBe('opmed-course/1.0.1');
+    });
   });
 });
