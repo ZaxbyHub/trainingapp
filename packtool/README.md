@@ -161,9 +161,14 @@ re-embedding.
   builds are float-identical but not guaranteed bit-identical — the `hash`
   embedder is fully deterministic everywhere.
 - **Player assets**: `html5/`, `story.html`, and `story_content/` are copied
-  byte-for-byte under `assets/player/` in the pack. Symlinks and Windows
+  byte-for-byte under `assets/player/` in the pack. When the publish carries
+  a `mobile/` sibling (small-screen image variants the player requests on
+  touch-capable devices), it is copied the same way. Symlinks and Windows
   junctions inside the publish folder are REFUSED (loud error, no pack) —
-  they are never dereferenced into the pack.
+  they are never dereferenced into the pack. `packtool verify` requires
+  `story.html`, `html5/`, and `story_content/` in training packs; `mobile/`
+  is optional (absent from minimal publishes) and not enumerated in the pack
+  manifest (the schema reserves `docs[]` for ingested documents).
 - **Index**: `index.sqlite` applies the authoritative
   `contracts/store.schema.sql` (sqlite-vec 0.1.9 pin; `meta.schema_version`
   2, `meta.embedding_model_id`/`meta.embedding_dims` stamped from the build).

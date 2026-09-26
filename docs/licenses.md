@@ -98,3 +98,10 @@ The initial `opmed-initial` knowledge pack (#133) is built from the operator-sup
 `knowledgepack/` corpus — operator-local and git-excluded, like the model weights. The
 repository asserts no redistribution right over it; distributing an installer that
 carries it is the operator's responsibility under the source documents' own terms.
+
+The bundled Articulate training course `opmed-cdp-mlc` (#133, "OpMed CDP MicroLearning
+Companion", including its `mobile/` image variants) is built from the operator-supplied
+Storyline publish — operator-local and git-excluded, like the model weights. The
+repository asserts no redistribution right over the course content; distributing an
+installer that carries it is the operator's responsibility under the source material's
+own terms (the same posture as `opmed-initial` above).

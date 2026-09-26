@@ -343,9 +343,18 @@ weights — nothing content-bearing is committed):
 2. `node desktop/scripts/build-knowledge-pack.mjs` → builds, verifies, and
    unpacks the `opmed-initial` pack into `desktop/knowledge-pack-src/`
    (OUTSIDE `installer-resources/`, which the stager wipes at start).
-3. `npm run desktop:build` — the stager stages the real pack when present
-   (fixture `bundled-min` otherwise, e.g. CI) and the manifest lists it; the
-   first-run wizard then installs+activates it from the packaged resources.
+3. For the bundled Articulate TRAINING course, also run
+   `node desktop/scripts/build-training-pack.mjs` (override the publish
+   folder with `--publish <dir>` or `TRAININGAPP_STORYLINE_PUBLISH`) →
+   builds and unpacks `opmed-cdp-mlc` into the same `knowledge-pack-src/`
+   root. Whenever `knowledge-pack-src/` exists, the stager REQUIRES both
+   packs — building only one makes `desktop:build` exit 1 naming the
+   missing builder script.
+4. `npm run desktop:build` — the stager stages the real packs when present
+   (fixture `bundled-min` otherwise, e.g. CI) and the manifest lists them;
+   the first-run wizard then installs+activates them from the packaged
+   resources, and every later boot re-ensures bundled packs an older install
+   is missing.
 
 `knowledgepack/` and `desktop/knowledge-pack-src/` are git-excluded local
 paths (`.git/info/exclude`, the `models/` precedent). The packaged-boot CI
