@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-27T00:00:00Z",
+  "packs": [
+    {
+      "pack_id": "bundled-min",
+      "versions": [
+        {
+          "version": "1.0.1",
+          "published_at": "2026-09-27T00:00:00Z",
+          "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "size_bytes": 48213,
+          "download_url": "https://github.com/ZaxbyHub/trainingapp/releases/download/pack-feed-v1/bundled-min-1.0.1.zip",
+          "supersedes": ["bundled-min@1.0.0"],
+          "signature": {
+            "algorithm": "ed25519",
+            "key_id": "trainingapp-update-feed-2026-09",
+            "value": "MEUCIQD7aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa=="
+          }
+        }
+      ]
+    }
+  ],
+  "app": {
+    "versions": [
+      {
+        "version": "3.0.1",
+        "published_at": "2026-09-27T00:00:00Z",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 184549376,
+        "download_url": "https://github.com/ZaxbyHub/trainingapp/releases/download/v3.0.1/TrainingApp-Setup-3.0.1.exe",
+        "notes_url": "https://github.com/ZaxbyHub/trainingapp/releases/tag/v3.0.1",
+        "signature": {
+          "algorithm": "ed25519",
+          "key_id": "trainingapp-update-feed-2026-09",
+          "value": "MEUCIQD7bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb=="
+        }
+      }
+    ]
+  }
+}

@@ -40,6 +40,21 @@ import { ensureBundledPacksAtBoot, isBundledPackSatisfied } from './first-run/bu
 import { formatFailure, runStartupIntegrityCheck } from './integrity-check.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
 import {
+  applyPackUpdate,
+  checkAppUpdate,
+  downloadArtifactBytes,
+  fetchFeedText,
+  loadUpdatesState,
+  loopbackPackInstaller,
+  runUpdateCheck,
+  saveUpdatesState,
+  DEFAULT_UPDATE_FEED_URL,
+  UPDATE_FEED_PUBLIC_KEY,
+  type AppUpdateCandidate,
+  type PackUpdateCandidate,
+} from './update-checker.js';
+import {
+  DEFAULT_TOKEN_HEADER_NAME,
   getLoopbackGuard,
   getLaunchToken,
   initializeLaunchToken,
@@ -370,6 +385,151 @@ export function bootstrap(): void {
       }
       return nodeHost.createStoreBackup(backupsDir);
     });
+    // ---- E5 (issue #88): signed update channels (default OFF) --------------
+    // Offline-first posture (.swarm/spec-snapshot.md): the opt-in gate runs
+    // BEFORE anything networked. The opt-in state lives in the profile dir
+    // next to first-run.json; the checker rides the loopback API for
+    // installed versions and applies pack updates through POST /packs/install
+    // so the C8 guards and the supersede/rollback semantics apply unchanged.
+    // App-binary updates are detect + notify only (ADR-0010 manual channel:
+    // in-app notice -> operator runs the installer per docs/updates.md).
+    interface UpdatesStatusPayload {
+      optIn: boolean;
+      feedUrl: string;
+      checkedAt: string | null;
+      candidates: PackUpdateCandidate[];
+      refused: Array<{ packId: string; version: string; reason: string }>;
+      error: string | null;
+      appUpdate: AppUpdateCandidate | null;
+      lastApply: { packId: string; applied: boolean; version?: string; reason?: string } | null;
+    }
+    const updatesFeedUrl = (): string => loadUpdatesState(storePath).feedUrl ?? DEFAULT_UPDATE_FEED_URL;
+    const emptyUpdatesStatus = (): UpdatesStatusPayload => ({
+      optIn: loadUpdatesState(storePath).optIn,
+      feedUrl: updatesFeedUrl(),
+      checkedAt: null,
+      candidates: [],
+      refused: [],
+      error: null,
+      appUpdate: null,
+      lastApply: null,
+    });
+    let updatesStatus: UpdatesStatusPayload = emptyUpdatesStatus();
+    const pushUpdatesStatus = (): void => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send('updates:available', updatesStatus);
+      }
+    };
+    const installedPackRecords = async (): Promise<Array<{ packId: string; version: string }>> => {
+      // Loopback GET /packs with the per-launch token — the same surface the
+      // renderer uses; no new API contract route is introduced (E1/E5 note).
+      const response = await fetch(`${backendHandle.url}/packs`, {
+        headers: { [DEFAULT_TOKEN_HEADER_NAME]: getLaunchToken() },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) throw new Error(`GET /packs answered HTTP ${response.status}`);
+      const body = (await response.json()) as { packs: Array<{ pack_id: string; version: string }> };
+      return body.packs.map((pack) => ({ packId: pack.pack_id, version: pack.version }));
+    };
+    let lastOutcomeEntries: Record<string, import('./update-checker.js').FeedVersionEntry> = {};
+    const performUpdateCheck = async (): Promise<void> => {
+      const state = loadUpdatesState(storePath);
+      if (!state.optIn) return;
+      const outcome = await runUpdateCheck(
+        state,
+        await installedPackRecords(),
+        { fetchFeed: fetchFeedText },
+        [UPDATE_FEED_PUBLIC_KEY],
+      );
+      if (outcome.skipped) return;
+      lastOutcomeEntries = outcome.entries ?? {};
+      updatesStatus = {
+        optIn: true,
+        feedUrl: updatesFeedUrl(),
+        checkedAt: new Date().toISOString(),
+        candidates: outcome.candidates,
+        refused: outcome.refused,
+        error: outcome.error ?? null,
+        appUpdate:
+          outcome.feed !== undefined && outcome.error === undefined
+            ? checkAppUpdate(outcome.feed, app.getVersion())
+            : null,
+        lastApply: updatesStatus.lastApply,
+      };
+      pushUpdatesStatus();
+    };
+    ipcMain.handle('desktop:updates:status', () => updatesStatus);
+    ipcMain.handle('desktop:updates:set-opt-in', async (_event, enabled: unknown) => {
+      if (typeof enabled !== 'boolean') {
+        return { ok: false as const, detail: 'opt-in must be a boolean' };
+      }
+      const current = loadUpdatesState(storePath);
+      saveUpdatesState(storePath, {
+        optIn: enabled,
+        ...(current.feedUrl !== undefined ? { feedUrl: current.feedUrl } : {}),
+      });
+      updatesStatus = emptyUpdatesStatus();
+      updatesStatus.lastApply = null;
+      if (enabled) {
+        await performUpdateCheck();
+      } else {
+        pushUpdatesStatus();
+      }
+      return { ok: true as const, status: updatesStatus };
+    });
+    ipcMain.handle('desktop:updates:check-now', async () => {
+      if (!loadUpdatesState(storePath).optIn) {
+        return { ok: false as const, detail: 'update checks are disabled (opt-in required)' };
+      }
+      try {
+        await performUpdateCheck();
+        return { ok: true as const, status: updatesStatus };
+      } catch (err) {
+        updatesStatus = { ...updatesStatus, error: err instanceof Error ? err.message : String(err), checkedAt: new Date().toISOString() };
+        pushUpdatesStatus();
+        return { ok: false as const, detail: updatesStatus.error ?? 'update check failed' };
+      }
+    });
+    ipcMain.handle('desktop:updates:apply', async (_event, packId: unknown) => {
+      if (typeof packId !== 'string') {
+        return { ok: false as const, detail: 'packId must be a string' };
+      }
+      if (!loadUpdatesState(storePath).optIn) {
+        return { ok: false as const, detail: 'update checks are disabled (opt-in required)' };
+      }
+      const entry = lastOutcomeEntries[packId];
+      const candidate = updatesStatus.candidates.find((update) => update.packId === packId);
+      if (entry === undefined || candidate === undefined) {
+        return { ok: false as const, detail: 'no verified update candidate for this pack; run a check first' };
+      }
+      const result = await applyPackUpdate(
+        candidate,
+        entry,
+        {
+          downloadArtifact: downloadArtifactBytes,
+          installPack: loopbackPackInstaller(backendHandle.url, getLaunchToken(), DEFAULT_TOKEN_HEADER_NAME),
+        },
+        [UPDATE_FEED_PUBLIC_KEY],
+      );
+      updatesStatus = {
+        ...updatesStatus,
+        lastApply: { packId, applied: result.applied, version: result.version, reason: result.reason },
+      };
+      if (result.applied) {
+        updatesStatus.candidates = updatesStatus.candidates.filter((update) => update.packId !== packId);
+        delete lastOutcomeEntries[packId];
+      }
+      pushUpdatesStatus();
+      return { ok: result.applied, detail: result.reason, status: updatesStatus };
+    });
+    // Boot-time check only when opted in (the state read is local; no network
+    // happens otherwise). Renderer surfaces pull desktop:updates:status on
+    // mount, so a notice is never lost to a boot/window race (ADR-0010).
+    if (loadUpdatesState(storePath).optIn) {
+      performUpdateCheck().catch((err: unknown) => {
+        console.error('[trainingapp-desktop] update check failed:', err instanceof Error ? err.message : err);
+      });
+    }
     // ---- E2 (issue #85): first-run validation wizard -----------------------
     // Same registration discipline as desktop:get-backend: the handlers exist
     // only after the backend host started; the renderer client treats a

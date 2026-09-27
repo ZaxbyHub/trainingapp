@@ -718,3 +718,22 @@ Pydantic parsing at Python startup (set an explicit value or unset the
 variable); the desktop `TRAININGAPP_PACKS_*` reader falls back to defaults
 instead. Set `packs.security.requireSignature=true` only together with a
 `trustedKeys` entry, or every install is refused.
+
+## Update Channel (updates.*, E5)
+
+Signed update channel for the app binary and knowledge packs (issue #88, ADR-0010).
+Desktop-only (Electron main process); there is no Python-side update surface. Checks are
+**disabled by default** — a fresh install makes zero update-related network calls until the
+user opts in (Settings → Updates).
+
+| Key (logical) | Where | Default | Meaning |
+| --- | --- | --- | --- |
+| `updates.optIn` | `<profileDir>/updates.json` (`desktopApi.setUpdateOptIn`) | `false` | Master gate; corruption fails closed to disabled. Enabling triggers one check |
+| `updates.feedUrl` | `<profileDir>/updates.json` (hand-edit) | baked default | Feed document URL; must be `https:` |
+| feed location (baked) | `DEFAULT_UPDATE_FEED_URL` in `desktop/main/update-checker.ts` | `https://github.com/ZaxbyHub/trainingapp/releases/latest/download/pack-feed.json` | GitHub Releases "latest" asset pattern |
+| trust anchor (baked) | `UPDATE_FEED_PUBLIC_KEY` in `desktop/main/update-checker.ts` | `trainingapp-update-feed-2026-09` | Ed25519 public key; every feed entry's sha256 signature must verify against it (no unsigned fallback) |
+
+Notes: checks run at app start (opted in) and via "Check for updates now" — no background timer.
+`<profileDir>` is the directory holding `store.sqlite` (e.g.
+`%APPDATA%/TrainingApp/profiles/default/`). Publishing/signing a feed: `docs/updates.md`;
+decision record: `docs/adr/0010-update-channels.md`.

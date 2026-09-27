@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ZaxbyHub/trainingapp/contracts/pack-feed.schema.json",
+  "title": "Trainingapp update feed document (E5, issue #88)",
+  "description": "Signed update feed for knowledge packs and the application binary. Every version entry's artifact sha256 is Ed25519-signed by a key whose public half is baked into the app at build time; entries without a valid signature are refused by the update checker (no unsigned fallback). Authored for issue #88; naming follows the contracts house style (snake_case).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "packs"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "packs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/packEntry" }
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["versions"],
+      "properties": {
+        "versions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/appVersion" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "supersedes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,198}@\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["algorithm", "key_id", "value"],
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "ed25519"
+        },
+        "key_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$",
+          "description": "base64 ed25519 signature over the artifact's sha256 as lowercase 64-hex UTF-8 bytes"
+        }
+      }
+    },
+    "versionEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "published_at", "sha256", "size_bytes", "download_url", "signature"],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "published_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "download_url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "supersedes": { "$ref": "#/$defs/supersedes" },
+        "signature": { "$ref": "#/$defs/signature" }
+      }
+    },
+    "packEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pack_id", "versions"],
+      "properties": {
+        "pack_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,198}$"
+        },
+        "versions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/versionEntry" }
+        }
+      }
+    },
+    "appVersion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "published_at", "sha256", "size_bytes", "download_url", "signature"],
+      "properties": {
+        "version": { "$ref": "#/$defs/semver" },
+        "published_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "download_url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "notes_url": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "signature": { "$ref": "#/$defs/signature" }
+      }
+    }
+  }
+}

@@ -82,6 +82,37 @@ export interface FirstRunStatus {
   };
 }
 
+/** Payload of desktop:updates:status / updates:available (E5, issue #88).
+ * Mirrors the main-process UpdatesStatusPayload shape. Update checks are
+ * opt-in; a fresh install reports optIn:false with empty results and the
+ * main process makes zero network calls until setUpdateOptIn(true). */
+export interface UpdateStatus {
+  optIn: boolean;
+  feedUrl: string;
+  checkedAt: string | null;
+  candidates: Array<{
+    packId: string;
+    currentVersion: string;
+    availableVersion: string;
+    publishedAt: string;
+    downloadUrl: string;
+    sha256: string;
+    sizeBytes: number;
+  }>;
+  refused: Array<{ packId: string; version: string; reason: string }>;
+  error: string | null;
+  appUpdate: {
+    currentVersion: string;
+    availableVersion: string;
+    publishedAt: string;
+    downloadUrl: string;
+    sha256: string;
+    sizeBytes: number;
+    notesUrl?: string;
+  } | null;
+  lastApply: { packId: string; applied: boolean; version?: string; reason?: string } | null;
+}
+
 export interface DesktopApiBridge {
   /** Per-launch backend token (never persisted; rotates every app start). */
   getAuthToken(): Promise<string>;
@@ -108,6 +139,18 @@ export interface DesktopApiBridge {
   /** E2 (issue #85): subscribe to the boot push fired when a first run or
    *  drift re-run is needed. Returns an unsubscribe function. */
   onFirstRunRequired(callback: (status: FirstRunStatus) => void): () => void;
+  /** E5 (issue #88): current update status (never networked on its own). */
+  getUpdateStatus(): Promise<UpdateStatus>;
+  /** E5 (issue #88): flip the opt-in. Enabling triggers one check. */
+  setUpdateOptIn(enabled: boolean): Promise<{ ok: boolean; detail?: string; status?: UpdateStatus }>;
+  /** E5 (issue #88): force a check (refused while opted out). */
+  checkForUpdates(): Promise<{ ok: boolean; detail?: string; status?: UpdateStatus }>;
+  /** E5 (issue #88): download-verify-install a checked pack update through
+   *  the loopback pack-install route (C8 guards apply). */
+  applyPackUpdate(packId: string): Promise<{ ok: boolean; detail?: string; status?: UpdateStatus }>;
+  /** E5 (issue #88): subscribe to the updates:available push. Returns an
+   *  unsubscribe function. */
+  onUpdateAvailable(callback: (status: UpdateStatus) => void): () => void;
 }
 
 declare global {

@@ -53,6 +53,9 @@ desktop/installer-resources/
 
 # Agent working state (issue traces, session artifacts — not committed)
 .zcode/
+# issue-tracer trace directories (checkpoints hold repro harnesses, never
+# commit them; private key material must never live here at all — ADR-0010)
+.agents/issue-traces/
 # eval harness local outputs (issue #54)
 eval/REPORT.md
 eval/report.json

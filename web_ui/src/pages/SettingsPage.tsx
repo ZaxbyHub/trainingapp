@@ -31,6 +31,7 @@ import {
   type PackagedModelKind,
 } from '../lib/models/model-manifest';
 import { RAG_PRESET_LABELS } from '../lib/rag/rag-presets';
+import type { UpdateStatus } from '../types/desktop';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
 import { ProgressBar, StatusBadge, SectionCard } from '../components/SettingsMetrics';
@@ -84,6 +85,131 @@ function FirstRunSetupCard(): React.ReactElement | null {
         </button>
       </div>
     </section>
+  );
+}
+
+// ============================================================================
+// Updates (E5, issue #88): opt-in toggle (default OFF), check-now, status.
+// Offline-first: the main process makes zero network calls until the toggle
+// is switched on; the notice surfaces here AND on the packs panel.
+// ============================================================================
+function UpdatesSection(): React.ReactElement {
+  const [status, setStatus] = useState<UpdateStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const bridge = window.desktopApi;
+    if (bridge === undefined) return undefined;
+    let cancelled = false;
+    // Optional calls: a bridge without the E5 methods (older main) keeps the
+    // controls disabled instead of crashing the settings page.
+    void bridge
+      .getUpdateStatus?.()
+      ?.then((initial) => {
+        if (!cancelled) setStatus(initial);
+      })
+      .catch(() => {
+        /* update IPC not ready (older main) — controls stay disabled */
+      });
+    const unsubscribe = bridge.onUpdateAvailable?.((next) => {
+      if (!cancelled) setStatus(next);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
+  const handleToggle = async (): Promise<void> => {
+    if (status === null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await window.desktopApi?.setUpdateOptIn(!status.optIn);
+      if (result !== undefined && !result.ok && result.detail) setError(result.detail);
+      if (result?.status !== undefined) setStatus(result.status);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to change the updates setting');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleCheckNow = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await window.desktopApi?.checkForUpdates();
+      if (result !== undefined && !result.ok && result.detail) setError(result.detail);
+      if (result?.status !== undefined) setStatus(result.status);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Update check failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={fieldGroupStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
+          <input
+            type="checkbox"
+            data-testid="updates-opt-in"
+            checked={status?.optIn ?? false}
+            disabled={busy || status === null}
+            onChange={() => void handleToggle()}
+          />
+          <span>Check for updates automatically (opt-in; the app works fully offline)</span>
+        </label>
+        <button
+          type="button"
+          data-testid="updates-check-now"
+          disabled={busy || status === null || !status.optIn}
+          onClick={() => void handleCheckNow()}
+        >
+          {busy ? 'Checking…' : 'Check for updates now'}
+        </button>
+      </div>
+      {error !== null && (
+        <p style={{ ...descriptionStyle, color: 'var(--color-danger, #c00)' }} data-testid="updates-error">
+          {error}
+        </p>
+      )}
+      {status !== null && status.optIn && status.error !== null && (
+        <p style={{ ...descriptionStyle, color: 'var(--color-danger, #c00)' }}>
+          Last check failed: {status.error}
+        </p>
+      )}
+      {status !== null && status.optIn && status.appUpdate !== null && (
+        <p style={descriptionStyle} data-testid="updates-app-available">
+          App update available: v{status.appUpdate.availableVersion} (currently v
+          {status.appUpdate.currentVersion}).{' '}
+          <a href={status.appUpdate.downloadUrl} target="_blank" rel="noreferrer">
+            Download the installer
+          </a>{' '}
+          and run it to update; your data is kept.
+        </p>
+      )}
+      {status !== null && status.optIn && status.refused.length > 0 && (
+        <p style={descriptionStyle} data-testid="updates-refused">
+          {status.refused.length} update{status.refused.length === 1 ? '' : 's'} refused (signature
+          verification failed):{' '}
+          {status.refused.map((entry) => `${entry.packId} v${entry.version}`).join(', ')}
+        </p>
+      )}
+      {status !== null && status.optIn && status.checkedAt !== null && (
+        <p style={descriptionStyle} data-testid="updates-status-line">
+          Last checked {status.checkedAt}. Pack updates, if any, are surfaced on the Knowledge
+          Packs panel (Documents page).
+        </p>
+      )}
+      <p style={descriptionStyle}>
+        Update feeds are Ed25519-signed; anything failing signature verification is refused with no
+        unsigned fallback. See the Updates runbook (docs/updates.md) for the feed format.
+      </p>
+    </div>
   );
 }
 
@@ -1331,7 +1457,19 @@ function SettingsPageInner(): React.ReactElement {
         </section>
 
         {/* ================================================================== */}
-        {/* 6. Storage */}
+        {/* 6. Updates (E5, issue #88 — Electron only, opt-in, default OFF)    */}
+        {/* ================================================================== */}
+        {electronMode && (
+          <section style={sectionStyle} aria-labelledby="updates-heading" data-testid="updates-section">
+            <h2 id="updates-heading" style={sectionTitleStyle}>
+              Updates
+            </h2>
+            <UpdatesSection />
+          </section>
+        )}
+
+        {/* ================================================================== */}
+        {/* 7. Storage */}
         {/* ================================================================== */}
         <SectionCard
           title="Storage"

@@ -50,6 +50,22 @@ function stubBridge(overrides: Partial<DesktopApiBridge> = {}): DesktopApiBridge
     completeFirstRun: vi.fn(async () => ({ ok: true })),
     resetFirstRun: vi.fn(async () => ({ ok: true })),
     onFirstRunRequired: vi.fn(() => () => {}),
+    // E5 (issue #88) update-channel methods: default no-op stubs; suites that
+    // exercise them override per-test.
+    getUpdateStatus: vi.fn(async () => ({
+      optIn: false,
+      feedUrl: '',
+      checkedAt: null,
+      candidates: [],
+      refused: [],
+      error: null,
+      appUpdate: null,
+      lastApply: null,
+    })),
+    setUpdateOptIn: vi.fn(async () => ({ ok: true })),
+    checkForUpdates: vi.fn(async () => ({ ok: true })),
+    applyPackUpdate: vi.fn(async () => ({ ok: true })),
+    onUpdateAvailable: vi.fn(() => () => {}),
     ...overrides,
   };
 }
