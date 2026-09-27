@@ -168,29 +168,9 @@ export function checkPackUpdates(
   for (const feedPack of feed.packs) {
     const current = installed.find((record) => record.packId === feedPack.pack_id);
     if (current === undefined) continue;
-    const currentKey = parseVersionKey(current.version);
-    if (currentKey === null) continue;
-    let best: FeedVersionEntry | null = null;
-    let bestKey: VersionKey | null = null;
-    for (const entry of feedPack.versions) {
-      const entryKey = parseVersionKey(entry.version);
-      if (entryKey === null) continue;
-      if (compareVersionKeys(entryKey, currentKey) <= 0) continue;
-      if (bestKey === null || compareVersionKeys(entryKey, bestKey) > 0) {
-        best = entry;
-        bestKey = entryKey;
-      }
-    }
-    if (best !== null && bestKey !== null) {
-      candidates.push({
-        packId: feedPack.pack_id,
-        currentVersion: current.version,
-        availableVersion: best.version,
-        publishedAt: best.published_at,
-        downloadUrl: best.download_url,
-        sha256: best.sha256,
-        sizeBytes: best.size_bytes,
-      });
+    const best = bestVersionEntry(feedPack.versions, current.version);
+    if (best !== null) {
+      candidates.push(toCandidate(feedPack.pack_id, current.version, best));
     }
   }
   return candidates;
@@ -381,37 +361,53 @@ export async function runUpdateCheck(
   for (const feedPack of feed.packs) {
     const current = installed.find((record) => record.packId === feedPack.pack_id);
     if (current === undefined) continue;
-    const currentKey = parseVersionKey(current.version);
-    if (currentKey === null) continue;
-    let best: FeedVersionEntry | null = null;
-    let bestKey: ReturnType<typeof parseVersionKey> = null;
-    for (const entry of feedPack.versions) {
-      const entryKey = parseVersionKey(entry.version);
-      if (entryKey === null) continue;
-      if (compareVersionKeys(entryKey, currentKey) <= 0) continue;
-      if (bestKey === null || compareVersionKeys(entryKey, bestKey) > 0) {
-        best = entry;
-        bestKey = entryKey;
-      }
-    }
+    const best = bestVersionEntry(feedPack.versions, current.version);
     if (best === null) continue;
     const verdict = verifyFeedEntrySignature(best, trustedKeys);
     if (!verdict.ok) {
       refused.push({ packId: feedPack.pack_id, version: best.version, reason: verdict.detail ?? 'signature verification failed' });
       continue;
     }
-    candidates.push({
-      packId: feedPack.pack_id,
-      currentVersion: current.version,
-      availableVersion: best.version,
-      publishedAt: best.published_at,
-      downloadUrl: best.download_url,
-      sha256: best.sha256,
-      sizeBytes: best.size_bytes,
-    });
+    candidates.push(toCandidate(feedPack.pack_id, current.version, best));
     entries[feedPack.pack_id] = best;
   }
   return { skipped: false, candidates, refused, entries, feed };
+}
+
+/** The newest feed version that compares GREATER than `currentVersion` under
+ * the pack semver ordering — the single selection rule shared by
+ * `checkPackUpdates` (frozen C2) and `runUpdateCheck` so the production diff
+ * and the tested diff cannot drift apart (review round 1, finding 3). */
+function bestVersionEntry(
+  versions: ReadonlyArray<FeedVersionEntry>,
+  currentVersion: string,
+): FeedVersionEntry | null {
+  const currentKey = parseVersionKey(currentVersion);
+  if (currentKey === null) return null;
+  let best: FeedVersionEntry | null = null;
+  let bestKey: ReturnType<typeof parseVersionKey> = null;
+  for (const entry of versions) {
+    const entryKey = parseVersionKey(entry.version);
+    if (entryKey === null) continue;
+    if (compareVersionKeys(entryKey, currentKey) <= 0) continue;
+    if (bestKey === null || compareVersionKeys(entryKey, bestKey) > 0) {
+      best = entry;
+      bestKey = entryKey;
+    }
+  }
+  return best;
+}
+
+function toCandidate(packId: string, currentVersion: string, best: FeedVersionEntry): PackUpdateCandidate {
+  return {
+    packId,
+    currentVersion,
+    availableVersion: best.version,
+    publishedAt: best.published_at,
+    downloadUrl: best.download_url,
+    sha256: best.sha256,
+    sizeBytes: best.size_bytes,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -428,26 +424,22 @@ export interface AppUpdateCandidate {
   notesUrl?: string;
 }
 
-export function checkAppUpdate(
+/** App-update notice derivation, MANDATORY-VERIFY (review round 1, finding 1):
+ * the newest app version is selected with the same ordering rule as packs and
+ * is returned ONLY when its Ed25519 signature verifies against the trusted
+ * keys — an unsigned/untrusted app entry yields null, so an unverifiable
+ * download link is never surfaced in Settings. */
+export function checkAppUpdateVerified(
   feed: PackFeedDocument,
   currentAppVersion: string,
+  trustedKeys: ReadonlyArray<TrustedKey>,
 ): AppUpdateCandidate | null {
   const versions = feed.app?.versions;
   if (!Array.isArray(versions)) return null;
-  const currentKey = parseVersionKey(currentAppVersion);
-  if (currentKey === null) return null;
-  let best: (typeof versions)[number] | null = null;
-  let bestKey: ReturnType<typeof parseVersionKey> = null;
-  for (const entry of versions) {
-    const entryKey = parseVersionKey(entry.version);
-    if (entryKey === null) continue;
-    if (compareVersionKeys(entryKey, currentKey) <= 0) continue;
-    if (bestKey === null || compareVersionKeys(entryKey, bestKey) > 0) {
-      best = entry;
-      bestKey = entryKey;
-    }
-  }
+  const best = bestVersionEntry(versions as FeedVersionEntry[], currentAppVersion);
   if (best === null) return null;
+  const verdict = verifyFeedEntrySignature(best, trustedKeys);
+  if (!verdict.ok) return null;
   return {
     currentVersion: currentAppVersion,
     availableVersion: best.version,
@@ -455,15 +447,10 @@ export function checkAppUpdate(
     downloadUrl: best.download_url,
     sha256: best.sha256,
     sizeBytes: best.size_bytes,
-    ...(best.notes_url !== undefined ? { notesUrl: best.notes_url } : {}),
+    ...((best as { notes_url?: string }).notes_url !== undefined
+      ? { notesUrl: (best as { notes_url?: string }).notes_url }
+      : {}),
   };
-}
-
-export function verifyAppUpdateSignature(
-  appEntry: NonNullable<PackFeedDocument['app']>['versions'][number],
-  trustedKeys: ReadonlyArray<TrustedKey>,
-): VerificationResult {
-  return verifyFeedEntrySignature(appEntry as FeedVersionEntry, trustedKeys);
 }
 
 // ---------------------------------------------------------------------------
@@ -480,6 +467,46 @@ function isHttpsUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** Streaming bounded body read (review round 1, finding 2): rejects on the
+ * declared content-length BEFORE reading, then accumulates chunks until the
+ * cap is exceeded — the connection is cancelled, never buffered past the
+ * cap. `capBytes` is an upper bound for the feed (5 MiB) and an exact-size
+ * gate for artifacts (callers compare the result length separately). */
+async function readBodyCapped(response: Response, capBytes: number): Promise<Uint8Array> {
+  const declaredLength = response.headers.get('content-length');
+  if (declaredLength !== null && Number(declaredLength) > capBytes) {
+    throw new Error(`response body exceeds the ${capBytes}-byte cap (content-length ${declaredLength})`);
+  }
+  const reader = response.body?.getReader();
+  if (reader === undefined) {
+    const buffered = new Uint8Array(await response.arrayBuffer());
+    if (buffered.byteLength > capBytes) {
+      throw new Error(`response body exceeds the ${capBytes}-byte cap`);
+    }
+    return buffered;
+  }
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value === undefined) continue;
+    received += value.byteLength;
+    if (received > capBytes) {
+      void reader.cancel();
+      throw new Error(`response body exceeds the ${capBytes}-byte cap`);
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
 }
 
 /** Hardened production fetchFeed (plan D8): https-only, credentials omitted,
@@ -502,15 +529,8 @@ export async function fetchFeedText(url: string): Promise<string> {
   if (!isHttpsUrl(response.url)) {
     throw new Error('feed fetch redirected away from https');
   }
-  const declaredLength = response.headers.get('content-length');
-  if (declaredLength !== null && Number(declaredLength) > FEED_MAX_BYTES) {
-    throw new Error(`feed document exceeds the ${FEED_MAX_BYTES}-byte cap`);
-  }
-  const text = await response.text();
-  if (Buffer.byteLength(text, 'utf8') > FEED_MAX_BYTES) {
-    throw new Error(`feed document exceeds the ${FEED_MAX_BYTES}-byte cap`);
-  }
-  return text;
+  const bytes = await readBodyCapped(response, FEED_MAX_BYTES);
+  return Buffer.from(bytes).toString('utf8');
 }
 
 const FEED_SCHEMA_RELATIVE_PATH = 'contracts/pack-feed.schema.json';
@@ -578,7 +598,7 @@ export async function downloadArtifactBytes(url: string, expectedBytes: number):
   if (!isHttpsUrl(response.url)) {
     throw new Error('artifact download redirected away from https');
   }
-  const bytes = new Uint8Array(await response.arrayBuffer());
+  const bytes = await readBodyCapped(response, expectedBytes);
   if (bytes.byteLength !== expectedBytes) {
     throw new Error(`artifact size mismatch: received ${bytes.byteLength} bytes, feed declares ${expectedBytes}`);
   }

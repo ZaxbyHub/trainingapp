@@ -41,7 +41,7 @@ import { formatFailure, runStartupIntegrityCheck } from './integrity-check.js';
 import { migrateLegacyStoreLayout, resolveProfileLayout } from './backend/store/profiles.js';
 import {
   applyPackUpdate,
-  checkAppUpdate,
+  checkAppUpdateVerified,
   downloadArtifactBytes,
   fetchFeedText,
   loadUpdatesState,
@@ -452,7 +452,7 @@ export function bootstrap(): void {
         error: outcome.error ?? null,
         appUpdate:
           outcome.feed !== undefined && outcome.error === undefined
-            ? checkAppUpdate(outcome.feed, app.getVersion())
+            ? checkAppUpdateVerified(outcome.feed, app.getVersion(), [UPDATE_FEED_PUBLIC_KEY])
             : null,
         lastApply: updatesStatus.lastApply,
       };

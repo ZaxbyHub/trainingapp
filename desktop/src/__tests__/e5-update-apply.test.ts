@@ -9,8 +9,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHash, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 import {
   applyPackUpdate,
+  checkAppUpdateVerified,
+  runUpdateCheck,
   UPDATE_FEED_PUBLIC_KEY,
   type FeedVersionEntry,
+  type PackFeedDocument,
   type PackUpdateCandidate,
   type TrustedKey,
 } from '../../main/update-checker.js';
@@ -125,5 +128,92 @@ describe('e5 apply composition + baked key guardrail (issue #88)', () => {
     expect(result.applied).toBe(false);
     expect(result.reason).toMatch(/refused|size|digest/i);
     expect(installPack).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// Review round 1 (finding 4): the runUpdateCheck REFUSAL branch, and the
+// verified app-update diff (finding 1). Supplements the frozen floor.
+// ============================================================================
+
+function signedFeedDocument(
+  privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'],
+  keyId: string,
+): PackFeedDocument {
+  const artifact = new Uint8Array(Buffer.from('refusal-branch artifact', 'utf8'));
+  const digest = sha256Hex(artifact);
+  return {
+    schema_version: 1,
+    packs: [
+      {
+        pack_id: 'bundled-min',
+        versions: [
+          {
+            version: '2.0.0',
+            published_at: '2026-09-27T00:00:00Z',
+            sha256: digest,
+            size_bytes: artifact.byteLength,
+            download_url: 'https://example.invalid/bundled-min-2.0.0.zip',
+            signature: {
+              algorithm: 'ed25519',
+              key_id: keyId,
+              value: sign(null, Buffer.from(digest, 'utf8'), privateKey).toString('base64'),
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+describe('e5 runUpdateCheck refusal branch + verified app diff (issue #88)', () => {
+  it('routes an untrusted winning entry to refused, never to candidates', async () => {
+    const untrusted = makeTrusted();
+    const feed = signedFeedDocument(untrusted.privateKey, untrusted.keys[0]?.key_id ?? 'untrusted');
+    const fetchFeed = vi.fn(async () => JSON.stringify(feed));
+    const outcome = await runUpdateCheck(
+      { optIn: true, feedUrl: 'https://example.invalid/feed.json' },
+      [{ packId: 'bundled-min', version: '1.0.0' }],
+      { fetchFeed },
+      makeTrusted().keys, // a DIFFERENT keypair: the signature must not verify
+    );
+    expect(outcome.skipped).toBe(false);
+    if (outcome.skipped) throw new Error('expected a live check');
+    expect(outcome.candidates).toHaveLength(0);
+    expect(outcome.refused).toHaveLength(1);
+    expect(outcome.refused[0]?.packId).toBe('bundled-min');
+    expect(outcome.refused[0]?.version).toBe('2.0.0');
+    expect(outcome.refused[0]?.reason.length).toBeGreaterThan(0);
+  });
+
+  it('checkAppUpdateVerified: signs the notice only with a trusted signature; untrusted yields null', () => {
+    const trusted = makeTrusted();
+    const artifact = new Uint8Array(Buffer.from('app installer bytes', 'utf8'));
+    const digest = sha256Hex(artifact);
+    const appEntry = {
+      version: '3.1.0',
+      published_at: '2026-09-27T00:00:00Z',
+      sha256: digest,
+      size_bytes: artifact.byteLength,
+      download_url: 'https://example.invalid/Setup-3.1.0.exe',
+      signature: {
+        algorithm: 'ed25519',
+        key_id: trusted.keys[0]?.key_id ?? 'trusted',
+        value: sign(null, Buffer.from(digest, 'utf8'), trusted.privateKey).toString('base64'),
+      },
+    };
+    const feed: PackFeedDocument = { schema_version: 1, packs: [], app: { versions: [appEntry] } };
+
+    const verified = checkAppUpdateVerified(feed, '3.0.0', trusted.keys);
+    expect(verified?.availableVersion).toBe('3.1.0');
+    expect(verified?.downloadUrl).toBe('https://example.invalid/Setup-3.1.0.exe');
+
+    // Untrusted key: NO notice at all (an unverifiable link is never shown).
+    const stranger = makeTrusted();
+    expect(checkAppUpdateVerified(feed, '3.0.0', stranger.keys)).toBeNull();
+    // Older-or-equal versions: null.
+    expect(checkAppUpdateVerified(feed, '3.1.0', trusted.keys)).toBeNull();
+    // No app section: null.
+    expect(checkAppUpdateVerified({ schema_version: 1, packs: [] }, '3.0.0', trusted.keys)).toBeNull();
   });
 });

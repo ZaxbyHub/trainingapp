@@ -204,8 +204,8 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
       if (bridge === undefined) return;
       setApplying(packId);
       try {
-        const result = await bridge.applyPackUpdate(packId);
-        if (!result.ok && result.detail) {
+        const result = await bridge.applyPackUpdate?.(packId);
+        if (result !== undefined && !result.ok && result.detail) {
           showToast(`Update failed: ${result.detail}`, 'error');
         }
         await refresh();

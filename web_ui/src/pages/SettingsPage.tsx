@@ -126,7 +126,7 @@ function UpdatesSection(): React.ReactElement {
     setBusy(true);
     setError(null);
     try {
-      const result = await window.desktopApi?.setUpdateOptIn(!status.optIn);
+      const result = await window.desktopApi?.setUpdateOptIn?.(!status.optIn);
       if (result !== undefined && !result.ok && result.detail) setError(result.detail);
       if (result?.status !== undefined) setStatus(result.status);
     } catch (err: unknown) {
@@ -140,7 +140,7 @@ function UpdatesSection(): React.ReactElement {
     setBusy(true);
     setError(null);
     try {
-      const result = await window.desktopApi?.checkForUpdates();
+      const result = await window.desktopApi?.checkForUpdates?.();
       if (result !== undefined && !result.ok && result.detail) setError(result.detail);
       if (result?.status !== undefined) setStatus(result.status);
     } catch (err: unknown) {
