@@ -6,18 +6,78 @@ on:
   pull_request:
     branches: [ main, master ]
 
-# Cancel superseded PR runs (force-push iterations replace stale 2.4h runs);
+# Cancel superseded PR runs (force-push iterations replace stale runs);
 # never cancel mainline pushes so master signal is always preserved.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Issue #87 (E4): the trigger stays UNFILTERED (a workflow-level paths filter
+# on jobs that could be required leaves their checks Pending forever);
+# scoping lives at job level via the `changes` job + scripts/ci_paths.py,
+# which is fail-open for unknown paths and for a broken changes job itself.
 jobs:
+  changes:
+    name: "path-scope classification (issue #87)"
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.buckets.outputs.python }}
+      webui: ${{ steps.buckets.outputs.webui }}
+      conformance: ${{ steps.buckets.outputs.conformance }}
+      pack: ${{ steps.buckets.outputs.pack }}
+      eval: ${{ steps.buckets.outputs.eval }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute diff buckets (fail-open)
+        id: buckets
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set +e
+          files=""
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags origin "$GITHUB_BASE_REF"
+            files="$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD")"
+          else
+            before="$BEFORE"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              files="$(git diff --name-only "$before" "$GITHUB_SHA")"
+            fi
+          fi
+          status=$?
+          # Fail-open: an unusable diff base (newborn branch, force-push,
+          # first commit, empty merge) runs every bucket.
+          if [ "$status" -ne 0 ] || [ -z "$(printf '%s' "$files" | tr -d '[:space:]')" ]; then
+            echo "diff unavailable or empty — failing open (all buckets true)"
+            for b in python webui conformance pack eval; do echo "$b=true" >> "$GITHUB_OUTPUT"; done
+            exit 0
+          fi
+          for b in python webui conformance pack eval; do
+            verdict="$(printf '%s\n' "$files" | python scripts/ci_paths.py --bucket "$b" --stdin)"; rc=$?
+            if [ "$rc" -eq 0 ] && [ "$verdict" = "false" ]; then
+              echo "$b=false" >> "$GITHUB_OUTPUT"
+            else
+              # A failing classifier (rc != 0 or no verdict) fails OPEN: a
+              # broken ci_paths.py must run CI, never silently skip it.
+              if [ "$rc" -ne 0 ] || [ -z "$verdict" ]; then
+                echo "ci_paths.py failed for bucket $b - failing open" >&2
+              fi
+              echo "$b=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          exit 0
+
   test:
+    needs: [changes]
+    if: always() && needs.changes.outputs.python != 'false'
     runs-on: windows-latest
     timeout-minutes: 180
     strategy:
-      # A failing leg must not cancel the others: in a ~2.5h suite, fail-fast
+      # A failing leg must not cancel the others: in a long suite, fail-fast
       # destroys two legs of diagnostics (and their --durations output) while
       # still billing the runner hours.
       fail-fast: false
@@ -30,15 +90,15 @@ jobs:
             with-cov: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~\AppData\Local\pip\Cache
           key: ${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
@@ -61,71 +121,91 @@ jobs:
 
       - name: Upload coverage
         if: matrix.with-cov == true
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@cb6530fbecd68d5f1ee7a3dcd113450ea8d5d6d4 # v5.1.2
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
 
-  conformance:
+  # Issue #87 (E4) perf-thresholds row: the two perf suites are
+  # evidence-conditional (issue #52 / a898258) — they assert against
+  # bench/RESULTS.md machine-tagged floors where the machine has a floors row
+  # and skip with a named per-artifact reason otherwise. -ra surfaces that
+  # pass/fail-vs-floor-or-skip-reason signal as an explicit check.
+  # Informational per the issue's required-vs-informational split: never
+  # blocks merge.
+  perf-thresholds:
+    name: perf-thresholds
+    needs: [changes]
+    if: always() && (needs.changes.outputs.python != 'false' || needs.changes.outputs.pack != 'false')
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~\AppData\Local\pip\Cache
-          key: ${{ runner.os }}-conformance-${{ hashFiles('**/requirements.txt') }}
+          key: ${{ runner.os }}-perf-thresholds-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-conformance-
+            ${{ runner.os }}-perf-thresholds-
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install httpx
+          pip install pytest pytest-asyncio pytest-timeout
 
-      - name: Check test collection completeness (issue #51 guardrail)
-        run: python scripts/check_test_collection.py
-
-      - name: Run API contract conformance suite
-        run: python contracts/tests/run_conformance.py --asgi api_server:app
+      # Step-level continue-on-error (matching eval-report): the job stays
+      # green in the checks UI when the informational signal fails.
+      - name: Run perf threshold suites (floors or stated skip reasons)
+        continue-on-error: true
+        run: python -m pytest tests/test_rag_performance.py tests/test_low_end_hardware.py tests/test_no_blanket_perf_skips.py tests/test_bench_floors.py -q -ra --timeout=600 --timeout-method=thread
 
   # Issue #54: informational tier-0 eval run against a deterministic no-weights
   # backend. NEVER gates merge (continue-on-error); the artifact records that
-  # the harness executes and the metrics populate on every PR.
+  # the harness executes and the metrics populate on retrieval-relevant PRs
+  # (issue #87: gated on the eval bucket).
   eval-report:
+    needs: [changes]
+    if: always() && needs.changes.outputs.eval != 'false'
     runs-on: windows-latest
     timeout-minutes: 20
     env:
       RUN_EVAL_INTEGRATION: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
 
       - name: Cache pip packages
-        uses: actions/cache@v4
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
         with:
           path: ~\AppData\Local\pip\Cache
           key: ${{ runner.os }}-eval-report-${{ hashFiles('**/requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-eval-report-
 
+      # pytest is installed here (issue #87 closeout): the pre-#87 job never
+      # installed it, so the integration-test step below silently errored
+      # "No module named pytest" behind its step-level continue-on-error.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install httpx
+          pip install httpx pytest pytest-asyncio pytest-timeout
 
+      # Informational per issue #87's split: step-level continue-on-error (as
+      # pre-#87) keeps the job green for the merge report even when the
+      # metrics or the integration leg fail.
       - name: Run tier-0 eval harness against the deterministic backend
         continue-on-error: true
         run: python eval/ci_serve.py --port 8091 --eval-report eval-report/REPORT.md --eval-json eval-report/report.json
@@ -136,8 +216,12 @@ jobs:
 
       - name: Upload eval report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: eval-report
           path: eval-report/
           if-no-files-found: warn
+
+  # The Python conformance suite moved to .github/workflows/conformance.yml
+  # (issue #87): path-scoped via the conformance bucket and required for
+  # merge, independent of the 3-leg matrix.

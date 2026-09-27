@@ -258,9 +258,10 @@ same shared TextChunker), pack id from `--id` or a slug of the folder name.
   generic chunker/embedder/index-writer/zip plumbing),
   `build/zip.ts` (the deterministic zip writer extracted from compose.ts so
   both build verbs emit identical conventions).
-- **CI**: the `packtool-fixture-pack` job in `desktop-build.yml` builds and
-  verifies the committed fixture pack and uploads the artifact on every PR
-  touching `packtool/`. Build-time notes: `RESULTS.md`.
+- **CI**: the `pack-fixture-build` job in `.github/workflows/conformance.yml`
+  builds and verifies the committed fixture packs (docs + storyline) and
+  uploads the artifacts on every PR touching `packtool/`, the pack schema, or
+  the storyline fixture. Build-time notes: `RESULTS.md`.
 
 ## `packtool diff` (issue #73)
 

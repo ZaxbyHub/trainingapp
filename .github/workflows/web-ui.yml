@@ -1,23 +1,91 @@
 name: Web UI (build, weights, packaging)
 
 # Gates issue #20 acceptance criteria for web_ui/: typecheck, build, test, and
-# packaging validation on every push/PR. The Python desktop suite is covered by
-# test.yml; this workflow owns the JS/TS side that previously had NO CI.
+# packaging validation. The Python desktop suite is covered by test.yml; this
+# workflow owns the JS/TS side.
+#
+# Issue #87 (E4): the trigger stays UNFILTERED (required checks cannot live
+# behind a workflow-level paths filter — they would sit Pending forever on
+# filtered PRs); scoping is at job level via the `changes` job +
+# scripts/ci_paths.py (webui bucket = web_ui/** + contracts/** + this file),
+# fail-open for a broken changes job.
 on:
   push:
     branches: [main, master]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    name: "path-scope classification (issue #87)"
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.buckets.outputs.python }}
+      webui: ${{ steps.buckets.outputs.webui }}
+      conformance: ${{ steps.buckets.outputs.conformance }}
+      pack: ${{ steps.buckets.outputs.pack }}
+      eval: ${{ steps.buckets.outputs.eval }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Compute diff buckets (fail-open)
+        id: buckets
+        shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set +e
+          files=""
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags origin "$GITHUB_BASE_REF"
+            files="$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD")"
+          else
+            before="$BEFORE"
+            if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
+              files="$(git diff --name-only "$before" "$GITHUB_SHA")"
+            fi
+          fi
+          status=$?
+          # Fail-open: an unusable diff base (newborn branch, force-push,
+          # first commit, empty merge) runs every bucket.
+          if [ "$status" -ne 0 ] || [ -z "$(printf '%s' "$files" | tr -d '[:space:]')" ]; then
+            echo "diff unavailable or empty — failing open (all buckets true)"
+            for b in python webui conformance pack eval; do echo "$b=true" >> "$GITHUB_OUTPUT"; done
+            exit 0
+          fi
+          for b in python webui conformance pack eval; do
+            verdict="$(printf '%s\n' "$files" | python scripts/ci_paths.py --bucket "$b" --stdin)"; rc=$?
+            if [ "$rc" -eq 0 ] && [ "$verdict" = "false" ]; then
+              echo "$b=false" >> "$GITHUB_OUTPUT"
+            else
+              # A failing classifier (rc != 0 or no verdict) fails OPEN: a
+              # broken ci_paths.py must run CI, never silently skip it.
+              if [ "$rc" -ne 0 ] || [ -z "$verdict" ]; then
+                echo "ci_paths.py failed for bucket $b - failing open" >&2
+              fi
+              echo "$b=true" >> "$GITHUB_OUTPUT"
+            fi
+          done
+          exit 0
+
   web-ui:
-    name: typecheck + build + test + packaging
+    # Check-run name carries the web-ui identity: this job's name is a
+    # required-check context (issue #87).
+    name: web-ui (typecheck + build + test + packaging)
+    needs: [changes]
+    if: always() && needs.changes.outputs.webui != 'false'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: web_ui
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           # Issue #37 R9: the embedder swapped to snowflake-arctic-embed-m-v1.5
           # (operator-acquired q8 ONNX, not in the repo). The old bge-small
@@ -27,7 +95,7 @@ jobs:
           lfs: true
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 'lts/*'
           cache: 'npm'
@@ -79,8 +147,8 @@ jobs:
         run: npm run build
 
       # Packaging validation with --no-llm --no-reranker --no-embedder: the
-      # browser-LLM runtime + Gemma weights, the cross-encoder q8 ONNX, AND the
-      # arctic embedding q8 ONNX are all operator-acquired (not in this repo),
+      # browser-LLM runtime + Gemma weights, the cross-encoder q8 ONNX, AND
+      # the arctic embedding q8 ONNX are all operator-acquired (not in this repo),
       # so CI enforces the ORT + wllama-WASM core only. Full validation
       # requires staged weights (see PACKAGING.md).
       - name: Validate build (--no-llm --no-reranker --no-embedder)
@@ -121,18 +189,20 @@ jobs:
   # prepare-models: CI never stages the operator-acquired weights (see the
   # main job above), and the gate path never loads model code.
   web-ui-e2e:
-    name: browser-mode pack gate e2e (Playwright)
+    name: web-ui e2e (browser-mode pack gate, Playwright)
+    needs: [changes]
+    if: always() && needs.changes.outputs.webui != 'false'
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: web_ui
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           lfs: true
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 'lts/*'
           cache: 'npm'
@@ -157,7 +227,7 @@ jobs:
       # ever written.
       - name: Upload Playwright traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: web-ui-e2e-traces
           path: web_ui/test-results/
