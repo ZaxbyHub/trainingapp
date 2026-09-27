@@ -189,7 +189,11 @@ function UpdatesSection(): React.ReactElement {
           <a href={status.appUpdate.downloadUrl} target="_blank" rel="noreferrer">
             Download the installer
           </a>{' '}
-          and run it to update; your data is kept.
+          and run it to update; your data is kept. Expected sha256:{' '}
+          <code style={{ wordBreak: 'break-all' }} data-testid="updates-app-sha256">
+            {status.appUpdate.sha256}
+          </code>{' '}
+          (verify the downloaded file against it before running, per docs/updates.md).
         </p>
       )}
       {status !== null && status.optIn && status.refused.length > 0 && (

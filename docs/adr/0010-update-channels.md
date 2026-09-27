@@ -115,6 +115,13 @@ document and the baked-key trust anchor would carry over.
   (validly-signed) feed remains verifiable until superseded; HTTPS + operator-controlled feed
   URLs are the mitigations. A schema `expires_at` field is the sanctioned follow-up if this ever
   matters in practice.
+- Unsigned-metadata residual (explicit, review round 2): the signature covers exactly the
+  artifact sha256 (the issue's scheme), so feed metadata around it — `download_url`,
+  `size_bytes` — is NOT signed. A feed tamperer without the key can repoint a download or
+  inflate the declared size. Mitigations: https-only transport, the sha256 gate as the final
+  arbiter (a repointed download fails it), and the absolute `MAX_ARTIFACT_BYTES` (8 GiB) clamp +
+  schema `maximum` on `size_bytes` so no entry can drive an unbounded read. Signing the whole
+  canonical entry (C8's manifest pattern) is the named stronger follow-up.
 - The desktop update checker is the app's first public-internet outbound call; its hardening set
   (https-only, credentials omitted, explicit timeouts, size caps, no identifying payload) is
   pinned in `desktop/main/update-checker.ts` and reviewed in `docs/security/desktop.md`'s

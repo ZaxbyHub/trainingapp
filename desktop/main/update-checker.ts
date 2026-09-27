@@ -578,6 +578,13 @@ export interface ApplyUpdateResult {
 
 const ARTIFACT_TIMEOUT_MS = 120_000;
 
+/** Absolute ceiling on any single artifact download (review round 2, N2):
+ * `size_bytes` is feed metadata OUTSIDE the signature (only the digest is
+ * signed per the issue's scheme), so the per-entry expected size alone must
+ * not bound the read. An entry declaring more than this is refused without
+ * buffering past the ceiling; the sha256 gate stays the final arbiter. */
+export const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024 * 1024; // 8 GiB
+
 /** Hardened production artifact download (plan D8): https-only, credentials
  * omitted, explicit timeout, and the response is refused when its byte
  * length differs from the feed-declared size (the sha256 gate stays the
@@ -598,7 +605,7 @@ export async function downloadArtifactBytes(url: string, expectedBytes: number):
   if (!isHttpsUrl(response.url)) {
     throw new Error('artifact download redirected away from https');
   }
-  const bytes = await readBodyCapped(response, expectedBytes);
+  const bytes = await readBodyCapped(response, Math.min(expectedBytes, MAX_ARTIFACT_BYTES));
   if (bytes.byteLength !== expectedBytes) {
     throw new Error(`artifact size mismatch: received ${bytes.byteLength} bytes, feed declares ${expectedBytes}`);
   }
