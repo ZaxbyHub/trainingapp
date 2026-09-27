@@ -79,11 +79,19 @@ PYTHON_TRUE = [
     # unknown files fail open, alone or mixed with safe-false files (M1)
     "newpkg/mod.py",
     "brand-new-tree/anything.txt",
+    # PRR-001: storyline fixture inputs the required pack-fixture-build job
+    # assembles its publish dir from (also python-positive via tests/**)
+    "tests/fixtures/storyline-mini/meta.xml",
+    "tests/fixtures/storyline-mini-story-html-stub.html",
 ]
 
 PYTHON_FALSE = [
     "web_ui/src/lib/x.ts",
     "web_ui/package.json",
+    # PRR-013: case-insensitive matching — a case-variant of a safe-false
+    # tree must stay python-false
+    "Web_UI/src/lib/x.ts",
+    "DOCS/foo.md",
     # desktop files verified UNREAD by any pytest (impl-review round-1 audit:
     # only main/index.ts + electron-builder.yml are _load()ed, both positive)
     "desktop/preload/index.ts",
@@ -176,6 +184,18 @@ def test_python_empty_diff_fails_open():
         ("pack", ["contracts/fixtures/source-docs/a.md"], True),
         ("pack", ["web_ui/src/lib/x.ts"], False),
         ("pack", ["tests/test_a.py"], False),
+        # PRR-001: the pack job's storyline fixture inputs must trigger it
+        ("pack", ["tests/fixtures/storyline-mini/meta.xml"], True),
+        ("pack", ["tests/fixtures/storyline-mini-story-html-stub.html"], True),
+        # PRR-007: scoped buckets do NOT fail open on unknown paths —
+        # unknown -> false is the pinned contract for webui/pack/eval
+        ("webui", ["newpkg/mod.py"], False),
+        ("pack", ["newpkg/mod.py"], False),
+        ("eval", ["newpkg/mod.py"], False),
+        # PRR-013: case variants must classify identically to their
+        # lowercase forms (matching is case-insensitive)
+        ("webui", ["Web_UI/src/lib/x.ts"], True),
+        ("eval", ["EVAL/runner.py"], True),
         ("eval", ["eval/runner.py", "rag_engine.py"], True),
         ("eval", ["web_ui/src/lib/x.ts"], False),
     ],
@@ -201,6 +221,33 @@ def test_cli_contract():
     )
     assert result.returncode == 0
     assert result.stdout.strip().splitlines()[-1] == "true"
+
+
+def test_cli_stdin_contract():
+    """The workflows invoke the classifier EXCLUSIVELY via --stdin (PRR-003):
+    the stdin input mode is the production path and must stay covered."""
+    for bucket, payload, expected in [
+        ("python", "api_server.py\ntests/test_a.py\n", "true"),
+        ("pack", "web_ui/src/lib/x.ts\n", "false"),
+        ("pack", "tests/fixtures/storyline-mini/meta.xml\n", "true"),
+    ]:
+        result = subprocess.run(
+            [sys.executable, str(CI_PATHS), "--bucket", bucket, "--stdin"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+        )
+        assert result.returncode == 0, (bucket, payload, result.stderr)
+        assert result.stdout.strip().splitlines()[-1] == expected, (bucket, payload)
+
+
+def test_case_insensitive_matching():
+    """PRR-013: a case-only rename away from canonical casing must keep the
+    scoped-bucket signal (webui true) and keep safe-false trees python-false."""
+    assert _decide("webui", ["Web_UI/src/lib/x.ts"]) is True
+    assert _decide("python", ["Web_UI/src/lib/x.ts"]) is False
+    assert _decide("python", ["install.md"]) is True
 
 
 def test_cli_rejects_unknown_bucket():

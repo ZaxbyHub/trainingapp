@@ -34,6 +34,8 @@ jobs:
       - name: Compute diff buckets (fail-open)
         id: buckets
         shell: bash
+        env:
+          BEFORE: ${{ github.event.before }}
         run: |
           set +e
           files=""
@@ -41,7 +43,7 @@ jobs:
             git fetch --no-tags origin "$GITHUB_BASE_REF"
             files="$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD")"
           else
-            before="${{ github.event.before }}"
+            before="$BEFORE"
             if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
               files="$(git diff --name-only "$before" "$GITHUB_SHA")"
             fi

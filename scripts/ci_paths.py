@@ -34,7 +34,13 @@ BUCKETS = ("python", "webui", "conformance", "pack", "eval")
 
 
 def _translate(pattern: str) -> re.Pattern[str]:
-    """Compile a path glob: `**` spans directories, `*` stays within one."""
+    """Compile a lowercase path glob: `**` spans dirs, `*` stays in one.
+
+    Patterns are lowercased here so matching is case-insensitive end to end
+    (paths are lowercased in _normalize; the only mixed-case constant,
+    INSTALL.md, normalizes to install.md).
+    """
+    pattern = pattern.lower()
     escaped = re.escape(pattern)
     # re.escape leaves '*' as '\*'; replace the double-star first so the
     # single-star rule cannot consume half of it.
@@ -104,16 +110,17 @@ PYTHON_SAFE_FALSE = [
 ]
 
 # Exact-path exceptions inside the safe-false trees (positive wins).
+# Keys are lowercase — paths are lowercased in _normalize before lookup.
 _PYTHON_EXCEPTIONS = {
-    "desktop/e2e/fixtures/storyline-nav/FIXTURE_CONTRACT.md",
+    "desktop/e2e/fixtures/storyline-nav/fixture_contract.md",
     "packtool/storyline/transcribe.py",
-    "INSTALL.md",
+    "install.md",
     ".github/workflows/test.yml",
     ".github/workflows/web-ui.yml",
     ".github/workflows/conformance.yml",
     # the required-checks table the provenance guardrail reads
     # (implementation-review round 1 F3)
-    ".github/workflows/README.md",
+    ".github/workflows/readme.md",
 }
 
 # --- scoped buckets: plain any-match -----------------------------------------
@@ -136,6 +143,11 @@ _PACK = [
     "contracts/pack.schema.json",
     "contracts/fixtures/**",
     "contracts/validate_pack.py",
+    # inputs the pack-fixture-build job assembles its storyline publish dir
+    # from (PRR-001: a fixture-only diff must run the required job that
+    # builds+verifies it)
+    "tests/fixtures/storyline-mini/**",
+    "tests/fixtures/storyline-mini-story-html-stub.html",
     ".github/workflows/conformance.yml",
 ]
 
@@ -158,7 +170,10 @@ _EVAL_RE = [_translate(p) for p in _EVAL]
 
 
 def _normalize(path: str) -> str:
-    path = path.strip().replace("\\", "/")
+    # Matching is case-insensitive: every pattern below is lowercase, and a
+    # case-only rename away from canonical casing (e.g. web_ui -> Web_UI)
+    # must not silently drop the scoped-bucket signal (PRR-013).
+    path = path.strip().replace("\\", "/").lower()
     if path.startswith("./"):
         path = path[2:]
     return path

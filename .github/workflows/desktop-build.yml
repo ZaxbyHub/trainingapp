@@ -233,6 +233,7 @@ jobs:
 
   # The packtool fixture-pack job (build-docs + verify, issue #73) moved to
   # .github/workflows/conformance.yml as pack-fixture-build and gained the
-  # build-storyline leg (issue #87): it now runs path-scoped via the `pack`
-  # bucket without dragging this 30-minute Windows workflow along on
-  # packtool/schema-only diffs.
+  # build-storyline leg (issue #87): the fixture-pack signal now runs
+  # path-scoped via the `pack` bucket instead of living inside this
+  # 30-minute Windows job. This workflow's own `paths:` filter is unchanged
+  # and still includes `packtool/**`, so packtool-only diffs still run it.
