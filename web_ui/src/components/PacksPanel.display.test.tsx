@@ -16,6 +16,8 @@ import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/re
 import { PacksPanel } from './PacksPanel';
 import { ToastProvider } from './ToastProvider';
 import type { ApiClient, PackInfo } from '../lib/api';
+import type { DesktopApiBridge, UpdateStatus } from '../types/desktop';
+import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../test/desktop-bridge-stub';
 
 const PACKS: PackInfo[] = [
   {
@@ -121,5 +123,77 @@ describe('PacksPanel display contract (issue #74)', () => {
 
     await screen.findByText('install refused: downgrade');
     expect(screen.queryByTestId('pack-row-user-sample-1.0.0')).toBeNull();
+  });
+});
+
+// ============================================================================
+// E5 (issue #88): update-available badge + apply action over the desktopApi
+// bridge. Lives outside the frozen acceptance files.
+// ============================================================================
+
+const UPDATE_STATUS: UpdateStatus = {
+  optIn: true,
+  feedUrl: 'https://example.invalid/feed.json',
+  checkedAt: '2026-09-27T00:00:00Z',
+  candidates: [
+    {
+      packId: 'bundled-min',
+      currentVersion: '1.0.0',
+      availableVersion: '2.0.0',
+      publishedAt: '2026-09-27T00:00:00Z',
+      downloadUrl: 'https://example.invalid/bundled-min-2.0.0.zip',
+      sha256: 'a'.repeat(64),
+      sizeBytes: 424242,
+    },
+  ],
+  refused: [],
+  error: null,
+  appUpdate: null,
+  lastApply: null,
+  // appliedAt omitted here would break the type; keep null lastApply valid
+};
+
+function stubBridge(overrides: Partial<DesktopApiBridge> = {}): void {
+  installDesktopBridgeStub({
+    getUpdateStatus: vi.fn(async () => UPDATE_STATUS),
+    applyPackUpdate: vi.fn(async () => ({ ok: true })),
+    ...overrides,
+  });
+}
+
+function clearBridge(): void {
+  removeDesktopBridgeStub();
+  vi.unstubAllGlobals();
+}
+
+describe('PacksPanel E5 update surfacing (issue #88)', () => {
+  afterEach(() => {
+    cleanup();
+    clearBridge();
+  });
+
+  it('shows the update badge and applies through the bridge', async () => {
+    const applyPackUpdate = vi.fn(async () => ({ ok: true }));
+    stubBridge({ applyPackUpdate });
+    renderPanel({ listPacks: vi.fn(async () => PACKS) });
+
+    const badge = await screen.findByTestId('pack-update-bundled-min-1.0.0');
+    expect(badge).toHaveTextContent('Update available: v2.0.0');
+    fireEvent.click(screen.getByTestId('pack-apply-bundled-min-1.0.0'));
+    await waitFor(() => expect(applyPackUpdate).toHaveBeenCalledWith('bundled-min'));
+
+    // Superseded rows never show an update badge (updates target the active
+    // version; rollback owns the superseded rows).
+    expect(screen.queryByTestId('pack-update-legacy-pack-0.9.0')).toBeNull();
+  });
+
+  it('shows no badge when the checker reports no candidates', async () => {
+    stubBridge({
+      getUpdateStatus: vi.fn(async () => ({ ...UPDATE_STATUS, candidates: [] })),
+    });
+    renderPanel({ listPacks: vi.fn(async () => PACKS) });
+    await screen.findByTestId('pack-row-bundled-min-1.0.0');
+    expect(screen.queryByTestId('pack-update-bundled-min-1.0.0')).toBeNull();
+    expect(screen.queryByTestId('pack-apply-bundled-min-1.0.0')).toBeNull();
   });
 });

@@ -198,3 +198,13 @@ the contract above as follows:
 - The manual verification transcript for this issue was produced against a
   local launch of the real guard (see the PR body); the packaged-app run on
   the reference laptop is an E3 (#86) validation-matrix item.
+
+- The update channel (E5, issue #88, ADR-0010) introduced the app's FIRST public-internet
+  outbound calls: the opt-in feed fetch and pack-artifact download in
+  `desktop/main/update-checker.ts`. Constraints pinned there and reviewed: https-only enforced
+  per redirect hop (a hop to plain http or a non-https target is refused before it is
+  requested), `credentials: 'omit'`, explicit per-call timeouts, a 5 MiB feed cap, a 50 MiB
+  pack-artifact clamp, GET-only with no identifying payload, and the loopback launch token is
+  never attached to any outbound request. The renderer cannot reach these paths directly —
+  window-open and navigation stay deny-all; the only egress affordance is the allowlisted
+  `desktop:updates:open-external` IPC handler (GitHub Releases https hosts only).

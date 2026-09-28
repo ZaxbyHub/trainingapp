@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+### Added — E5: signed application and knowledge-pack update channels with rollback (issue #88)
+
+- New opt-in update channel (ADR-0010): `desktop/main/update-checker.ts` fetches a signed feed
+  (default `https://github.com/ZaxbyHub/trainingapp/releases/latest/download/pack-feed.json`,
+  overridable per profile), validates it against the new `contracts/pack-feed.schema.json`, and
+  refuses any entry whose Ed25519 signature over the artifact sha256 does not verify against the
+  build-time-baked public key — no unsigned fallback on the feed path.
+- Offline-first preserved: checks are disabled by default (`updates.json` sidecar, fail-closed on
+  corruption); a fresh install makes zero update-related network calls until the Settings →
+  Updates toggle is switched on.
+- Pack updates surface as a badge + Update action on the Knowledge Packs panel and apply through
+  the existing loopback C8 install pipeline, so supersede/rollback (inactive-but-retained)
+  semantics apply unchanged; a refused update leaves the prior version active and rollback
+  reactivates retained versions without re-fetching.
+- App-binary updates are detect + notify (Settings → Updates, download link + digest); the
+  operator runs the installer. Authenticode stays deferred with a named risk acceptance and owner
+  (ADR-0010 §5); app-binary rollback is the prior-installer runbook (`docs/updates.md`).
+- Docs: ADR-0010 (decision table, key ceremony/custody, rotation), `docs/updates.md`
+  (publish-a-feed signing runbook + rollback), `docs/security/packs.md` known-limits update.
+
 ### Fixed — operator feedback rounds 4-9 on #133 (chat load gating, model residency, bundled Articulate course and its upgrade path)
 
 - Chat is disabled ONLY while the model is actually loading: the engine exposes a resident load state (idle/loading/ready + start time) on `/status/models`, warms the model at app start (single-flight with the first query), and ChatPage gates input on that real state with a reason+ETA banner — the previous >8s elapsed-time heuristic (which misfired on any slow query) is removed. A transient `/status/models` poll failure no longer fails the gate open (it keeps the last-known state; the 2s poll corrects). The banner's elapsed counter sits OUTSIDE the live region so screen readers get one announcement, not one per second.

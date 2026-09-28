@@ -40,4 +40,22 @@ contextBridge.exposeInMainWorld('desktopApi', {
       ipcRenderer.removeListener('first-run:required', listener);
     };
   },
+  // E5 (issue #88): signed update channels. Default-OFF in the main process;
+  // these bridges only exist so the renderer can read status, flip the
+  // opt-in, request a check, apply a verified pack update, and subscribe to
+  // the updates:available push. The checker never executes an installer.
+  getUpdateStatus: () => ipcRenderer.invoke('desktop:updates:status'),
+  setUpdateOptIn: (enabled: boolean) => ipcRenderer.invoke('desktop:updates:set-opt-in', enabled),
+  checkForUpdates: () => ipcRenderer.invoke('desktop:updates:check-now'),
+  applyPackUpdate: (packId: string) => ipcRenderer.invoke('desktop:updates:apply', packId),
+  // F-008/PRR-008: the shell deny-alls window-open and navigation, so the app
+  // update notice reaches the OS browser ONLY through this allowlisted handler.
+  openUpdateExternal: (url: string) => ipcRenderer.invoke('desktop:updates:open-external', url),
+  onUpdateAvailable: (callback: (status: unknown) => void) => {
+    const listener = (_event: unknown, status: unknown): void => callback(status);
+    ipcRenderer.on('updates:available', listener);
+    return () => {
+      ipcRenderer.removeListener('updates:available', listener);
+    };
+  },
 });

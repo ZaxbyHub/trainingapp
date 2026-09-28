@@ -342,7 +342,7 @@ function stageDocs() {
  *  Byte-copies, so a stale copy can never drift from the repo contract
  *  files at build time. Exported for the committed spec
  *  (e133-stager-contracts.test.ts). */
-export const STAGED_CONTRACTS = ['contracts/store.schema.sql', 'contracts/pack.schema.json'];
+export const STAGED_CONTRACTS = ['contracts/store.schema.sql', 'contracts/pack.schema.json', 'contracts/pack-feed.schema.json'];
 
 export function stageContracts(targetDesktopDir = desktopDir) {
   for (const rel of STAGED_CONTRACTS) {

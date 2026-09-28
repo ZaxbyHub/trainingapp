@@ -232,7 +232,11 @@ More known limits:
   (above 4 GiB or with more than 65535 entries) are refused with an
   explicit error rather than misparsed. Unreachable for legitimate packs
   under the 2 GiB default `maxUncompressedBytes`.
-- Signature verification is off by default (`requireSignature` false):
-  it becomes meaningful only once E5 (#88) ships trusted-key
-  distribution. Until then an operator opting in must provision
-  `trustedKeys` by hand.
+- Local-install signature verification remains opt-in
+  (`requireSignature` false): an operator who wants it provisions
+  `trustedKeys` by hand. The REMOTE update-feed path (E5, #88) is
+  different: it is mandatory-verify — `desktop/main/update-checker.ts`
+  refuses any feed entry whose Ed25519 signature (over the artifact
+  sha256, against the build-time-baked public key) does not verify, and
+  the feed format itself rejects unsigned entries. See ADR-0010 and
+  `docs/updates.md`.

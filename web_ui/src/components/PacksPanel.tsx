@@ -6,6 +6,13 @@
  * an explicit two-step confirmation, DocumentList precedent) and rollback on
  * superseded versions.
  *
+ * E5 (issue #88): rows with a signed feed update available carry an
+ * "Update available" badge plus an Update action that download-verify-installs
+ * through the desktop bridge (opt-in gated in the main process; zero network
+ * until the user enabled updates in Settings). Update data arrives over the
+ * desktopApi bridge — pull on mount + updates:available push subscription
+ * (ADR-0010's boot-race answer) — never through the frozen OpenAPI contract.
+ *
  * Frozen UI seams (mirrored by desktop/e2e/c7-packs.spec.ts and
  * web_ui/src/pages/DocumentsPage.packs.test.tsx — keep all three in sync):
  *   heading accessible name  `Knowledge Packs`
@@ -17,9 +24,12 @@
  *   data-testid="pack-remove-<packId>-<version>"    aria-label `Remove <id> <ver>`
  *   data-testid="pack-remove-confirm" / "pack-remove-cancel"
  *   data-testid="pack-rollback-<packId>-<version>"  aria-label `Rollback <id> to <ver>`
+ *   data-testid="pack-update-<packId>-<version>"    E5 update-available badge
+ *   data-testid="pack-apply-<packId>-<version>"     E5 update apply action
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ApiClient, PackInfo } from '../lib/api';
+import type { UpdateStatus } from '../types/desktop';
 import { useToast } from './ToastProvider';
 
 interface PacksPanelProps {
@@ -57,7 +67,54 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
   const [installing, setInstalling] = useState(false);
   const [working, setWorking] = useState(false);
   const [confirmingRemove, setConfirmingRemove] = useState<RowKey | null>(null);
+  /** E5: packId -> available version, from the desktop bridge's update
+   * status (pull on mount + updates:available push; absent in browser
+   * mode where this panel is not mounted anyway). */
+  const [updateByPack, setUpdateByPack] = useState<Record<string, string>>({});
+  const [applying, setApplying] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // PRF-003: lastApply is sticky in main's status, so every push/pull would
+  // re-toast an old outcome. Consume by appliedAt — toast only the first
+  // delivery of each apply result.
+  const lastApplyToastRef = useRef<string | null>(null);
+
+  const ingestUpdateStatus = useCallback((status: UpdateStatus): void => {
+    const next: Record<string, string> = {};
+    for (const candidate of status.candidates) {
+      next[candidate.packId] = candidate.availableVersion;
+    }
+    setUpdateByPack(next);
+    const lastApply = status.lastApply;
+    if (lastApply !== null && lastApply.appliedAt !== lastApplyToastRef.current) {
+      lastApplyToastRef.current = lastApply.appliedAt;
+      if (lastApply.applied) {
+        showToast(
+          `Updated ${lastApply.packId} to v${lastApply.version ?? ''}`,
+          'success',
+        );
+      } else if (lastApply.reason) {
+        showToast(`Update refused: ${lastApply.reason}`, 'error');
+      }
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    const bridge = window.desktopApi;
+    if (bridge === undefined) return undefined;
+    // Optional calls: a bridge without the E5 methods (stubs, or a renderer
+    // against an older main) degrades to "no update surface", never a crash.
+    let unsubscribe: (() => void) | undefined;
+    void bridge
+      .getUpdateStatus?.()
+      ?.then((status) => ingestUpdateStatus(status))
+      .catch(() => {
+        /* bridge present but update IPC not ready (older main) — stays empty */
+      });
+    unsubscribe = bridge.onUpdateAvailable?.((status) => ingestUpdateStatus(status));
+    return () => {
+      unsubscribe?.();
+    };
+  }, [ingestUpdateStatus]);
 
   /** Focus restoration for the two-step remove flow (WCAG focus order):
    * after Confirm/Cancel collapses the dialog, keyboard focus returns to the
@@ -143,6 +200,31 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
       }
     },
     [apiClient, refresh, showToast],
+  );
+
+  /** E5: apply a signed feed update through the desktop bridge
+   * (download -> Ed25519+sha256 verify -> loopback C8 install). */
+  const handleApplyUpdate = useCallback(
+    async (packId: string) => {
+      const bridge = window.desktopApi;
+      if (bridge === undefined) return;
+      setApplying(packId);
+      try {
+        const result = await bridge.applyPackUpdate?.(packId);
+        // The outcome toast fires exactly once via ingestUpdateStatus (the
+        // handler pushes status with a fresh appliedAt); don't double-toast
+        // from the invoke return (PRF-003).
+        if (result?.status !== undefined) {
+          ingestUpdateStatus(result.status);
+        }
+        await refresh();
+      } catch (err: unknown) {
+        showToast(err instanceof Error ? err.message : 'Update failed', 'error');
+      } finally {
+        setApplying(null);
+      }
+    },
+    [ingestUpdateStatus, refresh],
   );
 
   // Active version of each pack first, then superseded versions; groups stay
@@ -249,6 +331,25 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
                 >
                   {pack.active ? 'active' : 'superseded'}
                 </span>
+                {pack.active && updateByPack[pack.packId] !== undefined && (
+                  <>
+                    <span
+                      data-testid={`pack-update-${rowId(pack)}`}
+                      style={{ color: 'var(--color-accent, #06c)', fontWeight: 600 }}
+                    >
+                      Update available: v{updateByPack[pack.packId]}
+                    </span>
+                    <button
+                      type="button"
+                      data-testid={`pack-apply-${rowId(pack)}`}
+                      aria-label={`Update ${pack.packId} to ${updateByPack[pack.packId]}`}
+                      disabled={working || applying !== null}
+                      onClick={() => void handleApplyUpdate(pack.packId)}
+                    >
+                      {applying === pack.packId ? 'Updating…' : 'Update'}
+                    </button>
+                  </>
+                )}
                 {!pack.active && (
                   <button
                     type="button"
