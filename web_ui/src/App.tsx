@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ThemeProvider } from './lib/theme';
 import { ToastProvider } from './components/ToastProvider';
 import { InferenceModeProvider, useInferenceMode } from './lib/inference/InferenceModeContext';
+import { seedInferenceModeForDesktop as seedInferenceModeForDesktopImpl } from './lib/inference/desktop-seed';
 import {
   DesktopSessionProvider,
   fetchModelStatus,
@@ -100,17 +101,15 @@ function LoadingOverlay({
  * this must run with the FRESH session values each launch (loadStoredState
  * would otherwise restore a stale serverUrl from the previous run).
  */
+/**
+ * B9 (issue #67): seed the inference-mode store BEFORE InferenceModeProvider
+ * mounts so a desktop launch boots in `api` mode pointed at the Electron
+ * backend. Extracted to lib/inference/desktop-seed (trace
+ * external-llm-provider-settings) for unit testing; a persisted 'provider'
+ * mode survives the re-seed.
+ */
 function seedInferenceModeForDesktop(baseUrl: string): void {
-  const KEY = 'inference-mode';
-  let stored: Record<string, unknown> = {};
-  try {
-    stored = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Record<string, unknown>;
-  } catch {
-    stored = {};
-  }
-  stored.mode = 'api';
-  stored.serverUrl = baseUrl;
-  localStorage.setItem(KEY, JSON.stringify(stored));
+  seedInferenceModeForDesktopImpl(baseUrl);
 }
 
 /**

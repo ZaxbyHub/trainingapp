@@ -7,12 +7,13 @@ Comprehensive guide to configuring the Document Q&A Assistant, including environ
 1. [Overview](#overview)
 2. [Environment Variables](#environment-variables)
 3. [GUI Settings](#gui-settings)
-4. [LLM Backend Configuration](#llm-backend-configuration)
-5. [RAG Pipeline Configuration](#rag-pipeline-configuration)
-6. [Performance Tuning](#performance-tuning)
-7. [Advanced Features](#advanced-features)
-8. [Configuration File Formats](#configuration-file-formats)
-9. [Troubleshooting Configuration](#troubleshooting-configuration)
+4. [Provider Server (OpenAI-compatible)](#provider-server-openai-compatible)
+5. [LLM Backend Configuration](#llm-backend-configuration)
+6. [RAG Pipeline Configuration](#rag-pipeline-configuration)
+7. [Performance Tuning](#performance-tuning)
+8. [Advanced Features](#advanced-features)
+9. [Configuration File Formats](#configuration-file-formats)
+10. [Troubleshooting Configuration](#troubleshooting-configuration)
 
 ## Overview
 
@@ -253,6 +254,46 @@ Window=0: No expansion
 **Recommendation**:
 - Enable if quality is critical
 - Disable for speed
+
+
+## Provider Server (OpenAI-compatible)
+
+The web/desktop app can send its chat directly to a locally served LLM that speaks the
+standard OpenAI wire format — llama-server (`llama-server`), LM Studio, Ollama's compat
+endpoint, or vLLM. **This release accepts loopback servers only** (`http://127.0.0.1:<port>`
+or `http://[::1]:<port>`): the packaged desktop app's content-security policy only permits
+loopback connections, and the app validates this up front. Serving on a LAN address? Bind the
+server to loopback for now — widening to LAN/remote hosts is a deliberate desktop-CSP decision
+flagged for maintainers.
+
+**Setup (Settings → Inference Mode → "Provider server (OpenAI-compatible)")**:
+
+1. **Base URL** — the server root, e.g. `http://127.0.0.1:8080`. Loopback only in this
+   release. A `/v1` suffix is optional (the app appends it when missing); pasting the full
+   `.../v1/chat/completions` also works.
+2. **Model id** — the model name the server exposes (e.g. the loaded GGUF id llama-server
+   reports on `/v1/models`).
+3. **API key (optional)** — sent as `Authorization: Bearer <key>`. Stored locally in plain
+   text in the app's profile storage; it is sent ONLY to the configured server. Local servers
+   usually need no key.
+4. **Test Connection** — probes `{base}/v1/models`; it never requires the project's own
+   `/auth/status` route, so a standard OpenAI-compatible server probes green.
+
+**What provider mode does and does not do**:
+
+- Chat is DIRECT generation: your question plus bounded recent conversation context is POSTed
+  to `{base}/v1/chat/completions` (streamed). **Your conversation context is sent to that
+  server**, and responses are NOT grounded in your documents — provider mode is plain chat,
+  not RAG. Document Q&A stays available in the other modes.
+- The server must allow browser requests from the app origin (CORS). llama-server, LM Studio,
+  vLLM, and Ollama's compat layer ship permissive CORS by default; if Test Connection fails
+  on a healthy server, check its CORS/origins flag.
+- In the desktop app the selection persists across restarts (the built-in backend does not
+  override it); the quick mode toggle in the chat header is hidden in provider mode — switch
+  modes from Settings.
+- The old "API Server" option is different: in the desktop app it means the app's OWN built-in
+  backend; in the browser build it points at this project's Python `api_server.py` (the
+  `/ask` contract), not at an OpenAI endpoint.
 
 ## LLM Backend Configuration
 

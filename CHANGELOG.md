@@ -2,6 +2,44 @@
 
 ## [Unreleased]
 
+### Added — external OpenAI-compatible chat provider + settings honesty/layout fixes (trace external-llm-provider-settings)
+
+- New inference mode "Provider server (OpenAI-compatible)": point chat at a locally served
+  OpenAI-shaped server (llama-server, LM Studio, Ollama compat; loopback-only in this release
+  — the packaged app's CSP permits loopback connect-src and the app validates this up front,
+  with LAN/remote widening flagged as a maintainer CSP decision) with Base URL + Model id +
+  optional API key. Chat POSTs `{model, messages, stream}` to `{base}/v1/chat/completions`
+  (base-URL normalization tolerates bare hosts, `/v1`, trailing slashes, and full-endpoint
+  pastes) and streams the reply. Provider chat is direct and ungrounded (stated in the UI and
+  CONFIGURATION.md); conversation context (bounded to the shared history snapshot) is sent to
+  the configured server. The connectivity probe hits `{base}/v1/models` — never the
+  project-only `/auth/status` — so standard servers test green, and failures surface an
+  actionable message in the chat bubble. Provider generation is INCREMENTALLY streamed (SSE
+  reader, first-byte watchdog) and Stop cancels the in-flight stream; provider chat bypasses
+  the B9 staged-model gate (it never touches local models) and threads bounded history
+  (shared turn cap + the api-parity 4000-char per-turn bound).
+- Persistence: a saved provider selection survives desktop restarts (the B9 seeder no longer
+  clobbers it; the loopback URL still rotates for API mode), and the InferenceModeToggle is
+  hidden in provider mode instead of offering a one-click silent switch back.
+
+### Fixed — settings honesty and layout (same trace)
+
+- Response Quality preset no longer 422s on Quality: the server mirror now PUTs distinct
+  in-bounds values (fast 5 / balanced 8 / quality 10 against the shared `rag_n_results` max of
+  10) instead of the out-of-range 16 that rendered "Settings error: Request validation failed";
+  the mirror fires only where the preset can act (Electron API mode) and never claims to set
+  `rag_reranking_enabled` (which no desktop code path reads — retrieval rerank tuning is
+  env-configured). The preset group is disabled with an explanatory caption in modes where it
+  cannot affect chat.
+- The desktop "API Server" option now says it uses the built-in desktop backend instead of
+  claiming "Connect to a remote inference server".
+- Settings layout: removed the negative description margins that overprinted every radio-card
+  title (Inference Mode / Browser Engine / Response Quality cards and the Theme caption), and
+  collapsed the page's triple nested scroller to the single AppLayout scroller — one scrollbar,
+  and the page header can no longer intersect section content. The radio selected-state style
+  uses a single border shorthand (closes the issue #41 source defect).
+
+
 ### Added — E5: signed application and knowledge-pack update channels with rollback (issue #88)
 
 - New opt-in update channel (ADR-0010): `desktop/main/update-checker.ts` fetches a signed feed

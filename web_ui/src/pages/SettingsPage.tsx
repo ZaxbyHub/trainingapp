@@ -31,6 +31,13 @@ import {
   type PackagedModelKind,
 } from '../lib/models/model-manifest';
 import { RAG_PRESET_LABELS } from '../lib/rag/rag-presets';
+import {
+  isProviderConfigured,
+  loadProviderConfig,
+  probeOpenAICompat,
+  saveProviderConfig,
+  type ProviderConfig,
+} from '../lib/llm/openai-provider';
 import type { UpdateStatus } from '../types/desktop';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
@@ -465,8 +472,11 @@ const APP_VERSION = '1.0.0';
 const pageStyle: React.CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
-  height: '100%',
-  overflow: 'auto',
+  minHeight: '100%',
+  // Single-scroller ownership (trace external-llm-provider-settings): the
+  // AppLayout <main> is the ONLY scroller — a nested overflow here produced
+  // two visible scrollbars and let the header (which scrolled in this
+  // container) intersect section content.
   backgroundColor: 'var(--color-bubble-assistant)',
 };
 
@@ -486,7 +496,8 @@ const titleStyle: React.CSSProperties = {
 const contentStyle: React.CSSProperties = {
   flex: 1,
   padding: 'var(--spacing-xxl)',
-  overflow: 'auto',
+  // No nested scroller here (trace external-llm-provider-settings): the page
+  // scrolls in the AppLayout <main> so header and content move together.
   display: 'flex',
   flexDirection: 'column',
   gap: 'var(--spacing-xxl)',
@@ -528,7 +539,10 @@ const descriptionStyle: React.CSSProperties = {
   fontSize: 'var(--font-size-caption)',
   fontFamily: 'var(--font-family)',
   color: 'var(--color-text-muted)',
-  marginTop: `calc(-1 * var(--spacing-sm))`,
+  // No negative top margin (trace external-llm-provider-settings): the old
+  // `calc(-1 * var(--spacing-sm))` pulled every description up into the
+  // preceding control's line box, visually overprinting radio-card titles.
+  marginTop: 0,
 };
 
 const radioGroupStyle: React.CSSProperties = {
@@ -551,7 +565,10 @@ const radioOptionStyle: React.CSSProperties = {
 
 const radioOptionSelectedStyle: React.CSSProperties = {
   ...radioOptionStyle,
-  borderColor: 'var(--color-primary)',
+  // Full shorthand (issue #41 / trace external-llm-provider-settings): mixing
+  // this longhand with the shorthand `border` above made React warn under
+  // jsdom and risked a stale border frame on selection.
+  border: '2px solid var(--color-primary)',
 };
 
 const radioInputStyle: React.CSSProperties = {
@@ -714,6 +731,37 @@ function SettingsPageInner(): React.ReactElement {
   const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
+  // Provider connection state (trace external-llm-provider-settings): local
+  // draft seeded from the persisted config; blur-persists via the storage
+  // helpers in lib/llm/openai-provider.
+  const [providerDraft, setProviderDraft] = useState<ProviderConfig>(() => loadProviderConfig());
+  const [isTestingProvider, setIsTestingProvider] = useState(false);
+  const [providerProbe, setProviderProbe] = useState<'success' | 'error' | null>(null);
+  const [providerProbeDetail, setProviderProbeDetail] = useState<string | null>(null);
+  const handleProviderFieldChange = useCallback((patch: Partial<ProviderConfig>) => {
+    setProviderDraft((prev) => ({ ...prev, ...patch }));
+  }, []);
+  const handleProviderFieldBlur = useCallback(
+    (patch: Partial<ProviderConfig>) => {
+      setProviderDraft((prev) => {
+        const next = { ...prev, ...patch };
+        saveProviderConfig(next);
+        return next;
+      });
+    },
+    []
+  );
+  const handleTestProvider = useCallback(async () => {
+    setIsTestingProvider(true);
+    setProviderProbe(null);
+    setProviderProbeDetail(null);
+    const result = await probeOpenAICompat(providerDraft.baseUrl);
+    if (!isMountedRef.current) return;
+    setIsTestingProvider(false);
+    setProviderProbe(result.ok ? 'success' : 'error');
+    setProviderProbeDetail(result.ok ? null : (result.detail ?? 'Connection failed'));
+  }, [providerDraft.baseUrl]);
+
   // Hardware capability + packaged-model readiness (Phase 3)
   const [capability, setCapability] = useState<EngineCapability | null>(null);
   const [packagesReady, setPackagesReady] = useState<PackagedModelsReport | null>(null);
@@ -761,24 +809,28 @@ function SettingsPageInner(): React.ReactElement {
     [desktopSession]
   );
 
-  // B9: mirror a RAG preset change onto the backend's retrieval knobs
-  // (rag_n_results + rag_reranking_enabled) so server-side hybrid retrieval
-  // follows the preset semantics instead of only the browser orchestrator.
+  // Mirror a RAG preset change onto the backend's `rag_n_results` — the only
+  // server knob the preset drives; rerank/hybrid tuning is env-configured in
+  // desktop/main/backend/retrieval/config.ts and intentionally not
+  // UI-settable. Values are clamped inside the shared API bound (max 10, both
+  // backends) and kept DISTINCT per preset so the change stays observable in
+  // GET /settings. The PUT fires only where the preset can act on server-side
+  // chat: an Electron session in 'api' mode.
   const handleRagPresetChange = useCallback(
     (preset: 'fast' | 'balanced' | 'quality') => {
       setRagPreset(preset);
-      if (!electronMode || !desktopSession) return;
+      if (!electronMode || !desktopSession || mode !== 'api') return;
       const presetPatch: Record<string, unknown> =
         preset === 'fast'
-          ? { rag_n_results: 5, rag_reranking_enabled: false }
+          ? { rag_n_results: 5 }
           : preset === 'quality'
-            ? { rag_n_results: 16, rag_reranking_enabled: true }
-            : { rag_n_results: 10, rag_reranking_enabled: true };
+            ? { rag_n_results: 10 }
+            : { rag_n_results: 8 };
       desktopSession.apiClient
         .updateSettings(presetPatch)
         .catch((err) => setDesktopSettingsError(err instanceof Error ? err.message : String(err)));
     },
-    [electronMode, desktopSession, setRagPreset]
+    [electronMode, desktopSession, mode, setRagPreset]
   );
 
   // Load settings on mount
@@ -1129,7 +1181,7 @@ function SettingsPageInner(): React.ReactElement {
                   <div>
                     <span style={radioLabelStyle}>Browser-local</span>
                     <p id="browser-local-desc" style={descriptionStyle}>
-                      Run the AI model directly in your browser (CPU via wllama, or WebGPU via WebLLM — choose below)
+                      Run the AI directly in your browser (CPU via wllama, or WebGPU via WebLLM — choose below)
                     </p>
                   </div>
                 </label>
@@ -1150,7 +1202,34 @@ function SettingsPageInner(): React.ReactElement {
                   <div>
                     <span style={radioLabelStyle}>API Server</span>
                     <p id="api-desc" style={descriptionStyle}>
-                      Connect to a remote inference server
+                      {electronMode
+                        ? 'Use the built-in desktop backend (starts automatically with the app)'
+                        : 'Connect to a remote inference server'}
+                    </p>
+                  </div>
+                </label>
+
+                {/* Provider option (trace external-llm-provider-settings):
+                    direct chat against a user-configured OpenAI-compatible
+                    server. The card text must not contain "model", "base url",
+                    or "api key" (any case) — the provider section's labeled
+                    inputs below must stay the ONLY matches for those queries. */}
+                <label
+                  style={mode === 'provider' ? radioOptionSelectedStyle : radioOptionStyle}
+                >
+                  <input
+                    type="radio"
+                    name="inference-mode"
+                    value="provider"
+                    checked={mode === 'provider'}
+                    onChange={() => setMode('provider')}
+                    style={radioInputStyle}
+                    aria-describedby="provider-desc"
+                  />
+                  <div>
+                    <span style={radioLabelStyle}>Provider server (OpenAI-compatible)</span>
+                    <p id="provider-desc" style={descriptionStyle}>
+                      Send chat to any local or remote endpoint that speaks the OpenAI wire format. Configure the connection below.
                     </p>
                   </div>
                 </label>
@@ -1292,6 +1371,106 @@ function SettingsPageInner(): React.ReactElement {
         )}
 
         {/* ================================================================== */}
+        {/* 2c. Provider connection (provider mode — OpenAI-compatible server) */}
+        {/* ================================================================== */}
+        {mode === 'provider' && (
+          <section style={sectionStyle} aria-labelledby="provider-config-heading">
+            <h2 id="provider-config-heading" style={sectionTitleStyle}>
+              Provider connection
+            </h2>
+            <div style={fieldGroupStyle}>
+              <p style={descriptionStyle}>
+                Provider mode sends your question directly to the configured server; responses
+                are not grounded in your documents. Your conversation context is sent to that
+                server.
+              </p>
+              <div>
+                <label htmlFor="provider-base-url" style={labelStyle}>
+                  Base URL
+                </label>
+                <p id="provider-base-url-desc" style={descriptionStyle}>
+                  Root of a locally served OpenAI-compatible server, e.g. http://127.0.0.1:8080
+                  (loopback only in this release; a /v1 suffix is optional)
+                </p>
+                <input
+                  id="provider-base-url"
+                  type="url"
+                  value={providerDraft.baseUrl}
+                  onChange={(e) => handleProviderFieldChange({ baseUrl: e.target.value })}
+                  onBlur={() => handleProviderFieldBlur({ baseUrl: providerDraft.baseUrl })}
+                  placeholder="http://127.0.0.1:8080"
+                  style={inputStyle}
+                  aria-describedby="provider-base-url-desc"
+                />
+              </div>
+              <div>
+                <label htmlFor="provider-model" style={labelStyle}>
+                  Model id
+                </label>
+                <p id="provider-model-desc" style={descriptionStyle}>
+                  Model name the server exposes, e.g. llama-server's loaded GGUF id
+                </p>
+                <input
+                  id="provider-model"
+                  type="text"
+                  value={providerDraft.model}
+                  onChange={(e) => handleProviderFieldChange({ model: e.target.value })}
+                  onBlur={() => handleProviderFieldBlur({ model: providerDraft.model })}
+                  placeholder="local-model"
+                  style={inputStyle}
+                  aria-describedby="provider-model-desc"
+                />
+              </div>
+              <div>
+                <label htmlFor="provider-api-key" style={labelStyle}>
+                  API key (optional)
+                </label>
+                <p id="provider-api-key-desc" style={descriptionStyle}>
+                  Sent as a Bearer header. Stored locally in plain text; it is sent only to
+                  this server.
+                </p>
+                <input
+                  id="provider-api-key"
+                  type="password"
+                  value={providerDraft.apiKey}
+                  onChange={(e) => handleProviderFieldChange({ apiKey: e.target.value })}
+                  onBlur={() => handleProviderFieldBlur({ apiKey: providerDraft.apiKey })}
+                  placeholder="empty for servers without auth"
+                  style={inputStyle}
+                  aria-describedby="provider-api-key-desc"
+                />
+              </div>
+
+              <div style={buttonRowStyle} role="status" aria-live="polite">
+                <button
+                  type="button"
+                  onClick={() => void handleTestProvider()}
+                  disabled={isTestingProvider || !isProviderConfigured(providerDraft)}
+                  style={
+                    isTestingProvider
+                      ? { ...secondaryButtonStyle, opacity: 0.6, cursor: 'not-allowed' }
+                      : secondaryButtonStyle
+                  }
+                  aria-busy={isTestingProvider}
+                >
+                  {isTestingProvider ? 'Testing...' : 'Test Connection'}
+                </button>
+
+                {providerProbe === 'success' && <StatusBadge status="ready" label="Connected" />}
+                {providerProbe === 'error' && (
+                  <StatusBadge status="error" label="Connection failed" />
+                )}
+              </div>
+              {providerProbeDetail && (
+                <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }} role="alert">
+                  {providerProbeDetail}
+                </p>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* ================================================================== */}
         {/* 3. Browser Engine (browser-local only) + model cache status */}
         {/* ================================================================== */}
         <section style={sectionStyle} aria-labelledby="browser-engine-heading">
@@ -1422,10 +1601,13 @@ function SettingsPageInner(): React.ReactElement {
           </h2>
           <div style={fieldGroupStyle}>
             <p style={descriptionStyle}>
-              Trade speed for answer quality. Applies to browser-local mode; in API
-              mode the server controls retrieval settings.
+              Trade speed for answer quality. Applies to browser-local inference; in server
+              modes the server controls retrieval settings.
             </p>
-            <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
+            <fieldset
+              style={{ border: 'none', margin: 0, padding: 0 }}
+              disabled={mode === 'provider' || (mode === 'api' && !electronMode)}
+            >
               <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select response quality preset</legend>
               <div style={radioGroupStyle}>
                 {(['fast', 'balanced', 'quality'] as const).map((preset) => (
@@ -1451,6 +1633,15 @@ function SettingsPageInner(): React.ReactElement {
                   </label>
                 ))}
               </div>
+              {/* Sibling of the preset cards (NOT inside a card label): shown
+                  exactly when the group is disabled, i.e. whenever the preset
+                  cannot affect the active chat path. */}
+              {(mode === 'provider' || (mode === 'api' && !electronMode)) && (
+                <p id="rag-preset-disabled-desc" style={descriptionStyle}>
+                  Applies to browser-local inference only. In this mode the server controls
+                  retrieval settings.
+                </p>
+              )}
             </fieldset>
           </div>
         </section>
