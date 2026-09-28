@@ -9,7 +9,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
 import {
   createBackendHost,
@@ -388,11 +388,16 @@ export function bootstrap(): void {
     // ---- E5 (issue #88): signed update channels (default OFF) --------------
     // Offline-first posture (.swarm/spec-snapshot.md): the opt-in gate runs
     // BEFORE anything networked. The opt-in state lives in the profile dir
-    // next to first-run.json; the checker rides the loopback API for
-    // installed versions and applies pack updates through POST /packs/install
-    // so the C8 guards and the supersede/rollback semantics apply unchanged.
-    // App-binary updates are detect + notify only (ADR-0010 manual channel:
-    // in-app notice -> operator runs the installer per docs/updates.md).
+    // next to first-run.json (review F-001: storePath is the store.sqlite
+    // FILE — the DIRECTORY is path.dirname(storePath), matching the
+    // first-run-store/settings-store convention); the checker rides the
+    // loopback API for installed versions and applies pack updates through
+    // POST /packs/install so the C8 guards and the supersede/rollback
+    // semantics apply unchanged. App-binary updates are detect + notify only
+    // (ADR-0010 manual channel: in-app notice -> operator downloads via the
+    // allowlisted external-open handler and runs the installer per
+    // docs/updates.md).
+    const updatesProfileDir = path.dirname(storePath);
     interface UpdatesStatusPayload {
       optIn: boolean;
       feedUrl: string;
@@ -401,11 +406,18 @@ export function bootstrap(): void {
       refused: Array<{ packId: string; version: string; reason: string }>;
       error: string | null;
       appUpdate: AppUpdateCandidate | null;
-      lastApply: { packId: string; applied: boolean; version?: string; reason?: string } | null;
+      lastApply: {
+        packId: string;
+        applied: boolean;
+        version?: string;
+        reason?: string;
+        appliedAt: string;
+      } | null;
     }
-    const updatesFeedUrl = (): string => loadUpdatesState(storePath).feedUrl ?? DEFAULT_UPDATE_FEED_URL;
+    const updatesFeedUrl = (): string =>
+      loadUpdatesState(updatesProfileDir).feedUrl ?? DEFAULT_UPDATE_FEED_URL;
     const emptyUpdatesStatus = (): UpdatesStatusPayload => ({
-      optIn: loadUpdatesState(storePath).optIn,
+      optIn: loadUpdatesState(updatesProfileDir).optIn,
       feedUrl: updatesFeedUrl(),
       checkedAt: null,
       candidates: [],
@@ -428,12 +440,24 @@ export function bootstrap(): void {
         signal: AbortSignal.timeout(5000),
       });
       if (!response.ok) throw new Error(`GET /packs answered HTTP ${response.status}`);
-      const body = (await response.json()) as { packs: Array<{ pack_id: string; version: string }> };
-      return body.packs.map((pack) => ({ packId: pack.pack_id, version: pack.version }));
+      const body = (await response.json()) as {
+        packs: Array<{ pack_id: string; version: string; active?: boolean }>;
+      };
+      // ACTIVE rows only (review F-004): superseded versions are retained,
+      // and diffing against the lowest retained version resurrected the same
+      // update forever. The update diff is defined against the ACTIVE version.
+      return body.packs
+        .filter((pack) => pack.active !== false)
+        .map((pack) => ({ packId: pack.pack_id, version: pack.version }));
     };
     let lastOutcomeEntries: Record<string, import('./update-checker.js').FeedVersionEntry> = {};
+    // Single-flight guard (review F-014): only the newest check may commit
+    // results — a slower stale check (boot vs check-now vs toggle) is dropped
+    // instead of clobbering newer state.
+    let updateCheckGeneration = 0;
     const performUpdateCheck = async (): Promise<void> => {
-      const state = loadUpdatesState(storePath);
+      const generation = ++updateCheckGeneration;
+      const state = loadUpdatesState(updatesProfileDir);
       if (!state.optIn) return;
       const outcome = await runUpdateCheck(
         state,
@@ -442,6 +466,7 @@ export function bootstrap(): void {
         [UPDATE_FEED_PUBLIC_KEY],
       );
       if (outcome.skipped) return;
+      if (generation !== updateCheckGeneration) return; // a newer check superseded this one
       lastOutcomeEntries = outcome.entries ?? {};
       updatesStatus = {
         optIn: true,
@@ -463,22 +488,42 @@ export function bootstrap(): void {
       if (typeof enabled !== 'boolean') {
         return { ok: false as const, detail: 'opt-in must be a boolean' };
       }
-      const current = loadUpdatesState(storePath);
-      saveUpdatesState(storePath, {
-        optIn: enabled,
-        ...(current.feedUrl !== undefined ? { feedUrl: current.feedUrl } : {}),
-      });
+      try {
+        const current = loadUpdatesState(updatesProfileDir);
+        saveUpdatesState(updatesProfileDir, {
+          optIn: enabled,
+          ...(current.feedUrl !== undefined ? { feedUrl: current.feedUrl } : {}),
+        });
+      } catch (err) {
+        // F-016: mirror check-now's structured failure instead of rejecting
+        // the IPC promise with a raw error string.
+        const detail = `could not persist the updates setting: ${err instanceof Error ? err.message : String(err)}`;
+        updatesStatus = { ...updatesStatus, error: detail };
+        pushUpdatesStatus();
+        return { ok: false as const, detail, status: updatesStatus };
+      }
+      // Invalidate any in-flight check: its results belong to the old state.
+      updateCheckGeneration += 1;
       updatesStatus = emptyUpdatesStatus();
-      updatesStatus.lastApply = null;
       if (enabled) {
-        await performUpdateCheck();
+        try {
+          await performUpdateCheck();
+        } catch (err) {
+          updatesStatus = {
+            ...updatesStatus,
+            error: err instanceof Error ? err.message : String(err),
+            checkedAt: new Date().toISOString(),
+          };
+          pushUpdatesStatus();
+          return { ok: false as const, detail: updatesStatus.error ?? 'update check failed', status: updatesStatus };
+        }
       } else {
         pushUpdatesStatus();
       }
       return { ok: true as const, status: updatesStatus };
     });
     ipcMain.handle('desktop:updates:check-now', async () => {
-      if (!loadUpdatesState(storePath).optIn) {
+      if (!loadUpdatesState(updatesProfileDir).optIn) {
         return { ok: false as const, detail: 'update checks are disabled (opt-in required)' };
       }
       try {
@@ -490,42 +535,91 @@ export function bootstrap(): void {
         return { ok: false as const, detail: updatesStatus.error ?? 'update check failed' };
       }
     });
+    // Per-pack in-flight lock (review F-015): a second concurrent apply for
+    // the same pack is rejected instead of racing a duplicate download+install.
+    const appliesInFlight = new Set<string>();
     ipcMain.handle('desktop:updates:apply', async (_event, packId: unknown) => {
       if (typeof packId !== 'string') {
         return { ok: false as const, detail: 'packId must be a string' };
       }
-      if (!loadUpdatesState(storePath).optIn) {
+      if (!loadUpdatesState(updatesProfileDir).optIn) {
         return { ok: false as const, detail: 'update checks are disabled (opt-in required)' };
+      }
+      if (appliesInFlight.has(packId)) {
+        return { ok: false as const, detail: `an update for ${packId} is already in progress` };
       }
       const entry = lastOutcomeEntries[packId];
       const candidate = updatesStatus.candidates.find((update) => update.packId === packId);
       if (entry === undefined || candidate === undefined) {
         return { ok: false as const, detail: 'no verified update candidate for this pack; run a check first' };
       }
-      const result = await applyPackUpdate(
-        candidate,
-        entry,
-        {
-          downloadArtifact: downloadArtifactBytes,
-          installPack: loopbackPackInstaller(backendHandle.url, getLaunchToken(), DEFAULT_TOKEN_HEADER_NAME),
-        },
-        [UPDATE_FEED_PUBLIC_KEY],
-      );
+      appliesInFlight.add(packId);
+      let result;
+      try {
+        result = await applyPackUpdate(
+          candidate,
+          entry,
+          {
+            downloadArtifact: downloadArtifactBytes,
+            installPack: loopbackPackInstaller(backendHandle.url, getLaunchToken(), DEFAULT_TOKEN_HEADER_NAME),
+          },
+          [UPDATE_FEED_PUBLIC_KEY],
+        );
+      } finally {
+        appliesInFlight.delete(packId);
+      }
       updatesStatus = {
         ...updatesStatus,
-        lastApply: { packId, applied: result.applied, version: result.version, reason: result.reason },
+        lastApply: {
+          packId,
+          applied: result.applied,
+          version: result.version,
+          reason: result.reason,
+          appliedAt: new Date().toISOString(),
+        },
       };
       if (result.applied) {
-        updatesStatus.candidates = updatesStatus.candidates.filter((update) => update.packId !== packId);
-        delete lastOutcomeEntries[packId];
+        // F-024: remove only the APPLIED version's candidate — a newer
+        // candidate for the same pack published by a concurrent check stays
+        // offerable instead of being silently dropped.
+        updatesStatus.candidates = updatesStatus.candidates.filter(
+          (update) => !(update.packId === packId && update.availableVersion === result.version),
+        );
+        if (lastOutcomeEntries[packId]?.version === result.version) {
+          delete lastOutcomeEntries[packId];
+        }
       }
       pushUpdatesStatus();
       return { ok: result.applied, detail: result.reason, status: updatesStatus };
     });
+    // Allowlisted external open for the app-update notice (review F-008/PRR-008):
+    // the renderer's window-open and navigation are deny-all by design, so the
+    // only way to act on a download URL is this handler — restricted to the
+    // project's GitHub Releases host. shell is imported at the top of the file.
+    ipcMain.handle('desktop:updates:open-external', async (_event, url: unknown) => {
+      if (typeof url !== 'string') {
+        return { ok: false as const, detail: 'url must be a string' };
+      }
+      const allowedPrefixes = [
+        'https://github.com/ZaxbyHub/trainingapp/',
+        'https://objects.githubusercontent.com/',
+      ];
+      let parsed: URL;
+      try {
+        parsed = new URL(url);
+      } catch {
+        return { ok: false as const, detail: 'url is not a valid URL' };
+      }
+      if (parsed.protocol !== 'https:' || !allowedPrefixes.some((prefix) => url.startsWith(prefix))) {
+        return { ok: false as const, detail: 'url is outside the allowlisted update hosts' };
+      }
+      await shell.openExternal(url);
+      return { ok: true as const };
+    });
     // Boot-time check only when opted in (the state read is local; no network
     // happens otherwise). Renderer surfaces pull desktop:updates:status on
     // mount, so a notice is never lost to a boot/window race (ADR-0010).
-    if (loadUpdatesState(storePath).optIn) {
+    if (loadUpdatesState(updatesProfileDir).optIn) {
       performUpdateCheck().catch((err: unknown) => {
         console.error('[trainingapp-desktop] update check failed:', err instanceof Error ? err.message : err);
       });

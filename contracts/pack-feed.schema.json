@@ -82,11 +82,12 @@
         "size_bytes": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 8589934592
+          "maximum": 52428800,
+          "description": "pack artifacts install through the loopback route which caps zips at 50 MiB"
         },
         "download_url": {
           "type": "string",
-          "pattern": "^https://"
+          "pattern": "^https://[!-~]+$"
         },
         "supersedes": { "$ref": "#/$defs/supersedes" },
         "signature": { "$ref": "#/$defs/signature" }
@@ -125,11 +126,11 @@
         },
         "download_url": {
           "type": "string",
-          "pattern": "^https://"
+          "pattern": "^https://[!-~]+$"
         },
         "notes_url": {
           "type": "string",
-          "pattern": "^https://"
+          "pattern": "^https://[!-~]+$"
         },
         "signature": { "$ref": "#/$defs/signature" }
       }

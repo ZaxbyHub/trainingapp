@@ -110,7 +110,7 @@ export interface UpdateStatus {
     sizeBytes: number;
     notesUrl?: string;
   } | null;
-  lastApply: { packId: string; applied: boolean; version?: string; reason?: string } | null;
+  lastApply: { packId: string; applied: boolean; version?: string; reason?: string; appliedAt: string } | null;
 }
 
 export interface DesktopApiBridge {
@@ -151,6 +151,9 @@ export interface DesktopApiBridge {
   /** E5 (issue #88): subscribe to the updates:available push. Returns an
    *  unsubscribe function. */
   onUpdateAvailable(callback: (status: UpdateStatus) => void): () => void;
+  /** E5 (issue #88): open an allowlisted (GitHub Releases https) update URL
+   *  in the OS browser. The shell deny-alls renderer-initiated navigation. */
+  openUpdateExternal(url: string): Promise<{ ok: boolean; detail?: string }>;
 }
 
 declare global {

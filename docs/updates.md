@@ -35,10 +35,14 @@ resolve to (the default URL uses the Releases "latest" asset pattern).
 2. Sign each digest with the release signing key (offline store; see ADR-0010 §4 for custody):
 
    ```bash
-   printf '%s' "<64-hex-sha256>" | openssl pkeyutl -sign -inkey update-feed-ed25519.pem | base64 -w0
+   printf '%s' "<64-hex-sha256>" > msg.bin
+   openssl pkeyutl -sign -rawin -inkey update-feed-ed25519.pem -in msg.bin | base64 -w0
+   rm msg.bin
    ```
 
-   The message is the digest string itself (UTF-8, no trailing newline — hence `printf '%s'`).
+   The message is the artifact digest string itself (UTF-8, no trailing newline — hence `printf '%s'`).
+   Ed25519 one-shot signing cannot read from a pipe (review F-018: the piped form fails with
+   "unable to determine file size"), so the digest goes through `msg.bin` with `-rawin -in`.
    `key_id` is `trainingapp-update-feed-2026-09` (or the current baked key's id).
 3. Assemble `pack-feed.json` per `contracts/pack-feed.schema.json` (`signature` is required in
    the format — the schema rejects unsigned entries). Validate:
@@ -58,6 +62,9 @@ resolve to (the default URL uses the Releases "latest" asset pattern).
 
 - **Packs:** Documents page → Knowledge Packs → **Update** on the badge row. Requires the
   opt-in; installation reuses the hardened zip pipeline, then the new version becomes active.
+  Pack artifacts are capped at **50 MiB** — the loopback install route refuses larger zips, and
+  the feed schema enforces the same ceiling on pack `size_bytes` (app installers are manual
+  downloads and use the app entry's own cap).
 - **App binary:** Settings → Updates → download from the notice → run the installer
   (per-user NSIS; profiles, packs, and settings survive — `deleteAppDataOnUninstall` is false).
 
@@ -76,11 +83,12 @@ resolve to (the default URL uses the Releases "latest" asset pattern).
 ## Verification recipe (local, offline)
 
 ```bash
-# frozen acceptance checks (C1-C6) + suites
-bash .agents/issue-traces/88-signed-update-channels-rollback/repro/check-C2.sh
-cd desktop && npm test -- src/__tests__/e5-update-apply.test.ts
+cd desktop && npx vitest run src/__tests__/e5-update-checker.test.ts src/__tests__/e5-update-apply.test.ts src/__tests__/e5-update-network.test.ts
 python -m pytest contracts/tests/test_pack_feed_schema.py -q
 ```
+
+(The acceptance checks' frozen driver scripts live in a git-excluded trace directory and are not
+part of a checkout; the committed suites above are the same assertions, runnable from any clone.)
 
 ## Decision summary (issue #88 acceptance)
 

@@ -122,6 +122,10 @@ beforeEach(() => {
     completeFirstRun: vi.fn(async () => ({ ok: true })),
     resetFirstRun: vi.fn(async () => ({ ok: true })),
     onFirstRunRequired: vi.fn(() => () => {}),
+    // F-022 accepted residual: this stub block is a verified-identical copy of
+    // web_ui/src/test/desktop-bridge-stub.ts (adopted in PacksPanel.display.test);
+    // these suites override methods before it, so a blind spread refactor would
+    // clobber suite-specific mocks. Consolidation is tracked as cleanup.
     // E5 (issue #88) update-channel methods: default no-op stubs; suites that
     // exercise them override per-test.
     getUpdateStatus: vi.fn(async () => ({
@@ -138,6 +142,7 @@ beforeEach(() => {
     checkForUpdates: vi.fn(async () => ({ ok: true })),
     applyPackUpdate: vi.fn(async () => ({ ok: true })),
     onUpdateAvailable: vi.fn(() => () => {}),
+    openUpdateExternal: vi.fn(async () => ({ ok: true })),
   };
   vi.mocked(window.fetch ?? fetch).mockRestore?.();
 });

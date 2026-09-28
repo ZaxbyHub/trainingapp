@@ -280,18 +280,17 @@ describe('e5 update channels (issue #88)', () => {
     ).toHaveLength(0);
 
     // Anchor the ordering above against the production comparator itself
-    // (best effort: importing pack-manager drags sqlite-store, so native deps
-    // must be present — the behavioral assertions above stand alone).
-    try {
-      const pm = await import('../../main/backend/store/pack-manager.js');
+    // (F-005 fix: ONLY the import is best-effort — a missing native dep must
+    // not mask a real assertion failure, which the old blanket try/catch
+    // allowed; an import that succeeds but disagrees now FAILS this test).
+    const pm = await import('../../main/backend/store/pack-manager.js').catch(() => null);
+    if (pm !== null) {
       expect(
         pm.compareVersionKeys(pm.versionKey('2.0.0-rc.1'), pm.versionKey('1.5.0')),
       ).toBeGreaterThan(0);
       expect(
         pm.compareVersionKeys(pm.versionKey('1.0.0-rc.1'), pm.versionKey('1.0.0')),
       ).toBeLessThan(0);
-    } catch {
-      // native deps unavailable in this run; ordering already pinned above
     }
 
     // The shipped feed schema (contracts/pack-feed.schema.json) accepts a

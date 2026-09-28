@@ -32,11 +32,16 @@ const Ajv2020 = require_('ajv/dist/2020') as new (opts?: {
   allErrors?: boolean;
   strict?: boolean;
 }) => { compile(schema: object): (data: unknown) => boolean };
+const addFormats = require_('ajv-formats') as (ajv: unknown) => unknown;
 
 // ---------------------------------------------------------------------------
 // Frozen contract types
 // ---------------------------------------------------------------------------
 
+// NOTE: this interface mirrors contracts/pack-feed.schema.json by hand; the
+// schema file remains the authoritative validator at runtime. `signature` is
+// OPTIONAL here because diff-level code handles pre-verification entries;
+// the SCHEMA requires it, so an unsigned entry can never pass validation.
 export interface FeedVersionEntry {
   version: string;
   published_at: string;
@@ -136,41 +141,104 @@ interface VersionKey {
   minor: number;
   patch: number;
   pre: number; // 1 = release, 0 = pre-release: releases sort above their own RCs
+  preIds: Array<string | number>; // dotted pre-release identifiers (semver 2.0: numeric < alphanumeric, shorter prefix < longer)
 }
 
 export function parseVersionKey(version: string): VersionKey | null {
   const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(\+[0-9A-Za-z.-]+)?$/.exec(version.trim());
   if (match === null) return null;
+  const preIds: Array<string | number> = [];
+  if (match[4] !== undefined) {
+    for (const id of match[4].split('.')) {
+      preIds.push(/^\d+$/.test(id) ? Number(id) : id);
+    }
+  }
   return {
     major: Number(match[1]),
     minor: Number(match[2]),
     patch: Number(match[3]),
     pre: match[4] === undefined ? 1 : 0,
+    preIds,
   };
+}
+
+function comparePreIds(a: Array<string | number>, b: Array<string | number>): number {
+  // Identifiers compare left to right; a shorter prefix sorts BELOW a longer one.
+  const shared = Math.min(a.length, b.length);
+  for (let i = 0; i < shared; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (typeof left === 'number' && typeof right === 'number') {
+      if (left !== right) return left - right;
+    } else if (typeof left === 'string' && typeof right === 'string') {
+      if (left !== right) return left < right ? -1 : 1;
+    } else {
+      // semver 2.0: numeric identifiers rank below alphanumeric ones
+      return typeof left === 'number' ? -1 : 1;
+    }
+  }
+  return a.length - b.length;
 }
 
 export function compareVersionKeys(a: VersionKey, b: VersionKey): number {
   for (const field of ['major', 'minor', 'patch', 'pre'] as const) {
     if (a[field] !== b[field]) return a[field] - b[field];
   }
-  return 0;
+  return comparePreIds(a.preIds, b.preIds);
 }
 
 // ---------------------------------------------------------------------------
 // Pack update diff (frozen check C2)
 // ---------------------------------------------------------------------------
 
+/** The installed version to diff against: the HIGHEST among all rows for the
+ * pack (multiple versions are retained after a supersede), so a stale
+ * superseded row can never resurrect an already-applied update (review F-004). */
+function currentInstalledVersion(
+  installed: ReadonlyArray<{ packId: string; version: string }>,
+  packId: string,
+): string | null {
+  let bestKey: ReturnType<typeof parseVersionKey> = null;
+  let bestVersion: string | null = null;
+  for (const record of installed) {
+    if (record.packId !== packId) continue;
+    const key = parseVersionKey(record.version);
+    if (key === null) continue;
+    if (bestKey === null || compareVersionKeys(key, bestKey) > 0) {
+      bestKey = key;
+      bestVersion = record.version;
+    }
+  }
+  return bestVersion;
+}
+
+/** Feed packs merged by pack_id: a duplicate pack_id entry (the schema does
+ * not enforce uniqueness, review F-007) contributes its versions to ONE
+ * diff instead of emitting competing candidates. */
+function mergeFeedPacks(feed: PackFeedDocument): FeedPackEntry[] {
+  const byId = new Map<string, FeedPackEntry>();
+  for (const feedPack of feed.packs) {
+    const existing = byId.get(feedPack.pack_id);
+    if (existing === undefined) {
+      byId.set(feedPack.pack_id, { pack_id: feedPack.pack_id, versions: [...feedPack.versions] });
+    } else {
+      existing.versions.push(...feedPack.versions);
+    }
+  }
+  return [...byId.values()];
+}
+
 export function checkPackUpdates(
   installed: ReadonlyArray<{ packId: string; version: string }>,
   feed: PackFeedDocument,
 ): PackUpdateCandidate[] {
   const candidates: PackUpdateCandidate[] = [];
-  for (const feedPack of feed.packs) {
-    const current = installed.find((record) => record.packId === feedPack.pack_id);
-    if (current === undefined) continue;
-    const best = bestVersionEntry(feedPack.versions, current.version);
+  for (const feedPack of mergeFeedPacks(feed)) {
+    const currentVersion = currentInstalledVersion(installed, feedPack.pack_id);
+    if (currentVersion === null) continue;
+    const best = bestVersionEntry(feedPack.versions, currentVersion);
     if (best !== null) {
-      candidates.push(toCandidate(feedPack.pack_id, current.version, best));
+      candidates.push(toCandidate(feedPack.pack_id, currentVersion, best));
     }
   }
   return candidates;
@@ -342,6 +410,22 @@ export async function runUpdateCheck(
   let feed: PackFeedDocument;
   try {
     const parsed: unknown = JSON.parse(feedText);
+    // Forward-compat gate (review F-010): a feed the app does not understand
+    // must say WHY, so a stranded client knows to update the app.
+    if (
+      typeof parsed === 'object' &&
+      parsed !== null &&
+      'schema_version' in parsed &&
+      typeof (parsed as { schema_version: unknown }).schema_version === 'number' &&
+      (parsed as { schema_version: number }).schema_version > 1
+    ) {
+      return {
+        skipped: false,
+        candidates: [],
+        refused: [],
+        error: `feed schema version ${(parsed as { schema_version: number }).schema_version} is newer than this app supports (1); update the app to read this feed`,
+      };
+    }
     const validation = validateFeedDocument(parsed);
     if (!validation.ok) {
       return { skipped: false, candidates: [], refused: [], error: validation.detail };
@@ -358,17 +442,17 @@ export async function runUpdateCheck(
   const candidates: PackUpdateCandidate[] = [];
   const refused: Array<{ packId: string; version: string; reason: string }> = [];
   const entries: Record<string, FeedVersionEntry> = {};
-  for (const feedPack of feed.packs) {
-    const current = installed.find((record) => record.packId === feedPack.pack_id);
-    if (current === undefined) continue;
-    const best = bestVersionEntry(feedPack.versions, current.version);
+  for (const feedPack of mergeFeedPacks(feed)) {
+    const currentVersion = currentInstalledVersion(installed, feedPack.pack_id);
+    if (currentVersion === null) continue;
+    const best = bestVersionEntry(feedPack.versions, currentVersion);
     if (best === null) continue;
     const verdict = verifyFeedEntrySignature(best, trustedKeys);
     if (!verdict.ok) {
       refused.push({ packId: feedPack.pack_id, version: best.version, reason: verdict.detail ?? 'signature verification failed' });
       continue;
     }
-    candidates.push(toCandidate(feedPack.pack_id, current.version, best));
+    candidates.push(toCandidate(feedPack.pack_id, currentVersion, best));
     entries[feedPack.pack_id] = best;
   }
   return { skipped: false, candidates, refused, entries, feed };
@@ -509,25 +593,52 @@ async function readBodyCapped(response: Response, capBytes: number): Promise<Uin
   return merged;
 }
 
-/** Hardened production fetchFeed (plan D8): https-only, credentials omitted,
- * explicit timeout, response capped at 5 MiB, final URL re-validated as
- * https after redirects. No identifying payload: a bare GET for the feed. */
-export async function fetchFeedText(url: string): Promise<string> {
-  if (!isHttpsUrl(url)) {
-    throw new Error(`refusing to fetch a non-https feed URL: ${url}`);
+const MAX_REDIRECT_HOPS = 3;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+interface HttpsFetchInit {
+  timeoutMs: number;
+  headers?: Record<string, string>;
+}
+
+/** Hardened GET with per-hop validation (review F-013): every redirect target
+ * is re-validated as https BEFORE it is requested (redirect:'follow' requests
+ * the next hop before any check could run, so an intermediate hop to a LAN or
+ * plain-http address was reachable). Credentials are omitted on every hop and
+ * no identifying payload is sent. */
+async function fetchHttpsOnly(url: string, init: HttpsFetchInit): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop += 1) {
+    if (!isHttpsUrl(current)) {
+      throw new Error(`refusing to request a non-https URL: ${current}`);
+    }
+    const response = await fetch(current, {
+      method: 'GET',
+      credentials: 'omit',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(init.timeoutMs),
+      headers: init.headers,
+    });
+    if (REDIRECT_STATUSES.has(response.status)) {
+      const location = response.headers.get('location');
+      if (location === null) {
+        throw new Error(`redirect response ${response.status} without a Location header`);
+      }
+      void response.body?.cancel();
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return response;
   }
-  const response = await fetch(url, {
-    method: 'GET',
-    credentials: 'omit',
-    redirect: 'follow',
-    signal: AbortSignal.timeout(FEED_TIMEOUT_MS),
-    headers: { accept: 'application/json' },
-  });
+  throw new Error(`more than ${MAX_REDIRECT_HOPS} redirects`);
+}
+
+/** Hardened production fetchFeed (plan D8): https-only on every hop, credentials omitted,
+ * explicit timeout, response capped at 5 MiB. No identifying payload: a bare GET for the feed. */
+export async function fetchFeedText(url: string): Promise<string> {
+  const response = await fetchHttpsOnly(url, { timeoutMs: FEED_TIMEOUT_MS, headers: { accept: 'application/json' } });
   if (!response.ok) {
     throw new Error(`feed fetch answered HTTP ${response.status}`);
-  }
-  if (!isHttpsUrl(response.url)) {
-    throw new Error('feed fetch redirected away from https');
   }
   const bytes = await readBodyCapped(response, FEED_MAX_BYTES);
   return Buffer.from(bytes).toString('utf8');
@@ -536,9 +647,13 @@ export async function fetchFeedText(url: string): Promise<string> {
 const FEED_SCHEMA_RELATIVE_PATH = 'contracts/pack-feed.schema.json';
 
 function repoRootFrom(moduleDir: string): string {
+  // Marker = contracts/store.schema.sql (review F-002): one of the contract
+  // files STAGED into desktop/dist/contracts (and therefore into the packaged
+  // asar), like sqlite-store.ts's findRepoRoot. api.openapi.yaml is dev-only
+  // and made this walk fail in every packaged install.
   let current = moduleDir;
   for (let depth = 0; depth < 32; depth += 1) {
-    if (existsSync(path.join(current, 'contracts', 'api.openapi.yaml'))) return current;
+    if (existsSync(path.join(current, 'contracts', 'store.schema.sql'))) return current;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
@@ -557,6 +672,10 @@ export function validateFeedDocument(parsed: unknown): { ok: boolean; detail?: s
     const schemaPath = path.join(repoRootFrom(moduleDir), FEED_SCHEMA_RELATIVE_PATH);
     const schemaJson: unknown = JSON.parse(readFileSync(schemaPath, 'utf8'));
     const ajv = new Ajv2020({ allErrors: true, strict: false });
+    // Register the format pack (review F-019): without it the schema's
+    // date-time formats validate as plain strings, silently weaker than the
+    // pack-manager ajv setup this mirrors.
+    addFormats(ajv);
     feedValidator = ajv.compile(schemaJson as object);
   }
   if (!feedValidator(parsed)) {
@@ -578,12 +697,14 @@ export interface ApplyUpdateResult {
 
 const ARTIFACT_TIMEOUT_MS = 120_000;
 
-/** Absolute ceiling on any single artifact download (review round 2, N2):
- * `size_bytes` is feed metadata OUTSIDE the signature (only the digest is
- * signed per the issue's scheme), so the per-entry expected size alone must
- * not bound the read. An entry declaring more than this is refused without
- * buffering past the ceiling; the sha256 gate stays the final arbiter. */
-export const MAX_ARTIFACT_BYTES = 8 * 1024 * 1024 * 1024; // 8 GiB
+/** Absolute ceiling on pack-artifact downloads (review F-012): the ONLY
+ * consumer of a downloaded artifact is the loopback POST /packs/install
+ * route, which caps zips at 50 MiB — so downloads clamp to the same limit
+ * instead of the feed-declared (unsigned) size_bytes or the old 8 GiB
+ * ceiling. `size_bytes` is feed metadata OUTSIDE the signature (only the
+ * digest is signed per the issue's scheme); the sha256 gate stays the final
+ * arbiter. */
+export const MAX_PACK_ARTIFACT_BYTES = 52_428_800; // 50 MiB, mirrors PACK_ZIP_UPLOAD_CAP_BYTES
 
 /** Hardened production artifact download (plan D8): https-only, credentials
  * omitted, explicit timeout, and the response is refused when its byte
@@ -593,19 +714,11 @@ export async function downloadArtifactBytes(url: string, expectedBytes: number):
   if (!isHttpsUrl(url)) {
     throw new Error(`refusing to download a non-https artifact URL: ${url}`);
   }
-  const response = await fetch(url, {
-    method: 'GET',
-    credentials: 'omit',
-    redirect: 'follow',
-    signal: AbortSignal.timeout(ARTIFACT_TIMEOUT_MS),
-  });
+  const response = await fetchHttpsOnly(url, { timeoutMs: ARTIFACT_TIMEOUT_MS });
   if (!response.ok) {
     throw new Error(`artifact download answered HTTP ${response.status}`);
   }
-  if (!isHttpsUrl(response.url)) {
-    throw new Error('artifact download redirected away from https');
-  }
-  const bytes = await readBodyCapped(response, Math.min(expectedBytes, MAX_ARTIFACT_BYTES));
+  const bytes = await readBodyCapped(response, Math.min(expectedBytes, MAX_PACK_ARTIFACT_BYTES));
   if (bytes.byteLength !== expectedBytes) {
     throw new Error(`artifact size mismatch: received ${bytes.byteLength} bytes, feed declares ${expectedBytes}`);
   }

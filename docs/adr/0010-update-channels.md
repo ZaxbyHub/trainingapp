@@ -82,12 +82,12 @@ document and the baked-key trust anchor would carry over.
    mandatory-verify trust boundary (issue #88's different-trust-boundary rule).
 4. **Key ceremony and custody:** keypair `trainingapp-update-feed-2026-09`, generated 2026-09-27
    with `node:crypto` (ed25519). The public half is committed as the baked constant. The private
-   half was handed to the release owner (zaxbysauce) OUTSIDE any repository
-   (`E:\ZCode\.secrets\trainingapp\` on the build machine at generation time) and must live in
-   the offline release-signing store; it is never committed, never emailed, never left under
-   `.agents/` (trace dirs are excluded only by unversioned local config). Rotation = generate a
-   new keypair, ship a build with the new baked key, publish feed entries under the new `key_id`
-   during transition. Signing procedure (offline, one command): see `docs/updates.md`.
+   half was handed to the release owner (zaxbysauce) OUTSIDE any repository (generated on the
+   build machine in a private directory, since moved to the offline release-signing store; the
+   host path is deliberately NOT recorded here — review F-017) and it is never committed, never
+   emailed, never left under `.agents/` (trace dirs are excluded only by unversioned local
+   config). Rotation = generate a new keypair, ship a build with the new baked key, publish feed
+   entries under the new `key_id` during transition. Signing procedure (offline, one command): see `docs/updates.md`.
 5. **App-binary signing (Authenticode):** **deferred with an explicit risk acceptance.** The
    distributed NSIS installer remains unsigned for now (as at the issue's baseline). Risk
    accepted: an unsigned installer cannot prove publisher identity to Windows SmartScreen, and
@@ -115,17 +115,32 @@ document and the baked-key trust anchor would carry over.
   (validly-signed) feed remains verifiable until superseded; HTTPS + operator-controlled feed
   URLs are the mitigations. A schema `expires_at` field is the sanctioned follow-up if this ever
   matters in practice.
-- Unsigned-metadata residual (explicit, review round 2): the signature covers exactly the
-  artifact sha256 (the issue's scheme), so feed metadata around it — `download_url`,
+- Unsigned-metadata residual (explicit, review round 2 + F-003): the signature covers exactly
+  the artifact sha256 (the issue's scheme), so feed metadata around it — `download_url`,
   `size_bytes` — is NOT signed. A feed tamperer without the key can repoint a download or
-  inflate the declared size. Mitigations: https-only transport, the sha256 gate as the final
-  arbiter (a repointed download fails it), and the absolute `MAX_ARTIFACT_BYTES` (8 GiB) clamp +
-  schema `maximum` on `size_bytes` so no entry can drive an unbounded read. Signing the whole
-  canonical entry (C8's manifest pattern) is the named stronger follow-up.
+  inflate the declared size. Mitigations: https-only per-hop transport, the sha256 gate as the
+  final arbiter (a repointed download fails it), pack downloads clamped to
+  `MAX_PACK_ARTIFACT_BYTES` (50 MiB — the install route's real cap) plus the schema `maximum` on
+  pack `size_bytes`, and the diff's strictly-greater rule (a feed can never offer a version at
+  or below the installed/highest one, so replaying an old signed entry cannot downgrade anyone).
+  Accepted residual: an old-but-still-newer signed entry remains offerable until the feed is
+  refreshed. Signing the whole canonical entry (C8's manifest pattern) is the named stronger
+
+- Sidecar forward-migration residual (explicit, review F-023): `updates.json` is
+  duck-typed {optIn, feedUrl?} with no internal version discriminator - the same pattern as
+  the sibling settings.json/first-run.json sidecars. Every unrecognized shape fails closed
+  to {optIn: false} (corruption and future format changes can never enable network calls); a
+  state_version field ships only if a migration ever needs one. The TS
+  FeedVersionEntry.signature? optional is a diff-level convenience only - the JSON Schema
+  requires the signature block.
+  follow-up.
 - The desktop update checker is the app's first public-internet outbound call; its hardening set
-  (https-only, credentials omitted, explicit timeouts, size caps, no identifying payload) is
-  pinned in `desktop/main/update-checker.ts` and reviewed in `docs/security/desktop.md`'s
-  known-limits update.
+  (https-only on every redirect hop, credentials omitted, explicit timeouts, size caps, no
+  identifying payload) is pinned in `desktop/main/update-checker.ts` and surfaced in
+  `docs/security/desktop.md`'s known-limits update. Redirects are followed only after each hop's
+  https check (review F-013), pack downloads clamp to the 50 MiB install cap (review F-012), and
+  a feed declaring a newer `schema_version` gets an explicit upgrade-guidance error instead of a
+  generic validation failure (review F-010).
 - `applyPackUpdate` composition coverage is supplementary (`desktop/src/__tests__/e5-update-apply.test.ts`);
   the frozen acceptance floor (C1–C6) owns the diff/signature/rollback/opt-in seams.
 - No shared Ed25519 test vectors between the Python and Node verifiers were added — out of scope

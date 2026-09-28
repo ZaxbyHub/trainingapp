@@ -73,6 +73,10 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
   const [updateByPack, setUpdateByPack] = useState<Record<string, string>>({});
   const [applying, setApplying] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // PRF-003: lastApply is sticky in main's status, so every push/pull would
+  // re-toast an old outcome. Consume by appliedAt — toast only the first
+  // delivery of each apply result.
+  const lastApplyToastRef = useRef<string | null>(null);
 
   const ingestUpdateStatus = useCallback((status: UpdateStatus): void => {
     const next: Record<string, string> = {};
@@ -80,14 +84,16 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
       next[candidate.packId] = candidate.availableVersion;
     }
     setUpdateByPack(next);
-    if (status.lastApply !== null) {
-      if (status.lastApply.applied) {
+    const lastApply = status.lastApply;
+    if (lastApply !== null && lastApply.appliedAt !== lastApplyToastRef.current) {
+      lastApplyToastRef.current = lastApply.appliedAt;
+      if (lastApply.applied) {
         showToast(
-          `Updated ${status.lastApply.packId} to v${status.lastApply.version ?? ''}`,
+          `Updated ${lastApply.packId} to v${lastApply.version ?? ''}`,
           'success',
         );
-      } else if (status.lastApply.reason) {
-        showToast(`Update refused: ${status.lastApply.reason}`, 'error');
+      } else if (lastApply.reason) {
+        showToast(`Update refused: ${lastApply.reason}`, 'error');
       }
     }
   }, [showToast]);
@@ -205,8 +211,11 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
       setApplying(packId);
       try {
         const result = await bridge.applyPackUpdate?.(packId);
-        if (result !== undefined && !result.ok && result.detail) {
-          showToast(`Update failed: ${result.detail}`, 'error');
+        // The outcome toast fires exactly once via ingestUpdateStatus (the
+        // handler pushes status with a fresh appliedAt); don't double-toast
+        // from the invoke return (PRF-003).
+        if (result?.status !== undefined) {
+          ingestUpdateStatus(result.status);
         }
         await refresh();
       } catch (err: unknown) {
@@ -215,7 +224,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         setApplying(null);
       }
     },
-    [refresh, showToast],
+    [ingestUpdateStatus, refresh],
   );
 
   // Active version of each pack first, then superseded versions; groups stay

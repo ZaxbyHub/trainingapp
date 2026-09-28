@@ -48,6 +48,9 @@ contextBridge.exposeInMainWorld('desktopApi', {
   setUpdateOptIn: (enabled: boolean) => ipcRenderer.invoke('desktop:updates:set-opt-in', enabled),
   checkForUpdates: () => ipcRenderer.invoke('desktop:updates:check-now'),
   applyPackUpdate: (packId: string) => ipcRenderer.invoke('desktop:updates:apply', packId),
+  // F-008/PRR-008: the shell deny-alls window-open and navigation, so the app
+  // update notice reaches the OS browser ONLY through this allowlisted handler.
+  openUpdateExternal: (url: string) => ipcRenderer.invoke('desktop:updates:open-external', url),
   onUpdateAvailable: (callback: (status: unknown) => void) => {
     const listener = (_event: unknown, status: unknown): void => callback(status);
     ipcRenderer.on('updates:available', listener);

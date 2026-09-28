@@ -20,8 +20,8 @@ import { STAGED_CONTRACTS, stageContracts } from '../../scripts/stage-installer-
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 describe('stageContracts (#133 packaged findRepoRoot)', () => {
-  it('stages exactly the two contract files, byte-identical, under dist/contracts/', () => {
-    expect(STAGED_CONTRACTS).toEqual(['contracts/store.schema.sql', 'contracts/pack.schema.json']);
+  it('stages exactly the staged contract files, byte-identical, under dist/contracts/', () => {
+    expect(STAGED_CONTRACTS).toEqual(['contracts/store.schema.sql', 'contracts/pack.schema.json', 'contracts/pack-feed.schema.json']);
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'e133-stager-'));
     try {
       stageContracts(tmp);
@@ -39,5 +39,21 @@ describe('stageContracts (#133 packaged findRepoRoot)', () => {
   it('the electron-builder files glob carries dist/contracts into app.asar', () => {
     const yml = fs.readFileSync(path.join(REPO_ROOT, 'desktop', 'electron-builder.yml'), 'utf8');
     expect(yml).toMatch(/- dist\/\*\*\/\*/);
+  });
+});
+
+describe('stageContracts covers every runtime repo-root marker (PR #137 review)', () => {
+  it('every marker file a production repo-root walk keys on is staged', () => {
+    // The two runtime walks: sqlite-store.ts findRepoRoot (store.schema.sql)
+    // and update-checker.ts repoRootFrom (same marker since the review round).
+    // If a new walk introduces a marker, stage it here too — packaged builds
+    // otherwise fail every walk with 'contracts marker not found'.
+    const RUNTIME_MARKERS = ['contracts/store.schema.sql', 'contracts/pack.schema.json'];
+    for (const marker of RUNTIME_MARKERS) {
+      expect(STAGED_CONTRACTS).toContain(marker);
+    }
+    // The feed schema is loaded by absolute path from the discovered root,
+    // so it must ship alongside the markers.
+    expect(STAGED_CONTRACTS).toContain('contracts/pack-feed.schema.json');
   });
 });

@@ -17,6 +17,7 @@ import { PacksPanel } from './PacksPanel';
 import { ToastProvider } from './ToastProvider';
 import type { ApiClient, PackInfo } from '../lib/api';
 import type { DesktopApiBridge, UpdateStatus } from '../types/desktop';
+import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../test/desktop-bridge-stub';
 
 const PACKS: PackInfo[] = [
   {
@@ -149,31 +150,19 @@ const UPDATE_STATUS: UpdateStatus = {
   error: null,
   appUpdate: null,
   lastApply: null,
+  // appliedAt omitted here would break the type; keep null lastApply valid
 };
 
 function stubBridge(overrides: Partial<DesktopApiBridge> = {}): void {
-  const bridge: DesktopApiBridge = {
-    getAuthToken: vi.fn(async () => 'test-token'),
-    getBackendInfo: vi.fn(async () => ({ mode: 'node', port: 1, url: 'http://127.0.0.1:1' })),
-    getFirstRunStatus: vi.fn(async () => {
-      throw new Error('not used in this suite');
-    }),
-    activateFirstRunPacks: vi.fn(async () => ({ ok: true, results: [] })),
-    completeFirstRun: vi.fn(async () => ({ ok: true })),
-    resetFirstRun: vi.fn(async () => ({ ok: true })),
-    onFirstRunRequired: vi.fn(() => () => undefined),
+  installDesktopBridgeStub({
     getUpdateStatus: vi.fn(async () => UPDATE_STATUS),
-    setUpdateOptIn: vi.fn(async () => ({ ok: true })),
-    checkForUpdates: vi.fn(async () => ({ ok: true })),
     applyPackUpdate: vi.fn(async () => ({ ok: true })),
-    onUpdateAvailable: vi.fn(() => () => undefined),
     ...overrides,
-  };
-  Object.defineProperty(window, 'desktopApi', { value: bridge, configurable: true, writable: true });
+  });
 }
 
 function clearBridge(): void {
-  delete (window as { desktopApi?: unknown }).desktopApi;
+  removeDesktopBridgeStub();
   vi.unstubAllGlobals();
 }
 

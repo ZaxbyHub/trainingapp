@@ -735,5 +735,6 @@ user opts in (Settings → Updates).
 
 Notes: checks run at app start (opted in) and via "Check for updates now" — no background timer.
 `<profileDir>` is the directory holding `store.sqlite` (e.g.
-`%APPDATA%/TrainingApp/profiles/default/`). Publishing/signing a feed: `docs/updates.md`;
+`%APPDATA%/trainingapp-desktop/profiles/default/` - the runtime folder follows the package
+name `trainingapp-desktop`, not the installer's display name). Publishing/signing a feed: `docs/updates.md`;
 decision record: `docs/adr/0010-update-channels.md`.

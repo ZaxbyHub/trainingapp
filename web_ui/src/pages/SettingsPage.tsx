@@ -97,6 +97,14 @@ function UpdatesSection(): React.ReactElement {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [openBusy, setOpenBusy] = useState(false);
+  const errorRef = React.useRef<HTMLParagraphElement | null>(null);
+
+  const showError = (message: string): void => {
+    setError(message);
+    // Move keyboard focus to the error so AT/keyboard users land on it (PRR-012).
+    queueMicrotask(() => errorRef.current?.focus());
+  };
 
   useEffect(() => {
     const bridge = window.desktopApi;
@@ -127,10 +135,10 @@ function UpdatesSection(): React.ReactElement {
     setError(null);
     try {
       const result = await window.desktopApi?.setUpdateOptIn?.(!status.optIn);
-      if (result !== undefined && !result.ok && result.detail) setError(result.detail);
+      if (result !== undefined && !result.ok && result.detail) showError(result.detail);
       if (result?.status !== undefined) setStatus(result.status);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to change the updates setting');
+      showError(err instanceof Error ? err.message : 'Failed to change the updates setting');
     } finally {
       setBusy(false);
     }
@@ -141,12 +149,25 @@ function UpdatesSection(): React.ReactElement {
     setError(null);
     try {
       const result = await window.desktopApi?.checkForUpdates?.();
-      if (result !== undefined && !result.ok && result.detail) setError(result.detail);
+      if (result !== undefined && !result.ok && result.detail) showError(result.detail);
       if (result?.status !== undefined) setStatus(result.status);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Update check failed');
+      showError(err instanceof Error ? err.message : 'Update check failed');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleOpenDownload = async (url: string): Promise<void> => {
+    if (url === '') return;
+    setOpenBusy(true);
+    try {
+      const result = await window.desktopApi?.openUpdateExternal?.(url);
+      if (result !== undefined && !result.ok && result.detail) showError(result.detail);
+    } catch (err: unknown) {
+      showError(err instanceof Error ? err.message : 'Could not open the download page');
+    } finally {
+      setOpenBusy(false);
     }
   };
 
@@ -159,6 +180,7 @@ function UpdatesSection(): React.ReactElement {
             data-testid="updates-opt-in"
             checked={status?.optIn ?? false}
             disabled={busy || status === null}
+            aria-busy={busy}
             onChange={() => void handleToggle()}
           />
           <span>Check for updates automatically (opt-in; the app works fully offline)</span>
@@ -166,6 +188,7 @@ function UpdatesSection(): React.ReactElement {
         <button
           type="button"
           data-testid="updates-check-now"
+          aria-busy={busy}
           disabled={busy || status === null || !status.optIn}
           onClick={() => void handleCheckNow()}
         >
@@ -173,12 +196,18 @@ function UpdatesSection(): React.ReactElement {
         </button>
       </div>
       {error !== null && (
-        <p style={{ ...descriptionStyle, color: 'var(--color-danger, #c00)' }} data-testid="updates-error">
+        <p
+          role="alert"
+          ref={errorRef}
+          tabIndex={-1}
+          style={{ ...descriptionStyle, color: 'var(--color-danger, #c00)', outline: 'none' }}
+          data-testid="updates-error"
+        >
           {error}
         </p>
       )}
       {status !== null && status.optIn && status.error !== null && (
-        <p style={{ ...descriptionStyle, color: 'var(--color-danger, #c00)' }}>
+        <p role="alert" style={{ ...descriptionStyle, color: 'var(--color-danger, #c00)' }}>
           Last check failed: {status.error}
         </p>
       )}
@@ -186,10 +215,19 @@ function UpdatesSection(): React.ReactElement {
         <p style={descriptionStyle} data-testid="updates-app-available">
           App update available: v{status.appUpdate.availableVersion} (currently v
           {status.appUpdate.currentVersion}).{' '}
-          <a href={status.appUpdate.downloadUrl} target="_blank" rel="noreferrer">
-            Download the installer
-          </a>{' '}
-          and run it to update; your data is kept. Expected sha256:{' '}
+          <button
+            type="button"
+            data-testid="updates-app-open-download"
+            disabled={openBusy}
+            onClick={() => void handleOpenDownload(status.appUpdate?.downloadUrl ?? '')}
+          >
+            Open download page
+          </button>{' '}
+          and run the installer to update; your data is kept. Download URL (copyable):{' '}
+          <code style={{ wordBreak: 'break-all' }} data-testid="updates-app-url">
+            {status.appUpdate.downloadUrl}
+          </code>
+          . Expected sha256:{' '}
           <code style={{ wordBreak: 'break-all' }} data-testid="updates-app-sha256">
             {status.appUpdate.sha256}
           </code>{' '}
@@ -204,9 +242,9 @@ function UpdatesSection(): React.ReactElement {
         </p>
       )}
       {status !== null && status.optIn && status.checkedAt !== null && (
-        <p style={descriptionStyle} data-testid="updates-status-line">
-          Last checked {status.checkedAt}. Pack updates, if any, are surfaced on the Knowledge
-          Packs panel (Documents page).
+        <p role="status" aria-live="polite" style={descriptionStyle} data-testid="updates-status-line">
+          Last checked {new Date(status.checkedAt).toLocaleString()}. Pack updates, if any, are
+          surfaced on the Knowledge Packs panel (Documents page).
         </p>
       )}
       <p style={descriptionStyle}>
