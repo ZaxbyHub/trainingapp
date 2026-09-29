@@ -20,6 +20,11 @@ import { DESKTOP_FIRST_BYTE_TIMEOUT_MS, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '..
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
 import { buildHistorySnapshot } from '../lib/chat/history-snapshot';
 import { getLLMService } from '../lib/llm/llm-factory';
+import {
+  OpenAICompatChatService,
+  isProviderConfigured,
+  loadProviderConfig,
+} from '../lib/llm/openai-provider';
 import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessCache } from '../lib/llm/readiness-gate';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
@@ -130,13 +135,27 @@ function citationsFromDone(data: {
   }));
 }
 
+/**
+ * Storage tag for a persisted conversation (PR #138 review hygiene): api and
+ * provider turns ride the server surface; browser-local turns the wllama
+ * engine. Extracted from six identical inline ternaries so the mode→surface
+ * mapping has exactly one definition.
+ */
+function conversationStorageTag(mode: ReturnType<typeof useInferenceMode>['mode']): 'server' | 'wllama' {
+  return mode === 'api' || mode === 'provider' ? 'server' : 'wllama';
+}
+
 function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments, onOpenTraining, pinnedSlide, onDismissPinnedSlide }: ChatPageProps) {
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
   // B9 (issue #67): desktop session drives the SSE endpoint/auth and the
   // first-run model gate. Both are inert outside Electron (session null,
   // predicate false).
   const { session: desktopSession, models: desktopModels } = useDesktopSession();
-  const desktopModelBlocked = modelsAbsentForRealEngine(desktopModels);
+  const desktopModelBlocked =
+    // Provider mode never touches staged local models (trace
+    // external-llm-provider-settings reviewer round 1, finding 3): the B9
+    // model gate must not dead-end provider chat when no GGUF is staged.
+    mode !== 'provider' && modelsAbsentForRealEngine(desktopModels);
   const messages = messagesProp;
   const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
@@ -152,14 +171,21 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // Poll /status/models every 2s while eligible (a real engine with models
   // present) so the banner also catches mid-session reloads after a profile
   // switch; a missing `resident` field never gates.
+  // F-002 (PR #138 review): BOTH gates ignore provider mode — provider chat
+  // never touches the staged local models, but the desktop host warms them on
+  // every launch (and the installer always stages the GGUFs), so ungated these
+  // deterministically disabled the provider input for the whole multi-minute
+  // local load on every packaged launch.
   const residentLoad = modelLoad;
   const isModelLoading =
-    desktopSession !== null && residentLoad?.state === 'loading';
+    mode !== 'provider' && desktopSession !== null && residentLoad?.state === 'loading';
   // Poll only when a load is plausibly in flight: a real engine with models
-  // present. When the models are absent (blocked overlay already explains it)
-  // or in browser mode, no poll ever fires — the gate stays inert.
+  // present. When the models are absent (blocked overlay already explains it),
+  // in provider mode (no local load can gate the input), or in browser mode,
+  // no poll ever fires — the gate stays inert.
   const modelsAbsent = desktopModels !== null && modelsAbsentForRealEngine(desktopModels);
-  const pollEligible = desktopSession !== null && !modelsAbsent;
+  const pollEligible =
+    mode !== 'provider' && desktopSession !== null && !modelsAbsent;
   useEffect(() => {
     if (!pollEligible) return;
     let cancelled = false;
@@ -291,7 +317,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       );
       messagesRef.current = finalized;
       setMessages(finalized);
-      onSaveConversation(owningId, finalized, mode === 'api' ? 'server' : 'wllama', browserEngine);
+      onSaveConversation(owningId, finalized, conversationStorageTag(mode), browserEngine);
       // Clear the owning snapshot so a later switch can't re-persist it.
       owningMessagesRef.current = null;
       cancelActiveStream();
@@ -391,7 +417,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // values are used even though the effect has an empty dep array.
   const persistOnUnmountRef = useRef<(messages: ChatMessage[], owningId: string | undefined) => void>(() => {});
   persistOnUnmountRef.current = (messages, owningId) => {
-    onSaveConversation(owningId, messages, mode === 'api' ? 'server' : 'wllama', browserEngine);
+    onSaveConversation(owningId, messages, conversationStorageTag(mode), browserEngine);
   };
   // S2/S3 + PRR-001 unblock: dep array is `[]` so the cleanup fires ONLY on a
   // genuine unmount, NOT on every conversation switch. Previously the dep was
@@ -533,7 +559,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         setMessages(updated);
       }
       // Save to Dexie — always to the OWNING id (S1).
-      onSaveConversation(liveOwningId, updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
+      onSaveConversation(liveOwningId, updated, conversationStorageTag(mode), browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
@@ -559,7 +585,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       }
       // S2: persist the errored turn to the OWNING id so the partial answer +
       // user question survive (the save layer strips isStreaming — S3).
-      onSaveConversation(liveOwningId, updated, mode === 'api' ? 'server' : 'wllama', browserEngine);
+      onSaveConversation(liveOwningId, updated, conversationStorageTag(mode), browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
@@ -597,6 +623,68 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       } catch (err) {
         streamManager.error(err instanceof Error ? err.message : String(err));
       }
+    } else if (mode === 'provider') {
+      // Provider mode (trace external-llm-provider-settings) — DIRECT
+      // generation against a user-configured OpenAI-compatible server. No RAG
+      // orchestrator in this path: responses are ungrounded (labeled so in
+      // Settings + CONFIGURATION.md), and routing through the orchestrator
+      // would dead-end in its zero-chunk abstain short-circuit wherever the
+      // browser retrieval pipeline is not live. Conversation context (bounded
+      // by buildHistorySnapshot) IS threaded, so multi-turn chat works.
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+
+      (async () => {
+        const cfg = loadProviderConfig();
+        if (!isProviderConfigured(cfg)) {
+          streamManager.error(
+            'Provider server is not configured. Add the Base URL and Model in Settings → Provider server (OpenAI-compatible).'
+          );
+          return;
+        }
+        const svc = new OpenAICompatChatService(cfg);
+        // Cancellation: aborting the send signal interrupts the in-flight
+        // provider request (svc.interrupt is wired to the same signal).
+        abortController.signal.addEventListener('abort', () => svc.interrupt());
+        // Multi-turn context, bounded for the wire: the shared snapshot's
+        // turn cap (MAX_HISTORY_TURNS) with the api_server.py per-HISTORY-turn
+        // 4000-char bound applied client-side (issue #37 R6 — that bound
+        // covers history turns, NOT the question; api mode instead 422s
+        // questions over 2000 chars, which provider mode does not inherit).
+        const openaiMessages = [
+          ...buildHistorySnapshot(owningMessages).map((turn) => ({
+            role: turn.role,
+            content: turn.content.slice(0, 4000),
+          })),
+          { role: 'user' as const, content: text },
+        ];
+        const startTime = Date.now();
+        let fullAnswer = '';
+        try {
+          for await (const delta of svc.generate(openaiMessages, {
+            signal: abortController.signal,
+          })) {
+            if (abortController.signal.aborted) return;
+            if (tokenStreamManagerRef.current !== streamManager) return;
+            fullAnswer += delta;
+            streamManager.pushToken(delta);
+          }
+          if (abortController.signal.aborted) return;
+          if (tokenStreamManagerRef.current !== streamManager) return;
+          streamManager.complete({
+            sources: [],
+            // Ungrounded by design: never emit 'grounded' provenance here.
+            grounding: 'general',
+            contextLength: fullAnswer.length,
+            inferenceTime: Date.now() - startTime,
+          });
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            return; // User cancelled — no error message needed
+          }
+          streamManager.error(error instanceof Error ? error.message : 'Provider request failed');
+        }
+      })();
     } else {
       // Browser-local mode — RAG pipeline AsyncGenerator.
       // The LLM service singleton is fetched uninitialized from the factory; we
@@ -762,7 +850,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       await onSaveConversation(
         currentConversationId,
         appended,
-        mode === 'api' ? 'server' : 'wllama',
+        conversationStorageTag(mode),
         browserEngine,
         (newId) => {
           // First-turn creation: adopt the new id as both the owning id (for
@@ -826,7 +914,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     );
     messagesRef.current = finalized;
     setMessages(finalized);
-    onSaveConversation(owningId, finalized, mode === 'api' ? 'server' : 'wllama', browserEngine);
+    onSaveConversation(owningId, finalized, conversationStorageTag(mode), browserEngine);
     // PRR-001: the in-flight turn is finalized; clear the owning snapshot so a
     // later switch/unmount/engine-switch can't re-persist it.
     owningMessagesRef.current = null;

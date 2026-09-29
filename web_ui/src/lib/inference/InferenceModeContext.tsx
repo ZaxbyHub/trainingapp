@@ -1,6 +1,9 @@
 /**
- * Inference mode context - manages browser-local vs API mode state.
- * Provides state management for dual-mode architecture (Phase 5).
+ * Inference mode context - manages browser-local vs API vs provider mode state.
+ * 'provider' (trace external-llm-provider-settings) sends chat directly to a
+ * user-configured OpenAI-compatible server; its connection settings live in
+ * the same storage blob (key `providerConfig`) and are managed via
+ * lib/llm/openai-provider's load/save helpers, not through this context.
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
@@ -11,7 +14,7 @@ import { disposeBrowserEngine } from '../llm/llm-factory';
 import { getToken } from '../api/auth';
 import { initDesktopSession, isElectron } from '../desktop-session';
 
-export type InferenceMode = 'browser-local' | 'api';
+export type InferenceMode = 'browser-local' | 'api' | 'provider';
 
 /** Default browser engine — wllama (robust without WebGPU; multimodal-capable). */
 const DEFAULT_BROWSER_ENGINE: BrowserEngine = 'wllama';
@@ -50,6 +53,8 @@ interface StoredInferenceMode {
   serverUrl: string;
   browserEngine?: BrowserEngine;
   ragPreset?: RAGPreset;
+  /** Provider connection settings (managed by lib/llm/openai-provider). */
+  providerConfig?: { baseUrl: string; model: string };
 }
 
 const defaultState: InferenceModeState = {
@@ -72,7 +77,14 @@ function loadStoredState(): InferenceModeState {
       const parsed: StoredInferenceMode = JSON.parse(stored);
       return {
         ...defaultState,
-        mode: parsed.mode || 'browser-local',
+        // Mode allow-list (PR #138 review): browserEngine and ragPreset are
+        // already validated against their unions — a garbage/legacy mode value
+        // must degrade to the default the same way instead of flowing into the
+        // dispatch tree unvalidated.
+        mode:
+          parsed.mode === 'browser-local' || parsed.mode === 'api' || parsed.mode === 'provider'
+            ? parsed.mode
+            : 'browser-local',
         serverUrl: parsed.serverUrl || defaultState.serverUrl,
         browserEngine:
           parsed.browserEngine === 'webllm' || parsed.browserEngine === 'wllama'
@@ -94,7 +106,22 @@ function persistState(
   ragPreset: RAGPreset
 ): void {
   try {
-    const toStore: StoredInferenceMode = { mode, serverUrl, browserEngine, ragPreset };
+    // Merge over the existing blob so sibling keys written by other owners —
+    // notably `providerConfig` (lib/llm/openai-provider) — survive every
+    // mode/engine/preset persist.
+    let prev: StoredInferenceMode = {} as StoredInferenceMode;
+    try {
+      prev = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as StoredInferenceMode;
+    } catch {
+      prev = {} as StoredInferenceMode;
+    }
+    const toStore: StoredInferenceMode = {
+      ...prev,
+      mode,
+      serverUrl,
+      browserEngine,
+      ragPreset,
+    };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
   } catch {
     // localStorage not available or quota exceeded

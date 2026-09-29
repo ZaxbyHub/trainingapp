@@ -71,6 +71,14 @@ export function InferenceModeToggle() {
 
   const statusColor = getStatusColor();
 
+  // Trace external-llm-provider-settings: provider mode has its own switching
+  // surface (Settings → Inference Mode). Rendering the binary flip here would
+  // label provider mode "Company server" and one click would silently discard
+  // it — hide the toggle entirely in that mode.
+  if (mode === 'provider') {
+    return null;
+  }
+
   // U7b air-gap safety: the toggle is a one-click flip to API mode, so only
   // render it when an API server is actually configured. When `serverUrl` is
   // empty the app is browser-local only and the toggle would be a dead control

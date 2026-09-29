@@ -23,10 +23,13 @@
 //     The embedding worker itself is a same-origin module worker ('self').
 //   - img-src/font-src data:: the offline data:-URI favicon and inline font
 //     fallbacks in web_ui/index.html.
-//   - connect-src http://127.0.0.1:* + http://[::1]:*: the B3 loopback
-//     backend on its random free port (both literal loopback forms, symmetric
-//     with the loopback-guard Host gate). app: stays allowed for app://-URL
-//     fetches (the scheme registers supportFetchAPI).
+//   - connect-src http://127.0.0.1:*: the B3 loopback backend on its random
+//     free port, plus provider-mode loopback LLM servers. app: stays allowed
+//     for app://-URL fetches (the scheme registers supportFetchAPI).
+//     DELIBERATELY 127.0.0.1 ONLY: Chromium rejects http://[::1]:* as an
+//     invalid source-list entry (silently dropped from the policy — see the
+//     connect-src comment below), so the IPv6 loopback is neither listed here
+//     nor symmetric with the loopback-guard Host gate (an inbound surface).
 // Deliberately absent (blocked by default or explicitly):
 //   - 'unsafe-inline' / 'unsafe-eval' — never, in any directive.
 //   - object-src 'none', base-uri 'none', form-action 'none',
@@ -48,7 +51,12 @@ export function buildCspPolicy(): string {
     "style-src 'self' app:",
     "img-src 'self' app: data:",
     "font-src 'self' app:",
-    "connect-src 'self' app: http://127.0.0.1:* http://[::1]:*",
+    // 127.0.0.1 ONLY: Chromium rejects http://[::1]:* as an invalid CSP
+    // source-list entry (silently dropped - live-verified in the PR #138
+    // review), so listing it would promise an IPv6 loopback connect-src the
+    // browser then ignores. The provider-mode guard (web_ui openai-provider)
+    // rejects [::1] up front for the same reason.
+    "connect-src 'self' app: http://127.0.0.1:*",
     "worker-src 'self' app: blob:",
     // Explicit (rather than inherited from default-src) to pin the framing
     // posture independently of future default-src edits. PRR96-008.

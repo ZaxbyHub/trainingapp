@@ -79,6 +79,17 @@ export function buildHistorySnapshot(owningMessages: ChatMessage[]): RAGHistoryT
   while (windowed.length > 1 && windowed[0].role === 'assistant') {
     windowed = windowed.slice(1);
   }
+  // F-004 (PR #138 review): a trailing user turn means the PREVIOUS assistant
+  // turn was dropped (error / abstain / empty card) or never happened — and
+  // the caller is about to append the CURRENT user turn, so sending this one
+  // would put two consecutive `user` messages on the wire. Third-party jinja
+  // chat templates (llama-server --jinja, LM Studio Gemma/Mistral templates)
+  // can reject that shape outright, wedging the conversation until New Chat
+  // (Try-again cannot recover it). An unanswered question carries no answer
+  // context, so drop trailing user turns instead of sending them.
+  while (windowed.length > 0 && windowed[windowed.length - 1].role === 'user') {
+    windowed = windowed.slice(0, -1);
+  }
   return windowed.map((m) => ({
     role: m.role === 'assistant' ? 'assistant' : 'user',
     content: m.content ?? '',

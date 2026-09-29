@@ -67,13 +67,17 @@ const stepChip = (state: 'done' | 'current' | 'todo'): React.CSSProperties => ({
   padding: '2px 10px',
   borderRadius: 999,
   fontSize: 'var(--font-size-caption, 12px)',
-  border: '1px solid',
-  borderColor:
-    state === 'current'
-      ? 'var(--color-primary, #4a9eff)'
-      : state === 'done'
-        ? 'var(--color-success, #4caf50)'
-        : 'var(--color-border, #444)',
+  // Single shorthand (trace external-llm-provider-settings P6): do not mix a
+  // border shorthand with a borderColor longhand in one style object — that
+  // mix is the React style-warning class fixed on SettingsPage.
+  border:
+    `1px solid ${
+      state === 'current'
+        ? 'var(--color-primary, #4a9eff)'
+        : state === 'done'
+          ? 'var(--color-success, #4caf50)'
+          : 'var(--color-border, #444)'
+    }`,
   color:
     state === 'current'
       ? 'var(--color-primary, #4a9eff)'
