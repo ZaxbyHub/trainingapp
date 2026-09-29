@@ -78,7 +78,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 ### LLM Backend (GGUF-Only)
 The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, ADR-0003); the browser app uses the same GGUF weights through wllama (llama.cpp WASM) — fully offline on both:
 
-- **Quality profile (default)**: Gemma 4 E2B-it (Q4_K_M GGUF per [ADR-0002](docs/adr/0002-llm-profiles.md); ~2.9 GB nominal, 2.5 GB on disk) — bundled
+- **Quality profile (default)**: Gemma 4 E2B-it (Q4_K_M GGUF per [ADR-0002](docs/adr/0002-llm-profiles.md); ~2.9 GB nominal per PACKAGING.md; 2,620,370,976 bytes measured per bench/RESULTS.md) — bundled
 - **Fast profile**: lfm2.5-vl-450m (Q4_K_M GGUF per ADR-0002) — bundled
 - Profile selection: automatic free-RAM gate or in-app choice; `TRAININGAPP_DESKTOP_INFERENCE_PROFILE` (`quality` / `fast` / `auto`) is the desktop env override. (`RAG_GGUF_PATH` / `--gguf-path` select a custom GGUF on the legacy Python harness only.)
 - No GPU required

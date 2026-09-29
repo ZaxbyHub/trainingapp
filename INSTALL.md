@@ -84,7 +84,7 @@ Successfully installed pypdf-4.2.0 ...
 **Option B: Manual Download** (recommended for offline setup)
 1. Download Gemma 4 E2B from Hugging Face:
     - URL: https://huggingface.co/google/gemma-4-2b-it-gguf
-    - File: `gemma-4-e2b-it-q4_k_m.gguf` (~2.9 GB (nominal; 2.5 GB on disk))
+    - File: `gemma-4-e2b-it-q4_k_m.gguf` (~2.9 GB nominal; 2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md)
 
 2. Save to a known location:
     - Example: `C:\Models\gemma-4-e2b-it\model.gguf`
@@ -211,7 +211,7 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 **Bundled Model**: Gemma 4 E2B (Q4_K_M — ADR-0002; the quant packaged by issue #84)
 
 **Specifications**:
-- Model Size: ~2.9 GB (nominal; 2.5 GB on disk)
+- Model Size: ~2.9 GB nominal (2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md)
 - Architecture: Gemma 4 (Google)
 - Quantization: Q4_K_M (ADR-0002 decision)
 - Language: English (primary)
@@ -306,7 +306,7 @@ Edit settings via GUI:
 # Verify GGUF model exists (default bundled model)
 dir C:\path\to\gemma-4-e2b-it\model.gguf
 
-# Check file size (should be ~2.9 GB nominal (2.5 GB on disk) for Q4_K_M)
+# Check file size (should be ~2.9 GB nominal (2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md) for Q4_K_M)
 ```
 
 **Problem**: "chromadb not installed"

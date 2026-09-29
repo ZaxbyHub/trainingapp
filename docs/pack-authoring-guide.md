@@ -141,7 +141,7 @@ Required top-level fields: `id`, `name`, `version`, `published_at`,
 
 | field | rules |
 |---|---|
-| `id` | `^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$` (3–63 chars). Immutable across versions of the same pack. Validated at parse time by packtool. |
+| `id` | `^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$` (3–64 chars). Immutable across versions of the same pack. Validated at parse time by packtool. |
 | `name` | 1–200 chars. |
 | `version` | Semver 2.0.0 (`MAJOR.MINOR.PATCH` plus optional prerelease/build). Validated at parse time by packtool. |
 | `published_at` | RFC3339 date-time (UTC recommended). Drives recency ranking; must not be confused with the file's mtime. |

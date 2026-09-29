@@ -138,7 +138,7 @@ C:\Models\gemma-4-e2b-it\model.gguf
 **File Requirements**:
 - Must start with "GGUF" magic bytes
 - Size: 1-4 GB for 2B-8B models
-- Format: Q4_K_M (the quant packaged by ADR-0002 / issue #84; ~2.9 GB nominal, 2.5 GB on disk)
+- Format: Q4_K_M (the quant packaged by ADR-0002 / issue #84; ~2.9 GB nominal per PACKAGING.md; 2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md)
 
 **Bundled Model**:
 The application uses `gemma-4-e2b-it/model.gguf` (Q4_K_M, ADR-0002) staged under `models/`. This model is automatically detected on first run if no custom model is configured.
@@ -611,7 +611,7 @@ python main.py \
 # Verify GGUF model
 dir C:\path\to\gemma-4-e2b-it\model.gguf
 
-# Check file size (should be ~2.9 GB nominal / 2.5 GB on disk for Q4_K_M)
+# Check file size (should be ~2.9 GB nominal / 2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md for Q4_K_M)
 
 # If using custom model, set RAG_GGUF_PATH
 set RAG_GGUF_PATH=C:\Models\your-model.gguf

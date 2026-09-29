@@ -286,9 +286,10 @@ plays installed `training` source-class packs in the embedded Storyline
 player ([web_ui/src/components/TrainingPlayer.tsx](web_ui/src/components/TrainingPlayer.tsx)),
 served from `app://training/<packId>/`. The player frame is a distinct
 origin, so all communication goes through the postMessage protocol in
-[web_ui/src/components/training-player-bridge.ts](web_ui/src/components/training-player-bridge.ts)
-(state polling at 1 s; jumps verified against the player's own reported
-slide). The pinned-slide banner
+[web_ui/src/components/training-player-bridge.ts](web_ui/src/components/training-player-bridge.ts);
+the player itself polls state at 1 s — `POLL_INTERVAL_MS` in
+[web_ui/src/components/TrainingPlayer.tsx](web_ui/src/components/TrainingPlayer.tsx) —
+and jumps are verified against the player's own reported slide). The pinned-slide banner
 ([web_ui/src/components/PinnedSlideContext.tsx](web_ui/src/components/PinnedSlideContext.tsx))
 carries "currently viewing" context into chat and marks stale pins.
 
@@ -392,10 +393,10 @@ reach the renderer as `memory:event` pushes. Decision record:
 
 ## CI & conformance
 
-Post-PR this repository carries nine GitHub workflows. Eight exist on disk:
+This repository carries nine GitHub workflows on disk:
 `build.yml` and `release.yml` (Python artifacts), `nightly.yml`,
 `security.yml` (bandit/safety scans), and the four below; the ninth,
-`doc-accuracy.yml`, lands with this documentation refresh as a deliberately
+`doc-accuracy.yml`, is part of this documentation refresh: a deliberately
 unscoped, always-run guardrail that checks documented paths and claims
 against the tree (path filters would let a docs-drifting PR skip its own
 check).

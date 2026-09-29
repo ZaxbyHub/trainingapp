@@ -63,6 +63,8 @@ ENFORCED_FILES = [
     "INSTALL.md",
     "CONFIGURATION.md",
     "USAGE.md",
+    "docs/pack-authoring-guide.md",
+    "docs/training-pack-refresh-runbook.md",
 ]
 
 ARCH_STALE_TERMS = [
