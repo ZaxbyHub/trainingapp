@@ -260,9 +260,11 @@ Window=0: No expansion
 
 The web/desktop app can send its chat directly to a locally served LLM that speaks the
 standard OpenAI wire format — llama-server (`llama-server`), LM Studio, Ollama's compat
-endpoint, or vLLM. **This release accepts loopback servers only** (`http://127.0.0.1:<port>`
-or `http://[::1]:<port>`): the packaged desktop app's content-security policy only permits
-loopback connections, and the app validates this up front. Serving on a LAN address? Bind the
+endpoint, or vLLM. **This release accepts loopback servers only**
+(`http://127.0.0.1:<port>`): the packaged desktop app's content-security policy permits only
+the IPv4 loopback, and the app validates this up front. (IPv6 loopback `[::1]` is NOT
+supported: Chromium cannot parse it as a CSP source-list entry, so a `[::1]` server would be
+network-blocked at runtime in the packaged build.) Serving on a LAN address? Bind the
 server to loopback for now — widening to LAN/remote hosts is a deliberate desktop-CSP decision
 flagged for maintainers.
 
@@ -270,14 +272,21 @@ flagged for maintainers.
 
 1. **Base URL** — the server root, e.g. `http://127.0.0.1:8080`. Loopback only in this
    release. A `/v1` suffix is optional (the app appends it when missing); pasting the full
-   `.../v1/chat/completions` also works.
+   `.../v1/chat/completions` or `.../v1/models` also works, and a pasted query/fragment or
+   `user:pass@` prefix is stripped.
 2. **Model id** — the model name the server exposes (e.g. the loaded GGUF id llama-server
    reports on `/v1/models`).
 3. **API key (optional)** — sent as `Authorization: Bearer <key>`. Stored locally in plain
    text in the app's profile storage; it is sent ONLY to the configured server. Local servers
    usually need no key.
-4. **Test Connection** — probes `{base}/v1/models`; it never requires the project's own
-   `/auth/status` route, so a standard OpenAI-compatible server probes green.
+4. **Test Connection** — probes `{base}/v1/models` (sending the configured API key, when
+   one is set, so key-protected servers exercise their real auth path); it never requires the
+   project's own `/auth/status` route, so a standard OpenAI-compatible server probes green.
+   Editing any connection field clears a previous result, and a result that lands after the
+   URL changed is discarded.
+5. **First token** — chat waits up to 10 minutes for the first streamed byte (cold model
+   loads and CPU prompt evaluation over bounded history legitimately take minutes; the bound
+   clears on first byte and does not cap total generation length).
 
 **What provider mode does and does not do**:
 
@@ -285,9 +294,10 @@ flagged for maintainers.
   to `{base}/v1/chat/completions` (streamed). **Your conversation context is sent to that
   server**, and responses are NOT grounded in your documents — provider mode is plain chat,
   not RAG. Document Q&A stays available in the other modes.
-- The server must allow browser requests from the app origin (CORS). llama-server, LM Studio,
-  vLLM, and Ollama's compat layer ship permissive CORS by default; if Test Connection fails
-  on a healthy server, check its CORS/origins flag.
+- The server must allow browser requests from the app origin (CORS). This varies by server:
+  llama-server and vLLM typically accept browser origins out of the box, while LM Studio and
+  Ollama may require enabling a CORS toggle or allow-listing origins — if Test Connection
+  fails on a healthy server, check its CORS/origins setting first.
 - In the desktop app the selection persists across restarts (the built-in backend does not
   override it); the quick mode toggle in the chat header is hidden in provider mode — switch
   modes from Settings.

@@ -200,7 +200,10 @@ test.describe.serial('settings layout guardrail', () => {
       }
 
       // (2) One scroller owns the content; H1 never intersects sections at
-      // multiple scroll offsets.
+      // multiple scroll offsets. Runs at the titled 1280x800 viewport (the
+      // card-overlap loop above leaves 460x900 behind).
+      await page.setViewportSize({ width: 1280, height: 800 });
+      await page.waitForTimeout(400);
       const scrollTargets = await page.evaluate(() => {
         const hosts: HTMLElement[] = [];
         for (const el of document.querySelectorAll('main, div')) {
@@ -210,6 +213,28 @@ test.describe.serial('settings layout guardrail', () => {
         return hosts.length;
       });
       expect(scrollTargets).toBeGreaterThan(0);
+      // Base-build discriminator (PR #138 review): the bare census above also
+      // passed on the base build, whose SettingsPage content wrapper was its
+      // own overflow:auto host. No INTERMEDIATE ancestor between the settings
+      // sections and <main> may be a scroll container at all — scrolling
+      // belongs to <main> exclusively.
+      const nestedScrollers = await page.evaluate(() => {
+        const out: string[] = [];
+        const section = document.querySelector('main section');
+        let node: Element | null = section ? section.parentElement : null;
+        while (node && node.tagName !== 'MAIN') {
+          const s = getComputedStyle(node);
+          if (/(auto|scroll)/.test(s.overflowY)) {
+            out.push(`${node.tagName.toLowerCase()}.${String(node.className).slice(0, 40)}`);
+          }
+          node = node.parentElement;
+        }
+        return out;
+      });
+      expect(
+        nestedScrollers,
+        `an intermediate ancestor of the settings sections owns a scrollbar (base regression): ${nestedScrollers.join('; ')}`
+      ).toEqual([]);
       for (const offset of [0, 400, 1_000_000]) {
         await page.evaluate((off) => {
           const scroller = document.querySelector('main');

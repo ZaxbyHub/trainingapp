@@ -20,7 +20,13 @@ const STORAGE_KEY = 'inference-mode';
 export function seedInferenceModeForDesktop(baseUrl: string): void {
   let stored: Record<string, unknown> = {};
   try {
-    stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Record<string, unknown>;
+    // Harden the literal-'null'/'5'/garbage blob shapes (PR #138 review):
+    // anything that is not a plain object reads as empty instead of throwing
+    // during boot.
+    const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      stored = parsed as Record<string, unknown>;
+    }
   } catch {
     stored = {};
   }

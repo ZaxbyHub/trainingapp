@@ -60,6 +60,7 @@ vi.mock('../../lib/export/conversation-export', () => ({
 import { ChatPage } from '../ChatPage';
 import * as inferenceModule from '../../lib/inference';
 import * as themeModule from '../../lib/theme';
+import * as desktopSessionModule from '../../lib/desktop-session';
 import type { ChatMessage } from '../../types/chat';
 
 function mockContext(mode: string): void {
@@ -325,5 +326,106 @@ describe('provider mode + reviewer-round-1 fixes', () => {
     expect(wireMessages.length).toBe(3);
     expect(wireMessages[0].content.length).toBe(4000);
     expect(wireMessages[2].content).toBe('summarize');
+  });
+});
+
+describe('provider mode + PR #138 review fixes (F-002 input gate, F-004 wire shape)', () => {
+  let server: http.Server;
+  let port: number;
+  let requests: RecordedRequest[];
+
+  type DesktopSessionLike = NonNullable<
+    ReturnType<typeof desktopSessionModule.useDesktopSession>['session']
+  >;
+  const fakeSession = {
+    baseUrl: 'http://127.0.0.1:4567',
+    token: 'trace-token',
+    mode: 'node',
+    apiClient: {},
+    sseUrl: () => 'http://127.0.0.1:4567/ask/stream',
+  } as unknown as DesktopSessionLike;
+
+  beforeEach(async () => {
+    localStorage.clear();
+    mockContext('provider');
+    gateState.modelsAbsent = false;
+    const started = await startMockOpenAI();
+    server = started.server;
+    port = started.port;
+    requests = started.requests;
+    localStorage.setItem(
+      'inference-mode',
+      JSON.stringify({
+        mode: 'provider',
+        serverUrl: '',
+        providerConfig: { baseUrl: `http://127.0.0.1:${port}`, model: 'local-model' },
+      })
+    );
+    // Simulate the desktop host: a live session whose resident model is
+    // LOADING (the deterministic packaged-launch state — the installer always
+    // stages the GGUFs and the backend warms them on start).
+    vi.mocked(desktopSessionModule.useDesktopSession).mockReturnValue({
+      session: fakeSession,
+      models: null,
+      loading: false,
+      error: null,
+    } as ReturnType<typeof desktopSessionModule.useDesktopSession>);
+    vi.mocked(desktopSessionModule.fetchModelStatus).mockResolvedValue({
+      profile: 'stub',
+      engine: 'stub',
+      models: {},
+      resident: { state: 'loading', progress: 0.42, startedAtMs: 1 },
+    } as unknown as Awaited<ReturnType<typeof desktopSessionModule.fetchModelStatus>>);
+  });
+
+  afterEach(async () => {
+    cleanup();
+    gateState.modelsAbsent = false;
+    // Restore the module-factory defaults so later describes are unaffected.
+    vi.mocked(desktopSessionModule.useDesktopSession).mockReturnValue({
+      session: null,
+      models: null,
+      loading: false,
+      error: null,
+    } as ReturnType<typeof desktopSessionModule.useDesktopSession>);
+    vi.mocked(desktopSessionModule.fetchModelStatus).mockImplementation(() =>
+      Promise.reject(new Error('no desktop in tests'))
+    );
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  test('F-002: provider-mode input stays ENABLED while the local model loads', async () => {
+    renderChat({ messages: [] });
+    // Wait for the (now provider-gated-off) poll cycle — the input must never
+    // be disabled: provider chat does not touch the staged local models, so
+    // the resident-model load must not gate it. Reverting the F-002 fix makes
+    // pollEligible true again, the resident 'loading' state lands, and the
+    // textarea disables — failing this assertion.
+    await waitFor(() => expect(screen.getByLabelText('Message input')).not.toBeDisabled(), {
+      timeout: 5_000,
+    });
+    // And a send actually works in that state.
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'provider send' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+    await waitFor(() => expect(requests.length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(requests[0].url).toBe('/v1/chat/completions');
+  });
+
+  test('F-004: an errored prior turn never produces two consecutive user messages', async () => {
+    const prior = [
+      msg('user', 'unanswered question'),
+      { ...msg('assistant', 'boom'), error: 'server unreachable' } as ChatMessage,
+    ];
+    renderChat({ messages: prior });
+    const input = screen.getByLabelText('Message input');
+    fireEvent.change(input, { target: { value: 'retry the question' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+
+    await waitFor(() => expect(requests.length).toBeGreaterThan(0), { timeout: 10_000 });
+    const wire = requests[0].body.messages ?? [];
+    // The trailing unanswered user turn must be dropped (F-004): the wire is
+    // exactly [current user] — no [user, user] shape for jinja templates to
+    // reject.
+    expect(wire).toEqual([{ role: 'user', content: 'retry the question' }]);
   });
 });

@@ -738,7 +738,16 @@ function SettingsPageInner(): React.ReactElement {
   const [isTestingProvider, setIsTestingProvider] = useState(false);
   const [providerProbe, setProviderProbe] = useState<'success' | 'error' | null>(null);
   const [providerProbeDetail, setProviderProbeDetail] = useState<string | null>(null);
+  // Latest draft as a ref so an in-flight probe result can be validated against
+  // the CURRENT fields before it lands (review finding: a result computed for
+  // an edited-out URL must not be displayed as if it described the new one).
+  const providerDraftRef = useRef(providerDraft);
+  providerDraftRef.current = providerDraft;
   const handleProviderFieldChange = useCallback((patch: Partial<ProviderConfig>) => {
+    // Any field edit invalidates a prior probe result — a stale Connected
+    // badge must never survive an edited URL (review finding).
+    setProviderProbe(null);
+    setProviderProbeDetail(null);
     setProviderDraft((prev) => ({ ...prev, ...patch }));
   }, []);
   const handleProviderFieldBlur = useCallback(
@@ -752,15 +761,27 @@ function SettingsPageInner(): React.ReactElement {
     []
   );
   const handleTestProvider = useCallback(async () => {
+    const requestedBaseUrl = providerDraft.baseUrl;
     setIsTestingProvider(true);
     setProviderProbe(null);
     setProviderProbeDetail(null);
-    const result = await probeOpenAICompat(providerDraft.baseUrl);
+    // Send the configured key so key-protected servers (vLLM --api-key, LM
+    // Studio auth) exercise their real auth path instead of 401-ing as
+    // "cannot reach" (review finding).
+    const result = await probeOpenAICompat(providerDraft.baseUrl, {
+      apiKey: providerDraft.apiKey,
+    });
     if (!isMountedRef.current) return;
+    if (providerDraftRef.current.baseUrl !== requestedBaseUrl) {
+      // The URL was edited while the probe was in flight — the result is
+      // about a server the user is no longer looking at.
+      setIsTestingProvider(false);
+      return;
+    }
     setIsTestingProvider(false);
     setProviderProbe(result.ok ? 'success' : 'error');
     setProviderProbeDetail(result.ok ? null : (result.detail ?? 'Connection failed'));
-  }, [providerDraft.baseUrl]);
+  }, [providerDraft.baseUrl, providerDraft.apiKey]);
 
   // Hardware capability + packaged-model readiness (Phase 3)
   const [capability, setCapability] = useState<EngineCapability | null>(null);
@@ -1229,7 +1250,8 @@ function SettingsPageInner(): React.ReactElement {
                   <div>
                     <span style={radioLabelStyle}>Provider server (OpenAI-compatible)</span>
                     <p id="provider-desc" style={descriptionStyle}>
-                      Send chat to any local or remote endpoint that speaks the OpenAI wire format. Configure the connection below.
+                      Send chat directly to an OpenAI-compatible server on this machine (loopback
+                      only in this release). Configure the connection below.
                     </p>
                   </div>
                 </label>
@@ -1395,6 +1417,8 @@ function SettingsPageInner(): React.ReactElement {
                 <input
                   id="provider-base-url"
                   type="url"
+                  name="provider-base-url"
+                  autoComplete="off"
                   value={providerDraft.baseUrl}
                   onChange={(e) => handleProviderFieldChange({ baseUrl: e.target.value })}
                   onBlur={() => handleProviderFieldBlur({ baseUrl: providerDraft.baseUrl })}
@@ -1413,6 +1437,8 @@ function SettingsPageInner(): React.ReactElement {
                 <input
                   id="provider-model"
                   type="text"
+                  name="provider-model"
+                  autoComplete="off"
                   value={providerDraft.model}
                   onChange={(e) => handleProviderFieldChange({ model: e.target.value })}
                   onBlur={() => handleProviderFieldBlur({ model: providerDraft.model })}
@@ -1432,6 +1458,8 @@ function SettingsPageInner(): React.ReactElement {
                 <input
                   id="provider-api-key"
                   type="password"
+                  name="provider-api-key"
+                  autoComplete="new-password"
                   value={providerDraft.apiKey}
                   onChange={(e) => handleProviderFieldChange({ apiKey: e.target.value })}
                   onBlur={() => handleProviderFieldBlur({ apiKey: providerDraft.apiKey })}
@@ -1601,12 +1629,17 @@ function SettingsPageInner(): React.ReactElement {
           </h2>
           <div style={fieldGroupStyle}>
             <p style={descriptionStyle}>
-              Trade speed for answer quality. Applies to browser-local inference; in server
-              modes the server controls retrieval settings.
+              Trade speed for answer quality. Applies to browser-local inference; in API mode the
+              server controls retrieval settings, and provider mode does not use retrieval at all.
             </p>
             <fieldset
               style={{ border: 'none', margin: 0, padding: 0 }}
               disabled={mode === 'provider' || (mode === 'api' && !electronMode)}
+              aria-describedby={
+                mode === 'provider' || (mode === 'api' && !electronMode)
+                  ? 'rag-preset-disabled-desc'
+                  : undefined
+              }
             >
               <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select response quality preset</legend>
               <div style={radioGroupStyle}>
@@ -1638,8 +1671,9 @@ function SettingsPageInner(): React.ReactElement {
                   cannot affect the active chat path. */}
               {(mode === 'provider' || (mode === 'api' && !electronMode)) && (
                 <p id="rag-preset-disabled-desc" style={descriptionStyle}>
-                  Applies to browser-local inference only. In this mode the server controls
-                  retrieval settings.
+                  {mode === 'provider'
+                    ? 'Applies to browser-local inference only. Provider mode does not use retrieval — responses come directly from the provider server.'
+                    : 'Applies to browser-local inference only. The API server controls retrieval settings.'}
                 </p>
               )}
             </fieldset>

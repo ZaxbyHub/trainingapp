@@ -37,16 +37,22 @@ export interface ProviderConfig {
 /**
  * Normalize a user-entered provider base URL to the server root that the
  * OpenAI routes hang off:
- *   trim; strip ALL trailing slashes; strip one trailing
- *   `/chat/completions` (users paste the full endpoint); append `/v1` unless
- *   the final path segment is already `/v1` (case-insensitive).
+ *   trim; strip any query/fragment (pasted full URLs); strip a userinfo
+ *   component (`http://user:pass@host` — fetch rejects credential URLs, so
+ *   carrying it would only leak it into error strings); strip ALL trailing
+ *   slashes; strip a trailing `/chat/completions` or `/models` (users paste
+ *   the full endpoint or the models route); append `/v1` unless the final
+ *   path segment is already `/v1` (case-insensitive).
  * Shared by chat() and the probe so both always hit the same surface.
  */
 export function normalizeProviderBaseUrl(raw: string): string {
   let url = (raw ?? '').trim();
   if (!url) return '';
+  url = url.replace(/[?#].*$/, '');
+  url = url.replace(/^(https?:\/\/)[^/@]+@/i, '$1');
   url = url.replace(/\/+$/, '');
   url = url.replace(/\/chat\/completions$/i, '');
+  url = url.replace(/\/models$/i, '');
   const finalSegment = url.split('/').pop() ?? '';
   if (finalSegment.toLowerCase() !== 'v1') {
     url = `${url}/v1`;
@@ -56,14 +62,16 @@ export function normalizeProviderBaseUrl(raw: string): string {
 
 /**
  * Guard for provider base URLs: HTTP-only (the packaged CSP connect-src has
- * no https:// entries), and LOOPBACK-ONLY hosts
- * (`127.0.0.1` / `[::1]` — the packaged app's CSP `connect-src` allows exactly
- * `http://127.0.0.1:*` and `http://[::1]:*` on app:// responses, so any other
- * host would be network-blocked in the shipped build; this guard rejects it up
- * front with an actionable message instead). IPv6 metadata/link-local forms
- * that api/streaming.ts blocks are named explicitly for parity even though
- * loopback-only already excludes them. LAN/remote providers are a documented
- * follow-up (requires a desktop CSP decision — do not widen here unilaterally).
+ * no https:// entries), and LOOPBACK-ONLY on `127.0.0.1` — the ONLY host the
+ * packaged app's CSP `connect-src` can actually express. Chromium rejects
+ * `http://[::1]:*` as an invalid source-list entry (silently dropped, live
+ * Chromium-verified in the PR review), so an IPv6 loopback provider would
+ * pass a naive host check and then be connect-src-blocked at runtime in the
+ * shipped build; this guard rejects it up front with an actionable message
+ * instead. IPv6 metadata/link-local forms that api/streaming.ts blocks are
+ * named explicitly for parity even though loopback-only already excludes
+ * them. LAN/remote providers are a documented follow-up (requires a desktop
+ * CSP decision — do not widen here unilaterally).
  */
 export function assertProviderUrlAllowed(raw: string): void {
   if (!raw || raw.trim() === '') {
@@ -78,9 +86,8 @@ export function assertProviderUrlAllowed(raw: string): void {
   const scheme = parsed.protocol.toLowerCase();
   if (scheme !== 'http:') {
     // http-only: the packaged CSP connect-src permits exactly
-    // http://127.0.0.1:* and http://[::1]:* — an https:// loopback URL would
-    // pass the host check but be CSP-blocked mid-flight (reviewer round 2,
-    // finding C).
+    // http://127.0.0.1:* — an https:// loopback URL would pass the host check
+    // but be CSP-blocked mid-flight (reviewer round 2, finding C).
     throw new Error(
       `Provider base URL scheme "${scheme}" is not allowed (use http:// for the local server)`
     );
@@ -94,47 +101,168 @@ export function assertProviderUrlAllowed(raw: string): void {
   if (blockedMetadataHost) {
     throw new Error(`Provider base URL host "${hostname}" is not allowed`);
   }
-  if (hostname !== '127.0.0.1' && hostname !== '::1') {
+  if (hostname !== '127.0.0.1') {
     throw new Error(
-      `Provider base URL must be a loopback address (http://127.0.0.1:<port> or http://[::1]:<port>) in this release — got "${hostname}". The packaged app's content-security policy only permits loopback providers.`
+      `Provider base URL must be the loopback address http://127.0.0.1:<port> in this release — got "${hostname}". The packaged app's content-security policy permits only the IPv4 loopback (IPv6 loopback [::1] is not parseable as a CSP source and is blocked at runtime).`
     );
   }
 }
 
-/** First-byte watchdog for the provider stream (reviewer round 1, finding 2). */
-export const FIRST_BYTE_TIMEOUT_MS = 30_000;
+/**
+ * How long to wait for the FIRST byte of the provider stream (headers + first
+ * generated token) before giving up. Parity with the desktop SSE precedent
+ * (api/streaming.ts #133): the first byte legitimately waits behind the
+ * server's prompt evaluation over up to MAX_HISTORY_TURNS x 4000 chars of
+ * history on CPU, and behind a cold model load on llama-server / LM Studio /
+ * Ollama — measured in minutes, not seconds. A 30s watchdog turned every cold
+ * start into a hard failure while the backend kept working. This does NOT cap
+ * total stream duration — it is cleared as soon as data arrives, since
+ * generation itself may legitimately run long once it has started.
+ */
+export const FIRST_BYTE_TIMEOUT_MS = 600_000;
 
 /**
- * Extract the delta strings from SSE `data:` lines (one line per call; also
- * accepts a whole buffer for the buffered fallback). Non-delta frames
- * (keep-alives, comments, [DONE]) contribute nothing.
+ * One classified OpenAI SSE line. `deltas` carries answer text; `error`
+ * carries a provider-reported failure (mid-stream `data:{"error":...}` frames
+ * and llama-server-style `error:` lines — surfaced as a THROW, never as a
+ * silent empty answer); `done` marks the `data: [DONE]` sentinel; `finish`
+ * marks any `choices[].finish_reason`. `reasoning_content`-only deltas are
+ * deliberately NOT answer text (F-003): a reasoning-only reply must end in an
+ * explicit error, not a silent empty bubble.
  */
-export function extractLineDeltas(text: string): string[] {
-  const out: string[] = [];
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine.trim();
-    if (!line.startsWith('data:')) continue;
-    const payload = line.slice('data:'.length).trim();
-    if (!payload || payload === '[DONE]') continue;
-    try {
-      const frame = JSON.parse(payload) as {
-        choices?: Array<{ delta?: { content?: string } }>;
-      };
-      const delta = frame.choices?.[0]?.delta?.content;
-      if (typeof delta === 'string' && delta !== '') out.push(delta);
-    } catch {
-      // Keep-alive/comment frame — skip.
-    }
-  }
-  return out;
+export interface OpenAISseLine {
+  deltas: string[];
+  error?: string;
+  done?: boolean;
+  finish?: boolean;
 }
 
-/** Parse an OpenAI SSE stream body into the concatenated delta contents.
- * Delegates to extractLineDeltas so chat() and generate() parse identically
- * (reviewer round 2, finding C / round 3, Important 3 — single parser).
+/** Classify ONE SSE line (single parser for chat() and generate()). */
+export function parseOpenAISseLine(rawLine: string): OpenAISseLine {
+  const line = rawLine.trim();
+  if (!line) return { deltas: [] };
+  if (line.startsWith('error:')) {
+    // llama-server error events: `error: {"message": "..."}` or plain text.
+    const payload = line.slice('error:'.length).trim();
+    let message = payload;
+    try {
+      const frame = JSON.parse(payload) as { message?: unknown; error?: { message?: unknown } };
+      const nested =
+        typeof frame.message === 'string'
+          ? frame.message
+          : typeof frame.error?.message === 'string'
+            ? frame.error.message
+            : undefined;
+      if (nested) message = nested;
+    } catch {
+      // plain-text error body — use it verbatim
+    }
+    return { deltas: [], error: message || 'Provider server reported a stream error' };
+  }
+  if (!line.startsWith('data:')) return { deltas: [] };
+  const payload = line.slice('data:'.length).trim();
+  if (!payload) return { deltas: [] };
+  if (payload === '[DONE]') return { deltas: [], done: true };
+  try {
+    const frame = JSON.parse(payload) as {
+      error?: unknown;
+      choices?: Array<{
+        delta?: { content?: string };
+        finish_reason?: string | null;
+      }>;
+    };
+    if (frame.error !== undefined && frame.error !== null) {
+      const message =
+        typeof frame.error === 'string'
+          ? frame.error
+          : typeof (frame.error as { message?: unknown }).message === 'string'
+            ? ((frame.error as { message: string }).message)
+            : JSON.stringify(frame.error);
+      return { deltas: [], error: message || 'Provider server reported a stream error' };
+    }
+    const out: OpenAISseLine = { deltas: [] };
+    const choice = frame.choices?.[0];
+    const delta = choice?.delta?.content;
+    if (typeof delta === 'string' && delta !== '') out.deltas.push(delta);
+    if (choice?.finish_reason) out.finish = true;
+    return out;
+  } catch {
+    // Keep-alive/comment frame — skip.
+    return { deltas: [] };
+  }
+}
+
+/**
+ * Actionable failure message for a stream that produced no answer text
+ * (F-003: empty 200s, reasoning-only output, and clean closes before any
+ * content previously resolved as SUCCESS with an empty bubble).
  */
-function parseOpenAISseDeltas(body: string): string {
-  return extractLineDeltas(body).join('');
+function emptyStreamMessage(sawFinish: boolean, sawDone: boolean): string {
+  if (sawFinish) {
+    return 'Provider server finished without producing any answer text (the model may have returned only reasoning content). Check the server logs or try a different model id.';
+  }
+  return `Provider server closed the stream without sending any content${
+    sawDone ? ' (the [DONE] sentinel arrived, but no answer frames preceded it)' : ''
+  }. Is the model loaded on the server?`;
+}
+
+/**
+ * Extract an answer from a non-streamed JSON completion body (F-003: a server
+ * that ignores `stream:true` replies with one JSON object; reading only SSE
+ * frames used to resolve that as an empty success).
+ */
+function extractNonStreamAnswer(body: string): string {
+  let frame: {
+    error?: { message?: unknown } | string;
+    choices?: Array<{ message?: { content?: unknown } }>;
+  };
+  try {
+    frame = JSON.parse(body) as typeof frame;
+  } catch {
+    throw new Error(
+      `Provider server returned a non-stream JSON response that could not be parsed (${body.slice(0, 200)})`
+    );
+  }
+  if (frame.error !== undefined && frame.error !== null) {
+    const message =
+      typeof frame.error === 'string'
+        ? frame.error
+        : typeof frame.error.message === 'string'
+          ? frame.error.message
+          : JSON.stringify(frame.error);
+    throw new Error(message || 'Provider server reported an error');
+  }
+  const content = frame.choices?.[0]?.message?.content;
+  if (typeof content !== 'string') {
+    throw new Error('Provider server returned a JSON response without choices[0].message.content');
+  }
+  if (content.trim() === '') {
+    throw new Error(emptyStreamMessage(true, false));
+  }
+  return content;
+}
+
+/**
+ * Parse a COMPLETE OpenAI SSE body into the answer text, surfacing provider
+ * error frames as throws and an empty stream as an actionable error (F-003).
+ * Delegates line classification to parseOpenAISseLine so chat() and generate()
+ * parse identically (single parser).
+ */
+function parseOpenAISseAnswer(body: string): string {
+  let text = '';
+  let sawFinish = false;
+  let sawDone = false;
+  for (const rawLine of body.split('\n')) {
+    const line = parseOpenAISseLine(rawLine);
+    if (line.error) throw new Error(line.error);
+    text += line.deltas.join('');
+    if (line.done) sawDone = true;
+    if (line.finish) sawFinish = true;
+  }
+  if (text.trim() === '') {
+    throw new Error(emptyStreamMessage(sawFinish, sawDone));
+  }
+  return text;
 }
 
 /**
@@ -204,7 +332,11 @@ export class OpenAICompatChatService implements LLMService {
   /**
    * Frozen C1 entry point: POST {model, messages, stream: true} to
    * `${base}/chat/completions` and resolve the concatenated SSE deltas.
-   * Sends the caller's messages array verbatim.
+   * Sends the caller's messages array verbatim. On the frozen success path
+   * this resolves exactly the concatenated `delta.content` values; beyond it,
+   * provider-reported stream errors and empty streams THROW (F-003) — never a
+   * silent empty answer — and a server that ignores `stream:true` has its
+   * non-stream JSON completion read as choices[0].message.content.
    */
   async chat(messages: Array<{ role: string; content: string }>): Promise<string> {
     const base = this.resolvedBase();
@@ -221,7 +353,12 @@ export class OpenAICompatChatService implements LLMService {
     if (!response.ok) {
       throw new Error(await extractServerError(response));
     }
-    return parseOpenAISseDeltas(await response.text());
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.includes('application/json')) {
+      // Server ignored stream:true — read the single JSON completion (F-003).
+      return extractNonStreamAnswer(await response.text());
+    }
+    return parseOpenAISseAnswer(await response.text());
   }
 
   // ---- LLMService seam -------------------------------------------------
@@ -352,16 +489,74 @@ export class OpenAICompatChatService implements LLMService {
         }
         throw new Error(message);
       }
+      // Success path: disarm the pre-headers watchdog HERE (reviewer delta
+      // finding — it was armed before fetch with the same duration as any
+      // body bound below, so if it stayed armed it would always fire FIRST in
+      // a real browser, abort the fetch, and the resulting AbortError would be
+      // swallowed by the caller's cancelled-send branch — a stuck loading
+      // state instead of the actionable error). The whole-body reads below own
+      // their bound via readBodyBounded's local timer in every environment.
       clearWatchdog();
+      // Both whole-body reads below stay BOUNDED by a local copy of the
+      // first-byte bound (reviewer re-gate finding: the original draft
+      // disarmed the watchdog before `response.text()`, so a 200 whose body
+      // stalled mid-flight hung the send forever). The timer is local —
+      // NOT firstByteTimer — so markCancelled's disarm cannot strand an
+      // unbounded body read on the cancel path either; it is always cleared
+      // in the finally, and the raced promise is consumed by Promise.race, so
+      // a late firing is impossible/unobserved.
+      const readBodyBounded = async (): Promise<string> => {
+        let bodyTimer: ReturnType<typeof setTimeout> | null = null;
+        try {
+          return await Promise.race([
+            response.text(),
+            new Promise<never>((_, reject) => {
+              bodyTimer = setTimeout(
+                () =>
+                  reject(
+                    new Error(
+                      `Provider server at ${base} sent a ${response.status} response whose body stalled (exceeded ${this.firstByteTimeoutMs}ms).`
+                    )
+                  ),
+                this.firstByteTimeoutMs
+              );
+            }),
+          ]);
+        } finally {
+          if (bodyTimer) clearTimeout(bodyTimer);
+        }
+      };
+      // Non-stream reply (F-003): a server that ignores `stream:true` answers
+      // with one JSON completion — read choices[0].message.content instead of
+      // scanning for SSE frames that will never come.
+      const contentType = response.headers.get('content-type') ?? '';
+      if (contentType.includes('application/json')) {
+        yield extractNonStreamAnswer(await readBodyBounded());
+        return;
+      }
       // TRUE incremental streaming (reviewer round 1, finding 2): read the SSE
       // body chunk-by-chunk so deltas reach the UI as the server emits them,
       // with a first-byte watchdog so a hung server cannot spin forever.
       const readLineDeltas = async function* (text: string): AsyncGenerator<string> {
-        yield* extractLineDeltas(text);
+        // Buffered fallback shares the line parser + the same empty/error
+        // guards as the streaming path (F-003).
+        let buffered = '';
+        let sawFinish = false;
+        let sawDone = false;
+        for (const rawLine of text.split('\n')) {
+          const line = parseOpenAISseLine(rawLine);
+          if (line.error) throw new Error(line.error);
+          buffered += line.deltas.join('');
+          if (line.done) sawDone = true;
+          if (line.finish) sawFinish = true;
+        }
+        if (buffered.trim() === '') throw new Error(emptyStreamMessage(sawFinish, sawDone));
+        yield buffered;
       };
       if (!response.body) {
-        // No streaming body in this environment: buffered fallback.
-        yield* readLineDeltas(await response.text());
+        // No streaming body in this environment: buffered fallback (same
+        // bounded body read as the JSON branch).
+        yield* readLineDeltas(await readBodyBounded());
         return;
       }
       const reader = response.body.getReader();
@@ -369,6 +564,15 @@ export class OpenAICompatChatService implements LLMService {
       const decoder = new TextDecoder();
       let buffer = '';
       let sawFirstByte = false;
+      // F-003 stream state: provider error frames throw immediately; the
+      // empty-stream guard fires at close, so an empty 200 / reasoning-only
+      // output / clean close before any content can never resolve as success.
+      let streamError: string | null = null;
+      let streamText = '';
+      let sawFinish = false;
+      let sawDone = false;
+      // Body-stage watchdog timer (declared out here so the first-byte .then
+      // below can clear it the moment data arrives).
       let watchdog: ReturnType<typeof setTimeout> | null = null;
       const readChunk = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
         if (sawFirstByte) return reader.read();
@@ -404,15 +608,33 @@ export class OpenAICompatChatService implements LLMService {
         buffer = lines.pop() ?? '';
         for (const rawLine of lines) {
           if (cancelled) return;
-          for (const delta of extractLineDeltas(rawLine)) {
+          const line = parseOpenAISseLine(rawLine);
+          if (line.error) {
+            streamError = line.error;
+            break;
+          }
+          if (line.done) sawDone = true;
+          if (line.finish) sawFinish = true;
+          for (const delta of line.deltas) {
+            streamText += delta;
             yield delta;
           }
         }
+        if (streamError) break;
       }
-      if (!cancelled && buffer.trim()) {
-        for (const delta of extractLineDeltas(buffer)) {
+      if (!cancelled && !streamError && buffer.trim()) {
+        const line = parseOpenAISseLine(buffer);
+        if (line.error) streamError = line.error;
+        if (line.done) sawDone = true;
+        if (line.finish) sawFinish = true;
+        for (const delta of line.deltas) {
+          streamText += delta;
           yield delta;
         }
+      }
+      if (streamError) throw new Error(streamError);
+      if (!cancelled && streamText.trim() === '') {
+        throw new Error(emptyStreamMessage(sawFinish, sawDone));
       }
     } finally {
       // Reviewer round 2, finding A: release the connection on EVERY exit path
@@ -472,7 +694,7 @@ export class OpenAICompatChatService implements LLMService {
  */
 export async function probeOpenAICompat(
   baseUrl: string,
-  opts?: { timeoutMs?: number }
+  opts?: { timeoutMs?: number; apiKey?: string }
 ): Promise<{ ok: boolean; detail?: string }> {
   let base: string;
   try {
@@ -501,7 +723,14 @@ export async function probeOpenAICompat(
   });
   const attempt = (async (): Promise<{ ok: boolean; detail?: string }> => {
     try {
-      const response = await fetch(`${base}/models`, { method: 'GET' });
+      // Key-protected servers (e.g. vLLM --api-key) 401 an anonymous probe and
+      // read as "cannot reach" — send the configured Bearer header when set
+      // (review finding: Test Connection must exercise the real auth path).
+      const headers: Record<string, string> =
+        opts?.apiKey && opts.apiKey.trim() !== ''
+          ? { Authorization: `Bearer ${opts.apiKey}` }
+          : {};
+      const response = await fetch(`${base}/models`, { method: 'GET', headers });
       if (response.ok) return { ok: true };
       return {
         ok: false,
@@ -534,7 +763,15 @@ interface StoredInferenceModeLoose {
 
 function readStoredBlob(): StoredInferenceModeLoose {
   try {
-    return JSON.parse(localStorage.getItem('inference-mode') ?? '{}') as StoredInferenceModeLoose;
+    // Harden the literal-'null'/'5'/garbage blob shapes (review finding: a
+    // literal null blob made loadProviderConfig throw outside the send path's
+    // try and wedge isLoading): anything that is not a plain object reads as
+    // an empty config instead of throwing.
+    const parsed: unknown = JSON.parse(localStorage.getItem('inference-mode') ?? '{}');
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as StoredInferenceModeLoose;
+    }
+    return {};
   } catch {
     return {};
   }

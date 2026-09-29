@@ -75,7 +75,11 @@ import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../../test/de
 import { InferenceModeToggle } from '../../components/InferenceModeToggle';
 import type { ApiClient } from '../../lib/api';
 
-const updateSettingsMock = vi.fn(async () => ({ status: 'ok' }) as never);
+// F-001 (PR #138 CI red): the mock MUST declare its parameter type — a
+// zero-arg vi.fn types mock.calls as [] tuples, and the `call[0]` access in
+// the RAG-preset census below then fails TS2352/TS2493 under
+// tsconfig.test.json (the main typecheck does not see test files).
+const updateSettingsMock = vi.fn(async (_patch: Record<string, unknown>) => ({ status: 'ok' }));
 
 function makeSession(): DesktopSession {
   const apiClient = {
@@ -204,9 +208,7 @@ describe('RAG preset mirror (Electron api mode)', () => {
     utils.rerender(ui());
     await clickPreset('balanced', 3);
 
-    const patches = updateSettingsMock.mock.calls.map(
-      (call) => call[0] as Record<string, unknown>
-    );
+    const patches = updateSettingsMock.mock.calls.map((call) => call[0]);
     const relevant = patches.filter((p) => 'rag_n_results' in p);
     expect(relevant).toHaveLength(3);
     for (const patch of relevant) {

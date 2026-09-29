@@ -105,25 +105,57 @@ describe('buildHistorySnapshot (Issue #40 RC1)', () => {
       user('current'), emptyAssistant(),
     ];
     const snap = buildHistorySnapshot(msgs);
-    // The leading a0 must be dropped; window starts at u1.
+    // The leading a0 must be dropped; window starts at u1. The trailing u3 is
+    // ALSO dropped (F-004): its assistant reply never happened, and sending it
+    // would put u3 + the current turn on the wire as consecutive user messages.
     expect(snap[0]).toEqual({ role: 'user', content: 'u1' });
     expect(snap[0].role).toBe('user'); // always user-first
-    expect(snap.map((t) => t.content)).toEqual(['u1', 'a1', 'u2', 'a2', 'u3']);
+    expect(snap[snap.length - 1].role).toBe('assistant'); // never ends on a user turn
+    expect(snap.map((t) => t.content)).toEqual(['u1', 'a1', 'u2', 'a2']);
   });
 
   test('skips error assistant turns', () => {
     const msgs = [user('q1'), errorAssistant(), user('q2'), emptyAssistant()];
     const snap = buildHistorySnapshot(msgs);
     // q1 → error (skipped) → q2 (current, dropped) → placeholder (dropped).
-    // After dropping current user + placeholder, only q1 remains; the error
-    // assistant is filtered out.
-    expect(snap).toEqual([{ role: 'user', content: 'q1' }]);
+    // After the current turn is dropped, the errored exchange leaves only
+    // q1 — a trailing user turn, which F-004 drops (its answer never
+    // happened; sending it would make two consecutive user messages once the
+    // caller appends the current turn).
+    expect(snap).toEqual([]);
   });
 
   test('skips abstain assistant turns', () => {
     const msgs = [user('q1'), abstainAssistant(), user('q2'), emptyAssistant()];
     const snap = buildHistorySnapshot(msgs);
-    expect(snap).toEqual([{ role: 'user', content: 'q1' }]);
+    expect(snap).toEqual([]);
+  });
+
+  test('F-004: an answered exchange before an errored turn survives intact', () => {
+    // [q1, a1(ok), q2, a2(error)] + current q3: the snapshot must be
+    // [q1, a1] — the errored exchange is dropped AND the trailing q2 goes
+    // with it, so the wire is [user, assistant, user:q3] (alternating).
+    const msgs = [
+      user('q1'),
+      assistant('a1'),
+      user('q2'),
+      errorAssistant(),
+      user('q3'),
+      emptyAssistant(),
+    ];
+    const snap = buildHistorySnapshot(msgs);
+    expect(snap).toEqual([
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+    ]);
+  });
+
+  test('F-004: a normal conversation never gains a trailing user turn', () => {
+    const msgs = [user('q1'), assistant('a1'), user('current'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs)).toEqual([
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+    ]);
   });
 
   test('enforces role alternation (collapses consecutive same-role turns)', () => {

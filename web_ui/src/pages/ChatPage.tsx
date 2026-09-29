@@ -135,6 +135,16 @@ function citationsFromDone(data: {
   }));
 }
 
+/**
+ * Storage tag for a persisted conversation (PR #138 review hygiene): api and
+ * provider turns ride the server surface; browser-local turns the wllama
+ * engine. Extracted from six identical inline ternaries so the mode→surface
+ * mapping has exactly one definition.
+ */
+function conversationStorageTag(mode: ReturnType<typeof useInferenceMode>['mode']): 'server' | 'wllama' {
+  return mode === 'api' || mode === 'provider' ? 'server' : 'wllama';
+}
+
 function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments, onOpenTraining, pinnedSlide, onDismissPinnedSlide }: ChatPageProps) {
   const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
   // B9 (issue #67): desktop session drives the SSE endpoint/auth and the
@@ -161,14 +171,21 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // Poll /status/models every 2s while eligible (a real engine with models
   // present) so the banner also catches mid-session reloads after a profile
   // switch; a missing `resident` field never gates.
+  // F-002 (PR #138 review): BOTH gates ignore provider mode — provider chat
+  // never touches the staged local models, but the desktop host warms them on
+  // every launch (and the installer always stages the GGUFs), so ungated these
+  // deterministically disabled the provider input for the whole multi-minute
+  // local load on every packaged launch.
   const residentLoad = modelLoad;
   const isModelLoading =
-    desktopSession !== null && residentLoad?.state === 'loading';
+    mode !== 'provider' && desktopSession !== null && residentLoad?.state === 'loading';
   // Poll only when a load is plausibly in flight: a real engine with models
-  // present. When the models are absent (blocked overlay already explains it)
-  // or in browser mode, no poll ever fires — the gate stays inert.
+  // present. When the models are absent (blocked overlay already explains it),
+  // in provider mode (no local load can gate the input), or in browser mode,
+  // no poll ever fires — the gate stays inert.
   const modelsAbsent = desktopModels !== null && modelsAbsentForRealEngine(desktopModels);
-  const pollEligible = desktopSession !== null && !modelsAbsent;
+  const pollEligible =
+    mode !== 'provider' && desktopSession !== null && !modelsAbsent;
   useEffect(() => {
     if (!pollEligible) return;
     let cancelled = false;
@@ -300,7 +317,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       );
       messagesRef.current = finalized;
       setMessages(finalized);
-      onSaveConversation(owningId, finalized, mode === 'api' || mode === 'provider' ? 'server' : 'wllama', browserEngine);
+      onSaveConversation(owningId, finalized, conversationStorageTag(mode), browserEngine);
       // Clear the owning snapshot so a later switch can't re-persist it.
       owningMessagesRef.current = null;
       cancelActiveStream();
@@ -400,7 +417,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // values are used even though the effect has an empty dep array.
   const persistOnUnmountRef = useRef<(messages: ChatMessage[], owningId: string | undefined) => void>(() => {});
   persistOnUnmountRef.current = (messages, owningId) => {
-      onSaveConversation(owningId, messages, mode === 'api' || mode === 'provider' ? 'server' : 'wllama', browserEngine);
+    onSaveConversation(owningId, messages, conversationStorageTag(mode), browserEngine);
   };
   // S2/S3 + PRR-001 unblock: dep array is `[]` so the cleanup fires ONLY on a
   // genuine unmount, NOT on every conversation switch. Previously the dep was
@@ -542,7 +559,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         setMessages(updated);
       }
       // Save to Dexie — always to the OWNING id (S1).
-      onSaveConversation(liveOwningId, updated, mode === 'api' || mode === 'provider' ? 'server' : 'wllama', browserEngine);
+      onSaveConversation(liveOwningId, updated, conversationStorageTag(mode), browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
@@ -568,7 +585,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       }
       // S2: persist the errored turn to the OWNING id so the partial answer +
       // user question survive (the save layer strips isStreaming — S3).
-      onSaveConversation(liveOwningId, updated, mode === 'api' || mode === 'provider' ? 'server' : 'wllama', browserEngine);
+      onSaveConversation(liveOwningId, updated, conversationStorageTag(mode), browserEngine);
       if (tokenStreamManagerRef.current === streamManager) {
         setIsLoading(false);
         tokenStreamManagerRef.current = null;
@@ -833,7 +850,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       await onSaveConversation(
         currentConversationId,
         appended,
-        mode === 'api' || mode === 'provider' ? 'server' : 'wllama',
+        conversationStorageTag(mode),
         browserEngine,
         (newId) => {
           // First-turn creation: adopt the new id as both the owning id (for
@@ -897,7 +914,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     );
     messagesRef.current = finalized;
     setMessages(finalized);
-    onSaveConversation(owningId, finalized, mode === 'api' || mode === 'provider' ? 'server' : 'wllama', browserEngine);
+    onSaveConversation(owningId, finalized, conversationStorageTag(mode), browserEngine);
     // PRR-001: the in-flight turn is finalized; clear the owning snapshot so a
     // later switch/unmount/engine-switch can't re-persist it.
     owningMessagesRef.current = null;

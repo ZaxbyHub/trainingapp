@@ -77,7 +77,14 @@ function loadStoredState(): InferenceModeState {
       const parsed: StoredInferenceMode = JSON.parse(stored);
       return {
         ...defaultState,
-        mode: parsed.mode || 'browser-local',
+        // Mode allow-list (PR #138 review): browserEngine and ragPreset are
+        // already validated against their unions — a garbage/legacy mode value
+        // must degrade to the default the same way instead of flowing into the
+        // dispatch tree unvalidated.
+        mode:
+          parsed.mode === 'browser-local' || parsed.mode === 'api' || parsed.mode === 'provider'
+            ? parsed.mode
+            : 'browser-local',
         serverUrl: parsed.serverUrl || defaultState.serverUrl,
         browserEngine:
           parsed.browserEngine === 'webllm' || parsed.browserEngine === 'wllama'

@@ -97,13 +97,6 @@ function LoadingOverlay({
 /**
  * B9 (issue #67): seed the inference-mode store BEFORE InferenceModeProvider
  * mounts so a desktop launch boots in `api` mode pointed at the Electron
- * backend. The loopback port and launch token rotate on every app start, so
- * this must run with the FRESH session values each launch (loadStoredState
- * would otherwise restore a stale serverUrl from the previous run).
- */
-/**
- * B9 (issue #67): seed the inference-mode store BEFORE InferenceModeProvider
- * mounts so a desktop launch boots in `api` mode pointed at the Electron
  * backend. Extracted to lib/inference/desktop-seed (trace
  * external-llm-provider-settings) for unit testing; a persisted 'provider'
  * mode survives the re-seed.

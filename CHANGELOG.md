@@ -21,6 +21,13 @@
 - Persistence: a saved provider selection survives desktop restarts (the B9 seeder no longer
   clobbers it; the loopback URL still rotates for API mode), and the InferenceModeToggle is
   hidden in provider mode instead of offering a one-click silent switch back.
+- Provider robustness (PR #138 review round): server error frames (`data:{{"error":...}}`,
+  llama-server `error:` events) and non-streamed JSON replies now surface as chat errors
+  instead of silent empty answers, a stream that closes without content fails loudly, and
+  history never sends two consecutive `user` messages (third-party jinja templates can reject
+  that shape). The first-byte watchdog is 10 minutes (parity with the #133 desktop stream
+  precedent) instead of a hard-coded 30 seconds, and provider-mode chat input is no longer
+  disabled while the unrelated local model warms on desktop launches.
 
 ### Fixed — settings honesty and layout (same trace)
 
@@ -30,7 +37,11 @@
   the mirror fires only where the preset can act (Electron API mode) and never claims to set
   `rag_reranking_enabled` (which no desktop code path reads — retrieval rerank tuning is
   env-configured). The preset group is disabled with an explanatory caption in modes where it
-  cannot affect chat.
+  cannot affect chat. Note this is a behavior change for the desktop default: the Balanced
+  preset's mirrored retrieval count drops from 10 to 8 results (8 was chosen so the three
+  presets stay distinct and in-bounds under the shared `rag_n_results` max of 10; the old
+  Quality value of 16 exceeded that bound and 422'd its whole settings patch, which is the
+  defect this fixes).
 - The desktop "API Server" option now says it uses the built-in desktop backend instead of
   claiming "Connect to a remote inference server".
 - Settings layout: removed the negative description margins that overprinted every radio-card
