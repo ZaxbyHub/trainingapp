@@ -170,13 +170,13 @@ New modules (engine_factory) weren't added to PyInstaller hiddenimports, causing
 - **Prevents:** Identity loss in data processing pipelines
 
 ### 4. Documentation Audits
-- **docs/documentation_audit.md:** Tracks README drift
+- **documentation_audit.md:** Tracks README drift
 - **Benefit:** User-facing docs stay synchronized with code
 - **Prevents:** Capability confusion
 
 ### 5. Packaging Checklists
-- **docs/build_verification_checklist.md:** Pre-build verification steps
-- **docs/smoke_test_plan.md:** Post-build validation
+- **build_verification_checklist.md:** Pre-build verification steps
+- **smoke_test_plan.md:** Post-build validation
 - **Benefit:** Build completeness verified systematically
 - **Prevents:** Runtime failures in packaged apps
 

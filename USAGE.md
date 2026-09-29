@@ -1,5 +1,8 @@
 # User Guide
 
+> **SUPERSEDED — pre-v3 historical document (issue #89):** this is the user guide for the retired Python desktop GUI/CLI (CustomTkinter-era workflows against the legacy harness). It is retained because the harness remains the CI conformance surface; the shipped product's user flows are documented in the README (desktop app, first-run wizard, knowledge packs, Learn panel). Commands and defaults below describe the legacy harness only.
+
+
 Complete user guide for the Document Q&A Assistant, covering GUI usage, CLI commands, and API integration.
 
 ## Table of Contents
@@ -157,7 +160,7 @@ python main.py
    - **Tooltip**: "Window of chunks around matched chunk"
 
 3. **Cross-Encoder Reranking**
-   - Default: **ON** (TinyBERT — lightweight reranker)
+   - Default: **OFF** (`cross-encoder/ms-marco-MiniLM-L6-v2` — Python-harness default per config.py; the shipped v3 surfaces use `cross-encoder/ettin-reranker-32m-v1` per ADR-0001)
    - Re-ranks chunks for better accuracy
    - Minimal overhead on minimum-spec hardware
    - **Tooltip**: "Re-rank results with cross-encoder"
@@ -222,7 +225,7 @@ python main.py
    - Range: `0-3`
 
 3. **Cross-Encoder Reranking**
-   - Default: **ON** (TinyBERT — lightweight reranker)
+   - Default: **OFF** (`cross-encoder/ms-marco-MiniLM-L6-v2` — Python-harness default per config.py; the shipped v3 surfaces use `cross-encoder/ettin-reranker-32m-v1` per ADR-0001)
    - Re-ranks chunks for better accuracy
    - Minimal overhead on minimum-spec hardware
 

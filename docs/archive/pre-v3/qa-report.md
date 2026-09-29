@@ -1,8 +1,8 @@
 # QA Audit Report — Document Q&A Assistant
-**Audit Version**: AI-Hardened Edition v5.1  
-**Audit Date**: 2026-04-09  
-**Auditor**: paid_swarm (3-layer validation: Explorer → Reviewer → Critic)  
-**Scope**: ~48 files (15 core Python, 19 tests, 5 scripts, 5 CI/CD, 4 docs)  
+**Audit Version**: AI-Hardened Edition v5.1
+**Audit Date**: 2026-04-09
+**Auditor**: paid_swarm (3-layer validation: Explorer → Reviewer → Critic)
+**Scope**: ~48 files (15 core Python, 19 tests, 5 scripts, 5 CI/CD, 4 docs)
 **Methodology**: Serial-batched analysis with inline severity routing and challenge gates
 
 ---
@@ -285,11 +285,11 @@ All raw evidence preserved in:
 
 ## Sign-off
 
-**Audit Method**: AI-Hardened Edition v5.1  
-**Validation Layers**: 3 (Explorer → Reviewer → Critic)  
-**Batches**: 7 serial batches with inline challenge gates  
-**Findings**: 79 unique validated (106 generated, 15 disproved/overturned, 6 duplicates merged)  
-**Confidence**: HIGH — All findings verified by Reviewer, HIGH/CRITICAL challenged by Critic  
+**Audit Method**: AI-Hardened Edition v5.1
+**Validation Layers**: 3 (Explorer → Reviewer → Critic)
+**Batches**: 7 serial batches with inline challenge gates
+**Findings**: 79 unique validated (106 generated, 15 disproved/overturned, 6 duplicates merged)
+**Confidence**: HIGH — All findings verified by Reviewer, HIGH/CRITICAL challenged by Critic
 
-**Report Generated**: 2026-04-09  
+**Report Generated**: 2026-04-09
 **Next Steps**: Address P0 findings before production deployment

@@ -1,5 +1,8 @@
 # Installation Guide
 
+> **Scope note (issue #89):** this guide installs the **legacy Python harness** (`api_server.py` / `config.py`), which survives as the CI conformance surface — it is NOT the shipped product's install path. The v3 desktop app ships as an Electron installer with a first-run wizard; see the README "Installation" section. Model facts here reflect ADR-0002 (Quality: gemma-4-e2b-it Q4_K_M) and the shipped packaging (issue #84).
+
+
 Complete installation guide for the Document Q&A Assistant, including standard Python installation and offline bundle setup.
 
 ## Table of Contents
@@ -81,11 +84,11 @@ Successfully installed pypdf-4.2.0 ...
 **Option B: Manual Download** (recommended for offline setup)
 1. Download Gemma 4 E2B from Hugging Face:
     - URL: https://huggingface.co/google/gemma-4-2b-it-gguf
-    - File: `gemma-4-e2b-it-q5_k_m.gguf` (~3.1 GB)
+    - File: `gemma-4-e2b-it-q4_k_m.gguf` (~2.9 GB (nominal; 2.5 GB on disk))
 
 2. Save to a known location:
-    - Example: `C:\Models\gemma-4-E2B-it-Q5_K-M.gguf`
-    - Or in the application directory: `C:\doc_qa_app\models\gemma-4-E2B-it-Q5_K-M.gguf`
+    - Example: `C:\Models\gemma-4-e2b-it\model.gguf`
+    - Or in the application directory: `C:\doc_qa_app\models\gemma-4-e2b-it\model.gguf`
 
 Note: The application includes Gemma 4 E2B bundled in the `models/` directory.
 
@@ -93,7 +96,7 @@ Note: The application includes Gemma 4 E2B bundled in the `models/` directory.
 
 **Option A: Automatic Download**
 - First use will automatically download BAAI/bge-small-en-v1.5
-- Size: ~80MB
+- Size: ~105 MB q8 ONNX (105,428,690-byte quantized model per the shipped manifest)
 - Stored in cache: `%LOCALAPPDATA%\sentence-transformers`
 
 **Option B: Manual Download** (for offline bundle)
@@ -205,12 +208,12 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 
 ### GGUF Model Details
 
-**Bundled Model**: Gemma 4 E2B (Q5_K_M)
+**Bundled Model**: Gemma 4 E2B (Q4_K_M — ADR-0002; the quant packaged by issue #84)
 
 **Specifications**:
-- Model Size: ~3.1 GB
+- Model Size: ~2.9 GB (nominal; 2.5 GB on disk)
 - Architecture: Gemma 4 (Google)
-- Quantization: Q5_K_M (high quality)
+- Quantization: Q4_K_M (ADR-0002 decision)
 - Language: English (primary)
 - License: Apache-2.0 — Gemma 4 ships under the stock Apache License 2.0 (not the
   classic Gemma Terms of Use); see [docs/licenses.md](docs/licenses.md)
@@ -224,7 +227,7 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 **Recommended Model**: BAAI/bge-small-en-v1.5
 
 **Specifications**:
-- Model Size: ~80MB
+- Model Size: ~105 MB q8 ONNX (105,428,690-byte quantized model per the shipped manifest)
 - Dimensions: 384
 - Architecture: BERT-based
 - License: MIT (see [docs/licenses.md](docs/licenses.md))
@@ -291,7 +294,7 @@ Edit settings via GUI:
 
 - First run may be slower due to model loading
 - Subsequent runs will be much faster
-- Embedding model (~80MB) loads on first use
+- Embedding model (bge-small-en-v1.5, 134 MB fp32 ONNX, bundled — no runtime download) loads on first use
 - ChromaDB database initializes on first use
 
 ### Troubleshooting First Run
@@ -301,9 +304,9 @@ Edit settings via GUI:
 **Solution**:
 ```powershell
 # Verify GGUF model exists (default bundled model)
-dir C:\path\to\gemma-4-E2B-it-Q5_K-M.gguf
+dir C:\path\to\gemma-4-e2b-it\model.gguf
 
-# Check file size (should be ~3.1GB for Q5_K_M)
+# Check file size (should be ~2.9 GB nominal (2.5 GB on disk) for Q4_K_M)
 ```
 
 **Problem**: "chromadb not installed"

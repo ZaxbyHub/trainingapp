@@ -1,0 +1,26 @@
+# Issue #89 (E6): always-run documentation-accuracy guardrail.
+# Deliberately NO paths filter and NO changes-gate: the path-scoped buckets
+# (scripts/ci_paths.py) skip docs-only diffs, and docs drift is exactly what
+# this check exists to police. Runs tests/test_doc_accuracy.py only.
+name: doc-accuracy
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  doc-accuracy:
+    name: doc-accuracy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run doc-accuracy guardrail
+        run: python -m pytest tests/test_doc_accuracy.py -q --no-header

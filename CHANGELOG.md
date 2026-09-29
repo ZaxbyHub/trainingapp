@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added — E6: v3 documentation refresh (issue #89)
+
+- Rewrote ARCHITECTURE.md as the shipped v3 system (Electron desktop app, Node
+  main-process backend per ADR-0003, SQLite+sqlite-vec+FTS5 store, knowledge-pack
+  system, signed update channels).
+- New docs/pack-authoring-guide.md (the packtool verbs and the Knowledge Pack format)
+  and docs/training-pack-refresh-runbook.md (the operator refresh/publish flow).
+- README corrected to the desktop-first reality: ADR-0002 Q4_K_M quantization, measured
+  model sizes from bench/RESULTS.md, bundled-embedding offline facts (no runtime
+  downloads), and the legacy Python harness labeled as the CI conformance surface.
+- Retired 23 pre-v3 planning/audit/release docs to docs/archive/pre-v3/ with an index.
+- Corrected the legacy-harness docs (CONFIGURATION/INSTALL/USAGE) and the
+  AFOMIS.spec/export_seed_chunks.py banners.
+- Added tests/test_doc_accuracy.py + an always-run doc-accuracy CI workflow guarding
+  doc-vs-code drift.
+
 ### Added — external OpenAI-compatible chat provider + settings honesty/layout fixes (trace external-llm-provider-settings)
 
 - New inference mode "Provider server (OpenAI-compatible)": point chat at a locally served
@@ -466,6 +482,7 @@ Fixed all failing regression and unit tests; improved RAG pipeline quality.
 
 ### RAG Pipeline Quality
 - Added CrossEncoder reranking with TinyBERT (ms-marco-TinyBERT-L-2, ~85MB) — enabled by default
+> Correction (2026-09, #89): never shipped as described — config.py defaulted to cross-encoder/ms-marco-MiniLM-L6-v2 with reranking disabled (config.py:66-72), the reranking.py class default was inert on shipped installs (ADR-0001), and every shipped surface uses cross-encoder/ettin-reranker-32m-v1.
 - Sentence-boundary truncation (no more mid-sentence cuts)
 - 3-pattern follow-up query detection (anaphora, short non-WH, continuation keywords)
 - Expanded conversation history (2 turns, 4 messages)
@@ -492,6 +509,7 @@ Pipeline optimization: wired three dead features, fixed page citation, improved 
 #### Reranker Wiring
 - **Wired CrossEncoderReranker** into `RAGEngine.query()` — was fully implemented but never connected
 - **Switched to TinyBERT** (`ms-marco-TinyBERT-L-2`, ~85MB) from MiniLM (~500MB) — safe for 8GB RAM minimum spec
+> Correction (2026-09, #89): superseded — the shipped reranker on every surface is cross-encoder/ettin-reranker-32m-v1 (ADR-0001); this MiniLM comparison predates it.
 - Reranking now **enabled by default** (`reranking_enabled=True`)
 - Lazy initialization — model loads on first query, not at startup
 
@@ -536,6 +554,7 @@ Pipeline optimization: wired three dead features, fixed page citation, improved 
 - ARCHITECTURE.md: Updated reranking defaults (True / TinyBERT), added retrieval_window, fixed reranking code example
 - CONFIGURATION.md: Updated `RAG_RERANKING_ENABLED` default to `True`, `RAG_RERANKER_MODEL` to TinyBERT
 - README.md: Updated reranker description (TinyBERT, default ON), clarified step-back is not wired
+> Correction (2026-09, #89): these ARCHITECTURE.md / CONFIGURATION.md / README.md / USAGE.md updates never landed — all four files still carried the TinyBERT defaults until #89 corrected them.
 - USAGE.md: Updated reranking default to ON
 
 ## [1.1.0] - 2026-04-09

@@ -1,7 +1,7 @@
 # Model Path vs GGUF Path Usage Audit
 
-**Audit Date:** 2026-03-11  
-**Scope:** All Python files using `model_path` or `gguf_path` parameters  
+**Audit Date:** 2026-03-11
+**Scope:** All Python files using `model_path` or `gguf_path` parameters
 **Auditor:** Phase 15.3 Task
 
 ---
@@ -113,9 +113,9 @@ Create a unified helper that selects the appropriate path based on a single `llm
 def create_engine_from_env() -> RAGEngine:
     """Create RAG engine from environment variables."""
     config = RAGConfig(...)
-    
+
     gguf_path = os.environ.get("RAG_GGUF_PATH")  # ← Line 481
-    
+
     return RAGEngine(
         config=config,
         model_path=os.environ.get("RAG_MODEL_PATH"),
@@ -258,7 +258,7 @@ def create_rag_engine(
 ) -> RAGEngine:
     """
     Unified factory for RAGEngine.
-    
+
     Args:
         config: RAG configuration
         backend_type: Which LLM backend to use
@@ -267,7 +267,7 @@ def create_rag_engine(
     """
     gguf_path = model_path if backend_type == "gguf" else None
     openvino_path = model_path if backend_type == "openvino" else None
-    
+
     return RAGEngine(
         config=config,
         model_path=openvino_path,

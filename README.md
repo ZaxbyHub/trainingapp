@@ -2,10 +2,36 @@
 
 A fully offline RAG-based document question answering system optimized for Windows PCs. Features semantic search, hybrid retrieval, and CPU-based LLM inference with GGUF models.
 
-Two first-class delivery options share the same offline RAG capabilities:
-1. **Desktop app** — Python + PyInstaller + llama.cpp/GGUF (CustomTkinter GUI / FastAPI).
+The shipped delivery options share the same offline RAG capabilities:
+1. **Desktop app (primary)** — an Electron installer with a first-run wizard, a Node
+   main-process backend ([ADR-0003](docs/adr/0003-desktop-backend.md)), bundled models
+   (Quality/Fast profiles per [ADR-0002](docs/adr/0002-llm-profiles.md)), and knowledge
+   packs — fully offline after install.
 2. **HTML5 web app** (`web_ui/`) — a fully self-contained, STIG-scannable archive that
-   runs entirely in the browser with **no runtime downloads**.
+   runs entirely in the browser with **no runtime downloads** (the same build is the
+   desktop app's renderer).
+
+A legacy Python harness (`api_server.py`, `pip install`) survives only as the CI
+contract-conformance surface — see the scope notes at the top of USAGE.md, INSTALL.md,
+and CONFIGURATION.md.
+
+## 🖥️ What's in the v3 desktop app
+
+- **Knowledge packs** — installable document/training packs built and verified with
+  `packtool`, managed in-app (install / supersede / rollback / remove); see the
+  [pack authoring guide](docs/pack-authoring-guide.md) and the
+  [training-pack refresh runbook](docs/training-pack-refresh-runbook.md).
+- **Learn panel with Open-in-training deep links** — answers cite the training slides
+  that teach them, and jump straight into the embedded Storyline player.
+- **First-run wizard** — hardware detection, profile selection, sha256 integrity
+  verification of the bundled tree, pack activation, and license notices.
+- **Signed, opt-in update channel** — Ed25519-signed pack updates and detect-and-notify
+  app updates, off until you switch them on
+  ([ADR-0010](docs/adr/0010-update-channels.md), [docs/updates.md](docs/updates.md)).
+- **Quality/Fast inference profiles** — `gemma-4-e2b-it` Q4_K_M vs `lfm2.5-vl-450m`
+  Q4_K_M with a free-RAM auto gate ([ADR-0002](docs/adr/0002-llm-profiles.md)).
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system map.
 
 ## 🌐 Offline HTML5 Web App (overhauled)
 
@@ -14,14 +40,15 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Fully offline, packaged models** — embeddings (arctic-embed-m ONNX), ONNX Runtime WASM, and the
   browser LLM are served same-origin from `public/models/`; nothing is fetched from a CDN or the
   HuggingFace Hub at runtime. A readiness gate reports "models ready vs missing".
-- **Two user-selectable browser engines** — **wllama** (llama.cpp WASM, CPU/SIMD, **no WebGPU**,
-  the default and most robust on i5/Iris Xe) and **WebLLM** (WebGPU, faster when available). A
-  hardware-capability panel detects WebGPU/threads/memory and recommends an engine.
+- **Browser LLM engine: wllama** — llama.cpp WASM, CPU/SIMD, **no WebGPU**, the default
+  and most robust on i5/Iris Xe. A hardware-capability panel detects WebGPU/threads/memory.
+  The WebLLM (WebGPU) engine remains selectable code but ships no weights in the offline
+  manifest, so it is not part of the air-gapped configuration.
 - **Multimodal** — attach a screenshot in chat and ask about it (wllama + Gemma 4 E2B-it mmproj), offline.
 - **Chat UX** — streaming with interactive source citations, regenerate, conversation export
   (Markdown/JSON), and Fast/Balanced/Quality RAG presets.
 - **Self-contained archive** — `npm run build:offline` produces a validated `web_ui/dist/` the
-  desktop FastAPI server (or any root static host) serves with the COOP/COEP headers wllama needs.
+  Electron desktop app (or any root static host) serves with the COOP/COEP headers wllama needs.
 
 ### HTML5 Web UI (Phase 1 — Complete)
 - **Application Shell**: Navigation rail with Chat, Documents, Settings pages and responsive flexbox layout
@@ -43,16 +70,17 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 ### Core Capabilities
 - **Offline-First Design**: No internet required after initial setup
 - **Multi-format Support**: PDF, DOCX, PPTX, TXT, MD documents
-- **Hybrid Retrieval**: BM25 + Vector search with Reciprocal Rank Fusion (RRF)
+- **Hybrid Retrieval**: keyword (FTS5/BM25) + vector search fused with Reciprocal Rank Fusion (RRF, k=60 on every surface)
 - **Window Expansion**: Automatically fetches adjacent context chunks
 - **Smart Chunking**: Paragraph and sentence boundary aware
 - **Cross-Encoder Reranking**: ettin-reranker (ModernBERT) for precise ranking
 
 ### LLM Backend (GGUF-Only)
-The application uses GGUF models via llama-cpp-python for fully offline inference:
+The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, ADR-0003); the browser app uses the same GGUF weights through wllama (llama.cpp WASM) — fully offline on both:
 
-- **Default Model**: Gemma 4 E2B (Q5_K_M GGUF, ~3.1GB) — bundled
-- Set via: `RAG_GGUF_PATH` environment variable or `--gguf-path` CLI option
+- **Quality profile (default)**: Gemma 4 E2B-it (Q4_K_M GGUF per [ADR-0002](docs/adr/0002-llm-profiles.md); ~2.9 GB nominal, 2.5 GB on disk) — bundled
+- **Fast profile**: lfm2.5-vl-450m (Q4_K_M GGUF per ADR-0002) — bundled
+- Profile selection: automatic free-RAM gate or in-app choice; `TRAININGAPP_DESKTOP_INFERENCE_PROFILE` (`quality` / `fast` / `auto`) is the desktop env override. (`RAG_GGUF_PATH` / `--gguf-path` select a custom GGUF on the legacy Python harness only.)
 - No GPU required
 - No network access required
 - Measured decode throughput and first-token latency per model/profile: see [bench/RESULTS.md](bench/RESULTS.md) (issue #52 benchmark harness)
@@ -78,7 +106,13 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - 64GB RAM
 - **Performance**: measured CPU-only GGUF numbers are recorded in [bench/RESULTS.md](bench/RESULTS.md)
 
-## 🆕 New Features (Version 2.0.0)
+> **Pending**: the offline/low-RAM reference-laptop validation matrix (issue #86) —
+> reference-i5 rows are not yet measured; no reference-hardware numbers are claimed here.
+
+## Web UI overhaul (Version 2.0.0 era — historical)
+
+> The phases below describe the 2026 `web_ui` overhaul and are preserved for history;
+> the current feature set is described above and in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### Chat UI (Phase 3)
 - **Streaming Chat Interface**: Full-featured chat page (`ChatPage.tsx`) with real-time token streaming display using RAF-batched updates via `TokenStreamManager`
@@ -171,7 +205,12 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 - **Memory-Aware Model Selection**: Device memory detection with tier-based configuration (low/medium/high memory tiers)
 
 ### Browser LLM Inference (Phase 6)
-- **WebLLM Service**: Browser-side LLM inference using `@mlc-ai/web-llm` with `CreateMLCEngine` API for SmolLM3-3B-Q4_K_M (~1.9GB), OPFS caching, and streaming token generation
+- **Browser LLM engines**: **wllama** (llama.cpp WASM, CPU/SIMD, the default) drives the
+  bundled Gemma 4 E2B-it GGUF + mmproj weights — `web_ui/public/models/manifest.json` ships
+  the wllama runtime and the Gemma files, nothing is fetched at runtime. The Phase-6 WebLLM
+  (WebGPU) engine (`@mlc-ai/web-llm`, retired model era) remains selectable code but ships no
+  weights in the offline manifest, so it is not part of the air-gapped configuration
+  (see PACKAGING.md)
 - **Model Download Manager**: Progress tracking with speed/ETA calculation, cancellation support, and storage quota error handling
 - **ModelDownloadProgress UI**: Accessible progress bar with ARIA attributes, download speed, ETA countdown, and cancel button
 - **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to server API mode when requirements aren't met
@@ -240,7 +279,50 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 
 ## 📦 Installation
 
-### Method 1: Standard Python Installation
+### Desktop app (recommended)
+
+1. **Download the installer** — unsigned NSIS x64 build (see the repo Releases; the
+   measured installed footprint is ~6.4 GB, staged model resources 4,111,872,009 bytes —
+   [bench/RESULTS.md](bench/RESULTS.md)). Models, knowledge packs, and license docs are
+   bundled; nothing downloads at runtime.
+2. **Run the installer** and launch the app.
+3. **Complete the first-run wizard**: hardware detection → profile selection
+   (Quality/Fast, with an automatic free-RAM recommendation) → sha256 integrity
+   verification of the bundled tree → knowledge-pack activation → license notices →
+   complete. Every gate names its failure reason; setup can be re-run from Settings.
+
+No Python, no GPU, and no network access are required.
+
+### Building the desktop app from source
+
+```powershell
+cd desktop
+npm install
+npm run desktop:build   # builds the web_ui renderer, stages models/packs, compiles,
+                        # generates the sha256 manifest, runs electron-builder (NSIS x64)
+npm run desktop:dev     # vite dev server + Electron, for development
+npm test                # desktop test suites
+```
+
+Model weights must be staged first — see [PACKAGING.md](PACKAGING.md) and
+[desktop/README.md](desktop/README.md) for the staging and packaging details.
+
+### Browser web app (`web_ui/`, development flow)
+
+```powershell
+cd web_ui
+npm install
+npm run dev        # Development server
+npm run build:offline  # Self-contained offline archive (see PACKAGING.md)
+npm run typecheck  # TypeScript validation
+npm test           # Run tests with vitest
+```
+
+### Legacy Python harness (CI conformance)
+
+The Python stack below is **not the shipped product** — it survives as the CI
+contract-conformance surface for the frozen API (`contracts/tests/run_conformance.py`).
+It is retained here for maintainers running that suite.
 
 #### Prerequisites
 - Windows 10 or later
@@ -259,12 +341,12 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
    pip install -r requirements.txt
    ```
 
-3. **Download required models**
+3. **Models**
 
    **GGUF Model (Required for LLM inference)**
    ```powershell
-   # Default model: Gemma 4 E2B (Q5_K_M) is bundled
-   # To use a custom model, download any GGUF format model
+   # The harness uses a local GGUF via RAG_GGUF_PATH (e.g. the ADR-0002
+   # gemma-4-e2b-it Q4_K_M model.gguf); any GGUF format model works
    # From Hugging Face: https://huggingface.co/models?search=gguf
    ```
 
@@ -274,7 +356,7 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
    # Can be manually downloaded if needed for offline installation
    ```
 
-4. **Run the application**
+4. **Run the harness**
 
    **GUI Mode** (default):
    ```powershell
@@ -291,7 +373,7 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
    python main.py --api --port 8080
    ```
 
-### Method 2: Offline Bundle Installation (Recommended for Enterprises)
+#### Offline Bundle (historical enterprise path, retired)
 
 1. **Download the offline installer bundle**
    - Includes Python embeddable, wheels, and model files
@@ -306,6 +388,18 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 
 ### Environment Variables
 
+**Desktop app** (main override seams; more are documented in
+[docs/electron-mode.md](docs/electron-mode.md)):
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TRAININGAPP_DESKTOP_INFERENCE_PROFILE` | Force the inference profile (`quality` / `fast` / `auto`) | auto (free-RAM gate) |
+| `TRAININGAPP_DESKTOP_BACKEND_MODE` | Backend host selection (`node` / `sidecar`) | `node` (ADR-0003) |
+| `TRAININGAPP_DESKTOP_DEV_ORIGINS` | Extra dev origins allowed by the loopback guard (unpackaged builds only) | - |
+| `TRAININGAPP_DESKTOP_FREE_RAM_BYTES` | Override free RAM for the wizard's RAM gate (dev/test seam) | real reading |
+
+**Legacy Python harness only** (`api_server.py` / `main.py`):
+
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `RAG_DB_PATH` | Vector database location | `./doc_qa_db` |
@@ -316,7 +410,13 @@ The application uses GGUF models via llama-cpp-python for fully offline inferenc
 | `RAG_TEMPERATURE` | LLM temperature | `0.3` |
 | `API_PORT` | API server port | `8080` |
 
-## 🔐 API Authentication (Production Required)
+## 🔐 API Authentication (Legacy Python harness)
+
+> **The shipped desktop app has no user-facing auth**: its backend binds loopback only,
+> on an OS-assigned random port, and every request carries a per-launch 256-bit
+> `X-Desktop-Token` — see [docs/security/desktop.md](docs/security/desktop.md) and
+> [docs/electron-mode.md](docs/electron-mode.md). The `ENABLE_AUTH` / `API_KEY` material
+> below applies to the legacy Python harness only.
 
 ⚠️ **Warning**: Authentication is **disabled by default** for development convenience. **MUST be enabled** for any production or shared environment.
 
@@ -380,11 +480,17 @@ print(response.json())
 - Store API keys in environment variables, never in code
 - See [USAGE.md](USAGE.md) for complete authentication documentation
 
-**Backend Selection:**
-The application uses GGUF models only via llama-cpp-python.
-If `RAG_GGUF_PATH` is set, that model is used. Otherwise, defaults to bundled Gemma 4.
+**Backend Selection (legacy Python harness):**
+The harness uses GGUF models only via llama-cpp-python.
+If `RAG_GGUF_PATH` is set, that model is used. Otherwise, it defaults to the bundled Gemma 4
+artifact. The desktop app instead loads its bundled ADR-0002 profile models through
+node-llama-cpp (see the LLM Backend section above).
 
 ## 📖 Usage
+
+> The GUI/CLI/API flows below are the **legacy Python harness**. The shipped desktop app
+> exposes ingestion, chat, knowledge packs, and training through its UI; its API is the
+> same frozen contract, served on a per-launch loopback address.
 
 ### Ingest Documents
 
@@ -465,11 +571,11 @@ Automatically fetches adjacent chunks around retrieved results:
 - Improves answer quality for multi-part questions
 
 #### Cross-Encoder Reranking
-ettin-reranker-32m-v1 (ModernBERT, enabled by default):
+ettin-reranker-32m-v1 (ModernBERT, enabled by default on the desktop backend):
 - Ranks retrieved chunks by relevance after initial retrieval
 - Higher accuracy than pure hybrid search
-- Lightweight (~85MB) — optimized for minimum-spec hardware
-- Can be disabled via Settings dialog
+- Lightweight — ~38 MB staged (q8 ONNX, 39,611,408 bytes; [bench/RESULTS.md](bench/RESULTS.md)) — optimized for minimum-spec hardware
+- Can be tuned via `TRAININGAPP_RETRIEVAL_RERANK` (desktop) / the Settings dialog (legacy harness)
 
 #### Step-back Query Transform
 Keyword-based query expansion (disabled by default):
@@ -477,6 +583,10 @@ Keyword-based query expansion (disabled by default):
 - Note: The LLM-based step-back transformation is not wired (latency cost too high for minimum-spec hardware)
 
 ## ⚙️ Configuration
+
+> GUI settings dialog and CLI options below are the **legacy Python harness**; the desktop
+> app is configured in-app (Settings) plus the `TRAININGAPP_*` seams listed under
+> Installation. Harness env vars are documented in [CONFIGURATION.md](CONFIGURATION.md).
 
 ### GUI Settings Dialog
 
@@ -516,65 +626,78 @@ Options:
 
 ### Overview
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Document Q&A App                         │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │ Document     │    │ Vector Store │    │ LLM Interface│  │
-│  │ Processor    │───▶│ (ChromaDB+   │    │ (GGUF-only)  │  │
-│  │              │    │  BM25+RRF)   │◀───│             │  │
-│  └──────────────┘    └──────────────┘    └──────────────┘  │
-│         │                   │                    │          │
-│         └───────────────────┴────────────────────┘          │
-│                           │                                 │
-│                    ┌──────▼──────┐                          │
-│                    │ RAG Engine  │                          │
-│                    │ (Query      │                          │
-│                    │  Processing)│                          │
-│                    └──────┬──────┘                          │
-│                           │                                 │
-│                    ┌──────▼──────┐                          │
-│                    │ GUI / API   │                          │
-│                    └─────────────┘                          │
-│                                                               │
-└─────────────────────────────────────────────────────────────┘
+Mirrors [ARCHITECTURE.md](ARCHITECTURE.md) (the authoritative map):
+
+```text
++--------------------------- Windows desktop app (desktop/) ---------------------------+
+|                                                                                       |
+|  Electron renderer (web_ui build)          Electron main process                     |
+|  +--------------------------------+        +--------------------------------------+  |
+|  | app://index.html                |  IPC   | desktop/main/index.ts                 |  |
+|  | React pages (web_ui/src/pages)  |<------>|  lockdown, integrity gate, first-run  |  |
+|  | desktopApi bridge (preload)     |        |  wizard, signed update checker        |  |
+|  +--------+-----------------------+        +------------------+-------------------+  |
+|           | HTTP 127.0.0.1:<random port> + X-Desktop-Token (per-launch)               |
+|           v                                                                             |
+|  +----------------------------------------------------------------------------------+ |
+|  | Node backend host (desktop/main/backend) — ADR-0003                                | |
+|  | LlamaEngine (node-llama-cpp, Quality/Fast profiles) - ingest pipeline              | |
+|  | hybrid retrieval (vec0 KNN + FTS5 + RRF k=60 + ettin rerank) - pack manager        | |
+|  | learn assembler - memory governor                                                 | |
+|  +------------------------------------+---------------------------------------------+ |
+|                                       v                                               |
+|        <userData>/profiles/default/store.sqlite                                       |
+|        better-sqlite3 + sqlite-vec vec0 KNN + FTS5 (contracts/store.schema.sql)       |
++---------------------------------------------------------------------------------------+
+
+  Plain browser (web_ui/, no Electron): wllama WASM LLM + ONNX embeddings +
+  IndexedDB/EdgeVec/FlexSearch in-page; knowledge packs gated (ADR-0009).
 ```
 
 ### Components
 
-**Document Processor**
-- Extracts text from PDF, DOCX, PPTX, TXT, MD
-- Semantic chunking with paragraph/sentence boundaries
-- Chunk overlap for context continuity
+**Renderer (Electron)**
+- The web_ui React build served from the `app://` protocol with a strict CSP
+- Chat / Documents (knowledge packs) / Training (embedded Storyline player) / Settings pages
+
+**Node backend (Electron main process)**
+- 18 contract routes behind the loopback guard (random port + per-launch `X-Desktop-Token`)
+- GGUF inference via node-llama-cpp with Quality/Fast profiles (ADR-0002)
+- Pack lifecycle: install / supersede / rollback / remove (packtool-built packs)
 
 **Vector Store**
-- ChromaDB for semantic vector storage
-- BM25Index for keyword-based search
-- Reciprocal Rank Fusion (RRF) for hybrid results
-- Window expansion for context fetching
+- SQLite + sqlite-vec `vec0` KNN and an FTS5 mirror (contracts/store.schema.sql, ADR-0005)
+- Reciprocal Rank Fusion (RRF, k=60) for hybrid results — same constant on every surface
+- Cross-encoder rerank (ettin-reranker-32m-v1) with a calibrated relevance floor
 
 **LLM Interface**
-- GGUF via llama-cpp-python (CPU-only, fully offline)
+- GGUF via node-llama-cpp (desktop, CPU-only, fully offline)
+- GGUF via wllama WASM (browser, CPU/SIMD, fully offline)
 
 **RAG Engine**
 - Query processing and routing
 - Hybrid search orchestration
-- Context assembly and answer generation
-- Source citation tracking
+- Context assembly and answer generation with `grounding` provenance
+- Source citation and Learn-panel deep-link tracking
 
 ## 🔧 Troubleshooting
+
+> The pip-based entries below diagnose the **legacy Python harness**. Desktop-app issues
+> surface through the first-run wizard's named gates and the startup integrity check
+> (failures block backend start and name path/expected/actual — reinstall if the bundled
+> tree fails verification).
 
 ### "No LLM backend available"
 
 **Solution 1: GGUF Model Not Found**
 ```powershell
-# Check if model file exists (default bundled model)
-dir gemma-4-E2B-it-Q5_K-M.gguf
+# Desktop: both profile models are bundled and integrity-checked at startup:
+#   <resources>/models/llm-quality/gemma-4-e2b-it/model.gguf   (Q4_K_M, ADR-0002)
+#   <resources>/models/llm-fast/lfm2.5-vl-450m/model.gguf      (Q4_K_M, ADR-0002)
+# A missing model means a broken install — re-run the installer.
 
-# If not, download from:
-# https://huggingface.co/google/gemma-4-2b-it-gguf
+# Legacy harness: point RAG_GGUF_PATH at a local GGUF file; custom GGUF models
+# can be downloaded from https://huggingface.co/models?search=gguf
 ```
 
 **Solution 2: Wrong Model Path**
@@ -605,9 +728,9 @@ pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-c
 
 ### Slow First Run
 
-- Embedding model (~80MB) downloads on first use
-- Subsequent runs use cached model
-- BM25 index is built on first ingestion
+- Nothing downloads: the embedding model (bge-small-en-v1.5 on desktop, snowflake-arctic-embed-m in the browser), the reranker, and both LLM profiles are bundled
+- Desktop first run verifies the sha256 integrity manifest over the staged model tree (2,377 ms measured, streaming; [bench/RESULTS.md](bench/RESULTS.md))
+- Legacy harness only: BM25 index is built on first ingestion
 
 ### Memory Errors with Large Documents
 
@@ -673,8 +796,8 @@ print(f"BM25 index: {'Ready' if engine.vector_store.bm25_index else 'Not built'}
 import requests
 import json
 
-# Configure the engine
-os.environ["RAG_GGUF_PATH"] = "path/to/gemma-4-E2B-it-Q5_K-M.gguf"
+# Configure the engine (legacy Python harness)
+os.environ["RAG_GGUF_PATH"] = "path/to/gemma-4-e2b-it/model.gguf"  # Q4_K_M, ADR-0002
 
 # Start API server in another terminal
 # python main.py --api --port 8080
@@ -762,7 +885,11 @@ updated = response.json()
 print(f"New temperature: {updated['temperature']}, chunk size: {updated['chunk_size']}")
 ```
 
-## 📦 Building Standalone Executable
+## 📦 Building Standalone Executable (legacy Python harness — retired product path)
+
+> The shipped desktop binary is the Electron NSIS installer (see "Building the desktop
+> app from source" above). The PyInstaller/Inno Setup flow below built the retired
+> Python desktop product and is retained for history.
 
 ### Prerequisites
 
@@ -799,7 +926,8 @@ This creates an offline installer with all dependencies and models included.
 
 ## 🌐 HTML5 Web UI (Phase 1)
 
-A new browser-based interface is being developed alongside the existing desktop GUI.
+The browser-based interface (`web_ui/`) is one of the two shipped surfaces — it is also
+the desktop app's renderer. This section documents its development flow.
 
 ### Tech Stack
 - **Vite 6** + **React 18** + **TypeScript 5**
@@ -943,95 +1071,34 @@ Keyword Index (FlexSearch) ─────────────────�
 ## 📋 Project Structure
 
 ```
-doc_qa_app/
-├── main.py                 # Main entry point
-├── app_gui.py              # GUI application (customtkinter)
-├── api_server.py           # FastAPI REST server
-├── rag_engine.py           # RAG orchestration
-├── document_processor.py   # Document extraction & semantic chunking
-├── vector_store.py         # Vector search (ChromaDB + BM25 + RRF)
-├── llm_interface.py        # LLM interface (GGUF-only)
-├── reranking.py            # Cross-encoder reranking
-├── query_transformer.py    # Query transformation
-├── utils.py                # Utility functions (RRF fusion)
-├── requirements.txt        # Python dependencies
-├── build.py                # PyInstaller build script
-├── scripts/
-│   └── build_installer.py  # Inno Setup preparation
-├── web_ui/                 # HTML5 Web UI (Phase 3+)
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── ChatPage.tsx          # Chat UI page (Phase 3)
-│   │   │   ├── DocumentsPage.tsx    # Document upload & management (Phase 4)
-│   │   │   └── SettingsPage.tsx     # Settings page with 6 sections (Phase 7)
-│   │   ├── components/
-│   │   │   ├── ChatMessageBubble.tsx # Role-based message bubbles (Phase 3)
-│   │   │   ├── ChatMessageList.tsx   # Scrollable message container (Phase 3)
-│   │   │   ├── ChatInput.tsx         # Input with send/cancel (Phase 3)
-│   │   │   ├── MarkdownRenderer.tsx  # react-markdown + remark-gfm (Phase 3)
-│   │   │   ├── SourceCitation.tsx    # Expandable citation pills (Phase 3)
-│   │   │   ├── InferenceModeToggle.tsx # Mode status toggle (Phase 3)
-│   │   │   ├── StreamingIndicator.tsx  # Bouncing dots animation (Phase 3)
-│   │   │   ├── DropZone.tsx          # Drag-and-drop file upload (Phase 4)
-│   │   │   ├── DocumentList.tsx      # Document list with status (Phase 4)
-│   │   │   ├── ModelDownloadProgress.tsx # Download progress UI (Phase 6)
-│   │   │   ├── ErrorBoundary.tsx     # Error boundary with retry (Phase 7)
-│   │   │   ├── LoadingSkeleton.tsx   # Skeleton loading placeholders (Phase 7)
-│   │   │   ├── EmptyState.tsx        # Empty state messages (Phase 7)
-│   │   │   ├── Sidebar.tsx           # Responsive 260px sidebar (Phase 3)
-│   │   │   └── SidebarConversationItem.tsx # Context menu conversations (Phase 3)
-│   │   ├── db/
-│   │   │   ├── index.ts              # DocQADatabase class (Phase 3)
-│   │   │   └── conversations.ts       # Conversation CRUD + pagination (Phase 3)
-│   │   ├── hooks/
-│   │   │   ├── useSidebarState.ts    # Sidebar collapsed state (Phase 3)
-│   │   │   └── useConversations.ts   # Conversation list management (Phase 3)
-│   │   ├── layouts/
-│   │   │   └── AppLayout.tsx        # Layout with sidebar + header (Phase 3)
-│   │   ├── utils/
-│   │   │   └── relativeTime.ts       # Relative timestamp formatting (Phase 3)
-│   │   ├── lib/
-│   │   │   ├── streaming/
-│   │   │   │   └── TokenStreamManager.ts # RAF-batched token delivery (Phase 3)
-│   │   │   ├── inference/
-│   │   │   │   └── InferenceModeContext.tsx # Browser-local/API mode context (Phase 3)
-│   │   │   ├── browser/
-│   │   │   │   └── browser-compat.ts    # Cross-browser WebGPU detection (Phase 7)
-│   │   │   ├── embeddings/
-│   │   │   │   ├── embedding-service.ts # Transformers.js embedding (Phase 5)
-│   │   │   │   └── memory-aware.ts      # Memory-aware model selection (Phase 5)
-│   │   │   ├── llm/
-│   │   │   │   ├── web-llm-service.ts  # WebLLM browser inference (Phase 6)
-│   │   │   │   ├── model-download.ts   # Download manager with ETA (Phase 6)
-│   │   │   │   ├── model-readiness.ts  # WebGPU/memory readiness gate (Phase 6)
-│   │   │   │   └── webgpu-watchdog.ts  # Context loss recovery (Phase 6)
-│   │   │   ├── rag/
-│   │   │   │   └── rag-orchestrator.ts # RAG pipeline orchestrator (Phase 6)
-│   │   │   ├── search/
-│   │   │   │   ├── vector-index.ts     # EdgeVec HNSW index (Phase 5)
-│   │   │   │   ├── keyword-index.ts    # FlexSearch keyword index (Phase 5)
-│   │   │   │   ├── rrf-fusion.ts       # Reciprocal Rank Fusion (Phase 5)
-│   │   │   │   └── reranker.ts         # Cross-encoder reranker (Phase 5)
-│   │   │   ├── processing/
-│   │   │   │   ├── pdf-extractor.ts     # PDF text extraction (Phase 4)
-│   │   │   │   ├── docx-extractor.ts    # DOCX text extraction (Phase 4)
-│   │   │   │   ├── xlsx-extractor.ts    # XLSX text extraction (Phase 4)
-│   │   │   │   ├── pptx-extractor.ts   # PPTX text extraction (Phase 4)
-│   │   │   │   ├── txt-extractor.ts     # TXT/MD text extraction (Phase 4)
-│   │   │   │   ├── extractor-factory.ts # MIME-type based extractor selection (Phase 4)
-│   │   │   │   └── text-chunker.ts      # Semantic chunking with overlap (Phase 4)
-│   │   │   └── storage/
-│   │   │       └── document-store.ts   # IndexedDB document storage (Phase 4)
-│   │   ├── types/
-│   │   │   ├── chat.ts               # Shared chat types (Phase 3)
-│   │   │   ├── document.ts           # Document types (Phase 4)
-│   │   │   ├── embedding.ts          # Embedding types (Phase 5)
-│   │   │   ├── search.ts             # Search result types (Phase 5)
-│   │   │   └── llm.ts                # LLM types, WebGPU-only inference mode (Phase 6)
-│   │   └── styles/
-│   │       └── tokens.css           # Design tokens + @keyframes blink (Phase 3)
-│   ├── package.json
-│   └── ...
+trainingapp/
+├── desktop/                # Electron desktop app (the shipped product)
+│   ├── main/               # main process: backend host, security/, first-run/,
+│   │                       # update-checker.ts, app:// protocol
+│   ├── preload/            # contextBridge: desktopApi token bridge
+│   ├── renderer/           # build-time staging of web_ui/dist (gitignored)
+│   ├── scripts/            # resource stager, sha256 manifest generator,
+│   │                       # pack builders, packaged smoke test
+│   └── src/__tests__/      # desktop vitest suites (frozen acceptance specs)
+├── web_ui/                 # HTML5 web app — browser surface AND desktop renderer
+│   ├── src/                # React app: pages/, components/, lib/ (api, llm, rag, ...)
+│   ├── public/models/      # manifest.json + packaged model weights (gitignored)
+│   └── scripts/            # prepare-models.mjs, validate-build.mjs
+├── packtool/               # Knowledge Pack build/verify CLI (Node): build/, storyline/, links/
+├── contracts/              # frozen contracts + conformance suite + fixtures
+│   ├── api.openapi.yaml        # the frozen HTTP API (both backends)
+│   ├── store.schema.sql        # SQLite store schema (v3)
+│   ├── pack.schema.json        # Knowledge Pack manifest schema
+│   └── pack-feed.schema.json   # signed update-feed schema (ADR-0010)
+├── docs/                   # adr/ (ADR-0001..0010), security/, pack/training/update
+│   └── archive/pre-v3/     # retired pre-v3 planning/audit/release docs (indexed)
+├── eval/                   # tier-0 eval harness (questions.jsonl, corpus, runner)
+├── bench/                  # measured performance results (RESULTS.md)
+├── scripts/                # repo scripts (CI path classifier, export_seed_chunks.py)
+├── tests/                  # Python (legacy harness) test suites
+├── .github/workflows/      # CI: test, conformance, desktop-build, web-ui, ...
+├── api_server.py           # legacy Python harness entry (CI conformance surface),
+│                           # with config.py / rag_engine.py / vector_store.py / ...
 └── README.md               # This file
 ```
 
@@ -1040,7 +1107,7 @@ doc_qa_app/
 - **Offline-Only**: No data leaves your machine
 - **No Cloud Services**: All processing is local
 - **Model Bundling**: Models are stored locally
-- **Portable**: Can be run from USB drive
+- **Opt-in Updates Only**: zero update-related network calls until you enable the signed channel ([ADR-0010](docs/adr/0010-update-channels.md))
 
 ## 📄 License
 
@@ -1059,21 +1126,29 @@ see [docs/licenses.md](docs/licenses.md) for the per-model review.
 
 ## 🙏 Acknowledgments
 
-- [ChromaDB](https://www.trychroma.com/) - Vector database
-- [Sentence Transformers](https://www.sbert.net/) - Embedding models
-- [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) - GGUF inference
-- [PyMuPDF](https://pymupdf.readthedocs.io/) - PDF processing
-- [CustomTkinter](https://customtkinter.tomschimansky.com/) - Modern GUI toolkit
+Desktop stack (v3):
+
+- [node-llama-cpp](https://github.com/withcat/node-llama-cpp) - GGUF inference (node bindings)
+- [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) - SQLite store
+- [sqlite-vec](https://github.com/asg017/sqlite-vec) - sqlite vector search extension
 - [pdfjs-dist](https://mozilla.github.io/pdf.js/) - PDF processing (Apache-2.0)
 - [@huggingface/transformers](https://github.com/huggingface/transformers.js) - In-browser ML models (Apache-2.0)
-- [@mlc-ai/web-llm](https://github.com/mlc-ai/web-llm) - In-browser LLM inference (Apache-2.0)
 - [edgevec](https://github.com/matte1782/edgevec) - In-browser vector database (MIT OR Apache-2.0)
 - [flexsearch](https://github.com/nextapps-de/flexsearch/) - Full-text search (Apache-2.0)
 - [mammoth](https://github.com/mwilliamson/mammoth.js) - DOCX processing (BSD-2-Clause)
 - [xlsx](https://sheetjs.com/) - XLSX processing (Apache-2.0)
 - [jszip](https://github.com/Stuk/jszip) - ZIP handling (MIT OR GPL-3.0-or-later)
 
+Legacy Python harness only (CI conformance surface):
+
+- [ChromaDB](https://www.trychroma.com/) - Vector database
+- [Sentence Transformers](https://www.sbert.net/) - Embedding models
+- [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) - GGUF inference
+- [PyMuPDF](https://pymupdf.readthedocs.io/) - PDF processing
+- [CustomTkinter](https://customtkinter.tomschimansky.com/) - GUI toolkit of the retired desktop product
+- [@mlc-ai/web-llm](https://github.com/mlc-ai/web-llm) - Optional WebGPU browser engine (weights not bundled)
+
 ---
 **Version**: 2.3.0
-**Last Updated**: 2026-06-20 (Phase 9 → v2.3.0 web overhaul)
+**Last Updated**: 2026-09-29 (v3 documentation refresh, issue #89)
 **Hardware**: CPU-only optimized for Intel 11th gen i5 and above (16GB RAM minimum)

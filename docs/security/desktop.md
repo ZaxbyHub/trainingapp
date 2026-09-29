@@ -2,7 +2,7 @@
 
 Scope: the Electron desktop shell under `desktop/` — the `app://` renderer
 surface and the loopback API transport. Python-side server hardening is
-covered by `docs/security_hardening_guide.md`; renderer feature work is B9
+covered by `docs/archive/pre-v3/security_hardening_guide.md`; renderer feature work is B9
 (#67); the backend host itself is B3 (#61).
 
 ## Architecture invariants
