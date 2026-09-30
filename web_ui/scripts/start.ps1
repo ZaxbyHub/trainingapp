@@ -10,10 +10,10 @@
 
   Key design points:
   - HEAD requests return headers ONLY (no body) — the readiness gate probes
-    model files with HEAD, and reading a 229 MB GGUF into memory for every
+    model files with HEAD, and reading a ~2.6 GB GGUF into memory for every
     probe would be catastrophically slow and error-prone.
   - Large files are streamed (chunked) rather than loaded into memory, so
-    the 229 MB model GGUF doesn't OOM the server.
+    the ~2.6 GB model GGUF doesn't OOM the server.
   - Range requests are supported so wllama/ONNX can byte-range fetch.
 #>
 
@@ -189,7 +189,7 @@ while ($Listener.IsListening) {
         }
 
         # ---- GET request: stream the file ----
-        # Use FileStream + chunked copy so the 229 MB model GGUF doesn't load
+        # Use FileStream + chunked copy so the ~2.6 GB model GGUF doesn't load
         # entirely into memory. Supports Range requests via the stream offset.
         $AcceptRanges = $Request.Headers['Range']
         $Fs = [System.IO.File]::Open($ResolvedPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)

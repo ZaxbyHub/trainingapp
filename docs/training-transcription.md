@@ -96,15 +96,17 @@ run (partial-failure containment).
 Reference-package run (2026-09-12): **300 audio + 37 video = 337 media
 transcribed, 0 failures** (acceptance check C1). The issue's "33 sidecar-less
 MP4s" was file-space arithmetic (57 files − 24 sidecars); the id-space census
-(see trace `.agents/issue-traces/78-offline-narration-transcription/
-03-localization-log.md` H4) found 61 distinct video object ids of which 37
+(the issue #78 trace's localization log, finding H4 — trace artifacts are
+session-local and not part of the repo) found 61 distinct video object ids of which 37
 have no sidecar — the invariant "every sidecar-less asset transcribed" covers
 37 ⊇ 33, with no coverage gap.
 
 ## Spot-check sample (human-review anchor)
 
 Real cues from the verified run (for the PR's 3–5 cue human spot-check;
-pairings re-verified against `repro/c1-out/<objectId>_transcripts.js`):
+pairings re-verified against the trace-local `c1-out/<objectId>_transcripts.js`
+extracts produced by acceptance check C1 — session-local artifacts, not part
+of the repo):
 
 - MP3 `5VOOljZy4F3_44100_56_0.mp3` → `{"start_ms": 0, "text": " Select the
   ProC button."}`

@@ -2,14 +2,19 @@
 """
 Export Seed Chunks Script
 
-Developer CLI script to export ChromaDB collection to seed data format.
+LEGACY (pre-v3), developer-only: exports the legacy Python harness's vector
+store to the gitignored seed_data/ directory format. Nothing in CI, packaging,
+or the v3 desktop/web_ui surfaces invokes this script (zero callers); it is
+retained solely as a developer utility for the legacy harness. The seed_data/
+directory it targets is gitignored and its runtime loader was deliberately
+deleted, so the output has no consumer in the shipped product.
 """
 
 import argparse
 import json
 import sys
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 
 def main():
@@ -20,7 +25,7 @@ def main():
         "--db-path",
         type=str,
         default="doc_qa_db",
-        help="Path to ChromaDB directory (default: doc_qa_db)"
+        help="Path to ChromaDB directory (default: doc_qa_db)",
     )
     args = parser.parse_args()
 
@@ -46,7 +51,9 @@ def main():
     # Get all chunks from ChromaDB
     try:
         print("[INFO] Fetching chunks from ChromaDB...")
-        all_data = vector_store.collection.get(include=["documents", "metadatas", "embeddings"])
+        all_data = vector_store.collection.get(
+            include=["documents", "metadatas", "embeddings"]
+        )
         documents = all_data.get("documents") or []
         metadatas = all_data.get("metadatas") or []
         embeddings_raw = all_data.get("embeddings")
@@ -55,6 +62,7 @@ def main():
         if embeddings_raw is not None:
             try:
                 import numpy as np
+
                 if isinstance(embeddings_raw, np.ndarray):
                     # Handle both 1D and 2D arrays
                     if len(embeddings_raw.shape) == 1:
@@ -62,7 +70,10 @@ def main():
                         embeddings = embeddings_raw.tolist()
                     else:
                         # Multiple embeddings as a 2D array
-                        embeddings = [e.tolist() if isinstance(e, np.ndarray) else e for e in embeddings_raw]
+                        embeddings = [
+                            e.tolist() if isinstance(e, np.ndarray) else e
+                            for e in embeddings_raw
+                        ]
                 else:
                     # Assume it's already a list
                     embeddings = list(embeddings_raw)
@@ -73,6 +84,7 @@ def main():
             embeddings = []
     except Exception as e:
         import traceback
+
         print(f"[ERROR] Failed to get chunks: {e}")
         traceback.print_exc()
         sys.exit(1)
@@ -81,7 +93,9 @@ def main():
     chunks_by_doc: Dict[str, List[Dict[str, Any]]] = {}
     doc_manifest: List[Dict[str, Any]] = []
 
-    for doc_id, text, metadata, chunk_id in zip(ids, documents, metadatas, range(len(ids))):
+    for doc_id, text, metadata, chunk_id in zip(
+        ids, documents, metadatas, range(len(ids))
+    ):
         # Get source from metadata
         source = metadata.get("source", "Unknown") if metadata else "Unknown"
 
@@ -97,7 +111,7 @@ def main():
             "chunk_id": seed_chunk_id,
             "text": text,
             "embedding": embeddings[chunk_id],
-            "metadata": metadata or {}
+            "metadata": metadata or {},
         }
 
         # Group by doc_id
@@ -107,19 +121,18 @@ def main():
         chunks_by_doc[doc_id].append(chunk_entry)
 
         # Add to manifest if not already present
-        existing_entry = next(
-            (e for e in doc_manifest if e["doc_id"] == doc_id),
-            None
-        )
+        existing_entry = next((e for e in doc_manifest if e["doc_id"] == doc_id), None)
         if existing_entry:
             existing_entry["chunk_count"] += 1
         else:
-            doc_manifest.append({
-                "doc_id": doc_id,
-                "version": 1,
-                "description": source,
-                "chunk_count": 1
-            })
+            doc_manifest.append(
+                {
+                    "doc_id": doc_id,
+                    "version": 1,
+                    "description": source,
+                    "chunk_count": 1,
+                }
+            )
 
     # Create seed_data directory
     seed_data_dir = script_dir.parent / "seed_data"
@@ -131,22 +144,22 @@ def main():
         chunks_output.extend(chunks)
 
     chunks_json_path = seed_data_dir / "chunks.json"
-    with open(chunks_json_path, 'w', encoding='utf-8') as f:
+    with open(chunks_json_path, "w", encoding="utf-8") as f:
         json.dump(chunks_output, f, indent=2, ensure_ascii=False)
 
     # Export manifest to JSON
     manifest_json_path = seed_data_dir / "seed_manifest.json"
-    with open(manifest_json_path, 'w', encoding='utf-8') as f:
+    with open(manifest_json_path, "w", encoding="utf-8") as f:
         json.dump(doc_manifest, f, indent=2)
 
     # Print summary
     doc_count = len(doc_manifest)
     chunk_count = len(chunks_output)
 
-    print(f"\n[OK] Export completed!")
+    print("\n[OK] Export completed!")
     print(f"  Documents: {doc_count}")
     print(f"  Chunks: {chunk_count}")
-    print(f"\nOutput files:")
+    print("\nOutput files:")
     print(f"  - {chunks_json_path}")
     print(f"  - {manifest_json_path}")
 

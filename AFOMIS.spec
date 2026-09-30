@@ -1,6 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for Document Q&A Assistant offline RAG desktop app.
+LEGACY (pre-v3): PyInstaller spec for the retired Python desktop app.
+Superseded for the shipped product by the Electron packaging pipeline
+(desktop/electron-builder.yml, issue #84). Retained only because
+build_exe.bat and the skip-gated tests/regression/test_defect_006_build_path.py
+reference it, and the legacy Python surface remains the CI conformance target
+(.github/workflows/conformance.yml runs --asgi api_server:app). Note: the
+seed_data entry below packages a directory that no longer exists in the
+repository (gitignored; its loader was deliberately deleted).
 
 Build command: pyinstaller AFOMIS.spec --clean
 """

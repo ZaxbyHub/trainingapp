@@ -1,607 +1,468 @@
-# Architecture Guide
+# Architecture
 
-Technical architecture overview of the Document Q&A Assistant, including system design, component interactions, and algorithmic details.
+**This document describes the shipped v3 system.** Last Updated: 2026-09-29.
 
-## Table of Contents
+Scope: how the Windows desktop application (Electron shell + Node backend),
+the plain-browser web surface, the frozen API/store/pack contracts, and the
+packtool build tooling fit together. Every claim below is verifiable against
+the file cited next to it. Companion guides: [docs/electron-mode.md](docs/electron-mode.md)
+(renderer/backend mode selection), [docs/training-player.md](docs/training-player.md)
+(embedded Storyline player), [docs/updates.md](docs/updates.md) (update runbook),
+[desktop/README.md](desktop/README.md) (shell layout and scripts),
+[docs/pack-authoring-guide.md](docs/pack-authoring-guide.md) (authoring knowledge packs
+with packtool), and [docs/training-pack-refresh-runbook.md](docs/training-pack-refresh-runbook.md)
+(refreshing an installed training pack).
 
-1. [System Overview](#system-overview)
-2. [Component Architecture](#component-architecture)
-3. [Data Flow](#data-flow)
-4. [RAG Pipeline](#rag-pipeline)
-5. [Search Algorithms](#search-algorithms)
-6. [Memory Management](#memory-management)
-7. [Concurrency Model](#concurrency-model)
-8. [Extensibility](#extensibility)
+## System overview
 
-## System Overview
+```text
++--------------------------- Windows desktop app (desktop/) ---------------------------+
+|                                                                                       |
+|  Electron renderer (web_ui build)          Electron main process                     |
+|  +--------------------------------+        +--------------------------------------+  |
+|  | app://index.html                |  IPC   | desktop/main/index.ts                 |  |
+|  | React pages (web_ui/src/pages)  |<------>|  single-instance lock, navigation     |  |
+|  | desktopApi bridge (preload)     |        |  lockdown, integrity gate, first-run  |  |
+|  +--------+-----------------------+        |  wizard, signed update checker        |  |
+|           |                                 +------------------+-------------------+  |
+|           | HTTP 127.0.0.1:<random port>                       | owns                 |
+|           | X-Desktop-Token (per-launch, 256-bit)              v                     |
+|           v                                                                             |
+|  +----------------------------------------------------------------------------------+ |
+|  | Node backend host (desktop/main/backend/index.ts)                                  | |
+|  | 18 contract routes (desktop/main/backend/server.ts) behind the B2 loopback guard   | |
+|  | LlamaEngine - ingest pipeline - hybrid retrieval - pack manager - learn assembler  | |
+|  | memory governor (scheduler + pressure monitor + idle unload)                       | |
+|  +------------------------------------+---------------------------------------------+ |
+|                                       v                                               |
+|        <userData>/profiles/default/store.sqlite                                       |
+|        better-sqlite3 + sqlite-vec vec0 KNN + FTS5 (contracts/store.schema.sql)       |
++---------------------------------------------------------------------------------------+
 
-### High-Level Design
-
-The Document Q&A Assistant follows the **Retrieval-Augmented Generation (RAG)** pattern:
-
-```
-User Question → Query Processing → Retrieval → Context Assembly → LLM Generation → Answer
-```
-
-### Design Goals
-
-1. **Offline-First**: All processing happens locally
-2. **Hardware-Agnostic**: Works on any x64 Windows machine
-3. **Modular**: Components can be replaced or extended
-4. **Performance**: Optimized for CPU-only deployment
-5. **Accuracy**: Hybrid search with RRF fusion
-
-### Technology Stack
-
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| Document Processing | Python (pdfplumber, python-docx, pypdf fallback) | Text extraction |
-| Vector Store | ChromaDB | Semantic search |
-| Keyword Search | rank-bm25 | BM25 indexing |
-| Fusion | Custom RRF | Combine search results |
-| LLM Interface | llama-cpp-python | GGUF inference |
-| RAG Engine | Custom Python | Orchestration |
-| GUI | CustomTkinter | User interface |
-| API | FastAPI | REST interface |
-
-> **Per-profile store (B5, issue #63):** the desktop backend and the Python
-> sidecar share ONE SQLite store file per profile — schema frozen at
-> `contracts/store.schema.sql` (docs/chunks/embeddings via sqlite-vec 0.1.9/
-> FTS5/packs/links/meta), proven Node↔Python interoperable by
-> `contracts/tests/store-interop/` (ADR-0005). ChromaDB remains the live
-> ingestion pipeline until B6 (#64) wires the store.
-
-## Component Architecture
-
-### Module Structure
-
-```
-doc_qa_app/
-├── main.py                    # Application entry point
-├── app_gui.py                 # GUI implementation
-├── api_server.py              # REST API server
-├── rag_engine.py              # RAG orchestration
-├── document_processor.py      # Document extraction
-├── vector_store.py            # Vector + BM25 search
-├── llm_interface.py           # LLM backends
-├── reranking.py               # Cross-encoder reranking
-├── query_transformer.py       # Query transformation
-├── app_paths.py               # Path management
-├── engine_factory.py          # Engine creation
-├── utils.py                   # Utilities (RRF)
-├── scripts/                   # Build and utility scripts
-└── tests/                     # Test suite
+  Plain browser (web_ui/, no Electron): wllama WASM LLM + ONNX embeddings +
+  IndexedDB/EdgeVec/FlexSearch in-page; knowledge packs gated (ADR-0009).
 ```
 
-### Component Responsibilities
-
-#### DocumentProcessor
-- **Input**: File paths (PDF, DOCX, PPTX, TXT, MD)
-- **Output**: List of DocumentChunk objects
-- **Key Methods**:
-  - `extract_document()`: Extract text from any format
-  - `chunk_text()`: Semantic chunking with boundaries
-
-#### VectorStore
-- **Input**: DocumentChunk objects
-- **Output**: Search results with metadata
-- **Key Methods**:
-  - `add_chunks()`: Index and embed documents
-  - `search()`: Vector similarity search
-  - `get_context()`: Hybrid search with RRF
-  - `get_chunks_by_source()`: Fetch related chunks
-
-#### LLMInterface
-- **Input**: Prompts
-- **Output**: Generated text
-- **Backend**: GGUF-only via llama-cpp-python
-- **Model**: Gemma 4 E2B (Q5_K_M GGUF, ~3.1GB)
-
-#### RAGEngine
-- **Input**: User questions
-- **Output**: QueryResult objects
-- **Orchestration**:
-  - Query processing
-  - Retrieval
-  - Context assembly
-  - Answer generation
-
-## Data Flow
-
-### Query Processing Flow
-
-```
-User Question
-    ↓
-[Step 1] Query Processing
-    ├─→ Check for greetings (direct response)
-    ├─→ Check for general questions (more context)
-    └─→ Transform query (optional)
-    ↓
-[Step 2] Retrieval
-    ├─→ Hybrid Search (BM25 + Vector + RRF)
-    ├─→ Window Expansion
-    └─→ Reranking (optional)
-    ↓
-[Step 3] Context Assembly
-    ├─→ Filter by similarity threshold
-    ├─→ Truncate to safe size
-    └─→ Format as prompt
-    ↓
-[Step 4] LLM Generation
-    ├─→ Build RAG prompt
-    ├─→ Generate response
-    └─→ Format answer with sources
-    ↓
-Answer + Sources
-```
-
-### Ingestion Flow
-
-```
-Document Directory
-    ↓
-[Step 1] Scan & Extract
-    ├─→ Identify supported files
-    └─→ Extract text (pdfplumber, python-docx)
-    ↓
-[Step 2] Clean & Normalize
-    ├─→ Remove extra whitespace
-    ├─→ Normalize line breaks
-    └─→ Strip whitespace
-    ↓
-[Step 3] Semantic Chunking
-    ├─→ Split on paragraph boundaries
-    ├─→ Split sentences within paragraphs
-    ├─→ Respect word count limits
-    └─→ Create overlaps
-    ↓
-[Step 4] Embedding
-    ├─→ Encode each chunk
-    ├─→ Generate embeddings
-    └─→ Store in ChromaDB
-    ↓
-[Step 5] BM25 Indexing
-    ├─→ Tokenize chunks
-    ├─→ Build index
-    └─→ Store for keyword search
-    ↓
-Indexed Documents
-```
-
-## RAG Pipeline
-
-### Configuration Model
-
-```python
-@dataclass
-class RAGConfig:
-    # Document processing
-    chunk_size: int = 512
-    chunk_overlap: int = 50
-
-    # Retrieval
-    n_results: int = 3
-    min_similarity: float = 0.3
-    retrieval_window: int = 1
-
-    # Search
-    hybrid_search: bool = True
-    initial_retrieval_top_k: int = 20
-
-    # Reranking
-    reranking_enabled: bool = True
-    reranker_model: str = "cross-encoder/ms-marco-TinyBERT-L-2"
-
-    # Query transformation
-    query_transformation_enabled: bool = False
-
-    # Generation
-    max_tokens: int = 1024
-    temperature: float = 0.3
-```
-
-### Pipeline Execution
-
-#### Phase 1: Query Processing
-
-**Greeting Detection**:
-```python
-greeting_keywords = {'hello', 'hi', 'hey', ...}
-if len(words) <= 3 and any(keyword in question):
-    return direct_response()
-```
-
-**General Question Detection**:
-```python
-general_keywords = {'what', 'information', 'have', ...}
-if len(words) <= 8 and any(keyword in question):
-    return more_context()
-```
-
-**Query Transformation** (Optional):
-```python
-if query_transformation_enabled:
-    query = transformer.transform_step_back(question)
-```
-
-#### Phase 2: Retrieval
-
-**Hybrid Search**:
-```python
-if hybrid_search:
-    # Vector search
-    vector_results = vector_store.search(query, n_results=20)
-
-    # BM25 search
-    bm25_results = bm25_index.search(query, top_k=20)
-
-    # RRF fusion
-    fused = rrf_fuse([vector_results, bm25_results])
-
-    # Get top N
-    top_n = fused[:n_results]
-else:
-    # Pure vector search
-    top_n = vector_store.search(query, n_results=n_results)
-```
-
-**Window Expansion**:
-```python
-if retrieval_window > 0:
-    for chunk in top_n:
-        expanded = vector_store.get_chunks_by_source(chunk.source)
-        expanded = filter_adjacent(expanded, chunk, window)
-        top_n.extend(expanded)
-    top_n = deduplicate(top_n)
-```
-
-**Reranking** (Enabled by default):
-```python
-if reranking_enabled:
-    # Split combined context string back into individual chunks
-    chunk_texts = context.split("\n\n---\n\n")
-    rerank_chunks = [DocumentChunk(text=t.strip(), source=source, chunk_index=i)
-                     for i, t in enumerate(chunk_texts) if t.strip()]
-    reranked = reranker.rerank(question, rerank_chunks, top_k=n_results)
-    context = "\n\n---\n\n".join(c.text for c, _ in reranked)
-    sources = list(dict.fromkeys(c.source for c, _ in reranked))
-```
-
-#### Phase 3: Context Assembly
-
-```python
-# Filter by similarity
-context_chunks = [c for c in top_n if c.similarity >= min_similarity]
-
-# Truncate to safe size
-context = "\n\n---\n\n".join(c.text for c in context_chunks)
-context = context[:max_context_length]
-
-# Extract sources
-sources = list(set(c.source for c in context_chunks))
-```
-
-#### Phase 4: Generation
-
-```python
-# Build RAG prompt
-prompt = f"""
-You are a helpful assistant that answers questions based on the provided context.
-Answer the question using ONLY the information in the context below.
-If the context doesn't contain enough information to answer, say "I don't have enough information..."
-
-Context from documents:
-{context}
-
-Sources: {', '.join(sources)}
-
-Question: {question}
-
-Answer:
-"""
-
-# Generate response
-response = llm.generate(prompt, config)
-```
-
-## Search Algorithms
-
-### Vector Search (ChromaDB)
-
-**Algorithm**: Approximate Nearest Neighbor (ANN)
-
-**Parameters**:
-- Distance metric: Cosine similarity
-- Index type: HNSW (Hierarchical Navigable Small World)
-- Dimension: 384 (for bge-small-en-v1.5)
-
-**Process**:
-1. Embed query: `query_embedding = embedder.encode_single(query)`
-2. Query index: `results = collection.query(...)`
-3. Convert distance to similarity: `similarity = 1 - distance`
-4. Filter and sort: `results.sort(key=lambda x: x.similarity, reverse=True)`
-
-**Time Complexity**: O(log N) for HNSW
-
-### BM25 Search
-
-**Algorithm**: BM25 (Best Matching 25)
-
-**Parameters**:
-- k1: 1.5 (term frequency saturation)
-- b: 0.75 (document length normalization)
-- idf: Inverse document frequency
-
-**Process**:
-1. Tokenize query: `tokens = query.split()`
-2. Calculate scores: `scores = index.get_scores(tokens)`
-3. Filter non-zero: `scores = [s for s in scores if s > 0]`
-4. Sort by score: `scores.sort(reverse=True)`
-
-**Time Complexity**: O(N) for scoring
-
-### RRF Fusion
-
-**Algorithm**: Reciprocal Rank Fusion
-
-**Formula**:
-```
-RRF_score(doc_id, list) = Σ 1/(k + rank_in_list)
-```
-
-**Parameters**:
-- k: 60 (default)
-
-**Process**:
-1. Initialize score dict
-2. For each result list:
-   - For each rank:
-     - Add score: `score[doc_id] += 1/(k + rank)`
-3. Sort by final score
-
-**Time Complexity**: O(M * N) where M = number of lists, N = rank length
-
-**Implementation**:
-```python
-def rrf_fuse(results_list, k=60):
-    from collections import defaultdict
-    rrf_scores = defaultdict(float)
-
-    for results in results_list:
-        for rank, (doc_id, _) in enumerate(results):
-            rrf_scores[doc_id] += 1.0 / (k + rank + 1)
-
-    return sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-```
-
-### Window Expansion
-
-**Algorithm**: Adjacent Chunk Retrieval
-
-**Process**:
-```python
-def expand_chunks(chunks, window):
-    expanded = []
-    seen = set()
-
-    for chunk in chunks:
-        source_chunks = get_chunks_by_source(chunk.source)
-
-        for source_chunk in source_chunks:
-            if abs(source_chunk.chunk_index - chunk.chunk_index) <= window:
-                chunk_id = f"{source_chunk.source}_{source_chunk.chunk_index}"
-                if chunk_id not in seen:
-                    expanded.append(source_chunk)
-                    seen.add(chunk_id)
-
-    expanded.sort(key=lambda c: (c.source, c.chunk_index))
-    return expanded
-```
-
-**Benefits**:
-- Context continuity
-- Better for multi-part questions
-- Improved answer quality
-
-## Memory Management
-
-### Data Structures
-
-**DocumentChunk**:
-```python
-@dataclass
-class DocumentChunk:
-    text: str              # Chunk text
-    source: str            # Source file
-    page: Optional[int]    # Page number (if PDF)
-    chunk_index: int       # Chunk number in source
-```
-
-**Vector Metadata**:
-```python
-{
-    "source": "report.pdf",
-    "chunk_index": 5,
-    "page": 12
-}
-```
-
-### Memory Optimization
-
-**1. Chunking Strategy**:
-- Small chunks (256 words) reduce memory per document
-- Overlap preserves context between chunks
-
-**2. Embedding Storage**:
-- 384-dimensional vectors
-- Float32 (4 bytes per value)
-- ~1.5 KB per chunk
-
-**3. BM25 Index**:
-- In-memory list of tokenized text
-- No embeddings stored
-- Lightweight
-
-**4. Cache Management**:
-- ChromaDB persists to disk
-- Only active data in memory
-- Auto-cleanup on clear_documents()
-
-### Memory Usage Estimates
-
-| Documents | Chunks | Memory (embeddings) | Memory (total) |
-|-----------|--------|---------------------|----------------|
-| 10        | 500    | ~2 MB               | ~5 MB          |
-| 100       | 5000   | ~20 MB              | ~50 MB         |
-| 1000      | 50000  | ~200 MB             | ~500 MB        |
-| 10000     | 500000 | ~2 GB               | ~5 GB          |
-
-**Recommendation**: Keep documents under 10,000 for best performance
-
-## Concurrency Model
-
-### Threading Strategy
-
-**GUI Thread**:
-- Handles UI updates
-- User input
-- Event processing
-
-**Engine Thread**:
-- Ingestion processing
-- Query execution
-- Background tasks
-
-**Implementation**:
-```python
-def ingest(self, directory: str, callback=None):
-    # Run in separate thread
-    def process():
-        chunks = self.doc_processor.process_directory(directory)
-        self.vector_store.add_chunks(chunks)
-        if callback:
-            callback("Ingestion complete", 100)
-
-    threading.Thread(target=process, daemon=True).start()
-
-def query(self, question: str):
-    # Run in separate thread
-    def process():
-        result = self._execute_query(question)
-        self.message_queue.put(("message", result))
-
-    threading.Thread(target=process, daemon=True).start()
-```
-
-### Thread Safety
-
-**Shared State Protection**:
-- VectorStore: Thread-safe ChromaDB operations
-- Message Queue: Synchronized queue
-- Configuration: Atomic file writes
-
-**No Shared State**:
-- LLM interface: One instance per engine
-- DocumentProcessor: Stateless operations
-
-## Extensibility
-
-### Adding New LLM Backend
-
-```python
-class NewLLMBackend(BaseLLM):
-    def __init__(self, config):
-        # Initialize
-        pass
-
-    def generate(self, prompt, config):
-        # Generate response
-        return response
-
-    def get_info(self):
-        # Return backend info
-        return {"backend": "NewLLM", ...}
-
-# Add to SmartLLM priority
-def __init__(self, ...):
-    if new_backend_path:
-        self.backend = NewLLMBackend(...)
-```
-
-### Adding New Search Backend
-
-```python
-class NewSearchBackend:
-    def search(self, query, top_k):
-        # Search implementation
-        return results
-
-# Add to RAGEngine
-def query(self, question):
-    if new_search_enabled:
-        results = new_search_backend.search(question)
-```
-
-### Adding New Chunker
-
-```python
-def chunk_text_semantic(self, text, source):
-    """Semantic chunking with sentence boundaries"""
-    # Implementation
-    return chunks
-```
-
-## API Design
-
-### REST API Endpoints
-
-| Endpoint | Method | Description | Request | Response |
-|----------|--------|-------------|---------|----------|
-| `/health` | GET | Health check (liveness probe) | None | `{"status": "ok", "engine_ready": bool}` |
-| `/stats` | GET | Engine statistics | None | JSON stats |
-| `/ask` | POST | Ask question | `{question, n_results, history}` | QueryResult |
-| `/ask/stream` | POST | Ask question with SSE streaming | `{question, n_results, history}` | SSE token/done/error events |
-| `/search` | POST | Search documents | `{query}` | List of matches |
-| `/ingest` | POST | Ingest directory | `{directory}` | Stats |
-| `/ingest/file` | POST | Ingest file | multipart file | Stats |
-| `/ingest/batch` | POST | Ingest multiple files | multipart files (max 20) | Per-file results |
-| `/documents` | GET | List documents | None | List of documents |
-| `/documents` | DELETE | Clear all | None | `{"status": "cleared"}` |
-| `/settings` | GET | Get RAG settings | None | Settings JSON |
-| `/settings` | PUT | Update RAG settings | partial `rag_*` fields | Settings JSON |
-| `/auth/status` | GET | Authentication status | None | Auth config JSON |
-| `/auth/token` | POST | Exchange API key for JWT | `{api_key}` | Token JSON |
-| `/telemetry/memory` | GET | Memory telemetry snapshot and downgrade state (B8; 503 when unwired) | None | `{"snapshot": ..., "downgrade": ...}` |
-| `/status/models` | GET | Per-profile model presence for the first-run gate (B9; 503 when unwired) | None | `{"engine", "profile", "models": {"quality": {"present"}, "fast": {"present"}}}` |
-
-### Request/Response Format
-
-**Ask Question**:
-```json
-POST /ask
-{
-  "question": "What are the main findings?",
-  "n_results": 3
-}
-
-Response:
-{
-  "question": "What are the main findings?",
-  "answer": "The main findings indicate...",
-  "sources": ["report.pdf"],
-  "context_length": 1500,
-  "inference_time": 1.23,
-  "grounding": "grounded"
-}
-```
-
-`grounding` (C5, issue #72) is `"grounded"` when at least one chunk of the
-final evidence set cleared the active relevance floor, `"general"` otherwise
-(on the desktop's rerank-less fused path no floor exists, so it resolves
-`"general"`); the chat UI renders it as a per-answer badge.
-
----
-
-**Version**: 1.1.0
-**Last Updated**: 2026-04-09
+One web_ui build runs in three modes — Electron-hosted (this document's
+main subject), remote Python server, and pure-browser local; mode selection,
+boot discovery, and their deliberate limitations are documented in
+[docs/electron-mode.md](docs/electron-mode.md).
+
+## Process & transport architecture
+
+**Main-process bootstrap** — [desktop/main/index.ts](desktop/main/index.ts)
+claims the single-instance lock (a second launch focuses the existing
+window), creates the one window with `contextIsolation`/`sandbox` on and
+`nodeIntegration`/`webviewTag` off, denies all renderer-initiated
+`window.open`, and restricts `will-navigate` to `app://` targets plus the
+dev-server origin. `will-quit` holds the quit until the backend host's
+`stop()` completes. IPC surfaces: `desktop:get-token`,
+`desktop:get-backend`, `desktop:store-backup`, `desktop:updates:*` (status /
+opt-in / check-now / apply / allowlisted external open), and
+`desktop:first-run:*`; pushes are `ingest:progress`, `memory:event`,
+`updates:available`, and `first-run:required`.
+
+**Preload bridge** — [desktop/preload/index.ts](desktop/preload/index.ts)
+exposes exactly two contextBridge namespaces: `trainingapp` (compatibility
+shell object) and `desktopApi`, the only channel the per-launch token and
+backend address take to the renderer (never web storage, never a URL).
+
+**app:// protocol** — [desktop/main/protocol.ts](desktop/main/protocol.ts)
+registers the `app` scheme (`standard`/`secure`/`supportFetchAPI`/`stream`
+privileges) and serves the packaged renderer from `<resourcesPath>/web_ui`
+with MIME mapping, segment validation, containment, and a realpath re-check
+(a symlink inside root cannot serve content outside it). Every response
+carries the B2 header posture: strict CSP
+([desktop/main/security/csp.ts](desktop/main/security/csp.ts)), `COOP:
+same-origin`, `COEP: require-corp`, `CORP`. The reserved
+`app://training/<packId>/<rest>` namespace maps onto
+`<packsRoot>/<packId>/assets/player/<rest>` (the packtool build-storyline
+layout, with a versioned-layout fallback for manager-installed copies), uses
+the training CSP profile, sets `CORP: cross-origin` plus
+`access-control-allow-origin: *` so the player frame is embeddable, and
+answers HTTP Range requests (206/416) for pack media.
+
+**Loopback guard (B2)** — [desktop/main/security/loopback-guard.ts](desktop/main/security/loopback-guard.ts)
+is a pure request gate mounted in front of every route (including `/health`
+and CORS preflights): R2 origin (allowlist `app://*`; present-but-empty
+origin fails closed), R3 literal loopback host only (`127.0.0.1`/`::1`; the
+name `localhost` is refused — DNS-rebinding hardening), R1 token equality
+(CORS preflights exempt; every real request requires it), R4 pass, R5 the
+guard never touches the network. The token ([desktop/main/security/token.ts](desktop/main/security/token.ts))
+is 256 bits of CSPRNG per launch, held in main-process memory only. Header
+name and dev-origin additions resolve from [desktop/main/security/config.ts](desktop/main/security/config.ts):
+`X-Desktop-Token` by default, `TRAININGAPP_DESKTOP_DEV_ORIGINS` honored only
+in unpackaged builds.
+
+**Backend listener** — [desktop/main/backend/server.ts](desktop/main/backend/server.ts)
+binds `127.0.0.1` on an OS-assigned random port and routes the frozen
+contract table `CONTRACT_ROUTES` — 18 paths: `/health`, `/auth/status`,
+`/auth/token`, `/ask`, `/ask/stream` (SSE, frame `data: {json}\r\n\r\n`,
+exactly one terminal `done` or `error` event; client disconnect produces the
+cancelled `done`), `/ingest`, `/ingest/file`, `/ingest/batch`, `/documents`,
+`/search`, `/settings`, `/stats`, `/telemetry/memory`, `/status/models`,
+`/packs`, `/packs/install`, `/packs/rollback`, `/packs/remove`. Body caps:
+1 MiB JSON, 60 MiB multipart with the pack-zip upload capped at the contract
+50 MiB. Unknown paths 404; known paths with a wrong method 405; a missing
+model answers the contract 503, never a crash. The table mirrors
+[contracts/api.openapi.yaml](contracts/api.openapi.yaml) (OpenAPI 3.1,
+version 2.6.0), authoritative for both backends; conformance is verified by
+[contracts/tests/run_conformance.py](contracts/tests/run_conformance.py).
+
+**Host selection** — [desktop/main/backend/index.ts](desktop/main/backend/index.ts)
+`createBackendHost()` returns one of two `BackendHost` implementations,
+selected by `backend.mode`: `NodeBackendHost` (the shipped default —
+`DEFAULT_BACKEND_MODE` in [desktop/main/backend/types.ts](desktop/main/backend/types.ts),
+ADR-0003) and `SidecarBackendHost`, a guarded listener fronting a spawned
+backend child via
+[desktop/main/backend/sidecar-manager.ts](desktop/main/backend/sidecar-manager.ts).
+The sidecar path is dormant: implemented and unit-tested, not selected by
+the shipped configuration. The same host runs headless under plain Node for
+CI conformance via
+[desktop/main/backend/dev-server.ts](desktop/main/backend/dev-server.ts)
+(`--port-file`/`--mode`/`--token` CLI).
+
+`NodeBackendHost.start()` composes the backend: the memory governor
+(scheduler, telemetry, pressure monitor, idle-unload controller), the
+per-profile settings sidecar ([desktop/main/backend/settings-store.ts](desktop/main/backend/settings-store.ts),
+atomic `settings.json` beside the store), the store open/recovery path, the
+embedder (worker-proxied when a reranker worker exists — one ONNX runtime
+owner per process), the ingest document surface, the hybrid retrieval
+surface, the learn assembler, and the pack manager. Attached surfaces
+degrade independently: a missing model or a closed store logs a named reason
+and the rest of the host keeps serving; the pack lifecycle exposes its
+degradation reason to the first-run wizard.
+
+## Data & store
+
+[contracts/store.schema.sql](contracts/store.schema.sql) is the authoritative
+schema (version 3): `docs` (content-sha256 identity), `chunks`
+(content-derived chunk ids, `UNIQUE(doc_id, chunk_index)`), `embeddings`
+(sqlite-vec `vec0` virtual table, `__EMBEDDING_DIMS__` substituted at apply
+time), `chunks_fts` (FTS5 mirror of chunk text), `packs` (one row per
+installed pack version, PK `(id, version)`, `active`/`install_path`
+lifecycle), `links` (doc-chunk to training-slide links), and `meta`
+(`schema_version`, `embedding_model_id`, `embedding_dims`). sqlite-vec is
+pinned at 0.1.9 exactly on both the Node and Python sides (ADR-0005).
+
+- **Open/apply** — [desktop/main/backend/store/sqlite-store.ts](desktop/main/backend/store/sqlite-store.ts):
+  better-sqlite3 connection, sqlite-vec extension load (with an app.asar
+  unpacked-twin path rewrite for packaged layouts), schema applied from the
+  contracts file on disk (never copied), `meta.schema_version` verified.
+- **Migrations** — [desktop/main/backend/store/migrate.ts](desktop/main/backend/store/migrate.ts):
+  ladder v1 -> v2 (links finalization) -> v3 (per-version packs table);
+  `CURRENT_SCHEMA_VERSION = 3`.
+- **Profile layout** — [desktop/main/backend/store/profiles.ts](desktop/main/backend/store/profiles.ts)
+  (ADR-0006): `<userData>/profiles/default/store.sqlite` by default; named
+  profiles via `TRAININGAPP_PROFILE_MODE=named` +
+  `TRAININGAPP_PROFILE_NAME`; legacy layouts migrate by atomic rename.
+- **Backup/recovery** — [desktop/main/backend/store/backup.ts](desktop/main/backend/store/backup.ts)
+  WAL-truncates then snapshots to `<backupsDir>/<UTC-timestamp>/`;
+  [desktop/main/backend/store/recovery.ts](desktop/main/backend/store/recovery.ts)
+  runs `PRAGMA integrity_check` at startup and drives restore-or-fresh
+  (a modal choice in Electron, automatic in headless runs) before anything
+  is served from a corrupt store.
+- **Ingestion** — [desktop/main/backend/ingest/pipeline.ts](desktop/main/backend/ingest/pipeline.ts):
+  extract -> chunk -> embed -> write, with content-derived identity
+  (`doc id = sha256(bytes)`, `chunk id =
+  sha256(docsha:index:normalized)`, byte-matched with the Python interop
+  normalization), sha dedupe first, delete-before-reingest for revised
+  files, one writer queue, links recomputed in the chunks' transaction.
+  [desktop/main/backend/ingest/text-chunker.ts](desktop/main/backend/ingest/text-chunker.ts)
+  ports the browser semantic chunker (256-word / 100-overlap defaults, CJK
+  fallback) so both surfaces chunk identically.
+  [desktop/main/backend/ingest/config.ts](desktop/main/backend/ingest/config.ts)
+  defaults: `maxConcurrentFiles 2`, `chunkWordCount 256`,
+  `chunkOverlapWords 100`; caps 60 MiB per file, 512 MiB decompressed zip,
+  8 M extracted characters.
+- **Embeddings** — [desktop/main/backend/ingest/embedder.ts](desktop/main/backend/ingest/embedder.ts):
+  production embedder is the staged `bge-small-en-v1.5` ONNX weights (384
+  dims, fp32, `cls` pooling, normalized), loaded lazily; `HashEmbedder` is
+  the explicit dev/CI fixture (`TRAININGAPP_DESKTOP_EMBEDDER=hash`), never
+  a production default.
+- **Engine-facing surfaces** —
+  [desktop/main/backend/store/document-surface.ts](desktop/main/backend/store/document-surface.ts)
+  bridges the engine's document methods onto the store (including Clear
+  Cache: close, delete, re-initialize at the same path).
+
+## LLM inference & profiles
+
+[desktop/main/backend/inference/llama-engine.ts](desktop/main/backend/inference/llama-engine.ts)
+fills the engine slot with real llama.cpp inference through node-llama-cpp
+(imported dynamically so constructing the engine never loads native code).
+One model is resident per effective profile, loaded lazily and reused; a
+profile switch disposes and reconstructs once, deferred past in-flight
+generations; client disconnects bridge to the library abort signal via a
+20 ms poll. A missing model throws `ModelNotConfiguredError`, which the
+transport maps to the contract 503.
+
+| Knob | Value | Source |
+|---|---|---|
+| Quality model | `gemma-4-e2b-it/model.gguf` (Q4_K_M per ADR-0002) | `QUALITY_MODEL_SUBPATH` |
+| Fast model | `lfm2.5-vl-450m/model.gguf` (Q4_K_M per ADR-0002) | `FAST_MODEL_SUBPATH` |
+| Context size | 8192 | `CONTEXT_SIZE` |
+| Threads | `min(cores, 8)` | [desktop/main/backend/inference/profile-select.ts](desktop/main/backend/inference/profile-select.ts) |
+| Profile gate | `auto` selects quality at >= 6 GiB free RAM | `DEFAULT_PROFILE_THRESHOLD_GB` |
+| Generation (quality / fast) | 1024 tokens @ temp 0.2 / 384 @ 0.3 | `PROFILE_GENERATION` |
+| Sampler | top-p 0.9, repeat penalty 1.1, full-context lookback 8192 | [desktop/main/backend/inference/penalties.ts](desktop/main/backend/inference/penalties.ts) |
+| History | at most 12 turns carried into the prompt | `MAX_HISTORY_TURNS` |
+
+Vulkan stays off (reserved). The memory governor can force the runtime
+profile to `fast` (below); the wizard's RAM gate uses the same estimate
+family (file size + 1 GiB KV-cache + 1 GiB overhead,
+[desktop/main/first-run/ram-gate.ts](desktop/main/first-run/ram-gate.ts)).
+
+## Retrieval pipeline
+
+[desktop/main/backend/retrieval/hybrid.ts](desktop/main/backend/retrieval/hybrid.ts):
+query embedding -> `vec0` KNN leg **union** FTS5 leg (user syntax sanitized
+to quoted terms by `sanitizeFtsQuery`) -> Reciprocal Rank Fusion
+(`score += 1/(rrfK + rank + 1)`, dedup by chunk id) -> C4 pack stage
+(inactive-pack exclusion, cross-pack chunk dedup with
+publishedAt/semver/id precedence, linear recency multiplier per
+[desktop/main/backend/retrieval/recency.ts](desktop/main/backend/retrieval/recency.ts))
+-> optional cross-encoder rerank in a dedicated worker thread
+([desktop/main/backend/retrieval/reranker.ts](desktop/main/backend/retrieval/reranker.ts),
+model `ettin-reranker-32m-v1`; reranker scores replace the fused ones and the
+calibrated floor applies to reranker scores only — a no-reranker path is
+floor-free and resolves `grounding: "general"`) -> topK slice. The surface's
+`floorActive` flag is what the C5 `grounding` enum derives from.
+
+Shipped defaults ([desktop/main/backend/retrieval/config.ts](desktop/main/backend/retrieval/config.ts);
+every key has a `TRAININGAPP_RETRIEVAL_*` / `TRAININGAPP_PACKS_RECENCY_*` env
+override, invalid values fall back to the default):
+
+| Key | Default | Notes |
+|---|---|---|
+| `topK` | 10 | final slice; per-leg fetch is topK x multiplier |
+| `candidateMultiplier` | 3 | over-retrieval and rerank window factor |
+| `rerank` | true | worker cross-encoder on |
+| `rrfK` | 60 | same constant as the browser and Python fusion |
+| `relevanceFloor` | 0.569387 | calibrated per [docs/adr/0007-relevance-floor-calibration.md](docs/adr/0007-relevance-floor-calibration.md) |
+| `packsRecencyFloor` | 0.85 | multiplier floor |
+| `packsRecencyFloorMonths` | 18 | age (30.44-day months) reaching the floor |
+| `packsRecencyHalfLifeMonths` | 9 | reserved exponential variant, not wired |
+
+## Knowledge packs & packtool
+
+A knowledge pack is a zip with a root manifest validated against
+[contracts/pack.schema.json](contracts/pack.schema.json): id/version
+(semver), `published_at`, `source_class` (bundled / training / user),
+`supersedes` (`id@version` strings), embedding/chunking stamps, and a
+`docs[]` list with per-file sha256.
+
+- **Lifecycle** — [desktop/main/backend/store/pack-manager.ts](desktop/main/backend/store/pack-manager.ts):
+  install / supersede / rollback / remove / list. Identity is
+  content-derived (same scheme as ingest, cross-backend parity with the
+  Python manager). Superseded versions stay installed-but-inactive so
+  rollback reactivates them without re-obtaining the pack. Prebuilt-index
+  packs (packtool output) install through a read-only `index.sqlite` path.
+- **Install hardening (C8)** — [desktop/main/backend/packs/pack-extract.ts](desktop/main/backend/packs/pack-extract.ts)
+  (re-exported at [desktop/main/backend/packs/zip-install.ts](desktop/main/backend/packs/zip-install.ts)):
+  2 GiB total-uncompressed cap, 5000-entry cap, 100:1 declared
+  compression-ratio cap, resolved-path containment per entry
+  (drive-relative escapes refused), symlink entries refused, a ZIP32
+  central-directory pre-filter that runs before decompression, a
+  written-bytes backstop, the embedding-model pin (`bge-small-en-v1.5`),
+  and the opt-in Ed25519 detached-signature gate.
+- **Build tooling** — [packtool/cli.ts](packtool/cli.ts) verbs: `storyline
+  extract`, `build-storyline`, `build-docs`, `verify`, `diff`, `links`.
+  `storyline extract` ([packtool/storyline/extract.ts](packtool/storyline/extract.ts))
+  turns an Articulate Storyline 360 HTML5 publish into per-slide documents
+  plus an outline; [packtool/storyline/transcribe.py](packtool/storyline/transcribe.py)
+  is the build-machine-only narration transcriber (faster-whisper
+  `distil-large-v3` int8, content-hash keyed cache; nothing in web_ui/ or
+  the Electron runtime imports it — see
+  [docs/training-transcription.md](docs/training-transcription.md)). The
+  composer lives under `packtool/build/`; link computation under
+  `packtool/links/`.
+- **In-app surface** — the Knowledge Packs panel
+  ([web_ui/src/components/PacksPanel.tsx](web_ui/src/components/PacksPanel.tsx))
+  mounts only in Electron mode on the Documents page and drives
+  `POST /packs/install` (zip upload), rollback, and remove through the
+  loopback API.
+
+## Training / Learn surface
+
+The TRAINING tab ([web_ui/src/pages/TrainingPage.tsx](web_ui/src/pages/TrainingPage.tsx))
+plays installed `training` source-class packs in the embedded Storyline
+player ([web_ui/src/components/TrainingPlayer.tsx](web_ui/src/components/TrainingPlayer.tsx)),
+served from `app://training/<packId>/`. The player frame is a distinct
+origin, so all communication goes through the postMessage protocol in
+[web_ui/src/components/training-player-bridge.ts](web_ui/src/components/training-player-bridge.ts);
+the player itself polls state at 1 s — `POLL_INTERVAL_MS` in
+[web_ui/src/components/TrainingPlayer.tsx](web_ui/src/components/TrainingPlayer.tsx) —
+and jumps are verified against the player's own reported slide). The pinned-slide banner
+([web_ui/src/components/PinnedSlideContext.tsx](web_ui/src/components/PinnedSlideContext.tsx))
+carries "currently viewing" context into chat and marks stale pins.
+
+Ask-time learning: [desktop/main/backend/learn.ts](desktop/main/backend/learn.ts)
+joins the retrieval-cited chunks against the `links` and `docs` tables to
+build the `learn[]` payload (direct slide hits plus linked slides, deduped,
+capped at 5, empty when `grounding` is `"general"`), rendered by
+[web_ui/src/components/LearnPanel.tsx](web_ui/src/components/LearnPanel.tsx)
+with deep-links back into the player.
+
+## First-run & packaging
+
+**Startup integrity gate (E1)** — [desktop/main/integrity-check.ts](desktop/main/integrity-check.ts)
+verifies the staged `resources/manifest.json` before the backend host
+starts. Decision table: packaged + failures (or packaged + no manifest) ->
+block start with named path/expected/actual; packaged + clean -> pass and
+arm the packaged-to-runtime bridge (verified model dirs override env seams);
+dev + no manifest -> skip; dev + manifest -> verify and report, never fatal.
+
+**First-run wizard (E2)** — a six-step modal stepper
+([web_ui/src/components/FirstRunWizard.tsx](web_ui/src/components/FirstRunWizard.tsx)
+over the state machine in [desktop/main/first-run/wizard.ts](desktop/main/first-run/wizard.ts)):
+`detect-hardware` -> `select-profile` -> `verify-manifest` -> `activate-packs`
+-> `licensing-notices` -> `complete`. Completion requires an explicit
+profile choice, license acknowledgment, a passed (or explicitly absent)
+manifest verification, and every manifest-required pack active. Manifest
+loading and sha256 verification live in
+[desktop/main/first-run/manifest-verifier.ts](desktop/main/first-run/manifest-verifier.ts);
+persisted state (atomic `first-run.json` beside the store) in
+[desktop/main/first-run/first-run-store.ts](desktop/main/first-run/first-run-store.ts);
+bundled-pack satisfaction (installed + active at the manifest version or
+newer) in [desktop/main/first-run/bundled-packs.ts](desktop/main/first-run/bundled-packs.ts),
+also enforced at every boot.
+
+**Packaging** — [desktop/electron-builder.yml](desktop/electron-builder.yml):
+unsigned NSIS x64 installer; `extraResources` stage the renderer
+(`<resources>/web_ui`), models, packs, `docs/licenses.md`, and
+`manifest.json` at the resources root; native/wasm dependencies
+(transformers, onnxruntime, pdfjs-dist, sqlite-vec, better-sqlite3) are
+asar-unpacked. [desktop/scripts/stage-installer-resources.mjs](desktop/scripts/stage-installer-resources.mjs)
+assembles the staged tree from explicit allow-lists (a missing required
+file fails the build by name), supports `--fixture-models` for CI, and
+enforces the double-ship guard (no model id may exist in both the renderer
+dist and the staged weights). Measured installed footprint: ~6.4 GB
+(6,378,451,601 bytes) against the 7 GiB budget — devstation row in
+[bench/RESULTS.md](bench/RESULTS.md).
+
+## Update channels (E5, ADR-0010)
+
+[desktop/main/update-checker.ts](desktop/main/update-checker.ts) implements
+opt-in signed updates, default OFF — until the user opts in, the app makes
+zero update-related network calls. The feed document is validated against
+[contracts/pack-feed.schema.json](contracts/pack-feed.schema.json) and every
+version entry must carry an Ed25519 signature over the artifact's sha256,
+verifiable with the build-time-baked public key; there is no unsigned
+fallback. Pack updates download, re-verify, and install through the same
+loopback `POST /packs/install` route as a drag-dropped zip, so all C8
+guards and supersede/rollback semantics apply unchanged. App-binary updates
+are detect-and-notify only: the notice opens the download through an
+allowlisted external-open handler and the user runs the installer. Operator
+runbook: [docs/updates.md](docs/updates.md).
+
+## Browser surface & capability gate
+
+In plain-browser mode the web_ui runs its own stack: the wllama (llama.cpp
+WASM) LLM engine ([web_ui/src/lib/llm/wllama-service.ts](web_ui/src/lib/llm/wllama-service.ts),
+context 8192, weights served same-origin under `/models/`), and the
+`snowflake-arctic-embed-m-v1.5` embedder (768-dim,
+[web_ui/src/lib/models/model-manifest.ts](web_ui/src/lib/models/model-manifest.ts))
+over IndexedDB/EdgeVec/FlexSearch storage. Session/mode discovery and the
+`window.desktopApi` typing live in
+[web_ui/src/lib/desktop-session.tsx](web_ui/src/lib/desktop-session.tsx).
+
+Knowledge packs are desktop-only by decision (ADR-0009): the Documents page
+([web_ui/src/pages/DocumentsPage.tsx](web_ui/src/pages/DocumentsPage.tsx))
+recognizes a dropped pack zip by its manifest signature and shows a
+persistent "Knowledge Packs require the desktop app" notice — the file is
+never imported. The browser storage stack cannot mount the prebuilt
+`index.sqlite`, and re-embedding through the browser's model would produce a
+different vector space (768-dim browser vs 384-dim pack indexes).
+
+## Memory & concurrency budget (B8)
+
+[desktop/main/backend/memory/budget.ts](desktop/main/backend/memory/budget.ts)
+resolves the runtime budget (defaults: telemetry interval 5000 ms,
+accounting ceiling 16 GiB, pressure threshold 6 GiB — imported from the
+profile gate so the knobs cannot drift, pressure sustained 10 s, recovery
+sustained 60 s, idle unload 300 s) and implements the pressure monitor as a
+state machine. Sustained low free RAM latches a downgrade to `fast`; the
+only upgrade path clears the override between generations after sustained
+recovery. [desktop/main/backend/memory/scheduler.ts](desktop/main/backend/memory/scheduler.ts)
+serializes generations behind a FIFO mutex (default
+`maxConcurrentGenerations 1`; excess requests queue, never 503) and exposes
+the ingestion-pause seam. [desktop/main/backend/memory/idle-unload.ts](desktop/main/backend/memory/idle-unload.ts)
+owns the idle window: after 300 s idle the reranker worker's ONNX sessions
+unload; the next score or embed transparently rebuilds them. Telemetry
+(`GET /telemetry/memory`) attributes RSS per component (chromium / llm /
+rerankerSession / embeddingSession / sqlite); downgrade/recovery events
+reach the renderer as `memory:event` pushes. Decision record:
+[docs/adr/0008-memory-budget.md](docs/adr/0008-memory-budget.md).
+
+## CI & conformance
+
+This repository carries nine GitHub workflows on disk:
+`build.yml` and `release.yml` (Python artifacts), `nightly.yml`,
+`security.yml` (bandit/safety scans), and the four below; the ninth,
+`doc-accuracy.yml`, is part of this documentation refresh: a deliberately
+unscoped, always-run guardrail that checks documented paths and claims
+against the tree (path filters would let a docs-drifting PR skip its own
+check).
+
+- [`.github/workflows/test.yml`](.github/workflows/test.yml) and
+  [`.github/workflows/conformance.yml`](.github/workflows/conformance.yml) —
+  the issue #87 (E4) pattern: triggers stay unfiltered (a workflow-level
+  `paths:` filter leaves required checks Pending forever on filtered PRs);
+  scoping lives in a `changes` job classifying the diff into buckets via
+  [scripts/ci_paths.py](scripts/ci_paths.py), fail-open so a broken
+  classifier can only run more CI, never silently less. The conformance
+  jobs run [contracts/tests/run_conformance.py](contracts/tests/run_conformance.py)
+  against the reference app and the Node backend.
+- [`.github/workflows/desktop-build.yml`](.github/workflows/desktop-build.yml) —
+  builds the Electron shell (NSIS x64); its path-scoped trigger covers the
+  desktop, web_ui, contracts, and packtool trees plus the workflow file
+  itself.
+- [`.github/workflows/web-ui.yml`](.github/workflows/web-ui.yml) — web_ui
+  typecheck, build, test, and packaging validation.
+
+Quality measurement is backend-agnostic: the tier-0 eval harness
+([eval/README.md](eval/README.md), `eval/runner.py`) scores recall@k, MRR,
+abstain accuracy, and latency against any implementation of the frozen
+contract; measured performance numbers are recorded machine-tagged in
+[bench/RESULTS.md](bench/RESULTS.md).
+
+## ADR index
+
+| ADR | Decision (one line) |
+|---|---|
+| [0001](docs/adr/0001-embedding-reranker.md) | Embedding/reranker model targets for all surfaces (Qwen3-Embedding-0.6B 1024-dim + ettin-reranker-32m-v1); per-surface re-pin follow-ups open. |
+| [0002](docs/adr/0002-llm-profiles.md) | Distributable LLM profiles: Quality gemma-4-e2b-it / Fast lfm2.5-vl-450m, 6 GiB free-RAM gate. |
+| [0003](docs/adr/0003-desktop-backend.md) | Desktop backend is a Node main-process server; the Python sidecar loses as default (seam retained). |
+| [0004](docs/adr/0004-knowledge-packs.md) | Knowledge Pack specification and format freeze (content-hash identity, semver, supersedes). |
+| [0005](docs/adr/0005-sqlite-vec-interop.md) | SQLite store schema freeze; sqlite-vec Node/Python interop (0.1.9 exact pin). |
+| [0006](docs/adr/0006-profile-model.md) | Profile model, ingest configuration, store backup/recovery. |
+| [0007](docs/adr/0007-relevance-floor-calibration.md) | Calibrated reranker relevance floor 0.569387 for desktop hybrid retrieval. |
+| [0008](docs/adr/0008-memory-budget.md) | Runtime memory budget, concurrency governance, idle-session unloading. |
+| [0009](docs/adr/0009-browser-packs.md) | Browser surface gets an explicit pack capability gate, not a browser adapter. |
+| [0010](docs/adr/0010-update-channels.md) | Opt-in Ed25519-signed update channels for packs (installable) and the app binary (notify-only). |
+
+## Known limits & pending work
+
+- **Reference-laptop matrix (E3, issue #86) is pending.** All measured rows
+  in [bench/RESULTS.md](bench/RESULTS.md) are devstation-tagged; the
+  reference-i5 rows (physical 16 GB soak, installer size/latency) remain
+  PENDING until the operator runs them.
+- **Embedding re-pin is open follow-up work.** The shipped surfaces stage
+  `bge-small-en-v1.5` (desktop, 384-dim) and `snowflake-arctic-embed-m-v1.5`
+  (browser, 768-dim); the ADR-0001 target model and the reranker
+  export/floor re-derivation are recorded as downstream issues in
+  [docs/adr/0001-embedding-reranker.md](docs/adr/0001-embedding-reranker.md).
+- **The sidecar backend path is dormant.** `SidecarBackendHost` is
+  implemented and tested but never selected by the shipped configuration
+  (ADR-0003 chose Node).
+- **Narration transcription is build-machine-only.** faster-whisper runs in
+  [packtool/storyline/transcribe.py](packtool/storyline/transcribe.py) at
+  pack-build time; it is not a runtime dependency of any shipped surface.
+- **The doc-accuracy guardrail is intentionally unscoped.** `doc-accuracy.yml`
+  runs on every PR precisely so documentation-accuracy failures cannot be
+  skipped by path filters.
+- **The Windows installer is unsigned** (see Packaging; feed and pack
+  artifacts are Ed25519-signed, the binary is not), and per-document delete
+  does not exist on the frozen contract — only `DELETE /documents` (clear
+  all) — so Electron mode hides the per-document button
+  ([docs/electron-mode.md](docs/electron-mode.md)).

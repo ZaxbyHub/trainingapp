@@ -10,7 +10,7 @@ gate over the same dispositions). This document cross-references
 `docs/security/desktop.md` (the desktop transport threat model, issue #60)
 and is cross-referenced from it. Pack format semantics are frozen by C1
 (`contracts/pack.schema.json`); Python-side server hardening generally is
-`docs/security_hardening_guide.md`.
+`docs/archive/pre-v3/security_hardening_guide.md`.
 
 ## Architecture invariants
 

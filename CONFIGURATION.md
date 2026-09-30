@@ -1,5 +1,7 @@
 # Configuration Guide
 
+> **Scope note (issue #89):** this guide documents the **legacy Python harness** (`api_server.py` / `config.py`, the CI conformance surface), not the shipped v3 Electron desktop app. The desktop app is configured in-app (settings surface; profile model per docs/adr/0006-profile-model.md) and packages its models per ADR-0002 — no `RAG_*` environment variables are involved. Reranking here defaults to `cross-encoder/ms-marco-MiniLM-L6-v2` with `RAG_RERANKING_ENABLED=False` (config.py:66-72); the shipped v3 surfaces use `cross-encoder/ettin-reranker-32m-v1` (ADR-0001).
+
 Comprehensive guide to configuring the Document Q&A Assistant, including environment variables, GUI settings, and RAG pipeline tuning.
 
 ## Table of Contents
@@ -39,8 +41,8 @@ Set environment variables before running the application or in your system's env
 | `RAG_DB_PATH` | Vector database location | `./doc_qa_db` | No |
 | `RAG_GGUF_PATH` | Path to GGUF model file | None | Yes for GGUF backend |
 | `RAG_CHUNK_SIZE` | Document chunk size (words) | `512` | No |
-| `RAG_CHUNK_OVERLAP` | Chunk overlap (words) | `50` | No |
-| `RAG_N_RESULTS` | Context chunks to retrieve | `3` | No |
+| `RAG_CHUNK_OVERLAP` | Chunk overlap (words) | `100` | No |
+| `RAG_N_RESULTS` | Context chunks to retrieve | `4` | No |
 | `RAG_MIN_SIMILARITY` | Minimum similarity threshold | `0.3` | No |
 
 ### LLM Backend Variables
@@ -54,7 +56,7 @@ Set environment variables before running the application or in your system's env
 
 | Variable | Description | Default | Recommended |
 |----------|-------------|---------|-------------|
-| `RAG_MAX_TOKENS` | Max response tokens | `1024` | 512-1024 |
+| `RAG_MAX_TOKENS` | Max response tokens | `512` | 512-1024 |
 | `RAG_TEMPERATURE` | LLM temperature | `0.3` | 0.1-0.5 |
 | `API_PORT` | API server port | `8080` | 8080 |
 | `API_HOST` | API server bind address. Defaults to `127.0.0.1` (loopback only); set `0.0.0.0` to expose on your LAN — enable `ENABLE_AUTH=true` if you do | `127.0.0.1` | 127.0.0.1 |
@@ -99,10 +101,10 @@ openssl rand -base64 32
 |----------|-------------|---------|-------------|
 | `RAG_RETRIEVAL_WINDOW` | Window expansion (chunks) | `1` | 0-2 |
 | `RAG_HYBRID_SEARCH` | Enable BM25+Vector search | `True` | True |
-| `RAG_RERANKING_ENABLED` | Enable cross-encoder reranking | `True` | True |
-| `RAG_RERANKER_MODEL` | Reranker model name | `cross-encoder/ms-marco-TinyBERT-L-2` | Same |
+| `RAG_RERANKING_ENABLED` | Enable cross-encoder reranking | `False` | True |
+| `RAG_RERANKER_MODEL` | Reranker model name | `cross-encoder/ms-marco-MiniLM-L6-v2` | Same |
 | `RAG_QUERY_TRANSFORM_ENABLED` | Enable query transformation | `False` | False |
-| `RAG_INITIAL_RETRIEVAL_TOP_K` | Initial retrieval count | `20` | 10-30 |
+| `RAG_INITIAL_RETRIEVAL_TOP_K` | Initial retrieval count | `12` | 10-30 |
 
 ### Embedding Variables
 
@@ -130,16 +132,16 @@ openssl rand -base64 32
 
 **Recommended Path**:
 ```
-C:\Models\gemma-4-E2B-it-Q5_K-M.gguf
+C:\Models\gemma-4-e2b-it\model.gguf
 ```
 
 **File Requirements**:
 - Must start with "GGUF" magic bytes
 - Size: 1-4 GB for 2B-8B models
-- Format: Q5_K_M (recommended for quality/size balance)
+- Format: Q4_K_M (the quant packaged by ADR-0002 / issue #84; ~2.9 GB nominal per PACKAGING.md; 2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md)
 
 **Bundled Model**:
-The application ships with `gemma-4-E2B-it-Q5_K-M.gguf` located in the `models/` directory. This model is automatically detected on first run if no custom model is configured.
+The application uses `gemma-4-e2b-it/model.gguf` (Q4_K_M, ADR-0002) staged under `models/`. This model is automatically detected on first run if no custom model is configured.
 
 **Troubleshooting**:
 ```
@@ -245,7 +247,7 @@ Window=0: No expansion
 
 **Purpose**: Rerank retrieved chunks for better relevance
 
-**Model**: `cross-encoder/ms-marco-TinyBERT-L-2`
+**Model**: `cross-encoder/ms-marco-MiniLM-L6-v2` (Python-harness default, disabled by default; shipped v3 surfaces use `cross-encoder/ettin-reranker-32m-v1` per ADR-0001)
 
 **Impact**:
 - Increases accuracy (~10-20%)
@@ -328,7 +330,7 @@ n_threads=min(os.cpu_count() or 4, 8) # CPU threads (all CPUs up to 8; 4 if cpu_
 **Model Load RAM Gate**:
 Before loading a GGUF model the app estimates the free RAM requirement as
 `model file size + ~1 GB KV cache + ~1 GB runtime overhead` (about 5-6 GB for
-the bundled ~3.1 GB Gemma 4 E2B model). If the estimate exceeds available
+the bundled ~2.9 GB (nominal) Gemma 4 E2B model). If the estimate exceeds available
 RAM the load is refused with a diagnostic naming the model, the required and
 available memory. The `RAG_FAST_PROFILE_PATH` fallback fires only when the
 primary model is refused by this RAM gate AND the fast-profile file exists
@@ -409,7 +411,7 @@ window=1   # Fetch 1 chunk before and after
 **Configuration**:
 ```python
 reranking_enabled=False
-reranker_model="cross-encoder/ms-marco-TinyBERT-L-2"
+reranker_model="cross-encoder/ms-marco-MiniLM-L6-v2"
 ```
 
 **Benefits**:
@@ -498,12 +500,12 @@ query_transform_enabled=True
 
 **Purpose**: Re-rank for higher accuracy
 
-**Model**: MS MARCO TinyBERT
+**Model**: MS MARCO MiniLM-L6-v2 (harness default; shipped surfaces: ettin-reranker-32m-v1)
 
 **Configuration**:
 ```python
 reranking_enabled=True
-reranker_model="cross-encoder/ms-marco-TinyBERT-L-2"
+reranker_model="cross-encoder/ms-marco-MiniLM-L6-v2"
 ```
 
 **Performance Impact**:
@@ -540,7 +542,7 @@ max_context_length=2000  # characters
 **Example**:
 ```json
 {
-  "gguf_path": "C:\\Models\\gemma-4-E2B-it-Q5_K-M.gguf",
+  "gguf_path": "C:\\Models\\gemma-4-e2b-it\\model.gguf",
   "chunk_size": 512,
   "n_results": 3,
   "max_tokens": 1024,
@@ -570,7 +572,7 @@ max_context_length=2000  # characters
   "retrieval_window": 1,
   "hybrid_search": true,
   "reranking_enabled": false,
-  "reranker_model": "cross-encoder/ms-marco-TinyBERT-L-2",
+  "reranker_model": "cross-encoder/ms-marco-MiniLM-L6-v2",
   "query_transformation_enabled": false,
   "initial_retrieval_top_k": 20
 }
@@ -586,7 +588,7 @@ python main.py [OPTIONS]
 **Example**:
 ```bash
 python main.py \
-  --gguf-path "C:\Models\gemma-4-E2B-it-Q5_K-M.gguf" \
+  --gguf-path "C:\Models\gemma-4-e2b-it\model.gguf" \
   --chunk-size 512 \
   --n-results 5 \
   --max-tokens 1024 \
@@ -607,9 +609,9 @@ python main.py \
 **Solutions**:
 ```powershell
 # Verify GGUF model
-dir C:\path\to\gemma-4-E2B-it-Q5_K-M.gguf
+dir C:\path\to\gemma-4-e2b-it\model.gguf
 
-# Check file size (should be ~3.1GB for Q5_K_M)
+# Check file size (should be ~2.9 GB nominal / 2,620,370,976 bytes (~2.6 GB) measured per bench/RESULTS.md for Q4_K_M)
 
 # If using custom model, set RAG_GGUF_PATH
 set RAG_GGUF_PATH=C:\Models\your-model.gguf

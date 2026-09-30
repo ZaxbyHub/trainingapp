@@ -131,7 +131,7 @@ Intentional design difference not clearly documented. GUI optimized for batch fo
 **Files Changed:**
 - `README.md` lines 143-148: Added note that GUI is folder-based, use API/CLI for single files
 - `README.md` lines 159-176: Added single-file upload API example
-- `docs/documentation_audit.md`: Created audit report documenting the difference
+- `documentation_audit.md`: Created audit report documenting the difference
 
 **Fix Verification:**
 - README now clearly states GUI folder-only limitation
@@ -156,9 +156,9 @@ AFOMIS.spec entry point referenced `ui/app.py`, but build scripts and repository
 
 **Files Changed:**
 - `AFOMIS.spec` line 29: Added `'engine_factory'` to hiddenimports
-- `docs/packaging_audit.md`: Created audit report
-- `docs/build_verification_checklist.md`: Created build verification steps
-- `docs/smoke_test_plan.md`: Created smoke test plan for packaged app
+- `packaging_audit.md`: Created audit report
+- `build_verification_checklist.md`: Created build verification steps
+- `smoke_test_plan.md`: Created smoke test plan for packaged app
 
 **Fix Verification:**
 - AFOMIS.spec entry point verified correct (ui/app.py)

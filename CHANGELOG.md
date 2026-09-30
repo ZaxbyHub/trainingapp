@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+### Added — recorded outcomes for workstreams whose entries predate the [Unreleased] consolidation (issues #53, #58, #59, #60, #63, #64, #65, #66, #67, #71, #77, #78, #79, #87)
+
+- A3 (#53): desktop RAM gate fixed, inference thread defaults raised to `min(cores, 8)`, and the real LLM-load diagnostic surfaced instead of the synthetic one.
+- A8 (#58): Storyline embedding, current-slide reads, and exact slide jumps proven on the embedded player (D5/D6/D7 build on this recipe).
+- B1 (#59): Electron scaffold with secure defaults and a CI installer artifact.
+- B2 (#60): Electron protocol hardened — per-launch token, loopback-only guard, CSP — for the renderer↔backend transport.
+- B5 (#63): Node/Python sqlite-vec interoperability proven and the store schema frozen (ADR-0005).
+- B6 (#64): profile-scoped ingestion, migrations, backup and recovery on the SQLite store (ADR-0006).
+- B7 (#65): hybrid retrieval (sqlite-vec + FTS5 → RRF → reranker) with eval parity (ADR-0007 floor).
+- B8 (#66): 16 GB runtime memory budget and concurrency governance (ADR-0008).
+- B9 (#67): renderer moved onto the loopback API with Electron-aware mode and model/status UI.
+- C4 (#71): version precedence, cross-pack chunk dedup, and recency-weighted ranking in retrieval.
+- D1 (#77): Storyline extractor — publish folder to one document per slide plus course outline.
+- D2 (#78): offline narration transcription with content-hash cache (build machine only).
+- D3 (#79): installable Storyline training pack via `packtool build-storyline`.
+- E4 (#87): path-scoped CI workflows, conformance on both backends, perf thresholds, pack fixtures, and eval reporting.
+
+### Added — E6: v3 documentation refresh (issue #89)
+
+- Rewrote ARCHITECTURE.md as the shipped v3 system (Electron desktop app, Node
+  main-process backend per ADR-0003, SQLite+sqlite-vec+FTS5 store, knowledge-pack
+  system, signed update channels).
+- New docs/pack-authoring-guide.md (the packtool verbs and the Knowledge Pack format)
+  and docs/training-pack-refresh-runbook.md (the operator refresh/publish flow).
+- README corrected to the desktop-first reality: ADR-0002 Q4_K_M quantization, measured
+  model sizes from bench/RESULTS.md, bundled-embedding offline facts (no runtime
+  downloads), and the legacy Python harness labeled as the CI conformance surface.
+- Retired 23 pre-v3 planning/audit/release docs to docs/archive/pre-v3/ with an index.
+- Corrected the legacy-harness docs (CONFIGURATION/INSTALL/USAGE) and the
+  AFOMIS.spec/export_seed_chunks.py banners.
+- Added tests/test_doc_accuracy.py + an always-run doc-accuracy CI workflow guarding
+  doc-vs-code drift.
+
 ### Added — external OpenAI-compatible chat provider + settings honesty/layout fixes (trace external-llm-provider-settings)
 
 - New inference mode "Provider server (OpenAI-compatible)": point chat at a locally served
@@ -466,6 +499,7 @@ Fixed all failing regression and unit tests; improved RAG pipeline quality.
 
 ### RAG Pipeline Quality
 - Added CrossEncoder reranking with TinyBERT (ms-marco-TinyBERT-L-2, ~85MB) — enabled by default
+> Correction + history (2026-09, #89): this entry shipped as described — the April 2026 config defaulted reranking on with TinyBERT — and was later superseded: `config.py` moved to `cross-encoder/ms-marco-MiniLM-L6-v2` with reranking disabled (`config.py:66-72`), and every shipped surface now uses `cross-encoder/ettin-reranker-32m-v1` (ADR-0001).
 - Sentence-boundary truncation (no more mid-sentence cuts)
 - 3-pattern follow-up query detection (anaphora, short non-WH, continuation keywords)
 - Expanded conversation history (2 turns, 4 messages)
@@ -492,6 +526,7 @@ Pipeline optimization: wired three dead features, fixed page citation, improved 
 #### Reranker Wiring
 - **Wired CrossEncoderReranker** into `RAGEngine.query()` — was fully implemented but never connected
 - **Switched to TinyBERT** (`ms-marco-TinyBERT-L-2`, ~85MB) from MiniLM (~500MB) — safe for 8GB RAM minimum spec
+> Correction + history (2026-09, #89): the shipped reranker on every surface is now `cross-encoder/ettin-reranker-32m-v1` (ADR-0001); this MiniLM→TinyBERT swap records the April 2026 state and was later superseded.
 - Reranking now **enabled by default** (`reranking_enabled=True`)
 - Lazy initialization — model loads on first query, not at startup
 
@@ -536,6 +571,7 @@ Pipeline optimization: wired three dead features, fixed page citation, improved 
 - ARCHITECTURE.md: Updated reranking defaults (True / TinyBERT), added retrieval_window, fixed reranking code example
 - CONFIGURATION.md: Updated `RAG_RERANKING_ENABLED` default to `True`, `RAG_RERANKER_MODEL` to TinyBERT
 - README.md: Updated reranker description (TinyBERT, default ON), clarified step-back is not wired
+> Correction + history (2026-09, #89): the doc updates this entry describes did land (CONFIGURATION, USAGE and ARCHITECTURE carried the TinyBERT defaults until #89 replaced them; README had already dropped the token before #89); what never landed was any shipped surface using the TinyBERT default — the corrections and the ARCHITECTURE rewrite are #89's.
 - USAGE.md: Updated reranking default to ON
 
 ## [1.1.0] - 2026-04-09

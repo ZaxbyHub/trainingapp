@@ -43,7 +43,7 @@
 | `tests/test_logger_initialization.py` | Verify logger fix |
 | `tests/test_security_regression.py` | Port 0, timing attack tests |
 | `tests/test_async_vector_store.py` | Async operations tests |
-| `docs/security_hardening_guide.md` | Production security checklist |
+| `security_hardening_guide.md` | Production security checklist |
 
 ---
 
@@ -51,8 +51,8 @@
 
 ### Task 1.1: Fix Missing Logger Initialization in rag_engine.py
 
-**Priority:** 🔴 CRITICAL  
-**Impact:** RAGEngine crashes on initialization with NameError  
+**Priority:** 🔴 CRITICAL
+**Impact:** RAGEngine crashes on initialization with NameError
 **Files:**
 - Modify: `rag_engine.py:1-30` (add logger initialization)
 - Test: `tests/test_logger_initialization.py` (create new)
@@ -73,7 +73,7 @@ def test_rag_engine_initializes_without_name_error():
         chunk_size=512,
         n_results=3
     )
-    
+
     # This should NOT raise NameError: name 'logger' is not defined
     try:
         engine = RAGEngine(config=config)
@@ -86,7 +86,7 @@ def test_rag_engine_initializes_without_name_error():
 def test_rag_engine_logs_on_initialization():
     """Verify logger works after initialization."""
     import logging
-    
+
     # Capture log output
     with pytest.raises(NameError):
         # This will fail before the fix
@@ -173,8 +173,8 @@ Fixes: RAG Pipeline Review CRITICAL finding"
 
 ### Task 1.2: Fix Port 0 Bypass in security.py
 
-**Priority:** 🔴 HIGH (Security)  
-**Impact:** Port 0 bypasses allowed_ports validation  
+**Priority:** 🔴 HIGH (Security)
+**Impact:** Port 0 bypasses allowed_ports validation
 **Files:**
 - Modify: `security.py:84` (port validation)
 - Test: `tests/test_security.py:408-428` (existing test documents bug)
@@ -187,12 +187,12 @@ Add to `tests/test_security.py` after line 428:
 def test_validate_url_rejects_port_zero():
     """Port 0 should be rejected even though it's falsy in Python."""
     from security import validate_url
-    
+
     # Port 0 is technically valid in URLs but should be blocked
     # as it's often used for SSRF bypasses
     with pytest.raises(ValueError, match="port"):
         validate_url("http://example.com:0/path")
-    
+
     with pytest.raises(ValueError, match="port"):
         validate_url("http://localhost:0/")
 ```
@@ -258,8 +258,8 @@ Security: Prevents SSRF via port 0 bypass"
 
 ### Task 1.3: Fix Timing Attack in API Key Comparison
 
-**Priority:** 🔴 HIGH (Security)  
-**Impact:** API key vulnerable to timing attack  
+**Priority:** 🔴 HIGH (Security)
+**Impact:** API key vulnerable to timing attack
 **Files:**
 - Modify: `auth.py:108` (API key comparison)
 - Test: `tests/test_auth.py` (add timing test)
@@ -273,10 +273,10 @@ def test_api_key_uses_constant_time_comparison():
     """API key comparison should use secrets.compare_digest for timing safety."""
     import inspect
     from auth import authenticate_api_key
-    
+
     # Get source code of authenticate_api_key
     source = inspect.getsource(authenticate_api_key)
-    
+
     # Should use secrets.compare_digest, not ==
     assert "secrets.compare_digest" in source or "hmac.compare_digest" in source, \
         "API key comparison must use constant-time comparison to prevent timing attacks"
@@ -347,13 +347,13 @@ Security: Prevents timing attack on API key brute force"
 
 ### Task 1.4: Document ENABLE_AUTH Production Requirement
 
-**Priority:** 🔴 CRITICAL (Documentation)  
-**Impact:** Production deployments may leave API unprotected  
+**Priority:** 🔴 CRITICAL (Documentation)
+**Impact:** Production deployments may leave API unprotected
 **Files:**
 - Modify: `README.md` (add auth section)
 - Modify: `CONFIGURATION.md` (add auth table)
 - Modify: `USAGE.md` (add auth examples)
-- Create: `docs/security_hardening_guide.md`
+- Create: `security_hardening_guide.md`
 
 - [ ] **Step 1: Add authentication section to README.md**
 
@@ -483,7 +483,7 @@ curl -X POST http://localhost:8080/ask \
 
 - [ ] **Step 4: Create security hardening guide**
 
-Create `docs/security_hardening_guide.md`:
+Create `security_hardening_guide.md`:
 
 ```markdown
 # Security Hardening Guide for Production
@@ -526,7 +526,7 @@ export RAG_MIN_SIMILARITY="0.5"  # Stricter similarity threshold
 - [ ] **Step 5: Commit documentation changes**
 
 ```bash
-git add README.md CONFIGURATION.md USAGE.md docs/security_hardening_guide.md
+git add README.md CONFIGURATION.md USAGE.md security_hardening_guide.md
 git commit -m "CRITICAL: Document ENABLE_AUTH production requirement
 
 Add comprehensive authentication documentation:
@@ -534,7 +534,7 @@ Add comprehensive authentication documentation:
 - README.md: Add 'API Authentication (Production Required)' section
 - CONFIGURATION.md: Add authentication variables table with warnings
 - USAGE.md: Add authentication examples (API key and JWT)
-- docs/security_hardening_guide.md: New production security checklist
+- security_hardening_guide.md: New production security checklist
 
 Security: Prevents accidental production deployments without auth"
 ```
@@ -545,8 +545,8 @@ Security: Prevents accidental production deployments without auth"
 
 ### Task 2.1: Add Symlink Protection to validate_directory
 
-**Priority:** 🟠 HIGH (Security)  
-**Impact:** Path traversal via symlinks  
+**Priority:** 🟠 HIGH (Security)
+**Impact:** Path traversal via symlinks
 **Files:**
 - Modify: `api_server.py:103-147`
 - Test: `tests/test_path_traversal.py`
@@ -561,17 +561,17 @@ def test_validate_directory_rejects_symlinks_outside_base():
     from api_server import validate_directory
     import tempfile
     import os
-    
+
     with tempfile.TemporaryDirectory() as base_dir:
         # Create a file outside base_dir
         outside_file = tempfile.NamedTemporaryFile(delete=False)
         outside_file.close()
-        
+
         try:
             # Create a symlink inside base_dir pointing outside
             symlink_path = os.path.join(base_dir, "evil_link")
             os.symlink(outside_file.name, symlink_path)
-            
+
             # Should reject the symlink
             with pytest.raises(ValueError, match="path traversal"):
                 validate_directory(symlink_path, base_dir)
@@ -595,15 +595,15 @@ Modify `api_server.py` in `validate_directory()` function (around line 130):
 def validate_directory(directory: str, base_dir: Path) -> str:
     """Validate directory path for path traversal attempts."""
     # ... existing code ...
-    
+
     # Resolve the path to handle symlinks
     resolved_path = path.resolve()
     resolved_base = base_dir.resolve()
-    
+
     # Check if resolved path is still within base_dir
     if not str(resolved_path).startswith(str(resolved_base)):
         raise ValueError(f"Path traversal detected: resolved path {resolved_path} outside base {resolved_base}")
-    
+
     # Check if path contains any symlinks that escape base_dir
     current = path
     while current != current.parent:
@@ -614,7 +614,7 @@ def validate_directory(directory: str, base_dir: Path) -> str:
                 if not str(link_target).startswith(str(resolved_base)):
                     raise ValueError(f"Symlink escape detected: {link_target} outside base")
         current = current.parent
-    
+
     return str(path)
 ```
 
@@ -646,8 +646,8 @@ Security: Prevents symlink escape attacks"
 
 ### Task 2.2: Add Token Counting to Prevent Context Overflow
 
-**Priority:** 🟠 HIGH (Quality)  
-**Impact:** Context may exceed LLM token limit  
+**Priority:** 🟠 HIGH (Quality)
+**Impact:** Context may exceed LLM token limit
 **Files:**
 - Create: `token_counter.py`
 - Modify: `llm_interface.py` (use token counting)
@@ -673,19 +673,19 @@ logger = logging.getLogger(__name__)
 
 class TokenCounter:
     """Count tokens for text to manage LLM context windows."""
-    
+
     # Approximate tokens per character for different languages
     CHARS_PER_TOKEN = {
         'en': 4,  # English: ~4 chars per token
         'code': 3.5,  # Code: ~3.5 chars per token
         'default': 4
     }
-    
+
     def __init__(self, model_name: str = "gpt-3.5-turbo"):
         """Initialize token counter for a specific model."""
         self.model_name = model_name
         self.encoder = None
-        
+
         if TIKTOKEN_AVAILABLE:
             try:
                 self.encoder = tiktoken.encoding_for_model(model_name)
@@ -694,18 +694,18 @@ class TokenCounter:
                 # Model not in tiktoken, use cl100k_base (GPT-4 compatible)
                 self.encoder = tiktoken.get_encoding("cl100k_base")
                 logger.info(f"Using cl100k_base encoding for {model_name}")
-    
+
     def count_tokens(self, text: str) -> int:
         """Count tokens in text."""
         if not text:
             return 0
-            
+
         if self.encoder:
             return len(self.encoder.encode(text))
         else:
             # Fallback: approximate based on characters
             return len(text) // self.CHARS_PER_TOKEN['default']
-    
+
     def count_conversation_tokens(
         self,
         system_prompt: str,
@@ -715,27 +715,27 @@ class TokenCounter:
     ) -> int:
         """Count total tokens for a conversation."""
         total = 0
-        
+
         # System prompt
         total += self.count_tokens(system_prompt)
-        
+
         # Conversation history
         if conversation_history:
             for user_msg, assistant_msg in conversation_history:
                 total += self.count_tokens(user_msg)
                 total += self.count_tokens(assistant_msg)
-        
+
         # Context
         total += self.count_tokens(context)
-        
+
         # User question
         total += self.count_tokens(user_prompt)
-        
+
         # Add overhead for message formatting (approximate)
         total += 10  # Formatting overhead
-        
+
         return total
-    
+
     def truncate_to_token_limit(
         self,
         text: str,
@@ -745,7 +745,7 @@ class TokenCounter:
         """Truncate text to fit within token limit."""
         if self.count_tokens(text) <= max_tokens:
             return text
-        
+
         # Binary search for truncation point
         low, high = 0, len(text)
         while low < high:
@@ -755,7 +755,7 @@ class TokenCounter:
                 low = mid + 1
             else:
                 high = mid
-        
+
         # Find sentence boundary if requested
         if preserve_sentences:
             truncated = text[:low]
@@ -767,7 +767,7 @@ class TokenCounter:
             )
             if last_period > len(truncated) * 0.8:  # Keep at least 80%
                 truncated = truncated[:last_period + 1]
-        
+
         return truncated
 
 
@@ -793,10 +793,10 @@ from token_counter import TokenCounter, count_tokens
 def test_count_tokens_basic():
     """Test basic token counting."""
     counter = TokenCounter()
-    
+
     # Empty string
     assert counter.count_tokens("") == 0
-    
+
     # Simple text
     tokens = counter.count_tokens("Hello world")
     assert tokens > 0
@@ -806,14 +806,14 @@ def test_count_tokens_basic():
 def test_count_conversation():
     """Test counting conversation tokens."""
     counter = TokenCounter()
-    
+
     total = counter.count_conversation_tokens(
         system_prompt="You are a helpful assistant.",
         user_prompt="What is RAG?",
         context="RAG stands for Retrieval-Augmented Generation.",
         conversation_history=[("Hello", "Hi there!")]
     )
-    
+
     assert total > 0
     # Should be roughly: 6 + 4 + 7 + 2 + 3 + 10 overhead = ~32 tokens
     assert 20 < total < 50
@@ -822,14 +822,14 @@ def test_count_conversation():
 def test_truncate_to_token_limit():
     """Test token-aware truncation."""
     counter = TokenCounter()
-    
+
     long_text = "This is a very long sentence. " * 100
     original_tokens = counter.count_tokens(long_text)
-    
+
     # Truncate to smaller limit
     truncated = counter.truncate_to_token_limit(long_text, max_tokens=20)
     truncated_tokens = counter.count_tokens(truncated)
-    
+
     assert truncated_tokens <= 20
     assert len(truncated) < len(long_text)
 ```
@@ -920,8 +920,8 @@ LLM has room to generate complete answers."
 
 ### Task 3.1: Implement Async VectorStore Operations
 
-**Priority:** 🟡 MEDIUM (Performance)  
-**Impact:** 10× improvement in concurrent query throughput  
+**Priority:** 🟡 MEDIUM (Performance)
+**Impact:** 10× improvement in concurrent query throughput
 **Files:**
 - Modify: `vector_store.py` (add async methods)
 - Create: `tests/test_async_vector_store.py`
@@ -936,11 +936,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 class VectorStore:
     """Async-capable vector store with ChromaDB and BM25."""
-    
+
     def __init__(self, ...):
         # ... existing init ...
         self._executor = ThreadPoolExecutor(max_workers=4)
-    
+
     async def search_async(
         self,
         query: str,
@@ -956,7 +956,7 @@ class VectorStore:
             n_results,
             **kwargs
         )
-    
+
     async def get_context_async(
         self,
         query: str,
@@ -989,13 +989,13 @@ async def search_documents(
     """Search documents asynchronously."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
-    
+
     # Use async method
     results = await engine.vector_store.search_async(
         request.query,
         n_results=request.n_results
     )
-    
+
     return [
         SearchResult(text=doc, source=meta.get("source", "Unknown"), similarity=sim)
         for doc, meta, sim in results
@@ -1017,7 +1017,7 @@ from vector_store import VectorStore
 async def test_search_async_returns_results():
     """Async search should return same results as sync."""
     store = VectorStore(db_path="./test_async_db")
-    
+
     # Add test data
     from document_processor import DocumentChunk
     chunks = [
@@ -1025,10 +1025,10 @@ async def test_search_async_returns_results():
         DocumentChunk(text="JavaScript is cool", source="test.js", chunk_index=0)
     ]
     store.add_chunks(chunks)
-    
+
     # Async search
     results = await store.search_async("python", n_results=2)
-    
+
     assert len(results) > 0
     assert "python" in results[0][0].lower()
 
@@ -1037,13 +1037,13 @@ async def test_search_async_returns_results():
 async def test_concurrent_searches():
     """Multiple concurrent searches should complete without error."""
     store = VectorStore(db_path="./test_async_db")
-    
+
     # Run 10 searches concurrently
     queries = ["python", "javascript", "coding"] * 3 + ["test"]
     tasks = [store.search_async(q) for q in queries]
-    
+
     results = await asyncio.gather(*tasks)
-    
+
     assert len(results) == 10
     # All should complete without exception
 ```
@@ -1058,18 +1058,18 @@ from vector_store import VectorStore
 
 async def benchmark():
     store = VectorStore()
-    
+
     # Sync benchmark
     start = time.time()
     for _ in range(10):
         store.search("test")
     sync_time = time.time() - start
-    
+
     # Async benchmark
     start = time.time()
     await asyncio.gather(*[store.search_async("test") for _ in range(10)])
     async_time = time.time() - start
-    
+
     print(f"Sync: {sync_time:.2f}s, Async: {async_time:.2f}s")
     print(f"Speedup: {sync_time/async_time:.1f}x")
 
@@ -1098,8 +1098,8 @@ Performance: Resolves lock contention issue for high-concurrency workloads"
 
 ### Task 3.2: Background BM25 Index Rebuild
 
-**Priority:** 🟡 MEDIUM (Performance)  
-**Impact:** Non-blocking ingestion for large batches  
+**Priority:** 🟡 MEDIUM (Performance)
+**Impact:** Non-blocking ingestion for large batches
 **Files:**
 - Modify: `vector_store.py` (BM25 rebuild logic)
 - Modify: `bm25_index.py` (add async rebuild)
@@ -1114,27 +1114,27 @@ import queue
 
 class VectorStore:
     """Vector store with background BM25 rebuild."""
-    
+
     def __init__(self, ...):
         # ... existing init ...
         self._bm25_rebuild_queue = queue.Queue()
         self._bm25_rebuild_thread = None
         self._bm25_rebuild_lock = threading.Lock()
-    
+
     def add_chunks(self, chunks: List[DocumentChunk], batch_size: int = 100) -> int:
         """Add chunks with optional background BM25 rebuild."""
         # ... add to ChromaDB ...
-        
+
         # Queue BM25 chunks for background rebuild
         with self._bm25_rebuild_lock:
             for chunk in chunks:
                 self._bm25_rebuild_queue.put(chunk)
-        
+
         # Start background rebuild if not running
         self._start_background_rebuild()
-        
+
         return len(chunks)
-    
+
     def _start_background_rebuild(self):
         """Start background BM25 rebuild thread if not running."""
         with self._bm25_rebuild_lock:
@@ -1144,14 +1144,14 @@ class VectorStore:
                     daemon=True
                 )
                 self._bm25_rebuild_thread.start()
-    
+
     def _background_rebuild_worker(self):
         """Worker thread for background BM25 rebuild."""
         import time
-        
+
         # Wait for ingestion to settle (debounce)
         time.sleep(1.0)
-        
+
         # Collect all queued chunks
         chunks_to_add = []
         with self._bm25_rebuild_lock:
@@ -1160,7 +1160,7 @@ class VectorStore:
                     chunks_to_add.append(self._bm25_rebuild_queue.get_nowait())
                 except queue.Empty:
                     break
-        
+
         if chunks_to_add and self.bm25_index:
             logger.info(f"Background BM25 rebuild: {len(chunks_to_add)} chunks")
             self.bm25_index.add_documents(chunks_to_add, rebuild=True)
@@ -1174,7 +1174,7 @@ Add to `config.py`:
 ```python
 class RAGSettings(BaseSettings):
     # ... existing fields ...
-    
+
     bm25_background_rebuild: bool = Field(
         default=True,
         validation_alias="RAG_BM25_BACKGROUND_REBUILD"
@@ -1187,20 +1187,20 @@ class RAGSettings(BaseSettings):
 def test_background_bm25_rebuild():
     """BM25 should rebuild in background without blocking."""
     store = VectorStore()
-    
+
     # Add chunks
     chunks = [DocumentChunk(text=f"Chunk {i}", source="test", chunk_index=i) for i in range(100)]
-    
+
     start = time.time()
     store.add_chunks(chunks)
     add_time = time.time() - start
-    
+
     # Should return quickly (< 100ms) even with many chunks
     assert add_time < 0.5
-    
+
     # Wait for background rebuild
     time.sleep(2)
-    
+
     # BM25 should be searchable
     results = store.bm25_index.search("chunk", top_k=10)
     assert len(results) > 0
@@ -1229,8 +1229,8 @@ Performance: Eliminates synchronous BM25 rebuild bottleneck"
 
 ### Task 4.1: Integrate or Remove Dead Code
 
-**Priority:** 🟡 MEDIUM (Code Quality)  
-**Impact:** Cleaner codebase, either working features or removed bloat  
+**Priority:** 🟡 MEDIUM (Code Quality)
+**Impact:** Cleaner codebase, either working features or removed bloat
 **Files:**
 - Decision needed: `reranking.py`, `query_transformer.py`
 
@@ -1340,8 +1340,8 @@ Quality: Cleaner codebase without unused features"
 
 ### Task 5.1: Add GUI Tooltips
 
-**Priority:** 🟢 LOW (UX)  
-**Impact:** Better user understanding of settings  
+**Priority:** 🟢 LOW (UX)
+**Impact:** Better user understanding of settings
 **Files:**
 - Modify: `app_gui.py` (settings dialog)
 
@@ -1359,7 +1359,7 @@ def add_tooltip(widget, text):
         tooltip = tk.Toplevel()
         tooltip.wm_overrideredirect(True)
         tooltip.wm_geometry(f"+{event.x_root+10}+{event.y_root+10}")
-        
+
         label = tk.Label(
             tooltip,
             text=text,
@@ -1369,14 +1369,14 @@ def add_tooltip(widget, text):
             wraplength=300
         )
         label.pack()
-        
+
         widget.tooltip = tooltip
-    
+
     def hide_tooltip(event):
         if hasattr(widget, 'tooltip'):
             widget.tooltip.destroy()
             delattr(widget, 'tooltip')
-    
+
     widget.bind('<Enter>', show_tooltip)
     widget.bind('<Leave>', hide_tooltip)
 ```
@@ -1524,6 +1524,6 @@ python -m bandit -r . -f json -o bandit_report.json
 
 ---
 
-**Plan created:** 2026-04-09  
-**Estimated implementation time:** 3-5 days  
+**Plan created:** 2026-04-09
+**Estimated implementation time:** 3-5 days
 **Risk level:** Low (mostly additive changes with comprehensive tests)

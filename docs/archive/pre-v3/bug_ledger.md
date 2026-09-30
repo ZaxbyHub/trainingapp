@@ -1,7 +1,7 @@
 # Bug Ledger - Document Q&A Application
 
-**Generated:** 2026-03-11  
-**Status:** Baseline Analysis Complete  
+**Generated:** 2026-03-11
+**Status:** Baseline Analysis Complete
 **Total Confirmed Defects:** 6
 
 ---
@@ -114,11 +114,11 @@ def test_gui_gguf_wiring():
     """Verify GGUF path is passed correctly to RAGEngine."""
     app = DocumentQAApp()
     app.settings["gguf_path"] = "/path/to/model.gguf"
-    
+
     with patch('app_gui.RAGEngine') as mock_engine:
         app._initialize_engine()
         call_kwargs = mock_engine.call_args.kwargs
-        
+
         assert "gguf_path" in call_kwargs
         assert call_kwargs["gguf_path"] == "/path/to/model.gguf"
         assert "model_path" not in call_kwargs or call_kwargs["model_path"] is None
@@ -277,12 +277,12 @@ engine = RAGEngine.create_engine_from_env(config)
 def test_api_gguf_env_var_wiring():
     """Verify RAG_GGUF_PATH environment variable is read and passed to RAGEngine."""
     os.environ["RAG_GGUF_PATH"] = "/path/to/model.gguf"
-    
+
     with patch('api_server.RAGEngine') as mock_engine:
         # Simulate lifespan startup
         async with lifespan(app):
             pass
-        
+
         call_kwargs = mock_engine.call_args.kwargs
         assert "gguf_path" in call_kwargs
         assert call_kwargs["gguf_path"] == "/path/to/model.gguf"
@@ -290,11 +290,11 @@ def test_api_gguf_env_var_wiring():
 def test_api_gguf_path_validation():
     """Verify RAG_GGUF_PATH is validated before being passed to RAGEngine."""
     os.environ["RAG_GGUF_PATH"] = "/invalid/path/model.gguf"
-    
+
     with pytest.raises(HTTPException) as exc_info:
         async with lifespan(app):
             pass
-    
+
     assert exc_info.value.status_code == 500
     assert "Invalid GGUF configuration" in exc_info.value.detail
 ```
@@ -383,34 +383,34 @@ def validate_url(url: str) -> str:
     """Validate URL to prevent injection attacks."""
     if not url:
         raise ValueError("URL cannot be empty")
-    
+
     parsed = urlparse(url)
     if not parsed.scheme:
         raise ValueError("URL must have a scheme (http/https)")
-    
+
     if parsed.scheme not in ('http', 'https'):
         raise ValueError("URL scheme must be http or https")
-    
+
     # Reject userinfo in URL (user:pass@host)
     if parsed.username or parsed.password:
         raise ValueError("URL must not contain userinfo")
-    
+
     # Reject localhost and private IP addresses - TOO RESTRICTIVE
     if parsed.hostname:
         if parsed.hostname in ('localhost', '127.0.0.1', '::1'):
             raise ValueError("URL must not point to localhost")  # BREAKS LOCAL OLLAMA
-        
+
         try:
             ip_addr = ipaddress.ip_address(parsed.hostname)
             if ip_addr.is_private:
                 raise ValueError("URL must not point to private IP addresses")  # BREAKS PRIVATE SERVERS
         except ValueError:
             pass
-    
+
     # Reject non-standard ports - TOO RESTRICTIVE
     if parsed.port and parsed.port not in (80, 443):
         raise ValueError("URL must use standard ports (80 or 443)")  # BREAKS OLLAMA DEFAULT PORT
-    
+
     return url
 ```
 
@@ -422,34 +422,34 @@ def validate_url(url: str, allow_local: bool = True) -> str:
     """Validate URL to prevent injection attacks."""
     if not url:
         raise ValueError("URL cannot be empty")
-    
+
     parsed = urlparse(url)
     if not parsed.scheme:
         raise ValueError("URL must have a scheme (http/https)")
-    
+
     if parsed.scheme not in ('http', 'https'):
         raise ValueError("URL scheme must be http or https")
-    
+
     # Reject userinfo in URL (user:pass@host)
     if parsed.username or parsed.password:
         raise ValueError("URL must not contain userinfo")
-    
+
     # Only restrict localhost/private IPs if explicitly disabled
     if not allow_local:
         if parsed.hostname:
             if parsed.hostname in ('localhost', '127.0.0.1', '::1'):
                 raise ValueError("URL must not point to localhost")
-            
+
             try:
                 ip_addr = ipaddress.ip_address(parsed.hostname)
                 if ip_addr.is_private:
                     raise ValueError("URL must not point to private IP addresses")
             except ValueError:
                 pass
-    
+
     # Remove port restrictions - common LLM ports (11434 for Ollama, 8000, 8080, etc.)
     # Port validation removed - let the connection attempt fail naturally if port is invalid
-    
+
     return url
 ```
 
@@ -467,7 +467,7 @@ def test_url_validation_allows_local():
     assert validate_url("http://127.0.0.1:11434") == "http://127.0.0.1:11434"
     assert validate_url("http://192.168.1.100:8080") == "http://192.168.1.100:8080"
     assert validate_url("http://10.0.0.5:8000") == "http://10.0.0.5:8000"
-    
+
     # Should still reject malicious URLs
     with pytest.raises(ValueError, match="scheme"):
         validate_url("ftp://localhost:11434")
@@ -546,19 +546,19 @@ async def ingest_file(file: UploadFile = File(...)):
     """Ingest a single uploaded file."""
     if not engine:
         raise HTTPException(status_code=503, detail="Engine not initialized")
-    
+
     ext = Path(file.filename).suffix.lower()  # Original filename available here
     ...
-    
+
     import tempfile
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             content = await file.read()
             tmp.write(content)
             tmp_path = tmp.name  # Random temp name: /tmp/tmpabc123.pdf
-        
+
         stats = engine.ingest_file(tmp_path)  # Loses original filename!
-        
+
         os.unlink(tmp_path)
         ...
 ```
@@ -569,7 +569,7 @@ def process_file(self, filepath: str) -> List[DocumentChunk]:
     """Process a single file and return chunks."""
     filepath = str(filepath)
     filename = Path(filepath).name  # Gets "tmpabc123.pdf" not original name
-    
+
     try:
         text = self.extract_document(filepath)
         ...
@@ -590,7 +590,7 @@ async def ingest_file(file: UploadFile = File(...)):
         content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
-    
+
     # Pass original filename as source_name
     stats = engine.ingest_file(tmp_path, source_name=file.filename)
     ...
@@ -613,23 +613,23 @@ Modify `process_file()` to accept an optional `source_override` parameter.
 def test_upload_preserves_filename():
     """Verify uploaded files retain their original filename as source."""
     from fastapi.testclient import TestClient
-    
+
     client = TestClient(app)
-    
+
     # Create a test file
     test_content = b"This is a test document about AI."
-    
+
     response = client.post(
         "/ingest/file",
         files={"file": ("my_document.pdf", test_content, "application/pdf")}
     )
-    
+
     assert response.status_code == 200
-    
+
     # Query and check sources
     response = client.post("/ask", json={"question": "What is this about?"})
     data = response.json()
-    
+
     assert "my_document.pdf" in data["sources"]
     # Ensure no temp names appear
     assert not any("tmp" in s for s in data["sources"])
@@ -705,20 +705,20 @@ def _ingest_documents(self):
     directory = filedialog.askdirectory(title="Select Document Folder")
     if not directory:
         return
-    
+
     if not self.engine:
         messagebox.showerror("Error", "Engine not initialized")
         return
-    
+
     self.ask_button.configure(state="disabled")
     self.question_entry.configure(state="disabled")
-    
+
     def ingest():
         try:
             def callback(msg, progress):
                 self.message_queue.put(("status", msg))
                 self.message_queue.put(("progress", progress))
-            
+
             stats = self.engine.ingest_directory(directory, callback)  # Directory only!
             ...
 ```
@@ -772,7 +772,7 @@ def _ingest_documents_file(self):
     )
     if not filepath:
         return
-    
+
     def ingest():
         try:
             stats = self.engine.ingest_file(filepath)
@@ -787,19 +787,19 @@ Add a second button next to "Ingest" labeled "Ingest File".
 def test_gui_file_ingestion():
     """Verify GUI supports single file ingestion."""
     from unittest.mock import patch, MagicMock
-    
+
     app = DocumentQAApp()
     app.engine = MagicMock()
     app.engine.ingest_file.return_value = {
         "success": True,
         "chunks_added": 5
     }
-    
+
     # Mock the file dialog to return a test file
     with patch('app_gui.filedialog.askopenfilename', return_value="/path/to/doc.pdf"):
         with patch.object(app, '_add_message') as mock_msg:
             app._ingest_documents_file()
-            
+
             # Verify ingest_file was called with the selected path
             app.engine.ingest_file.assert_called_once_with("/path/to/doc.pdf")
 ```
@@ -908,7 +908,7 @@ def main():
         print("GUI not available. Install customtkinter:")
         print("  pip install customtkinter")
         sys.exit(1)
-    
+
     app = DocumentQAApp()
     app.mainloop()
 
@@ -920,7 +920,7 @@ if __name__ == "__main__":
 ```python
 class DocumentQApp:
     """Main application class."""
-    
+
     def __init__(self):
         """Initialize the application."""
         ...
@@ -967,10 +967,10 @@ a = Analysis(
 def test_build_spec_entry_point():
     """Verify build spec references correct entry point."""
     import ast
-    
+
     with open('AFOMIS.spec', 'r') as f:
         spec_content = f.read()
-    
+
     # Check that entry point file exists
     if "['app_gui.py']" in spec_content:
         assert os.path.exists('app_gui.py'), "Entry point app_gui.py must exist"
@@ -978,12 +978,12 @@ def test_build_spec_entry_point():
         assert os.path.exists('ui/app.py'), "Entry point ui/app.py must exist"
     else:
         raise AssertionError("Build spec must reference a valid entry point")
-    
+
     # Verify the entry point has main() function
     entry_point = 'app_gui.py' if "['app_gui.py']" in spec_content else 'ui/app.py'
     with open(entry_point, 'r') as f:
         tree = ast.parse(f.read())
-    
+
     has_main = any(
         isinstance(node, ast.FunctionDef) and node.name == 'main'
         for node in ast.walk(tree)

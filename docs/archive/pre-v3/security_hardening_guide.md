@@ -190,7 +190,7 @@ server {
     # SSL Certificate Configuration
     ssl_certificate /etc/ssl/certs/your-cert.pem;
     ssl_certificate_key /etc/ssl/private/your-key.pem;
-    
+
     # Strong SSL Configuration
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
@@ -205,7 +205,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
+
         # Timeouts
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
@@ -278,7 +278,7 @@ All uploaded files are:
 
 ### Path Traversal Protection
 - **Location**: `api_server.py` - `validate_directory()` function
-- **Mechanism**: 
+- **Mechanism**:
   - Resolves symlinks and validates target is within allowed base directory
   - Rejects paths containing `..` sequences
   - Validates resolved paths against base directory
@@ -501,6 +501,6 @@ ps aux | grep python
 
 ---
 
-**Document Version**: 1.0.0  
-**Last Updated**: 2026-04-09  
+**Document Version**: 1.0.0
+**Last Updated**: 2026-04-09
 **Maintained By**: Security Team

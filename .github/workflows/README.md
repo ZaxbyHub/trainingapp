@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project uses GitHub Actions for continuous integration and deployment. All workflows are defined in `.github/workflows/`. Eight workflows run the CI signal; three of them (Tests, Web UI, Conformance) plus Security implement the path-scoped gating model of issue #87 (Workstream E, E4).
+This project uses GitHub Actions for continuous integration and deployment. All workflows are defined in `.github/workflows/`. Nine workflows run the CI signal; three of them (Tests, Web UI, Conformance) plus Security implement the path-scoped gating model of issue #87 (Workstream E, E4), and `doc-accuracy` (issue #89) runs unconditionally on every PR and push.
 
 ## Path scoping model (issue #87)
 
@@ -25,7 +25,7 @@ python-conformance
 pack-fixture-build
 ```
 
-Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (floors-or-stated-skip-reasons signal), `eval-report`, and the whole Desktop Build workflow. Note for PRs opened BEFORE a required check existed (e.g. #48): the new checks stay "Pending" on the old head until the PR is pushed again or closed/reopened.
+Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (floors-or-stated-skip-reasons signal), `eval-report`, the whole Desktop Build workflow, and `doc-accuracy` (issue #89: documentation-vs-code drift guardrail — deliberately unscoped so docs-only PRs get a signal; informational tier is a deliberate choice, not an omission — promote it to required by adding the `doc-accuracy` context to branch protection if the maintainers want it gating). Note for PRs opened BEFORE a required check existed (e.g. #48): the new checks stay "Pending" on the old head until the PR is pushed again or closed/reopened.
 
 ## Workflows
 
@@ -138,3 +138,7 @@ Add these to your README.md:
 ![Tests](https://github.com/USERNAME/REPO/workflows/Tests/badge.svg)
 ![Security](https://github.com/USERNAME/REPO/workflows/Security%20Scan/badge.svg)
 ```
+
+### doc-accuracy (issue #89)
+
+Always-run documentation-accuracy guardrail. No `paths:` filter and no bucket gate — by design: the path-scoped model above skips docs-only diffs, and doc drift is exactly what this check polices. Runs `tests/test_doc_accuracy.py` (stdlib-only) on `ubuntu-latest`; informational tier (see Required checks above).
