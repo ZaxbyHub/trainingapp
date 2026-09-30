@@ -95,7 +95,7 @@ Note: The application includes Gemma 4 E2B bundled in the `models/` directory.
 #### Embedding Model
 
 **Option A: Automatic Download** (legacy-harness path only — the shipped desktop bundles this model and downloads nothing)
-- First use will automatically download BAAI/bge-small-en-v1.5 via SentenceTransformer
+- The harness opens BAAI/bge-small-en-v1.5 with `local_files_only=True` — it does NOT download; if the model is absent it fails closed with manual-install instructions (use Option B)
 - Size: ~134 MB fp32 weights (the repo's measured bge-small artifact is 134,098,874 bytes per bench/RESULTS.md; full-precision — no q8 variant ships)
 - Stored in cache: `%LOCALAPPDATA%\sentence-transformers`
 
@@ -227,7 +227,7 @@ This creates `DocumentQAInstaller.exe` in the root directory.
 **Recommended Model**: BAAI/bge-small-en-v1.5
 
 **Specifications**:
-- Model Size: 134 MB fp32 ONNX (134,098,874 bytes per bench/RESULTS.md; full-precision — no q8 variant ships)
+- Model Size: ~134 MB fp32 (staged embedding footprint 134,098,874 bytes per bench/RESULTS.md; full-precision — no q8 variant ships)
 - Dimensions: 384
 - Architecture: BERT-based
 - License: MIT (see [docs/licenses.md](docs/licenses.md))

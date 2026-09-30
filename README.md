@@ -574,7 +574,7 @@ Automatically fetches adjacent chunks around retrieved results:
 ettin-reranker-32m-v1 (ModernBERT, enabled by default on the desktop backend):
 - Ranks retrieved chunks by relevance after initial retrieval
 - Higher accuracy than pure hybrid search
-- Lightweight — ~38 MB staged total (q8 ONNX 32,440,318 bytes + tokenizers; [bench/RESULTS.md](bench/RESULTS.md)) — optimized for minimum-spec hardware
+- Lightweight — ~40 MB staged total (39,611,408 bytes: q8 ONNX + root tokenizers, per [bench/RESULTS.md](bench/RESULTS.md)) — optimized for minimum-spec hardware
 - Can be tuned via `TRAININGAPP_RETRIEVAL_RERANK` (desktop) / the Settings dialog (legacy harness)
 
 #### Step-back Query Transform

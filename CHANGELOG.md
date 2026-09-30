@@ -571,7 +571,7 @@ Pipeline optimization: wired three dead features, fixed page citation, improved 
 - ARCHITECTURE.md: Updated reranking defaults (True / TinyBERT), added retrieval_window, fixed reranking code example
 - CONFIGURATION.md: Updated `RAG_RERANKING_ENABLED` default to `True`, `RAG_RERANKER_MODEL` to TinyBERT
 - README.md: Updated reranker description (TinyBERT, default ON), clarified step-back is not wired
-> Correction + history (2026-09, #89): the doc updates this entry describes did land (those files carried the TinyBERT defaults until #89 replaced them); what never landed was any shipped surface using the TinyBERT default — CONFIGURATION/USAGE/README now carry MiniLM/ettin corrections and ARCHITECTURE.md is fully rewritten.
+> Correction + history (2026-09, #89): the doc updates this entry describes did land (CONFIGURATION, USAGE and ARCHITECTURE carried the TinyBERT defaults until #89 replaced them; README had already dropped the token before #89); what never landed was any shipped surface using the TinyBERT default — the corrections and the ARCHITECTURE rewrite are #89's.
 - USAGE.md: Updated reranking default to ON
 
 ## [1.1.0] - 2026-04-09

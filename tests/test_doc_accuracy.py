@@ -13,8 +13,9 @@ CONFIGURATION.md, USAGE.md, ARCHITECTURE.md, the two new guides
 (docs/pack-authoring-guide.md, docs/training-pack-refresh-runbook.md), the
 kept v3 product docs (docs/electron-mode.md, docs/training-player.md,
 docs/training-transcription.md, docs/updates.md, docs/security/*), PACKAGING.md
-(with one line-scoped carve-out for its operator quant-staging guidance), and
-web_ui/scripts/start.ps1. CHANGELOG.md history, docs/adr/*, bench/RESULTS.md,
+(with one line-scoped carve-out for its operator quant-staging guidance).
+web_ui/scripts/start.ps1 has a dedicated 229-pattern test, not a scan row.
+CHANGELOG.md history, docs/adr/*, bench/RESULTS.md,
 and the archived pre-v3 tree are OUTSIDE the stale-token scan by design — their
 stale tokens are true history or recorded dispositions. The CHANGELOG
 correction markers ARE guarded in-repo (test_changelog_correction_markers),
@@ -322,7 +323,10 @@ def test_no_archive_file_cites_another_by_old_path():
     """Generalization of the pinned set (PRR-006): NO archived file may cite
     another archived member by its old docs/ path — co-move siblings are
     flat neighbours under docs/archive/pre-v3/."""
-    members = sorted(p for p in ARCHIVE.rglob("*.md"))
+    members = sorted((REPO_ROOT / ARCHIVE).rglob("*.md"))
+    assert (
+        members
+    ), f"archive directory {ARCHIVE} resolved to no files (CWD-relative path bug)"
     basenames = {p.name for p in members}
     problems = []
     for member in members:
