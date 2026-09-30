@@ -574,7 +574,7 @@ Automatically fetches adjacent chunks around retrieved results:
 ettin-reranker-32m-v1 (ModernBERT, enabled by default on the desktop backend):
 - Ranks retrieved chunks by relevance after initial retrieval
 - Higher accuracy than pure hybrid search
-- Lightweight — ~38 MB staged (q8 ONNX, 39,611,408 bytes; [bench/RESULTS.md](bench/RESULTS.md)) — optimized for minimum-spec hardware
+- Lightweight — ~38 MB staged total (q8 ONNX 32,440,318 bytes + tokenizers; [bench/RESULTS.md](bench/RESULTS.md)) — optimized for minimum-spec hardware
 - Can be tuned via `TRAININGAPP_RETRIEVAL_RERANK` (desktop) / the Settings dialog (legacy harness)
 
 #### Step-back Query Transform
@@ -1128,7 +1128,7 @@ see [docs/licenses.md](docs/licenses.md) for the per-model review.
 
 Desktop stack (v3):
 
-- [node-llama-cpp](https://github.com/withcat/node-llama-cpp) - GGUF inference (node bindings)
+- [node-llama-cpp](https://github.com/withcatai/node-llama-cpp) - GGUF inference (node bindings)
 - [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) - SQLite store
 - [sqlite-vec](https://github.com/asg017/sqlite-vec) - sqlite vector search extension
 - [pdfjs-dist](https://mozilla.github.io/pdf.js/) - PDF processing (Apache-2.0)

@@ -150,7 +150,7 @@ Required top-level fields: `id`, `name`, `version`, `published_at`,
 | `embedding` | `{model_id, dims, normalize}` — all required. Packtool's pin is `bge-small-en-v1.5` (384 dims, L2-normalized; `packtool/build/pack-json.ts` / ADR-0006). |
 | `chunking` | `{strategy, size, overlap}` — enum `fixed-words`, `fixed-tokens`, `page-aware`, `slide-aware`. |
 | `docs[]` | `{path, sha256, title, mime}` (+optional per-doc `published_at`). `path` is pack-relative, forward-slash separated, no `..` segments; `sha256` is the hex digest of the raw doc bytes BEFORE chunking. |
-| `index` | `{path, schema_version, sqlite_vec_version}` when a prebuilt index ships. `schema_version` must match `contracts/store.schema.sql`'s `SCHEMA_VERSION` (currently `3`); `sqlite_vec_version` must equal the pin `0.1.9` (ADR-0005). |
+| `index` | `{path, schema_version, sqlite_vec_version}` when a prebuilt index ships. `schema_version` must match `STORE_SCHEMA_VERSION` in `packtool/build/pack-json.ts` (currently `3`, matching the seeded `schema_version` in `contracts/store.schema.sql`); `sqlite_vec_version` must equal the pin `0.1.9` (ADR-0005). |
 | `signature` | `{algorithm, value, key_id}` detached signature block. |
 
 ## Embeddings

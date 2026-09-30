@@ -62,10 +62,13 @@ transcribes it with faster-whisper (defaults: model `distil-large-v3`,
 compute type `int8`, language `en`), and writes one
 `<objectId>_transcripts.js` per media OBJECT id — the same byte format and
 id space as native sidecars, so the extractor reads ASR output through its
-unchanged decode path. The cache is keyed by CONTENT — sha256 of the media
-bytes plus the ASR parameters — never by filename, because publish
-filenames churn across re-exports; a re-run over unchanged media is all
-cache hits. The JSON report is written on every path (including fatal
+unchanged decode path. The cache is keyed by CONTENT —
+`CACHE_FORMAT_VERSION | sha256(media bytes) | model | compute_type`
+(`packtool/storyline/transcribe.py` `cache_composite`) — never by
+filename, because publish filenames churn across re-exports; a re-run
+over unchanged media is all cache hits. The ASR language is not part of
+the key (the documented command uses the fixed default `en`), so a
+transcription with a different `--language` needs a fresh cache dir. The JSON report is written on every path (including fatal
 errors) and the exit code is non-zero when any failure is recorded.
 `faster_whisper` is imported lazily, so `python
 packtool/storyline/transcribe.py --help` works on machines without it.
@@ -179,6 +182,8 @@ Assemble the publish dir the same way the workflow's assembly step does
 that step — the mini fixture ships without one):
 
 ```bash
+# bash/Git-Bash shown; PowerShell equivalents: mkdir -p -> New-Item -ItemType Directory -Force,
+# cp -r -> Copy-Item -Recurse, cp -> Copy-Item (the packtool/node/python commands are identical).
 mkdir -p rehearsal/pub
 cp -r tests/fixtures/storyline-mini/. rehearsal/pub/
 cp tests/fixtures/storyline-mini-story*.html rehearsal/pub/story.html

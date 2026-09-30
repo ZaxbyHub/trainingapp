@@ -8,7 +8,10 @@ packtool build tooling fit together. Every claim below is verifiable against
 the file cited next to it. Companion guides: [docs/electron-mode.md](docs/electron-mode.md)
 (renderer/backend mode selection), [docs/training-player.md](docs/training-player.md)
 (embedded Storyline player), [docs/updates.md](docs/updates.md) (update runbook),
-[desktop/README.md](desktop/README.md) (shell layout and scripts).
+[desktop/README.md](desktop/README.md) (shell layout and scripts),
+[docs/pack-authoring-guide.md](docs/pack-authoring-guide.md) (authoring knowledge packs
+with packtool), and [docs/training-pack-refresh-runbook.md](docs/training-pack-refresh-runbook.md)
+(refreshing an installed training pack).
 
 ## System overview
 

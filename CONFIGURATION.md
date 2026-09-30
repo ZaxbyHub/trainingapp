@@ -41,8 +41,8 @@ Set environment variables before running the application or in your system's env
 | `RAG_DB_PATH` | Vector database location | `./doc_qa_db` | No |
 | `RAG_GGUF_PATH` | Path to GGUF model file | None | Yes for GGUF backend |
 | `RAG_CHUNK_SIZE` | Document chunk size (words) | `512` | No |
-| `RAG_CHUNK_OVERLAP` | Chunk overlap (words) | `50` | No |
-| `RAG_N_RESULTS` | Context chunks to retrieve | `3` | No |
+| `RAG_CHUNK_OVERLAP` | Chunk overlap (words) | `100` | No |
+| `RAG_N_RESULTS` | Context chunks to retrieve | `4` | No |
 | `RAG_MIN_SIMILARITY` | Minimum similarity threshold | `0.3` | No |
 
 ### LLM Backend Variables
@@ -56,7 +56,7 @@ Set environment variables before running the application or in your system's env
 
 | Variable | Description | Default | Recommended |
 |----------|-------------|---------|-------------|
-| `RAG_MAX_TOKENS` | Max response tokens | `1024` | 512-1024 |
+| `RAG_MAX_TOKENS` | Max response tokens | `512` | 512-1024 |
 | `RAG_TEMPERATURE` | LLM temperature | `0.3` | 0.1-0.5 |
 | `API_PORT` | API server port | `8080` | 8080 |
 | `API_HOST` | API server bind address. Defaults to `127.0.0.1` (loopback only); set `0.0.0.0` to expose on your LAN — enable `ENABLE_AUTH=true` if you do | `127.0.0.1` | 127.0.0.1 |
@@ -101,10 +101,10 @@ openssl rand -base64 32
 |----------|-------------|---------|-------------|
 | `RAG_RETRIEVAL_WINDOW` | Window expansion (chunks) | `1` | 0-2 |
 | `RAG_HYBRID_SEARCH` | Enable BM25+Vector search | `True` | True |
-| `RAG_RERANKING_ENABLED` | Enable cross-encoder reranking | `True` | True |
+| `RAG_RERANKING_ENABLED` | Enable cross-encoder reranking | `False` | True |
 | `RAG_RERANKER_MODEL` | Reranker model name | `cross-encoder/ms-marco-MiniLM-L6-v2` | Same |
 | `RAG_QUERY_TRANSFORM_ENABLED` | Enable query transformation | `False` | False |
-| `RAG_INITIAL_RETRIEVAL_TOP_K` | Initial retrieval count | `20` | 10-30 |
+| `RAG_INITIAL_RETRIEVAL_TOP_K` | Initial retrieval count | `12` | 10-30 |
 
 ### Embedding Variables
 
