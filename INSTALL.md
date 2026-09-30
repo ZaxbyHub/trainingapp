@@ -94,7 +94,7 @@ Note: The application includes Gemma 4 E2B bundled in the `models/` directory.
 
 #### Embedding Model
 
-**Option A: Automatic Download** (legacy-harness path only — the shipped desktop bundles this model and downloads nothing)
+**Option A: Open from local cache — no download** (legacy-harness path only; the shipped desktop bundles this model)
 - The harness opens BAAI/bge-small-en-v1.5 with `local_files_only=True` — it does NOT download; if the model is absent it fails closed with manual-install instructions (use Option B)
 - Size: ~134 MB fp32 weights (the repo's measured bge-small artifact is 134,098,874 bytes per bench/RESULTS.md; full-precision — no q8 variant ships)
 - Stored in cache: `%LOCALAPPDATA%\sentence-transformers`
