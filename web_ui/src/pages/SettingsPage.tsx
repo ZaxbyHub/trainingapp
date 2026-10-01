@@ -1,7 +1,8 @@
 /**
- * Settings page — inference mode (desktop backend / external provider
- * connection), browser engine & model cache status, response quality,
- * appearance, storage management, and about info.
+ * Settings page — inference mode (desktop backend / browser-local), External
+ * model (OpenAI- or Anthropic-compatible endpoint), browser engine & model
+ * cache status, response quality, appearance, storage management, and about
+ * info.
  *
  * Issue #24 rebuild: the page was almost entirely useless — Clear Cache was a
  * no-op (deleted a nonexistent DB), the Model Selection dropdown was dead

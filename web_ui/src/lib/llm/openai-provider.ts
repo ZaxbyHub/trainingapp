@@ -124,7 +124,7 @@ export function parseOpenAISseLine(rawLine: string): OpenAISseLine {
     } catch {
       // plain-text error body — use it verbatim
     }
-    return { deltas: [], error: message || 'Provider server reported a stream error' };
+    return { deltas: [], error: message || 'the endpoint reported a stream error' };
   }
   if (!line.startsWith('data:')) return { deltas: [] };
   const payload = line.slice('data:'.length).trim();
@@ -145,7 +145,7 @@ export function parseOpenAISseLine(rawLine: string): OpenAISseLine {
           : typeof (frame.error as { message?: unknown }).message === 'string'
             ? (frame.error as { message: string }).message
             : JSON.stringify(frame.error);
-      return { deltas: [], error: message || 'Provider server reported a stream error' };
+      return { deltas: [], error: message || 'the endpoint reported a stream error' };
     }
     const out: OpenAISseLine = { deltas: [] };
     const choice = frame.choices?.[0];
