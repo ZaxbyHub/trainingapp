@@ -15,7 +15,7 @@
  * 'api' mode and switching back should target the live backend.
  */
 
-const STORAGE_KEY = 'inference-mode';
+import { INFERENCE_MODE_KEY } from '../storage/persisted-keys';
 
 export function seedInferenceModeForDesktop(baseUrl: string): void {
   let stored: Record<string, unknown> = {};
@@ -23,7 +23,7 @@ export function seedInferenceModeForDesktop(baseUrl: string): void {
     // Harden the literal-'null'/'5'/garbage blob shapes (PR #138 review):
     // anything that is not a plain object reads as empty instead of throwing
     // during boot.
-    const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}');
+    const parsed: unknown = JSON.parse(localStorage.getItem(INFERENCE_MODE_KEY) ?? '{}');
     if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
       stored = parsed as Record<string, unknown>;
     }
@@ -34,5 +34,5 @@ export function seedInferenceModeForDesktop(baseUrl: string): void {
     stored.mode = 'api';
   }
   stored.serverUrl = baseUrl;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+  localStorage.setItem(INFERENCE_MODE_KEY, JSON.stringify(stored));
 }

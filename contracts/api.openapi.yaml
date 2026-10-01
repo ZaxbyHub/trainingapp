@@ -1012,6 +1012,37 @@ components:
         packs_recency_half_life_months: { type: integer, minimum: 1 }
         packs_recency_floor_months: { type: integer, minimum: 1 }
         packs_recency_floor: { type: number, minimum: 0, maximum: 1 }
+        # settings-wiring-honesty: OPTIONAL desktop-backend properties (the
+        # Python backend omits them; the required set above is unchanged).
+        # On the desktop backend the flat keys report EFFECTIVE values (what
+        # the next query uses); these explain where each value comes from.
+        explicit_keys:
+          type: array
+          items: { type: string }
+          description: rag_* keys a client explicitly set (desktop only).
+        requested:
+          type: object
+          description: Explicitly set preset values, null when not set (desktop only).
+          properties:
+            n_results: { type: integer, nullable: true }
+            reranking_enabled: { type: boolean, nullable: true }
+            max_tokens: { type: integer, nullable: true }
+            temperature: { type: number, nullable: true }
+        effective:
+          type: object
+          description: The values the next query uses (desktop only).
+          properties:
+            n_results: { type: integer }
+            reranking_enabled: { type: boolean }
+            max_tokens: { type: integer }
+            temperature: { type: number }
+        reranking_available:
+          type: boolean
+          description: Whether a reranker can run on this installation (desktop only).
+        not_applied:
+          type: array
+          items: { type: string }
+          description: Stored rag_* keys no desktop query or ingest reads (desktop only).
     SettingsUpdateRequest:
       type: object
       description: Field names are the rag_* settings keys; omitted fields are unchanged.
@@ -1031,6 +1062,13 @@ components:
         rag_packs_recency_half_life_months: { type: integer, minimum: 1, default: 9 }
         rag_packs_recency_floor_months: { type: integer, minimum: 1, default: 18 }
         rag_packs_recency_floor: { type: number, minimum: 0, maximum: 1, default: 0.85 }
+        reset:
+          type: array
+          items: { type: string }
+          description: >-
+            Desktop backend only (settings-wiring-honesty): a directive, never a
+            stored key. Restores the named rag_* keys to their defaults and clears
+            them from explicit_keys. Must be the only property of the request.
     StatsResponse:
       type: object
       required: [document_count, chunk_count, embedding_model]

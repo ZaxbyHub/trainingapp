@@ -25,6 +25,7 @@ import type {
   LLMProgress,
   LLMService,
 } from '../../types/llm';
+import { INFERENCE_MODE_KEY, PROVIDER_API_KEY_KEY } from '../storage/persisted-keys';
 
 /** Provider connection settings (persisted via {@link loadProviderConfig}). */
 export interface ProviderConfig {
@@ -754,7 +755,6 @@ export async function probeOpenAICompat(
 // it is sent ONLY to the configured provider server. (Plan open-question 1 —
 // desktop safeStorage was rejected for v1.)
 
-const PROVIDER_APIKEY_STORAGE_KEY = 'openai-provider-apikey';
 
 interface StoredInferenceModeLoose {
   providerConfig?: { baseUrl?: string; model?: string };
@@ -767,7 +767,7 @@ function readStoredBlob(): StoredInferenceModeLoose {
     // literal null blob made loadProviderConfig throw outside the send path's
     // try and wedge isLoading): anything that is not a plain object reads as
     // an empty config instead of throwing.
-    const parsed: unknown = JSON.parse(localStorage.getItem('inference-mode') ?? '{}');
+    const parsed: unknown = JSON.parse(localStorage.getItem(INFERENCE_MODE_KEY) ?? '{}');
     if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
       return parsed as StoredInferenceModeLoose;
     }
@@ -783,7 +783,7 @@ export function loadProviderConfig(): ProviderConfig {
   const cfg = blob.providerConfig ?? {};
   let apiKey = '';
   try {
-    apiKey = localStorage.getItem(PROVIDER_APIKEY_STORAGE_KEY) ?? '';
+    apiKey = localStorage.getItem(PROVIDER_API_KEY_KEY) ?? '';
   } catch {
     apiKey = '';
   }
@@ -804,11 +804,11 @@ export function saveProviderConfig(patch: Partial<ProviderConfig>): void {
   };
   try {
     localStorage.setItem(
-      'inference-mode',
+      INFERENCE_MODE_KEY,
       JSON.stringify({ ...blob, providerConfig: next })
     );
     if (patch.apiKey !== undefined) {
-      localStorage.setItem(PROVIDER_APIKEY_STORAGE_KEY, patch.apiKey);
+      localStorage.setItem(PROVIDER_API_KEY_KEY, patch.apiKey);
     }
   } catch {
     // localStorage unavailable or quota exceeded — settings stay in-memory.

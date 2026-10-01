@@ -10,12 +10,13 @@ Comprehensive guide to configuring the Document Q&A Assistant, including environ
 2. [Environment Variables](#environment-variables)
 3. [GUI Settings](#gui-settings)
 4. [Provider Server (OpenAI-compatible)](#provider-server-openai-compatible)
-5. [LLM Backend Configuration](#llm-backend-configuration)
-6. [RAG Pipeline Configuration](#rag-pipeline-configuration)
-7. [Performance Tuning](#performance-tuning)
-8. [Advanced Features](#advanced-features)
-9. [Configuration File Formats](#configuration-file-formats)
-10. [Troubleshooting Configuration](#troubleshooting-configuration)
+5. [App Settings (desktop and browser app)](#app-settings-desktop-and-browser-app)
+6. [LLM Backend Configuration](#llm-backend-configuration)
+7. [RAG Pipeline Configuration](#rag-pipeline-configuration)
+8. [Performance Tuning](#performance-tuning)
+9. [Advanced Features](#advanced-features)
+10. [Configuration File Formats](#configuration-file-formats)
+11. [Troubleshooting Configuration](#troubleshooting-configuration)
 
 ## Overview
 
@@ -303,9 +304,93 @@ flagged for maintainers.
 - In the desktop app the selection persists across restarts (the built-in backend does not
   override it); the quick mode toggle in the chat header is hidden in provider mode — switch
   modes from Settings.
-- The old "API Server" option is different: in the desktop app it means the app's OWN built-in
-  backend; in the browser build it points at this project's Python `api_server.py` (the
-  `/ask` contract), not at an OpenAI endpoint.
+- The "API Server" option is different: it exists only in the desktop app and means the
+  app's OWN built-in backend (the `/ask` contract), not an OpenAI endpoint. The browser build
+  has no API-server mode.
+
+## App Settings (desktop and browser app)
+
+This section covers the Settings page of the shipped app (`web_ui/src/pages/SettingsPage.tsx`)
+in both the desktop app (Electron) and the browser build. Every control either takes effect on
+the path the app is actually using or is hidden with a one-line reason.
+
+### Inference modes
+
+- **Browser-local**: the model runs in the browser (wllama on the CPU, or WebLLM on WebGPU).
+- **API Server**: the desktop app's own built-in backend. It exists **only in the desktop app**.
+  The browser build has no API-server mode: a browser profile that stored the old
+  `mode: "api"` is migrated once to Browser-local on load, its stored server URL is dropped,
+  and its engine, response-quality and provider choices are kept. The migration is one-way.
+- **Provider server (OpenAI-compatible)**: see the section above.
+
+Mode-specific controls are shown only where they can act: Browser Engine, browser memory use
+and Hardware Capability only in Browser-local mode; the desktop inference profile only in the
+desktop app's API Server mode.
+
+### Response Quality presets (desktop backend)
+
+In the desktop app each preset is a backend setting: choosing one PUTs its full patch to the
+desktop backend (`PUT /settings`), in any inference mode
+(`web_ui/src/lib/rag/rag-presets.ts`, `DESKTOP_PRESET_SETTINGS`):
+
+| Preset   | `rag_n_results` | `rag_reranking_enabled` | `rag_max_tokens` | `rag_temperature` |
+|----------|-----------------|-------------------------|------------------|-------------------|
+| Fast     | 5               | false                   | 384              | 0.3               |
+| Balanced | 8               | true                    | 512              | 0.3               |
+| Quality  | 10              | true                    | 1024             | 0.2               |
+
+In the browser build the preset applies to browser-local chat only (there is no backend to
+write).
+
+**Precedence.** For `rag_reranking_enabled`, `rag_max_tokens` and `rag_temperature` an
+**explicitly set** value wins. Otherwise reranking follows the retrieval environment default
+(`TRAININGAPP_RETRIEVAL_RERANK`, default on — `desktop/main/backend/retrieval/config.ts`) and
+answer length/temperature follow the inference profile (Quality 1024 / 0.2, Fast 384 / 0.3 —
+`desktop/main/backend/inference/llama-engine.ts`). A fresh install sets nothing explicitly, so
+it behaves exactly as before. An explicit preset value keeps winning over the inference
+profile until it is reset. Reranking can only run when a reranker was built at startup; when
+none was, the preset cards say "Reranking unavailable on this installation" and reranking is
+effectively off.
+
+**Reset.** "Reset to defaults" sends `PUT /settings {"reset": ["rag_n_results",
+"rag_reranking_enabled", "rag_max_tokens", "rag_temperature"]}`. `reset` is a request
+directive, never a stored key: it must be the only property of the request, it restores the
+named `rag_*` keys to their defaults, removes them from the explicit set and from the persisted
+`settings.json` sidecar, and is never replayed at startup. Unknown keys are rejected with 422
+and nothing is committed.
+
+**What GET /settings reports (desktop backend).** The flat keys keep their names but carry
+**effective** values — what the next query uses — so the desktop's flat `max_tokens`,
+`temperature` and `reranking_enabled` are profile- and environment-dependent and differ from
+the Python backend's flat defaults by design. Optional properties explain the values
+(`desktop/main/backend/engine.ts`; `contracts/api.openapi.yaml` `SettingsResponse`):
+
+- `explicit_keys` — the `rag_*` keys a client explicitly set;
+- `requested` — the explicit preset values (`null` when not set);
+- `effective` — the preset values the next query uses;
+- `reranking_available` — whether a reranker can run;
+- `not_applied` — every stored keyspace key with no desktop reader. Today that includes
+  `rag_chunk_size`, `rag_chunk_overlap`, `rag_min_similarity`, `rag_hybrid_search`,
+  `rag_context_truncation`, `rag_retrieval_window`, `rag_initial_retrieval_top_k`,
+  `rag_rerank_top_k` and the stored `rag_packs_recency_*` values (pack recency comes from the
+  `TRAININGAPP_PACKS_RECENCY_*` environment variables). These keys are validated and saved
+  but do not change desktop behavior; `rag_min_similarity` and `rag_hybrid_search` stay
+  unwired on purpose (the calibrated relevance floor of ADR-0007 governs, and fused scores are
+  not cosine similarities).
+
+The Settings page derives the selected preset from these values: a preset is shown only when
+every explicitly set preset key matches it; otherwise it shows "Custom server settings", or
+"Using server defaults" when nothing is set.
+
+### Clear Cache
+
+Clear Cache removes, in this browser profile: the document library and its keyword/vector
+indexes, downloaded WebLLM weights, orphaned data from earlier sessions, and every saved
+setting registered in `web_ui/src/lib/storage/persisted-keys.ts` (inference mode, browser
+engine and response-quality choices, theme, provider connection and API key, sidebar state,
+last-opened course). It keeps the internal profile id, migration marker and re-index notice
+flag, then reloads the page. In the desktop app it does **not** touch documents or settings
+stored by the desktop backend — remove those documents from the Documents page.
 
 ## LLM Backend Configuration
 

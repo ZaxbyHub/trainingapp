@@ -9,6 +9,7 @@ import type { EmbeddingEntry, EmbeddingVector } from '../../types/embedding';
 import type { SearchResult, VectorIndexConfig, VectorSearchOptions } from '../../types/search';
 import initWasm, { EdgeVec, EdgeVecConfig } from 'edgevec';
 import { getStorageDbNames } from '../storage/profile';
+import { REINDEX_FLAG_KEY } from '../storage/persisted-keys';
 
 /**
  * F1: the per-store IndexedDB names now derive from the stable localStorage
@@ -37,7 +38,6 @@ const INDEX_NAME = DB_NAMES.vector;
 export const VECTOR_INDEX_VERSION = 3;
 /** localStorage flag set when a version mismatch invalidates the stored corpus,
  *  so the UI can show a one-time "re-add your documents" notice. */
-const REINDEX_FLAG_KEY = 'rag-reindex-required';
 
 /**
  * Default configuration for the vector index.

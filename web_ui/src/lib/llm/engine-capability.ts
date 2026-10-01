@@ -14,6 +14,7 @@
 
 import type { BrowserEngine } from '../../types/llm';
 import { getMemoryBudget } from '../embeddings/memory-aware';
+import { isElectron } from '../desktop-session';
 
 export type CapabilityTier = 'green' | 'yellow' | 'red';
 export type MemoryTier = 'HIGH' | 'MEDIUM' | 'LOW';
@@ -33,8 +34,12 @@ export interface EngineCapability {
   cores: number;
   /** Engine we recommend given the detected capabilities. */
   recommendedEngine: BrowserEngine;
-  /** Inference mode we recommend (browser-local vs server api). */
-  recommendedMode: 'browser-local' | 'api';
+  /**
+   * Inference mode we recommend. 'api' (the desktop backend) only inside the
+   * desktop app; the browser app has no API-server mode, so a device that
+   * cannot run browser inference is pointed at an external model ('provider').
+   */
+  recommendedMode: 'browser-local' | 'api' | 'provider';
   /** Overall browser-inference suitability for this device. */
   tier: CapabilityTier;
   /** Human-readable reasons backing the recommendation. */
@@ -88,14 +93,18 @@ export async function detectEngineCapability(): Promise<EngineCapability> {
 
   const reasons: string[] = [];
   let recommendedEngine: BrowserEngine;
-  let recommendedMode: 'browser-local' | 'api';
+  let recommendedMode: EngineCapability['recommendedMode'];
   let tier: CapabilityTier;
 
   if (!wasm) {
     recommendedEngine = 'wllama';
-    recommendedMode = 'api';
+    recommendedMode = isElectron() ? 'api' : 'provider';
     tier = 'red';
-    reasons.push('WebAssembly is unavailable; browser inference is not supported — use server mode.');
+    reasons.push(
+      isElectron()
+        ? 'WebAssembly is unavailable; browser inference is not supported — use the desktop backend (API Server mode).'
+        : 'WebAssembly is unavailable; browser inference is not supported — use the desktop app or an external model server (Provider server mode).'
+    );
   } else if (webgpu) {
     recommendedEngine = 'webllm';
     recommendedMode = 'browser-local';
@@ -116,7 +125,7 @@ export async function detectEngineCapability(): Promise<EngineCapability> {
         reasons.push('Cross-origin isolation is off; wllama runs single-threaded (slower).');
       }
       if (memoryTier === 'LOW') {
-        reasons.push('Low available memory; consider a smaller model or server mode.');
+        reasons.push('Low available memory; consider a smaller model, the desktop app, or an external model server.');
       }
     }
   }

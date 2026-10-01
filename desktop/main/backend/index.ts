@@ -321,7 +321,7 @@ export class NodeBackendHost implements BackendHost {
     // apply exactly; a snapshot from a newer/older schema that the engine
     // rejects simply fails validation and the host boots on defaults.
     // No store path (CI stub runs) => persistence disabled, engine-memory only.
-    let persistSettings: ((settings: Record<string, unknown>) => void) | undefined;
+    let persistSettings: ((settings: Record<string, unknown>, removeKeys?: string[]) => void) | undefined;
     if (this.config.storePath) {
       const storePath = this.config.storePath;
       let storedPatch = loadSettingsSnapshot(storePath) ?? {};
@@ -334,10 +334,13 @@ export class NodeBackendHost implements BackendHost {
           storedPatch = {};
         }
       }
-      persistSettings = (patch) => {
+      persistSettings = (patch, removeKeys = []) => {
         // Adopt the merged patch ONLY after the disk write succeeds, so a
         // failed save cannot desynchronize memory from the sidecar.
-        const merged = { ...storedPatch, ...patch };
+        const merged: Record<string, unknown> = { ...storedPatch, ...patch };
+        // settings-wiring-honesty: a reset directive's keys leave the
+        // snapshot, so the next boot no longer replays them as explicit.
+        for (const key of removeKeys) delete merged[key];
         saveSettingsSnapshot(storePath, merged);
         storedPatch = merged;
       };

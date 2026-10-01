@@ -322,52 +322,27 @@ describe('SettingsPage', () => {
     });
 
     const browserLocalRadio = screen.getByRole('radio', { name: /browser-local/i });
-    const apiRadio = screen.getByRole('radio', { name: /api server/i });
+    const providerRadio = screen.getByRole('radio', { name: /provider server/i });
+    // settings-wiring-honesty (AC4): the browser app has no API-server mode.
+    expect(screen.queryByRole('radio', { name: /api server/i })).not.toBeInTheDocument();
 
     expect(browserLocalRadio).toBeChecked();
-    expect(apiRadio).not.toBeChecked();
+    expect(providerRadio).not.toBeChecked();
 
-    fireEvent.click(apiRadio);
+    fireEvent.click(providerRadio);
 
-    expect(setMode).toHaveBeenCalledWith('api');
+    expect(setMode).toHaveBeenCalledWith('provider');
   });
 
-  test('Server URL input updates value on change but persists on blur (issue #24 F8)', async () => {
-    const setServerUrl = vi.fn();
-    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
-      mode: 'api',
-      browserEngine: 'wllama',
-      ragPreset: 'balanced',
-      isServerConnected: false,
-      isModelReady: false,
-      modelLoadingProgress: 0,
-      modeError: null,
-      serverUrl: '',
-      setMode: vi.fn(),
-      setBrowserEngine: vi.fn(),
-      setRagPreset: vi.fn(),
-      setServerUrl,
-      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
-      setModelReady: vi.fn(),
-      setModelLoadingProgress: vi.fn(),
-    });
-
+  test('settings-wiring-honesty (AC4): the browser app renders no Server URL input in any mode', async () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText(/server url/i)).toBeInTheDocument();
+      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
     });
 
-    const serverUrlInput = screen.getByLabelText(/server url/i) as HTMLInputElement;
-
-    // Change updates the input value (local state) but does NOT persist.
-    fireEvent.change(serverUrlInput, { target: { value: 'http://localhost:8080' } });
-    expect(serverUrlInput.value).toBe('http://localhost:8080');
-    expect(setServerUrl).not.toHaveBeenCalled();
-
-    // Blur persists (the correct UX — issue #24 F8).
-    fireEvent.blur(serverUrlInput);
-    expect(setServerUrl).toHaveBeenCalledWith('http://localhost:8080');
+    expect(screen.queryByLabelText(/server url/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Server Configuration')).not.toBeInTheDocument();
   });
 
   test('Theme selection calls setTheme (not toggleTheme) (issue #24 F5)', async () => {
@@ -445,63 +420,6 @@ describe('SettingsPage', () => {
     await waitFor(() => {
       expect(deleteNamespaceMock).toHaveBeenCalledWith('testprfx');
     });
-  });
-
-  test('Settings persist to IndexedDB via SettingsStore (serverUrl on blur)', async () => {
-    const savedData: unknown[] = [];
-
-    mockObjectStore.put.mockImplementation((data) => {
-      savedData.push(data);
-      const req = createIDBRequest();
-      setTimeout(() => {
-        const onsuccess = (req as unknown as Record<string, (e: Event) => void>).onsuccess;
-        if (onsuccess) onsuccess.call(req, new Event('success'));
-      }, 0);
-      return req as unknown as IDBRequest;
-    });
-
-    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
-      mode: 'api',
-      browserEngine: 'wllama',
-      ragPreset: 'balanced',
-      isServerConnected: false,
-      isModelReady: false,
-      modelLoadingProgress: 0,
-      modeError: null,
-      serverUrl: '',
-      setMode: vi.fn(),
-      setBrowserEngine: vi.fn(),
-      setRagPreset: vi.fn(),
-      setServerUrl: vi.fn(),
-      checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
-      setModelReady: vi.fn(),
-      setModelLoadingProgress: vi.fn(),
-    });
-
-    render(<SettingsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/server url/i)).toBeInTheDocument();
-    });
-
-    // Trigger a settings persist by typing + blurring the server URL.
-    const serverUrlInput = screen.getByLabelText(/server url/i) as HTMLInputElement;
-    fireEvent.change(serverUrlInput, { target: { value: 'http://localhost:8080' } });
-    fireEvent.blur(serverUrlInput);
-
-    await waitFor(() => {
-      expect(savedData.length).toBeGreaterThan(0);
-    });
-
-    // Verify the saved data structure — theme and preferredModel are no longer
-    // part of the persisted shape (issue #24 F2/F5).
-    const savedSettings = savedData[savedData.length - 1] as Record<string, unknown>;
-    expect(savedSettings).toMatchObject({
-      key: 'user-preferences',
-      serverUrl: 'http://localhost:8080',
-    });
-    expect(savedSettings).not.toHaveProperty('theme');
-    expect(savedSettings).not.toHaveProperty('preferredModel');
   });
 
   test('Server Configuration section is hidden in browser-local mode', async () => {

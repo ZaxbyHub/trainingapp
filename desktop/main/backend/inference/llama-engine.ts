@@ -67,6 +67,10 @@ export interface LlamaEngineBackend {
       history?: unknown[];
       streamCallback?: (token: string) => void;
       cancellationEvent?: CancellationFlag;
+      /** settings-wiring-honesty: explicit rag_max_tokens (else the profile's). */
+      maxTokens?: number;
+      /** settings-wiring-honesty: explicit rag_temperature (else the profile's). */
+      temperature?: number;
     },
   ): Promise<{ answer: string; cancelled: boolean }>;
   dispose(): Promise<void>;
@@ -141,19 +145,27 @@ export function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
   return items.slice(-MAX_HISTORY_TURNS);
 }
 
+/** The profile's generation defaults (what GET /settings reports when not explicitly set). */
+export function profileGeneration(profile: InferenceProfileName): { maxTokens: number; temperature: number } {
+  return PROFILE_GENERATION[profile];
+}
+
 /**
  * Prompt sampler options for a profile (PRR-011): the single place the
  * PROFILE_GENERATION/topP/penalties mapping is derived, exported so tests can
- * pin the shape that reaches session.prompt().
+ * pin the shape that reaches session.prompt(). settings-wiring-honesty: an
+ * explicitly set rag_max_tokens/rag_temperature (overrides) wins over the
+ * profile value; an omitted override keeps the profile default.
  */
 export function buildGenerationParams(
   profile: InferenceProfileName,
   penalties: object = {},
+  overrides: { maxTokens?: number; temperature?: number } = {},
 ): Record<string, unknown> {
   const generation = PROFILE_GENERATION[profile];
   return {
-    maxTokens: generation.maxTokens,
-    temperature: generation.temperature,
+    maxTokens: overrides.maxTokens ?? generation.maxTokens,
+    temperature: overrides.temperature ?? generation.temperature,
     topP: SAMPLER_TOP_P,
     ...(Object.keys(penalties).length > 0 ? { repeatPenalty: penalties } : {}),
   };
@@ -202,7 +214,10 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
           },
           signal: abort.signal,
           stopOnAbortSignal: true,
-          ...buildGenerationParams(opts.profile, penalties),
+          ...buildGenerationParams(opts.profile, penalties, {
+            maxTokens: genOpts.maxTokens,
+            temperature: genOpts.temperature,
+          }),
         });
         return { answer, cancelled: genOpts.cancellationEvent?.isSet() ?? false };
       } finally {
@@ -543,10 +558,16 @@ export class LlamaEngine implements EngineSurface {
       const entry = await this.ensureResident(profile, modelPath);
       entry.inFlight += 1;
       try {
+        // settings-wiring-honesty: explicit rag_max_tokens/rag_temperature are
+        // read here, per generation (never frozen at model load), and passed
+        // only when set so the profile defaults apply otherwise.
+        const overrides = this.stub.generationOverrides();
         const result = await entry.backend.generate(groundedQuestion, {
           history: opts.history,
           streamCallback: opts.streamCallback,
           cancellationEvent: opts.cancellationEvent,
+          ...(overrides.maxTokens !== undefined ? { maxTokens: overrides.maxTokens } : {}),
+          ...(overrides.temperature !== undefined ? { temperature: overrides.temperature } : {}),
         });
         const out: EngineQueryResult = {
           answer: result.answer,
@@ -693,9 +714,17 @@ export class LlamaEngine implements EngineSurface {
     return { ok: true };
   }
 
+  /** settings-wiring-honesty: the rag_* reset directive (rag keys only). */
+  resetSettings(keys: unknown): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
+    return this.stub.resetSettings(keys);
+  }
+
   responseSettings(): Record<string, unknown> {
     return {
-      ...this.stub.responseSettings(),
+      // Effective generation values follow the profile the NEXT query uses
+      // (effectiveProfile() may advance the sticky AUTO latch exactly as
+      // modelStatus() does — see the PRR-240 note there).
+      ...this.stub.responseSettings(profileGeneration(this.effectiveProfile())),
       'inference.profile': this.profileSetting,
       'inference.profileThresholdGb': this.thresholdGb,
       'inference.threads': this.effectiveThreads(),

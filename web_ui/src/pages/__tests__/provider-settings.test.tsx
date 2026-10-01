@@ -184,7 +184,10 @@ describe('RAG preset mirror (Electron api mode)', () => {
     updateSettingsMock.mockClear();
   });
 
-  test('presets PUT distinct in-bounds rag_n_results and never rag_reranking_enabled', async () => {
+  // settings-wiring-honesty (user decision 2026-09-30, reversing PR #138's
+  // rag_n_results-only mirror): presets control reranking, max tokens and
+  // temperature too, so each PUT carries the preset's full desktop patch.
+  test('presets PUT the full desktop patch with distinct in-bounds rag_n_results', async () => {
     const session = makeSession();
     const ui = () => (
       <DesktopSessionProvider value={{ session, models: null, loading: false, error: null }}>
@@ -215,8 +218,16 @@ describe('RAG preset mirror (Electron api mode)', () => {
       expect(Number.isInteger(patch.rag_n_results)).toBe(true);
       expect(patch.rag_n_results as number).toBeGreaterThanOrEqual(1);
       expect(patch.rag_n_results as number).toBeLessThanOrEqual(10);
-      expect('rag_reranking_enabled' in patch).toBe(false);
+      expect(Object.keys(patch).sort()).toEqual(
+        ['rag_max_tokens', 'rag_n_results', 'rag_reranking_enabled', 'rag_temperature'],
+      );
+      expect(patch.rag_max_tokens as number).toBeGreaterThanOrEqual(256);
+      expect(patch.rag_max_tokens as number).toBeLessThanOrEqual(4096);
     }
+    // Fast promises "no reranking, shorter answers"; Quality reranks longer.
+    expect(relevant[0]).toEqual({ rag_n_results: 10, rag_reranking_enabled: true, rag_max_tokens: 1024, rag_temperature: 0.2 });
+    expect(relevant[1]).toEqual({ rag_n_results: 5, rag_reranking_enabled: false, rag_max_tokens: 384, rag_temperature: 0.3 });
+    expect(relevant[2]).toEqual({ rag_n_results: 8, rag_reranking_enabled: true, rag_max_tokens: 512, rag_temperature: 0.3 });
     // DISTINCT per preset: Quality must not collapse into Balanced in
     // GET /settings (the AC4 observability clause).
     const values = new Set(relevant.map((p) => p.rag_n_results));
@@ -235,9 +246,17 @@ describe('InferenceModeToggle', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  test('still renders for api mode with a serverUrl (existing behavior)', () => {
+  test('still renders for api mode with a serverUrl inside the desktop app (existing behavior)', () => {
+    installDesktopBridgeStub();
     mockContext({ mode: 'api', serverUrl: 'http://127.0.0.1:4567' });
     const { container } = render(<InferenceModeToggle />);
     expect(container).not.toBeEmptyDOMElement();
+    removeDesktopBridgeStub();
+  });
+
+  test('settings-wiring-honesty (AC4): renders null outside the desktop app (no browser API-server mode)', () => {
+    mockContext({ mode: 'api', serverUrl: 'http://127.0.0.1:4567' });
+    const { container } = render(<InferenceModeToggle />);
+    expect(container).toBeEmptyDOMElement();
   });
 });

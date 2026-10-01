@@ -399,7 +399,7 @@ describe('ModelReadinessGate', () => {
       expect(result.ready).toBe(false);
       expect(result.checks.webgpu).toBe(false);
       expect(result.failures).toContain('WebGPU is not available in this browser.');
-      expect(result.recommendations.some(r => r.includes('server API mode'))).toBe(true);
+      expect(result.recommendations.some(r => r.includes('external model server'))).toBe(true);
     });
 
     test('wllama engine: WebGPU unavailable is NOT a hard failure (model is cached)', async () => {
@@ -428,7 +428,7 @@ describe('ModelReadinessGate', () => {
       expect(result.ready).toBe(false);
       expect(result.checks.memory.sufficient).toBe(false);
       expect(result.failures.some(f => f.includes('Insufficient memory'))).toBe(true);
-      expect(result.recommendations.some(r => r.includes('server API mode'))).toBe(true);
+      expect(result.recommendations.some(r => r.includes('external model server'))).toBe(true);
     });
 
     test('returns ready=true but with recommendation when model is not cached', async () => {
@@ -531,15 +531,18 @@ describe('ModelReadinessGate', () => {
       expect(result.failures).toContain('WebGPU is not available in this browser.');
     });
 
-    test('populates recommendations correctly for server API mode', async () => {
+    // settings-wiring-honesty (IC6): the browser app has no API-server mode;
+    // the fallback recommendation is an external model server.
+    test('populates recommendations correctly for an external model server', async () => {
       mockGpu = undefined;
 
       const result = await gate.checkReadiness('SmolLM3-3B-Q4_K_M');
 
-      const serverApiRecommendations = result.recommendations.filter(r =>
-        r.toLowerCase().includes('server api mode')
+      const externalRecommendations = result.recommendations.filter(r =>
+        r.toLowerCase().includes('external model server')
       );
-      expect(serverApiRecommendations.length).toBeGreaterThanOrEqual(1);
+      expect(externalRecommendations.length).toBeGreaterThanOrEqual(1);
+      expect(result.recommendations.some(r => r.toLowerCase().includes('server api mode'))).toBe(false);
     });
 
     test('recommends smaller model when memory is insufficient', async () => {

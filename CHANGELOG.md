@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Fixed — Settings controls that did nothing now take effect or say so (trace settings-wiring-honesty)
+
+- Desktop Response Quality presets now control the desktop backend's result count,
+  reranking, answer length and temperature (user decision, reversing PR #138's
+  `rag_n_results`-only mirror). A preset change PUTs the full patch in any mode; the selected
+  preset is read back from the backend on load and when switching into API Server mode, so a
+  fresh install no longer shows "Balanced" while the backend retrieves 4 chunks ("Using server
+  defaults" / "Custom server settings" instead). An explicit preset value wins over the
+  inference profile until "Reset to defaults" (new `PUT /settings {"reset": [...]}` directive).
+- The desktop backend now applies stored `rag_max_tokens` / `rag_temperature` at generation
+  time and `rag_reranking_enabled` per query (rerank-off queries resolve grounding "general",
+  the issue #72 contract). GET /settings reports effective flat values plus optional
+  `explicit_keys`, `requested`, `effective`, `reranking_available` and `not_applied`.
+- **Removed: the browser build's API-server mode** (user decision). The API Server option, its
+  Server URL field and connection test now exist only in the desktop app; a stored browser
+  `mode: "api"` migrates once to Browser-local (server URL dropped, other choices kept — not
+  restored by a revert).
+- Clear Cache now removes every saved browser setting it lists (inference mode, theme,
+  provider connection and API key, sidebar, last-opened course) and reloads; its copy says
+  exactly what is removed, and the desktop copy no longer claims to delete documents.
+- Browser Engine, browser memory use and Hardware Capability show only in Browser-local mode;
+  the desktop inference profile only in API Server mode.
+- About shows the real version from `web_ui/package.json` (kept in lockstep with the desktop
+  package by test), the TrainingApp name and mode-accurate credits; the page title is
+  "TrainingApp".
+- One engine recommendation: the static "Recommended for most hardware" copy is gone.
+- The missing-model overlay adds "Use a local server or cloud model", which opens Settings at
+  the external-model controls.
+
 ### Added — recorded outcomes for workstreams whose entries predate the [Unreleased] consolidation (issues #53, #58, #59, #60, #63, #64, #65, #66, #67, #71, #77, #78, #79, #87)
 
 - A3 (#53): desktop RAM gate fixed, inference thread defaults raised to `min(cores, 8)`, and the real LLM-load diagnostic surfaced instead of the synthetic one.

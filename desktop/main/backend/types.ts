@@ -398,6 +398,13 @@ export interface EngineSurface {
   clearDocuments(): Promise<void>;
   getStats(): Promise<{ document_count: number; chunk_count: number; embedding_model: string; llm_backend: string | null; documents: string[] }>;
   applySettingsPatch(patch: Record<string, unknown>): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
+  /**
+   * settings-wiring-honesty: the PUT /settings `reset` directive. Restores the
+   * named rag_* keys to their defaults and drops them from the explicitly-set
+   * key set, so they follow the env/profile defaults again. Optional: the
+   * route answers 422 for engines without it (test doubles).
+   */
+  resetSettings?(keys: unknown): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
   responseSettings(): Record<string, unknown>;
   ingestDirectory(directory: string): Promise<IngestResult>;
   /** B6 (issue #64): input carries the uploaded file; the no-input form is

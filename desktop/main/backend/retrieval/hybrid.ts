@@ -68,10 +68,20 @@ export interface RetrievedChunkAttribution {
   packPublishedAt?: string | null;
 }
 
+/**
+ * Per-query retrieval options (settings-wiring-honesty). `rerank: false` skips
+ * the reranker for this query only — the fused, floor-free path, exactly the
+ * rerank-disabled semantics. Omitted or true keeps the surface's own choice.
+ */
+export interface RetrievalQueryOptions {
+  rerank?: boolean;
+}
+
 export interface RetrievalSurface {
   search(
     query: string,
     nResults?: number,
+    options?: RetrievalQueryOptions,
   ): Promise<
     Array<{
       text: string;
@@ -90,6 +100,13 @@ export interface RetrievalSurface {
    * surface without the flag as floor-qualified (pre-C5 behavior).
    */
   readonly floorActive?: boolean;
+  /**
+   * settings-wiring-honesty: the rerank choice this surface was configured
+   * with (TRAININGAPP_RETRIEVAL_RERANK, default true) — the value a query
+   * follows when the user has not explicitly set rag_reranking_enabled.
+   * Optional: engines treat a custom surface without it as rerank-on.
+   */
+  readonly rerankDefault?: boolean;
 }
 
 /** Reciprocal Rank Fusion over ranked chunk-id legs; dedup by chunk id. */
@@ -329,9 +346,14 @@ export function createRetrievalSurface(options: {
     get floorActive() {
       return floorActive;
     },
-    async search(query, nResults) {
+    rerankDefault: config.rerank !== false,
+    async search(query, nResults, queryOptions) {
       const topK = config.topK ?? 10;
-      if (reranker !== null) {
+      // settings-wiring-honesty: an explicit per-query `rerank: false` (the
+      // user's rag_reranking_enabled) takes the fused, floor-free path for
+      // this query only; the surface-level latch and floorActive are not
+      // touched, so the next rerank-on query uses the reranker again.
+      if (reranker !== null && queryOptions?.rerank !== false) {
         // Production isolation: a broken reranker worker must never 500
         // /search — that query degrades to fused, floor-free ordering (the
         // same semantics as rerank disabled) after a single warning, and the
@@ -349,7 +371,7 @@ export function createRetrievalSurface(options: {
           floorActive = false;
         }
       }
-      return runSearch(query, nResults, topK, reranker, config, options);
+      return runSearch(query, nResults, topK, null, config, options);
     },
   };
 }

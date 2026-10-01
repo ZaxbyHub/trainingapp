@@ -28,7 +28,6 @@ import {
 import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessCache } from '../lib/llm/readiness-gate';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
-import { getToken } from '../lib/api/auth';
 import { citationsToRefs } from '../lib/api/citations';
 import type { Citation } from '../lib/api/types';
 import type { AttachedImage } from '../lib/processing/image-input';
@@ -78,8 +77,11 @@ export interface ChatPageProps {
   setCurrentConversationId: (id: string | undefined) => void;
   onNewChat: () => void;
   /** Navigate to the Settings page (wired from App). Used by the model-block
-   *  overlay's "Open Settings" button and the Ctrl+, shortcut. */
-  onOpenSettings: () => void;
+   *  overlay's "Open Settings" button and the Ctrl+, shortcut. The optional
+   *  section id (settings-wiring-honesty) scrolls Settings to that section and
+   *  focuses its heading, e.g. 'model-connection' for the overlay's
+   *  local-server/cloud model action. */
+  onOpenSettings: (section?: string) => void;
   /** U4: navigate to the Documents page (zero-doc empty-state CTA). */
   onNavigateToDocuments?: () => void;
   /** D6 (issue #82): navigate into the embedded training player, targeting a
@@ -146,7 +148,7 @@ function conversationStorageTag(mode: ReturnType<typeof useInferenceMode>['mode'
 }
 
 function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments, onOpenTraining, pinnedSlide, onDismissPinnedSlide }: ChatPageProps) {
-  const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, serverUrl, setModelLoadingProgress } = useInferenceMode();
+  const { mode, browserEngine, ragPreset, isModelReady, isServerConnected, modelLoadingProgress, setModelLoadingProgress } = useInferenceMode();
   // B9 (issue #67): desktop session drives the SSE endpoint/auth and the
   // first-run model gate. Both are inert outside Electron (session null,
   // predicate false).
@@ -594,20 +596,21 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     });
 
     if (mode === 'api') {
-      // Server API mode — SSE streaming via /ask/stream endpoint.
-      // Pass the stored auth token when present so server mode works whether
-      // auth is off (default) or on. Wrap setup so a synchronous throw (e.g.
-      // URL validation) routes to onError and clears the stream ref instead of
-      // wedging the send pipeline permanently. (issue #21 F5, F9)
-      // B9 (issue #67): inside Electron, URL + per-launch token come from the
-      // desktop session and auth travels via X-Desktop-Token (the loopback
-      // guard rejects Bearer). Remote-Python/browser mode is unchanged.
-      const url = desktopSession
-        ? desktopSession.sseUrl()
-        : serverUrl
-          ? `${serverUrl.replace(/\/$/, '')}/ask/stream`
-          : '/ask/stream';
-      const sseToken = desktopSession ? desktopSession.token : getToken() ?? undefined;
+      // Desktop backend mode — SSE streaming via /ask/stream endpoint. Wrap
+      // setup so a synchronous throw (e.g. URL validation) routes to onError
+      // and clears the stream ref instead of wedging the send pipeline
+      // permanently. (issue #21 F5, F9)
+      // B9 (issue #67): the URL + per-launch token come from the desktop
+      // session and auth travels via X-Desktop-Token (the loopback guard
+      // rejects Bearer). settings-wiring-honesty (AC4): 'api' is the desktop
+      // app's built-in backend only — the browser app has no API-server mode,
+      // so there is no user-entered server URL to fall back to.
+      if (desktopSession === null) {
+        streamManager.error('The desktop backend is not available yet. Wait for it to start, then try again.');
+        return;
+      }
+      const url = desktopSession.sseUrl();
+      const sseToken = desktopSession.token;
       try {
         // Issue #40 RC1: thread conversation history into the server request so
         // server mode benefits from multi-turn memory + retrieval rewriting too.
@@ -618,7 +621,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           url,
           { question: text, history: buildHistorySnapshot(owningMessages) },
           sseToken,
-          desktopSession ? 'X-Desktop-Token' : undefined
+          'X-Desktop-Token'
         );
       } catch (err) {
         streamManager.error(err instanceof Error ? err.message : String(err));
@@ -787,7 +790,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         }
       })();
     }
-  }, [mode, serverUrl, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages]);
+  }, [mode, desktopSession, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages]);
 
   const handleSend = useCallback(async (text: string, attachedImages?: AttachedImage[]) => {
     // Prevent overlapping streams
@@ -1012,7 +1015,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           {/* API mode warning */}
           {mode === 'api' && !isServerConnected && (
             <span
-              title="Server not connected. Check your server URL in Settings."
+              title="The desktop backend is not reachable. Restart the app if this persists."
               style={{
                 fontSize: 'var(--font-size-caption)',
                 color: 'var(--color-warning)',

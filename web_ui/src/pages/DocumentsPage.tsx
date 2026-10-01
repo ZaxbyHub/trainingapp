@@ -12,6 +12,7 @@ import { extractDocument, SUPPORTED_EXTENSIONS } from '../lib/processing/extract
 import { TextChunker } from '../lib/processing/text-chunker';
 import { loadDocuments, saveDocuments, deleteDocument as deleteDocumentFromStore } from '../lib/storage/document-store';
 import { migrateOrphanedNamespaces } from '../lib/storage/profile';
+import { REINDEX_FLAG_KEY } from '../lib/storage/persisted-keys';
 import { getEmbeddingService } from '../lib/embeddings/embedding-service';
 import { ensureEmbeddingServiceReady } from '../hooks/useServiceInitialization';
 import { getVectorIndex } from '../lib/search/vector-index';
@@ -96,7 +97,7 @@ export function DocumentsPage() {
   // on version mismatch; cleared here on dismiss so the user sees it once.
   useEffect(() => {
     try {
-      if (typeof localStorage !== 'undefined' && localStorage.getItem('rag-reindex-required') === '1') {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem(REINDEX_FLAG_KEY) === '1') {
         setShowReindexNotice(true);
       }
     } catch {
@@ -108,7 +109,7 @@ export function DocumentsPage() {
     setShowReindexNotice(false);
     try {
       if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('rag-reindex-required');
+        localStorage.removeItem(REINDEX_FLAG_KEY);
       }
     } catch {
       /* private mode / storage disabled */

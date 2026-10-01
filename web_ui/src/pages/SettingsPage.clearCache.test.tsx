@@ -335,12 +335,14 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
     fireEvent.click(clearButton);
 
-    // PRR-003: text now mentions orphan cleanup from previous sessions.
+    // PRR-003: text mentions orphan cleanup from previous sessions.
+    // settings-wiring-honesty (AC5): it lists exactly what is removed,
+    // including the browser-stored settings.
     expect(
-      screen.getByText(/this will delete all documents, keyword\/vector indexes/i)
+      screen.getByText(/this deletes the documents and keyword\/vector indexes stored in this browser/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/orphaned data from previous sessions/i)
+      screen.getByText(/orphaned data from earlier sessions/i)
     ).toBeInTheDocument();
   });
 

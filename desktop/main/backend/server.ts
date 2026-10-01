@@ -74,8 +74,11 @@ export interface BackendServerOptions {
    * Host wires an atomic writer (settings.json beside the profile store).
    * Called ONLY after the engine accepted the patch; when absent, settings
    * stay engine-memory-only (CI stub runs without a store path).
+   * settings-wiring-honesty: `removeKeys` (from an accepted `reset`
+   * directive) are DELETED from the persisted snapshot so the next boot does
+   * not replay them as explicit values.
    */
-  persistSettings?: (settings: Record<string, unknown>) => void;
+  persistSettings?: (settings: Record<string, unknown>, removeKeys?: string[]) => void;
 }
 
 // The 16 contract operations (contracts/api.openapi.yaml). Unknown paths get
@@ -781,6 +784,39 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               patch = parsedBody as Record<string, unknown>;
             } catch {
               validationError(res, ['body: invalid JSON'], cors);
+              return;
+            }
+            // settings-wiring-honesty: `reset` is a route directive, never a
+            // stored key — stripped here before applySettingsPatch, never
+            // persisted, never replayed at boot. It stands alone so a request
+            // is either a reset or a patch (all-or-nothing, no partial commit).
+            if (Object.prototype.hasOwnProperty.call(patch, 'reset')) {
+              if (Object.keys(patch).length !== 1) {
+                validationError(res, ['reset: cannot be combined with setting values'], cors);
+                return;
+              }
+              if (typeof engine.resetSettings !== 'function') {
+                validationError(res, ['reset: not supported by this engine'], cors);
+                return;
+              }
+              const resetResult = engine.resetSettings(patch.reset);
+              if (!resetResult.ok) {
+                if (resetResult.status === 400) sendJson(res, 400, { detail: resetResult.detail }, cors);
+                else validationError(res, resetResult.errors ?? [resetResult.detail], cors);
+                return;
+              }
+              const afterReset = engine.responseSettings();
+              if (opts.persistSettings) {
+                try {
+                  opts.persistSettings({}, patch.reset as string[]);
+                } catch (err) {
+                  sendJson(res, 500, {
+                    detail: `Settings were reset but could not be persisted: ${err instanceof Error ? err.message : String(err)}`,
+                  }, cors);
+                  return;
+                }
+              }
+              sendJson(res, 200, afterReset, cors);
               return;
             }
             const result = engine.applySettingsPatch(patch);

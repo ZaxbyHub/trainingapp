@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { TrainingPlayer } from '../components/TrainingPlayer';
 import type { TrainingPlayerSlideState } from '../components/training-player-bridge';
 import { useDesktopSession } from '../lib/desktop-session';
+import { LAST_PACK_KEY } from '../lib/storage/persisted-keys';
 import type { PackInfo } from '../lib/api/types';
 
 export interface TrainingPageProps {
@@ -33,7 +34,6 @@ export interface TrainingPageProps {
   onSlideChange?: (event: TrainingPlayerSlideState) => void;
 }
 
-const LAST_PACK_KEY = 'training.lastPackDir';
 
 /** Managed pack directory path (`<packId>/<version>`) — the form the reserved
  * app://training route serves for PackManager-installed packs. */

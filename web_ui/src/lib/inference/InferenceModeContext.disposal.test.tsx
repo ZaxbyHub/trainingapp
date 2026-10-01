@@ -19,6 +19,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 import { InferenceModeProvider, useInferenceMode } from './InferenceModeContext';
+import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../../test/desktop-bridge-stub';
 
 // Mock the llm-factory module so we never pull in the real WASM/model-backed
 // WebLLM/wllama service singletons — we only care that `disposeBrowserEngine`
@@ -65,6 +66,9 @@ describe('InferenceModeContext setBrowserEngine disposal', () => {
   });
 
   it('disposes the previous engine when changing engine while mode is api (regression for issue #21 F-LEAK follow-up)', () => {
+    // settings-wiring-honesty (AC4): 'api' is the desktop app's built-in
+    // backend, selectable only inside Electron.
+    installDesktopBridgeStub();
     const { result } = renderHook(() => useInferenceMode(), { wrapper });
 
     act(() => {
@@ -85,6 +89,7 @@ describe('InferenceModeContext setBrowserEngine disposal', () => {
     expect(mockDisposeBrowserEngine).toHaveBeenCalledTimes(1);
     expect(mockDisposeBrowserEngine).toHaveBeenCalledWith('wllama');
     expect(result.current.browserEngine).toBe('webllm');
+    removeDesktopBridgeStub();
   });
 
   it('does not dispose when setBrowserEngine is called with the same value (no actual change)', () => {
