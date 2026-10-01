@@ -482,6 +482,20 @@ describe('overlay destination (AC10)', () => {
     );
   });
 
+  test('Electron app (desktop overlay destination): initialSection="model-connection" focuses the External model heading', async () => {
+    // universal-provider-settings-overhaul: DesktopModelBlockedOverlay's
+    // "Use a local server or cloud model" calls onOpenSettings('model-connection');
+    // inside Electron (api mode, desktop bridge + session) that lands here.
+    H.reset({ mode: 'api' });
+    const { session } = makeSession(backend([], {}));
+    renderElectron(session, { initialSection: 'model-connection' });
+    const heading = await screen.findByRole('heading', { name: /^external model$/i });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(document.getElementById('model-connection')).toContainElement(
+      screen.getByRole('switch', { name: /^use external model$/i }),
+    );
+  });
+
   test('without initialSection nothing in the page takes focus', async () => {
     H.reset({ mode: 'browser-local' });
     render(<SettingsPage />);

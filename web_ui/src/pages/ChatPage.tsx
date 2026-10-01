@@ -1077,7 +1077,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       {/* B9 (issue #67): desktop first-run gate — real engine, no staged
           models. Blocks send with an informative state instead of a doomed
           /ask (AC5). Extracted component per the shared-file convention. */}
-      <DesktopModelBlockedOverlay open={desktopModelBlocked} />
+      <DesktopModelBlockedOverlay open={desktopModelBlocked} onOpenSettings={onOpenSettings} />
 
       {isModelBlocked && (
         <ModelBlockedOverlay
