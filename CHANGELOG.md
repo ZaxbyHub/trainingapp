@@ -57,7 +57,8 @@
 - **Hardening.** A key with a character that cannot be sent in an HTTP header is refused when
   it is saved (both apps, the key is never echoed). The desktop client bounds DNS resolution
   (30 s) and stops a lookup on cancel. SIIT, local-use NAT64 and Teredo IPv6 addresses are
-  never treated as public, and are refused when the IPv4 address they carry is.
+  classified by the IPv4 address they carry (refused when it is refused); a local-use NAT64
+  address without a locatable IPv4 address is treated as private network.
 - **PR #138 "Provider server" mode retired and migrated.** The inference-mode radio is gone. A
   stored provider configuration is migrated once: in the browser into the External model
   settings as Direct chat (as before); in the desktop app into the desktop backend's settings,

@@ -25,8 +25,9 @@
  * SIIT ::ffff:0:0:0/96, NAT64 64:ff9b::/96, local-use NAT64 64:ff9b:1::/48
  * in its /96 layout, 6to4 2002::/16) are classified by the embedded IPv4.
  * Formats whose embedding cannot be located (local-use NAT64 with a shorter
- * prefix) are private, never public. Teredo 2001::/32 is refused when its
- * server or (de-obfuscated) client IPv4 is refused and is private otherwise.
+ * prefix) are private. Teredo 2001::/32 is refused when its server or
+ * (de-obfuscated) client IPv4 is refused, public when either is public, and
+ * private otherwise.
  * Unspecified / multicast / reserved targets report rule 'invalid-url' (the
  * rule set is frozen); the message names the actual reason.
  *
@@ -166,13 +167,15 @@ function classifyIPv6(groups: number[]): AddressClass {
     return { ok: true, kind: 'private' };
   }
   // Teredo 2001:0::/32 (RFC 4380): server IPv4 in groups 2-3, client IPv4
-  // XOR-obfuscated in groups 6-7. A refused embedded address refuses the
-  // whole address; otherwise it is a tunnel endpoint, private (never public).
+  // XOR-obfuscated in groups 6-7. Classified by the strictest embedded
+  // address: a refused one refuses the whole address, a public one keeps it
+  // public (https required, refused in airgap builds), otherwise private.
   if (g(0) === 0x2001 && g(1) === 0) {
     const server = classifyIPv4(embedded(g(2), g(3)));
     if (!server.ok) return server;
     const client = classifyIPv4(embedded(g(6) ^ 0xffff, g(7) ^ 0xffff));
     if (!client.ok) return client;
+    if (server.kind === 'public' || client.kind === 'public') return { ok: true, kind: 'public' };
     return { ok: true, kind: 'private' };
   }
   // 6to4 2002::/16 carries the IPv4 in groups 1-2.

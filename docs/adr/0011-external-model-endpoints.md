@@ -92,8 +92,9 @@ land on an address that was not checked.
    - numeric IPv4 spellings (decimal, octal, hex, short forms such as `127.1`) and IPv6 forms
      that embed an IPv4 address (`::ffff:...`, SIIT `::ffff:0:0:0/96`, NAT64 `64:ff9b::/96`,
      local-use NAT64 `64:ff9b:1::/48`, 6to4 `2002::/16`) are normalized and classified by the
-     embedded address; Teredo `2001::/32` and local-use NAT64 addresses whose embedded address
-     cannot be located are private, never public, and are refused when an embedded address is.
+     embedded address; Teredo `2001::/32` is classified by the strictest IPv4 address it carries
+     (refused if either is refused, public if either is public), and local-use NAT64 addresses
+     whose embedded address cannot be located are private.
 5. **Airgap builds refuse public hosts.** The browser build made with `npm run build:airgap`
    (`VITE_AIRGAP=1`) and the desktop app, when its installer resources manifest
    (`installer-resources/manifest.json`, field `"airgap": true`, staged by `desktop:build`)
