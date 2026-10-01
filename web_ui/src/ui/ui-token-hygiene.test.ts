@@ -65,11 +65,19 @@ describe('src/ui token hygiene', () => {
     const scanned = sources.filter((f) => /\.(css|tsx)$/.test(f));
     expect(scanned.filter((f) => f.endsWith('.css')).length).toBeGreaterThanOrEqual(2); // ui.css + gallery/gallery.css
     expect(scanned.some((f) => f.endsWith('.tsx'))).toBe(true);
+    // Component-private runtime properties (--ui-*) are allowed when the component itself
+    // sets them (e.g. Tooltip's --ui-tooltip-shift via style.setProperty); they are not tokens.
+    const privateSet = new Set<string>();
+    for (const f of scanned) {
+      for (const m of stripComments(readFileSync(f, 'utf8')).matchAll(/setProperty\(\s*['"`](--ui-[\w-]+)/g)) {
+        privateSet.add(m[1]);
+      }
+    }
     const missing: string[] = [];
     for (const f of scanned) {
       const text = stripComments(readFileSync(f, 'utf8'));
       for (const m of text.matchAll(/var\(\s*(--[\w-]+)/g)) {
-        if (!LUMEN_DECLARED.has(m[1])) missing.push(`${f}: ${m[1]}`);
+        if (!LUMEN_DECLARED.has(m[1]) && !privateSet.has(m[1])) missing.push(`${f}: ${m[1]}`);
       }
     }
     expect(missing).toEqual([]);

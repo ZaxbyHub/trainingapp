@@ -16,7 +16,9 @@
 
 .ui-icon { flex: none; }
 
-/* Disabled (section 3.6): label dimmed, no pointer affordance, no hover. */
+/* Disabled (section 3.6): label dimmed, not-allowed cursor, no hover. The cursor
+   is re-asserted with higher specificity in the "Disabled cursor" block near the end
+   of this file, because component rules below declare cursor: pointer. */
 .ui-disabled, .ui-disabled * { cursor: not-allowed; }
 .ui-disabled .ui-toggle__label, .ui-disabled .ui-toggle__desc,
 .ui-disabled .ui-radio-card__label, .ui-disabled .ui-radio-card__desc,
@@ -192,7 +194,7 @@
 .ui-dialog__footer { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-6); }
 
 .ui-tooltip-wrap { position: relative; display: inline-flex; }
-.ui-tooltip { position: absolute; z-index: 1100; top: calc(100% + var(--space-1)); left: 50%; transform: translateX(-50%); width: max-content; max-width: 240px; padding: var(--space-1) var(--space-2); background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-control); border-radius: var(--r-control); box-shadow: var(--shadow-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+.ui-tooltip { position: absolute; z-index: 1100; top: calc(100% + var(--space-1)); left: 50%; transform: translateX(calc(-50% + var(--ui-tooltip-shift, 0px))); width: max-content; max-width: min(240px, calc(100vw - 16px)); padding: var(--space-1) var(--space-2); background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-control); border-radius: var(--r-control); box-shadow: var(--shadow-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
 
 .ui-tabs__list { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-subtle); overflow-x: auto; }
 .ui-tabs__tab { min-height: var(--target-primary); padding: 0 var(--space-4); background: transparent; color: var(--text-secondary); border: 0; border-bottom: 3px solid transparent; font-family: inherit; font-size: var(--type-label-size); font-weight: var(--type-label-weight); cursor: pointer; }
@@ -201,6 +203,13 @@
 .ui-tabs__tab[aria-disabled="true"] { color: var(--text-disabled); cursor: not-allowed; }
 .ui-tabs__panel { padding: var(--space-4) 0; }
 .ui-tabs__panel[hidden] { display: none; }
+
+/* Disabled cursor: component rules above declare cursor: pointer on the item and its
+   native input, so these need MORE specificity than any of them (see ui-disabled.test.ts). */
+.ui-toggle.ui-disabled, .ui-toggle.ui-disabled *,
+.ui-radio-card.ui-disabled, .ui-radio-card.ui-disabled *,
+.ui-segmented__item.ui-disabled, .ui-segmented__item.ui-disabled * { cursor: not-allowed; }
+.ui-segmented__item.ui-disabled.ui-segmented-on { color: var(--text-disabled); }
 
 /* Reduced motion (section 3.4): collapsing --dur-* to ~0 would make infinite
    animations flicker at ~250 Hz, so they are removed outright. aria-busy on

@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -12,6 +13,7 @@ import {
 import { createPortal } from 'react-dom';
 import { mergeIds } from './cx';
 import { cx } from './cx';
+import { computeTooltipShift } from './tooltip-position';
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -112,13 +114,25 @@ export function Dialog({ open, onClose, title, children, footer, alert, classNam
 export interface TooltipProps {
   content: ReactNode;
   /** A single focusable element; it receives aria-describedby. */
-  children: ReactElement<{ 'aria-describedby'?: string }>;
+  children: ReactElement<{ 'aria-describedby'?: string; 'aria-label'?: string }>;
 }
 
 /** Shows on hover and keyboard focus; Escape dismisses. */
 export function Tooltip({ content, children }: TooltipProps) {
   const id = useId();
   const [shown, setShown] = useState(false);
+  const tipRef = useRef<HTMLSpanElement>(null);
+  // Keep the tooltip inside the viewport: measure unshifted, then apply the correction.
+  useLayoutEffect(() => {
+    const tip = tipRef.current;
+    if (!shown || !tip) return;
+    tip.style.setProperty('--ui-tooltip-shift', '0px');
+    const shift = computeTooltipShift(tip.getBoundingClientRect(), document.documentElement.clientWidth);
+    tip.style.setProperty('--ui-tooltip-shift', `${shift}px`);
+  }, [shown, content]);
+  // When the tooltip text just repeats the trigger's accessible name, do not also
+  // expose it as the description (screen readers would announce it twice).
+  const duplicatesName = typeof content === 'string' && children.props['aria-label'] === content;
   return (
     <span
       className="ui-tooltip-wrap"
@@ -134,9 +148,9 @@ export function Tooltip({ content, children }: TooltipProps) {
         }
       }}
     >
-      {cloneElement(children, { 'aria-describedby': mergeIds(shown ? id : undefined, children.props['aria-describedby']) })}
+      {cloneElement(children, { 'aria-describedby': mergeIds(shown && !duplicatesName ? id : undefined, children.props['aria-describedby']) })}
       {shown ? (
-        <span role="tooltip" id={id} className="ui-tooltip">
+        <span ref={tipRef} role="tooltip" id={id} className="ui-tooltip">
           {content}
         </span>
       ) : null}

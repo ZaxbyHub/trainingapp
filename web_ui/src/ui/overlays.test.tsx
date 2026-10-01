@@ -148,6 +148,47 @@ describe('Tooltip', () => {
     expect(btn).toHaveAccessibleDescription(/Hint/);
   });
 
+  it('does not expose the tooltip as a description when it repeats the trigger aria-label', async () => {
+    render(
+      <Tooltip content="Show password">
+        <Button aria-label="Show password">i</Button>
+      </Tooltip>
+    );
+    const btn = screen.getByRole('button', { name: 'Show password' });
+    await userEvent.tab();
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Show password'); // still visible
+    expect(btn).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('still describes the trigger when the text differs from its aria-label', async () => {
+    render(
+      <Tooltip content="Reveals the key on screen">
+        <Button aria-label="Show password">i</Button>
+      </Tooltip>
+    );
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Show password' })).toHaveAccessibleDescription('Reveals the key on screen');
+  });
+
+  it('applies the viewport-collision shift to the shown tooltip', async () => {
+    const spy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue({ left: 398, right: 514, top: 0, bottom: 20, width: 116, height: 20, x: 398, y: 0, toJSON: () => ({}) });
+    Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 500 });
+    try {
+      render(
+        <Tooltip content="Edge">
+          <Button>Edge</Button>
+        </Tooltip>
+      );
+      await userEvent.tab();
+      expect(screen.getByRole('tooltip').style.getPropertyValue('--ui-tooltip-shift')).toBe('-22px');
+    } finally {
+      spy.mockRestore();
+      Reflect.deleteProperty(document.documentElement, 'clientWidth');
+    }
+  });
+
   it('appears on hover and hides on leave', async () => {
     render(
       <Tooltip content="Hint">

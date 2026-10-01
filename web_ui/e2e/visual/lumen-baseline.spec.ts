@@ -37,7 +37,13 @@
  * Determinism: theme is forced via the persisted `theme-preference` key (and
  * emulated colorScheme); animations are disabled by the config and reduced
  * motion is requested; fonts are awaited; all cross-origin traffic is
- * aborted; hardware/quota-derived text is masked.
+ * aborted; hardware/quota-derived text is masked (the Hardware Capability
+ * section is masked per value cell, not as a whole).
+ *
+ * Viewport note: each capture grows the viewport to the full content height, so
+ * height-dependent layout (100vh regions, the pinned composer, the sidebar footer)
+ * is rendered in that tall layout, not a real 900px one; the 1440x900 chat and
+ * overlay captures cover the real-viewport case.
  */
 
 import { expect, test, type Locator, type Page } from '@playwright/test';
@@ -216,12 +222,28 @@ async function fitViewportToContent(page: Page, width: number): Promise<void> {
   }
 }
 
+/**
+ * Machine-derived VALUE cells of the Hardware Capability section only (suitability
+ * bar, WebGPU / multi-threading badges, memory tier, recommended engine, reasons
+ * sentence). The section card, its heading, description and row labels stay in the
+ * baseline so a restyle of that section still shows a diff.
+ */
+function hardwareValueMasks(page: Page): Locator[] {
+  const section = page.locator('section[aria-labelledby="hardware-heading"]');
+  return [
+    section.getByRole('progressbar'),
+    section.locator('span[role="status"]'),
+    section.locator('xpath=.//span[normalize-space(.)="Memory Tier" or normalize-space(.)="Recommended Engine"]/following-sibling::span[1]'),
+    section.locator('xpath=./div/p'),
+  ];
+}
+
 /** Dynamic, machine-derived regions that must not enter a baseline. */
 function dynamicMasks(page: Page): Locator[] {
   return [
     page.getByText(/Recommended for this device/i),
     page.getByText(/Memory Used/i),
-    page.getByRole('heading', { name: 'Hardware Capability' }).locator('xpath=..'),
+    ...hardwareValueMasks(page),
     page.locator('time'),
   ];
 }
