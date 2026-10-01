@@ -318,9 +318,9 @@ One policy applies in both apps (`web_ui/src/lib/llm/endpoint-policy.ts`,
 - Numeric IPv4 spellings (decimal, octal, hex, short forms such as `127.1`) and IPv6 forms that
   embed an IPv4 address (`::ffff:...`, SIIT `::ffff:0:0:0/96`, NAT64 `64:ff9b::/96`, local-use
   NAT64 `64:ff9b:1::/48` in its `/96` layout, 6to4 `2002::/16`) are classified by the embedded
-  address. Teredo (`2001::/32`) and local-use NAT64 addresses outside the `/96` layout are
-  refused when any IPv4 address they may carry is refused and are otherwise public (https
-  required, refused in air-gapped builds).
+  address. Teredo (`2001::/32`) is refused when either IPv4 address it carries is refused and is
+  otherwise public (https required, refused in air-gapped builds). Local-use NAT64 addresses
+  outside the `/96` layout are refused.
 
 In the desktop app a refused URL is a 422 whose message names the rule.
 

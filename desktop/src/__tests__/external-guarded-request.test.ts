@@ -241,9 +241,14 @@ describe('guarded outbound client', () => {
         expect(err.message).toMatch(/\(metadata\)/);
       }
     });
-    it('gpu-box.lan -> a public local-use NAT64 or Teredo answer is refused (name-class consistency)', async () => {
-      for (const address of ['64:ff9b:1:808:8:808:800:0', '2001:0:7f00:1::f5ff:fffe', '2001:0:c0a8:101::f5ff:fffe']) {
+    it('gpu-box.lan -> a public Teredo answer is refused (name-class consistency)', async () => {
+      for (const address of ['2001:0:7f00:1::f5ff:fffe', '2001:0:c0a8:101::f5ff:fffe']) {
         expect((await lan(address, false)).message).toMatch(/private name but resolves to the public address/);
+      }
+    });
+    it('any local-use NAT64 answer outside the /96 layout is refused outright', async () => {
+      for (const airgap of [true, false]) {
+        expect((await lan('64:ff9b:1:808:8:808:800:0', airgap)).message).toMatch(/\(invalid-url\)/);
       }
     });
   });

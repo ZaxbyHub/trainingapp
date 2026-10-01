@@ -25,8 +25,9 @@
  * SIIT ::ffff:0:0:0/96, NAT64 64:ff9b::/96, local-use NAT64 64:ff9b:1::/48
  * in its /96 layout, 6to4 2002::/16) are classified by the embedded IPv4.
  * Local-use NAT64 outside the /96 layout is refused when ANY RFC 6052
- * decoding that fits the /48 allocation (/40, /48, /56, /64, /96) yields a
- * refused IPv4, and is public otherwise. Teredo 2001::/32 is refused when its
+ * decoding (/32, /40, /48, /56, /64, /96) yields a refused IPv4, and is public
+ * otherwise; because the /32 decoding reads the fixed prefix bits 0x0001 as
+ * 0.1.x.x, every such address is in practice refused. Teredo 2001::/32 is refused when its
  * server or (de-obfuscated) client IPv4 is refused, and is public otherwise
  * (it is tunnelled through Internet relays, never a LAN destination). Neither
  * is ever private: that would lift the https requirement and the airgap
@@ -164,12 +165,13 @@ function classifyIPv6(groups: number[]): AddressClass {
   if (g(0) === 0x64 && g(1) === 0xff9b && isZero(2, 6)) return classifyIPv4(embedded(g(6), g(7)));
   // Local-use NAT64 64:ff9b:1::/48 (RFC 8215). The /96 layout carries the
   // IPv4 in the last 32 bits and is classified by it. Outside the /96 layout
-  // the translator's prefix length is unknown, so every RFC 6052 layout that
-  // fits the /48 allocation is decoded (bits 64-71, the u-octet, are
-  // skipped): any refused decoding refuses the address; otherwise it is
-  // PUBLIC (https required, refused in airgap builds) - a translator may map
-  // it to any IPv4. (A /32 layout cannot lie inside this /48: it would read
-  // the fixed prefix bits 0x0001 as 0.1.x.x.)
+  // the translator's prefix length is unknown, so every RFC 6052 layout is
+  // decoded (bits 64-71, the u-octet, are skipped): any refused decoding
+  // refuses the address; otherwise it is PUBLIC (https required, refused in
+  // airgap builds) - a translator may map it to any IPv4. The /32 decoding
+  // reads the fixed prefix bits 0x0001 as 0.1.x.x (unspecified), so every
+  // local-use address outside /96 is refused; it is evaluated LAST so a more
+  // specific rule (metadata, link-local) is the one reported.
   if (g(0) === 0x64 && g(1) === 0xff9b && g(2) === 0x0001) {
     if (isZero(3, 6)) return classifyIPv4(embedded(g(6), g(7)));
     const layouts: number[][] = [
@@ -178,6 +180,7 @@ function classifyIPv6(groups: number[]): AddressClass {
       [g(3) & 0xff, g(4) & 0xff, g(5) >> 8, g(5) & 0xff], // /56
       [g(4) & 0xff, g(5) >> 8, g(5) & 0xff, g(6) >> 8], // /64
       embedded(g(6), g(7)), // /96
+      [g(2) >> 8, g(2) & 0xff, g(3) >> 8, g(3) & 0xff], // /32
     ];
     for (const octets of layouts) {
       const cls = classifyIPv4(octets);

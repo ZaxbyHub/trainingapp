@@ -1,5 +1,5 @@
 {
-  "_comment": "Supplemental endpoint-policy vectors (universal-provider-settings-overhaul). Asserted row-for-row, together with endpoint-policy-vectors.json, by the web (web_ui/src/lib/llm/endpoint-policy.test.ts) and desktop (desktop/src/__tests__/endpoint-policy.test.ts) policy twins. Covers WHATWG numeric IPv4 forms, IPv4-embedding IPv6 forms (mapped, compatible, NAT64 64:ff9b::/96, SIIT ::ffff:0:0:0/96, local-use NAT64 64:ff9b:1::/48, 6to4 2002::/16, Teredo 2001::/32 and local-use NAT64 outside the /96 layout refused when any IPv4 they may carry is refused, otherwise public - never private), the unspecified address, multicast/broadcast, CGNAT and trailing-dot names. Unspecified/multicast/broadcast targets report rule invalid-url because the rule set is frozen; the message names the reason.",
+  "_comment": "Supplemental endpoint-policy vectors (universal-provider-settings-overhaul). Asserted row-for-row, together with endpoint-policy-vectors.json, by the web (web_ui/src/lib/llm/endpoint-policy.test.ts) and desktop (desktop/src/__tests__/endpoint-policy.test.ts) policy twins. Covers WHATWG numeric IPv4 forms, IPv4-embedding IPv6 forms (mapped, compatible, NAT64 64:ff9b::/96, SIIT ::ffff:0:0:0/96, local-use NAT64 64:ff9b:1::/48, 6to4 2002::/16, Teredo 2001::/32 refused when either IPv4 it carries is refused, otherwise public; local-use NAT64 outside the /96 layout refused - every RFC 6052 decoding /32-/96 is checked and the /32 one always reads 0.1.x.x), the unspecified address, multicast/broadcast, CGNAT and trailing-dot names. Unspecified/multicast/broadcast targets report rule invalid-url because the rule set is frozen; the message names the reason.",
   "cases": [
     { "url": "http://2130706433", "ok": true, "kind": "loopback" },
     { "url": "http://0177.0.0.1:8080", "ok": true, "kind": "loopback" },
@@ -37,9 +37,9 @@
     { "url": "http://[64:ff9b:1::169.254.1.1]", "ok": false, "rules": ["link-local"] },
     { "url": "http://[64:ff9b:1::10.0.0.1]", "ok": true, "kind": "private" },
     { "url": "http://[64:ff9b:1::127.0.0.1]", "ok": true, "kind": "loopback" },
-    { "url": "https://[64:ff9b:1:808:8:808:800:0]", "ok": true, "kind": "public" },
-    { "url": "http://[64:ff9b:1:808:8:808:800:0]", "ok": false, "rules": ["public-requires-https"] },
-    { "url": "https://[64:ff9b:1:808:8:808:800:0]", "airgap": true, "ok": false, "rules": ["airgap-public"] },
+    { "url": "https://[64:ff9b:1:808:8:808:800:0]", "ok": false, "rules": ["invalid-url"] },
+    { "url": "http://[64:ff9b:1:808:8:808:800:0]", "ok": false, "rules": ["invalid-url"] },
+    { "url": "https://[64:ff9b:1:808:8:808:800:0]", "airgap": true, "ok": false, "rules": ["invalid-url"] },
     { "url": "http://[64:ff9b:1:a9fe:a9:fe00::]/", "ok": false, "rules": ["metadata"] },
     { "url": "http://[64:ff9b:1:a9fe:a9:fe00::]/", "airgap": true, "ok": false, "rules": ["metadata"] },
     { "url": "https://[64:ff9b:1:abcd::1]", "ok": false, "rules": ["invalid-url"] },
