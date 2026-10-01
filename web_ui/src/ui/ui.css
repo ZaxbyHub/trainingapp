@@ -16,6 +16,13 @@
 
 .ui-icon { flex: none; }
 
+/* Disabled (section 3.6): label dimmed, no pointer affordance, no hover. */
+.ui-disabled, .ui-disabled * { cursor: not-allowed; }
+.ui-disabled .ui-toggle__label, .ui-disabled .ui-toggle__desc,
+.ui-disabled .ui-radio-card__label, .ui-disabled .ui-radio-card__desc,
+.ui-segmented__item.ui-disabled { color: var(--text-disabled); }
+.ui-segmented__item.ui-disabled.ui-segmented-on { background: var(--bg-sunken); box-shadow: none; }
+
 /* ------------------------------------------------------------- Button */
 .ui-button {
   display: inline-flex;
@@ -113,7 +120,7 @@
 .ui-select:disabled { color: var(--text-disabled); cursor: not-allowed; }
 .ui-password { position: relative; display: block; }
 .ui-password__input { padding-right: calc(var(--target-primary) + var(--space-1)); }
-.ui-password__toggle { position: absolute; top: 4px; right: 4px; }
+.ui-password > .ui-tooltip-wrap { position: absolute; top: 4px; right: 4px; }
 
 .ui-toggle { display: inline-flex; align-items: flex-start; gap: var(--space-3); cursor: pointer; position: relative; }
 .ui-toggle__text { display: flex; flex-direction: column; }
@@ -141,7 +148,7 @@
 
 .ui-radio-cards { display: grid; gap: var(--space-2); }
 .ui-radio-card { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); background: var(--bg-surface); border: 1px solid var(--border-control); border-radius: var(--r-card); cursor: pointer; }
-.ui-radio-card:hover { background: var(--bg-hover); }
+.ui-radio-card:hover:not(.ui-disabled) { background: var(--bg-hover); }
 .ui-radio-card.ui-selected { background: var(--bg-selected); border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
 .ui-radio-card__input { margin: 3px 0 0; accent-color: var(--accent); }
 .ui-radio-card__text { display: flex; flex-direction: column; }
@@ -189,11 +196,20 @@
 
 .ui-tabs__list { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-subtle); overflow-x: auto; }
 .ui-tabs__tab { min-height: var(--target-primary); padding: 0 var(--space-4); background: transparent; color: var(--text-secondary); border: 0; border-bottom: 3px solid transparent; font-family: inherit; font-size: var(--type-label-size); font-weight: var(--type-label-weight); cursor: pointer; }
-.ui-tabs__tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.ui-tabs__tab:hover:not([aria-disabled="true"]) { background: var(--bg-hover); color: var(--text-primary); }
 .ui-tabs__tab.ui-selected { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-.ui-tabs__tab[aria-disabled="true"] { cursor: not-allowed; }
+.ui-tabs__tab[aria-disabled="true"] { color: var(--text-disabled); cursor: not-allowed; }
 .ui-tabs__panel { padding: var(--space-4) 0; }
 .ui-tabs__panel[hidden] { display: none; }
+
+/* Reduced motion (section 3.4): collapsing --dur-* to ~0 would make infinite
+   animations flicker at ~250 Hz, so they are removed outright. aria-busy on
+   Button remains the loading cue. */
+@media (prefers-reduced-motion: reduce) {
+  .ui-spinner,
+  .ui-skeleton,
+  .ui-progress--indeterminate .ui-progress__fill { animation: none; }
+}
 
 @media (forced-colors: active) {
   /* .ui-selected's 2px border in lumen-tokens.css must not be overridden here. */

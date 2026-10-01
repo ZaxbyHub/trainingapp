@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Lumen phase-0 visual-baseline harness (design-language.md section 6).
+ * Lumen phase-0 visual-baseline harness (docs/design/design-language.md section 6).
  *
  * Opt-in and NOT part of `npm run test:e2e`: the default config
  * (playwright.config.ts) ignores e2e/visual/. Baselines are rendered by

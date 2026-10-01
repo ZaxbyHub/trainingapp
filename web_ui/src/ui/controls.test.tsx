@@ -66,8 +66,15 @@ describe('IconButton', () => {
   it('exposes its aria-label as accessible name and tooltip, icon is decorative', () => {
     render(<IconButton icon="plus" aria-label="New chat" />);
     const btn = screen.getByRole('button', { name: 'New chat' });
-    expect(btn).toHaveAttribute('title', 'New chat');
     expect(btn.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('shows its label as a Tooltip on keyboard focus and keeps the aria-label', async () => {
+    render(<IconButton icon="plus" aria-label="New chat" />);
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'New chat' })).toHaveFocus();
+    expect(screen.getByRole('tooltip')).toHaveTextContent('New chat');
   });
 });
 
@@ -230,6 +237,41 @@ describe('Switch and Checkbox caller ARIA', () => {
       </>
     );
     expect(screen.getByRole('switch')).toHaveAttribute('aria-describedby', 'ext-err');
+  });
+});
+
+describe('disabled styling hooks', () => {
+  const opts = [
+    { value: 'a', label: 'A' },
+    { value: 'b', label: 'B', disabled: true },
+  ];
+  it('SegmentedControl and RadioCardGroup mark only disabled options with .ui-disabled', () => {
+    render(
+      <>
+        <SegmentedControl legend="Seg" options={opts} value="a" onChange={() => {}} />
+        <RadioCardGroup legend="Cards" options={opts} value="a" onChange={() => {}} />
+      </>
+    );
+    for (const radio of screen.getAllByRole('radio', { name: 'B' })) {
+      expect(radio.closest('label')).toHaveClass('ui-disabled');
+    }
+    for (const radio of screen.getAllByRole('radio', { name: 'A' })) {
+      expect(radio.closest('label')).not.toHaveClass('ui-disabled');
+    }
+  });
+  it('Switch and Checkbox label gets .ui-disabled only when disabled', () => {
+    render(
+      <>
+        <Switch label="S1" disabled />
+        <Checkbox label="C1" disabled />
+        <Switch label="S2" />
+        <Checkbox label="C2" />
+      </>
+    );
+    expect(screen.getByRole('switch', { name: 'S1' }).closest('label')).toHaveClass('ui-disabled');
+    expect(screen.getByRole('checkbox', { name: 'C1' }).closest('label')).toHaveClass('ui-disabled');
+    expect(screen.getByRole('switch', { name: 'S2' }).closest('label')).not.toHaveClass('ui-disabled');
+    expect(screen.getByRole('checkbox', { name: 'C2' }).closest('label')).not.toHaveClass('ui-disabled');
   });
 });
 

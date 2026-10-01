@@ -1,5 +1,5 @@
 /**
- * lumen-axe.spec.ts — Lumen phase 0 accessibility pass: axe-core (WCAG 2.0/2.1
+ * lumen-axe.spec.ts — Lumen phase 0 accessibility pass: axe-core (WCAG 2.0/2.1/2.2
  * A + AA tags) over every browser-mode surface, light + dark, at 1440 and 500.
  * Run through playwright.visual.config.ts (opt-in).
  *
@@ -136,7 +136,7 @@ for (const theme of THEMES) {
           await page.waitForTimeout(500);
 
           const results = await new AxeBuilder({ page })
-            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])
             .analyze();
           const blocking = results.violations.filter(
             (v) => v.impact === 'serious' || v.impact === 'critical'

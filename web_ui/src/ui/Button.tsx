@@ -1,6 +1,7 @@
 import type { ButtonHTMLAttributes, MouseEvent } from 'react';
 import { Icon, type IconName } from './icons';
 import { cx } from './cx';
+import { Tooltip } from './Overlays';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 export type ButtonSize = 'md' | 'sm';
@@ -52,21 +53,17 @@ export function Button({
 
 export interface IconButtonProps
   extends Omit<ButtonProps, 'children' | 'aria-label'> {
-  /** Required accessible name; also used as the tooltip. */
+  /** Required accessible name; also shown as a Tooltip on hover and keyboard focus. */
   'aria-label': string;
   icon: IconName;
 }
 
 export function IconButton({ icon, className, size = 'md', variant = 'ghost', ...rest }: IconButtonProps) {
   return (
-    <Button
-      {...rest}
-      size={size}
-      variant={variant}
-      title={rest.title ?? rest['aria-label']}
-      className={cx('ui-icon-button', className)}
-    >
-      <Icon name={icon} />
-    </Button>
+    <Tooltip content={rest.title ?? rest['aria-label']}>
+      <Button {...rest} size={size} variant={variant} className={cx('ui-icon-button', className)}>
+        <Icon name={icon} />
+      </Button>
+    </Tooltip>
   );
 }

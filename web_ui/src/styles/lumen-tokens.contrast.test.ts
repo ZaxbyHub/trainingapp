@@ -1,5 +1,5 @@
 /**
- * Lumen token contrast guard (design-language.md section 2 principle 5 and
+ * Lumen token contrast guard (docs/design/design-language.md section 2 principle 5 and
  * section 6 phase 1). Parses the SHIPPED lumen-tokens.css (no duplicated
  * value table), resolves var() references, blends alpha colors over the
  * surface they are used on, and computes WCAG 2.x relative-luminance contrast

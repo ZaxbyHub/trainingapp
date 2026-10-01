@@ -1,7 +1,7 @@
 /**
  * Phase-2 guardrail: src/ui/ components use ONLY the Lumen tokens. Any
  * reference to a legacy token family, any hard-coded color literal, or any
- * CSS-in-JS escape hatch (design-language.md section 4) fails this test.
+ * CSS-in-JS escape hatch (docs/design/design-language.md section 4) fails this test.
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';

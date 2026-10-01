@@ -131,6 +131,23 @@ describe('Tooltip', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('merges the child aria-describedby with the tooltip id instead of replacing it', async () => {
+    render(
+      <>
+        <span id="help">Field help</span>
+        <Tooltip content="Hint">
+          <Button aria-describedby="help">Trigger</Button>
+        </Tooltip>
+      </>
+    );
+    const btn = screen.getByRole('button', { name: 'Trigger' });
+    expect(btn).toHaveAttribute('aria-describedby', 'help');
+    await userEvent.tab();
+    expect(btn.getAttribute('aria-describedby')?.split(' ')).toContain('help');
+    expect(btn).toHaveAccessibleDescription(/Field help/);
+    expect(btn).toHaveAccessibleDescription(/Hint/);
+  });
+
   it('appears on hover and hides on leave', async () => {
     render(
       <Tooltip content="Hint">
@@ -256,5 +273,27 @@ describe('Tabs edge cases', () => {
     );
     expect(screen.getByRole('tab', { name: 'Y' })).toHaveAttribute('tabindex', '0');
     expect(screen.getByRole('tab', { name: 'X' })).toHaveAttribute('tabindex', '-1');
+  });
+});
+
+describe('Tabs ids', () => {
+  it('builds id/aria-controls/aria-labelledby from the index, so ids with whitespace stay valid IDREFs', () => {
+    render(
+      <Tabs
+        label="Odd"
+        value="a b"
+        onChange={() => {}}
+        items={[
+          { id: 'a b', label: 'Spaced', panel: <p>one</p> },
+          { id: 'c\td', label: 'Tabbed', panel: <p>two</p> },
+        ]}
+      />
+    );
+    const tab = screen.getByRole('tab', { name: 'Spaced' });
+    expect(tab.id).not.toMatch(/\s/);
+    const panel = screen.getByRole('tabpanel', { name: 'Spaced' });
+    expect(tab.getAttribute('aria-controls')).toBe(panel.id);
+    expect(panel.id).not.toMatch(/\s/);
+    expect(screen.getByRole('tab', { name: 'Tabbed' }).id).not.toMatch(/\s/);
   });
 });

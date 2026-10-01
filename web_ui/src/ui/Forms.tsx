@@ -6,7 +6,7 @@ import {
   type SelectHTMLAttributes,
 } from 'react';
 import { IconButton } from './Button';
-import { cx } from './cx';
+import { cx, mergeIds } from './cx';
 
 /* ------------------------------------------------------------------ Field */
 
@@ -95,12 +95,6 @@ export function Select({ className, children, ...rest }: SelectHTMLAttributes<HT
 
 /* --------------------------------------------------- Switch and Checkbox */
 
-/** Space-joined IDREF list; caller-provided ids are kept, not overridden. */
-function mergeIds(...ids: Array<string | undefined>): string | undefined {
-  const merged = ids.filter(Boolean).join(' ');
-  return merged || undefined;
-}
-
 interface ToggleProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'children'> {
   label: ReactNode;
   description?: ReactNode;
@@ -111,7 +105,7 @@ export function Switch({ label, description, className, ...rest }: ToggleProps) 
   const descId = useId();
   const labelId = useId();
   return (
-    <label className={cx('ui-toggle', 'ui-switch', className)}>
+    <label className={cx('ui-toggle', 'ui-switch', rest.disabled && 'ui-disabled', className)}>
       <input
         {...rest}
         type="checkbox"
@@ -139,7 +133,7 @@ export function Checkbox({ label, description, className, ...rest }: ToggleProps
   const descId = useId();
   const labelId = useId();
   return (
-    <label className={cx('ui-toggle', 'ui-checkbox', className)}>
+    <label className={cx('ui-toggle', 'ui-checkbox', rest.disabled && 'ui-disabled', className)}>
       <input
         {...rest}
         type="checkbox"
@@ -188,7 +182,7 @@ export function SegmentedControl({ legend, options, value, onChange, hideLegend,
         {options.map((o) => {
           const on = o.value === value;
           return (
-            <label key={o.value} className={cx('ui-segmented__item', on && 'ui-segmented-on')}>
+            <label key={o.value} className={cx('ui-segmented__item', on && 'ui-segmented-on', o.disabled && 'ui-disabled')}>
               <input
                 type="radio"
                 name={name}
@@ -219,7 +213,7 @@ export function RadioCardGroup({ legend, options, value, onChange, hideLegend, c
         const labelId = `${base}-${i}-label`;
         const descId = `${base}-${i}-desc`;
         return (
-          <label key={o.value} className={cx('ui-radio-card', on && 'ui-selected')}>
+          <label key={o.value} className={cx('ui-radio-card', on && 'ui-selected', o.disabled && 'ui-disabled')}>
             <input
               aria-labelledby={labelId}
               aria-describedby={o.description ? descId : undefined}

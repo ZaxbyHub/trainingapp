@@ -17,7 +17,8 @@ export interface TabsProps {
   className?: string;
 }
 
-/** WAI-ARIA tabs: roving tabindex, arrow/Home/End keys, automatic activation. */
+/** Ids are built from the item INDEX (ids may contain whitespace, which would split an IDREF).
+ * WAI-ARIA tabs: roving tabindex, arrow/Home/End keys, automatic activation. */
 export function Tabs({ label, items, value, onChange, className }: TabsProps) {
   const base = useId();
   const refs = useRef(new Map<string, HTMLButtonElement>());
@@ -44,7 +45,7 @@ export function Tabs({ label, items, value, onChange, className }: TabsProps) {
   return (
     <div className={cx('ui-tabs', className)}>
       <div role="tablist" aria-label={label} className="ui-tabs__list" onKeyDown={onKeyDown}>
-        {items.map((item) => {
+        {items.map((item, i) => {
           const selected = item.id === value;
           return (
             <button
@@ -55,9 +56,9 @@ export function Tabs({ label, items, value, onChange, className }: TabsProps) {
               }}
               type="button"
               role="tab"
-              id={`${base}-tab-${item.id}`}
+              id={`${base}-tab-${i}`}
               aria-selected={selected}
-              aria-controls={`${base}-panel-${item.id}`}
+              aria-controls={`${base}-panel-${i}`}
               aria-disabled={item.disabled || undefined}
               tabIndex={item.id === tabStopId ? 0 : -1}
               className={cx('ui-tabs__tab', 'ui-focusable', selected && 'ui-selected')}
@@ -70,12 +71,12 @@ export function Tabs({ label, items, value, onChange, className }: TabsProps) {
           );
         })}
       </div>
-      {items.map((item) => (
+      {items.map((item, i) => (
         <div
           key={item.id}
           role="tabpanel"
-          id={`${base}-panel-${item.id}`}
-          aria-labelledby={`${base}-tab-${item.id}`}
+          id={`${base}-panel-${i}`}
+          aria-labelledby={`${base}-tab-${i}`}
           hidden={item.id !== value}
           tabIndex={0}
           className="ui-tabs__panel ui-focusable"

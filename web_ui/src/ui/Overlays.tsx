@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { mergeIds } from './cx';
 import { cx } from './cx';
 
 const FOCUSABLE =
@@ -133,7 +134,7 @@ export function Tooltip({ content, children }: TooltipProps) {
         }
       }}
     >
-      {cloneElement(children, { 'aria-describedby': shown ? id : children.props['aria-describedby'] })}
+      {cloneElement(children, { 'aria-describedby': mergeIds(shown ? id : undefined, children.props['aria-describedby']) })}
       {shown ? (
         <span role="tooltip" id={id} className="ui-tooltip">
           {content}

@@ -14,7 +14,7 @@ export interface SectionProps extends Omit<HTMLAttributes<HTMLElement>, 'title'>
   actions?: ReactNode;
 }
 
-/** `<section aria-labelledby>` + heading (design-language.md section 4). */
+/** `<section aria-labelledby>` + heading (docs/design/design-language.md section 4). */
 export function Section({
   title,
   description,

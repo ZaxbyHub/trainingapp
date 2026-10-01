@@ -1,5 +1,5 @@
 /**
- * lumen-baseline.spec.ts — Lumen design-language phase 0 (section 6): visual
+ * lumen-baseline.spec.ts — Lumen design-language (docs/design/design-language.md) phase 0 (section 6): visual
  * regression baselines of every top-level browser-mode surface, light + dark,
  * at widths 1440 / 1024 / 768 / 500, so every later phase shows its visual
  * diff explicitly.

@@ -1,5 +1,5 @@
 /**
- * Lumen UI primitives (design-language.md section 4). Importing this module
+ * Lumen UI primitives (docs/design/design-language.md section 4). Importing this module
  * also loads the component stylesheet; the design tokens themselves come from
  * styles/theme.css -> lumen-tokens.css.
  *
