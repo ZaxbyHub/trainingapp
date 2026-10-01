@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { defineConfig, devices } from '@playwright/test';
 
 /**
@@ -9,8 +10,16 @@ import { defineConfig, devices } from '@playwright/test';
  * snapshotPathTemplate) and CI (ubuntu) never runs this config until Linux
  * baselines are generated deliberately.
  *
- * Run (after `npm run build`):
+ * Run (builds first, so dist/ is never stale or foreign):
+ *   npm run test:visual
+ * Or, after an up-to-date `npm run build`:
  *   npx playwright test --config playwright.visual.config.ts
+ *
+ * The overlay text and pixels depend on build-time model-exclusion env
+ * (.env.production written by `npm run prepare-models`, see
+ * ModelBlockedOverlay.tsx): baselines were taken from a plain `npm run build`
+ * WITHOUT staged weights. A build made after prepare-models changes the
+ * overlay screenshots; rebuild from a clean state (no .env.production) to compare.
  * Regenerate baselines (only from a known-good UI):
  *   npx playwright test --config playwright.visual.config.ts --update-snapshots
  *
@@ -18,6 +27,11 @@ import { defineConfig, devices } from '@playwright/test';
  * default e2e harness (4174), desktop (4173) or other local dev servers.
  */
 const PORT = 4391;
+
+// Fail fast rather than screenshot whatever (or nothing) dist/ happens to hold.
+if (!existsSync('dist/index.html')) {
+  throw new Error('web_ui/dist is missing: run `npm run test:visual` (builds first) or `npm run build`.');
+}
 
 export default defineConfig({
   testDir: './e2e/visual',
@@ -31,6 +45,8 @@ export default defineConfig({
       animations: 'disabled',
       caret: 'hide',
       maxDiffPixelRatio: 0,
+      // Per-pixel color tolerance 0 (default 0.2 hides subtle recolors): unchanged means pixel-identical.
+      threshold: 0,
     },
   },
   use: {

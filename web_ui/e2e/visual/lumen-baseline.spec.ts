@@ -71,9 +71,12 @@ for (const theme of THEMES) {
       test('model-not-ready overlay', async ({ page }) => {
         await boot(page, theme);
         const dialog = page.getByRole('alertdialog');
-        if ((await dialog.count()) === 0) {
-          test.skip(true, 'model gate overlay not shown in this build');
+        const shown = (await dialog.count()) > 0;
+        if (!shown && process.env.LUMEN_ALLOW_NO_OVERLAY === '1') {
+          test.skip(true, 'overlay opt-out (LUMEN_ALLOW_NO_OVERLAY=1)');
         }
+        // Absent gate = regression or a staged-weights build: fail unless explicitly opted out.
+        expect(shown, 'model-gate overlay must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for builds with staged weights').toBe(true);
         await expect(page).toHaveScreenshot(`overlay-model-not-ready-${theme}-${width}.png`, {
           mask: dynamicMasks(page),
         });

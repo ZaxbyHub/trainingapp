@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test --config playwright.config.ts",
+    "test:visual": "npm run build && playwright test --config playwright.visual.config.ts",
     "validate-build:no-llm": "node scripts/validate-build.mjs --no-llm"
   },
   "dependencies": {
