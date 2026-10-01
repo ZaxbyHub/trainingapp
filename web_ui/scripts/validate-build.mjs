@@ -25,7 +25,7 @@
  *                 their own groups, enforced unless their --no-X flag is passed).
  *   - `llm`     — the browser-LLM runtime (wllama WASM/compat) + Gemma 4 E2B-it weights.
  *                  Enforced by default; skipped when `--no-llm` is passed (for
- *                  embeddings-only / server-mode builds where the multi-GB LLM
+ *                  embeddings-only builds where the multi-GB LLM
  *                  weights are deliberately absent).
  *   - `optional` — never enforced.
  *
@@ -205,7 +205,7 @@ if (existsSync(MANIFEST)) {
     process.stderr.write(
       '[validate-build] WARN: --no-llm passed — the browser-LLM runtime + weights group was NOT validated. ' +
         'The resulting artifact CANNOT drive in-browser chat generation. ' +
-        'Only use this for embeddings-only / server-mode builds.\n'
+        'Only use this for embeddings-only builds.\n'
     );
   }
   if (SKIP_RERANKER) {

@@ -126,7 +126,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Operation Cancellation**: Cancel button stops `TokenStreamManager`, clears pending mock timers, and marks streaming messages complete
 
 ### Inference Mode Architecture (Phase 3)
-> Historical (Phase 3): the browser API-server mode, its server URL and the "Server not connected" header warning described here were removed by settings-wiring-honesty; `api` mode now exists only in the desktop app. See CONFIGURATION.md, App Settings.
+> Historical (Phase 3): the browser API-server mode and its server URL described here were removed by settings-wiring-honesty, and with them the browser-side "Server not connected" header warning; `api` mode now exists only in the desktop app (where that warning still reports the desktop backend). See CONFIGURATION.md, App Settings.
 
 - **Dual-Mode Context**: `InferenceModeContext` (`InferenceModeContext.tsx`) manages `browser-local` vs `api` mode via React context
 - **localStorage Persistence**: Mode preference and server URL stored under `inference-mode` key; survives page refresh
