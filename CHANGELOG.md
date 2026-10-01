@@ -11,6 +11,9 @@
   fresh install no longer shows "Balanced" while the backend retrieves 4 chunks ("Using server
   defaults" / "Custom server settings" instead). An explicit preset value wins over the
   inference profile until "Reset to defaults" (new `PUT /settings {"reset": [...]}` directive).
+  A preset matched on result count alone (settings saved before this change) is shown with
+  "Re-select a preset to apply its reranking and answer settings"; selecting it again applies
+  the full preset.
 - The desktop backend now applies stored `rag_max_tokens` / `rag_temperature` at generation
   time and `rag_reranking_enabled` per query (rerank-off queries resolve grounding "general",
   the issue #72 contract). GET /settings reports effective flat values plus optional
@@ -21,7 +24,9 @@
   restored by a revert).
 - Clear Cache now removes every saved browser setting it lists (inference mode, theme,
   provider connection and API key, sidebar, last-opened course) and reloads; its copy says
-  exactly what is removed, and the desktop copy no longer claims to delete documents.
+  exactly what is removed and what is kept in each app (chat history is kept in both; the
+  desktop backend's documents and settings are kept), and the desktop copy no longer claims to
+  delete documents.
 - Browser Engine, browser memory use and Hardware Capability show only in Browser-local mode;
   the desktop inference profile only in API Server mode.
 - About shows the real version from `web_ui/package.json` (kept in lockstep with the desktop

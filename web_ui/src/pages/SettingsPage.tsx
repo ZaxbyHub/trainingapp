@@ -37,6 +37,7 @@ import {
   DESKTOP_PRESET_SETTINGS,
   RAG_PRESET_LABELS,
   presetFromBackend,
+  presetIsNResultsOnly,
   type DesktopPresetState,
 } from '../lib/rag/rag-presets';
 import { clearUserSettings } from '../lib/storage/persisted-keys';
@@ -703,6 +704,10 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
   const [desktopPreset, setDesktopPreset] = useState<DesktopPresetState | null>(null);
   // The last desktop settings body (reranker availability for the cards).
   const [desktopSettings, setDesktopSettings] = useState<Record<string, unknown> | null>(null);
+  // True when the backend matched a preset on rag_n_results alone (a profile
+  // saved before presets wrote the full patch): the preset's reranking and
+  // answer settings are NOT applied until the user re-selects it.
+  const [presetNeedsReapply, setPresetNeedsReapply] = useState(false);
   const [presetError, setPresetError] = useState<string | null>(null);
   // Latest-wins: every preset GET/PUT takes a ticket and a response whose
   // ticket is stale (a newer read or write started) is ignored, so a GET
@@ -712,6 +717,7 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
   const applyDesktopSettings = useCallback((settings: Record<string, unknown>) => {
     setDesktopSettings(settings);
     setDesktopPreset(presetFromBackend(settings));
+    setPresetNeedsReapply(presetIsNResultsOnly(settings));
   }, []);
 
   // B9 (issue #67) + settings-wiring-honesty (AC1/AC2): read the desktop
@@ -781,8 +787,11 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
       setRagPreset(preset);
       if (!desktopSession) return;
       const previousDisplay = desktopPreset;
+      const previousNeedsReapply = presetNeedsReapply;
       const ticket = ++presetTicketRef.current;
       setDesktopPreset({ kind: 'preset', preset });
+      // The full patch is being sent, so every preset setting will be explicit.
+      setPresetNeedsReapply(false);
       desktopSession.apiClient
         .updateSettings({ ...DESKTOP_PRESET_SETTINGS[preset] })
         .then((response) => {
@@ -796,13 +805,14 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
         .catch((err) => {
           if (!isMountedRef.current || ticket !== presetTicketRef.current) return;
           setDesktopPreset(previousDisplay);
+          setPresetNeedsReapply(previousNeedsReapply);
           setRagPreset(previousRagPreset);
           setPresetError(
             `The preset could not be applied to the desktop backend: ${err instanceof Error ? err.message : String(err)}`
           );
         });
     },
-    [desktopApp, desktopSession, desktopPreset, ragPreset, setRagPreset, applyDesktopSettings]
+    [desktopApp, desktopSession, desktopPreset, presetNeedsReapply, ragPreset, setRagPreset, applyDesktopSettings]
   );
 
   // settings-wiring-honesty (IC1): "Reset to defaults" clears the preset keys
@@ -1548,6 +1558,13 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                       value={preset}
                       checked={presetChecked(preset)}
                       onChange={() => handleRagPresetChange(preset)}
+                      // A checked radio fires no change event, so re-selecting
+                      // the preset matched on rag_n_results alone (settings
+                      // saved before presets wrote the full patch) re-applies
+                      // its full patch on click instead.
+                      onClick={() => {
+                        if (electronMode && presetNeedsReapply && presetChecked(preset)) handleRagPresetChange(preset);
+                      }}
                       style={radioInputStyle}
                       aria-describedby={`rag-${preset}-desc`}
                     />
@@ -1556,7 +1573,9 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                       <p id={`rag-${preset}-desc`} style={descriptionStyle}>
                         {RAG_PRESET_LABELS[preset].description}
                         {electronMode &&
-                          " On the desktop backend it overrides the inference profile's answer length and temperature until reset."}
+                          (presetNeedsReapply && presetChecked(preset)
+                            ? ' Re-select a preset to apply its reranking and answer settings.'
+                            : " On the desktop backend it overrides the inference profile's answer length and temperature until reset.")}
                         {rerankUnavailable && DESKTOP_PRESET_SETTINGS[preset].rag_reranking_enabled &&
                           ' Reranking unavailable on this installation.'}
                       </p>
@@ -1727,11 +1746,11 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                   what is removed and what is kept in each app. */}
               {clearCacheState === 'confirming'
                 ? desktopApp
-                  ? `This removes this app's local caches and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Documents and settings stored by the desktop backend are kept; to remove documents, use the Documents page. This cannot be undone.`
-                  : `This deletes the documents and keyword/vector indexes stored in this browser, downloaded model weights, and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. This cannot be undone.`
+                  ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, downloaded browser-model files, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
+                  : `This deletes the documents and keyword/vector indexes stored in this browser, downloaded model weights, and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
                 : desktopApp
-                  ? "Clear this app's local caches and saved settings. Documents in the desktop library are kept."
-                  : 'Clear downloaded models, search indexes, and saved settings in this browser.'}
+                  ? "Clear this app's browser-side indexes, downloaded browser-model files and saved settings. Chat history and documents in the desktop library are kept."
+                  : 'Clear downloaded models, search indexes, and saved settings in this browser. Chat history is kept.'}
             </span>
             {/* Result feedback (issue #24 F1) — announced to screen readers */}
             {clearCacheResult === 'clearing' && (

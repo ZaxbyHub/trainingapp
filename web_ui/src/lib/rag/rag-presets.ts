@@ -134,3 +134,17 @@ export function presetFromBackend(settings: Record<string, unknown>): DesktopPre
   );
   return match !== undefined ? { kind: 'preset', preset: match } : { kind: 'custom' };
 }
+
+/**
+ * True when rag_n_results is the ONLY explicitly set preset key (a profile
+ * saved before presets wrote the full patch). presetFromBackend still matches
+ * a preset on n_results alone (IC4), but the backend is then NOT applying that
+ * preset's reranking, answer length or temperature, so the UI must not claim
+ * it is. False when the backend does not report explicit_keys.
+ */
+export function presetIsNResultsOnly(settings: Record<string, unknown>): boolean {
+  const explicitKeys = settings.explicit_keys;
+  if (!Array.isArray(explicitKeys)) return false;
+  const explicitPresetKeys = DESKTOP_PRESET_KEYS.filter((key) => explicitKeys.includes(key));
+  return explicitPresetKeys.length === 1 && explicitPresetKeys[0] === 'rag_n_results';
+}

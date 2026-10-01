@@ -382,7 +382,10 @@ the Python backend's flat defaults by design. Optional properties explain the va
 
 The Settings page derives the selected preset from these values: a preset is shown only when
 every explicitly set preset key matches it; otherwise it shows "Custom server settings", or
-"Using server defaults" when nothing is set.
+"Using server defaults" when nothing is set. When `rag_n_results` is the only explicit key
+(settings saved before presets wrote all four keys), the matching preset is shown with "Re-select
+a preset to apply its reranking and answer settings": the backend is then not applying that
+preset's reranking, answer length or temperature, and selecting the preset again applies them.
 
 ### Clear Cache
 
@@ -390,9 +393,12 @@ Clear Cache removes, in this browser profile: the document library and its keywo
 indexes, downloaded WebLLM weights, orphaned data from earlier sessions, and every saved
 setting registered in `web_ui/src/lib/storage/persisted-keys.ts` (inference mode, browser
 engine and response-quality choices, theme, provider connection and API key, sidebar state,
-last-opened course). It keeps the internal profile id, migration marker and re-index notice
-flag, then reloads the page. In the desktop app it does **not** touch documents or settings
-stored by the desktop backend — remove those documents from the Documents page.
+last-opened course). It keeps your chat history (conversations, stored separately from the
+document library) and the internal profile id, migration marker and re-index notice flag, then
+reloads the page. The desktop app removes the same browser-side data from its app window (the
+browser-side document and index databases, downloaded browser-model files and saved settings);
+it also keeps chat history and does **not** touch documents or settings stored by the desktop
+backend — remove those documents from the Documents page.
 
 ## LLM Backend Configuration
 

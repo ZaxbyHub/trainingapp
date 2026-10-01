@@ -8,7 +8,7 @@
  * must forward ONLY a string section to SettingsPage, and sidebar navigation
  * must never carry a stale section. ChatPage and SettingsPage are stubbed so
  * this pins exactly what App passes through; the SettingsPage focus behavior
- * itself is pinned in SettingsPage.settings-wiring.test.tsx.
+ * itself is pinned in pages/__tests__/settings-wiring-honesty.test.tsx.
  */
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -53,7 +53,6 @@ vi.mock('./lib/inference/InferenceModeContext', () => ({
     setMode: vi.fn(),
     setBrowserEngine: vi.fn(),
     setRagPreset: vi.fn(),
-    setServerUrl: vi.fn(),
     checkServerConnectivity: vi.fn(),
     setModelReady: vi.fn(),
     modeError: null,

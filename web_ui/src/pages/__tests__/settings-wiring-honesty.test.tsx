@@ -240,6 +240,63 @@ describe('desktop Response Quality preset (AC1-AC3)', () => {
     expect(screen.getByText(/custom server settings/i)).toHaveTextContent(/browser-local chat uses the fast preset/i);
   });
 
+  test('a preset matched on n_results alone does not claim its other settings and re-applies on re-select (final-critic F2)', async () => {
+    H.reset({ mode: 'api' });
+    const q = DESKTOP_PRESET_SETTINGS.quality;
+    const confirmed = backend([...DESKTOP_PRESET_KEYS], {
+      n_results: q.rag_n_results,
+      reranking_enabled: q.rag_reranking_enabled,
+      max_tokens: q.rag_max_tokens,
+      temperature: q.rag_temperature,
+    });
+    // Saved before presets wrote the full patch: only rag_n_results is explicit.
+    const { session, updateSettings } = makeSession(
+      backend(['rag_n_results'], { n_results: q.rag_n_results }),
+      async () => confirmed,
+    );
+    const { container } = renderElectron(session);
+    await settle();
+    expect(checkedPreset(container)).toBe('quality'); // IC4: still reads back
+    const desc = (p: string) => document.getElementById(`rag-${p}-desc`)?.textContent ?? '';
+    expect(desc('quality')).toMatch(/re-select a preset to apply its reranking and answer settings/i);
+    expect(desc('quality')).not.toMatch(/overrides the inference profile/i);
+    // Selecting another preset sends the full patch, so its card may promise it.
+    expect(desc('fast')).toMatch(/overrides the inference profile/i);
+
+    // Clicking the already-checked card (no change event) re-applies the full patch.
+    await act(async () => {
+      fireEvent.click(container.querySelector('input[name="rag-preset"][value="quality"]') as HTMLInputElement);
+    });
+    await settle();
+    expect(updateSettings).toHaveBeenCalledWith({ ...q });
+    expect(desc('quality')).toMatch(/overrides the inference profile/i);
+    expect(desc('quality')).not.toMatch(/re-select a preset/i);
+  });
+
+  test('a fully explicit preset states the override and shows no re-select caption; clicking it again sends nothing', async () => {
+    H.reset({ mode: 'api' });
+    const q = DESKTOP_PRESET_SETTINGS.quality;
+    const { session, updateSettings } = makeSession(
+      backend([...DESKTOP_PRESET_KEYS], {
+        n_results: q.rag_n_results,
+        reranking_enabled: q.rag_reranking_enabled,
+        max_tokens: q.rag_max_tokens,
+        temperature: q.rag_temperature,
+      }),
+    );
+    const { container } = renderElectron(session);
+    await settle();
+    expect(checkedPreset(container)).toBe('quality');
+    const quality = document.getElementById('rag-quality-desc')?.textContent ?? '';
+    expect(quality).toMatch(/overrides the inference profile's answer length and temperature/i);
+    expect(quality).not.toMatch(/re-select a preset/i);
+    await act(async () => {
+      fireEvent.click(container.querySelector('input[name="rag-preset"][value="quality"]') as HTMLInputElement);
+    });
+    await settle();
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
   test('no reranker on this installation is stated on the reranking presets', async () => {
     H.reset({ mode: 'api' });
     const { session } = makeSession(backend([], {}, { reranking_available: false }));
@@ -364,6 +421,35 @@ describe('Clear Cache (AC5)', () => {
       await new Promise((r) => setTimeout(r, 700));
     });
     expect(reloadPage).not.toHaveBeenCalled();
+  });
+
+  const clearCopy = () => document.getElementById('clear-cache-desc')?.textContent ?? '';
+
+  test('browser app: idle and confirming copy name what is removed and that chat history is kept (final-critic F1)', async () => {
+    H.reset({ mode: 'browser-local' });
+    render(<SettingsPage />);
+    const button = await screen.findByRole('button', { name: /clear cache/i });
+    expect(clearCopy()).toMatch(/chat history is kept/i);
+    fireEvent.click(button);
+    const confirming = clearCopy();
+    expect(confirming).toMatch(/documents and keyword\/vector indexes stored in this browser/i);
+    expect(confirming).toMatch(/downloaded model weights/i);
+    expect(confirming).toMatch(/your chat history \(conversations\) is kept/i);
+  });
+
+  test('desktop app: copy names the browser-side data removed and keeps chat history and backend documents/settings (final-critic F1)', async () => {
+    H.reset({ mode: 'api' });
+    const { session } = makeSession(backend([], {}));
+    renderElectron(session);
+    const button = await screen.findByRole('button', { name: /clear cache/i });
+    expect(clearCopy()).toMatch(/chat history and documents in the desktop library are kept/i);
+    expect(clearCopy()).not.toMatch(/local caches/i);
+    fireEvent.click(button);
+    const confirming = clearCopy();
+    expect(confirming).toMatch(/browser-side document and keyword\/vector index databases/i);
+    expect(confirming).toMatch(/downloaded browser-model files/i);
+    expect(confirming).toMatch(/kept: your chat history \(conversations\), and the documents and settings stored by the desktop backend/i);
+    expect(confirming).not.toMatch(/local caches/i);
   });
 });
 
