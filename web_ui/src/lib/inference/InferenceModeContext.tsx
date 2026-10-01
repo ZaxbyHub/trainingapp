@@ -17,7 +17,7 @@ import { disposeBrowserEngine } from '../llm/llm-factory';
 import { getToken } from '../api/auth';
 import { initDesktopSession, isElectron } from '../desktop-session';
 import { INFERENCE_MODE_KEY } from '../storage/persisted-keys';
-import { migrateLegacyProviderBlob } from '../llm/external-migration';
+import { migrateLegacyProviderBlob, migrateUnboundExternalKey } from '../llm/external-migration';
 
 export type InferenceMode = 'browser-local' | 'api';
 
@@ -83,6 +83,8 @@ const InferenceModeContext = createContext<InferenceModeContextValue | null>(nul
 function migrateLegacyBrowserBlob(input: Record<string, unknown>): Record<string, unknown> {
   if (isElectron()) return input;
   const parsed = migrateLegacyProviderBlob(input);
+  // Boot migration of an external API key saved without a bound origin.
+  migrateUnboundExternalKey();
   if (parsed.mode !== 'api' && !('serverUrl' in parsed)) return parsed;
   const migrated: Record<string, unknown> = { ...parsed };
   if (migrated.mode === 'api') migrated.mode = 'browser-local';

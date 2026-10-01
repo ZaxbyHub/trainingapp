@@ -24,6 +24,7 @@
  */
 import type { ApiClient } from '../api';
 import { ApiError } from '../api/types';
+import { isElectron } from '../desktop-session';
 import {
   EXTERNAL_API_KEY_KEY,
   EXTERNAL_API_KEY_ORIGIN_KEY,
@@ -32,6 +33,48 @@ import {
   PROVIDER_API_KEY_KEY,
 } from '../storage/persisted-keys';
 import { keyOriginOf } from './key-origin';
+
+/**
+ * Browser app, boot migration (review round 2 ruling e): a key saved by an
+ * earlier build of this branch without a bound origin is bound to the stored
+ * base URL's origin, or DROPPED when there is no usable base URL (it cannot be
+ * attributed to an endpoint, so it is never sent). Runs from the inference-mode
+ * boot path next to the PR #138 migration and at the start of every
+ * saveExternalConfig(); reads in external-provider.ts evaluate the same rule
+ * without writing, so render stays pure.
+ */
+export function migrateUnboundExternalKey(): void {
+  if (isElectron()) return;
+  let baseUrl = '';
+  let remember = false;
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(EXTERNAL_CONFIG_KEY) ?? '{}');
+    if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+      const cfg = raw as { baseUrl?: unknown; rememberKey?: unknown };
+      baseUrl = typeof cfg.baseUrl === 'string' ? cfg.baseUrl : '';
+      remember = cfg.rememberKey === true;
+    }
+  } catch {
+    /* unreadable config: treated as no base URL */
+  }
+  try {
+    const storage = remember ? localStorage : sessionStorage;
+    const key = storage.getItem(EXTERNAL_API_KEY_KEY) ?? '';
+    if (key === '' || storage.getItem(EXTERNAL_API_KEY_ORIGIN_KEY) !== null) return;
+    const origin = keyOriginOf(baseUrl);
+    if (origin !== '') {
+      if (remember) localStorage.setItem(EXTERNAL_API_KEY_ORIGIN_KEY, origin);
+      else sessionStorage.setItem(EXTERNAL_API_KEY_ORIGIN_KEY, origin);
+      return;
+    }
+    localStorage.removeItem(EXTERNAL_API_KEY_KEY);
+    localStorage.removeItem(EXTERNAL_API_KEY_ORIGIN_KEY);
+    sessionStorage.removeItem(EXTERNAL_API_KEY_KEY);
+    sessionStorage.removeItem(EXTERNAL_API_KEY_ORIGIN_KEY);
+  } catch {
+    /* storage unavailable: nothing persisted to migrate */
+  }
+}
 
 /** Blob marker desktop-seed sets when it moved a stored 'provider' mode to 'api'. */
 export const LEGACY_PROVIDER_MARKER = 'legacyProviderMode';

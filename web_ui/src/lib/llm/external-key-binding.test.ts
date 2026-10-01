@@ -21,6 +21,7 @@ import {
   keyOriginOf,
   loadExternalConfig,
   loadExternalKeyState,
+  migrateUnboundExternalKey,
   probeExternalEndpoint,
   saveExternalConfig,
 } from './external-provider';
@@ -187,11 +188,50 @@ describe('binding lifecycle', () => {
     expect(keyForBaseUrl('http://localhost:1234')).toBe('');
   });
 
-  test('an explicit keyOrigin binds to the URL the user sees, not the stored one', () => {
+  test('a key saved together with a base URL binds to THAT URL, not the one stored before', () => {
     saveExternalConfig({ baseUrl: 'http://localhost:1234' });
-    saveExternalConfig({ apiKey: KEY }, { keyOrigin: 'http://192.168.1.20:8000/v1' });
+    saveExternalConfig({ baseUrl: 'http://192.168.1.20:8000/v1', apiKey: KEY });
     expect(keyForBaseUrl('http://localhost:1234')).toBe('');
     expect(keyForBaseUrl('http://192.168.1.20:8000')).toBe(KEY);
+  });
+
+  // Review round 2 (R2-F1): a pending key (saved with no base URL) must not be
+  // bound to a URL that is merely already stored when another field is saved.
+  test('a pending key binds only on an explicit base-URL save, never on other saves', () => {
+    saveExternalConfig({ apiKey: KEY });
+    // The stored URL appears without a base-URL save of this flow (e.g. set
+    // earlier in another tab); saving other fields must not bind to it.
+    localStorage.setItem(
+      'external-provider-config',
+      JSON.stringify({ ...JSON.parse(localStorage.getItem('external-provider-config') ?? '{}'), baseUrl: 'http://localhost:1234' }),
+    );
+    saveExternalConfig({ model: 'm' });
+    saveExternalConfig({ protocol: 'anthropic' });
+    saveExternalConfig({ enabled: true });
+    saveExternalConfig({ grounded: false });
+    saveExternalConfig({ rememberKey: true });
+    expect(loadExternalKeyState()).toEqual({ status: 'pending' });
+    expect(keyForBaseUrl('http://localhost:1234')).toBe('');
+    saveExternalConfig({ baseUrl: 'http://192.168.1.20:8000' });
+    expect(loadExternalKeyState()).toEqual({ status: 'bound', origin: 'http://192.168.1.20:8000' });
+  });
+
+  // Review round 2 (R2-F4): a storage failure part-way through a re-entry can
+  // never leave the OLD key next to the NEW origin.
+  test('a failing key write never leaves the old key bound to the new origin', () => {
+    saveExternalConfig({ baseUrl: 'http://localhost:1234', apiKey: KEY, rememberKey: true });
+    const real = Storage.prototype.setItem;
+    const spy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, k: string, v: string) {
+      if (k === 'external-provider-apikey') throw new DOMException('quota', 'QuotaExceededError');
+      return real.call(this, k, v);
+    });
+    try {
+      saveExternalConfig({ baseUrl: 'http://192.168.1.20:8000', apiKey: KEY2 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(keyForBaseUrl('http://192.168.1.20:8000')).toBe('');
+    expect(localStorage.getItem('external-provider-apikey')).toBeNull();
   });
 
   test('clearing or resetting the base URL never rebinds the key', () => {
@@ -235,17 +275,30 @@ describe('migration of a key saved without a bound origin', () => {
   const config = (extra: Record<string, unknown>) =>
     localStorage.setItem('external-provider-config', JSON.stringify({ enabled: true, protocol: 'openai', model: 'm', ...extra }));
 
-  test('remembered key + stored base URL: bound to that origin (written back), never sent elsewhere', () => {
+  // Ruling (e): reads are pure (render-safe); the boot migration step
+  // (migrateUnboundExternalKey, also run at the start of every save) writes.
+  test('reads evaluate a legacy key without writing storage', () => {
     config({ baseUrl: 'http://localhost:1234/v1', rememberKey: true });
     localStorage.setItem('external-provider-apikey', KEY);
     expect(loadExternalConfig().apiKey).toBe(KEY);
+    expect(keyForBaseUrl('http://127.0.0.1:1234')).toBe('');
+    expect(loadExternalKeyState()).toEqual({ status: 'bound', origin: 'http://localhost:1234' });
+    expect(localStorage.getItem('external-provider-apikey-origin')).toBeNull();
+  });
+
+  test('remembered key + stored base URL: the boot migration binds it to that origin (written back)', () => {
+    config({ baseUrl: 'http://localhost:1234/v1', rememberKey: true });
+    localStorage.setItem('external-provider-apikey', KEY);
+    migrateUnboundExternalKey();
     expect(localStorage.getItem('external-provider-apikey-origin')).toBe('http://localhost:1234');
+    expect(loadExternalConfig().apiKey).toBe(KEY);
     expect(keyForBaseUrl('http://127.0.0.1:1234')).toBe('');
   });
 
   test('session key + stored base URL: bound in sessionStorage', () => {
     config({ baseUrl: 'http://192.168.1.20:8000', rememberKey: false });
     sessionStorage.setItem('external-provider-apikey', KEY);
+    migrateUnboundExternalKey();
     expect(loadExternalKeyState()).toEqual({ status: 'bound', origin: 'http://192.168.1.20:8000' });
     expect(sessionStorage.getItem('external-provider-apikey-origin')).toBe('http://192.168.1.20:8000');
   });
@@ -255,6 +308,7 @@ describe('migration of a key saved without a bound origin', () => {
     localStorage.setItem('external-provider-apikey', KEY);
     expect(loadExternalConfig().apiKey).toBe('');
     expect(loadExternalKeyState()).toEqual({ status: 'none' });
+    migrateUnboundExternalKey();
     expect(localStorage.getItem('external-provider-apikey')).toBeNull();
   });
 
@@ -262,6 +316,7 @@ describe('migration of a key saved without a bound origin', () => {
     config({ baseUrl: 'not a url', rememberKey: true });
     localStorage.setItem('external-provider-apikey', KEY);
     expect(keyForBaseUrl('http://localhost:1234')).toBe('');
+    migrateUnboundExternalKey();
     expect(localStorage.getItem('external-provider-apikey')).toBeNull();
   });
 

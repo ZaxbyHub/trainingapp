@@ -15,6 +15,11 @@
 //   - a key saved while no base URL is set binds to the first origin set
 //     afterwards;
 //   - a base URL change or a boot replay never deletes the key.
+// The Settings panel (both apps, review round 2 R2-F1) never relies on the
+// key-alone form: it PUTs a typed key only together with the base URL shown
+// (one patch, so a refused URL commits neither) and holds the key while the
+// shown URL is empty or refused. The key-alone form stays as the approved API
+// contract (I2) for callers that address the configured endpoint.
 // Use: the key is sent only when the configured origin equals the bound
 // origin (otherwise apiKeySet:false and nothing is sent); pointing back at
 // the bound origin re-enables it.

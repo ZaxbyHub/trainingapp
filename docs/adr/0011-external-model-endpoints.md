@@ -133,6 +133,9 @@ land on an address that was not checked.
   the connection test; the panel says the key belongs to the other origin and the user
   re-enters it, which binds it to the new origin. Changing, clearing or resetting the base URL
   never rebinds the key, and pointing back to the original origin uses the saved key again.
+  The Settings panel in both apps saves a typed key only together with the base URL shown (one
+  save, one desktop `PUT`); while the shown URL is empty or refused the key is held in the panel
+  and is not saved, so it can never be bound to a URL saved earlier.
   Desktop: the backend keeps the key and its origin as separate secret-store entries and sends
   the key only when the configured origin matches. Browser: the origin is stored next to the
   key in the same browser storage (`external-provider-apikey-origin`), and the configuration

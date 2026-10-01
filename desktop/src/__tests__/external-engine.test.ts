@@ -140,6 +140,38 @@ describe('key-origin binding (I1/I2)', () => {
     expect(ext.requests[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
   });
 
+  // Review round 2 (R2-F1): the Settings panel sends a typed key TOGETHER with
+  // the base URL shown, in one PUT. The previously configured endpoint C never
+  // receives that key; the key is bound to the URL it was typed for.
+  it('a key PUT together with a new base URL binds to that URL; the previously configured endpoint never receives it', async () => {
+    const c = await endpoint();
+    const d = await endpoint();
+    const { engine, store } = newEngine();
+    expect(engine.applySettingsPatch(enable(c.base)).ok).toBe(true);
+    expect(engine.applySettingsPatch({ 'external.baseUrl': d.base, 'external.apiKey': KEY }).ok).toBe(true);
+    expect(store.dump()['external-api-key-origin']).toBe(d.base);
+    await engine.query('to d');
+    expect(d.requests[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
+    expect(engine.applySettingsPatch({ 'external.baseUrl': c.base }).ok).toBe(true);
+    await engine.query('to c');
+    expect(c.requests).toHaveLength(1);
+    expect(c.requests[0]?.headers.authorization).toBeUndefined();
+    expect(JSON.stringify(c.requests)).not.toContain(KEY);
+    expect(engine.responseSettings()['external.apiKeyBoundOrigin']).toBe(d.base);
+  });
+
+  it('a key PUT with a refused base URL commits nothing (the key is not bound to the configured URL)', async () => {
+    const c = await endpoint();
+    const { engine, store } = newEngine();
+    expect(engine.applySettingsPatch(enable(c.base)).ok).toBe(true);
+    const r = engine.applySettingsPatch({ 'external.baseUrl': 'http://api.openai.com/v1', 'external.apiKey': KEY });
+    expect(r.ok).toBe(false);
+    expect(JSON.stringify(r)).not.toContain(KEY);
+    expect(store.dump()).toEqual({});
+    await engine.query('to c');
+    expect(c.requests[0]?.headers.authorization).toBeUndefined();
+  });
+
   it('a key saved before any URL binds to the first origin set afterwards', async () => {
     const ext = await endpoint();
     const { engine, store } = newEngine();

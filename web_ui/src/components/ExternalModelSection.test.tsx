@@ -105,6 +105,9 @@ describe('browser app', () => {
   test('the key is session-only unless Remember is checked', async () => {
     render(<ExternalModelSection />);
     const q = within(panel());
+    // (review round 2: a key is saved only together with a valid base URL)
+    fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://localhost:1234' } });
+    fireEvent.blur(q.getByLabelText(/^base url$/i));
     const key = q.getByLabelText(/^api key$/i);
     fireEvent.change(key, { target: { value: KEY } });
     fireEvent.blur(key);
@@ -184,14 +187,52 @@ describe('desktop app', () => {
     const { s, updateSettings } = session({ 'external.baseUrl': 'http://192.168.1.20:8000' });
     renderDesktop(s);
     const q = within(panel());
+    await waitFor(() => expect((q.getByLabelText(/^base url$/i) as HTMLInputElement).value).toBe('http://192.168.1.20:8000'));
     const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
     fireEvent.change(key, { target: { value: KEY } });
     fireEvent.blur(key);
-    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ 'external.apiKey': KEY }));
+    // Review round 2 (R2-F1): the key is PUT together with the URL shown, in one patch.
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith({ 'external.baseUrl': 'http://192.168.1.20:8000', 'external.apiKey': KEY }),
+    );
+    expect(updateSettings.mock.calls.some(([body]) => 'external.apiKey' in body && !('external.baseUrl' in body))).toBe(false);
     await waitFor(() => expect(key.value).toBe(''));
     const dump = JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage });
     expect(dump).not.toContain(KEY);
   });
+
+  // Review round 2 (R2-F1): a key typed while the shown URL is refused or
+  // empty is never PUT on its own (the backend would bind it to the stored
+  // URL C); it is held and PUT together with the next valid URL.
+  for (const shown of ['http://api.openai.com/v1', ''] as const) {
+    test(`a key typed while the Base URL shows ${shown === '' ? 'nothing' : 'a refused URL'} is held, then PUT only with a valid URL`, async () => {
+      installDesktopBridgeStub();
+      const { s, updateSettings } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.enabled': true, 'external.model': 'm' });
+      renderDesktop(s);
+      const q = within(panel());
+      const base = q.getByLabelText(/^base url$/i) as HTMLInputElement;
+      await waitFor(() => expect(base.value).toBe('http://192.168.1.50:8080'));
+      fireEvent.change(base, { target: { value: shown } });
+      fireEvent.blur(base);
+      const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+      fireEvent.change(key, { target: { value: KEY } });
+      fireEvent.blur(key);
+      expect(await q.findByTestId('external-key-held')).toHaveTextContent(/saved together with the next valid base URL/);
+      // Saves of other fields never carry the key.
+      fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm2' } });
+      fireEvent.blur(q.getByLabelText(/^model$/i));
+      fireEvent.change(q.getByRole('combobox', { name: /^protocol$/i }), { target: { value: 'anthropic' } });
+      await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ 'external.protocol': 'anthropic' }));
+      expect(updateSettings.mock.calls.some(([body]) => 'external.apiKey' in body)).toBe(false);
+      // A valid URL: ONE PUT carrying both, bound to that URL (never to C).
+      fireEvent.change(base, { target: { value: 'http://192.168.1.77:8000' } });
+      fireEvent.blur(base);
+      await waitFor(() =>
+        expect(updateSettings).toHaveBeenCalledWith({ 'external.baseUrl': 'http://192.168.1.77:8000', 'external.apiKey': KEY }),
+      );
+      expect(updateSettings.mock.calls.filter(([body]) => 'external.apiKey' in body)).toHaveLength(1);
+    });
+  }
 
   test('a key with a header-invalid character is refused inline and never PUT (F4)', async () => {
     installDesktopBridgeStub();
@@ -363,6 +404,51 @@ describe('browser app: key-origin binding (F2)', () => {
     expect(keyOf(b.hits[0])).toEqual([undefined, undefined]);
     expect(a.hits).toHaveLength(0);
   });
+
+  // Review round 2 (R2-F1): end to end against a real endpoint C that is the
+  // SAVED base URL. A key typed while the Base URL field shows a refused or an
+  // empty URL is never saved, so neither generation nor anything else sends it
+  // to C; it is saved only together with the next valid URL shown.
+  for (const protocol of ['openai', 'anthropic'] as const) {
+    for (const shown of ['http://api.openai.com/v1', ''] as const) {
+      test(`${protocol}: a key typed while the URL field shows ${shown === '' ? 'nothing' : 'a refused URL'} never reaches the saved endpoint C`, async () => {
+        const c = await endpoint();
+        const d = await endpoint();
+        localStorage.setItem(
+          'external-provider-config',
+          JSON.stringify({ enabled: true, protocol, baseUrl: c.base, model: 'm', rememberKey: false }),
+        );
+        render(<ExternalModelSection />);
+        const q = within(panel());
+        const base = q.getByLabelText(/^base url$/i);
+        fireEvent.change(base, { target: { value: shown } });
+        fireEvent.blur(base);
+        const key = q.getByLabelText(/^api key$/i);
+        fireEvent.change(key, { target: { value: KEY } });
+        fireEvent.blur(key);
+        expect(await q.findByTestId('external-key-held')).toBeInTheDocument();
+        // Every other save the reviewer used to bind the key to C.
+        fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm' } });
+        fireEvent.blur(q.getByLabelText(/^model$/i));
+        fireEvent.click(q.getByRole('checkbox', { name: /remember api key/i }));
+        fireEvent.click(q.getByRole('checkbox', { name: /^direct chat/i }));
+        expect(JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage })).not.toContain(KEY);
+        // Generation through the saved configuration (endpoint C).
+        const ext = await import('../lib/llm/external-provider');
+        const svc = ext.createExternalLLMService(ext.loadExternalConfig());
+        expect(svc).not.toBeNull();
+        await (svc as NonNullable<typeof svc>).generateComplete([{ role: 'user', content: 'hi' }]).catch(() => '');
+        expect(c.hits.length).toBeGreaterThan(0);
+        for (const h of c.hits) expect(keyOf(h)).toEqual([undefined, undefined]);
+        // A valid URL shown: saved together, bound to D only.
+        fireEvent.change(base, { target: { value: d.base } });
+        fireEvent.blur(base);
+        await waitFor(() => expect(ext.keyForBaseUrl(d.base)).toBe(KEY));
+        expect(ext.keyForBaseUrl(c.base)).toBe('');
+        expect(q.queryByTestId('external-key-held')).toBeNull();
+      });
+    }
+  }
 
   test('tabbing through the key field while a refused URL is shown does not re-save (or un-bind) the key', async () => {
     const a = await endpoint();

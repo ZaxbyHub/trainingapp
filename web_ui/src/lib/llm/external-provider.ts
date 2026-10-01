@@ -19,10 +19,13 @@
  * ExternalProviderState, ADR-0011 decision 3). The key is sent ONLY to the
  * origin (scheme://host:port, normalized by keyOriginOf) it was saved for:
  *   - a key entered in a save binds to the origin of the base URL in effect
- *     after that save (or to an explicit `keyOrigin`), i.e. re-entering the
- *     key is what (re)binds it;
- *   - a key entered while no base URL is set is pending ('') and binds to the
- *     first origin set afterwards;
+ *     after that save; the Settings panel always sends the key TOGETHER with
+ *     the base URL shown (one save) and never saves a key while the shown URL
+ *     is empty or refused, so re-entering the key is what (re)binds it, and
+ *     only to the URL it was typed for;
+ *   - a key saved with no base URL at all is pending ('') and binds only when
+ *     a later save carries a base URL (patch.baseUrl), never on a save of
+ *     another field (parity with the desktop ExternalProviderState.commit);
  *   - changing, clearing or resetting the base URL NEVER rebinds or deletes
  *     the key; pointing back at the bound origin uses it again;
  *   - loadExternalConfig().apiKey / keyForBaseUrl() return the key only for
@@ -31,7 +34,9 @@
  *     mismatch for the panel);
  *   - migration: a key stored by an earlier build (no origin entry) binds to
  *     the stored base URL's origin when there is one; otherwise it is DROPPED
- *     (it cannot be attributed to any endpoint, so it is never sent).
+ *     (it cannot be attributed to any endpoint, so it is never sent). The
+ *     write happens in migrateUnboundExternalKey() (boot migration path and
+ *     every save); reads are pure and evaluate the same rule without writing.
  *
  * Egress is off by default: no generator is constructed and nothing is
  * fetched until the config is enabled with a model and a base URL the shared
@@ -42,6 +47,7 @@ import { isElectron } from '../desktop-session';
 import { EXTERNAL_API_KEY_KEY, EXTERNAL_API_KEY_ORIGIN_KEY, EXTERNAL_CONFIG_KEY } from '../storage/persisted-keys';
 import { AnthropicCompatChatService, listAnthropicModels } from './anthropic-provider';
 import { validateEndpointUrl } from './endpoint-policy';
+import { migrateUnboundExternalKey } from './external-migration';
 import { keyOriginOf } from './key-origin';
 import { OpenAICompatChatService, listOpenAIModels } from './openai-provider';
 import { asProviderError, modelError, scrubSecrets, type ProviderFailureKind } from './provider-error';
@@ -49,6 +55,7 @@ import { asProviderError, modelError, scrubSecrets, type ProviderFailureKind } f
 export { ProviderError, scrubSecrets } from './provider-error';
 export type { ProviderFailureKind } from './provider-error';
 export { keyOriginOf } from './key-origin';
+export { migrateUnboundExternalKey } from './external-migration';
 
 export type ExternalProtocol = 'openai' | 'anthropic';
 
@@ -148,50 +155,35 @@ function removeKeyEverywhere(): void {
 }
 
 /**
- * Write the key and its origin to the storage the Remember rule selects and
- * remove both from the other one. An empty key removes both everywhere. The
- * origin is written BEFORE the key, so a storage failure can never leave a
- * key without its binding (which would read as a legacy, unbound key).
+ * Write the key and its origin to the storage the Remember rule selects. The
+ * old key and origin are removed from BOTH storages first, then the origin is
+ * written, then the key: a storage failure part-way can leave no key (or an
+ * origin without a key), never an old key next to a new origin, and never a
+ * key without its origin (which would read as a legacy, unbound key). An
+ * empty key just removes both everywhere.
  */
 function writeKeyRecord(rec: KeyRecord, remember: boolean): void {
-  if (rec.key === '') {
-    removeKeyEverywhere();
-    return;
-  }
+  removeKeyEverywhere();
+  if (rec.key === '') return;
   const origin = rec.origin ?? '';
-  if (remember) {
-    try {
+  try {
+    if (remember) {
       localStorage.setItem(EXTERNAL_API_KEY_ORIGIN_KEY, origin);
       localStorage.setItem(EXTERNAL_API_KEY_KEY, rec.key);
-    } catch {
-      /* storage unavailable — the key stays only in the form */
+    } else {
+      sessionStorage.setItem(EXTERNAL_API_KEY_ORIGIN_KEY, origin);
+      sessionStorage.setItem(EXTERNAL_API_KEY_KEY, rec.key);
     }
-    try {
-      sessionStorage.removeItem(EXTERNAL_API_KEY_KEY);
-      sessionStorage.removeItem(EXTERNAL_API_KEY_ORIGIN_KEY);
-    } catch {
-      /* storage unavailable */
-    }
-    return;
-  }
-  try {
-    localStorage.removeItem(EXTERNAL_API_KEY_KEY);
-    localStorage.removeItem(EXTERNAL_API_KEY_ORIGIN_KEY);
-  } catch {
-    /* storage unavailable */
-  }
-  try {
-    sessionStorage.setItem(EXTERNAL_API_KEY_ORIGIN_KEY, origin);
-    sessionStorage.setItem(EXTERNAL_API_KEY_KEY, rec.key);
   } catch {
     /* storage unavailable — the key stays only in the form */
   }
 }
 
 /**
- * The saved key and its binding (browser app only), migrating a key saved by
- * an earlier build without an origin entry: it binds to the stored base URL's
- * origin when there is one, otherwise it is dropped (never sent anywhere).
+ * The saved key and its binding (browser app only). PURE (no storage
+ * writes; safe in render): a key saved by an earlier build without an origin
+ * entry is evaluated as migrateUnboundExternalKey() would persist it (bound
+ * to the stored base URL's origin, or no key when there is none).
  */
 function readKeyRecord(stored: StoredConfig): KeyRecord {
   const storage = storageOf(stored.rememberKey);
@@ -200,12 +192,7 @@ function readKeyRecord(stored: StoredConfig): KeyRecord {
   const origin = getIn(storage, EXTERNAL_API_KEY_ORIGIN_KEY);
   if (origin !== null) return { key, origin };
   const migrated = keyOriginOf(stored.baseUrl);
-  if (migrated === '') {
-    removeKeyEverywhere();
-    return { key: '', origin: null };
-  }
-  writeKeyRecord({ key, origin: migrated }, stored.rememberKey);
-  return { key, origin: migrated };
+  return migrated === '' ? { key: '', origin: null } : { key, origin: migrated };
 }
 
 /**
@@ -252,14 +239,15 @@ export function loadExternalConfig(): ExternalConfig {
  * sessionStorage otherwise; its bound origin travels with it. Turning
  * rememberKey off moves both out of localStorage.
  *
- * `patch.apiKey` is a (re-)entry: a non-empty value binds to
- * `opts.keyOrigin` when given (the panel passes the origin of the URL the
- * user sees, '' for pending), else to the origin of the base URL in effect
- * after this save; '' clears the key. Without `patch.apiKey` the saved key
- * keeps its binding, whatever the base URL becomes (a pending key binds to
- * the first origin set).
+ * `patch.apiKey` is a (re-)entry: a non-empty value binds to the origin of
+ * the base URL in effect after this save (send `baseUrl` in the same patch to
+ * bind to the URL the key was typed for); '' clears the key. Without
+ * `patch.apiKey` the saved key keeps its binding, whatever the base URL
+ * becomes; a pending key (saved with no base URL) binds only when this patch
+ * carries a base URL.
  */
-export function saveExternalConfig(patch: Partial<ExternalConfig>, opts?: { keyOrigin?: string }): void {
+export function saveExternalConfig(patch: Partial<ExternalConfig>): void {
+  migrateUnboundExternalKey();
   const prev = readStored();
   const prevRec: KeyRecord = isElectron() ? { key: '', origin: null } : readKeyRecord(prev);
   const next: StoredConfig = {
@@ -282,12 +270,11 @@ export function saveExternalConfig(patch: Partial<ExternalConfig>, opts?: { keyO
   }
   let rec: KeyRecord = prevRec;
   if (patch.apiKey !== undefined) {
-    rec =
-      patch.apiKey === ''
-        ? { key: '', origin: null }
-        : { key: patch.apiKey, origin: opts?.keyOrigin !== undefined ? keyOriginOf(opts.keyOrigin) : keyOriginOf(next.baseUrl) };
-  } else if (rec.key !== '' && rec.origin === '') {
-    const first = keyOriginOf(next.baseUrl);
+    rec = patch.apiKey === '' ? { key: '', origin: null } : { key: patch.apiKey, origin: keyOriginOf(next.baseUrl) };
+  } else if (rec.key !== '' && rec.origin === '' && patch.baseUrl !== undefined) {
+    // A pending key binds only to a base URL saved explicitly (not to one
+    // already stored when some other field is saved).
+    const first = keyOriginOf(patch.baseUrl);
     if (first !== '') rec = { key: rec.key, origin: first };
   }
   writeKeyRecord(rec, next.rememberKey);

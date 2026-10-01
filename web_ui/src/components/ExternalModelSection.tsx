@@ -13,6 +13,11 @@
  *     3): after the base URL moves to another origin the saved key is not
  *     shown, not tested and not used; the panel says which origin it belongs
  *     to and re-entering it binds it to the new origin.
+ *   Both apps: a typed key is saved ONLY together with the base URL shown
+ *     (one browser save / one desktop PUT carrying external.baseUrl and
+ *     external.apiKey). While the shown URL is empty or refused the key is
+ *     held in this component only (never saved, never bound to a URL saved
+ *     earlier) and the panel says it will be saved with the next valid URL.
  *   Desktop app: every change is a PUT /settings `external.*` patch to the
  *     built-in backend; the key goes to the main-process secret store and is
  *     never kept in the renderer; "Test connection" is POST
@@ -136,6 +141,8 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
   // the URL shown while typing), and whether it was typed since the last save.
   const fieldKeyOriginRef = useRef(!desktop && draft.apiKey !== '' ? keyOriginOf(draft.baseUrl) : '');
   const keyDirtyRef = useRef(false);
+  // A typed key waiting for a valid base URL (held in this component only).
+  const [keyHeld, setKeyHeld] = useState(false);
   // Re-render after a browser key save (storage writes do not re-render).
   const [, setKeyVersion] = useState(0);
   const [keyState, setKeyState] = useState<DesktopKeyState>({
@@ -166,7 +173,9 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       baseUrl: typeof s['external.baseUrl'] === 'string' ? (s['external.baseUrl'] as string) : prev.baseUrl,
       model: typeof s['external.model'] === 'string' ? (s['external.model'] as string) : prev.model,
       grounded: s['external.grounded'] !== false,
-      apiKey: '',
+      // Write-only key field: only a key typed and not saved yet stays (a held
+      // key survives saves of other fields); saveTypedKey clears it once saved.
+      apiKey: prev.apiKey,
     }));
     setKeyState({
       apiKeySet: s['external.apiKeySet'] === true,
@@ -204,9 +213,9 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
 
   /** Persist a patch (browser storage or desktop PUT). Resolves false on refusal. */
   const persist = useCallback(
-    async (patch: Partial<Draft>, opts?: { keyOrigin?: string }): Promise<boolean> => {
+    async (patch: Partial<Draft>): Promise<boolean> => {
       if (!desktop) {
-        saveExternalConfig(patch, opts);
+        saveExternalConfig(patch);
         setKeyVersion((v) => v + 1);
         return true;
       }
@@ -239,6 +248,33 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     setDraft((prev) => ({ ...prev, ...patch }));
   };
 
+  /** A key typed in the field and not saved yet (desktop: any key in the write-only field). */
+  const typedKeyPending = (): boolean =>
+    draftRef.current.apiKey !== '' && (desktop || keyDirtyRef.current);
+
+  /**
+   * Save the typed key TOGETHER with the base URL shown, in one patch, so it
+   * is bound to that URL's origin and to nothing else. While the shown URL is
+   * empty or refused the key is held (not saved) until a valid URL is entered.
+   */
+  const saveTypedKey = async (): Promise<void> => {
+    const key = draftRef.current.apiKey;
+    const url = draftRef.current.baseUrl;
+    if (url.trim() === '' || checkUrl(url) !== null) {
+      setKeyHeld(true);
+      return;
+    }
+    setKeyHeld(false);
+    if (desktop) {
+      const ok = await persist({ baseUrl: url, apiKey: key });
+      if (ok && mountedRef.current) setDraft((prev) => ({ ...prev, apiKey: '' }));
+      return;
+    }
+    keyDirtyRef.current = false;
+    fieldKeyOriginRef.current = keyOriginOf(url);
+    await persist({ baseUrl: url, apiKey: key });
+  };
+
   const handleBaseUrlBlur = async () => {
     const url = draftRef.current.baseUrl;
     if (url.trim() === '') return;
@@ -248,6 +284,17 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       return;
     }
     setProblem(null);
+    if (typedKeyPending()) {
+      // A typed (or held) key is saved with this URL, in the same patch.
+      const key = draftRef.current.apiKey;
+      if (!isHeaderSafeValue(key)) {
+        await persist({ baseUrl: url });
+        setProblem(`API key: ${UNSENDABLE_KEY_MESSAGE}.`);
+        return;
+      }
+      await saveTypedKey();
+      return;
+    }
     await persist({ baseUrl: url });
     if (!desktop && !keyDirtyRef.current) {
       // The field only ever shows the key bound to the URL shown: moving to
@@ -276,33 +323,32 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       return;
     }
     if (desktop) {
-      if (key === '') return; // write-only: an empty field never clears a saved key by accident
-      const ok = await persist({ apiKey: key });
-      if (ok && mountedRef.current) setDraft((prev) => ({ ...prev, apiKey: '' }));
+      if (key === '') {
+        setKeyHeld(false);
+        return; // write-only: an empty field never clears a saved key by accident
+      }
+      await saveTypedKey();
       return;
     }
     // Browser: only a key the user actually typed is saved (a tab-through
     // never rebinds the saved key to the URL now shown).
     if (!keyDirtyRef.current) return;
-    keyDirtyRef.current = false;
     const url = draftRef.current.baseUrl;
     if (key === '') {
+      keyDirtyRef.current = false;
+      setKeyHeld(false);
       // The user emptied the field: forget the key that was shown here (a key
       // bound to another origin was never shown, so it is kept).
-      const state = loadExternalKeyState(url);
-      if (state.status === 'bound' || state.status === 'pending') await persist({ apiKey: '' });
+      if (loadExternalKeyState(url).status === 'bound') await persist({ apiKey: '' });
       fieldKeyOriginRef.current = '';
       return;
     }
-    // (Re-)entry binds to the URL the user sees; pending when it has no
-    // usable origin yet (binds to the first base URL saved).
-    const keyOrigin = url.trim() !== '' && checkUrl(url) === null ? keyOriginOf(url) : '';
-    fieldKeyOriginRef.current = keyOrigin;
-    await persist({ apiKey: key }, { keyOrigin });
+    await saveTypedKey();
   };
 
   const handleClearKey = async () => {
     keyDirtyRef.current = false;
+    setKeyHeld(false);
     fieldKeyOriginRef.current = '';
     setDraft((prev) => ({ ...prev, apiKey: '' }));
     await persist({ apiKey: '' });
@@ -522,6 +568,12 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
         )}
         {desktop && !keyState.apiKeyPersisted && keyState.apiKeySet && (
           <p style={descStyle}>Key kept for this session only: secure storage is unavailable on this computer.</p>
+        )}
+        {keyHeld && draft.apiKey !== '' && (
+          <p style={descStyle} data-testid="external-key-held">
+            The API key is not saved yet: it will be saved together with the next valid base URL you
+            enter, and sent only to that server.
+          </p>
         )}
         {keyElsewhereOrigin !== '' && (
           <p style={descStyle} data-testid="external-key-elsewhere">
