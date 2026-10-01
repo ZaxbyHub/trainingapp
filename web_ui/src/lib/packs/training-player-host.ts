@@ -32,21 +32,34 @@ export interface RelayReadyInfo {
 }
 
 const BOOT_PATH = '/training-boot.html';
+/** Minimum spacing between window-requested re-handshakes. */
+export const RELAY_REQUEST_MIN_INTERVAL_MS = 1000;
 
 export class TrainingPlayerHost {
   readonly relay: TrainingRelay;
   private bootFrame: HTMLIFrameElement | null = null;
   private generation = 0;
   private readyPromise: Promise<RelayReadyInfo> | null = null;
+  /** A window-requested re-handshake is in flight (coalesces bursts). */
+  private relayRequestInFlight = false;
+  private lastRelayRequestAt = Number.NEGATIVE_INFINITY;
   private readonly onWindowMessage = (event: MessageEvent): void => {
     if (this.bootFrame === null || event.source !== this.bootFrame.contentWindow) return;
     if (event.origin !== this.opts.playerOrigin) return;
     const data = event.data as { type?: unknown } | null;
-    if (data !== null && typeof data === 'object' && data.type === 'trainingapp-relay-request') {
-      // The worker lost its port (stopped while idle): repeat the handshake
-      // with the CURRENT boot frame.
-      void this.handshake(this.generation);
-    }
+    if (data === null || typeof data !== 'object' || data.type !== 'trainingapp-relay-request') return;
+    // The worker lost its port (stopped while idle): repeat the handshake
+    // with the CURRENT boot frame. Course JS shares the boot frame's origin
+    // and can send this at will, so requests are coalesced (one in flight)
+    // and spaced (RELAY_REQUEST_MIN_INTERVAL_MS) — a flood cannot make the
+    // app tab churn channels and timers.
+    const now = Date.now();
+    if (this.relayRequestInFlight || now - this.lastRelayRequestAt < RELAY_REQUEST_MIN_INTERVAL_MS) return;
+    this.relayRequestInFlight = true;
+    this.lastRelayRequestAt = now;
+    void this.handshake(this.generation).finally(() => {
+      this.relayRequestInFlight = false;
+    });
   };
 
   constructor(private readonly opts: TrainingPlayerHostOptions) {
