@@ -18,7 +18,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTrainingPlayerBridge } from '../../../components/training-player-bridge';
 import { browserTrainingUrl, loopbackAliasOrigin, validatePlayerOrigin } from '../player-origin';
 import { AIRGAP_UPDATES_DETAIL, BrowserUpdatesController, type BrowserUpdatesDeps } from '../pack-update-controller';
-import { downloadArtifactBytes, fetchFeedText } from '../pack-update-browser';
+import {
+  downloadArtifactBytes,
+  fetchFeedText,
+  runUpdateCheck,
+  verifyArtifactBytes,
+  type FeedVersionEntry,
+} from '../pack-update-browser';
 import { PACK_UPDATES_STATE_KEY } from '../../storage/persisted-keys';
 
 const APP = 'http://localhost:4183';
@@ -159,6 +165,13 @@ describe('update channel egress (AC8)', () => {
     return { c, fetchFeed };
   }
 
+  it('UP0 runUpdateCheck itself reads nothing before the opt-in (inner gate, independent of the controller)', async () => {
+    const fetchFeed = vi.fn(async (_url: string) => '{}');
+    const outcome = await runUpdateCheck({ optIn: false, feedUrl: 'https://feed.example/pack-feed.json' }, [{ packId: 'p', version: '1.0.0' }], { fetchFeed }, []);
+    expect(outcome).toMatchObject({ skipped: true });
+    expect(fetchFeed).not.toHaveBeenCalled();
+  });
+
   it('UP1 nothing is fetched until the user opts in', async () => {
     const { c, fetchFeed } = controller();
     const result = await c.checkForUpdates();
@@ -218,6 +231,20 @@ describe('update channel egress (AC8)', () => {
     });
     vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
     await expect(downloadArtifactBytes('https://feed.example/p.zip', 100)).rejects.toThrow(/cap/);
+  });
+
+  it('UP10 a downloaded artifact whose sha256 differs from the signed feed entry is refused', async () => {
+    const entry = {
+      version: '2.0.0',
+      published_at: '2026-10-01T00:00:00Z',
+      download_url: 'https://feed.example/p.zip',
+      sha256: '0'.repeat(64),
+      size_bytes: 1,
+      signature: { algorithm: 'ed25519', key_id: 'k', value: 'AA==' },
+    } as unknown as FeedVersionEntry;
+    const verdict = await verifyArtifactBytes(new Uint8Array([1]), entry, []);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.detail).toMatch(/sha256 digest mismatch/);
   });
 
   it('UP9 an artifact shorter than the feed-declared size is refused', async () => {

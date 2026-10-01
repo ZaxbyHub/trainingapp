@@ -97,7 +97,8 @@ could be served were not isolated from app storage.
   `MessageChannel` port to it with `targetOrigin` set to the player origin. Relay requests are
   accepted only on that port. The one window message the app accepts from the boot frame (exact
   source window and origin) is a data-free "relay needed" signal, sent when the worker lost its
-  port while idle; the app answers it by repeating the handshake with the current boot frame.
+  port while idle; the app answers it by repeating the handshake with the current boot frame,
+  coalesced (one re-handshake in flight, at least 1 s apart) because course JS can send it too.
 - The relay answers reads only for the pack currently open in the Training page (app state, not
   request data), mapped to that pack's active version in the app-origin registry. Path
   containment uses the same rules as desktop `resolveTrainingRequest` (`..`, encoded traversal,
