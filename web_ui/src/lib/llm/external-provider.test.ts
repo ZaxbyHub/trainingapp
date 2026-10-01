@@ -203,3 +203,20 @@ describe('unsendable API key (header-invalid characters)', () => {
     expect(err.message).not.toContain('SENTINEL');
   });
 });
+
+test('F4: the browser transport refuses an unsendable key BEFORE calling fetch (both protocols, generation and probe)', async () => {
+  const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+  vi.stubGlobal('fetch', fetchSpy);
+  for (const protocol of ['openai', 'anthropic'] as const) {
+    const bad = 'sk-PRECHECK-\u2603-SENTINEL';
+    const svc =
+      protocol === 'openai'
+        ? new OpenAICompatChatService({ baseUrl: 'http://127.0.0.1:9', model: 'm', apiKey: bad })
+        : new AnthropicCompatChatService({ baseUrl: 'http://127.0.0.1:9', model: 'm', apiKey: bad });
+    const err = await failure(svc.generateComplete([{ role: 'user', content: 'hi' }]));
+    expect(err.kind).toBe('auth');
+    const probe = await probeExternalEndpoint({ protocol, baseUrl: 'http://127.0.0.1:9', model: 'm', apiKey: bad });
+    expect(probe).toMatchObject({ ok: false, kind: 'auth' });
+  }
+  expect(fetchSpy).not.toHaveBeenCalled();
+});
