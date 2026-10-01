@@ -19,6 +19,9 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // Opt-in Lumen visual baselines (playwright.visual.config.ts) are
+  // platform-specific screenshots; never run them in the default/CI harness.
+  testIgnore: ['**/visual/**'],
   fullyParallel: false,
   workers: 1,
   retries: 0,
