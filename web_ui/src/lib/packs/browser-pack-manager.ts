@@ -204,7 +204,7 @@ export class BrowserPackManager {
     const missing = this.missingCapabilities();
     if (missing.length > 0) {
       throw new PackManagerError(
-        `this browser cannot install training packs (missing ${missing.join(', ')}); use a current Chrome, Edge or Firefox, or the desktop app`,
+        `this browser cannot install training packs (missing ${missing.join(', ')}); use a current Chrome or Edge, or the desktop app (Safari is not supported)`,
       );
     }
     const filename = file.name;

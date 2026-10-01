@@ -223,7 +223,8 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
         )}
         {playerError !== null && (
           <p role="alert" data-testid="training-player-error" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
-            Course player could not start: {playerError}.{' '}
+            Course player could not start: {playerError}. Course playback is supported in current Chrome and Edge (Safari is not
+            supported).{' '}
             <button type="button" onClick={() => window.location.reload()}>
               Reload
             </button>

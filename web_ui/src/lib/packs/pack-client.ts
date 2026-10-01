@@ -69,7 +69,7 @@ export function browserPackClient(): PackClient {
       const missing = manager.missingCapabilities();
       return missing.length === 0
         ? null
-        : `This browser cannot install training or knowledge packs (missing ${missing.join(', ')}). Use a current Chrome, Edge or Firefox, or the desktop app.`;
+        : `This browser cannot install training or knowledge packs (missing ${missing.join(', ')}). Use a current Chrome or Edge, or the desktop app (Safari is not supported).`;
     },
   };
 }

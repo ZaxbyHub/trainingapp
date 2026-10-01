@@ -13,7 +13,8 @@
 //   * path containment uses the same decode / segment / pack-id rules as
 //     desktop resolveTrainingRequest (desktop/main/protocol.ts), pinned by
 //     the shared vectors in contracts/training-path-vectors.json;
-//   * reads are size-bounded (<= 16 MiB per message) and rate-bounded per port.
+//   * reads are size-bounded (<= 16 MiB per message) and rate-bounded (one
+//     window shared by every port, so a fresh handshake earns no fresh budget).
 // The relay answers with the status, headers and bytes the service worker
 // turns into a Response (Range 206/416, MIME, CORP, nosniff, training CSP).
 
@@ -22,7 +23,7 @@ export const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/;
 
 /** Largest byte range one relay message may carry. */
 export const MAX_RELAY_READ_BYTES = 16 * 1024 * 1024;
-/** Requests allowed per port per rate window. */
+/** Requests allowed per rate window (shared across ports). */
 export const RELAY_RATE_LIMIT = 2000;
 export const RELAY_RATE_WINDOW_MS = 10_000;
 /** Open file handles allowed per relay (bounds memory held for the worker). */
