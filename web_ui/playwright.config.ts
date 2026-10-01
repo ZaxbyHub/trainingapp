@@ -1,14 +1,16 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * web_ui browser-mode e2e harness (issue #76, C9 / AC3).
+ * web_ui browser-mode e2e harness (issue #76; browser packs per ADR-0012).
  *
  * Modeled on desktop/playwright.config.ts (issue #67, B9), but this harness
  * exercises the PLAIN-BROWSER surface: Playwright's chromium project against
  * `vite preview` of the production renderer build (dist/), with no Electron
- * shell and no window.desktopApi. The C3 acceptance driver builds the
- * renderer first, then runs e2e/packs-gate.spec.ts (the Option-B capability
- * gate PoC) through this config.
+ * shell and no window.desktopApi. `npm run test:e2e` builds the renderer
+ * first, then runs e2e/packs-browser.spec.ts (browser Knowledge Pack install
+ * and course playback on the player origin) through this config. The app
+ * runs on 127.0.0.1, so the course player origin is the localhost alias of
+ * the same preview server.
  *
  * Port 4174 is pinned with --strictPort (desktop's Electron harness owns
  * 4173) so a stale server on either port can never satisfy the readiness

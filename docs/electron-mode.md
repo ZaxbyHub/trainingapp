@@ -73,9 +73,9 @@ browser `api` mode migrates to browser-local on load.
 - `DocumentsPage.tsx` — load/upload/delete handlers, plus the C7 Knowledge
   Packs surface (issue #74): the `PacksPanel` mounts only in Electron mode,
   a dropped `.zip` routes to `POST /packs/install`, and pack operations never
-  touch the browser-profile IndexedDB namespaces (on the browser surface,
-  C9/ADR-0009 decided the explicit capability gate: a recognized pack zip
-  shows a "requires the desktop app" notice and is never imported).
+  touch the browser-profile IndexedDB namespaces. In the browser app the
+  same Packs panel installs packs into the browser pack store through the
+  shared PackClient (ADR-0012, which superseded the ADR-0009 gate).
 - `SettingsPage.tsx` — settings load/save via the backend, "Desktop backend"
   status section; server-URL + browser-model sections hidden.
 - `ChatPage.tsx` — SSE URL/token/header from the session; model gate. C7

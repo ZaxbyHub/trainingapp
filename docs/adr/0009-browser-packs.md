@@ -1,6 +1,8 @@
 # ADR-0009: Knowledge Packs on the browser surface — explicit capability gate
 
-- **Status:** Accepted (2026-09-20)
+- **Status:** Superseded by [ADR-0012](0012-browser-training-packs.md) (2026-10-01, trace
+  `browser-training-parity`). Accepted 2026-09-20. The decision below is kept unedited as
+  history; the browser app now installs packs and plays courses on an isolated player origin.
 - **Context:** Workstream C, slot C9, issue #76 (epic #50). Workstream C built
   the Knowledge Pack system for the desktop: the format freeze (ADR-0004),
   the Python and Node PackManagers (C2/C3), version precedence (C4),

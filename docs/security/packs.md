@@ -5,7 +5,9 @@ pack bytes into an installed pack: the Python `PackManager`
 (`pack_manager.py`, whose zip-upload extractor lives behind the
 `POST /packs/install` route in `api_server.py` and shares `pack_extract.py`),
 the Node `PackManager` (`desktop/main/backend/store/pack-manager.ts` with
-its zip extractor `pack-extract.ts`), and `packtool verify` (the offline
+its zip extractor `pack-extract.ts`), the browser app's pack manager
+(`web_ui/src/lib/packs/browser-pack-manager.ts` with its extractor
+`pack-extract-browser.ts`, ADR-0012), and `packtool verify` (the offline
 gate over the same dispositions). This document cross-references
 `docs/security/desktop.md` (the desktop transport threat model, issue #60)
 and is cross-referenced from it. Pack format semantics are frozen by C1
@@ -23,8 +25,14 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
    `packtool/build/zip-safety.ts` and the manifest-level rules via
    `packtool/build/pack-json.ts`. (packtool and desktop are separate npm
    packages with no workspace root; cross-package parity is pinned by the
-   frozen C8/C11 checks.) A new check goes into a shared core, never into a
-   caller only.
+   frozen C8/C11 checks.) The browser app shares the desktop rules through
+   `pack-archive-rules.ts`, kept byte-identical in
+   `desktop/main/backend/packs/` and `web_ui/src/lib/packs/` (drift test
+   `desktop/src/__tests__/pack-archive-rules-drift.test.ts`), and runs the
+   desktop manifest gates and Ed25519 check (`pack-manifest.ts`,
+   `pack-verify.ts`) against the shared vectors in
+   `contracts/pack-signature-vectors.json`. A new check goes into a shared
+   core, never into a caller only.
 2. **Containment is proven on the RESOLVED path, never on token shape
    alone.** An entry name is first rejected by `safeEntryName` /
    `safe_entry_name` (empty, backslash, leading `/`, drive-relative or
@@ -154,6 +162,44 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   `node:crypto` DER SPKI keys; `packtool verify` accepts the same
   `--require-signature` / `--trusted-keys-file` semantics.
 
+## Browser app: install path and course isolation (ADR-0012)
+
+- **Install.** The browser extractor reads the central directory first
+  (through `Blob.slice`, bounded to 64 MiB), applies the shared limits,
+  entry-name rules, symlink/encrypted/compression-method/ZIP64 refusals and
+  the desktop messages, then inflates entries with
+  `DecompressionStream('deflate-raw')` straight into OPFS, counting written
+  bytes against each entry's declared size and the total cap. Entries read
+  into memory (`pack.json`, docs being hashed) are capped at 256 MiB. Manifest
+  gates and the signature policy run before any file is written.
+- **Trust policy** is baked at build time (`VITE_TRAININGAPP_PACKS_REQUIRE_SIGNATURE`,
+  `VITE_TRAININGAPP_PACKS_TRUSTED_KEYS`, `VITE_TRAININGAPP_PACKS_EMBEDDING_MODEL_ID`),
+  as desktop bakes its environment; nothing reads a runtime-editable trust
+  anchor.
+- **Signature scope.** The signed manifest hashes `docs[]` only. Player
+  JavaScript and media are not covered on either runtime; origin isolation is
+  the control for executable course content.
+- **Course isolation.** Course JS runs on a dedicated player origin, never the
+  app origin, so it cannot read app IndexedDB, localStorage, OPFS, Cache
+  Storage or DOM (documents, settings, the external-model API key). Nothing on
+  the player origin is trusted: the app-side relay serves only the open pack's
+  active version, with the desktop `resolveTrainingRequest` containment rules
+  (shared vectors `contracts/training-path-vectors.json`), bounded reads and a
+  request-rate window. The player-origin worker and boot page store nothing.
+- **Shared player origin (accepted, desktop parity).** All packs share one
+  player origin, as all packs share `app://training` on desktop. A live
+  malicious pack can interfere with the player origin within a session (for
+  example spoof what another pack's frame displays) but cannot reach app data.
+- **Messaging.** The slide bridge uses exact target origins and one-shot
+  `MessagePort` replies; no first-party `postMessage` uses `'*'` (source
+  guardrail `web_ui/src/lib/packs/__tests__/browser-isolation-guards.test.ts`).
+- **Updates.** The browser update channel is opt-in (zero network before
+  opt-in), https-only on the request and final URL, credential-free, size
+  capped, verifies the Ed25519 feed signature and the artifact sha256, and
+  installs through the guarded path. It cannot validate intermediate redirect
+  hops (`fetch` hides them; desktop checks each hop) and needs a CORS-enabled
+  feed host. Air-gapped builds refuse it.
+
 ## Configuration surface
 
 Canonical keys are `packs.security.*`; each backend spells them as
@@ -189,7 +235,17 @@ Node (`BackendHostConfig.packsSecurity` fields, env override):
 
 `TRAININGAPP_PACKS_TRUSTED_KEYS` uses the same JSON shape;
 `TRAININGAPP_PACKS_EMBEDDING_MODEL_ID` defaults to
-`bge-small-en-v1.5` (ADR-0006). The route-level upload cap
+`bge-small-en-v1.5` (ADR-0006).
+
+Browser app (build-time Vite variables, inlined into the bundle; the byte,
+entry and ratio limits are the shared defaults):
+
+| Canonical key | Variable |
+|---|---|
+| requireSignature | `VITE_TRAININGAPP_PACKS_REQUIRE_SIGNATURE` |
+| trustedKeys | `VITE_TRAININGAPP_PACKS_TRUSTED_KEYS` |
+| embeddingModelId | `VITE_TRAININGAPP_PACKS_EMBEDDING_MODEL_ID` |
+| update-feed trust anchor | `VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS` (default: the desktop feed key) | The route-level upload cap
 (`PACK_ZIP_MAX_UPLOAD_BYTES`, 50 MiB compressed) is unchanged and sits in
 front of these decompression-side limits.
 

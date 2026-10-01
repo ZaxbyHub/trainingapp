@@ -660,7 +660,8 @@ Mirrors [ARCHITECTURE.md](ARCHITECTURE.md) (the authoritative map):
 +---------------------------------------------------------------------------------------+
 
   Plain browser (web_ui/, no Electron): wllama WASM LLM + ONNX embeddings +
-  IndexedDB/EdgeVec/FlexSearch in-page; knowledge packs gated (ADR-0009).
+  IndexedDB/EdgeVec/FlexSearch in-page; knowledge packs in OPFS, courses on an
+  isolated player origin (ADR-0012).
 ```
 
 ### Components

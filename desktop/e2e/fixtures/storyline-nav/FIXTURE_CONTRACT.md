@@ -115,7 +115,12 @@ document:
 - a `postMessage` RPC listener (protocol in §5) so the renderer-side
   `web_ui/src/components/training-player-bridge.ts` can drive the same operations without
   same-origin window access (`app://index.html` and `app://training/...` are distinct
-  WHATWG hosts under the standard `app://` scheme).
+  WHATWG hosts under the standard `app://` scheme; in the browser app the course runs on a
+  separate player origin, ADR-0012).
+- origin pinning (amended, browser-training-parity AC5): the listener accepts a request only
+  when `event.source === window.parent` and `event.origin` equals the parent origin
+  (`location.ancestorOrigins[0]`, else the referrer's origin). If neither yields an origin the
+  bridge answers nothing.
 
 ## 5. The one permitted story.html edit + the postMessage protocol
 
@@ -128,8 +133,10 @@ document:
 No other story.html modification is permitted (the file's inline bootstrap script is why
 the training CSP profile needs `'unsafe-inline'` in `script-src` for pack documents).
 
-Frozen postMessage protocol (bridge listens on `window` 'message'; replies are posted to
-`event.source` with the same `__trainingapp: true` marker):
+Frozen postMessage protocol (bridge listens on `window` 'message'; replies carry the same
+`__trainingapp: true` marker and are posted on the `MessagePort` transferred with the request,
+or, when the sender transferred none, to `event.source` at the exact parent origin, never `'*'`
+(amended by browser-training-parity AC5)):
 
 ```
 renderer -> frame:  { __trainingapp: true, kind: 'jump',  reqId: number, slideId: string }
@@ -181,6 +188,10 @@ errors only; favicon 404s and slide-media 404s are ignored). If the fixture stay
   bookkeeping with floored decrements, landed-slide `slideReady` recovery
   (PlayerMemoryEnhancements eats htmlReady rAFs — see
   docs/training-player.md "Known runtime defect").
+- Origin pinning (browser-training-parity, ADR-0012): requests are accepted only from
+  `window.parent` at the exact parent origin, and replies go on the request's transferred
+  `MessagePort` (fallback: `event.source` at the exact parent origin). The protocol messages
+  are unchanged.
 
 ## 9. Licensing
 

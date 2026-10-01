@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Added — Knowledge Packs and training courses in the browser app (trace browser-training-parity)
+
+- **The browser app installs Knowledge Packs and plays training courses** with the same Packs
+  panel, install refusals, rollback/remove and Training page as the desktop app (ADR-0012, which
+  supersedes the ADR-0009 capability gate). The "Knowledge Packs require the desktop app" notice
+  and the Training page's desktop-only notice are gone; a dropped or picked pack zip installs.
+- **Same install guards and signature checks as desktop.** The archive rules module is shared
+  byte-for-byte between desktop and browser (`pack-archive-rules.ts`); the browser extractor
+  reads the central directory first and streams entries into the browser's private storage
+  (OPFS). Manifest gates and Ed25519 signature checks mirror desktop and run the shared vectors
+  in `contracts/pack-signature-vectors.json` (desktop, browser and Python tests). The signature
+  policy and trusted keys are fixed at build time (`VITE_TRAININGAPP_PACKS_*`).
+- **Courses run on an isolated player origin.** Course JavaScript never runs on the app's origin:
+  it runs on a separate player origin (by default the loopback alias, `localhost` <->
+  `127.0.0.1`) and is served by a player-origin service worker from bytes the app relays for the
+  open pack only, with desktop path containment (`contracts/training-path-vectors.json`), MIME
+  types and training CSP. Every bundled server now binds 127.0.0.1, serves the boot files with
+  `Cross-Origin-Resource-Policy: cross-origin`, and answers other `/training/*` paths with 404.
+  Other hosts can name a player origin with `player-origin.json` or
+  `VITE_TRAININGAPP_PLAYER_ORIGIN` (CONFIGURATION.md).
+- **Slide bridge messages use exact origins.** The renderer bridge and the fixture's pack-side
+  bridge post to exact origins with one-shot `MessagePort` replies; no first-party
+  `postMessage` uses `'*'` (source guardrail test).
+- **Pack updates in the browser app** (Settings → Updates): opt-in, same signed feed and
+  verification as desktop; needs a CORS-enabled feed host; refused in air-gapped builds.
+- **Retrieval:** pack slide documents are indexed in the browser with their pack id, so Learn
+  rows carry `pack_id` and linked slides are computed at question time.
+- **Clear Cache** in the browser app also removes installed packs and the pack update setting.
+- Supported browsers: current Chrome and Edge. Safari is not supported; Firefox is untested.
+  Manual checks on the real 292 MB publish and under enterprise cookie policies are still open
+  (ADR-0012).
+
 ### Added — connect to any OpenAI- or Anthropic-compatible endpoint, grounded, opt-in (trace universal-provider-settings-overhaul)
 
 - **One "External model" region in Settings**, identical in the browser app and the desktop

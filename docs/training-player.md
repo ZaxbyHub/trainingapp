@@ -5,6 +5,10 @@ programmatically. This doc extends the A8 spike evidence (issue #58): the
 recipes below were proven against the live OpMed publish (Storyline 360
 3.114.36620.0, published 2026-07-10) before any production code was written.
 
+The desktop app serves courses from `app://training` (below). The browser app
+plays the same courses on a dedicated player origin (see "Browser app: player
+origin and relay"; decision record ADR-0012).
+
 ## Serving route
 
 `app://training/<packId>/<rest>` maps to
@@ -153,6 +157,15 @@ never reaches into the frame directly. Each pack ships
   reqId, ... }`) that the renderer-side
   `web_ui/src/components/training-player-bridge.ts` drives.
 
+Origin discipline (browser-training-parity AC5): the renderer posts each
+request to the frame's exact origin (never `'*'`) with a one-shot
+`MessagePort` and accepts the reply only on that port. The pack-side bridge
+accepts requests only from `window.parent` at the exact parent origin
+(`location.ancestorOrigins[0]`, else the referrer's origin) and replies on the
+transferred port. Real packs built by packtool carry no bridge (there is no
+packtool injection); they play in both apps but report no slide state and
+accept no deep-link jumps.
+
 The committed e2e fixture `desktop/e2e/fixtures/storyline-nav/` is a trimmed
 runnable copy of the real publish (12 slides across 3 sections) with this
 bridge; its layout contract is `FIXTURE_CONTRACT.md` in that directory.
@@ -210,6 +223,53 @@ sends nothing pinned: the frozen `QuestionRequest` contract has no such field,
 and server-side prefill parity is the follow-up #83 names explicitly. The
 player bridge payload stays byte-identical to #81's frozen protocol — the
 section/on-screen text never rides through it.
+
+## Browser app: player origin and relay (ADR-0012)
+
+The browser app has no `app://` scheme, and course JavaScript must never run
+on the app origin (it could read the app's IndexedDB, localStorage and OPFS).
+Courses run on a dedicated player origin instead:
+
+- **Player origin.** By default the loopback alias of the app's own server:
+  app at `http://localhost:<port>`, player at `http://127.0.0.1:<port>` (or
+  the reverse). Every local server binds `127.0.0.1` so both names reach one
+  listener. A runtime `player-origin.json` next to `index.html` or the
+  build-time `VITE_TRAININGAPP_PLAYER_ORIGIN` can name another origin (a bare
+  origin, https unless loopback, never the app origin); see CONFIGURATION.md.
+  Resolution: `web_ui/src/lib/packs/player-origin.ts`.
+- **Course URL.** `<player origin>/training/<packId>/<rest>`, version-less
+  like desktop; the app serves the pack's active version.
+- **Boot frame and worker.** The app embeds a hidden
+  `<player origin>/training-boot.html`, which registers the course service
+  worker `/training/sw.js` (scope `/training/`). The worker answers only
+  `/training/<packId>/<rest>`; every other request from a course page is
+  refused with 404. It stores nothing: pack bytes live only in the app
+  origin's OPFS.
+- **Relay.** On every course open the app page recreates the boot frame and
+  transfers a fresh `MessageChannel` port to it. The worker sends each request
+  over that port; the app-side relay (`web_ui/src/lib/packs/training-relay.ts`)
+  answers only for the course currently open, from that pack's active version,
+  with desktop path containment (shared vectors in
+  `contracts/training-path-vectors.json`), the desktop MIME table, Range
+  206/416, and bounded reads.
+- **Headers.** Course responses carry CORP `cross-origin`, `nosniff`,
+  `no-cache` and the training CSP without the private `app:` sources plus
+  `frame-ancestors 'self' <app origin>`; course documents also carry COEP
+  `require-corp` (without it the app's COEP blocks the frame). Every server
+  that hosts the web app serves the boot files with CORP `cross-origin` and
+  answers other `/training/*` paths with 404 (vite dev/preview,
+  `web_ui/scripts/serve-offline.mjs`, `web_ui/scripts/start.ps1`,
+  `api_server.py`).
+- **First load.** If a course page loaded before the worker controlled it, the
+  Training page reloads the frame once.
+- **Support.** Chrome and Edge; Safari is not supported; Firefox is untested.
+
+Threat model: nothing on the player origin is trusted. A malicious course can
+take the relay port, but the relay serves only the open pack's files. All
+packs share one player origin (as all packs share `app://training` on
+desktop), so a live malicious pack can interfere with the player origin within
+a session, for example spoof what another pack's frame displays; it cannot
+reach app data. Details: ADR-0012 and `docs/security/packs.md`.
 
 ## Native menu dependency: confirmed disabled
 
