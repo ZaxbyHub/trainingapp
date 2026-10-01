@@ -21,6 +21,8 @@ export interface EmbeddingEntry {
   source?: string;
   /** Page number, threaded into citation metadata (F7). */
   page?: number;
+  /** Owning installed pack (browser-training-parity AC6). */
+  packId?: string;
 }
 
 /**

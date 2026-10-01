@@ -28,7 +28,8 @@ import { getKeywordIndex, type KeywordIndex } from '../search/keyword-index';
 import { rrfFuse } from '../search/rrf-fusion';
 import { getRerankerService, type RerankerService } from '../search/reranker';
 import { getLLMService } from '../llm/llm-factory';
-import { buildLearnResults } from './learn-kernel';
+import { buildLearnResults, type LinkedSlide } from './learn-kernel';
+import { linkedSlidesWithin } from './learn-links';
 import { DEFAULT_N_CTX } from '../llm/wllama-service';
 import { ensureEmbeddingServiceReady, ensureReadinessGateChecked } from '../../hooks/useServiceInitialization';
 
@@ -630,10 +631,18 @@ export class RAGOrchestrator {
     // onto it by index (F7 numbering invariant).
     //
     // D6 (issue #82): learn[] = the union of direct training-slide hits and
-    // linked slides of the cited chunks (browser surface: no links store —
-    // the linked half is the documented #76 divergence), ranked and deduped
-    // by the same kernel the other surfaces run.
-    const learn = buildLearnResults(contextChunks, { grounding });
+    // linked slides of the cited chunks, ranked and deduped by the same
+    // kernel the other surfaces run. browser-training-parity (AC6): the
+    // linked half is computed from the vector index (the browser has no #80
+    // links table) — best-effort, time-bounded, skipped for general answers.
+    let links: LinkedSlide[] = [];
+    if (grounding !== 'general' && this.embeddingService.isReady() && this.vectorIndex.isReady()) {
+      links = await linkedSlidesWithin(contextChunks, {
+        encodeBatch: (texts) => this.embeddingService.encodeBatch(texts),
+        search: (vector, k) => this.vectorIndex.search(vector as EmbeddingVector, { k }),
+      });
+    }
+    const learn = buildLearnResults(contextChunks, { grounding, links });
     yield {
       type: 'complete',
       data: {

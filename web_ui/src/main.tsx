@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { startBrowserTraining } from './lib/packs/browser-training';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -25,4 +26,11 @@ if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('gall
       </ErrorBoundary>
     </StrictMode>
   );
+
+  // Browser app only (inert inside Electron): resolve the dedicated course
+  // player origin once and register its service worker early
+  // (browser-training-parity, ADR-0012).
+  void startBrowserTraining().catch((error: unknown) => {
+    console.warn('[training] player start-up failed:', error);
+  });
 }

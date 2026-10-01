@@ -21,7 +21,7 @@ from urllib.parse import unquote
 from fastapi import FastAPI, File, HTTPException, Request, Security, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field, validator
 
 from auth import get_auth_status, require_auth
@@ -534,6 +534,18 @@ app.add_middleware(
 )
 
 
+# Player-origin routes of the served web archive (browser-training-parity,
+# ADR-0012). The archive's course player runs on a DEDICATED player origin
+# (the app's loopback alias, or the origin named in player-origin.json); when
+# this server answers as that origin, the boot frame files are embedded
+# cross-origin by the COEP require-corp app page (CORP cross-origin), the
+# course service worker is /training/sw.js, and every other /training/* path
+# is 404 - never the app shell - because course paths are served by that
+# worker only. Mirrors web_ui/vite.config.ts trainingRouteMiddleware.
+TRAINING_BOOT_PATHS = frozenset({"/training-boot.html", "/training-boot.js"})
+TRAINING_SW_PATH = "/training/sw.js"
+
+
 @app.middleware("http")
 async def cross_origin_isolation(request: Request, call_next):
     """Send COOP/COEP so the served HTML5 archive can use SharedArrayBuffer
@@ -543,10 +555,33 @@ async def cross_origin_isolation(request: Request, call_next):
     (`_web_archive_dir` resolved at startup). Pure API-only deployments don't
     need cross-origin isolation, and emitting COOP/COEP there would needlessly
     affect external API consumers and iframe embedders."""
+    path = request.url.path
+    if (
+        _web_archive_dir is not None
+        and (path == "/training" or path.startswith("/training/"))
+        and path != TRAINING_SW_PATH
+    ):
+        return PlainTextResponse(
+            "Not Found",
+            status_code=404,
+            headers={
+                "Cross-Origin-Opener-Policy": "same-origin",
+                "Cross-Origin-Embedder-Policy": "require-corp",
+                "Cross-Origin-Resource-Policy": "same-origin",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
     response = await call_next(request)
     if _web_archive_dir is not None:
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+        if path in TRAINING_BOOT_PATHS:
+            response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Cache-Control"] = "no-cache"
+        elif path == TRAINING_SW_PATH:
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["Cache-Control"] = "no-cache"
     return response
 
 

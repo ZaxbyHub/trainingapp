@@ -59,10 +59,34 @@ const COI_HEADERS = {
   'Cross-Origin-Resource-Policy': 'same-origin',
 };
 
+// Player-origin routes (browser-training-parity, ADR-0012): this server also
+// answers as the course PLAYER origin (the app's loopback alias). The boot
+// frame files carry CORP cross-origin + COEP require-corp; the course service
+// worker is served at /training/sw.js; every other /training/* path is 404,
+// never the SPA shell (course paths are served by that worker only).
+// Mirrors web_ui/vite.config.ts trainingRouteMiddleware.
+const TRAINING_BOOT_PATHS = new Set(['/training-boot.html', '/training-boot.js']);
+const TRAINING_SW_PATH = '/training/sw.js';
+const BOOT_HEADERS = {
+  'Cross-Origin-Resource-Policy': 'cross-origin',
+  'X-Content-Type-Options': 'nosniff',
+};
+
 const server = createServer((req, res) => {
   try {
     // Parse the URL and prevent path traversal.
     const url = new URL(req.url || '/', `http://localhost:${PORT}`);
+    const rawPath = url.pathname;
+    if ((rawPath === '/training' || rawPath.startsWith('/training/')) && rawPath !== TRAINING_SW_PATH) {
+      res.writeHead(404, { ...COI_HEADERS, 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
+      res.end('Not Found');
+      return;
+    }
+    const extraHeaders = TRAINING_BOOT_PATHS.has(rawPath)
+      ? BOOT_HEADERS
+      : rawPath === TRAINING_SW_PATH
+        ? { 'X-Content-Type-Options': 'nosniff' }
+        : {};
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === '/') pathname = '/index.html';
 
@@ -98,7 +122,7 @@ const server = createServer((req, res) => {
 
     // HEAD request: headers only, no body (used by readiness probes).
     if (req.method === 'HEAD') {
-      res.writeHead(200, { ...COI_HEADERS, 'Content-Type': contentType, 'Content-Length': fileLen, 'Cache-Control': 'no-cache' });
+      res.writeHead(200, { ...COI_HEADERS, ...extraHeaders, 'Content-Type': contentType, 'Content-Length': fileLen, 'Cache-Control': 'no-cache' });
       res.end();
       return;
     }
@@ -113,6 +137,7 @@ const server = createServer((req, res) => {
         if (start < fileLen && end < fileLen && start <= end) {
           res.writeHead(206, {
             ...COI_HEADERS,
+            ...extraHeaders,
             'Content-Type': contentType,
             'Content-Length': end - start + 1,
             'Content-Range': `bytes ${start}-${end}/${fileLen}`,
@@ -133,6 +158,7 @@ const server = createServer((req, res) => {
     // Full GET: stream the file (avoid loading large GGUF into memory).
     res.writeHead(200, {
       ...COI_HEADERS,
+      ...extraHeaders,
       'Content-Type': contentType,
       'Content-Length': fileLen,
       'Cache-Control': 'no-cache',

@@ -27,7 +27,7 @@ import { buildCspPolicy, buildTrainingCspPolicy } from './security/csp.js';
  */
 const PACK_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/;
 
-const MIME_TYPES: Record<string, string> = {
+export const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.htm': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',

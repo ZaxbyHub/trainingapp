@@ -48,6 +48,7 @@ const ALLOWLIST: Record<string, [number, string]> = {
   'components/TrainingPlayer.tsx': [1, '<iframe src> of the app:// training-pack protocol (Electron-served, local)'],
   // PR #142 Stage B (Worker constructions): same-origin bundled module worker.
   'lib/embeddings/embedding-service.ts': [1, 'new Worker(new URL("./embedding.worker.ts", import.meta.url)): the same-origin bundled embedding worker (its own outbound calls are scanned in its file)'],
+  'lib/packs/player-origin.ts': [1, 'same-origin runtime config player-origin.json (browser-training-parity), bounded 2 s, read once at app start'],
   'lib/packs/pack-update-browser.ts': [
     1,
     'opt-in signed pack update feed + artifact (browser-training-parity AC8): zero calls before opt-in, https-only request and final URL, credentials omit, no-referrer, size-capped, compiled out under VITE_AIRGAP; bytes are sha256 + Ed25519 verified before install',

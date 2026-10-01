@@ -19,6 +19,12 @@ export interface SearchResult {
   source?: string;
   /** Page number within the source document, when known (F7). */
   page?: number;
+  /**
+   * The installed pack this chunk came from (browser-training-parity AC6):
+   * stamped by the browser pack ingestion on every pack-doc chunk, mirror of
+   * the desktop docs.pack_id column; learn rows carry it as pack_id.
+   */
+  packId?: string;
 }
 
 /**

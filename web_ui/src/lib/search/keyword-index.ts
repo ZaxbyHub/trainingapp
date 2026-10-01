@@ -29,6 +29,7 @@ interface IndexEntry {
   text: string;
   source?: string;
   page?: number;
+  packId?: string;
 }
 
 interface StoredData {
@@ -50,7 +51,7 @@ export class KeywordIndex {
   private disposed: boolean = false;
 
   // In-memory mapping from FlexSearch document ID to chunk metadata
-  private idMapping: Map<string, { docId: string; chunkIndex: number; text: string; source?: string; page?: number }> = new Map();
+  private idMapping: Map<string, { docId: string; chunkIndex: number; text: string; source?: string; page?: number; packId?: string }> = new Map();
   // Reverse mapping: docId -> Set of chunk indices
   private docIdToChunks: Map<string, Set<string>> = new Map();
 
@@ -141,7 +142,7 @@ export class KeywordIndex {
     docId: string,
     chunkIndex: number,
     text: string,
-    meta?: { source?: string; page?: number }
+    meta?: { source?: string; page?: number; packId?: string }
   ): void {
     if (!this.isReady()) {
       throw new Error('KeywordIndex not initialized. Call initialize() first.');
@@ -154,7 +155,14 @@ export class KeywordIndex {
     const id = this.makeChunkId(docId, chunkIndex);
 
     // Store metadata for retrieval
-    this.idMapping.set(id, { docId, chunkIndex, text, source: meta?.source, page: meta?.page });
+    this.idMapping.set(id, {
+      docId,
+      chunkIndex,
+      text,
+      source: meta?.source,
+      page: meta?.page,
+      ...(meta?.packId !== undefined ? { packId: meta.packId } : {}),
+    });
 
     // Update reverse mapping
     if (!this.docIdToChunks.has(docId)) {
@@ -187,6 +195,7 @@ export class KeywordIndex {
       this.addDocument(chunk.docId, chunk.chunkIndex, chunk.text, {
         source: chunk.source,
         page: chunk.page,
+        packId: chunk.packId,
       });
     }
 
@@ -235,6 +244,7 @@ export class KeywordIndex {
           text: meta.text,
           source: meta.source, // F7: filename for citations
           page: meta.page,     // F7: page number for citations
+          ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
         });
         rank++;
       }
@@ -285,7 +295,7 @@ export class KeywordIndex {
    * results are NOT ranked. Iteration is O(index size) per call.
    */
   findChunks(
-    predicate: (meta: { docId: string; chunkIndex: number; text: string; source?: string; page?: number }) => boolean,
+    predicate: (meta: { docId: string; chunkIndex: number; text: string; source?: string; page?: number; packId?: string }) => boolean,
     limit = 10
   ): SearchResult[] {
     const results: SearchResult[] = [];
@@ -298,6 +308,7 @@ export class KeywordIndex {
         text: meta.text,
         source: meta.source,
         page: meta.page,
+        ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
       });
       if (results.length >= limit) break;
     }
@@ -322,6 +333,7 @@ export class KeywordIndex {
           text: meta.text,
           source: meta.source,
           page: meta.page,
+          ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
         });
       }
 
@@ -411,6 +423,7 @@ export class KeywordIndex {
           text: entry.text,
           source: entry.source,
           page: entry.page,
+          ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
         });
       }
 

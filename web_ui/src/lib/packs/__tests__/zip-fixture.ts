@@ -48,7 +48,7 @@ export interface RawZipOptions {
 const enc = new TextEncoder();
 const bytesOf = (d: Uint8Array | string): Uint8Array => (typeof d === 'string' ? enc.encode(d) : d);
 
-export function buildRawZip(entries: RawEntry[], options: RawZipOptions = {}): Uint8Array {
+export function buildRawZip(entries: RawEntry[], options: RawZipOptions = {}): Uint8Array<ArrayBuffer> {
   const parts: Buffer[] = [];
   const central: Buffer[] = [];
   const prefix = Buffer.from(options.prefix ?? new Uint8Array());
@@ -129,6 +129,6 @@ export function buildRawZip(entries: RawEntry[], options: RawZipOptions = {}): U
 export const PACK_JSON_STUB = JSON.stringify({ id: 'stub', version: '1.0.0', docs: [] });
 
 /** A minimal archive with a root pack.json plus `extra` entries. */
-export function packWith(extra: RawEntry[], options: RawZipOptions = {}): Uint8Array {
+export function packWith(extra: RawEntry[], options: RawZipOptions = {}): Uint8Array<ArrayBuffer> {
   return buildRawZip([{ name: 'pack.json', data: PACK_JSON_STUB }, ...extra], options);
 }

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Training player boot</title>
+    <!--
+      Player-origin boot frame (browser-training-parity, ADR-0012). The app
+      embeds this page on the DEDICATED player origin to register the course
+      service worker (/training/sw.js, scope /training/) and to hand the
+      worker the MessagePort the app created for the byte relay. It stores
+      nothing and is not a trust boundary: every check lives in the app page.
+    -->
+  </head>
+  <body>
+    <script src="training-boot.js"></script>
+  </body>
+</html>

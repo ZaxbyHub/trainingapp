@@ -71,4 +71,6 @@ export interface DocumentChunk {
    * Optional so older callers and stored shapes remain valid.
    */
   charOffset?: number;
+  /** Owning installed pack (browser-training-parity AC6); absent for user documents. */
+  packId?: string;
 }

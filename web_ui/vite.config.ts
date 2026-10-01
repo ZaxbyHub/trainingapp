@@ -79,13 +79,74 @@ export default IndexedDbBackend;
   };
 }
 
+/**
+ * Player-origin routes (browser-training-parity, ADR-0012). The course player
+ * runs on the app server's loopback alias (app http://localhost:PORT, player
+ * http://127.0.0.1:PORT, or the reverse); this server therefore also answers
+ * as the PLAYER origin, where:
+ *   - /training-boot.html and /training-boot.js (the boot frame embedded by
+ *     the COEP require-corp app page) carry CORP cross-origin + COEP
+ *     require-corp, nosniff and no-cache;
+ *   - /training/sw.js (the course service worker, scope /training/) carries
+ *     nosniff and no-cache;
+ *   - every other /training/* request is 404 — never the SPA shell — because
+ *     course paths are answered by the player-origin service worker only.
+ * Mirrored by scripts/serve-offline.mjs, scripts/start.ps1 and api_server.py;
+ * pinned by src/lib/packs/__tests__/player-origin-hosting.test.ts.
+ */
+export const TRAINING_BOOT_PATHS = new Set(['/training-boot.html', '/training-boot.js']);
+export const TRAINING_SW_PATH = '/training/sw.js';
+
+export function trainingRouteMiddleware(
+  req: { url?: string },
+  res: { statusCode: number; setHeader(name: string, value: string): void; end(body?: string): void },
+  next: () => void,
+): void {
+  const path = (req.url ?? '').split(/[?#]/)[0] ?? '';
+  if (TRAINING_BOOT_PATHS.has(path)) {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-cache');
+    next();
+    return;
+  }
+  if (path === TRAINING_SW_PATH) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-cache');
+    next();
+    return;
+  }
+  if (path === '/training' || path.startsWith('/training/')) {
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end('Not Found');
+    return;
+  }
+  next();
+}
+
+function trainingPlayerOriginPlugin(): Plugin {
+  return {
+    name: 'trainingapp-player-origin-routes',
+    configureServer(server) {
+      server.middlewares.use(trainingRouteMiddleware);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(trainingRouteMiddleware);
+    },
+  };
+}
+
 export default defineConfig(({ command }) => ({
   // Relative base so the built bundle's own asset URLs (JS/CSS) work when the
   // self-contained archive is served from any path. Model assets under /models
   // are loaded same-origin and the archive is served at the origin root (the
   // bundled FastAPI server, or a static host) — see PACKAGING.md.
   base: './',
-  plugins: [react(), edgevecSnippetPlugin()],
+  plugins: [react(), edgevecSnippetPlugin(), trainingPlayerOriginPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -95,6 +156,10 @@ export default defineConfig(({ command }) => ({
     exclude: ['@huggingface/transformers', '@mlc-ai/web-llm', 'edgevec'],
   },
   server: {
+    // Bind the IPv4 loopback explicitly (never 0.0.0.0, which would expose
+    // the LAN): both loopback names must reach this one listener, because the
+    // course player runs on the app origin's alias (localhost <-> 127.0.0.1).
+    host: '127.0.0.1',
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
@@ -113,6 +178,7 @@ export default defineConfig(({ command }) => ({
   // Same cross-origin isolation for `vite preview`, so the packaged build can be
   // validated with the SharedArrayBuffer/threads it needs for WASM inference.
   preview: {
+    host: '127.0.0.1',
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',

@@ -120,6 +120,30 @@ while ($Listener.IsListening) {
             continue
         }
 
+        # Player-origin routes (browser-training-parity, ADR-0012): this server
+        # also answers as the course PLAYER origin (http://localhost:PORT is the
+        # app, its loopback alias http://127.0.0.1:PORT the player, or the
+        # reverse). The boot frame files get CORP cross-origin (below); the
+        # course service worker is served at /training/sw.js; every other
+        # /training/* path is 404, never the SPA shell (course paths are served
+        # by that worker only). Mirrors web_ui/vite.config.ts.
+        $RawPath = $Request.Url.AbsolutePath
+        $IsTrainingBoot = ($RawPath -ceq '/training-boot.html' -or $RawPath -ceq '/training-boot.js')
+        $IsTrainingWorker = ($RawPath -ceq '/training/sw.js')
+        if (($RawPath -ceq '/training' -or $RawPath.StartsWith('/training/', [StringComparison]::Ordinal)) -and -not $IsTrainingWorker) {
+            $Response.StatusCode = 404
+            $Response.Headers.Set('Cross-Origin-Opener-Policy', 'same-origin')
+            $Response.Headers.Set('Cross-Origin-Embedder-Policy', 'require-corp')
+            $Response.Headers.Set('Cross-Origin-Resource-Policy', 'same-origin')
+            $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
+            $Response.ContentType = 'text/plain; charset=utf-8'
+            $Bytes = [System.Text.Encoding]::UTF8.GetBytes('404 Not Found')
+            $Response.ContentLength64 = $Bytes.Length
+            $Response.OutputStream.Write($Bytes, 0, $Bytes.Length)
+            $Response.Close()
+            continue
+        }
+
         # Map to file on disk and canonicalize.
         $FilePath = Join-Path $DistDir $Path.TrimStart('/\')
         $FilePath = $FilePath -replace '/', '\'
@@ -169,6 +193,13 @@ while ($Listener.IsListening) {
         # which breaks cross-origin isolation and SharedArrayBuffer.
         $Response.Headers.Set('Cross-Origin-Resource-Policy', 'same-origin')
         $Response.Headers.Set('Cache-Control', 'no-cache')
+        if ($IsTrainingBoot) {
+            # The boot frame is embedded cross-origin by the COEP require-corp app page.
+            $Response.Headers.Set('Cross-Origin-Resource-Policy', 'cross-origin')
+            $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
+        } elseif ($IsTrainingWorker) {
+            $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
+        }
         $Response.ContentType = $ContentType
 
         $FileLen = (Get-Item $ResolvedPath).Length
