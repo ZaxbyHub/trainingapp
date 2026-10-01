@@ -30,6 +30,13 @@ export const EXTERNAL_CONFIG_KEY = 'external-provider-config';
  * The desktop app never stores it in the renderer (main-process secret store).
  */
 export const EXTERNAL_API_KEY_KEY = 'external-provider-apikey';
+/**
+ * The origin (scheme://host:port) the external API key is bound to, kept in
+ * the SAME storage as the key (it moves with "Remember API key"). The key is
+ * sent only to this origin. '' = saved before any base URL (binds to the
+ * first origin set). Browser app only.
+ */
+export const EXTERNAL_API_KEY_ORIGIN_KEY = 'external-provider-apikey-origin';
 /** Sidebar open/closed state. */
 export const SIDEBAR_OPEN_KEY = 'sidebarOpen';
 /** Last course opened on the Training page. */
@@ -42,12 +49,13 @@ export const USER_SETTING_KEYS: readonly string[] = [
   PROVIDER_API_KEY_KEY,
   EXTERNAL_CONFIG_KEY,
   EXTERNAL_API_KEY_KEY,
+  EXTERNAL_API_KEY_ORIGIN_KEY,
   SIDEBAR_OPEN_KEY,
   LAST_PACK_KEY,
 ];
 
 /** Session-scoped user settings (sessionStorage): Clear Cache removes these too. */
-export const SESSION_SETTING_KEYS: readonly string[] = [EXTERNAL_API_KEY_KEY];
+export const SESSION_SETTING_KEYS: readonly string[] = [EXTERNAL_API_KEY_KEY, EXTERNAL_API_KEY_ORIGIN_KEY];
 
 /** Stable profile id that names this browser profile's storage namespace. */
 export const PROFILE_KEY = 'doc-qa-profile-id';

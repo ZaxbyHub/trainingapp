@@ -384,9 +384,18 @@ Airgap builds refuse public hosts; loopback and private-network endpoints still 
   system offers no encryption the key is kept for the current session only and the panel says
   "Key kept for this session only". The renderer never sees or stores the key; it is never
   written to `settings.json` or `external.json`, never returned by any endpoint and never
-  logged. A saved key is bound to the endpoint origin (`scheme://host:port`) it was saved for:
-  if you point the base URL at a different origin the key is NOT sent there, the panel says the
-  key belongs to the other origin and you re-enter it. Pointing back uses it again.
+  logged.
+- **Both apps: the key is bound to its origin.** A saved key is bound to the endpoint origin
+  (`scheme://host:port`, compared case-insensitively with default ports dropped, so
+  `https://api.example.com` and `https://api.example.com:443` are the same origin while
+  `http://localhost:1234` and `http://127.0.0.1:1234` are not) it was entered for. If you point
+  the base URL at a different origin the key is NOT sent there (neither for answers nor for
+  "Test connection"); the panel says "Your saved key is for <origin>. Enter the key for this
+  server to use it." Entering the key again binds it to the new origin. Changing or clearing
+  the base URL never moves the key to another origin, and pointing back uses it again. The
+  browser app keeps the bound origin next to the key (`external-provider-apikey-origin`, in the
+  same storage); a key saved by an earlier version without an origin is bound to the base URL
+  saved with it, or discarded if there is none.
 
 ### Browser app transport limits
 

@@ -250,6 +250,144 @@ describe('desktop app', () => {
       'external.apiKeyBoundOrigin': 'https://api.openai.com',
     });
     renderDesktop(s);
-    expect(await within(panel()).findByText(/belongs to https:\/\/api\.openai\.com/)).toBeInTheDocument();
+    // Same copy in both apps (review round 1 F2 parity).
+    expect(
+      await within(panel()).findByText('Your saved key is for https://api.openai.com. Enter the key for this server to use it.'),
+    ).toBeInTheDocument();
+  });
+});
+
+// Review round 1 (F2): browser key-origin binding, end to end through the
+// panel against real local endpoints. The saved key is never shown, tested or
+// sent for another origin; re-entering it binds it to the new origin.
+describe('browser app: key-origin binding (F2)', () => {
+  interface Hit {
+    url: string;
+    headers: import('node:http').IncomingHttpHeaders;
+  }
+  const open: import('node:http').Server[] = [];
+  afterEach(async () => {
+    while (open.length > 0) {
+      const s = open.pop() as import('node:http').Server;
+      (s as unknown as { closeAllConnections?: () => void }).closeAllConnections?.();
+      await new Promise<void>((resolve) => s.close(() => resolve()));
+    }
+  });
+  async function endpoint(): Promise<{ base: string; hits: Hit[] }> {
+    const http = await import('node:http');
+    const hits: Hit[] = [];
+    const s = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        hits.push({ url: req.url ?? '', headers: req.headers });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ data: [{ id: 'm' }] }));
+      });
+    });
+    await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', () => resolve()));
+    open.push(s);
+    return { base: `http://127.0.0.1:${(s.address() as import('node:net').AddressInfo).port}`, hits };
+  }
+  const KEY2 = 'sk-panel-SECOND-1357';
+  const keyOf = (h: Hit | undefined) => [h?.headers.authorization, h?.headers['x-api-key']];
+
+  for (const protocol of ['openai', 'anthropic'] as const) {
+    test(`${protocol}: A -> B hides the key, Test connection sends none to B, re-entry rebinds to B`, async () => {
+      const a = await endpoint();
+      const b = await endpoint();
+      render(<ExternalModelSection />);
+      const q = within(panel());
+      if (protocol === 'anthropic') {
+        fireEvent.change(q.getByRole('combobox', { name: /^protocol$/i }), { target: { value: 'anthropic' } });
+      }
+      const sent = (k: string) => (protocol === 'openai' ? [`Bearer ${k}`, undefined] : [undefined, k]);
+      const base = q.getByLabelText(/^base url$/i);
+      const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+      const testButton = q.getByRole('button', { name: /^test connection$/i });
+      fireEvent.change(base, { target: { value: a.base } });
+      fireEvent.blur(base);
+      fireEvent.change(key, { target: { value: KEY } });
+      fireEvent.blur(key);
+      await waitFor(() => expect(sessionStorage.getItem('external-provider-apikey-origin')).toBe(a.base));
+      fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm' } });
+      fireEvent.click(testButton);
+      await waitFor(() => expect(a.hits).toHaveLength(1));
+      expect(keyOf(a.hits[0])).toEqual(sent(KEY));
+      await waitFor(() => expect(testButton).not.toBeDisabled());
+
+      // Point the panel at B: the saved key is hidden, announced, and not sent.
+      fireEvent.change(base, { target: { value: b.base } });
+      fireEvent.blur(base);
+      expect(await q.findByText(`Your saved key is for ${a.base}. Enter the key for this server to use it.`)).toBeInTheDocument();
+      expect(key.value).toBe('');
+      fireEvent.click(testButton);
+      await waitFor(() => expect(b.hits).toHaveLength(1));
+      expect(keyOf(b.hits[0])).toEqual([undefined, undefined]);
+      await waitFor(() => expect(testButton).not.toBeDisabled());
+      // The saved key was kept (not deleted, not rebound to B).
+      expect(sessionStorage.getItem('external-provider-apikey')).toBe(KEY);
+      expect(sessionStorage.getItem('external-provider-apikey-origin')).toBe(a.base);
+
+      // Re-entering a key binds it to B.
+      fireEvent.change(key, { target: { value: KEY2 } });
+      fireEvent.blur(key);
+      await waitFor(() => expect(sessionStorage.getItem('external-provider-apikey-origin')).toBe(b.base));
+      await waitFor(() => expect(q.queryByTestId('external-key-elsewhere')).toBeNull());
+      fireEvent.click(testButton);
+      await waitFor(() => expect(b.hits).toHaveLength(2));
+      expect(keyOf(b.hits[1])).toEqual(sent(KEY2));
+      await waitFor(() => expect(testButton).not.toBeDisabled());
+
+      // Back to A: KEY2 belongs to B now, so A gets nothing.
+      fireEvent.change(base, { target: { value: a.base } });
+      fireEvent.blur(base);
+      expect(await q.findByText(`Your saved key is for ${b.base}. Enter the key for this server to use it.`)).toBeInTheDocument();
+      fireEvent.click(testButton);
+      await waitFor(() => expect(a.hits).toHaveLength(2));
+      expect(keyOf(a.hits[1])).toEqual([undefined, undefined]);
+    });
+  }
+
+  test('Test connection right after editing the URL (no blur yet) does not send the shown key to the new origin', async () => {
+    const a = await endpoint();
+    const b = await endpoint();
+    localStorage.setItem('external-provider-config', JSON.stringify({ protocol: 'openai', baseUrl: a.base, model: 'm', rememberKey: true }));
+    localStorage.setItem('external-provider-apikey-origin', a.base);
+    localStorage.setItem('external-provider-apikey', KEY);
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    expect((q.getByLabelText(/^api key$/i) as HTMLInputElement).value).toBe(KEY);
+    fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: b.base } });
+    fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+    await waitFor(() => expect(b.hits).toHaveLength(1));
+    expect(keyOf(b.hits[0])).toEqual([undefined, undefined]);
+    expect(a.hits).toHaveLength(0);
+  });
+
+  test('tab-through and the Remember toggle never rebind a key that belongs to another origin', async () => {
+    const a = await endpoint();
+    const b = await endpoint();
+    localStorage.setItem('external-provider-config', JSON.stringify({ protocol: 'openai', baseUrl: a.base, model: 'm', rememberKey: false }));
+    sessionStorage.setItem('external-provider-apikey-origin', a.base);
+    sessionStorage.setItem('external-provider-apikey', KEY);
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+    expect(key.value).toBe(KEY);
+    const base = q.getByLabelText(/^base url$/i);
+    fireEvent.change(base, { target: { value: b.base } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(key.value).toBe(''));
+    fireEvent.focus(key);
+    fireEvent.blur(key);
+    fireEvent.click(q.getByRole('checkbox', { name: /remember api key/i }));
+    await waitFor(() => expect(localStorage.getItem('external-provider-apikey')).toBe(KEY));
+    expect(localStorage.getItem('external-provider-apikey-origin')).toBe(a.base);
+    expect(q.getByTestId('external-key-elsewhere')).toHaveTextContent(`Your saved key is for ${a.base}.`);
+    // Pointing back at A shows (and uses) the key again.
+    fireEvent.change(base, { target: { value: `${a.base}/v1` } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(key.value).toBe(KEY));
+    expect(q.queryByTestId('external-key-elsewhere')).toBeNull();
   });
 });

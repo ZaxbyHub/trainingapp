@@ -8,7 +8,11 @@
  *   Browser app: the configuration lives in this browser
  *     (lib/llm/external-provider.ts) and "Test connection" calls the endpoint
  *     directly (probeExternalEndpoint). The key is stored in this browser —
- *     in localStorage only while "Remember API key" is on.
+ *     in localStorage only while "Remember API key" is on — and is bound to
+ *     the origin it was entered for (key-origin binding, ADR-0011 decision
+ *     3): after the base URL moves to another origin the saved key is not
+ *     shown, not tested and not used; the panel says which origin it belongs
+ *     to and re-entering it binds it to the new origin.
  *   Desktop app: every change is a PUT /settings `external.*` patch to the
  *     built-in backend; the key goes to the main-process secret store and is
  *     never kept in the renderer; "Test connection" is POST
@@ -25,9 +29,13 @@ import { IS_AIRGAP } from '../lib/llm/airgap';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
 import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE } from '../lib/llm/provider-error';
 import {
+  keyForBaseUrl,
+  keyOriginOf,
   loadExternalConfig,
+  loadExternalKeyState,
   probeExternalEndpoint,
   saveExternalConfig,
+  type ExternalKeyState,
   type ExternalProtocol,
 } from '../lib/llm/external-provider';
 
@@ -103,12 +111,9 @@ const buttonStyle: React.CSSProperties = {
 const errorStyle: React.CSSProperties = { ...descStyle, color: 'var(--color-danger)' };
 const okStyle: React.CSSProperties = { ...descStyle, color: 'var(--color-success, var(--color-text))' };
 
-function originOf(url: string): string {
-  try {
-    return new URL(url.trim()).origin;
-  } catch {
-    return '';
-  }
+/** Same copy in both apps when the saved key belongs to another origin. */
+function keyElsewhereText(boundOrigin: string): string {
+  return `Your saved key is for ${boundOrigin}. Enter the key for this server to use it.`;
 }
 
 function errorText(err: unknown): string {
@@ -126,6 +131,13 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
   });
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // Browser key-origin binding: the origin the key in the field belongs to
+  // (loaded key: its bound origin, which equals the shown URL's; typed key:
+  // the URL shown while typing), and whether it was typed since the last save.
+  const fieldKeyOriginRef = useRef(!desktop && draft.apiKey !== '' ? keyOriginOf(draft.baseUrl) : '');
+  const keyDirtyRef = useRef(false);
+  // Re-render after a browser key save (storage writes do not re-render).
+  const [, setKeyVersion] = useState(0);
   const [keyState, setKeyState] = useState<DesktopKeyState>({
     apiKeySet: false,
     apiKeyPersisted: true,
@@ -192,9 +204,10 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
 
   /** Persist a patch (browser storage or desktop PUT). Resolves false on refusal. */
   const persist = useCallback(
-    async (patch: Partial<Draft>): Promise<boolean> => {
+    async (patch: Partial<Draft>, opts?: { keyOrigin?: string }): Promise<boolean> => {
       if (!desktop) {
-        saveExternalConfig(patch);
+        saveExternalConfig(patch, opts);
+        setKeyVersion((v) => v + 1);
         return true;
       }
       if (session === null) {
@@ -236,6 +249,17 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     }
     setProblem(null);
     await persist({ baseUrl: url });
+    if (!desktop && !keyDirtyRef.current) {
+      // The field only ever shows the key bound to the URL shown: moving to
+      // another origin hides it (the saved key is kept, not rebound); moving
+      // back shows it again.
+      const origin = keyOriginOf(url);
+      const bound = keyForBaseUrl(url);
+      if (fieldKeyOriginRef.current !== origin || draftRef.current.apiKey !== bound) {
+        fieldKeyOriginRef.current = bound !== '' ? origin : '';
+        if (mountedRef.current) setDraft((prev) => ({ ...prev, apiKey: bound }));
+      }
+    }
   };
 
   const handleModelBlur = async () => {
@@ -257,10 +281,29 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       if (ok && mountedRef.current) setDraft((prev) => ({ ...prev, apiKey: '' }));
       return;
     }
-    await persist({ apiKey: key });
+    // Browser: only a key the user actually typed is saved (a tab-through
+    // never rebinds the saved key to the URL now shown).
+    if (!keyDirtyRef.current) return;
+    keyDirtyRef.current = false;
+    const url = draftRef.current.baseUrl;
+    if (key === '') {
+      // The user emptied the field: forget the key that was shown here (a key
+      // bound to another origin was never shown, so it is kept).
+      const state = loadExternalKeyState(url);
+      if (state.status === 'bound' || state.status === 'pending') await persist({ apiKey: '' });
+      fieldKeyOriginRef.current = '';
+      return;
+    }
+    // (Re-)entry binds to the URL the user sees; pending when it has no
+    // usable origin yet (binds to the first base URL saved).
+    const keyOrigin = url.trim() !== '' && checkUrl(url) === null ? keyOriginOf(url) : '';
+    fieldKeyOriginRef.current = keyOrigin;
+    await persist({ apiKey: key }, { keyOrigin });
   };
 
   const handleClearKey = async () => {
+    keyDirtyRef.current = false;
+    fieldKeyOriginRef.current = '';
     setDraft((prev) => ({ ...prev, apiKey: '' }));
     await persist({ apiKey: '' });
   };
@@ -314,11 +357,18 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
           ...(current.apiKey !== '' ? { apiKey: current.apiKey } : {}),
         });
       } else {
+        // Key-origin binding: the key in the field only when it belongs to
+        // this URL's origin; otherwise the saved key only if it is bound here.
+        const origin = keyOriginOf(current.baseUrl);
+        const apiKey =
+          current.apiKey !== '' && fieldKeyOriginRef.current !== '' && fieldKeyOriginRef.current === origin
+            ? current.apiKey
+            : keyForBaseUrl(current.baseUrl);
         result = await probeExternalEndpoint({
           protocol: current.protocol,
           baseUrl: current.baseUrl.trim(),
           model: current.model.trim(),
-          apiKey: current.apiKey,
+          apiKey,
         });
       }
       if (!mountedRef.current || draftRef.current.baseUrl !== requested) return;
@@ -332,9 +382,15 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     }
   };
 
-  const draftOrigin = originOf(draft.baseUrl);
-  const boundElsewhere =
-    desktop && keyState.apiKeyBoundOrigin !== '' && draftOrigin !== '' && keyState.apiKeyBoundOrigin !== draftOrigin;
+  const draftOrigin = keyOriginOf(draft.baseUrl);
+  const browserKey: ExternalKeyState = desktop ? { status: 'none' } : loadExternalKeyState(draft.baseUrl);
+  const keyElsewhereOrigin = desktop
+    ? keyState.apiKeyBoundOrigin !== '' && draftOrigin !== '' && keyState.apiKeyBoundOrigin !== draftOrigin
+      ? keyState.apiKeyBoundOrigin
+      : ''
+    : browserKey.status === 'mismatch' && draftOrigin !== '' && draft.apiKey === ''
+      ? browserKey.boundOrigin
+      : '';
   const plainHttpKey =
     draft.apiKey !== '' &&
     draft.baseUrl.trim().toLowerCase().startsWith('http://') &&
@@ -422,7 +478,7 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
             ? keyState.apiKeySet
               ? 'A key is saved (encrypted by the operating system). Type a new key to replace it.'
               : 'Optional. Saved encrypted by the desktop app and sent only to this endpoint.'
-            : 'Optional. Stored in this browser and sent only to this endpoint.'}
+            : 'Optional. Stored in this browser and sent only to the server it was entered for.'}
         </p>
         <div style={rowStyle}>
           <input
@@ -431,13 +487,17 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
             autoComplete="new-password"
             spellCheck={false}
             value={draft.apiKey}
-            onChange={(e) => update({ apiKey: e.target.value })}
+            onChange={(e) => {
+              keyDirtyRef.current = true;
+              fieldKeyOriginRef.current = keyOriginOf(draftRef.current.baseUrl);
+              update({ apiKey: e.target.value });
+            }}
             onBlur={() => void handleKeyBlur()}
             placeholder={desktop && keyState.apiKeySet ? 'Saved' : 'Leave empty for servers without a key'}
             style={inputStyle}
             aria-describedby="external-api-key-desc"
           />
-          {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '') && (
+          {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '' || browserKey.status !== 'none') && (
             <button type="button" style={buttonStyle} onClick={() => void handleClearKey()}>
               Clear saved key
             </button>
@@ -451,7 +511,8 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
               checked={draft.rememberKey}
               onChange={(e) => {
                 update({ rememberKey: e.target.checked });
-                void persist({ rememberKey: e.target.checked, apiKey: draftRef.current.apiKey });
+                // Moves the saved key and its binding between storages; never rebinds.
+                void persist({ rememberKey: e.target.checked });
               }}
             />
             <label htmlFor="external-remember-key" style={descStyle}>
@@ -462,10 +523,9 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
         {desktop && !keyState.apiKeyPersisted && keyState.apiKeySet && (
           <p style={descStyle}>Key kept for this session only: secure storage is unavailable on this computer.</p>
         )}
-        {boundElsewhere && (
-          <p style={descStyle}>
-            The saved key belongs to {keyState.apiKeyBoundOrigin} and is not sent anywhere else; re-enter it to use it
-            here.
+        {keyElsewhereOrigin !== '' && (
+          <p style={descStyle} data-testid="external-key-elsewhere">
+            {keyElsewhereText(keyElsewhereOrigin)}
           </p>
         )}
         {plainHttpKey && (

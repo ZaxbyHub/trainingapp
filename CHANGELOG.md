@@ -50,7 +50,14 @@
   `anthropic-dangerous-direct-browser-access: true`; the panel warns when a key would travel
   over plain http to a non-loopback host. The key is kept in `sessionStorage`, or in
   `localStorage` only while "Remember API key in this browser" is on; Clear Cache removes it.
-  A browser cannot check what a name resolves to (the desktop app does).
+  As in the desktop app, the key is bound to the origin it was entered for and is never sent
+  to another origin (for answers or "Test connection"); the panel names the origin it belongs
+  to and re-entering the key binds it to the new one. A browser cannot check what a name
+  resolves to (the desktop app does).
+- **Hardening.** A key with a character that cannot be sent in an HTTP header is refused when
+  it is saved (both apps, the key is never echoed). The desktop client bounds DNS resolution
+  (30 s) and stops a lookup on cancel. SIIT, local-use NAT64 and Teredo IPv6 addresses are
+  never treated as public, and are refused when the IPv4 address they carry is.
 - **PR #138 "Provider server" mode retired and migrated.** The inference-mode radio is gone. A
   stored provider configuration is migrated once: in the browser into the External model
   settings as Direct chat (as before); in the desktop app into the desktop backend's settings,

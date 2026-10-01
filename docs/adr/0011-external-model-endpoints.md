@@ -126,10 +126,18 @@ land on an address that was not checked.
   you turn on the external model or update checks".
 - **Redirects are never followed** on either transport. A key is therefore never replayed to a
   host the user did not configure.
-- **Key-origin binding (desktop).** A saved key is bound to the origin (`scheme://host:port`)
-  it was saved for. If the base URL is pointed at a different origin the key is not sent; the
-  panel says the key belongs to the other origin and the user re-enters it. Pointing back to the
-  original origin uses the saved key again.
+- **Key-origin binding (both apps).** A saved key is bound to the origin (`scheme://host:port`,
+  the WHATWG URL origin: lowercase scheme and host, default port dropped) it was entered for.
+  If the base URL is pointed at a different origin the key is not sent, for generation or for
+  the connection test; the panel says the key belongs to the other origin and the user
+  re-enters it, which binds it to the new origin. Changing, clearing or resetting the base URL
+  never rebinds the key, and pointing back to the original origin uses the saved key again.
+  Desktop: the backend keeps the key and its origin as separate secret-store entries and sends
+  the key only when the configured origin matches. Browser: the origin is stored next to the
+  key in the same browser storage (`external-provider-apikey-origin`), and the configuration
+  loader hands the key to the generators and the connection test only for the matching origin.
+  A browser key saved before this binding existed is bound to the base URL stored with it, or
+  discarded when there is none.
 - **Name-class consistency (desktop).** A name that claims to be private or loopback cannot be
   made to reach a public address by DNS (rebinding), and a name that resolves to metadata,
   link-local or unspecified addresses is refused.

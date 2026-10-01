@@ -11,7 +11,8 @@
  *     blob is loaded. Legacy provider state becomes `external-provider-config`
  *     {enabled: <was provider mode>, protocol 'openai', baseUrl, model,
  *     grounded: false (#138 was ungrounded direct chat), rememberKey: true}
- *     plus the key under `external-provider-apikey`; the mode becomes
+ *     plus the key under `external-provider-apikey`, bound to the migrated
+ *     base URL's origin (`external-provider-apikey-origin`); the mode becomes
  *     browser-local and the legacy fields/key are deleted. An existing
  *     external configuration is never overwritten.
  *   Desktop app: desktop-seed moves a stored 'provider' mode to 'api' (the
@@ -25,10 +26,12 @@ import type { ApiClient } from '../api';
 import { ApiError } from '../api/types';
 import {
   EXTERNAL_API_KEY_KEY,
+  EXTERNAL_API_KEY_ORIGIN_KEY,
   EXTERNAL_CONFIG_KEY,
   INFERENCE_MODE_KEY,
   PROVIDER_API_KEY_KEY,
 } from '../storage/persisted-keys';
+import { keyOriginOf } from './key-origin';
 
 /** Blob marker desktop-seed sets when it moved a stored 'provider' mode to 'api'. */
 export const LEGACY_PROVIDER_MARKER = 'legacyProviderMode';
@@ -92,7 +95,13 @@ export function migrateLegacyProviderBlob(blob: Record<string, unknown>): Record
           rememberKey: true,
         }),
       );
-      if (key !== '') localStorage.setItem(EXTERNAL_API_KEY_KEY, key);
+      // The migrated key is bound to the migrated base URL's origin (key-origin
+      // binding); a base URL without an http(s) origin gets no key at all.
+      const origin = keyOriginOf(legacy.baseUrl);
+      if (key !== '' && origin !== '') {
+        localStorage.setItem(EXTERNAL_API_KEY_ORIGIN_KEY, origin);
+        localStorage.setItem(EXTERNAL_API_KEY_KEY, key);
+      }
     } catch {
       /* storage unavailable — the legacy state is dropped below regardless */
     }
@@ -134,6 +143,7 @@ function scrubDesktopLegacy(): void {
   // linger there either way (AC7).
   try {
     localStorage.removeItem(EXTERNAL_API_KEY_KEY);
+    localStorage.removeItem(EXTERNAL_API_KEY_ORIGIN_KEY);
   } catch {
     /* storage unavailable */
   }
