@@ -133,7 +133,7 @@ function classifyIPv4(o: number[]): AddressClass {
   if (a === 169 && b === 254) {
     return { ok: false, rule: 'link-local', reason: 'a link-local address (169.254.0.0/16)' };
   }
-  if (a === 0) return { ok: false, rule: 'invalid-url', reason: 'the unspecified address 0.0.0.0/8 is not a server address' };
+  if (a === 0) return { ok: false, rule: 'invalid-url', reason: 'the unspecified address 0.0.0.0/8 (not a server address)' };
   if (a === 127) return { ok: true, kind: 'loopback' };
   if (a === 10) return { ok: true, kind: 'private' };
   if (a === 172 && b >= 16 && b <= 31) return { ok: true, kind: 'private' };
@@ -150,7 +150,7 @@ function classifyIPv6(groups: number[]): AddressClass {
   const isZero = (from: number, to: number) => groups.slice(from, to).every((x) => x === 0);
   const embedded = (hi: number, lo: number): number[] => [hi >> 8, hi & 0xff, lo >> 8, lo & 0xff];
   if (groups.every((x) => x === 0)) {
-    return { ok: false, rule: 'invalid-url', reason: 'the unspecified address :: is not a server address' };
+    return { ok: false, rule: 'invalid-url', reason: 'the unspecified address :: (not a server address)' };
   }
   if (isZero(0, 7) && g(7) === 1) return { ok: true, kind: 'loopback' };
   // fd00:ec2::254 — AWS IMDS over IPv6.
@@ -180,11 +180,20 @@ function classifyIPv6(groups: number[]): AddressClass {
       [g(3) & 0xff, g(4) & 0xff, g(5) >> 8, g(5) & 0xff], // /56
       [g(4) & 0xff, g(5) >> 8, g(5) & 0xff, g(6) >> 8], // /64
       embedded(g(6), g(7)), // /96
-      [g(2) >> 8, g(2) & 0xff, g(3) >> 8, g(3) & 0xff], // /32
     ];
     for (const octets of layouts) {
       const cls = classifyIPv4(octets);
-      if (!cls.ok) return cls;
+      if (!cls.ok) {
+        return { ok: false, rule: cls.rule, reason: `a local-use NAT64 address (64:ff9b:1::/48) that may embed ${cls.reason}` };
+      }
+    }
+    const slash32 = classifyIPv4([g(2) >> 8, g(2) & 0xff, g(3) >> 8, g(3) & 0xff]); // /32
+    if (!slash32.ok) {
+      return {
+        ok: false,
+        rule: slash32.rule,
+        reason: 'a local-use NAT64 address (64:ff9b:1::/48) outside the /96 layout (its embedded IPv4 address cannot be determined)',
+      };
     }
     return { ok: true, kind: 'public' };
   }
@@ -194,9 +203,9 @@ function classifyIPv6(groups: number[]): AddressClass {
   // through Internet relays, never a LAN destination).
   if (g(0) === 0x2001 && g(1) === 0) {
     const server = classifyIPv4(embedded(g(2), g(3)));
-    if (!server.ok) return server;
+    if (!server.ok) return { ok: false, rule: server.rule, reason: `a Teredo address (2001::/32) whose server is ${server.reason}` };
     const client = classifyIPv4(embedded(g(6) ^ 0xffff, g(7) ^ 0xffff));
-    if (!client.ok) return client;
+    if (!client.ok) return { ok: false, rule: client.rule, reason: `a Teredo address (2001::/32) whose client is ${client.reason}` };
     return { ok: true, kind: 'public' };
   }
   // 6to4 2002::/16 carries the IPv4 in groups 1-2.

@@ -65,3 +65,40 @@ describe('address classification used for connect-time checks', () => {
     }
   });
 });
+
+// Review round 3 (R3-N3): refusal reasons are specific and read as one sentence.
+describe('refusal reasons (local-use NAT64, Teredo, unspecified)', () => {
+  const msg = (url: string) => validateEndpointUrl(url, { airgap: false }).message;
+  const MESSAGES: Array<[string, string]> = [
+    [
+      'https://[64:ff9b:1:808:8:808:800:0]',
+      'Endpoint refused (invalid-url): a local-use NAT64 address (64:ff9b:1::/48) outside the /96 layout (its embedded IPv4 address cannot be determined) cannot be used as a model endpoint',
+    ],
+    [
+      'http://[64:ff9b:1:a9fe:a9:fe00::]/',
+      'Endpoint refused (metadata): a local-use NAT64 address (64:ff9b:1::/48) that may embed the cloud metadata service address 169.254.169.254 cannot be used as a model endpoint',
+    ],
+    [
+      'http://[2001:0:4136:e378:8000:63bf:5601:5601]',
+      'Endpoint refused (metadata): a Teredo address (2001::/32) whose client is the cloud metadata service address 169.254.169.254 cannot be used as a model endpoint',
+    ],
+    [
+      'http://[2001:0:a9fe:a9fe::3fff:fdd2]',
+      'Endpoint refused (metadata): a Teredo address (2001::/32) whose server is the cloud metadata service address 169.254.169.254 cannot be used as a model endpoint',
+    ],
+    [
+      'http://0.0.0.0:8080',
+      'Endpoint refused (invalid-url): the unspecified address 0.0.0.0/8 (not a server address) cannot be used as a model endpoint',
+    ],
+    [
+      'https://[64:ff9b:1:abcd::1]',
+      'Endpoint refused (invalid-url): a local-use NAT64 address (64:ff9b:1::/48) that may embed the unspecified address 0.0.0.0/8 (not a server address) cannot be used as a model endpoint',
+    ],
+    ['http://[::]:8080', 'Endpoint refused (invalid-url): the unspecified address :: (not a server address) cannot be used as a model endpoint'],
+  ];
+  for (const [url, expected] of MESSAGES) {
+    test(url, () => {
+      expect(msg(url)).toBe(expected);
+    });
+  }
+});
