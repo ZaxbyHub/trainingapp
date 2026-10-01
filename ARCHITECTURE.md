@@ -43,8 +43,9 @@ with packtool), and [docs/training-pack-refresh-runbook.md](docs/training-pack-r
   IndexedDB/EdgeVec/FlexSearch in-page; knowledge packs gated (ADR-0009).
 ```
 
-One web_ui build runs in three modes — Electron-hosted (this document's
-main subject), remote Python server, and pure-browser local; mode selection,
+One web_ui build runs Electron-hosted (this document's main subject) or as a
+pure-browser local app (the former browser "remote Python server" mode was
+removed by settings-wiring-honesty); mode selection,
 boot discovery, and their deliberate limitations are documented in
 [docs/electron-mode.md](docs/electron-mode.md).
 

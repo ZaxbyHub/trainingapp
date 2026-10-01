@@ -350,7 +350,9 @@ answer length/temperature follow the inference profile (Quality 1024 / 0.2, Fast
 it behaves exactly as before. An explicit preset value keeps winning over the inference
 profile until it is reset. Reranking can only run when a reranker was built at startup; when
 none was, the preset cards say "Reranking unavailable on this installation" and reranking is
-effectively off.
+effectively off. In particular, with `TRAININGAPP_RETRIEVAL_RERANK=false` no reranker is built at
+startup, so an explicit `rag_reranking_enabled: true` has no effect and the UI shows "Reranking
+unavailable on this installation".
 
 **Reset.** "Reset to defaults" sends `PUT /settings {"reset": ["rag_n_results",
 "rag_reranking_enabled", "rag_max_tokens", "rag_temperature"]}`. `reset` is a request

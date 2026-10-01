@@ -43,7 +43,6 @@ interface InferenceModeContextValue extends InferenceModeState {
   setMode: (mode: InferenceMode) => void;
   setBrowserEngine: (engine: BrowserEngine) => void;
   setRagPreset: (preset: RAGPreset) => void;
-  setServerUrl: (url: string) => void;
   checkServerConnectivity: () => Promise<boolean>;
   setModelReady: (ready: boolean) => void;
   setModelLoadingProgress: (progress: number) => void;
@@ -238,14 +237,6 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
     });
   }, []);
 
-  const setServerUrl = useCallback((serverUrl: string) => {
-    setState((prev) => {
-      const next = { ...prev, serverUrl };
-      persistState(prev.mode, serverUrl, prev.browserEngine, prev.ragPreset);
-      return next;
-    });
-  }, []);
-
   const checkServerConnectivity = useCallback(async (): Promise<boolean> => {
     // Cancel any pending request and clear previous timeout
     if (abortControllerRef.current) {
@@ -368,7 +359,6 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
     setMode,
     setBrowserEngine,
     setRagPreset,
-    setServerUrl,
     checkServerConnectivity,
     setModelReady,
     setModelLoadingProgress,

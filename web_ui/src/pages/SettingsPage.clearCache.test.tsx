@@ -155,7 +155,6 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
       setMode: vi.fn(),
       setBrowserEngine: vi.fn(),
       setRagPreset: vi.fn(),
-      setServerUrl: vi.fn(),
       checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
       setModelReady: vi.fn(),
       setModelLoadingProgress: vi.fn(),

@@ -129,7 +129,6 @@ describe('ChatPage RAG Pipeline Integration', () => {
       setMode: vi.fn(),
       setBrowserEngine: vi.fn(),
       setRagPreset: vi.fn(),
-      setServerUrl: vi.fn(),
       checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
       setModelReady: vi.fn(),
       setModelLoadingProgress: vi.fn(),

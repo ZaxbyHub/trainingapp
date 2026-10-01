@@ -142,7 +142,10 @@ async function withHost<T>(storePath: string, run: (port: number) => Promise<T>)
 }
 
 describe('b6 C1 (AC1): ingest + list over the guarded HTTP contract', () => {
-  itReal('POST /ingest ingests supported files once; GET /documents lists them by source path', async () => {
+  // Explicit timeout: this test starts a real host and runs a cold ingest
+  // (store open + embed + FTS) that can exceed vitest's 5 s default when the
+  // full suite saturates the worker pool (observed flake, settings-wiring-honesty F3).
+  itReal('POST /ingest ingests supported files once; GET /documents lists them by source path', { timeout: 20_000 }, async () => {
     const root = makeTempDir('b6-c1-dir-');
     const docsDir = path.join(root, 'docs');
     fs.mkdirSync(docsDir);

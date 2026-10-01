@@ -14,8 +14,6 @@ import { INFERENCE_MODE_KEY } from '../storage/persisted-keys';
 /** Default browser engine — wllama, for robustness on hardware without WebGPU. */
 export const DEFAULT_BROWSER_ENGINE: BrowserEngine = 'wllama';
 
-
-
 /**
  * Return the LLMService singleton for the given engine.
  */
