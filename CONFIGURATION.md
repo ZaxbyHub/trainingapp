@@ -349,6 +349,10 @@ the server root.
 
 A `/v1` suffix on the base URL is optional.
 
+When the browser app itself is served over https, the browser blocks plain-http model servers
+(mixed content) and Chromium may ask for permission to reach the local network; use https on the
+model server, or the desktop app.
+
 ### CORS
 
 - **Browser app:** the browser calls the endpoint directly, so the endpoint must allow the
@@ -383,7 +387,8 @@ Airgap builds refuse public hosts; loopback and private-network endpoints still 
 - **Desktop app:** the key is encrypted with Electron `safeStorage` (Windows DPAPI, macOS
   Keychain, Linux secret service) in the profile directory (`secrets.bin`). If the operating
   system offers no encryption the key is kept for the current session only and the panel says
-  "Key kept for this session only". The renderer never sees or stores the key; it is never
+  "Key kept for this session only". The renderer never stores the key or receives it back
+  (it holds the key only while you type it and sends it once with the save); it is never
   written to `settings.json` or `external.json`, never returned by any endpoint and never
   logged.
 - **Both apps: the key is bound to its origin.** A saved key is bound to the endpoint origin

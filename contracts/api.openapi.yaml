@@ -358,13 +358,17 @@ paths:
               $ref: "#/components/schemas/ExternalProbeRequest"
       responses:
         "200":
-          description: Classified probe result (ok, or the failure kind and a key-free message)
+          description: >
+            Classified probe result (ok, or the failure kind and a key-free
+            message). Field-level problems are reported here too, as ok false
+            with kind other: an unknown protocol, a missing or refused baseUrl,
+            or a draft key that cannot be sent in an HTTP header.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ExternalProbeResponse"
         "422":
-          description: Request validation failed
+          description: The request body is not a JSON object (invalid JSON or a non-object body)
         "501":
           description: The backend engine does not support external model endpoints
   /stats:

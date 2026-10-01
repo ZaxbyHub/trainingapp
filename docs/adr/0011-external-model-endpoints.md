@@ -56,7 +56,7 @@ and connects to the validated address with the DNS lookup pinned, so the connect
 land on an address that was not checked.
 
 - **For:** connect-time address validation and pinning are possible; the renderer's CSP stays
-  unchanged; the renderer never sees or stores the key; no new dependency.
+  unchanged; the renderer never stores the key or receives it back; no new dependency.
 - **Against:** the app does not use Chromium's proxy configuration or certificate verifier for
   these calls (see Consequences for the proxy and CA handling).
 
@@ -108,7 +108,8 @@ land on an address that was not checked.
    private name may resolve only to private or loopback addresses; a loopback name only to
    loopback addresses), connects to the validated address with the lookup pinned (the TLS server
    name and `Host` header stay the original name), and follows no redirects. The renderer's CSP
-   is unchanged and the renderer never sees or stores the key. The caller is
+   is unchanged and the renderer never stores the key or receives it back (it holds the key only
+   while it is typed and sends it once in the settings save). The caller is
    `desktop/main/backend/inference/external-generator.ts`; the key is held by
    `desktop/main/security/secret-store.ts`.
 7. **Browser transport.** The browser app calls the endpoint directly with `fetch`, so the

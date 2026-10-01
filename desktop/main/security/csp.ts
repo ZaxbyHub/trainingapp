@@ -24,7 +24,9 @@
 //   - img-src/font-src data:: the offline data:-URI favicon and inline font
 //     fallbacks in web_ui/index.html.
 //   - connect-src http://127.0.0.1:*: the B3 loopback backend on its random
-//     free port, plus provider-mode loopback LLM servers. app: stays allowed
+//     free port. (PR #138's renderer-side loopback provider mode also used it;
+//     that mode is retired - external model endpoints are contacted by the
+//     desktop backend, never by the renderer, ADR-0011.) app: stays allowed
 //     for app://-URL fetches (the scheme registers supportFetchAPI).
 //     DELIBERATELY 127.0.0.1 ONLY: Chromium rejects http://[::1]:* as an
 //     invalid source-list entry (silently dropped from the policy — see the
@@ -54,8 +56,8 @@ export function buildCspPolicy(): string {
     // 127.0.0.1 ONLY: Chromium rejects http://[::1]:* as an invalid CSP
     // source-list entry (silently dropped - live-verified in the PR #138
     // review), so listing it would promise an IPv6 loopback connect-src the
-    // browser then ignores. The provider-mode guard (web_ui openai-provider)
-    // rejects [::1] up front for the same reason.
+    // browser then ignores. (The retired PR #138 renderer provider guard
+    // rejected [::1] up front for the same reason.)
     "connect-src 'self' app: http://127.0.0.1:*",
     "worker-src 'self' app: blob:",
     // Explicit (rather than inherited from default-src) to pin the framing

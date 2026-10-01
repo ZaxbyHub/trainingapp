@@ -1,6 +1,6 @@
 # Document Q&A Assistant
 
-A fully offline RAG-based document question answering system optimized for Windows PCs. Features semantic search, hybrid retrieval, and CPU-based LLM inference with GGUF models.
+A fully offline RAG-based document question answering system optimized for Windows PCs. Features semantic search, hybrid retrieval, and CPU-based LLM inference with GGUF models. Nothing leaves the machine unless you turn on the external model or update checks (both off by default).
 
 The shipped delivery options share the same offline RAG capabilities:
 1. **Desktop app (primary)** — an Electron installer with a first-run wizard, a Node
@@ -49,6 +49,11 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
   (Markdown/JSON), and Fast/Balanced/Quality RAG presets.
 - **Self-contained archive** — `npm run build:offline` produces a validated `web_ui/dist/` the
   Electron desktop app (or any root static host) serves with the COOP/COEP headers wllama needs.
+- **Optional external model (both apps, off by default)** — Settings → External model connects to
+  any OpenAI- or Anthropic-compatible server on this computer, on your network, or in the cloud
+  (with an API key). Retrieval stays local; see the "External model" section of
+  [CONFIGURATION.md](CONFIGURATION.md) and
+  [ADR-0011](docs/adr/0011-external-model-endpoints.md).
 
 ### HTML5 Web UI (Phase 1 — Complete)
 - **Application Shell**: Navigation rail with Chat, Documents, Settings pages and responsive flexbox layout
@@ -82,7 +87,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Fast profile**: lfm2.5-vl-450m (Q4_K_M GGUF per ADR-0002) — bundled
 - Profile selection: automatic free-RAM gate or in-app choice; `TRAININGAPP_DESKTOP_INFERENCE_PROFILE` (`quality` / `fast` / `auto`) is the desktop env override. (`RAG_GGUF_PATH` / `--gguf-path` select a custom GGUF on the legacy Python harness only.)
 - No GPU required
-- No network access required
+- No network access required (unless you turn on the external model or update checks)
 - Measured decode throughput and first-token latency per model/profile: see [bench/RESULTS.md](bench/RESULTS.md) (issue #52 benchmark harness)
 
 ### Hardware Requirements
@@ -215,7 +220,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
   (see PACKAGING.md)
 - **Model Download Manager**: Progress tracking with speed/ETA calculation, cancellation support, and storage quota error handling
 - **ModelDownloadProgress UI**: Accessible progress bar with ARIA attributes, download speed, ETA countdown, and cancel button
-- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to the wllama engine or an external model server (Provider server mode) when requirements aren't met
+- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to the wllama engine or an external model server (Settings → External model) when requirements aren't met
 - **RAG Orchestrator**: Full retrieval pipeline connecting embedding→vector search→keyword search→RRF fusion→reranking→LLM generation; emits typed `RAGEvent` stream for UI progress
 - **WebGPU Watchdog**: Context loss detection via `GPUDevice.lost` promise/event monitoring; `createRecoveryHandler` automatically re-initializes the service after loss
 
@@ -295,7 +300,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
    verification of the bundled tree → knowledge-pack activation → license notices →
    complete. Every gate names its failure reason; setup can be re-run from Settings.
 
-No Python, no GPU, and no network access are required.
+No Python, no GPU, and no network access are required (unless you turn on the external model or update checks).
 
 ### Building the desktop app from source
 

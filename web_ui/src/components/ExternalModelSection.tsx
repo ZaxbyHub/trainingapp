@@ -533,6 +533,8 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
         <p id="external-base-url-desc" style={descStyle}>
           For example http://localhost:1234 (LM Studio), http://192.168.1.20:11434 (Ollama on your
           network), https://api.openai.com or https://api.anthropic.com. Public hosts need https.
+          {!desktop &&
+            ' If this page is served over https, the browser blocks plain-http model servers (mixed content) and may ask to allow local-network access: use https on the server, or the desktop app.'}
         </p>
         <input
           id="external-base-url"
