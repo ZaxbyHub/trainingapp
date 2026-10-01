@@ -96,9 +96,6 @@ function migrateLegacyBrowserBlob(input: Record<string, unknown>): Record<string
 }
 
 function loadStoredState(): InferenceModeState {
-  // Boot migration (browser app) of an external API key saved without a bound
-  // origin; runs whether or not an inference-mode blob exists.
-  migrateUnboundExternalKey();
   try {
     const stored = localStorage.getItem(INFERENCE_MODE_KEY);
     if (stored) {
@@ -168,6 +165,15 @@ function persistState(
 export function InferenceModeProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<InferenceModeState>(loadStoredState);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // One-time boot migration (browser app) of an external API key saved without
+  // a bound origin. It runs as an effect, outside render (review round 3
+  // R3-N2), whether or not an inference-mode blob exists; it is idempotent,
+  // and the reads in lib/llm/external-provider.ts evaluate the same rule
+  // without writing, so nothing rendered before it runs differs.
+  useEffect(() => {
+    migrateUnboundExternalKey();
+  }, []);
   const timeoutIdRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 

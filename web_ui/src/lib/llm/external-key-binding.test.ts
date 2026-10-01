@@ -336,3 +336,46 @@ describe('migration of a key saved without a bound origin', () => {
     expect(keyForBaseUrl('http://localhost:4321')).toBe('');
   });
 });
+
+// Review round 3 (R3-N2): reads never write storage (render-safe). Every read
+// entry point is run against each storage state, with setItem / removeItem /
+// clear spied on the Storage prototype (localStorage and sessionStorage).
+describe('reads are pure: no storage writes', () => {
+  const states: Array<[string, () => void]> = [
+    ['no key', () => undefined],
+    ['bound key', () => saveExternalConfig({ baseUrl: 'http://localhost:1234', apiKey: KEY, rememberKey: true })],
+    ['session key bound elsewhere', () => {
+      saveExternalConfig({ baseUrl: 'http://localhost:1234', apiKey: KEY, rememberKey: false });
+      saveExternalConfig({ baseUrl: 'http://192.168.1.20:8000' });
+    }],
+    ['legacy key with a stored base URL', () => {
+      localStorage.setItem('external-provider-config', JSON.stringify({ baseUrl: 'http://localhost:1234', rememberKey: true }));
+      localStorage.setItem('external-provider-apikey', KEY);
+    }],
+    ['legacy key without a base URL', () => {
+      localStorage.setItem('external-provider-config', JSON.stringify({ rememberKey: false }));
+      sessionStorage.setItem('external-provider-apikey', KEY);
+    }],
+    ['pending key', () => saveExternalConfig({ apiKey: KEY })],
+  ];
+  for (const [label, seed] of states) {
+    test(`${label}: loadExternalConfig / loadExternalKeyState / keyForBaseUrl write nothing`, () => {
+      seed();
+      const spies = [
+        vi.spyOn(Storage.prototype, 'setItem'),
+        vi.spyOn(Storage.prototype, 'removeItem'),
+        vi.spyOn(Storage.prototype, 'clear'),
+      ];
+      try {
+        loadExternalConfig();
+        loadExternalKeyState();
+        loadExternalKeyState('http://192.168.1.20:8000');
+        keyForBaseUrl('http://localhost:1234');
+        keyForBaseUrl('https://evil.example.com');
+        for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
+    });
+  }
+});
