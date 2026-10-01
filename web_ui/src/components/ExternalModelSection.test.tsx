@@ -203,9 +203,45 @@ describe('desktop app', () => {
 
   // Review round 2 (R2-F1): a key typed while the shown URL is refused or
   // empty is never PUT on its own (the backend would bind it to the stored
-  // URL C); it is held and PUT together with the next valid URL.
+  // URL C), never PUT with C, and never tested against C.
   for (const shown of ['http://api.openai.com/v1', ''] as const) {
-    test(`a key typed while the Base URL shows ${shown === '' ? 'nothing' : 'a refused URL'} is held, then PUT only with a valid URL`, async () => {
+    test(`a key typed while the Base URL shows ${shown === '' ? 'nothing' : 'a refused URL'} is held; other saves reset the URL to C and drop it`, async () => {
+      installDesktopBridgeStub();
+      const { s, updateSettings, testExternalEndpoint } = session({
+        'external.baseUrl': 'http://192.168.1.50:8080',
+        'external.enabled': true,
+        'external.model': 'm',
+      });
+      renderDesktop(s);
+      const q = within(panel());
+      const base = q.getByLabelText(/^base url$/i) as HTMLInputElement;
+      await waitFor(() => expect(base.value).toBe('http://192.168.1.50:8080'));
+      fireEvent.change(base, { target: { value: shown } });
+      fireEvent.blur(base);
+      const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+      fireEvent.change(key, { target: { value: KEY } });
+      fireEvent.blur(key);
+      expect(await q.findByTestId('external-key-held')).toHaveTextContent(/saved together with the next valid base URL/);
+      // Saves of other fields: the backend answer puts C back in the field,
+      // so the typed key is dropped (fail closed) and the user is told.
+      fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm2' } });
+      fireEvent.blur(q.getByLabelText(/^model$/i));
+      await waitFor(() => expect(base.value).toBe('http://192.168.1.50:8080'));
+      expect(key.value).toBe('');
+      expect(await q.findByTestId('external-key-dropped')).toBeInTheDocument();
+      fireEvent.change(q.getByRole('combobox', { name: /^protocol$/i }), { target: { value: 'anthropic' } });
+      fireEvent.click(q.getByRole('checkbox', { name: /^direct chat/i }));
+      await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ 'external.grounded': false }));
+      // Key blur and Test against C: nothing carries the key.
+      fireEvent.focus(key);
+      fireEvent.blur(key);
+      fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+      await waitFor(() => expect(testExternalEndpoint).toHaveBeenCalled());
+      expect(updateSettings.mock.calls.some(([body]) => 'external.apiKey' in body)).toBe(false);
+      for (const [req] of testExternalEndpoint.mock.calls) expect(req).not.toHaveProperty('apiKey');
+    });
+
+    test(`a held key (typed while the Base URL shows ${shown === '' ? 'nothing' : 'a refused URL'}) is PUT only together with the next valid URL`, async () => {
       installDesktopBridgeStub();
       const { s, updateSettings } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.enabled': true, 'external.model': 'm' });
       renderDesktop(s);
@@ -217,14 +253,8 @@ describe('desktop app', () => {
       const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
       fireEvent.change(key, { target: { value: KEY } });
       fireEvent.blur(key);
-      expect(await q.findByTestId('external-key-held')).toHaveTextContent(/saved together with the next valid base URL/);
-      // Saves of other fields never carry the key.
-      fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm2' } });
-      fireEvent.blur(q.getByLabelText(/^model$/i));
-      fireEvent.change(q.getByRole('combobox', { name: /^protocol$/i }), { target: { value: 'anthropic' } });
-      await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ 'external.protocol': 'anthropic' }));
-      expect(updateSettings.mock.calls.some(([body]) => 'external.apiKey' in body)).toBe(false);
-      // A valid URL: ONE PUT carrying both, bound to that URL (never to C).
+      await q.findByTestId('external-key-held');
+      expect(updateSettings).not.toHaveBeenCalled();
       fireEvent.change(base, { target: { value: 'http://192.168.1.77:8000' } });
       fireEvent.blur(base);
       await waitFor(() =>
@@ -233,6 +263,48 @@ describe('desktop app', () => {
       expect(updateSettings.mock.calls.filter(([body]) => 'external.apiKey' in body)).toHaveLength(1);
     });
   }
+
+  test('a key typed before the first settings load arrives is dropped when the stored URL C fills the field', async () => {
+    installDesktopBridgeStub();
+    const { s, updateSettings, testExternalEndpoint } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
+    let release: (v: unknown) => void = () => undefined;
+    const late = new Promise((resolve) => {
+      release = resolve;
+    });
+    (s.apiClient as unknown as { getSettings: () => Promise<unknown> }).getSettings = () => late;
+    renderDesktop(s);
+    const q = within(panel());
+    const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+    fireEvent.change(key, { target: { value: KEY } });
+    fireEvent.blur(key);
+    await q.findByTestId('external-key-held');
+    release({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
+    await waitFor(() => expect((q.getByLabelText(/^base url$/i) as HTMLInputElement).value).toBe('http://192.168.1.50:8080'));
+    expect(key.value).toBe('');
+    fireEvent.focus(key);
+    fireEvent.blur(key);
+    fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+    await waitFor(() => expect(testExternalEndpoint).toHaveBeenCalled());
+    expect(updateSettings.mock.calls.some(([body]) => 'external.apiKey' in body)).toBe(false);
+    for (const [req] of testExternalEndpoint.mock.calls) expect(req).not.toHaveProperty('apiKey');
+  });
+
+  test('Test connection sends a typed key only for the origin it was typed for', async () => {
+    installDesktopBridgeStub();
+    const { s, testExternalEndpoint } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
+    renderDesktop(s);
+    const q = within(panel());
+    const base = q.getByLabelText(/^base url$/i) as HTMLInputElement;
+    await waitFor(() => expect(base.value).toBe('http://192.168.1.50:8080'));
+    fireEvent.change(base, { target: { value: 'http://api.openai.com/v1' } });
+    const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+    fireEvent.change(key, { target: { value: KEY } });
+    // URL edited back to C without blurring the key field: the key was typed for another origin.
+    fireEvent.change(base, { target: { value: 'http://192.168.1.50:8080' } });
+    fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+    await waitFor(() => expect(testExternalEndpoint).toHaveBeenCalled());
+    for (const [req] of testExternalEndpoint.mock.calls) expect(req).not.toHaveProperty('apiKey');
+  });
 
   test('a key with a header-invalid character is refused inline and never PUT (F4)', async () => {
     installDesktopBridgeStub();

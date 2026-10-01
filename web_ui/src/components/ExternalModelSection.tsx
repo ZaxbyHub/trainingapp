@@ -143,6 +143,8 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
   const keyDirtyRef = useRef(false);
   // A typed key waiting for a valid base URL (held in this component only).
   const [keyHeld, setKeyHeld] = useState(false);
+  // Desktop: a typed key was dropped because the backend changed the shown URL.
+  const [keyDropped, setKeyDropped] = useState(false);
   // Re-render after a browser key save (storage writes do not re-render).
   const [, setKeyVersion] = useState(0);
   const [keyState, setKeyState] = useState<DesktopKeyState>({
@@ -166,16 +168,29 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
   const airgap = IS_AIRGAP || keyState.airgap;
 
   const applyDesktopSettings = useCallback((s: Record<string, unknown>) => {
+    const current = draftRef.current;
+    const nextBaseUrl = typeof s['external.baseUrl'] === 'string' ? (s['external.baseUrl'] as string) : current.baseUrl;
+    // A typed key belongs to the URL that was SHOWN when it was typed. When the
+    // backend's answer replaces the shown URL (e.g. after a save of another
+    // field, or the first settings load), the typed key is dropped (fail
+    // closed) so it can never be saved or tested against that other URL.
+    const dropKey = current.apiKey !== '' && nextBaseUrl.trim() !== current.baseUrl.trim();
+    if (dropKey) {
+      fieldKeyOriginRef.current = '';
+      setKeyHeld(false);
+      setKeyDropped(true);
+    }
+    draftRef.current = { ...current, baseUrl: nextBaseUrl, apiKey: dropKey ? '' : current.apiKey };
     setDraft((prev) => ({
       ...prev,
       enabled: s['external.enabled'] === true,
       protocol: s['external.protocol'] === 'anthropic' ? 'anthropic' : 'openai',
-      baseUrl: typeof s['external.baseUrl'] === 'string' ? (s['external.baseUrl'] as string) : prev.baseUrl,
+      baseUrl: nextBaseUrl,
       model: typeof s['external.model'] === 'string' ? (s['external.model'] as string) : prev.model,
       grounded: s['external.grounded'] !== false,
-      // Write-only key field: only a key typed and not saved yet stays (a held
-      // key survives saves of other fields); saveTypedKey clears it once saved.
-      apiKey: prev.apiKey,
+      // Write-only key field: a typed, unsaved key stays only while the shown
+      // URL is unchanged; saveTypedKey clears it once saved.
+      apiKey: dropKey ? '' : prev.apiKey,
     }));
     setKeyState({
       apiKeySet: s['external.apiKeySet'] === true,
@@ -400,7 +415,11 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
           protocol: current.protocol,
           baseUrl: current.baseUrl.trim(),
           model: current.model.trim(),
-          ...(current.apiKey !== '' ? { apiKey: current.apiKey } : {}),
+          // A draft key only for the origin it was typed for (else the backend
+          // uses the saved key, and only for its bound origin).
+          ...(current.apiKey !== '' && fieldKeyOriginRef.current !== '' && fieldKeyOriginRef.current === keyOriginOf(current.baseUrl)
+            ? { apiKey: current.apiKey }
+            : {}),
         });
       } else {
         // Key-origin binding: the key in the field only when it belongs to
@@ -534,6 +553,7 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
             spellCheck={false}
             value={draft.apiKey}
             onChange={(e) => {
+              setKeyDropped(false);
               keyDirtyRef.current = true;
               fieldKeyOriginRef.current = keyOriginOf(draftRef.current.baseUrl);
               update({ apiKey: e.target.value });
@@ -568,6 +588,12 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
         )}
         {desktop && !keyState.apiKeyPersisted && keyState.apiKeySet && (
           <p style={descStyle}>Key kept for this session only: secure storage is unavailable on this computer.</p>
+        )}
+        {keyDropped && draft.apiKey === '' && (
+          <p style={descStyle} data-testid="external-key-dropped">
+            The base URL changed before the API key was saved, so the key was not saved. Enter it again for
+            this server.
+          </p>
         )}
         {keyHeld && draft.apiKey !== '' && (
           <p style={descStyle} data-testid="external-key-held">
