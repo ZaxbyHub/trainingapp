@@ -33,17 +33,36 @@ import path from 'node:path';
 import { createPublicKey, verify as cryptoVerify } from 'node:crypto';
 import JSZip from 'jszip';
 import { PackManagerError } from '../store/pack-manager.js';
+import {
+  DEFAULT_PACKS_MAX_COMPRESSION_RATIO as SHARED_MAX_COMPRESSION_RATIO,
+  DEFAULT_PACKS_MAX_ENTRIES as SHARED_MAX_ENTRIES,
+  DEFAULT_PACKS_MAX_UNCOMPRESSED_BYTES as SHARED_MAX_UNCOMPRESSED_BYTES,
+  checkEntryName,
+  enforceDeclaredLimits as sharedEnforceDeclaredLimits,
+  expandsBeyondCapMessage,
+  isSymlinkMode,
+  isZipFilename as sharedIsZipFilename,
+  missingManifestMessage,
+  notZipMessage,
+  parseCentralDirectory,
+  symlinkEntryMessage,
+  type CentralDirectoryEntry as SharedCentralDirectoryEntry,
+  type PackSecurityLimits as SharedPackSecurityLimits,
+} from './pack-archive-rules.js';
+
+/** Refusal factory for the shared rules: every refusal is a PackManagerError. */
+const packError = (message: string): Error => new PackManagerError(message);
 
 // --------------------------------------------------------------------- //
 // S1 — limits + config surface
 // --------------------------------------------------------------------- //
 
 /** Default total-uncompressed cap per archive (2 GiB, the issue's default). */
-export const DEFAULT_PACKS_MAX_UNCOMPRESSED_BYTES = 2147483648;
+export const DEFAULT_PACKS_MAX_UNCOMPRESSED_BYTES = SHARED_MAX_UNCOMPRESSED_BYTES;
 /** Default entry-count cap per archive (the issue's default). */
-export const DEFAULT_PACKS_MAX_ENTRIES = 5000;
+export const DEFAULT_PACKS_MAX_ENTRIES = SHARED_MAX_ENTRIES;
 /** Default aggregate declared compression-ratio cap (100:1, new in #75). */
-export const DEFAULT_PACKS_MAX_COMPRESSION_RATIO = 100;
+export const DEFAULT_PACKS_MAX_COMPRESSION_RATIO = SHARED_MAX_COMPRESSION_RATIO;
 /**
  * The embedding-model pin gate target (ADR-0006). Packtool stamps basenames;
  * the Python settings default 'BAAI/bge-small-en-v1.5' canonicalizes to this
@@ -59,12 +78,8 @@ export const PACKS_REQUIRE_SIGNATURE_ENV = 'TRAININGAPP_PACKS_REQUIRE_SIGNATURE'
 export const PACKS_TRUSTED_KEYS_ENV = 'TRAININGAPP_PACKS_TRUSTED_KEYS';
 export const PACKS_EMBEDDING_MODEL_ID_ENV = 'TRAININGAPP_PACKS_EMBEDDING_MODEL_ID';
 
-/** Extraction limits (the S3/S5 knobs). */
-export interface PackSecurityLimits {
-  maxUncompressedBytes: number;
-  maxEntries: number;
-  maxCompressionRatio: number;
-}
+/** Extraction limits (the S3/S5 knobs; shared with the browser extractor). */
+export type PackSecurityLimits = SharedPackSecurityLimits;
 
 /** One trusted signing key: key_id selects it, public_key is base64 DER SPKI. */
 export interface TrustedPackKey {
@@ -190,39 +205,11 @@ export function resolvePackLimits(
  * Refuse entry names that are empty, contain backslashes, are root-relative
  * ('/x') or drive-relative/absolute ('E:../x', 'C:/x' — the C1 escape class),
  * carry '..'/'.' segments, or embed NUL/control characters.
- * Throws PackManagerError with the frozen 'unsafe archive entry path' wording.
+ * Throws PackManagerError with the frozen 'unsafe archive entry path' wording
+ * (the rule lives in ./pack-archive-rules.ts, shared with the browser).
  */
 export function safeEntryName(name: string): string {
-  if (name.length === 0) {
-    throw new PackManagerError('unsafe archive entry path: empty name');
-  }
-  if (name.includes('\\')) {
-    throw new PackManagerError(`unsafe archive entry path (backslash): ${JSON.stringify(name)}`);
-  }
-  if (name.startsWith('/')) {
-    throw new PackManagerError(`unsafe archive entry path (absolute): ${JSON.stringify(name)}`);
-  }
-  if (/^[A-Za-z]:/.test(name)) {
-    throw new PackManagerError(
-      `unsafe archive entry path (drive-relative/absolute): ${JSON.stringify(name)}`,
-    );
-  }
-  for (const segment of name.split('/')) {
-    if (segment === '..' || segment === '.') {
-      throw new PackManagerError(
-        `unsafe archive entry path (dot segment): ${JSON.stringify(name)}`,
-      );
-    }
-  }
-  for (const char of name) {
-    const code = char.charCodeAt(0);
-    if (code === 0 || code < 32 || code === 127) {
-      throw new PackManagerError(
-        `unsafe archive entry path (control character): ${JSON.stringify(name)}`,
-      );
-    }
-  }
-  return name;
+  return checkEntryName(name, packError);
 }
 
 /**
@@ -237,7 +224,7 @@ export function ensureContained(root: string, target: string): boolean {
 }
 
 export function isZipFilename(filename: string): boolean {
-  return filename.toLowerCase().endsWith('.zip');
+  return sharedIsZipFilename(filename);
 }
 
 export function isSymlinkEntry(unixPermissions: number | string | undefined): boolean {
@@ -245,133 +232,24 @@ export function isSymlinkEntry(unixPermissions: number | string | undefined): bo
   // symlink. DOS-style archives have no symlink representation (directory
   // entries carry the dosPermissions dir bit and are skipped via entry.dir
   // before this check matters).
-  const perms =
-    typeof unixPermissions === 'string' ? parseInt(unixPermissions, 8) : unixPermissions;
-  return typeof perms === 'number' && perms !== 0 && (perms & 0o170000) === 0o120000;
+  return isSymlinkMode(unixPermissions);
 }
 
 // --------------------------------------------------------------------- //
-// S3 — ZIP32 central-directory parser (declared-metadata pre-filter)
+// S3 — ZIP32 central-directory parser (declared-metadata pre-filter); the
+// parser and limits live in ./pack-archive-rules.ts (shared with the browser)
 // --------------------------------------------------------------------- //
-
-const EOCD_SIGNATURE = 0x06054b50;
-const CENTRAL_SIGNATURE = 0x02014b50;
-const ZIP64_LOCATOR_SIGNATURE = 0x07064b50;
-const ZIP32_UINT16_MAX = 0xffff;
-const ZIP32_UINT32_MAX = 0xffffffff;
-const EOCD_SIZE = 22;
-const CENTRAL_HEADER_SIZE = 46;
-/** Longest possible zip comment; bounds the backward EOCD scan. */
-const MAX_ZIP_COMMENT = 0xffff;
 
 /** One central-directory record, as declared by the archive. */
-export interface CentralDirectoryEntry {
-  name: string;
-  uncompressedSize: number;
-  compressedSize: number;
-  isDirectory: boolean;
-  isSymlink: boolean;
-}
-
-/**
- * Locate the ZIP32 end-of-central-directory record by BACKWARD signature
- * scan, honoring the trailing comment length (the record must sit exactly
- * `22 + commentLength` bytes from the end). Scanning from the end instead of
- * trusting a fixed offset tolerates prepended bytes (self-extracting
- * prefixes) — the caller anchors the central directory off the FOUND record.
- * Returns the record's byte offset, or -1 when no valid record exists.
- */
-function findEocdOffset(buf: Buffer): number {
-  if (buf.length < EOCD_SIZE) return -1;
-  const highest = buf.length - EOCD_SIZE;
-  const floor = Math.max(0, buf.length - EOCD_SIZE - MAX_ZIP_COMMENT);
-  for (let pos = highest; pos >= floor; pos -= 1) {
-    if (buf.readUInt32LE(pos) !== EOCD_SIGNATURE) continue;
-    if (buf.readUInt16LE(pos + 20) === buf.length - pos - EOCD_SIZE) return pos;
-  }
-  return -1;
-}
+export type CentralDirectoryEntry = SharedCentralDirectoryEntry;
 
 /**
  * Walk the ZIP32 central directory of `buf` and return every declared entry
- * (names, sizes, modes). Central-directory declared sizes are authoritative
- * even for bit-3 data-descriptor entries (descriptors zero the LOCAL header
- * fields only, so parsing the central directory has no 0/0 blind spot).
- *
- * ZIP32-only v1: a ZIP64 marker (0xffffffff fields in the EOCD, a ZIP64 EOCD
- * locator, or 0xffffffff sizes in a central header) is REFUSED, not misparsed
- * — unreachable for legitimate packs under the 2 GiB default cap.
+ * (names, sizes, modes). ZIP64 markers and duplicate names are refused; see
+ * parseCentralDirectory in ./pack-archive-rules.ts.
  */
 export function parseZip32CentralDirectory(buf: Buffer, filename: string): CentralDirectoryEntry[] {
-  const eocd = findEocdOffset(buf);
-  if (eocd < 0) {
-    throw new PackManagerError(`${filename}: not a readable zip archive (no end-of-central-directory record)`);
-  }
-  const zip64Refusal = `${filename}: ZIP64 markers are refused; pack archives above 4 GiB / 65535 entries are not accepted`;
-  if (
-    buf.readUInt16LE(eocd + 8) === ZIP32_UINT16_MAX ||
-    buf.readUInt16LE(eocd + 10) === ZIP32_UINT16_MAX ||
-    buf.readUInt32LE(eocd + 12) === ZIP32_UINT32_MAX ||
-    buf.readUInt32LE(eocd + 16) === ZIP32_UINT32_MAX
-  ) {
-    throw new PackManagerError(zip64Refusal);
-  }
-  // A ZIP64 EOCD locator sits immediately before the (32-bit) EOCD.
-  if (eocd >= 20 && buf.readUInt32LE(eocd - 20) === ZIP64_LOCATOR_SIGNATURE) {
-    throw new PackManagerError(zip64Refusal);
-  }
-  const totalEntries = buf.readUInt16LE(eocd + 10);
-  const centralSize = buf.readUInt32LE(eocd + 12);
-  // Anchor on the found record, not the declared offset: with prepended
-  // bytes the declared cdOffset is shifted by exactly the prefix length.
-  const centralStart = eocd - centralSize;
-  if (centralStart < 0 || centralSize > eocd) {
-    throw new PackManagerError(`${filename}: malformed zip central directory (declared size overruns the archive)`);
-  }
-  const entries: CentralDirectoryEntry[] = [];
-  const seenNames = new Set<string>();
-  let pos = centralStart;
-  for (let i = 0; i < totalEntries; i += 1) {
-    if (pos + CENTRAL_HEADER_SIZE > eocd) {
-      throw new PackManagerError(`${filename}: malformed zip central directory (truncated header)`);
-    }
-    if (buf.readUInt32LE(pos) !== CENTRAL_SIGNATURE) {
-      throw new PackManagerError(`${filename}: malformed zip central directory (bad header signature)`);
-    }
-    const nameLength = buf.readUInt16LE(pos + 28);
-    const extraLength = buf.readUInt16LE(pos + 30);
-    const commentLength = buf.readUInt16LE(pos + 32);
-    const uncompressedSize = buf.readUInt32LE(pos + 24);
-    const compressedSize = buf.readUInt32LE(pos + 20);
-    if (uncompressedSize === ZIP32_UINT32_MAX || compressedSize === ZIP32_UINT32_MAX) {
-      throw new PackManagerError(zip64Refusal);
-    }
-    const nameStart = pos + CENTRAL_HEADER_SIZE;
-    if (nameStart + nameLength > eocd) {
-      throw new PackManagerError(`${filename}: malformed zip central directory (truncated name)`);
-    }
-    const name = buf.subarray(nameStart, nameStart + nameLength).toString('utf8');
-    // Duplicate entry names are refused: extraction is last-write-wins (and
-    // JSZip collapses duplicates at load), so a benign first entry must not
-    // mask a hostile duplicate (PRR-004).
-    if (seenNames.has(name)) {
-      throw new PackManagerError(
-        `${filename}: duplicate archive entry ${name} is not allowed`,
-      );
-    }
-    seenNames.add(name);
-    const externalAttrs = buf.readUInt32LE(pos + 38);
-    const mode = externalAttrs >>> 16;
-    entries.push({
-      name,
-      uncompressedSize,
-      compressedSize,
-      isDirectory: name.endsWith('/') || (mode !== 0 && (mode & 0o170000) === 0o040000),
-      isSymlink: mode !== 0 && (mode & 0o170000) === 0o120000,
-    });
-    pos += CENTRAL_HEADER_SIZE + nameLength + extraLength + commentLength;
-  }
-  return entries;
+  return parseCentralDirectory(buf, filename, packError).entries;
 }
 
 /**
@@ -384,39 +262,7 @@ export function enforceDeclaredLimits(
   limits: PackSecurityLimits,
   filename: string,
 ): void {
-  if (entries.length > limits.maxEntries) {
-    throw new PackManagerError(
-      `${filename}: archive declares ${entries.length} entries, over the ${limits.maxEntries} entry cap`,
-    );
-  }
-  let totalUncompressed = 0;
-  let ratioUncompressed = 0;
-  let ratioCompressed = 0;
-  for (const entry of entries) {
-    if (entry.isDirectory || entry.uncompressedSize === 0) continue;
-    totalUncompressed += entry.uncompressedSize;
-    ratioUncompressed += entry.uncompressedSize;
-    ratioCompressed += entry.compressedSize;
-  }
-  if (totalUncompressed > limits.maxUncompressedBytes) {
-    throw new PackManagerError(
-      `${filename}: archive declares ${totalUncompressed} uncompressed bytes, over the ${limits.maxUncompressedBytes} byte cap`,
-    );
-  }
-  // Skip dir/zero entries (plan G5): only real payloads count toward the
-  // ratio. A declared payload with zero compressed bytes is not compressible
-  // input — it is a malformed or crafted record; fail closed.
-  // Ratio is enforced only above an absolute floor: the byte cap bounds
-  // small archives absolutely, and legitimate sqlite vector pages compress
-  // far beyond 100:1 on tiny indexes.
-  const RATIO_FLOOR_BYTES = 16 * 1024 * 1024;
-  const ratioEnforced = ratioUncompressed >= RATIO_FLOOR_BYTES;
-  if (ratioEnforced && (ratioCompressed === 0 || ratioUncompressed / ratioCompressed > limits.maxCompressionRatio)) {
-    const ratio = ratioCompressed === 0 ? Number.POSITIVE_INFINITY : ratioUncompressed / ratioCompressed;
-    throw new PackManagerError(
-      `${filename}: archive declares a ${ratio.toFixed(1)}:1 compression ratio, over the ${limits.maxCompressionRatio}:1 cap (possible zip bomb)`,
-    );
-  }
+  sharedEnforceDeclaredLimits(entries, limits, filename, packError);
 }
 
 // --------------------------------------------------------------------- //
@@ -567,7 +413,7 @@ export async function extractPackZip(
   limits?: Partial<PackSecurityLimits>,
 ): Promise<string> {
   if (!isZipFilename(filename)) {
-    throw new PackManagerError(`${filename}: pack install accepts .zip archives only`);
+    throw new PackManagerError(notZipMessage(filename));
   }
   const resolvedLimits = resolvePackLimits(process.env, limits);
 
@@ -582,7 +428,7 @@ export async function extractPackZip(
   for (const entry of declared) {
     safeEntryName(entry.name);
     if (entry.isSymlink) {
-      throw new PackManagerError(`${filename}: symlink archive entry ${entry.name} is not allowed`);
+      throw new PackManagerError(symlinkEntryMessage(filename, entry.name));
     }
   }
 
@@ -619,7 +465,7 @@ export async function extractPackZip(
       unixPermissions?: number | string;
     };
     if (isSymlinkEntry(unixPermissions)) {
-      throw new PackManagerError(`${filename}: symlink archive entry ${entry.name} is not allowed`);
+      throw new PackManagerError(symlinkEntryMessage(filename, entry.name));
     }
   }
 
@@ -629,7 +475,7 @@ export async function extractPackZip(
     (entry) => !entry.dir && (entry.name === 'pack.json' || entry.name === './pack.json'),
   );
   if (manifest === undefined) {
-    throw new PackManagerError(`${filename}: no pack.json manifest at the archive root`);
+    throw new PackManagerError(missingManifestMessage(filename));
   }
 
   let totalUncompressed = 0;
@@ -652,9 +498,7 @@ export async function extractPackZip(
       // decompression; documented in docs/security/packs.md.)
       totalUncompressed += data.length;
       if (totalUncompressed > resolvedLimits.maxUncompressedBytes) {
-        throw new PackManagerError(
-          `${filename}: archive expands beyond the ${resolvedLimits.maxUncompressedBytes} byte cap`,
-        );
+        throw new PackManagerError(expandsBeyondCapMessage(filename, resolvedLimits.maxUncompressedBytes));
       }
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, data);
