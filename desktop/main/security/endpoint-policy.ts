@@ -22,7 +22,11 @@
  * (0.0.0.0/8, ::), multicast / broadcast / reserved ranges, userinfo, any
  * scheme other than http/https, and public hosts over http. IPv6 forms that
  * embed an IPv4 address (IPv4-mapped ::ffff:0:0/96, IPv4-compatible ::/96,
- * NAT64 64:ff9b::/96, 6to4 2002::/16) are classified by the embedded IPv4.
+ * SIIT ::ffff:0:0:0/96, NAT64 64:ff9b::/96, local-use NAT64 64:ff9b:1::/48
+ * in its /96 layout, 6to4 2002::/16) are classified by the embedded IPv4.
+ * Formats whose embedding cannot be located (local-use NAT64 with a shorter
+ * prefix) are private, never public. Teredo 2001::/32 is refused when its
+ * server or (de-obfuscated) client IPv4 is refused and is private otherwise.
  * Unspecified / multicast / reserved targets report rule 'invalid-url' (the
  * rule set is frozen); the message names the actual reason.
  *
@@ -149,8 +153,27 @@ function classifyIPv6(groups: number[]): AddressClass {
   }
   // IPv4-mapped ::ffff:0:0/96 and IPv4-compatible ::/96.
   if (isZero(0, 5) && (g(5) === 0xffff || g(5) === 0)) return classifyIPv4(embedded(g(6), g(7)));
+  // SIIT IPv4-translated ::ffff:0:0:0/96 (RFC 7915: ::ffff:0:a.b.c.d).
+  if (isZero(0, 4) && g(4) === 0xffff && g(5) === 0) return classifyIPv4(embedded(g(6), g(7)));
   // NAT64 well-known prefix 64:ff9b::/96.
   if (g(0) === 0x64 && g(1) === 0xff9b && isZero(2, 6)) return classifyIPv4(embedded(g(6), g(7)));
+  // Local-use NAT64 64:ff9b:1::/48 (RFC 8215): the /96 layout carries the
+  // IPv4 in the last 32 bits; any other layout is a local translator address,
+  // so it is private (never public).
+  if (g(0) === 0x64 && g(1) === 0xff9b && g(2) === 0x0001) {
+    if (isZero(3, 6)) return classifyIPv4(embedded(g(6), g(7)));
+    return { ok: true, kind: 'private' };
+  }
+  // Teredo 2001:0::/32 (RFC 4380): server IPv4 in groups 2-3, client IPv4
+  // XOR-obfuscated in groups 6-7. A refused embedded address refuses the
+  // whole address; otherwise it is a tunnel endpoint, private (never public).
+  if (g(0) === 0x2001 && g(1) === 0) {
+    const server = classifyIPv4(embedded(g(2), g(3)));
+    if (!server.ok) return server;
+    const client = classifyIPv4(embedded(g(6) ^ 0xffff, g(7) ^ 0xffff));
+    if (!client.ok) return client;
+    return { ok: true, kind: 'private' };
+  }
   // 6to4 2002::/16 carries the IPv4 in groups 1-2.
   if (g(0) === 0x2002) return classifyIPv4(embedded(g(1), g(2)));
   if ((g(0) & 0xffc0) === 0xfe80) return { ok: false, rule: 'link-local', reason: 'an IPv6 link-local address (fe80::/10)' };

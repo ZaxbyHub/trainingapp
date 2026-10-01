@@ -23,6 +23,7 @@ import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { IS_AIRGAP } from '../lib/llm/airgap';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
+import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE } from '../lib/llm/provider-error';
 import {
   loadExternalConfig,
   probeExternalEndpoint,
@@ -244,6 +245,12 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
 
   const handleKeyBlur = async () => {
     const key = draftRef.current.apiKey;
+    // Inline validation (both apps): a key that cannot travel in an HTTP
+    // header is never saved; the message names the rule, never the value.
+    if (key !== '' && !isHeaderSafeValue(key)) {
+      setProblem(`API key: ${UNSENDABLE_KEY_MESSAGE}.`);
+      return;
+    }
     if (desktop) {
       if (key === '') return; // write-only: an empty field never clears a saved key by accident
       const ok = await persist({ apiKey: key });
@@ -283,7 +290,12 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
   const handleTest = async () => {
     const current = draftRef.current;
     setStatus(null);
-    const refusal = current.baseUrl.trim() === '' ? 'Enter a base URL to test.' : checkUrl(current.baseUrl);
+    const refusal =
+      current.baseUrl.trim() === ''
+        ? 'Enter a base URL to test.'
+        : current.apiKey !== '' && !isHeaderSafeValue(current.apiKey)
+          ? `API key: ${UNSENDABLE_KEY_MESSAGE}.`
+          : checkUrl(current.baseUrl);
     if (refusal !== null) {
       setProblem(refusal);
       return;

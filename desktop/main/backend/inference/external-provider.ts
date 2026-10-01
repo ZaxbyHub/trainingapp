@@ -77,6 +77,24 @@ function hasControlChars(value: string): boolean {
   return false;
 }
 
+/**
+ * True when `value` can be sent as an HTTP header value (the API key travels
+ * as `Authorization: Bearer <key>` or `x-api-key: <key>`): no control
+ * characters (CR/LF/NUL/TAB/DEL ...) and nothing outside Latin-1, which
+ * node:http would reject with an untyped TypeError at request time.
+ */
+export function isHeaderSafeValue(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f || code > 0xff) return false;
+  }
+  return true;
+}
+
+/** Key-free refusal text for a key that cannot travel in a header. */
+export const UNSENDABLE_KEY_MESSAGE =
+  'the API key contains a character that cannot be sent in an HTTP header (a control character, a line break, or a character outside Latin-1); paste the key again';
+
 /** In-memory store used when the host injects none (headless tools, tests). */
 function memoryStore(): SecretStore {
   const data = new Map<string, string>();
@@ -160,8 +178,11 @@ export class ExternalProviderState {
           }
           break;
         case 'external.apiKey':
-          if (typeof value !== 'string' || value.length > MAX_KEY_CHARS || hasControlChars(value)) {
-            errors.push(`${key}: expected an API key without control characters`);
+          if (typeof value !== 'string' || value.length > MAX_KEY_CHARS) {
+            errors.push(`${key}: expected an API key (text, at most ${MAX_KEY_CHARS} characters)`);
+          } else if (!isHeaderSafeValue(value)) {
+            // Never echo the value: the message names the rule only.
+            errors.push(`${key}: ${UNSENDABLE_KEY_MESSAGE}`);
           }
           break;
         case 'external.grounded':

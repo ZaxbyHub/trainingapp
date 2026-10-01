@@ -45,6 +45,8 @@ import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from
 import {
   EXTERNAL_SETTING_KEYS,
   ExternalProviderState,
+  isHeaderSafeValue,
+  UNSENDABLE_KEY_MESSAGE,
   type ExternalProviderOptions,
 } from './external-provider.js';
 import { generateExternal, listExternalModels, originOf } from './external-generator.js';
@@ -717,10 +719,8 @@ export class LlamaEngine implements EngineSurface {
     const model = typeof body.model === 'string' ? body.model.trim() : '';
     const draftKey = typeof body.apiKey === 'string' ? body.apiKey : '';
     if (protocol === null) return { ok: false, kind: 'other', message: "protocol: expected 'openai' or 'anthropic'", models: [] };
-    for (let i = 0; i < draftKey.length; i += 1) {
-      const code = draftKey.charCodeAt(i);
-      if (code < 0x20 || code === 0x7f) return { ok: false, kind: 'other', message: 'apiKey: control characters are not allowed', models: [] };
-    }
+    // The draft key is refused (never echoed) when it cannot travel in a header.
+    if (!isHeaderSafeValue(draftKey)) return { ok: false, kind: 'other', message: `apiKey: ${UNSENDABLE_KEY_MESSAGE}`, models: [] };
     const verdict = validateEndpointUrl(baseUrl, { airgap: this.external.airgap() });
     if (!verdict.ok) return { ok: false, kind: 'other', message: verdict.message, models: [] };
     const apiKey = draftKey !== '' ? draftKey : this.external.keyFor(baseUrl);

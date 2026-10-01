@@ -1,5 +1,5 @@
 {
-  "_comment": "Supplemental endpoint-policy vectors (universal-provider-settings-overhaul). Asserted row-for-row, together with endpoint-policy-vectors.json, by the web (web_ui/src/lib/llm/endpoint-policy.test.ts) and desktop (desktop/src/__tests__/endpoint-policy.test.ts) policy twins. Covers WHATWG numeric IPv4 forms, IPv4-embedding IPv6 forms (mapped, compatible, NAT64 64:ff9b::/96, 6to4 2002::/16), the unspecified address, multicast/broadcast, CGNAT and trailing-dot names. Unspecified/multicast/broadcast targets report rule invalid-url because the rule set is frozen; the message names the reason.",
+  "_comment": "Supplemental endpoint-policy vectors (universal-provider-settings-overhaul). Asserted row-for-row, together with endpoint-policy-vectors.json, by the web (web_ui/src/lib/llm/endpoint-policy.test.ts) and desktop (desktop/src/__tests__/endpoint-policy.test.ts) policy twins. Covers WHATWG numeric IPv4 forms, IPv4-embedding IPv6 forms (mapped, compatible, NAT64 64:ff9b::/96, SIIT ::ffff:0:0:0/96, local-use NAT64 64:ff9b:1::/48, 6to4 2002::/16, Teredo 2001::/32 - private, never public, unless an embedded address is refused), the unspecified address, multicast/broadcast, CGNAT and trailing-dot names. Unspecified/multicast/broadcast targets report rule invalid-url because the rule set is frozen; the message names the reason.",
   "cases": [
     { "url": "http://2130706433", "ok": true, "kind": "loopback" },
     { "url": "http://0177.0.0.1:8080", "ok": true, "kind": "loopback" },
@@ -25,6 +25,24 @@
     { "url": "https://[2001:4860:4860::8888]", "ok": true, "kind": "public" },
     { "url": "http://[2001:4860:4860::8888]", "ok": false, "rules": ["public-requires-https"] },
     { "url": "http://[fec0::1]", "ok": true, "kind": "private" },
+
+    { "url": "http://[::ffff:0:169.254.169.254]", "ok": false, "rules": ["metadata"] },
+    { "url": "http://[::ffff:0:a9fe:a9fe]", "ok": false, "rules": ["metadata"] },
+    { "url": "http://[::ffff:0:169.254.7.7]", "ok": false, "rules": ["link-local"] },
+    { "url": "http://[::ffff:0:127.0.0.1]:1234", "ok": true, "kind": "loopback" },
+    { "url": "http://[::ffff:0:10.0.0.1]", "ok": true, "kind": "private" },
+    { "url": "http://[::ffff:0:8.8.8.8]", "ok": false, "rules": ["public-requires-https"] },
+    { "url": "http://[::ffff:0:0.0.0.0]", "ok": false, "rules": ["invalid-url"] },
+    { "url": "http://[64:ff9b:1::a9fe:a9fe]", "ok": false, "rules": ["metadata"] },
+    { "url": "http://[64:ff9b:1::169.254.1.1]", "ok": false, "rules": ["link-local"] },
+    { "url": "http://[64:ff9b:1::10.0.0.1]", "ok": true, "kind": "private" },
+    { "url": "http://[64:ff9b:1::127.0.0.1]", "ok": true, "kind": "loopback" },
+    { "url": "https://[64:ff9b:1:abcd::1]", "ok": true, "kind": "private" },
+    { "url": "https://[2001:0:4136:e378:8000:63bf:3fff:fdd2]", "ok": true, "kind": "private" },
+    { "url": "http://[2001:0:4136:e378:8000:63bf:5601:5601]", "ok": false, "rules": ["metadata"] },
+    { "url": "http://[2001:0:a9fe:a9fe::3fff:fdd2]", "ok": false, "rules": ["metadata"] },
+    { "url": "http://[2001:0:4136:e378:8000:63bf:ffff:ffff]", "ok": false, "rules": ["invalid-url"] },
+    { "url": "http://[2001:db8::1]", "ok": false, "rules": ["public-requires-https"] },
 
     { "url": "http://0.0.0.0:8080", "ok": false, "rules": ["invalid-url"] },
     { "url": "http://0:8080", "ok": false, "rules": ["invalid-url"] },

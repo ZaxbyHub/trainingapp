@@ -114,6 +114,28 @@ describe('browser app', () => {
     await waitFor(() => expect(localStorage.getItem('external-provider-apikey')).toBe(KEY));
     expect(sessionStorage.getItem('external-provider-apikey')).toBeNull();
   });
+
+  // Review round 1 (F4): inline validation of a key that cannot travel in an
+  // HTTP header; it is never saved and never echoed.
+  test('a key with a header-invalid character is refused inline and never stored', async () => {
+    const fetchSpy = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetchSpy);
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://localhost:1234' } });
+    fireEvent.blur(q.getByLabelText(/^base url$/i));
+    const key = q.getByLabelText(/^api key$/i);
+    fireEvent.change(key, { target: { value: 'sk-INLINE-☃-SENTINEL' } });
+    fireEvent.blur(key);
+    const alert = await q.findByRole('alert');
+    expect(alert).toHaveTextContent(/cannot be sent in an HTTP header/);
+    expect(alert.textContent).not.toContain('SENTINEL');
+    const dump = JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage });
+    expect(dump).not.toContain('SENTINEL');
+    fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+    await waitFor(() => expect(q.getByRole('alert')).toHaveTextContent(/cannot be sent in an HTTP header/));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe('desktop app', () => {
@@ -169,6 +191,21 @@ describe('desktop app', () => {
     await waitFor(() => expect(key.value).toBe(''));
     const dump = JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage });
     expect(dump).not.toContain(KEY);
+  });
+
+  test('a key with a header-invalid character is refused inline and never PUT (F4)', async () => {
+    installDesktopBridgeStub();
+    const { s, updateSettings } = session({ 'external.baseUrl': 'http://192.168.1.20:8000' });
+    renderDesktop(s);
+    const q = within(panel());
+    const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+    // (an <input> strips CR/LF itself, so the reachable case is a non-Latin-1 paste)
+    fireEvent.change(key, { target: { value: 'sk-INLINE-\u{1F511}-SENTINEL' } });
+    fireEvent.blur(key);
+    const alert = await q.findByRole('alert');
+    expect(alert).toHaveTextContent(/cannot be sent in an HTTP header/);
+    expect(alert.textContent).not.toContain('SENTINEL');
+    expect(updateSettings).not.toHaveBeenCalled();
   });
 
   test('enabling PUTs the connection and announces the engine change', async () => {

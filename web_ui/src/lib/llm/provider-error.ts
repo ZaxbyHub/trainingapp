@@ -106,6 +106,33 @@ export function serverError(ctx: FailureContext, status: number, upstream?: stri
   return new ProviderError('server', `The endpoint ${ctx.origin} returned an error (HTTP ${status})${detail}`, status);
 }
 
+/**
+ * True when `value` can be sent as an HTTP header value (the key travels as
+ * `Authorization: Bearer <key>` or `x-api-key: <key>`): no control characters
+ * (CR/LF/NUL/TAB/DEL ...) and nothing outside Latin-1 — fetch() would
+ * otherwise throw a TypeError whose text can quote the value. Twin of
+ * desktop/main/backend/inference/external-provider.ts isHeaderSafeValue.
+ */
+export function isHeaderSafeValue(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f || code > 0xff) return false;
+  }
+  return true;
+}
+
+/** Key-free refusal text for a key that cannot travel in a header. */
+export const UNSENDABLE_KEY_MESSAGE =
+  'the API key contains a character that cannot be sent in an HTTP header (a control character, a line break, or a character outside Latin-1); paste the key again';
+
+/** The request was not sent because a header value (the key) is unsendable. Never names the value. */
+export function unsendableHeaderError(ctx: FailureContext): ProviderError {
+  return new ProviderError(
+    'auth',
+    `The request to ${ctx.origin} was not sent: ${UNSENDABLE_KEY_MESSAGE} in ${SETTINGS_HINT}.`,
+  );
+}
+
 /** Map an HTTP failure status to the classified error. */
 export function errorForStatus(ctx: FailureContext, status: number, upstream?: string): ProviderError {
   if (status === 401 || status === 403) return authError(ctx, status, upstream);

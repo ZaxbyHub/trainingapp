@@ -161,3 +161,45 @@ describe('factory egress gate', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+// Review round 1 (F4): a key with a character that cannot travel in an HTTP
+// header is refused before any request, as a classified, key-free error, on
+// generation and on the connection test, for both protocols.
+describe('unsendable API key (header-invalid characters)', () => {
+  const BAD_KEYS = ['sk-UNSENDABLE-\u2603-SENTINEL', 'sk-UNSENDABLE-SENTINEL\r\nX-Evil: 1', 'sk-UNSENDABLE-\u0000-SENTINEL'];
+  for (const protocol of ['openai', 'anthropic'] as const) {
+    for (const bad of BAD_KEYS) {
+      test(`${protocol}: ${JSON.stringify(bad.slice(14, 16))} fails as auth, sends nothing, never echoes the key`, async () => {
+        const target = await server((_req, res) => {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('{}');
+        });
+        const svc =
+          protocol === 'openai'
+            ? new OpenAICompatChatService({ baseUrl: target.base, model: 'm', apiKey: bad })
+            : new AnthropicCompatChatService({ baseUrl: target.base, model: 'm', apiKey: bad });
+        const err = await failure(svc.generateComplete([{ role: 'user', content: 'hi' }]));
+        expect(err.kind).toBe('auth');
+        expect(err.message).toMatch(/cannot be sent in an HTTP header/);
+        expect(err.message).not.toContain('SENTINEL');
+        const probe = await probeExternalEndpoint({ protocol, baseUrl: target.base, model: 'm', apiKey: bad });
+        expect(probe).toMatchObject({ ok: false, kind: 'auth' });
+        expect(probe.message).not.toContain('SENTINEL');
+        expect(target.hits).toHaveLength(0);
+      });
+    }
+  }
+
+  test('a residual header TypeError from fetch maps to the same key-free error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Headers.append: "Bearer sk-RESIDUAL-SENTINEL" is an invalid header value.');
+      }),
+    );
+    const svc = new OpenAICompatChatService({ baseUrl: 'http://127.0.0.1:9', model: 'm', apiKey: 'sk-RESIDUAL-SENTINEL' });
+    const err = await failure(svc.generateComplete([{ role: 'user', content: 'hi' }]));
+    expect(err.kind).toBe('auth');
+    expect(err.message).not.toContain('SENTINEL');
+  });
+});

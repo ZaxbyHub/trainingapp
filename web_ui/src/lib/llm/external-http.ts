@@ -18,9 +18,11 @@
 import {
   ProviderError,
   errorForStatus,
+  isHeaderSafeValue,
   networkError,
   scrubSecrets,
   timeoutError,
+  unsendableHeaderError,
   type FailureContext,
 } from './provider-error';
 
@@ -98,6 +100,11 @@ export async function openRequest(
   init: { method: 'GET' | 'POST'; headers: Record<string, string>; body?: string },
   opts: TransportOptions,
 ): Promise<OpenedStream | null> {
+  // A header value fetch() would refuse (a key with a character outside
+  // Latin-1, CR/LF ...) fails classified and key-free, before any request.
+  for (const value of Object.values(init.headers)) {
+    if (!isHeaderSafeValue(value)) throw unsendableHeaderError(opts.ctx);
+  }
   const controller = new AbortController();
   const abort = () => controller.abort();
   const cancelled = () => opts.signal?.aborted === true;
@@ -129,6 +136,11 @@ export async function openRequest(
     opts.signal?.removeEventListener('abort', abort);
     if (err instanceof ProviderError) throw err;
     if (cancelled() && !timedOut) return null;
+    // Residual guard: a header TypeError from fetch() (its text may quote the
+    // value) is reported as the classified, key-free unsendable-key error.
+    if (err instanceof TypeError && /header|ISO-8859-1|ByteString/i.test(err.message)) {
+      throw unsendableHeaderError(opts.ctx);
+    }
     throw networkError(opts.ctx, err);
   }
   if (cancelled()) {

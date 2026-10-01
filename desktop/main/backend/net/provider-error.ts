@@ -72,9 +72,16 @@ export function refusedError(ctx: FailureContext, reason: string): ExternalProvi
 export function timeoutError(
   ctx: FailureContext,
   ms: number,
-  phase: 'first-byte' | 'idle' | 'error-body',
+  phase: 'first-byte' | 'idle' | 'error-body' | 'dns',
   status?: number,
+  hostname?: string,
 ): ExternalProviderError {
+  if (phase === 'dns') {
+    return new ExternalProviderError(
+      'timeout',
+      `The endpoint at ${ctx.origin} timed out: resolving ${hostname ?? 'the host name'} took longer than ${ms}ms, so nothing was sent. Check the host name and your network or DNS settings.`,
+    );
+  }
   const what =
     phase === 'first-byte'
       ? `it accepted the request but sent no data within ${ms}ms`

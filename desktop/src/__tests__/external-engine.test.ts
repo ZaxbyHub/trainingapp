@@ -20,6 +20,7 @@ import { NodeBackendHost } from '../../main/backend';
 import { LlamaEngine } from '../../main/backend/inference/llama-engine';
 import { createBackendServer, listenOnRandomPort } from '../../main/backend/server';
 import { createLoopbackGuard } from '../../main/security/loopback-guard';
+import { ExternalProviderError } from '../../main/backend/net/provider-error';
 import type { RetrievalSurface } from '../../main/backend/types';
 
 const TOKEN = 'ext-engine-token';
@@ -204,6 +205,90 @@ describe('key-origin binding (I1/I2)', () => {
     expect(r.ok).toBe(false);
     expect(store.dump()).toEqual({});
     expect(engine.responseSettings()['external.enabled']).toBe(false);
+  });
+
+  // Review round 1 (F4): any character that cannot travel in an HTTP header
+  // (CR/LF, TAB, NUL, DEL, anything above Latin-1) is refused at save time
+  // with a typed validation error that never echoes the key.
+  for (const [label, bad] of [
+    ['non-Latin-1 (snowman)', 'sk-UNSENDABLE-☃-SENTINEL'],
+    ['non-Latin-1 (emoji)', 'sk-UNSENDABLE-\u{1F511}-SENTINEL'],
+    ['CR/LF', 'sk-UNSENDABLE-SENTINEL\r\nX-Evil: 1'],
+    ['TAB', 'sk-UNSENDABLE-\t-SENTINEL'],
+    ['NUL', 'sk-UNSENDABLE-\u0000-SENTINEL'],
+    ['DEL', 'sk-UNSENDABLE-\u007f-SENTINEL'],
+  ] as const) {
+    it(`a key with an unsendable character (${label}) is refused with a 422 that never echoes it`, () => {
+      const { engine, store } = newEngine();
+      const r = engine.applySettingsPatch(enable('http://127.0.0.1:9', { 'external.apiKey': bad }));
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.status).toBe(422);
+      const text = JSON.stringify(r);
+      expect(text).toMatch(/external\.apiKey: the API key contains a character that cannot be sent in an HTTP header/);
+      expect(text).not.toContain('SENTINEL');
+      expect(store.dump()).toEqual({});
+    });
+  }
+
+  it('Latin-1 punctuation in a key is still accepted (only header-invalid characters are refused)', () => {
+    const { engine, store } = newEngine();
+    const r = engine.applySettingsPatch(enable('http://127.0.0.1:9', { 'external.apiKey': 'sk-ok_key.with-punct~=+/é' }));
+    expect(r.ok).toBe(true);
+    expect(store.dump()['external-api-key']).toBe('sk-ok_key.with-punct~=+/é');
+  });
+
+  it('a pre-existing stored key that cannot be sent fails generation as a classified error, key-free', async () => {
+    const ext = await endpoint();
+    const store = mapStore();
+    // Seeded directly (as an older build could have saved it), bypassing validation.
+    store.set('external-api-key', 'sk-STORED-☃-SENTINEL');
+    store.set('external-api-key-origin', ext.base);
+    const { engine } = newEngine(store);
+    expect(engine.applySettingsPatch(enable(ext.base)).ok).toBe(true);
+    const err = await engine.query('q').then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ExternalProviderError);
+    expect((err as ExternalProviderError).kind).toBe('auth');
+    expect((err as ExternalProviderError).message).not.toContain('SENTINEL');
+    expect(ext.requests).toHaveLength(0);
+  });
+
+  it('the probe route refuses an unsendable draft key without echoing it', async () => {
+    const { engine } = newEngine();
+    const r = await engine.probeExternal({ protocol: 'openai', baseUrl: 'http://127.0.0.1:9', model: 'm', apiKey: 'sk-☃-SENTINEL' });
+    expect(r).toMatchObject({ ok: false, kind: 'other' });
+    expect(r.message).toMatch(/cannot be sent in an HTTP header/);
+    expect(r.message).not.toContain('SENTINEL');
+  });
+});
+
+describe('F4: /ask and /ask/stream map an unsendable stored key to 502 {detail, kind} / a kind frame', () => {
+  it('both routes classify the failure and never leak the key', async () => {
+    const ext = await endpoint();
+    const store = mapStore();
+    store.set('external-api-key', 'sk-ROUTE-☃-SENTINEL');
+    store.set('external-api-key-origin', ext.base);
+    const { engine } = newEngine(store);
+    // Direct chat: no retrieval surface needed for the route.
+    expect(engine.applySettingsPatch(enable(ext.base, { 'external.grounded': false })).ok).toBe(true);
+    const server = createBackendServer({ guard: createLoopbackGuard({ token: TOKEN }), tokenHeaderName: 'X-Desktop-Token', engine });
+    const port = await listenOnRandomPort(server);
+    servers.push(server);
+    const headers = { 'content-type': 'application/json', 'x-desktop-token': TOKEN };
+    const ask = await fetch(`http://127.0.0.1:${port}/ask`, { method: 'POST', headers, body: JSON.stringify({ question: 'q' }) });
+    expect(ask.status).toBe(502);
+    const body = (await ask.json()) as Record<string, unknown>;
+    expect(body.kind).toBe('auth');
+    expect(String(body.detail)).toMatch(/cannot be sent in an HTTP header/);
+    expect(JSON.stringify(body)).not.toContain('SENTINEL');
+    const stream = await fetch(`http://127.0.0.1:${port}/ask/stream`, { method: 'POST', headers, body: JSON.stringify({ question: 'q' }) });
+    const text = await stream.text();
+    expect(text).toMatch(/"kind":"auth"/);
+    expect(text).not.toContain('SENTINEL');
+    expect(ext.requests).toHaveLength(0);
   });
 });
 

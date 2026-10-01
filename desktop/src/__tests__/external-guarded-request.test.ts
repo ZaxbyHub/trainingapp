@@ -380,6 +380,164 @@ describe('guarded outbound client', () => {
     expect(scrubSecrets(`x sk-abcdef123 ${KEY}`, KEY)).not.toMatch(/sk-abcdef123|SENTINEL/);
   });
 
+  // Review round 1 (F7): DNS resolution is bounded and cancellable, and a
+  // lookup that answers late never opens a socket.
+  describe('DNS timeout and cancellation during lookup', () => {
+    async function counted(): Promise<{ port: number; connections: () => number }> {
+      let n = 0;
+      const s = http.createServer((_req, res) => {
+        res.writeHead(200);
+        res.end('reached');
+      });
+      s.on('connection', () => {
+        n += 1;
+      });
+      await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', () => resolve()));
+      servers.push(s);
+      return { port: (s.address() as AddressInfo).port, connections: () => n };
+    }
+    /** A lookup that answers 127.0.0.1 only after `ms` (or never). */
+    const lateLookup = (ms: number | null, calls: { n: number }): DnsLookup => async () => {
+      calls.n += 1;
+      if (ms === null) return new Promise<never>(() => undefined);
+      await new Promise((r) => setTimeout(r, ms));
+      return [{ address: '127.0.0.1', family: 4 }];
+    };
+
+    it('a lookup that never resolves fails with a typed DNS timeout within the bound', async () => {
+      const calls = { n: 0 };
+      const started = Date.now();
+      const err = await failureOf(
+        guardedRequest({
+          url: 'http://gpu-box.lan:9/v1/models',
+          method: 'GET',
+          headers: { authorization: `Bearer ${KEY}` },
+          ctx: ctx('http://gpu-box.lan:9'),
+          airgap: false,
+          lookup: lateLookup(null, calls),
+          dnsTimeoutMs: 200,
+        }),
+      );
+      expect(err.kind).toBe('timeout');
+      expect(err.message).toMatch(/resolving gpu-box\.lan took longer than 200ms/);
+      expect(err.message).not.toContain(KEY);
+      expect(calls.n).toBe(1);
+      expect(Date.now() - started).toBeLessThan(5_000);
+    });
+
+    it('a lookup that answers AFTER the DNS timeout never opens a socket', async () => {
+      const target = await counted();
+      const err = await failureOf(
+        guardedRequest({
+          url: `http://gpu-box.lan:${target.port}/v1/models`,
+          method: 'GET',
+          headers: {},
+          ctx: ctx('http://gpu-box.lan'),
+          airgap: false,
+          lookup: lateLookup(300, { n: 0 }),
+          dnsTimeoutMs: 100,
+        }),
+      );
+      expect(err.kind).toBe('timeout');
+      await new Promise((r) => setTimeout(r, 500));
+      expect(target.connections()).toBe(0);
+    });
+
+    it('an AbortSignal fired mid-lookup rejects with RequestCancelledError and no socket is opened', async () => {
+      const target = await counted();
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 80);
+      const started = Date.now();
+      await expect(
+        guardedRequest({
+          url: `http://gpu-box.lan:${target.port}/v1/models`,
+          method: 'GET',
+          headers: {},
+          ctx: ctx('http://gpu-box.lan'),
+          airgap: false,
+          lookup: lateLookup(300, { n: 0 }),
+          signal: controller.signal,
+        }),
+      ).rejects.toBeInstanceOf(RequestCancelledError);
+      expect(Date.now() - started).toBeLessThan(290);
+      await new Promise((r) => setTimeout(r, 500));
+      expect(target.connections()).toBe(0);
+    });
+
+    it('isCancelled turning true mid-lookup (Stop) rejects promptly and no socket is opened', async () => {
+      const target = await counted();
+      let cancel = false;
+      setTimeout(() => {
+        cancel = true;
+      }, 80);
+      const started = Date.now();
+      await expect(
+        guardedRequest({
+          url: `http://gpu-box.lan:${target.port}/v1/models`,
+          method: 'GET',
+          headers: {},
+          ctx: ctx('http://gpu-box.lan'),
+          airgap: false,
+          lookup: lateLookup(null, { n: 0 }),
+          isCancelled: () => cancel,
+        }),
+      ).rejects.toBeInstanceOf(RequestCancelledError);
+      expect(Date.now() - started).toBeLessThan(2_000);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(target.connections()).toBe(0);
+    });
+
+    it('an already-aborted signal rejects before any connection', async () => {
+      const target = await counted();
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        guardedRequest({
+          url: `http://gpu-box.lan:${target.port}/v1/models`,
+          method: 'GET',
+          headers: {},
+          ctx: ctx('http://gpu-box.lan'),
+          airgap: false,
+          lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+          signal: controller.signal,
+        }),
+      ).rejects.toBeInstanceOf(RequestCancelledError);
+      await new Promise((r) => setTimeout(r, 100));
+      expect(target.connections()).toBe(0);
+    });
+
+    it('resolveTarget keeps its 4-argument form (default bound) and still resolves', async () => {
+      await expect(
+        resolveTarget('gpu-box.lan', async () => [{ address: '10.0.0.5', family: 4 }], ctx('x'), false),
+      ).resolves.toEqual({ address: '10.0.0.5', family: 4 });
+    });
+  });
+
+  // Review round 1 (F4): a header value node:http refuses (a stored key with a
+  // character outside Latin-1) is a classified, key-free error, not an
+  // untyped TypeError, and nothing is sent.
+  it('an unsendable header value fails as a key-free auth error and sends nothing', async () => {
+    const target = await server((_req, res) => {
+      res.writeHead(200);
+      res.end('reached');
+    });
+    const badKey = 'sk-☃-unsendable-SENTINEL';
+    const err = await failureOf(
+      guardedRequest({
+        url: `http://127.0.0.1:${target.port}/v1/models`,
+        method: 'GET',
+        headers: { authorization: `Bearer ${badKey}` },
+        ctx: { origin: `http://127.0.0.1:${target.port}`, model: 'm', apiKey: badKey },
+        airgap: false,
+      }),
+    );
+    expect(err.kind).toBe('auth');
+    expect(err.message).toMatch(/cannot be sent in an HTTP header/);
+    expect(err.message).not.toContain('SENTINEL');
+    expect(err.message).not.toContain('☃');
+    expect(target.hits).toHaveLength(0);
+  });
+
   it('trusts Node defaults plus the OS certificate store', () => {
     const cas = trustedCertificateAuthorities();
     expect(Array.isArray(cas)).toBe(true);

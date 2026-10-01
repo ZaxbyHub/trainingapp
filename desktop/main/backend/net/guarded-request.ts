@@ -23,9 +23,14 @@
 //      (tls.getCACertificates('system'), available in Electron 44's Node 24;
 //      NODE_EXTRA_CA_CERTS is part of the 'default' set). No proxy support in
 //      this release; loopback/private endpoints are never proxied.
-//   6. Timeouts: first byte (default 600 s) and idle gaps between body chunks
-//      (default 120 s) -> kind 'timeout'; cancellation (isCancelled) aborts
-//      the socket.
+//   6. Timeouts: DNS resolution (default 30 s), first byte (default 600 s)
+//      and idle gaps between body chunks (default 120 s) -> kind 'timeout';
+//      cancellation (isCancelled or an AbortSignal) is honoured during the
+//      DNS lookup (no socket is ever opened afterwards) and aborts the socket
+//      once connected.
+//   7. A header value node:http refuses (e.g. a key with characters outside
+//      Latin-1) fails as a classified, key-free ExternalProviderError, never
+//      an untyped TypeError.
 // node:http / node:https only — no new dependency, no electron import.
 import { promises as dnsPromises } from 'node:dns';
 import http from 'node:http';
@@ -48,6 +53,8 @@ import {
 export type DnsLookup = (hostname: string) => Promise<Array<{ address: string; family: 4 | 6 }>>;
 
 export const FIRST_BYTE_TIMEOUT_MS = 600_000;
+/** Bound on one DNS resolution (an OS resolver can otherwise stall Stop). */
+export const DNS_TIMEOUT_MS = 30_000;
 export const IDLE_TIMEOUT_MS = 120_000;
 const ERROR_BODY_LIMIT_BYTES = 64 * 1024;
 const CANCEL_POLL_MS = 20;
@@ -86,15 +93,69 @@ export function trustedCertificateAuthorities(): string[] | undefined {
   return caBundle;
 }
 
+/** Bounds and cancellation for the DNS step of resolveTarget. */
+export interface ResolveOptions {
+  /** Default DNS_TIMEOUT_MS. */
+  timeoutMs?: number;
+  isCancelled?: () => boolean;
+  signal?: AbortSignal;
+}
+
+type LookupOutcome = { ok: true; answers: unknown } | { ok: false; err: unknown };
+
+/**
+ * Wait for the lookup, but never longer than `timeoutMs` and never past a
+ * cancellation. A lookup that settles late is ignored (its answers are never
+ * used, so no socket is opened for them).
+ */
+function awaitLookup(
+  pending: Promise<LookupOutcome>,
+  ctx: FailureContext,
+  hostname: string,
+  opts: ResolveOptions,
+): Promise<LookupOutcome> {
+  const ms = opts.timeoutMs ?? DNS_TIMEOUT_MS;
+  return new Promise<LookupOutcome>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
+    let done = false;
+    const onAbort = (): void => finish(() => reject(new RequestCancelledError()));
+    const finish = (settle: () => void): void => {
+      if (done) return;
+      done = true;
+      if (timer !== null) clearTimeout(timer);
+      if (poll !== null) clearInterval(poll);
+      opts.signal?.removeEventListener('abort', onAbort);
+      settle();
+    };
+    if (opts.signal?.aborted === true || opts.isCancelled?.() === true) {
+      finish(() => reject(new RequestCancelledError()));
+      return;
+    }
+    opts.signal?.addEventListener('abort', onAbort);
+    timer = setTimeout(() => finish(() => reject(timeoutError(ctx, ms, 'dns', undefined, hostname))), ms);
+    if (opts.isCancelled !== undefined) {
+      const isCancelled = opts.isCancelled;
+      poll = setInterval(() => {
+        if (isCancelled()) finish(() => reject(new RequestCancelledError()));
+      }, CANCEL_POLL_MS);
+    }
+    void pending.then((outcome) => finish(() => resolve(outcome)));
+  });
+}
+
 /**
  * Resolve and validate the target address for `hostname` (no brackets).
- * Returns the address to connect to; throws a refusal with zero bytes sent.
+ * Returns the address to connect to; throws a refusal with zero bytes sent,
+ * a 'timeout' ExternalProviderError when DNS exceeds the bound, or
+ * RequestCancelledError when cancelled during the lookup.
  */
 export async function resolveTarget(
   hostname: string,
   lookup: DnsLookup,
   ctx: FailureContext,
   airgap: boolean,
+  opts: ResolveOptions = {},
 ): Promise<{ address: string; family: 4 | 6 }> {
   const literalFamily = net.isIP(hostname);
   if (literalFamily !== 0) {
@@ -106,12 +167,18 @@ export async function resolveTarget(
   }
   const nameKind = hostKind(hostname);
   if (nameKind === null) throw refusedError(ctx, `${hostname} is not an allowed host name`);
-  let answers: Array<{ address: string; family: 4 | 6 }>;
-  try {
-    answers = await lookup(hostname);
-  } catch (err) {
+  const pending: Promise<LookupOutcome> = Promise.resolve()
+    .then(() => lookup(hostname))
+    .then(
+      (found): LookupOutcome => ({ ok: true, answers: found }),
+      (err: unknown): LookupOutcome => ({ ok: false, err }),
+    );
+  const outcome = await awaitLookup(pending, ctx, hostname, opts);
+  if (!outcome.ok) {
+    const err = outcome.err;
     throw networkError(ctx, `DNS lookup for ${hostname} failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  const answers = outcome.answers as Array<{ address: string; family: 4 | 6 }>;
   if (!Array.isArray(answers) || answers.length === 0) {
     throw networkError(ctx, `DNS lookup for ${hostname} returned no addresses`);
   }
@@ -150,7 +217,11 @@ export interface GuardedRequestInit {
   lookup?: DnsLookup;
   firstByteTimeoutMs?: number;
   idleTimeoutMs?: number;
+  /** Bound on the DNS lookup (default DNS_TIMEOUT_MS). */
+  dnsTimeoutMs?: number;
   isCancelled?: () => boolean;
+  /** Optional AbortSignal; equivalent to isCancelled() turning true. */
+  signal?: AbortSignal;
 }
 
 export interface GuardedResponse {
@@ -169,9 +240,19 @@ export async function guardedRequest(init: GuardedRequestInit): Promise<GuardedR
   if (!verdict.ok) throw new ExternalProviderError('other', verdict.message);
   const url = new URL(init.url);
   const hostname = url.hostname.replace(/^\[/, '').replace(/\]$/, '');
-  const target = await resolveTarget(hostname, init.lookup ?? defaultLookup, init.ctx, init.airgap);
-  if (init.isCancelled?.()) throw new RequestCancelledError();
-  return send(url, hostname, target, init);
+  const signal = init.signal;
+  const callerCancelled = init.isCancelled;
+  const isCancelled =
+    signal === undefined && callerCancelled === undefined
+      ? undefined
+      : (): boolean => signal?.aborted === true || callerCancelled?.() === true;
+  const target = await resolveTarget(hostname, init.lookup ?? defaultLookup, init.ctx, init.airgap, {
+    timeoutMs: init.dnsTimeoutMs,
+    isCancelled,
+    signal,
+  });
+  if (isCancelled?.()) throw new RequestCancelledError();
+  return send(url, hostname, target, { ...init, isCancelled });
 }
 
 /**
@@ -264,7 +345,25 @@ function send(
       if (ca !== undefined) options.ca = ca;
     }
     const transport = isHttps ? https : http;
-    req = transport.request(options, (res) => {
+    try {
+      req = transport.request(options, onResponse);
+    } catch (err) {
+      // node:http validates header values synchronously (ERR_INVALID_CHAR for
+      // CR/LF/control characters or anything outside Latin-1). Classify it;
+      // the message names the rule, never the value.
+      settled = true;
+      const code = (err as NodeJS.ErrnoException | null)?.code;
+      reject(
+        code === 'ERR_INVALID_CHAR' || code === 'ERR_INVALID_HTTP_TOKEN'
+          ? new ExternalProviderError(
+              'auth',
+              `The request to ${ctx.origin} was not sent: the API key (or another header value) contains a character that cannot be sent in an HTTP header. Paste the key again in Settings → External model.`,
+            )
+          : networkError(ctx, 'the request could not be created'),
+      );
+      return;
+    }
+    function onResponse(res: http.IncomingMessage): void {
       response = res;
       const status = res.statusCode ?? 0;
       if (status >= 300 && status < 400) {
@@ -345,7 +444,7 @@ function send(
           notify();
         },
       });
-    });
+    }
     req.on('error', (err) => {
       if (err instanceof ExternalProviderError) fail(err);
       else fail(networkError(ctx, (err as NodeJS.ErrnoException).code ?? err.message));
