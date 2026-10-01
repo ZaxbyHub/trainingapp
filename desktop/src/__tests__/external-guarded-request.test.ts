@@ -229,6 +229,25 @@ describe('guarded outbound client', () => {
     ).resolves.toEqual({ address: '8.8.8.8', family: 4 });
   });
 
+  // Review round 2 (R2-F2): local-use NAT64 outside the /96 layout and Teredo
+  // are never private, so a private-class name cannot reach them, and a
+  // metadata address embedded in the RFC 6052 /48 layout is refused outright.
+  describe('local-use NAT64 / Teredo answers (never private)', () => {
+    const lan = (address: string, airgap: boolean) =>
+      failureOf(resolveTarget('gpu-box.lan', async () => [{ address, family: 6 }], ctx('http://gpu-box.lan'), airgap));
+    it('gpu-box.lan -> 64:ff9b:1:a9fe:a9:fe00:: (metadata in the /48 layout) is refused, airgap or not', async () => {
+      for (const airgap of [true, false]) {
+        const err = await lan('64:ff9b:1:a9fe:a9:fe00::', airgap);
+        expect(err.message).toMatch(/\(metadata\)/);
+      }
+    });
+    it('gpu-box.lan -> a public local-use NAT64 or Teredo answer is refused (name-class consistency)', async () => {
+      for (const address of ['64:ff9b:1:808:8:808:800:0', '2001:0:7f00:1::f5ff:fffe', '2001:0:c0a8:101::f5ff:fffe']) {
+        expect((await lan(address, false)).message).toMatch(/private name but resolves to the public address/);
+      }
+    });
+  });
+
   // Review round 1 (F5): the pinned lookup must hand back ONLY the validated
   // address in every callback shape net/tls use; Node normally calls the
   // {all:true} shape, so the single-address shapes are pinned directly here.

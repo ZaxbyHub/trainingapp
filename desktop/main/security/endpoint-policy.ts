@@ -24,10 +24,13 @@
  * embed an IPv4 address (IPv4-mapped ::ffff:0:0/96, IPv4-compatible ::/96,
  * SIIT ::ffff:0:0:0/96, NAT64 64:ff9b::/96, local-use NAT64 64:ff9b:1::/48
  * in its /96 layout, 6to4 2002::/16) are classified by the embedded IPv4.
- * Formats whose embedding cannot be located (local-use NAT64 with a shorter
- * prefix) are private. Teredo 2001::/32 is refused when its server or
- * (de-obfuscated) client IPv4 is refused, public when either is public, and
- * private otherwise.
+ * Local-use NAT64 outside the /96 layout is refused when ANY RFC 6052
+ * decoding that fits the /48 allocation (/40, /48, /56, /64, /96) yields a
+ * refused IPv4, and is public otherwise. Teredo 2001::/32 is refused when its
+ * server or (de-obfuscated) client IPv4 is refused, and is public otherwise
+ * (it is tunnelled through Internet relays, never a LAN destination). Neither
+ * is ever private: that would lift the https requirement and the airgap
+ * restriction.
  * Unspecified / multicast / reserved targets report rule 'invalid-url' (the
  * rule set is frozen); the message names the actual reason.
  *
@@ -158,24 +161,39 @@ function classifyIPv6(groups: number[]): AddressClass {
   if (isZero(0, 4) && g(4) === 0xffff && g(5) === 0) return classifyIPv4(embedded(g(6), g(7)));
   // NAT64 well-known prefix 64:ff9b::/96.
   if (g(0) === 0x64 && g(1) === 0xff9b && isZero(2, 6)) return classifyIPv4(embedded(g(6), g(7)));
-  // Local-use NAT64 64:ff9b:1::/48 (RFC 8215): the /96 layout carries the
-  // IPv4 in the last 32 bits; any other layout is a local translator address,
-  // so it is private (never public).
+  // Local-use NAT64 64:ff9b:1::/48 (RFC 8215). The /96 layout carries the
+  // IPv4 in the last 32 bits and is classified by it. Outside the /96 layout
+  // the translator's prefix length is unknown, so every RFC 6052 layout that
+  // fits the /48 allocation is decoded (bits 64-71, the u-octet, are
+  // skipped): any refused decoding refuses the address; otherwise it is
+  // PUBLIC (https required, refused in airgap builds) - a translator may map
+  // it to any IPv4. (A /32 layout cannot lie inside this /48: it would read
+  // the fixed prefix bits 0x0001 as 0.1.x.x.)
   if (g(0) === 0x64 && g(1) === 0xff9b && g(2) === 0x0001) {
     if (isZero(3, 6)) return classifyIPv4(embedded(g(6), g(7)));
-    return { ok: true, kind: 'private' };
+    const layouts: number[][] = [
+      [g(2) & 0xff, g(3) >> 8, g(3) & 0xff, g(4) & 0xff], // /40
+      [g(3) >> 8, g(3) & 0xff, g(4) & 0xff, g(5) >> 8], // /48
+      [g(3) & 0xff, g(4) & 0xff, g(5) >> 8, g(5) & 0xff], // /56
+      [g(4) & 0xff, g(5) >> 8, g(5) & 0xff, g(6) >> 8], // /64
+      embedded(g(6), g(7)), // /96
+    ];
+    for (const octets of layouts) {
+      const cls = classifyIPv4(octets);
+      if (!cls.ok) return cls;
+    }
+    return { ok: true, kind: 'public' };
   }
   // Teredo 2001:0::/32 (RFC 4380): server IPv4 in groups 2-3, client IPv4
-  // XOR-obfuscated in groups 6-7. Classified by the strictest embedded
-  // address: a refused one refuses the whole address, a public one keeps it
-  // public (https required, refused in airgap builds), otherwise private.
+  // XOR-obfuscated in groups 6-7. A refused embedded address refuses the
+  // whole address; otherwise it is PUBLIC (Teredo traffic is tunnelled
+  // through Internet relays, never a LAN destination).
   if (g(0) === 0x2001 && g(1) === 0) {
     const server = classifyIPv4(embedded(g(2), g(3)));
     if (!server.ok) return server;
     const client = classifyIPv4(embedded(g(6) ^ 0xffff, g(7) ^ 0xffff));
     if (!client.ok) return client;
-    if (server.kind === 'public' || client.kind === 'public') return { ok: true, kind: 'public' };
-    return { ok: true, kind: 'private' };
+    return { ok: true, kind: 'public' };
   }
   // 6to4 2002::/16 carries the IPv4 in groups 1-2.
   if (g(0) === 0x2002) return classifyIPv4(embedded(g(1), g(2)));
