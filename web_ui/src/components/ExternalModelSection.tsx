@@ -16,8 +16,9 @@
  *   Both apps: a typed key is saved ONLY together with the base URL shown
  *     (one browser save / one desktop PUT carrying external.baseUrl and
  *     external.apiKey). While the shown URL is empty or refused the key is
- *     held in this component only (never saved, never bound to a URL saved
- *     earlier) and the panel says it will be saved with the next valid URL.
+ *     held in this component only (not saved) and is saved only with the
+ *     next valid base URL the user enters (never with one saved earlier
+ *     unless the user enters it again); the panel says so.
  *   Desktop app: every change is a PUT /settings `external.*` patch to the
  *     built-in backend; the key goes to the main-process secret store and is
  *     never kept in the renderer; "Test connection" is POST

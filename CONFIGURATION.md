@@ -395,8 +395,8 @@ Airgap builds refuse public hosts; loopback and private-network endpoints still 
   server to use it." Entering the key again binds it to the new origin. Changing or clearing
   the base URL never moves the key to another origin, and pointing back uses it again. A key is
   saved only together with the base URL shown in the panel; while that field is empty or shows a
-  refused URL the key is not saved (the panel says it will be saved with the next valid base
-  URL), so it is never bound to a URL you saved earlier. The
+  refused URL the key is not saved: it is saved only with the next valid base URL you enter
+  (never with one saved earlier unless you enter it again), as the panel says. The
   browser app keeps the bound origin next to the key (`external-provider-apikey-origin`, in the
   same storage); a key saved by an earlier version without an origin is bound to the base URL
   saved with it, or discarded if there is none.
