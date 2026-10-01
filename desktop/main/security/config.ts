@@ -3,7 +3,8 @@
 // Config keys (issue-required names):
 //   security.tokenHeaderName — the custom header carrying the per-launch token
 //     (default 'X-Desktop-Token'; deliberately NOT Authorization: Bearer, which
-//     the web_ui ApiClient reserves for its server-mode JWT flow).
+//     the web_ui ApiClient reserves for direct API clients of the Python
+//     server's JWT flow; the browser app itself has no server mode).
 //   security.allowedOrigins — origins allowed to talk to the desktop transport
 //     (default ['app://*'] — every app:// origin; 'app://index.html' is what
 //     the packaged renderer's origin resolves to under WHATWG non-special-

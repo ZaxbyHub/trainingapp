@@ -1,6 +1,7 @@
 /**
  * Issue #40 RC1: build the conversation-history snapshot threaded into the RAG
- * orchestrator (browser mode) and the /ask/stream POST body (server mode).
+ * orchestrator (browser mode) and the desktop backend's /ask/stream POST body
+ * (desktop api mode).
  *
  * Extracted from ChatPage into a pure module so it is unit-testable without a
  * React rendering harness. Pure: given a ChatMessage[] snapshot captured at

@@ -3,7 +3,8 @@
  *
  * buildHistorySnapshot extracts the prior conversation turns from the send-time
  * message snapshot and returns them as {role, content} pairs for the RAG
- * orchestrator (browser mode) and the /ask/stream POST body (server mode). Pure
+ * orchestrator (browser mode) and the desktop backend's /ask/stream POST body
+ * (desktop api mode). Pure
  * and deterministic — tested here in isolation.
  */
 

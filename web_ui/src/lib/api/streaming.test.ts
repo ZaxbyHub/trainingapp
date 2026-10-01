@@ -1,6 +1,6 @@
 /**
  * Comprehensive test suite for SSEStreamConsumer
- * Tests POST-based SSE streaming for API server mode.
+ * Tests POST-based SSE streaming (used by the desktop app's api mode).
  * Uses vitest + jsdom patterns from the web_ui project.
  */
 

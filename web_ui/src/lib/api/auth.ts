@@ -46,11 +46,14 @@ export function clearToken(): void {
 /**
  * Login with an API key and store the resulting access token.
  *
- * This is the entrypoint for the (future) login UI. The streaming chat path
- * already passes any stored token (see ChatPage → getToken()), so once a login
- * screen calls this, server mode will be authenticated end-to-end. Until then,
- * the default deployment runs with server auth OFF (api_server's ENABLE_AUTH
- * defaults to false) — see PACKAGING.md. (issue #21 F9)
+ * This is the entrypoint for a (future) login UI. The default ApiClient attaches
+ * any stored token as a Bearer header (client.ts → getToken()), which is what
+ * direct API clients of api_server.py need; browser chat no longer streams from
+ * api_server.py (the browser API-server mode was removed by
+ * settings-wiring-honesty), and the desktop app authenticates with its
+ * per-launch X-Desktop-Token instead. The Python server runs with auth OFF by
+ * default (api_server's ENABLE_AUTH defaults to false) — see PACKAGING.md.
+ * (issue #21 F9)
  *
  * @param apiKey - The API key to authenticate with
  * @returns Promise resolving to the token response

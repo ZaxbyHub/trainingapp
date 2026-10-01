@@ -5,8 +5,8 @@
  * contextBridge.exposeInMainWorld and is therefore present ONLY inside the
  * Electron shell (production app:// renderer AND the dev vite server loaded
  * by Electron). Its absence is the renderer's signal that it runs as a pure
- * browser page (or pointed at a remote Python server) and must keep the
- * browser-local behavior.
+ * browser page and must keep the browser-local behavior (the browser app has
+ * no remote Python server mode since settings-wiring-honesty).
  *
  * FROZEN IPC shape (desktop/main/backend/types.ts): getBackendInfo returns
  * ADDRESS ONLY — credentials travel exclusively via getAuthToken().

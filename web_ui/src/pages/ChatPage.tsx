@@ -612,11 +612,11 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       const url = desktopSession.sseUrl();
       const sseToken = desktopSession.token;
       try {
-        // Issue #40 RC1: thread conversation history into the server request so
-        // server mode benefits from multi-turn memory + retrieval rewriting too.
-        // The server (api_server.py) already accepts + validates `history`
-        // (<=20 turns, content truncated to 4000 chars) — Issue #37 R6 — so this
-        // is a pure client-side addition with ZERO Python changes.
+        // Issue #40 RC1: thread conversation history into the desktop backend
+        // request so api mode benefits from multi-turn memory + retrieval
+        // rewriting too. The desktop backend's /ask/stream accepts and validates
+        // `history` (at most 20 turns; parseQuestionRequest in
+        // desktop/main/backend/server.ts).
         streamManager.startSSEStream(
           url,
           { question: text, history: buildHistorySnapshot(owningMessages) },
