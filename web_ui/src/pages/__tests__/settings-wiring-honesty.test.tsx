@@ -313,17 +313,22 @@ describe('desktop Response Quality preset (AC1-AC3)', () => {
     expect(checkedPreset(container)).toBe('quality');
   });
 
-  test('switching into api mode re-reads GET /settings (no silent PUT)', async () => {
+  test('switching into api mode re-reads GET /settings and applies the result (no silent PUT)', async () => {
     H.reset({ mode: 'browser-local' });
     const { session, getSettings, updateSettings } = makeSession(backend([], {}));
-    renderElectron(session);
+    const { container } = renderElectron(session);
     await settle();
+    expect(checkedPreset(container)).toBeNull();
     const reads = getSettings.mock.calls.length;
+    // The backend changed while the app was in another mode (e.g. another
+    // window applied Quality): the re-read must drive the display.
+    getSettings.mockImplementation(async () => backend(['rag_n_results'], { n_results: DESKTOP_PRESET_SETTINGS.quality.rag_n_results }) as never);
     await act(async () => {
       (H.actions.setMode as (m: string) => void)('api');
     });
     await settle();
     expect(getSettings.mock.calls.length).toBe(reads + 1);
+    expect(checkedPreset(container)).toBe('quality');
     expect(updateSettings).not.toHaveBeenCalled();
   });
 });

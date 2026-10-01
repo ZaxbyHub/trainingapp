@@ -58,7 +58,6 @@ export default defineConfig({
       // Missing fake-timer setup + spy/mock-result drift in chat/streaming
       // integration tests. Owned by chat engine PR #21.
       'src/pages/ChatPage.rag.test.tsx',
-      'src/pages/ChatPage.server-mode.test.tsx',
       'src/pages/ChatPage.shortcuts.test.tsx',
       'src/lib/inference/InferenceModeContext.test.tsx',
       // Extractor return-shape drift (asserts string, code returns object) and
