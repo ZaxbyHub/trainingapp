@@ -506,6 +506,19 @@ describe('guarded outbound client', () => {
       expect(target.connections()).toBe(0);
     });
 
+    it('resolveTarget honours an AbortSignal on its own (no isCancelled poll)', async () => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), 50);
+      const started = Date.now();
+      await expect(
+        resolveTarget('gpu-box.lan', lateLookup(null, { n: 0 }), ctx('http://gpu-box.lan'), false, {
+          signal: controller.signal,
+          timeoutMs: 3_000,
+        }),
+      ).rejects.toBeInstanceOf(RequestCancelledError);
+      expect(Date.now() - started).toBeLessThan(1_500);
+    });
+
     it('resolveTarget keeps its 4-argument form (default bound) and still resolves', async () => {
       await expect(
         resolveTarget('gpu-box.lan', async () => [{ address: '10.0.0.5', family: 4 }], ctx('x'), false),
