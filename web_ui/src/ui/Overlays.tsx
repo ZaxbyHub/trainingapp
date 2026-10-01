@@ -126,7 +126,11 @@ export function Tooltip({ content, children }: TooltipProps) {
       onFocus={() => setShown(true)}
       onBlur={() => setShown(false)}
       onKeyDown={(e) => {
-        if (e.key === 'Escape') setShown(false);
+        if (e.key === 'Escape' && shown) {
+          // Consume Escape only when it dismisses the tooltip, so an enclosing Dialog stays open.
+          e.stopPropagation();
+          setShown(false);
+        }
       }}
     >
       {cloneElement(children, { 'aria-describedby': shown ? id : children.props['aria-describedby'] })}

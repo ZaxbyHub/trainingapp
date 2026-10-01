@@ -202,6 +202,7 @@
      so it does not depend on stylesheet order. */
   .ui-radio-card.ui-selected { border: 2px solid Highlight; box-shadow: none; }
   .ui-switch .ui-toggle__input:checked + .ui-switch__track { border-color: Highlight; }
+  .ui-button[aria-disabled="true"] { color: GrayText; border-color: GrayText; }
   .ui-banner, .ui-badge, .ui-progress { border: 1px solid CanvasText; }
   .ui-progress__fill { background: Highlight; }
 }

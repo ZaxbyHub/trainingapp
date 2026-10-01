@@ -20,13 +20,22 @@ const sources = walk(UI_DIR).filter(
   (f) => /\.(css|tsx?)$/.test(f) && !/\.test\.(tsx?)$/.test(f)
 );
 
-const LEGACY = /--(color|radius|spacing|font-size|line-height|shadow-(sm|md|lg))\b/;
-const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
-const ESCAPE_HATCH = /\bcssText\b|\binsertRule\b|dangerouslySetInnerHTML|\.innerHTML\b/;
-
 function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
+
+const LUMEN_TOKENS = readFileSync(resolve(UI_DIR, '../styles/lumen-tokens.css'), 'utf8');
+const declared = (css: string): Set<string> =>
+  new Set([...stripComments(css).matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+const LUMEN_DECLARED = declared(LUMEN_TOKENS);
+/** Every token the legacy tokens.css declares that Lumen does not redefine. */
+const LEGACY_NAMES = [...declared(readFileSync(resolve(UI_DIR, '../styles/tokens.css'), 'utf8'))].filter(
+  (n) => !LUMEN_DECLARED.has(n)
+);
+// Trailing (?![\w-]) keeps --font-family from matching --font-family-mono style names.
+const LEGACY = new RegExp(`(${LEGACY_NAMES.join('|')})(?![\\w-])`);
+const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
+const ESCAPE_HATCH = /\bcssText\b|\binsertRule\b|dangerouslySetInnerHTML|\.innerHTML\b/;
 
 describe('src/ui token hygiene', () => {
   it('finds the component sources to scan', () => {
@@ -44,16 +53,23 @@ describe('src/ui token hygiene', () => {
     });
   }
 
-  it('every var(--x) used in any src/ui css file is defined in lumen-tokens.css', () => {
-    const tokens = readFileSync(resolve(UI_DIR, '../styles/lumen-tokens.css'), 'utf8');
-    const defined = new Set([...tokens.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
-    const cssFiles = sources.filter((f) => f.endsWith('.css'));
-    expect(cssFiles.length).toBeGreaterThanOrEqual(2); // ui.css + gallery/gallery.css
+  it('derives the legacy token list from tokens.css (includes --font-family, excludes Lumen names)', () => {
+    expect(LEGACY_NAMES).toContain('--font-family');
+    expect(LEGACY_NAMES).toContain('--color-primary');
+    expect(LEGACY_NAMES.filter((n) => LUMEN_DECLARED.has(n))).toEqual([]);
+    expect(LEGACY.test('font-family: var(--font-family)')).toBe(true);
+    expect(LEGACY.test('var(--font-family-mono)')).toBe(false);
+  });
+
+  it('every var(--x) used in any src/ui css or tsx file (incl. inline styles) is defined in lumen-tokens.css', () => {
+    const scanned = sources.filter((f) => /\.(css|tsx)$/.test(f));
+    expect(scanned.filter((f) => f.endsWith('.css')).length).toBeGreaterThanOrEqual(2); // ui.css + gallery/gallery.css
+    expect(scanned.some((f) => f.endsWith('.tsx'))).toBe(true);
     const missing: string[] = [];
-    for (const f of cssFiles) {
-      const css = stripComments(readFileSync(f, 'utf8'));
-      for (const m of css.matchAll(/var\((--[\w-]+)/g)) {
-        if (!defined.has(m[1])) missing.push(`${f}: ${m[1]}`);
+    for (const f of scanned) {
+      const text = stripComments(readFileSync(f, 'utf8'));
+      for (const m of text.matchAll(/var\(\s*(--[\w-]+)/g)) {
+        if (!LUMEN_DECLARED.has(m[1])) missing.push(`${f}: ${m[1]}`);
       }
     }
     expect(missing).toEqual([]);

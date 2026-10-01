@@ -116,7 +116,7 @@ describe('lumen token contrast (WCAG 2.x relative luminance)', () => {
       // Hover/hover-raised/selected only occur under specific parents, so
       // primary/secondary text is checked on every surface, while the muted
       // tokens are checked on the surfaces the spec guarantees (canvas,
-      // surface, raised, sunken, selected).
+      // surface, raised, sunken, selected, hover-raised).
       for (const fg of ['--text-primary', '--text-secondary']) {
         for (const bg of INTERACTIVE_SURFACES) {
           check(theme, `${fg} on ${bg} >= 4.5`, () => {
@@ -125,7 +125,7 @@ describe('lumen token contrast (WCAG 2.x relative luminance)', () => {
         }
       }
       for (const fg of ['--text-tertiary', '--text-placeholder']) {
-        for (const bg of [...SURFACES, '--bg-selected']) {
+        for (const bg of [...SURFACES, '--bg-selected', '--bg-hover-raised']) {
           check(theme, `${fg} on ${bg} >= 4.5`, () => {
             expect(contrast(theme, fg, bg)).toBeGreaterThanOrEqual(4.5);
           });

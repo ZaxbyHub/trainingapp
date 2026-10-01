@@ -15,7 +15,7 @@
   --slate-150: #e6e9ef;
   --slate-200: #dfe3ea;
   --slate-300: #c5ccd8;
-  --slate-400: #97a1b2;
+  --slate-400: #9ea8b7; /* was #97a1b2: dark tertiary/placeholder >= 4.5:1 on --bg-hover-raised (was 4.23) */
   --slate-450: #7c8698; /* was #7d8799: border-control >= 3:1 on --bg-hover (was 2.98) */
   --slate-500: #6b7588;
   --slate-550: #5a6578;

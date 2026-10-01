@@ -202,6 +202,58 @@ describe.each([
   });
 });
 
+describe('Switch and Checkbox caller ARIA', () => {
+  it('merges caller aria-labelledby/aria-describedby ids with its own', () => {
+    render(
+      <>
+        <span id="ext-label">Extra label</span>
+        <span id="ext-err">Extra error</span>
+        <Switch label="Sync" description="Keeps devices equal" aria-labelledby="ext-label" aria-describedby="ext-err" />
+        <Checkbox label="Agree" description="Terms" aria-labelledby="ext-label" aria-describedby="ext-err" />
+      </>
+    );
+    for (const role of ['switch', 'checkbox'] as const) {
+      const el = screen.getByRole(role);
+      expect(el).toHaveAccessibleName(/Extra label/);
+      expect(el).toHaveAccessibleName(/(Sync|Agree)/);
+      expect(el.getAttribute('aria-describedby')?.split(' ')).toContain('ext-err');
+      expect(el).toHaveAccessibleDescription(/Extra error/);
+      expect(el).toHaveAccessibleDescription(/(Keeps devices equal|Terms)/);
+    }
+  });
+
+  it('keeps a caller aria-describedby when there is no description prop', () => {
+    render(
+      <>
+        <span id="ext-err">Required</span>
+        <Switch label="Sync" aria-describedby="ext-err" />
+      </>
+    );
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-describedby', 'ext-err');
+  });
+});
+
+describe('RadioCardGroup ids', () => {
+  it('keeps name and description wiring for option values containing whitespace', () => {
+    render(
+      <RadioCardGroup
+        legend="Engine"
+        value="a b"
+        onChange={() => {}}
+        options={[
+          { value: 'a b', label: 'Spaced', description: 'Has a space' },
+          { value: 'c	d', label: 'Tabbed', description: 'Has a tab' },
+        ]}
+      />
+    );
+    const spaced = screen.getByRole('radio', { name: 'Spaced' });
+    expect(spaced).toHaveAccessibleDescription('Has a space');
+    expect(spaced.getAttribute('aria-describedby')).not.toMatch(/\s/);
+    expect(spaced.getAttribute('aria-labelledby')).not.toMatch(/\s/);
+    expect(screen.getByRole('radio', { name: 'Tabbed' })).toHaveAccessibleDescription('Has a tab');
+  });
+});
+
 describe('RadioCardGroup selection cue', () => {
   it('radio accessible name is the label only; description is the description', () => {
     render(<Controlled Group={RadioCardGroup} />);

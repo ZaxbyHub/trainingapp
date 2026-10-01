@@ -95,6 +95,12 @@ export function Select({ className, children, ...rest }: SelectHTMLAttributes<HT
 
 /* --------------------------------------------------- Switch and Checkbox */
 
+/** Space-joined IDREF list; caller-provided ids are kept, not overridden. */
+function mergeIds(...ids: Array<string | undefined>): string | undefined {
+  const merged = ids.filter(Boolean).join(' ');
+  return merged || undefined;
+}
+
 interface ToggleProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'children'> {
   label: ReactNode;
   description?: ReactNode;
@@ -111,8 +117,8 @@ export function Switch({ label, description, className, ...rest }: ToggleProps) 
         type="checkbox"
         role="switch"
         className="ui-toggle__input ui-focusable"
-        aria-labelledby={labelId}
-        aria-describedby={description ? descId : rest['aria-describedby']}
+        aria-labelledby={mergeIds(labelId, rest['aria-labelledby'])}
+        aria-describedby={mergeIds(description ? descId : undefined, rest['aria-describedby'])}
       />
       <span className="ui-switch__track" aria-hidden="true">
         <span className="ui-switch__thumb" />
@@ -138,8 +144,8 @@ export function Checkbox({ label, description, className, ...rest }: ToggleProps
         {...rest}
         type="checkbox"
         className="ui-toggle__input ui-focusable"
-        aria-labelledby={labelId}
-        aria-describedby={description ? descId : rest['aria-describedby']}
+        aria-labelledby={mergeIds(labelId, rest['aria-labelledby'])}
+        aria-describedby={mergeIds(description ? descId : undefined, rest['aria-describedby'])}
       />
       <span className="ui-toggle__text">
         <span id={labelId} className="ui-toggle__label">{label}</span>
@@ -207,10 +213,11 @@ export function RadioCardGroup({ legend, options, value, onChange, hideLegend, c
   return (
     <fieldset className={cx('ui-choice', 'ui-radio-cards', className)}>
       <legend className={hideLegend ? 'ui-visually-hidden' : 'ui-choice__legend'}>{legend}</legend>
-      {options.map((o) => {
+      {options.map((o, i) => {
         const on = o.value === value;
-        const labelId = `${base}-${o.value}-label`;
-        const descId = `${base}-${o.value}-desc`;
+        // Ids come from the index: option values may contain whitespace, which would split an IDREF.
+        const labelId = `${base}-${i}-label`;
+        const descId = `${base}-${i}-desc`;
         return (
           <label key={o.value} className={cx('ui-radio-card', on && 'ui-selected')}>
             <input

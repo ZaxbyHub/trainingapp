@@ -22,8 +22,12 @@ export function Tabs({ label, items, value, onChange, className }: TabsProps) {
   const base = useId();
   const refs = useRef(new Map<string, HTMLButtonElement>());
   const enabled = items.filter((i) => !i.disabled);
+  // Roving tabindex target: the selected tab, else the first enabled tab so the
+  // tablist stays keyboard-reachable when `value` matches nothing.
+  const tabStopId = (enabled.find((i) => i.id === value) ?? enabled[0])?.id;
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (enabled.length === 0) return;
     const idx = enabled.findIndex((i) => i.id === value);
     let next: number | null = null;
     if (e.key === 'ArrowRight') next = (idx + 1) % enabled.length;
@@ -55,7 +59,7 @@ export function Tabs({ label, items, value, onChange, className }: TabsProps) {
               aria-selected={selected}
               aria-controls={`${base}-panel-${item.id}`}
               aria-disabled={item.disabled || undefined}
-              tabIndex={selected ? 0 : -1}
+              tabIndex={item.id === tabStopId ? 0 : -1}
               className={cx('ui-tabs__tab', 'ui-focusable', selected && 'ui-selected')}
               onClick={() => {
                 if (!item.disabled) onChange(item.id);

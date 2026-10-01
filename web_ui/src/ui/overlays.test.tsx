@@ -112,6 +112,25 @@ describe('Tooltip', () => {
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
   });
 
+  it('Escape closes only the tooltip, not an enclosing Dialog; with no tooltip shown it closes the Dialog', async () => {
+    const onClose = vi.fn();
+    render(
+      <Dialog open onClose={onClose} title="Host">
+        <Tooltip content="Hint">
+          <Button>Trigger</Button>
+        </Tooltip>
+      </Dialog>
+    );
+    const trigger = screen.getByRole('button', { name: 'Trigger' });
+    trigger.focus();
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('appears on hover and hides on leave', async () => {
     render(
       <Tooltip content="Hint">
@@ -182,5 +201,60 @@ describe('Tabs', () => {
     render(<TabsHarness />);
     await userEvent.click(screen.getByRole('tab', { name: 'Disabled' }));
     expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('Tabs edge cases', () => {
+  it('does not throw when every tab is disabled', async () => {
+    render(
+      <Tabs
+        label="None"
+        value="a"
+        onChange={() => {}}
+        items={[
+          { id: 'a', label: 'A', panel: <p>a</p>, disabled: true },
+          { id: 'b', label: 'B', panel: <p>b</p>, disabled: true },
+        ]}
+      />
+    );
+    // React reports handler exceptions through window 'error', not as a rejected call.
+    const errors: unknown[] = [];
+    const onError = (e: ErrorEvent) => {
+      e.preventDefault();
+      errors.push(e.error);
+    };
+    window.addEventListener('error', onError);
+    screen.getByRole('tab', { name: 'A' }).focus();
+    await userEvent.keyboard('{ArrowRight}{ArrowLeft}{Home}{End}');
+    window.removeEventListener('error', onError);
+    expect(errors).toEqual([]);
+    expect(screen.getByRole('tablist')).toBeInTheDocument();
+  });
+
+  it('keeps the tablist reachable when value matches no tab', async () => {
+    const onChange = vi.fn();
+    render(<Tabs label="Lost" value="nope" onChange={onChange} items={ITEMS} />);
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('tabindex', '-1');
+    await userEvent.tab();
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveFocus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(onChange).toHaveBeenCalledWith('docs'); // no current tab: ArrowRight lands on the first enabled one
+  });
+
+  it('falls back to the first ENABLED tab when the first item is disabled', () => {
+    render(
+      <Tabs
+        label="Skip"
+        value="zzz"
+        onChange={() => {}}
+        items={[
+          { id: 'x', label: 'X', panel: null, disabled: true },
+          { id: 'y', label: 'Y', panel: null },
+        ]}
+      />
+    );
+    expect(screen.getByRole('tab', { name: 'Y' })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'X' })).toHaveAttribute('tabindex', '-1');
   });
 });
