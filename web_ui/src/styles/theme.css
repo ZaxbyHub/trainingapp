@@ -1,4 +1,5 @@
 @import "./tokens.css";
+@import "./lumen-tokens.css";
 
 @keyframes spin {
   to { transform: rotate(360deg); }

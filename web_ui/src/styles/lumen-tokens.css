@@ -1,0 +1,232 @@
+/* Lumen design tokens (docs/design/design-language.md section 3).
+   ADDITIVE: these sit next to the legacy --color-* / --radius-* / --spacing-*
+   tokens in tokens.css, which are untouched. No existing consumer references
+   any name defined here. Components in web_ui/src/ui/ use ONLY these tokens
+   (enforced by src/ui/ui-token-hygiene.test.ts); AA contrast is enforced by
+   src/styles/lumen-tokens.contrast.test.ts, which parses THIS file. Keep every
+   token a literal value or a var() of another token defined here so that test
+   can resolve it. */
+
+:root {
+  /* ---- 3.1 primitives: slate (cool neutral) ---- */
+  --slate-0: #ffffff;
+  --slate-50: #f7f8fa;
+  --slate-100: #eef0f4;
+  --slate-150: #e6e9ef;
+  --slate-200: #dfe3ea;
+  --slate-300: #c5ccd8;
+  --slate-400: #97a1b2;
+  --slate-450: #7d8799;
+  --slate-500: #6b7588;
+  --slate-550: #5a6578;
+  --slate-600: #4d566a;
+  --slate-700: #353c4d;
+  --slate-800: #232837;
+  --slate-850: #1c2030;
+  --slate-900: #171a25;
+  --slate-950: #0f111a;
+
+  /* primitives: iris (accent) */
+  --iris-50: #eef2ff;
+  --iris-100: #dde5ff;
+  --iris-300: #9db0ff;
+  --iris-400: #7a8fff;
+  --iris-500: #5b6cff;
+  --iris-600: #4a55f0;
+  --iris-700: #3b41c9;
+
+  /* primitives: status foregrounds */
+  --success-light: #15803d;
+  --success-dark: #4ade80;
+  --warning-light: #a16207;
+  --warning-dark: #fbbf24;
+  --danger-light: #b91c1c;
+  --danger-dark: #f87171;
+  --info-light: #0369a1;
+  --info-dark: #38bdf8;
+
+  /* ---- 3.2 semantic color (light) ---- */
+  --bg-canvas: var(--slate-50);
+  --bg-surface: var(--slate-0);
+  --bg-raised: var(--slate-0);
+  --bg-sunken: var(--slate-100);
+  --bg-hover: var(--slate-150);
+  --bg-hover-raised: var(--slate-100);
+  --bg-selected: var(--iris-50);
+  --border-subtle: var(--slate-200);
+  --border-control: var(--slate-450);
+  --text-primary: var(--slate-900);
+  --text-secondary: var(--slate-600);
+  --text-tertiary: var(--slate-550);
+  --text-placeholder: var(--slate-550);
+  --text-disabled: var(--slate-400);
+  --accent: var(--iris-600);
+  --accent-hover: var(--iris-700);
+  --accent-fg: #ffffff;
+  --focus-ring: var(--iris-600);
+
+  --success: var(--success-light);
+  --warning: var(--warning-light);
+  --danger: var(--danger-light);
+  --info: var(--info-light);
+  --success-subtle: #dcfce7;
+  --warning-subtle: #fef3c7;
+  --danger-subtle: #fee2e2;
+  --info-subtle: #e0f2fe;
+  --success-border: rgba(21, 128, 61, 0.4);
+  --warning-border: rgba(161, 98, 7, 0.4);
+  --danger-border: rgba(185, 28, 28, 0.4);
+  --info-border: rgba(3, 105, 161, 0.4);
+  --success-fg-on-fill: #ffffff;
+  --warning-fg-on-fill: #ffffff;
+  --danger-fg-on-fill: #ffffff;
+  --info-fg-on-fill: #ffffff;
+  --bubble-user: var(--iris-50);
+
+  /* ---- 3.3 typography ---- */
+  --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  --type-display-size: 30px;
+  --type-display-line: 36px;
+  --type-display-weight: 600;
+  --type-title-size: 22px;
+  --type-title-line: 28px;
+  --type-title-weight: 600;
+  --type-heading-size: 17px;
+  --type-heading-line: 24px;
+  --type-heading-weight: 600;
+  --type-body-size: 15px;
+  --type-body-line: 24px;
+  --type-body-weight: 400;
+  --type-label-size: 14px;
+  --type-label-line: 20px;
+  --type-label-weight: 500;
+  --type-caption-size: 13px;
+  --type-caption-line: 18px;
+  --type-caption-weight: 400;
+  --type-micro-size: 12px;
+  --type-micro-line: 16px;
+  --type-micro-weight: 500;
+
+  /* ---- 3.4 space, radius, elevation, motion, layout ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --r-control: 6px;
+  --r-card: 10px;
+  --r-overlay: 14px;
+  --r-pill: 999px;
+  --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-2: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --shadow-3: 0 12px 32px rgba(16, 24, 40, 0.12);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --w-reading: 760px;
+  --w-form: 880px;
+  --w-wide: 1200px;
+
+  /* ---- 3.5 breakpoints (documentation only: custom properties cannot be
+     used inside @media conditions, so components repeat these literals).
+     shell collapse: 1024, drawer: 768, narrow / EHR side panel: 500 ---- */
+  --bp-collapse: 1024px;
+  --bp-drawer: 768px;
+  --bp-narrow: 500px;
+
+  /* ---- 3.6 state helpers ---- */
+  --target-min: 24px;
+  --target-primary: 40px;
+  --focus-outline-width: 2px;
+  --focus-outline-offset: 2px;
+}
+
+[data-theme="dark"] {
+  --bg-canvas: var(--slate-950);
+  --bg-surface: var(--slate-900);
+  --bg-raised: var(--slate-800);
+  --bg-sunken: #0b0d14;
+  --bg-hover: var(--slate-850);
+  --bg-hover-raised: var(--slate-700);
+  --bg-selected: rgba(91, 108, 255, 0.16);
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-control: var(--slate-500);
+  --text-primary: var(--slate-50);
+  --text-secondary: var(--slate-300);
+  --text-tertiary: var(--slate-400);
+  --text-placeholder: var(--slate-400);
+  --text-disabled: var(--slate-600);
+  --accent: var(--iris-400);
+  --accent-hover: var(--iris-300);
+  --accent-fg: var(--slate-950);
+  --focus-ring: var(--iris-400);
+
+  --success: var(--success-dark);
+  --warning: var(--warning-dark);
+  --danger: var(--danger-dark);
+  --info: var(--info-dark);
+  --success-subtle: rgba(74, 222, 128, 0.12);
+  --warning-subtle: rgba(251, 191, 36, 0.12);
+  --danger-subtle: rgba(248, 113, 113, 0.12);
+  --info-subtle: rgba(56, 189, 248, 0.12);
+  --success-border: rgba(74, 222, 128, 0.45);
+  --warning-border: rgba(251, 191, 36, 0.45);
+  --danger-border: rgba(248, 113, 113, 0.45);
+  --info-border: rgba(56, 189, 248, 0.45);
+  --success-fg-on-fill: var(--slate-950);
+  --warning-fg-on-fill: var(--slate-950);
+  --danger-fg-on-fill: var(--slate-950);
+  --info-fg-on-fill: var(--slate-950);
+  --bubble-user: rgba(91, 108, 255, 0.14);
+
+  /* Dark mode communicates elevation by surface lightening + borders. */
+  --shadow-1: none;
+  --shadow-2: none;
+  --shadow-3: none;
+}
+
+/* Motion tokens collapse under reduced motion (section 3.4). */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0.001ms;
+    --dur-base: 0.001ms;
+    --dur-slow: 0.001ms;
+  }
+}
+
+/* ---- 3.6 / 3.7 shared state + forced-colors rules, scoped to .ui-* ---- */
+
+/* Visible, outline-based focus ring (never box-shadow) on every ui control. */
+.ui-focusable:focus-visible {
+  outline: var(--focus-outline-width) solid var(--focus-ring);
+  outline-offset: var(--focus-outline-offset);
+}
+
+/* Disabled controls are conveyed with aria-disabled; no hover affordance. */
+.ui-focusable[aria-disabled="true"] {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+  /* Outlines survive forced colors; make the ring use the system color. */
+  .ui-focusable:focus-visible {
+    outline: var(--focus-outline-width) solid Highlight;
+  }
+  /* Selection must never rely on background tint alone. */
+  .ui-selected {
+    border: 2px solid Highlight;
+  }
+  .ui-segmented-on {
+    outline: 2px solid Highlight;
+  }
+  .ui-icon {
+    stroke: currentColor;
+  }
+}
