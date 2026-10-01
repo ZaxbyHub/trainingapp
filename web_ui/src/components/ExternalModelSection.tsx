@@ -201,14 +201,23 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     });
   }, []);
 
+  // Desktop write sequence (review round 3 R3-N1): incremented when a PUT is
+  // issued. A settings snapshot (GET or PUT answer) is applied only if no
+  // later PUT was issued after its request started, so a slow, stale answer
+  // can never repaint an older base URL that the next blur would PUT back.
+  const writeSeqRef = useRef(0);
+
   // Desktop: the backend is the source of truth for the external settings.
   useEffect(() => {
     if (!desktop || session === null) return;
     let cancelled = false;
+    const startedAt = writeSeqRef.current;
     void session.apiClient
       .getSettings()
       .then((s) => {
-        if (!cancelled && mountedRef.current) applyDesktopSettings(s as Record<string, unknown>);
+        if (cancelled || !mountedRef.current) return;
+        if (writeSeqRef.current !== startedAt) return; // a PUT was issued since: its answer is newer
+        applyDesktopSettings(s as Record<string, unknown>);
       })
       .catch(() => {
         /* the Desktop backend section reports settings errors */
@@ -246,9 +255,13 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       if (patch.model !== undefined) body['external.model'] = patch.model.trim();
       if (patch.grounded !== undefined) body['external.grounded'] = patch.grounded;
       if (patch.apiKey !== undefined) body['external.apiKey'] = patch.apiKey;
+      writeSeqRef.current += 1;
+      const seq = writeSeqRef.current;
       try {
         const settings = await session.apiClient.updateSettings(body);
-        if (mountedRef.current) applyDesktopSettings(settings as Record<string, unknown>);
+        // Only the answer to the LATEST PUT repaints the panel (answers can
+        // arrive out of order).
+        if (mountedRef.current && seq === writeSeqRef.current) applyDesktopSettings(settings as Record<string, unknown>);
         if (patch.enabled !== undefined) notifyDesktopModelsChanged();
         return true;
       } catch (err) {

@@ -289,6 +289,52 @@ describe('desktop app', () => {
     for (const [req] of testExternalEndpoint.mock.calls) expect(req).not.toHaveProperty('apiKey');
   });
 
+  // Review round 3 (R3-N1): a stale settings snapshot never repaints an older
+  // base URL over a newer PUT, so the next blur cannot PUT the old URL back.
+  test('a settings load that resolves after a PUT does not repaint the stale URL (and nothing PUTs it back)', async () => {
+    installDesktopBridgeStub();
+    const { s, updateSettings } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
+    let release: (v: unknown) => void = () => undefined;
+    const late = new Promise((resolve) => {
+      release = resolve;
+    });
+    (s.apiClient as unknown as { getSettings: () => Promise<unknown> }).getSettings = () => late;
+    renderDesktop(s);
+    const q = within(panel());
+    const base = q.getByLabelText(/^base url$/i) as HTMLInputElement;
+    fireEvent.change(base, { target: { value: 'http://192.168.1.77:8000' } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ 'external.baseUrl': 'http://192.168.1.77:8000' }));
+    await waitFor(() => expect(base.value).toBe('http://192.168.1.77:8000'));
+    release({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(base.value).toBe('http://192.168.1.77:8000');
+    fireEvent.blur(base);
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledTimes(2));
+    expect(updateSettings.mock.calls.some(([body]) => body['external.baseUrl'] === 'http://192.168.1.50:8080')).toBe(false);
+  });
+
+  test('PUT answers arriving out of order: only the latest PUT repaints the panel', async () => {
+    installDesktopBridgeStub();
+    const { s, updateSettings } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
+    const delays = [90, 10];
+    updateSettings.mockImplementation(async (patch: Record<string, unknown>) => {
+      const wait = delays.shift() ?? 0;
+      await new Promise((r) => setTimeout(r, wait));
+      return { 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm', ...patch } as never;
+    });
+    renderDesktop(s);
+    const q = within(panel());
+    const base = q.getByLabelText(/^base url$/i) as HTMLInputElement;
+    await waitFor(() => expect(base.value).toBe('http://192.168.1.50:8080'));
+    fireEvent.change(base, { target: { value: 'http://192.168.1.77:8000' } });
+    fireEvent.blur(base);
+    fireEvent.change(base, { target: { value: 'http://192.168.1.88:8000' } });
+    fireEvent.blur(base);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(base.value).toBe('http://192.168.1.88:8000');
+  });
+
   test('Test connection sends a typed key only for the origin it was typed for', async () => {
     installDesktopBridgeStub();
     const { s, testExternalEndpoint } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
