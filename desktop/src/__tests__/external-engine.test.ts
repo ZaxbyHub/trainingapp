@@ -425,6 +425,38 @@ describe('host persistence: external.json sidecar, tolerant boot, downgrade-safe
     expect(settings['external.airgap']).toBe(true);
   });
 
+  it('applyEngineSettings (first-run seam) never writes external.* or the key to settings.json', async () => {
+    const profileDir = tmp('ext-host-');
+    const { host } = await boot(profileDir);
+    const applied = host.applyEngineSettings({ ...enable('http://192.168.1.50:8000'), 'external.apiKey': KEY, rag_n_results: 7 });
+    expect(applied.ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(profileDir, 'settings.json'), 'utf8'))).toEqual({ rag_n_results: 7 });
+    const externalJson = JSON.parse(fs.readFileSync(path.join(profileDir, 'external.json'), 'utf8')) as Record<string, unknown>;
+    expect(externalJson['external.baseUrl']).toBe('http://192.168.1.50:8000');
+    expect(externalJson).not.toHaveProperty('external.apiKey');
+    for (const file of fs.readdirSync(profileDir)) {
+      const full = path.join(profileDir, file);
+      if (fs.statSync(full).isFile()) expect(fs.readFileSync(full).includes(Buffer.from(KEY))).toBe(false);
+    }
+  });
+
+  it('a stale settings.json carrying external.* (incl. a plaintext key) is not applied and is rewritten without it', async () => {
+    const profileDir = tmp('ext-host-');
+    fs.writeFileSync(
+      path.join(profileDir, 'settings.json'),
+      JSON.stringify({ rag_n_results: 5, ...enable('http://192.168.1.50:8000'), 'external.apiKey': KEY }),
+    );
+    const { handle, engine } = await boot(profileDir);
+    const settings = engine.responseSettings();
+    expect(settings['external.enabled']).toBe(false);
+    expect(settings['external.apiKeySet']).toBe(false);
+    expect(settings.n_results).toBe(5);
+    expect((await put(handle.url, { rag_n_results: 6 })).status).toBe(200);
+    const rewritten = fs.readFileSync(path.join(profileDir, 'settings.json'), 'utf8');
+    expect(JSON.parse(rewritten)).toEqual({ rag_n_results: 6 });
+    expect(rewritten).not.toContain(KEY);
+  });
+
   it('a restart replays external.json so the external engine is live before the first request', async () => {
     const profileDir = tmp('ext-host-');
     const store = mapStore();

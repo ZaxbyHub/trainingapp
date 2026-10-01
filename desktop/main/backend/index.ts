@@ -330,7 +330,12 @@ export class NodeBackendHost implements BackendHost {
     let persistExternal: ((snapshot: Record<string, unknown>) => void) | undefined;
     if (this.config.storePath) {
       const storePath = this.config.storePath;
-      let storedPatch = loadSettingsSnapshot(storePath) ?? {};
+      // universal-provider-settings-overhaul: external.* never comes from
+      // settings.json (a stale or hand-edited file must not apply or keep an
+      // API key there); those settings replay from external.json below.
+      let storedPatch = Object.fromEntries(
+        Object.entries(loadSettingsSnapshot(storePath) ?? {}).filter(([key]) => !key.startsWith('external.')),
+      );
       if (Object.keys(storedPatch).length > 0) {
         const applied = this.engine.applySettingsPatch(storedPatch);
         if (!applied.ok) {
@@ -348,7 +353,14 @@ export class NodeBackendHost implements BackendHost {
         // engine's settings state first and restores it when this throws
         // (PR #140 review FB140-001), so engine memory cannot drift from
         // the sidecar either.
-        const merged: Record<string, unknown> = { ...storedPatch, ...patch };
+        // universal-provider-settings-overhaul: settings.json NEVER carries
+        // external.* (above all external.apiKey, which lives only in the
+        // SecretStore) whichever caller hands a patch in; those keys persist
+        // through persistExternal (external.json, key stripped) instead.
+        const merged: Record<string, unknown> = { ...storedPatch };
+        for (const [key, value] of Object.entries(patch)) {
+          if (!key.startsWith('external.')) merged[key] = value;
+        }
         // settings-wiring-honesty: a reset directive's keys leave the
         // snapshot, so the next boot no longer replays them as explicit.
         for (const key of removeKeys) delete merged[key];
@@ -376,6 +388,10 @@ export class NodeBackendHost implements BackendHost {
       if (!applied.ok) return applied;
       try {
         persistSettings?.(patch);
+        if (Object.keys(patch).some((key) => key.startsWith('external.'))) {
+          const snapshot = this.engine.externalSnapshot?.();
+          if (snapshot !== undefined) persistExternal?.(snapshot);
+        }
       } catch (err) {
         return { ok: false as const, status: 500 as const, detail: rollBackUnsavedSettings(this.engine, before, 'change', err) };
       }
