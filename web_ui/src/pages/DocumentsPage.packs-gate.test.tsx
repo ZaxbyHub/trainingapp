@@ -1,19 +1,19 @@
 /**
- * DocumentsPage.packs-gate.test.tsx — implementation-side coverage for the
- * C9 (issue #76 / ADR-0009) browser-mode Knowledge Pack capability gate.
- *
- * Contract provenance: the FROZEN acceptance check for this surface is the
- * Playwright spec web_ui/e2e/packs-gate.spec.ts (checkpoint-manifest C3,
- * driver .agents/issue-traces/76-browser-packs-adr/repro/c3-browser-gate-poc.sh
- * — trace-local per repo convention). This suite adds the fast CI-wired
- * component-level half:
- *   1. browser mode: a pack zip dropped on the DropZone shows the persistent
- *      gate notice (data-testid="pack-gate-notice") and writes NOTHING to the
- *      document pipeline (no extraction, no save);
- *   2. browser mode: a NON-pack zip keeps the generic unsupported-type toast
- *      and does NOT trigger the gate;
- *   3. Electron mode: a pack zip is NOT gated — it routes to the C7
- *      installPack API exactly as before (the gate is scoped to !electronMode).
+ * DocumentsPage.packs-gate.test.tsx — the RETIRED C9 (issue #76 / ADR-0009)
+ * browser-mode Knowledge Pack capability gate, INVERTED by
+ * browser-training-parity (ADR-0012, which supersedes ADR-0009): the browser
+ * app now installs packs through the same Packs UI and the same drop/picker
+ * routing as the desktop app.
+ *   1. browser mode: a pack zip dropped on the DropZone (or selected through
+ *      its picker) installs through the browser pack store — no gate notice,
+ *      nothing reaches the document pipeline;
+ *   2. browser mode: every .zip is a pack install attempt, exactly like the
+ *      desktop routing; a refused archive surfaces the refusal as an error
+ *      toast and still writes nothing to the document pipeline;
+ *   3. Electron mode: a pack zip routes to the C7 installPack API exactly as
+ *      before.
+ * The gate notice (data-testid="pack-gate-notice") no longer exists in either
+ * app; these cases assert its absence.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
@@ -60,6 +60,29 @@ vi.mock('../lib/processing/text-chunker', () => ({
 vi.mock('../hooks/useServiceInitialization', () => ({
   ensureEmbeddingServiceReady: vi.fn(async () => false),
 }));
+
+// The browser app's pack store (OPFS + IndexedDB in a real browser) is
+// replaced by a spy manager: these cases pin the page's ROUTING, the store
+// itself is covered by src/lib/packs/__tests__/browser-pack-manager.test.ts.
+const browserManager = vi.hoisted(() => ({
+  installPack: vi.fn(async (file: File) => {
+    if (file.name === 'photos-archive.zip') throw new Error('photos-archive.zip: no pack.json manifest at the archive root');
+    return { packId: 'opmed-core', version: '1.0.0' };
+  }),
+  listPacks: vi.fn(async () => []),
+  collectOrphans: vi.fn(async () => undefined),
+  missingCapabilities: vi.fn(() => [] as string[]),
+  subscribe: vi.fn(() => () => undefined),
+  storageReport: vi.fn(async () => ({ usage: 0, quota: 1024 * 1024 * 1024, available: 1024 * 1024 * 1024, persisted: true })),
+  removePack: vi.fn(async () => 1),
+  rollbackPack: vi.fn(async () => undefined),
+}));
+vi.mock('../lib/packs/browser-pack-manager', () => ({
+  getBrowserPackManager: () => browserManager,
+}));
+
+/** The DropZone's file input (the Packs panel's own .zip input comes first in document order). */
+const DOCUMENT_FILE_INPUT = 'input[type="file"]:not([data-testid="pack-install-input"])';
 
 import { extractDocument } from '../lib/processing/extractor-factory';
 import { saveDocuments } from '../lib/storage/document-store';
@@ -194,26 +217,26 @@ afterEach(() => {
   delete (window as { desktopApi?: DesktopApiBridge }).desktopApi;
 });
 
-describe('C9 gate — browser mode', () => {
-  it('a dropped pack zip shows the persistent gate notice and writes nothing', async () => {
+describe('browser mode: packs install (ADR-0012 inverts the C9 gate)', () => {
+  it('a dropped pack zip installs through the browser pack store and writes nothing to the document pipeline', async () => {
     render(
       <ToastProvider>
         <DocumentsPage />
       </ToastProvider>
     );
 
-    await dropOnDropZone([await packZipFile()]);
+    const pack = await packZipFile();
+    await dropOnDropZone([pack]);
 
-    const gate = await screen.findByTestId('pack-gate-notice');
-    expect(gate).toHaveTextContent('Knowledge Packs require the desktop app');
-
-    // No import happened: the document pipeline and its storage were untouched.
+    await waitFor(() => expect(browserManager.installPack).toHaveBeenCalledWith(pack));
+    expect(await screen.findByText(/Installed opmed-core v1\.0\.0/)).toBeInTheDocument();
+    expect(screen.queryByTestId('pack-gate-notice')).toBeNull();
+    expect(screen.queryByText(/Knowledge Packs require the desktop app/)).toBeNull();
     expect(extractDocument).not.toHaveBeenCalled();
     expect(saveDocuments).not.toHaveBeenCalled();
-    expect(screen.queryByText(/opmed-core-v1.0.0\.zip/)).toBeTruthy();
   });
 
-  it('a non-pack zip keeps the generic unsupported-type toast and does not gate', async () => {
+  it('a non-pack zip is an install attempt too (desktop routing); its refusal is an error toast', async () => {
     render(
       <ToastProvider>
         <DocumentsPage />
@@ -223,14 +246,15 @@ describe('C9 gate — browser mode', () => {
     await dropOnDropZone([await plainZipFile()]);
 
     await waitFor(() => {
-      expect(screen.getByText(/Unsupported file type/i)).toBeInTheDocument();
+      expect(screen.getByText(/Failed to install pack "photos-archive\.zip": .*no pack\.json manifest/)).toBeInTheDocument();
     });
     expect(screen.queryByTestId('pack-gate-notice')).toBeNull();
+    expect(extractDocument).not.toHaveBeenCalled();
   });
 });
 
-describe('C9 gate — coverage gaps from review round pr123-20260920', () => {
-  it('a mixed drop (pack zip + plain doc) gates the pack and processes the plain doc', async () => {
+describe('browser mode: mixed and repeated selections', () => {
+  it('a mixed drop (pack zip + plain doc) installs the pack and processes the plain doc', async () => {
     render(
       <ToastProvider>
         <DocumentsPage />
@@ -240,29 +264,12 @@ describe('C9 gate — coverage gaps from review round pr123-20260920', () => {
     const plainTxt = new File(['plain body'], 'notes.txt', { type: 'text/plain' });
     await dropOnDropZone([await packZipFile(), plainTxt]);
 
-    // The pack is gated...
-    expect(await screen.findByTestId('pack-gate-notice')).toHaveTextContent(
-      'Knowledge Packs require the desktop app'
-    );
-    // ...while the plain document still enters the pipeline.
+    await waitFor(() => expect(browserManager.installPack).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(extractDocument).toHaveBeenCalledWith(plainTxt));
+    expect(screen.queryByTestId('pack-gate-notice')).toBeNull();
   });
 
-  it('Dismiss clears the gate notice', async () => {
-    render(
-      <ToastProvider>
-        <DocumentsPage />
-      </ToastProvider>
-    );
-
-    await dropOnDropZone([await packZipFile()]);
-    expect(await screen.findByTestId('pack-gate-notice')).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: /dismiss/i }));
-    await waitFor(() => expect(screen.queryByTestId('pack-gate-notice')).toBeNull());
-  });
-
-  it('two distinct pack zips in one drop appear (deduped) in the notice', async () => {
+  it('two pack zips in one drop are installed one after the other', async () => {
     render(
       <ToastProvider>
         <DocumentsPage />
@@ -275,20 +282,16 @@ describe('C9 gate — coverage gaps from review round pr123-20260920', () => {
     const zipB = new JSZip();
     zipB.file('pack.json', JSON.stringify({ ...manifestJson(), id: 'opmed-extra' }));
     zipB.file('docs/b.md', '# B');
-    const bytesA = await zipA.generateAsync({ type: 'uint8array' });
-    const bytesB = await zipB.generateAsync({ type: 'uint8array' });
+    const fileA = fileFromBytes(await zipA.generateAsync({ type: 'uint8array' }), 'pack-a.zip');
+    const fileB = fileFromBytes(await zipB.generateAsync({ type: 'uint8array' }), 'pack-b.zip');
 
-    await dropOnDropZone([
-      fileFromBytes(bytesA, 'pack-a.zip'),
-      fileFromBytes(bytesB, 'pack-b.zip'),
-    ]);
+    await dropOnDropZone([fileA, fileB]);
 
-    const gate = await screen.findByTestId('pack-gate-notice');
-    expect(gate).toHaveTextContent('pack-a.zip');
-    expect(gate).toHaveTextContent('pack-b.zip');
+    await waitFor(() => expect(browserManager.installPack).toHaveBeenCalledTimes(2));
+    expect(browserManager.installPack.mock.calls.map((call) => (call[0] as File).name)).toEqual(['pack-a.zip', 'pack-b.zip']);
   });
 
-  it('a plain-file selection after the gate is shown processes normally (gate persists)', async () => {
+  it('a plain-file selection after a pack install processes normally', async () => {
     render(
       <ToastProvider>
         <DocumentsPage />
@@ -296,24 +299,23 @@ describe('C9 gate — coverage gaps from review round pr123-20260920', () => {
     );
 
     const input = (await waitFor(() => {
-      const el = document.querySelector('input[type="file"]');
+      const el = document.querySelector(DOCUMENT_FILE_INPUT);
       expect(el).toBeTruthy();
       return el as HTMLInputElement;
     })) as HTMLInputElement;
 
     fireEvent.change(input, { target: { files: [await packZipFile()] } });
-    expect(await screen.findByTestId('pack-gate-notice')).toBeTruthy();
+    await waitFor(() => expect(browserManager.installPack).toHaveBeenCalledTimes(1));
 
     const plainTxt = new File(['later doc'], 'later.txt', { type: 'text/plain' });
     fireEvent.change(input, { target: { files: [plainTxt] } });
     await waitFor(() => expect(extractDocument).toHaveBeenCalledWith(plainTxt));
-    // The earlier gate notice persists alongside the new processing.
-    expect(screen.queryByTestId('pack-gate-notice')).toBeTruthy();
+    expect(screen.queryByTestId('pack-gate-notice')).toBeNull();
   });
 });
 
-describe('C9 gate — picker path (selected, not dropped)', () => {
-  it('a pack zip selected via the file input is gated and writes nothing', async () => {
+describe('picker path (selected, not dropped)', () => {
+  it('a pack zip selected via the DropZone file input installs in the browser and writes nothing to the document pipeline', async () => {
     render(
       <ToastProvider>
         <DocumentsPage />
@@ -324,19 +326,20 @@ describe('C9 gate — picker path (selected, not dropped)', () => {
     // accept filtering — the HTML accept attribute is a chooser hint, not an
     // enforcement boundary, so this is the path a "selected" pack takes.
     const input = (await waitFor(() => {
-      const el = document.querySelector('input[type="file"]');
+      const el = document.querySelector(DOCUMENT_FILE_INPUT);
       expect(el).toBeTruthy();
       return el as HTMLInputElement;
     })) as HTMLInputElement;
-    fireEvent.change(input, { target: { files: [await packZipFile()] } });
+    const pack = await packZipFile();
+    fireEvent.change(input, { target: { files: [pack] } });
 
-    const gate = await screen.findByTestId('pack-gate-notice');
-    expect(gate).toHaveTextContent('Knowledge Packs require the desktop app');
+    await waitFor(() => expect(browserManager.installPack).toHaveBeenCalledWith(pack));
+    expect(screen.queryByTestId('pack-gate-notice')).toBeNull();
     expect(extractDocument).not.toHaveBeenCalled();
     expect(saveDocuments).not.toHaveBeenCalled();
   });
 
-  it('a pack zip selected in Electron mode is NOT gated; installPack owns it', async () => {
+  it('a pack zip selected in Electron mode routes to the desktop installPack API', async () => {
     installDesktopBridge();
     const session = makeElectronSession();
     render(
@@ -348,7 +351,7 @@ describe('C9 gate — picker path (selected, not dropped)', () => {
     );
 
     const input = (await waitFor(() => {
-      const el = document.querySelector('input[type="file"]');
+      const el = document.querySelector(DOCUMENT_FILE_INPUT);
       expect(el).toBeTruthy();
       return el as HTMLInputElement;
     })) as HTMLInputElement;
@@ -359,8 +362,8 @@ describe('C9 gate — picker path (selected, not dropped)', () => {
   });
 });
 
-describe('C9 gate — Electron mode negative', () => {
-  it('a dropped pack zip is NOT gated; the C7 install path owns it', async () => {
+describe('Electron mode', () => {
+  it('a dropped pack zip routes to the C7 desktop install path', async () => {
     installDesktopBridge();
     const session = makeElectronSession();
     render(

@@ -1,6 +1,9 @@
 /**
- * PacksPanel — C7 (issue #74): the Electron-mode Knowledge Packs panel on the
- * Documents page. Lists installed pack versions (name, version, source_class,
+ * PacksPanel — C7 (issue #74): the Knowledge Packs panel on the Documents
+ * page, in BOTH apps (browser-training-parity AC4: the browser app reuses
+ * this panel over the PackClient seam — desktop: loopback pack API +
+ * preload update bridge; browser: origin-private pack store + browser update
+ * controller). Lists installed pack versions (name, version, source_class,
  * published_at, active/superseded status), installs dropped/selected .zip
  * packs through the pack-install API, and offers per-version remove (behind
  * an explicit two-step confirmation, DocumentList precedent) and rollback on
@@ -10,8 +13,14 @@
  * "Update available" badge plus an Update action that download-verify-installs
  * through the desktop bridge (opt-in gated in the main process; zero network
  * until the user enabled updates in Settings). Update data arrives over the
- * desktopApi bridge — pull on mount + updates:available push subscription
- * (ADR-0010's boot-race answer) — never through the frozen OpenAPI contract.
+ * PackClient's update bridge (window.desktopApi inside Electron, the browser
+ * update controller otherwise) — pull on mount + updates:available push
+ * subscription (ADR-0010's boot-race answer) — never through the frozen
+ * OpenAPI contract.
+ *
+ * Browser app (AC9): a storage line (data-testid="packs-storage") reports the
+ * origin's used/available bytes from navigator.storage.estimate() and whether
+ * the browser granted persistent storage.
  *
  * Frozen UI seams (mirrored by desktop/e2e/c7-packs.spec.ts and
  * web_ui/src/pages/DocumentsPage.packs.test.tsx — keep all three in sync):
@@ -26,14 +35,26 @@
  *   data-testid="pack-rollback-<packId>-<version>"  aria-label `Rollback <id> to <ver>`
  *   data-testid="pack-update-<packId>-<version>"    E5 update-available badge
  *   data-testid="pack-apply-<packId>-<version>"     E5 update apply action
+ *   data-testid="packs-storage"                     browser storage report
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient, PackInfo } from '../lib/api';
+import type { StorageReport } from '../lib/packs/browser-pack-manager';
+import { desktopPackClient, type PackClient } from '../lib/packs/pack-client';
 import type { UpdateStatus } from '../types/desktop';
 import { useToast } from './ToastProvider';
 
 interface PacksPanelProps {
-  apiClient: ApiClient;
+  /** The pack seam (desktop or browser). */
+  client?: PackClient;
+  /** Desktop shorthand: wraps the loopback ApiClient in a desktop PackClient. */
+  apiClient?: ApiClient;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
 }
 
 interface RowKey {
@@ -60,8 +81,14 @@ function formatDate(value: string | null): string {
     : date.toLocaleDateString(undefined, { timeZone: 'UTC' });
 }
 
-export function PacksPanel({ apiClient }: PacksPanelProps) {
+export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
   const { showToast } = useToast();
+  const client = useMemo<PackClient>(() => {
+    if (clientProp !== undefined) return clientProp;
+    if (apiClient !== undefined) return desktopPackClient(apiClient);
+    throw new Error('PacksPanel needs a PackClient (client) or a desktop ApiClient (apiClient)');
+  }, [clientProp, apiClient]);
+  const [storage, setStorage] = useState<StorageReport | null>(null);
   const [packs, setPacks] = useState<PackInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [installing, setInstalling] = useState(false);
@@ -99,7 +126,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
   }, [showToast]);
 
   useEffect(() => {
-    const bridge = window.desktopApi;
+    const bridge = client.updates;
     if (bridge === undefined) return undefined;
     // Optional calls: a bridge without the E5 methods (stubs, or a renderer
     // against an older main) degrades to "no update surface", never a crash.
@@ -126,12 +153,31 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
     (control as HTMLElement | null)?.focus();
   }, []);
 
+  const refreshStorage = useCallback(async (): Promise<void> => {
+    if (client.storageReport === undefined) return;
+    try {
+      setStorage(await client.storageReport());
+    } catch {
+      setStorage(null);
+    }
+  }, [client]);
+
   const refresh = useCallback(async (): Promise<PackInfo[]> => {
-    const list = await apiClient.listPacks();
+    const list = await client.listPacks();
     setPacks(list);
     setLoading(false);
+    void refreshStorage();
     return list;
-  }, [apiClient]);
+  }, [client, refreshStorage]);
+
+  // Installs/removals made elsewhere in this tab (e.g. an update applied from
+  // the Settings page) refresh the list.
+  useEffect(() => {
+    if (client.subscribe === undefined) return undefined;
+    return client.subscribe(() => {
+      void refresh().catch(() => undefined);
+    });
+  }, [client, refresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,7 +201,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
       setInstalling(true);
       setWorking(true);
       try {
-        const result = await apiClient.installPack(file);
+        const result = await client.installPack(file);
         await refresh();
         showToast(`Installed ${result.packId} v${result.version}`, 'success');
       } catch (err: unknown) {
@@ -165,14 +211,14 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         setWorking(false);
       }
     },
-    [apiClient, refresh, showToast],
+    [client, refresh, showToast],
   );
 
   const handleRemove = useCallback(
     async (key: RowKey) => {
       setWorking(true);
       try {
-        await apiClient.removePack(key.packId, key.version);
+        await client.removePack(key.packId, key.version);
         await refresh();
         showToast(`Removed ${key.packId} v${key.version}`, 'success');
       } catch (err: unknown) {
@@ -183,14 +229,14 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         focusRemoveControl(key);
       }
     },
-    [apiClient, focusRemoveControl, refresh, showToast],
+    [client, focusRemoveControl, refresh, showToast],
   );
 
   const handleRollback = useCallback(
     async (key: RowKey) => {
       setWorking(true);
       try {
-        await apiClient.rollbackPack(key.packId, key.version);
+        await client.rollbackPack(key.packId, key.version);
         await refresh();
         showToast(`Rolled back ${key.packId} to v${key.version}`, 'success');
       } catch (err: unknown) {
@@ -199,14 +245,14 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         setWorking(false);
       }
     },
-    [apiClient, refresh, showToast],
+    [client, refresh, showToast],
   );
 
-  /** E5: apply a signed feed update through the desktop bridge
-   * (download -> Ed25519+sha256 verify -> loopback C8 install). */
+  /** E5: apply a signed feed update through the update bridge
+   * (download -> Ed25519+sha256 verify -> the shared install path). */
   const handleApplyUpdate = useCallback(
     async (packId: string) => {
-      const bridge = window.desktopApi;
+      const bridge = client.updates;
       if (bridge === undefined) return;
       setApplying(packId);
       try {
@@ -224,7 +270,7 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
         setApplying(null);
       }
     },
-    [ingestUpdateStatus, refresh],
+    [client, ingestUpdateStatus, refresh, showToast],
   );
 
   // Active version of each pack first, then superseded versions; groups stay
@@ -283,6 +329,21 @@ export function PacksPanel({ apiClient }: PacksPanelProps) {
           }}
         />
       </div>
+      {client.capabilityIssue?.() != null && (
+        <p role="status" data-testid="packs-capability" style={{ color: 'var(--color-text)', margin: 'var(--spacing-xs, 4px) 0' }}>
+          {client.capabilityIssue?.()}
+        </p>
+      )}
+      {storage !== null && (
+        <p data-testid="packs-storage" style={{ color: 'var(--color-text)', margin: 'var(--spacing-xs, 4px) 0' }}>
+          Browser storage: {formatBytes(storage.usage)} used, {formatBytes(storage.available)} available
+          {storage.persisted === true
+            ? ' (persistent: the browser will not evict installed packs)'
+            : storage.persisted === false
+              ? ' (not persistent: the browser may evict installed packs under storage pressure)'
+              : ''}
+        </p>
+      )}
       {sorted.length === 0 ? (
         <p style={{ color: 'var(--color-text)' }}>
           No knowledge packs installed. Drop a .zip pack here or use the install button.

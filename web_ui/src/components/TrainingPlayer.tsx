@@ -1,12 +1,19 @@
 /**
- * TrainingPlayer — embeds an installed Storyline training pack under
- * app://training/<packId>/story.html and exposes programmatic navigation +
- * slide-change events to the app (issue #81, D5).
+ * TrainingPlayer — embeds an installed Storyline training pack and exposes
+ * programmatic navigation + slide-change events to the app (issue #81, D5).
  *
- * The player document and this renderer are distinct WHATWG origins (both
- * under the app: scheme), so ALL player communication goes through
- * ./training-player-bridge (postMessage to the pack-local bridge script the
- * pack ships at story_content/trainingapp-bridge.js).
+ * Desktop: the course loads from app://training/<packId>/story.html (served
+ * by the Electron main process). Browser (browser-training-parity,
+ * ADR-0012): it loads from <player origin>/training/<packId>/story.html — a
+ * DEDICATED origin distinct from the app's — served by that origin's service
+ * worker from bytes the app page relays out of its private storage. The src
+ * is version-less in the browser (the relay serves the pack's ACTIVE version)
+ * and is computed synchronously from the pack id and the player origin.
+ *
+ * The player document and this renderer are distinct WHATWG origins in both
+ * apps, so ALL player communication goes through ./training-player-bridge
+ * (exact-origin postMessage + one-shot MessagePort to the pack-local bridge
+ * script the pack ships at story_content/trainingapp-bridge.js).
  *
  * Contract notes:
  *  - Polls the player state at a 1000 ms cadence and calls onSlideChange
@@ -16,12 +23,28 @@
  *  - Before the course starts the player reports no state; polls stay
  *    silent and queued jumps wait inside the pack bridge until ready.
  */
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import {
   createTrainingPlayerBridge,
   type TrainingPlayerBridge,
   type TrainingPlayerSlideState,
 } from './training-player-bridge';
+import { isElectron } from '../lib/desktop-session';
+import { browserTrainingHost } from '../lib/packs/browser-training';
+import { browserTrainingUrl, getPlayerOrigin } from '../lib/packs/player-origin';
+
+/** The course id of a pack key ('<id>' or the desktop dir key '<id>/<version>'). */
+export function courseIdOf(packKey: string): string {
+  return packKey.split('/')[0] ?? packKey;
+}
+
+/** Where the course document loads from in THIS app, or null when it cannot be played here. */
+export function trainingPlayerSrc(packKey: string): { src: string; origin: string | null } | null {
+  if (isElectron()) return { src: `app://training/${packKey}/story.html`, origin: null };
+  const playerOrigin = getPlayerOrigin();
+  if (playerOrigin === null) return null;
+  return { src: browserTrainingUrl(playerOrigin, courseIdOf(packKey)), origin: playerOrigin };
+}
 
 export interface TrainingPlayerProps {
   packId: string;
@@ -46,11 +69,52 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
     const onSlideChangeRef = useRef(onSlideChange);
     onSlideChangeRef.current = onSlideChange;
 
+    const location = trainingPlayerSrc(packId);
+    const courseId = courseIdOf(packId);
+    const [playerError, setPlayerError] = useState<string | null>(null);
+    const reloadedRef = useRef(false);
+    const readyRef = useRef<Promise<{ ready: boolean; detail?: string }> | null>(null);
+
     const ensureBridge = (): TrainingPlayerBridge | null => {
       if (bridgeRef.current === null && frameRef.current !== null) {
-        bridgeRef.current = createTrainingPlayerBridge(frameRef.current);
+        bridgeRef.current = createTrainingPlayerBridge(
+          frameRef.current,
+          location?.origin ? { expectedOrigin: location.origin } : {},
+        );
       }
       return bridgeRef.current;
+    };
+
+    // Browser app: scope the app-side relay to THIS course synchronously
+    // (before the frame's first request can reach the app), recreate the
+    // boot frame and hand the player-origin worker a fresh relay port.
+    useLayoutEffect(() => {
+      const host = browserTrainingHost();
+      if (host === null) return undefined;
+      reloadedRef.current = false;
+      setPlayerError(null);
+      readyRef.current = host.openCourse(courseId).then((info) => {
+        if (!info.ready) setPlayerError(info.detail ?? 'the training player service did not start');
+        return info;
+      });
+      return () => host.closeCourse(courseId);
+    }, [courseId]);
+
+    // First-ever activation: the worker did not exist when the frame first
+    // loaded, so that load never reached the relay. Once the relay is ready,
+    // reload ONCE by reassigning src on the SAME element (a remount would
+    // detach the frame handle automation and the bridge hold).
+    const handleFrameLoad = (): void => {
+      const host = browserTrainingHost();
+      if (host === null || reloadedRef.current || readyRef.current === null) return;
+      if (host.relay.servedCount() > 0) return;
+      void readyRef.current.then((info) => {
+        const frame = frameRef.current;
+        if (!info.ready || frame === null || reloadedRef.current || location === null) return;
+        if (host.relay.servedCount() > 0) return;
+        reloadedRef.current = true;
+        frame.setAttribute('src', location.src);
+      });
     };
 
     useEffect(() => {
@@ -151,10 +215,25 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             </span>
           </span>
         </div>
+        {location === null && (
+          <p role="alert" data-testid="training-player-unavailable" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+            Course playback needs a player origin: open the app at http://localhost or http://127.0.0.1 (its loopback
+            alias serves the player), or configure player-origin.json / VITE_TRAININGAPP_PLAYER_ORIGIN for this host.
+          </p>
+        )}
+        {playerError !== null && (
+          <p role="alert" data-testid="training-player-error" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+            Course player could not start: {playerError}.{' '}
+            <button type="button" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </p>
+        )}
         <iframe
           ref={frameRef}
           data-testid="training-player-frame"
-          src={`app://training/${packId}/story.html`}
+          src={location?.src ?? 'about:blank'}
+          onLoad={handleFrameLoad}
           title={`Training player (${packId})`}
           style={{
             flex: 1,

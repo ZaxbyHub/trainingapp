@@ -15,6 +15,10 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useInferenceMode } from '../lib/inference';
 import { fetchModelStatus, isElectron, useDesktopSession } from '../lib/desktop-session';
+import { getBrowserPackManager } from '../lib/packs/browser-pack-manager';
+import { releaseBrowserTrainingIfEmpty } from '../lib/packs/browser-training';
+import { AIRGAP_UPDATES_DETAIL, getUpdatesBridge } from '../lib/packs/pack-update-controller';
+import { IS_AIRGAP } from '../lib/llm/airgap';
 import type { RAGPreset } from '../lib/rag/rag-presets';
 import { fetchFirstRunStatus, resetFirstRun, emitFirstRunReopen } from '../lib/first-run';
 import type { ModelStatus, SettingsResponse } from '../lib/api/types';
@@ -106,8 +110,10 @@ function FirstRunSetupCard(): React.ReactElement | null {
 
 // ============================================================================
 // Updates (E5, issue #88): opt-in toggle (default OFF), check-now, status.
-// Offline-first: the main process makes zero network calls until the toggle
-// is switched on; the notice surfaces here AND on the packs panel.
+// Offline-first: nothing is fetched until the toggle is switched on; the
+// notice surfaces here AND on the packs panel. Both apps (browser-training-
+// parity AC8): the update bridge is the desktop preload bridge inside
+// Electron and the browser update controller otherwise — one UI.
 // ============================================================================
 function UpdatesSection(): React.ReactElement {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
@@ -123,7 +129,7 @@ function UpdatesSection(): React.ReactElement {
   };
 
   useEffect(() => {
-    const bridge = window.desktopApi;
+    const bridge = getUpdatesBridge();
     if (bridge === undefined) return undefined;
     let cancelled = false;
     // Optional calls: a bridge without the E5 methods (older main) keeps the
@@ -150,7 +156,7 @@ function UpdatesSection(): React.ReactElement {
     setBusy(true);
     setError(null);
     try {
-      const result = await window.desktopApi?.setUpdateOptIn?.(!status.optIn);
+      const result = await getUpdatesBridge()?.setUpdateOptIn?.(!status.optIn);
       if (result !== undefined && !result.ok && result.detail) showError(result.detail);
       if (result?.status !== undefined) setStatus(result.status);
     } catch (err: unknown) {
@@ -164,7 +170,7 @@ function UpdatesSection(): React.ReactElement {
     setBusy(true);
     setError(null);
     try {
-      const result = await window.desktopApi?.checkForUpdates?.();
+      const result = await getUpdatesBridge()?.checkForUpdates?.();
       if (result !== undefined && !result.ok && result.detail) showError(result.detail);
       if (result?.status !== undefined) setStatus(result.status);
     } catch (err: unknown) {
@@ -178,7 +184,7 @@ function UpdatesSection(): React.ReactElement {
     if (url === '') return;
     setOpenBusy(true);
     try {
-      const result = await window.desktopApi?.openUpdateExternal?.(url);
+      const result = await getUpdatesBridge()?.openUpdateExternal?.(url);
       if (result !== undefined && !result.ok && result.detail) showError(result.detail);
     } catch (err: unknown) {
       showError(err instanceof Error ? err.message : 'Could not open the download page');
@@ -195,7 +201,7 @@ function UpdatesSection(): React.ReactElement {
             type="checkbox"
             data-testid="updates-opt-in"
             checked={status?.optIn ?? false}
-            disabled={busy || status === null}
+            disabled={busy || status === null || (IS_AIRGAP && !isElectron())}
             aria-busy={busy}
             onChange={() => void handleToggle()}
           />
@@ -261,6 +267,18 @@ function UpdatesSection(): React.ReactElement {
         <p role="status" aria-live="polite" style={descriptionStyle} data-testid="updates-status-line">
           Last checked {new Date(status.checkedAt).toLocaleString()}. Pack updates, if any, are
           surfaced on the Knowledge Packs panel (Documents page).
+        </p>
+      )}
+      {IS_AIRGAP && !isElectron() && (
+        <p style={descriptionStyle} data-testid="updates-airgap">
+          {AIRGAP_UPDATES_DETAIL}
+        </p>
+      )}
+      {!isElectron() && !IS_AIRGAP && (
+        <p style={descriptionStyle} data-testid="updates-browser-note">
+          In the browser app the feed and the pack downloads are fetched by this page, so their host must allow
+          cross-origin requests (a CORS-enabled mirror); if it does not, the check reports the refusal and the
+          desktop app remains the way to apply updates.
         </p>
       )}
       <p style={descriptionStyle}>
@@ -561,7 +579,7 @@ const aboutSectionStyle: React.CSSProperties = {
 
 /** The browser-stored user settings Clear Cache removes (persisted-keys.ts USER_SETTING_KEYS). */
 const CLEARED_SETTINGS_COPY =
-  'inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state and last-opened course';
+  'inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course and the pack update setting';
 
 /**
  * Delay between the final Clear Cache status and the reload (PR #140 review
@@ -1029,6 +1047,16 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
         console.error('Error clearing cache (saved settings):', err);
       }
 
+      // 7. Browser app only (browser-training-parity): installed training and
+      //    knowledge packs (origin-private files + registry) and the
+      //    player-origin service worker, each its own step like the rest. The
+      //    desktop app's packs live in its backend and are managed on the
+      //    Documents page.
+      if (!desktopApp) {
+        await attempt('installed packs', () => getBrowserPackManager().clearAll());
+        await attempt('course player service worker', () => releaseBrowserTrainingIfEmpty());
+      }
+
       setClearCacheResult(failed ? 'error' : 'cleared');
       setClearCacheReloading(settingsCleared);
 
@@ -1052,7 +1080,7 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
         clearTimeoutRef.current = null;
       }, 3000);
     }
-  }, [clearCacheState, isDownloading, handleCancelDownload, reloadPage]);
+  }, [clearCacheState, isDownloading, handleCancelDownload, reloadPage, desktopApp]);
 
   // settings-wiring-honesty: in the desktop app the checked preset reflects
   // the BACKEND (none checked while unread, custom, or on defaults); in the
@@ -1509,9 +1537,10 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
         </section>
 
         {/* ================================================================== */}
-        {/* 6. Updates (E5, issue #88 — Electron only, opt-in, default OFF)    */}
+        {/* 6. Updates (E5, issue #88; both apps since browser-training-parity */}
+        {/*    AC8 — opt-in, default OFF)                                      */}
         {/* ================================================================== */}
-        {electronMode && (
+        {(electronMode || !desktopApp) && (
           <section style={sectionStyle} aria-labelledby="updates-heading" data-testid="updates-section">
             <h2 id="updates-heading" style={sectionTitleStyle}>
               Updates
@@ -1586,10 +1615,10 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
               {clearCacheState === 'confirming'
                 ? desktopApp
                   ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
-                  : `This deletes the documents and keyword/vector indexes stored in this browser, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
+                  : `This deletes the documents and keyword/vector indexes stored in this browser, installed training and knowledge packs, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
                 : desktopApp
                   ? "Clear this app's browser-side indexes, any WebLLM model files downloaded in this window, and saved settings. Chat history and documents in the desktop library are kept."
-                  : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, and saved settings in this browser. Chat history is kept.'}
+                  : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, installed packs, and saved settings in this browser. Chat history is kept.'}
             </span>
             {/* Result feedback (issue #24 F1). PR #140 review (FB140-002): the
                 polite live region is ALWAYS mounted and only its text changes

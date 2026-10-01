@@ -106,16 +106,41 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+// browser-training-parity (ADR-0012, plan step 11): the app:// src is the
+// DESKTOP app's player route, so the two src cases below run with the
+// Electron preload bridge present; the browser app's player-origin src is
+// pinned by the third case.
+const withDesktopShell = (): (() => void) => {
+  const w = window as unknown as { desktopApi?: unknown };
+  w.desktopApi = {};
+  return () => {
+    delete w.desktopApi;
+  };
+};
+
 describe('D5 C5: TrainingPlayer component (issue #81 AC5)', () => {
   it('renders an iframe whose src starts with app://training/<packId>/story.html', () => {
+    const restore = withDesktopShell();
     bridge.stateQueue = [null];
     render(<TrainingPlayer packId={OPMED} />);
     const frame = frameElement();
     expect(frame.tagName).toBe('IFRAME');
     expect(frame.src.startsWith(`app://training/${OPMED}/story.html`)).toBe(true);
+    restore();
+  });
+
+  it('in the browser app the course loads from the dedicated player origin, never app:// or the app origin', () => {
+    bridge.stateQueue = [null];
+    render(<TrainingPlayer packId={`${OPMED}/1.0.0`} />);
+    const src = new URL(frameElement().src);
+    expect(src.protocol).toBe('http:');
+    expect(src.origin).not.toBe(window.location.origin);
+    // Version-less: the relay serves the pack's ACTIVE version.
+    expect(src.pathname).toBe(`/training/${OPMED}/story.html`);
   });
 
   it('renders differently for two distinct packIds (multi-course readiness)', () => {
+    const restore = withDesktopShell();
     bridge.stateQueue = [null];
     const first = render(<TrainingPlayer packId={OPMED} />);
     expect(frameElement().src.startsWith(`app://training/${OPMED}/story.html`)).toBe(true);
@@ -126,6 +151,7 @@ describe('D5 C5: TrainingPlayer component (issue #81 AC5)', () => {
     render(<TrainingPlayer packId={SECOND} />);
     expect(frameElement().src.startsWith(`app://training/${SECOND}/story.html`)).toBe(true);
     expect(frameElement().src.startsWith(`app://training/${OPMED}/story.html`)).toBe(false);
+    restore();
   });
 
   it('creates its bridge against the rendered player frame', () => {

@@ -87,7 +87,12 @@ describe('D7 C1 (wire): TrainingPage forwards slidechange into pinned-slide stat
     bridge.stateQueue = [null];
     render(<TrainingPage initialPackId={PACK} />);
     const frame = screen.getByTestId('training-player-frame') as HTMLIFrameElement;
-    expect(frame.src.startsWith(`app://training/${PACK}/story.html`)).toBe(true);
+    // browser-training-parity (ADR-0012): without the Electron shell the
+    // course loads from the dedicated player origin; inside Electron it is
+    // app://training/<pack>/story.html (TrainingPlayer.test.tsx pins both).
+    const src = new URL(frame.src);
+    expect(src.origin).not.toBe(window.location.origin);
+    expect(src.pathname).toBe(`/training/${PACK}/story.html`);
   });
 
   it('[AC1-RED] TrainingPage must forward the player slidechange to its onSlideChange prop', async () => {

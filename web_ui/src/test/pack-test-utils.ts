@@ -1,9 +1,10 @@
 /**
- * Test-only helpers for pack-detection coverage (ADR-0009 PoC, issue #76).
+ * Test-only helper for pack-file coverage (originally the ADR-0009 PoC,
+ * issue #76; the gate it served was retired by ADR-0012).
  *
  * jsdom (this version) does not implement `Blob.prototype.arrayBuffer`,
- * which jsdom-run tests need because `isKnowledgePackZip` reads the dropped
- * file's bytes through the same API real browsers provide. The helper
+ * which jsdom-run tests need when page code reads a dropped file's bytes
+ * through the same API real browsers provide. The helper
  * attaches a per-instance override built from the very bytes the test passed
  * in — byte-honest (no jsdom internals, no re-encoding) and inert wherever a
  * real `arrayBuffer` exists (e.g. Playwright chromium).
