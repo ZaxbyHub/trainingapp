@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 /**
@@ -29,7 +30,8 @@ import { defineConfig, devices } from '@playwright/test';
 const PORT = 4391;
 
 // Fail fast rather than screenshot whatever (or nothing) dist/ happens to hold.
-if (!existsSync('dist/index.html')) {
+// Resolved against this file, not the cwd, so it holds wherever playwright is launched from.
+if (!existsSync(fileURLToPath(new URL('./dist/index.html', import.meta.url)))) {
   throw new Error('web_ui/dist is missing: run `npm run test:visual` (builds first) or `npm run build`.');
 }
 
