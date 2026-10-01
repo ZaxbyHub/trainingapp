@@ -661,3 +661,63 @@ describe('browser app: key-origin binding (F2)', () => {
     expect(q.queryByTestId('external-key-elsewhere')).toBeNull();
   });
 });
+
+// Review round 5 (R5-N1): the re-GET issued after a refused desktop save must
+// not repaint a stale snapshot over a newer successful save (mirrors the
+// reviewer's probe B). The fake backend snapshots its state when each GET
+// starts, so the delayed re-GET answers with the OLD URL C.
+describe('desktop app: stale re-GET after a refused save (R5-N1)', () => {
+  const C = 'http://192.168.1.50:8080';
+  const B = 'http://10.0.0.9:1234';
+  const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  test('a successful save issued while the re-GET is in flight wins; the stale URL is never shown or PUT back', async () => {
+    installDesktopBridgeStub();
+    const backend: Record<string, unknown> = { 'external.baseUrl': C, 'external.model': 'm', 'external.enabled': true };
+    const getDelays = [80, 120]; // initial GET (discarded), then the delayed re-GET
+    let gets = 0;
+    let puts = 0;
+    const putBodies: Array<Record<string, unknown>> = [];
+    const apiClient = {
+      getSettings: vi.fn(async () => {
+        gets += 1;
+        const snapshot = { ...backend };
+        await wait(getDelays[gets - 1] ?? 10);
+        return snapshot as never;
+      }),
+      updateSettings: vi.fn(async (patch: Record<string, unknown>) => {
+        puts += 1;
+        putBodies.push(patch);
+        if (puts === 1) throw new Error('422: refused');
+        Object.assign(backend, patch);
+        return { ...backend } as never;
+      }),
+      testExternalEndpoint: vi.fn(async () => ({ ok: true, message: 'ok', models: [] })),
+    } as unknown as ApiClient;
+    const s: DesktopSession = { baseUrl: 'http://127.0.0.1:4567', token: 't', mode: 'node', apiClient, sseUrl: () => 'x' };
+    render(
+      <DesktopSessionProvider value={{ session: s, models: null, loading: false, error: null }}>
+        <ExternalModelSection />
+      </DesktopSessionProvider>,
+    );
+    const q = within(panel());
+    // 1) A refused save before any snapshot was applied -> re-GET (delayed 120 ms).
+    const model = q.getByLabelText(/^model$/i);
+    fireEvent.change(model, { target: { value: 'x' } });
+    fireEvent.blur(model);
+    await waitFor(() => expect(gets).toBe(2));
+    // 2) While the re-GET is in flight, a successful save of URL B.
+    const base = q.getByLabelText(/^base url$/i) as HTMLInputElement;
+    fireEvent.change(base, { target: { value: B } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(putBodies).toContainEqual({ 'external.baseUrl': B }));
+    // 3) The delayed re-GET answers with the stale URL C: it must be ignored.
+    await wait(250);
+    expect(base.value).toBe(B);
+    // 4) A later URL blur PUTs B again, never C.
+    fireEvent.blur(base);
+    await waitFor(() => expect(puts).toBe(3));
+    expect(base.value).toBe(B);
+    expect(putBodies.some((body) => body['external.baseUrl'] === C)).toBe(false);
+  });
+});
