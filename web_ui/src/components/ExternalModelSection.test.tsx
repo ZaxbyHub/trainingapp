@@ -364,6 +364,32 @@ describe('browser app: key-origin binding (F2)', () => {
     expect(a.hits).toHaveLength(0);
   });
 
+  test('tabbing through the key field while a refused URL is shown does not re-save (or un-bind) the key', async () => {
+    const a = await endpoint();
+    const b = await endpoint();
+    localStorage.setItem('external-provider-config', JSON.stringify({ protocol: 'openai', baseUrl: a.base, model: 'm', rememberKey: true }));
+    localStorage.setItem('external-provider-apikey-origin', a.base);
+    localStorage.setItem('external-provider-apikey', KEY);
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+    const base = q.getByLabelText(/^base url$/i);
+    expect(key.value).toBe(KEY);
+    fireEvent.change(base, { target: { value: 'http://169.254.169.254' } });
+    fireEvent.blur(base);
+    expect(await q.findByRole('alert')).toHaveTextContent(/metadata/);
+    fireEvent.focus(key);
+    fireEvent.blur(key);
+    expect(localStorage.getItem('external-provider-apikey-origin')).toBe(a.base);
+    fireEvent.change(base, { target: { value: b.base } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(key.value).toBe(''));
+    expect(localStorage.getItem('external-provider-apikey-origin')).toBe(a.base);
+    fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+    await waitFor(() => expect(b.hits).toHaveLength(1));
+    expect(keyOf(b.hits[0])).toEqual([undefined, undefined]);
+  });
+
   test('tab-through and the Remember toggle never rebind a key that belongs to another origin', async () => {
     const a = await endpoint();
     const b = await endpoint();
