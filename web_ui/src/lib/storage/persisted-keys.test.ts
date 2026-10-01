@@ -436,3 +436,23 @@ describe('clearUserSettings (Clear Cache, AC5)', () => {
     expect(registry.USER_SETTING_KEYS.filter((k) => registry.INTERNAL_KEYS.includes(k))).toEqual([]);
   });
 });
+
+// Review round 2 (R2-F3): the sessionStorage leg of Clear Cache. A session-only
+// (Remember off) external API key and its bound origin are written to
+// sessionStorage; every entry written there must be registered in
+// SESSION_SETTING_KEYS, and clearSessionSettings() must leave none behind.
+describe('clearSessionSettings (Clear Cache, session-only external key)', () => {
+  it('removes the session-only key AND its bound origin; every session entry is registered', async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    const ext = await import('../llm/external-provider');
+    ext.saveExternalConfig({ baseUrl: 'http://localhost:1234', apiKey: 'sk-session-only-1', rememberKey: false });
+    const written: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) written.push(sessionStorage.key(i) as string);
+    expect(written.sort()).toEqual(['external-provider-apikey', 'external-provider-apikey-origin']);
+    for (const key of written) expect(registry.SESSION_SETTING_KEYS).toContain(key);
+    registry.clearSessionSettings();
+    expect(sessionStorage.length).toBe(0);
+    localStorage.clear();
+  });
+});
