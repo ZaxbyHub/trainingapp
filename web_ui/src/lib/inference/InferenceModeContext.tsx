@@ -83,8 +83,6 @@ const InferenceModeContext = createContext<InferenceModeContextValue | null>(nul
 function migrateLegacyBrowserBlob(input: Record<string, unknown>): Record<string, unknown> {
   if (isElectron()) return input;
   const parsed = migrateLegacyProviderBlob(input);
-  // Boot migration of an external API key saved without a bound origin.
-  migrateUnboundExternalKey();
   if (parsed.mode !== 'api' && !('serverUrl' in parsed)) return parsed;
   const migrated: Record<string, unknown> = { ...parsed };
   if (migrated.mode === 'api') migrated.mode = 'browser-local';
@@ -98,6 +96,9 @@ function migrateLegacyBrowserBlob(input: Record<string, unknown>): Record<string
 }
 
 function loadStoredState(): InferenceModeState {
+  // Boot migration (browser app) of an external API key saved without a bound
+  // origin; runs whether or not an inference-mode blob exists.
+  migrateUnboundExternalKey();
   try {
     const stored = localStorage.getItem(INFERENCE_MODE_KEY);
     if (stored) {

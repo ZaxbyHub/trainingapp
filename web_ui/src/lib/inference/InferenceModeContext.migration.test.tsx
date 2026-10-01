@@ -227,3 +227,22 @@ describe('PR #138 provider-mode migration (universal-provider-settings-overhaul)
     expect(localStorage.getItem('external-provider-apikey')).toBeNull();
   });
 });
+
+// Review round 2 (ruling e): the unbound external-key migration runs in this
+// boot path (reads elsewhere are pure).
+describe('external API key boot migration (universal-provider-settings-overhaul, round 2)', () => {
+  it('browser: a key saved without a bound origin is bound to the stored base URL at boot', () => {
+    localStorage.setItem('external-provider-config', JSON.stringify({ baseUrl: 'http://127.0.0.1:1234/v1', model: 'm', rememberKey: true }));
+    localStorage.setItem('external-provider-apikey', 'sk-boot-legacy-1');
+    renderHook(() => useInferenceMode(), { wrapper });
+    expect(localStorage.getItem('external-provider-apikey-origin')).toBe('http://127.0.0.1:1234');
+    expect(localStorage.getItem('external-provider-apikey')).toBe('sk-boot-legacy-1');
+  });
+
+  it('browser: a key saved without a bound origin and without a base URL is dropped at boot', () => {
+    localStorage.setItem('external-provider-config', JSON.stringify({ model: 'm', rememberKey: false }));
+    sessionStorage.setItem('external-provider-apikey', 'sk-boot-legacy-2');
+    renderHook(() => useInferenceMode(), { wrapper });
+    expect(sessionStorage.getItem('external-provider-apikey')).toBeNull();
+  });
+});
