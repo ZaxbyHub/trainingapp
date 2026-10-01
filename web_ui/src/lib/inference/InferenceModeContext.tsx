@@ -1,11 +1,12 @@
 /**
- * Inference mode context - manages browser-local vs API vs provider mode state.
+ * Inference mode context - manages browser-local vs API mode state.
  * 'api' is the desktop app's built-in backend and exists only inside Electron
  * (settings-wiring-honesty: the browser app has no API-server mode).
- * 'provider' (trace external-llm-provider-settings) sends chat directly to a
- * user-configured OpenAI-compatible server; its connection settings live in
- * the same storage blob (key `providerConfig`) and are managed via
- * lib/llm/openai-provider's load/save helpers, not through this context.
+ * External OpenAI/Anthropic-compatible endpoints are NOT a mode
+ * (universal-provider-settings-overhaul): they replace the generator inside
+ * either mode and are configured in Settings -> External model
+ * (lib/llm/external-provider.ts). PR #138's 'provider' mode is retired; a
+ * stored legacy blob is migrated once by lib/llm/external-migration.ts.
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
@@ -16,8 +17,9 @@ import { disposeBrowserEngine } from '../llm/llm-factory';
 import { getToken } from '../api/auth';
 import { initDesktopSession, isElectron } from '../desktop-session';
 import { INFERENCE_MODE_KEY } from '../storage/persisted-keys';
+import { migrateLegacyProviderBlob } from '../llm/external-migration';
 
-export type InferenceMode = 'browser-local' | 'api' | 'provider';
+export type InferenceMode = 'browser-local' | 'api';
 
 /** Default browser engine — wllama (robust without WebGPU; multimodal-capable). */
 const DEFAULT_BROWSER_ENGINE: BrowserEngine = 'wllama';
@@ -54,8 +56,6 @@ interface StoredInferenceMode {
   serverUrl?: string;
   browserEngine?: BrowserEngine;
   ragPreset?: RAGPreset;
-  /** Provider connection settings (managed by lib/llm/openai-provider). */
-  providerConfig?: { baseUrl: string; model: string };
 }
 
 const defaultState: InferenceModeState = {
@@ -76,12 +76,14 @@ const InferenceModeContext = createContext<InferenceModeContextValue | null>(nul
  * the desktop app's built-in backend is an 'api' target. Outside Electron a
  * legacy stored blob (`mode: 'api'` and/or a user-entered `serverUrl`) is
  * re-written once as browser-local without `serverUrl`; every other field
- * (browserEngine, ragPreset, providerConfig) is kept. One-way: a revert does
- * not restore the dropped mode or URL.
+ * (browserEngine, ragPreset) is kept. One-way: a revert does not restore the
+ * dropped mode or URL. A legacy PR #138 'provider' blob is first turned into
+ * the external-model configuration (universal-provider-settings-overhaul).
  */
-function migrateLegacyBrowserBlob(parsed: Record<string, unknown>): void {
-  if (isElectron()) return;
-  if (parsed.mode !== 'api' && !('serverUrl' in parsed)) return;
+function migrateLegacyBrowserBlob(input: Record<string, unknown>): Record<string, unknown> {
+  if (isElectron()) return input;
+  const parsed = migrateLegacyProviderBlob(input);
+  if (parsed.mode !== 'api' && !('serverUrl' in parsed)) return parsed;
   const migrated: Record<string, unknown> = { ...parsed };
   if (migrated.mode === 'api') migrated.mode = 'browser-local';
   delete migrated.serverUrl;
@@ -90,15 +92,16 @@ function migrateLegacyBrowserBlob(parsed: Record<string, unknown>): void {
   } catch {
     // localStorage unavailable — the in-memory state below is still migrated
   }
+  return migrated;
 }
 
 function loadStoredState(): InferenceModeState {
   try {
     const stored = localStorage.getItem(INFERENCE_MODE_KEY);
     if (stored) {
-      const parsed: StoredInferenceMode = JSON.parse(stored);
+      let parsed: StoredInferenceMode = JSON.parse(stored);
       if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        migrateLegacyBrowserBlob(parsed as unknown as Record<string, unknown>);
+        parsed = migrateLegacyBrowserBlob(parsed as unknown as Record<string, unknown>) as unknown as StoredInferenceMode;
       }
       const desktop = isElectron();
       return {
@@ -106,11 +109,14 @@ function loadStoredState(): InferenceModeState {
         // Mode allow-list (PR #138 review): browserEngine and ragPreset are
         // already validated against their unions — a garbage/legacy mode value
         // must degrade to the default the same way instead of flowing into the
-        // dispatch tree unvalidated. 'api' is valid only inside the desktop app.
+        // dispatch tree unvalidated. 'api' is valid only inside the desktop app
+        // (where a not-yet-seeded legacy 'provider' value also means the backend).
         mode:
-          parsed.mode === 'browser-local' || parsed.mode === 'provider' || (parsed.mode === 'api' && desktop)
-            ? parsed.mode
-            : 'browser-local',
+          parsed.mode === 'browser-local'
+            ? 'browser-local'
+            : desktop && (parsed.mode === 'api' || (parsed.mode as string) === 'provider')
+              ? 'api'
+              : 'browser-local',
         serverUrl: desktop ? parsed.serverUrl || defaultState.serverUrl : defaultState.serverUrl,
         browserEngine:
           parsed.browserEngine === 'webllm' || parsed.browserEngine === 'wllama'
@@ -132,8 +138,8 @@ function persistState(
   ragPreset: RAGPreset
 ): void {
   try {
-    // Merge over the existing blob so sibling keys written by other owners —
-    // notably `providerConfig` (lib/llm/openai-provider) — survive every
+    // Merge over the existing blob so sibling keys written by other owners
+    // (e.g. the desktop legacy-provider migration marker) survive every
     // mode/engine/preset persist.
     let prev: StoredInferenceMode = {} as StoredInferenceMode;
     try {
@@ -173,7 +179,7 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
       setState((prev) => ({
         ...prev,
         isModelReady: false,
-        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Switch engines, or use the desktop app or an external model server (Provider server mode).',
+        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Switch engines, or use the desktop app or an external model (Settings → External model).',
       }));
     };
     if (typeof window !== 'undefined') {

@@ -114,6 +114,12 @@ paths:
           description: Request validation failed
         "500":
           description: Processing error
+        "502":
+          description: >-
+            Desktop backend only (universal-provider-settings-overhaul): the
+            configured external model endpoint failed. Body
+            {"detail": "<classified message, never the API key>", "kind":
+            "network" | "auth" | "model" | "timeout" | "server" | "other"}.
         "503":
           description: Engine not initialized / no LLM backend (detail carries the model-load diagnostic when available)
   /ask/stream:
@@ -128,7 +134,10 @@ paths:
                   "inference_time": t, "cancelled": true (only when cancelled),
                   "grounding": "grounded" | "general" (required, C5 issue #72),
                   "learn": [...], "citations": [...]}`
-        - error: `{"error": "<message>"}` on `event: error`
+        - error: `{"error": "<message>"}` on `event: error`; the desktop
+          backend adds `"kind"` (network | auth | model | timeout | server |
+          other) when an external model endpoint failed (the message never
+          contains the API key)
         Exactly one terminal (done or error) per stream. Client disconnect
         cancels generation server-side; the cancelled stream still ends with a
         renderer-detectable done payload (`cancelled: true`).
@@ -325,6 +334,39 @@ paths:
                 $ref: "#/components/schemas/SettingsResponse"
         "400":
           description: Cross-field validation failed (overlap >= chunk size)
+  /settings/external/test:
+    x-desktop-only: true
+    post:
+      tags: [settings]
+      summary: Test a draft external model endpoint (desktop backend only)
+      description: >
+        Desktop backend only (universal-provider-settings-overhaul; declared
+        x-desktop-only — the Python API surface does not implement it and the
+        conformance drift check exempts it). Lists the draft endpoint's models
+        through the same guarded outbound client as generation (endpoint
+        policy + airgap, connect-time address checks, no redirects, timeouts)
+        and checks the chosen model. Persists nothing. Key selection: a key in
+        the body is used for this test only; otherwise the stored key is sent
+        only when the draft URL's origin equals the key's bound origin;
+        otherwise no key is sent. Transport-token-guarded like every route.
+      operationId: testExternalEndpoint
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExternalProbeRequest"
+      responses:
+        "200":
+          description: Classified probe result (ok, or the failure kind and a key-free message)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExternalProbeResponse"
+        "422":
+          description: Request validation failed
+        "501":
+          description: The backend engine does not support external model endpoints
   /stats:
     get:
       tags: [ops]
@@ -532,7 +574,11 @@ components:
       properties:
         engine:
           type: string
-          enum: [stub, llama.cpp]
+          enum: [stub, llama.cpp, external]
+          description: >-
+            'external' (desktop backend, universal-provider-settings-overhaul):
+            generation runs on a configured external endpoint, so absent local
+            GGUFs never block chat.
         profile:
           type: string
         resident:
@@ -888,6 +934,10 @@ components:
           properties:
             error:
               type: string
+            kind:
+              type: string
+              enum: [network, auth, model, timeout, server, other]
+              description: Desktop backend only — the classified external model endpoint failure.
     IngestRequest:
       type: object
       required: [directory]
@@ -1043,6 +1093,17 @@ components:
           type: array
           items: { type: string }
           description: Stored rag_* keys no desktop query or ingest reads (desktop only).
+        # universal-provider-settings-overhaul: OPTIONAL desktop-backend
+        # external model settings. The API key is write-only and NEVER returned.
+        "external.enabled": { type: boolean, description: External model generation on (desktop only; default false). }
+        "external.protocol": { type: string, enum: [openai, anthropic], description: Wire protocol (desktop only). }
+        "external.baseUrl": { type: string, description: Endpoint base URL (desktop only). }
+        "external.model": { type: string, description: Model id (desktop only). }
+        "external.grounded": { type: boolean, description: true = answers use local retrieval (default); false = opt-in Direct chat (desktop only). }
+        "external.apiKeySet": { type: boolean, description: A key is saved AND bound to the configured origin (desktop only). }
+        "external.apiKeyPersisted": { type: boolean, description: false when the OS offers no encryption and the key is kept for this session only (desktop only). }
+        "external.apiKeyBoundOrigin": { type: string, description: Origin the saved key is bound to; empty when none (desktop only). }
+        "external.airgap": { type: boolean, description: Air-gapped build — public endpoints refused (desktop only). }
     SettingsUpdateRequest:
       type: object
       description: Field names are the rag_* settings keys; omitted fields are unchanged.
@@ -1069,6 +1130,35 @@ components:
             Desktop backend only (settings-wiring-honesty): a directive, never a
             stored key. Restores the named rag_* keys to their defaults and clears
             them from explicit_keys. Must be the only property of the request.
+            Also accepts external.* keys (universal-provider-settings-overhaul):
+            resetting external.apiKey deletes the saved key and its bound origin.
+        # universal-provider-settings-overhaul: desktop-backend-only external
+        # model settings (validated by the shared endpoint policy; a refused
+        # URL is a 422 whose message names the rule).
+        "external.enabled": { type: boolean }
+        "external.protocol": { type: string, enum: [openai, anthropic] }
+        "external.baseUrl": { type: string }
+        "external.model": { type: string }
+        "external.apiKey": { type: string, description: Write-only; '' clears the saved key. }
+        "external.grounded": { type: boolean }
+    ExternalProbeRequest:
+      type: object
+      required: [protocol, baseUrl]
+      properties:
+        protocol: { type: string, enum: [openai, anthropic] }
+        baseUrl: { type: string }
+        model: { type: string }
+        apiKey: { type: string, description: Optional draft key used for this test only (never persisted). }
+    ExternalProbeResponse:
+      type: object
+      required: [ok, message, models]
+      properties:
+        ok: { type: boolean }
+        kind: { type: string, enum: [network, auth, model, timeout, server, other] }
+        message: { type: string, description: Classified, key-free message naming the likely fix. }
+        models:
+          type: array
+          items: { type: string }
     StatsResponse:
       type: object
       required: [document_count, chunk_count, embedding_model]

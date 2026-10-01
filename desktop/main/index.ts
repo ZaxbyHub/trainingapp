@@ -9,7 +9,8 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron';
+import { createSafeStorageSecretStore } from './security/secret-store.js';
 import { registerAppProtocol, registerAppSchemePrivileges } from './protocol.js';
 import {
   createBackendHost,
@@ -305,8 +306,24 @@ export function bootstrap(): void {
     }
     // E2 (issue #85): the engine reference is kept so the wizard can read
     // per-profile model paths (modelStatus) for the RAM-gate estimate.
-    const engineOverrides: { userDataPath: string; models?: { quality?: string; fast?: string } } = {
+    // universal-provider-settings-overhaul: the external model API key lives
+    // ONLY in this safeStorage-backed store (<profileDir>/secrets.bin,
+    // ciphertext only); the airgap flag comes from the installer resources
+    // manifest (missing => false; TRAININGAPP_AIRGAP=1 can only tighten it).
+    const externalAirgap = integrity.manifest?.airgap === true;
+    const engineOverrides: {
+      userDataPath: string;
+      models?: { quality?: string; fast?: string };
+      externalProvider: { secretStore: ReturnType<typeof createSafeStorageSecretStore>; airgap: boolean };
+    } = {
       userDataPath,
+      externalProvider: {
+        secretStore: createSafeStorageSecretStore({
+          safeStorage,
+          filePath: path.join(path.dirname(storePath), 'secrets.bin'),
+        }),
+        airgap: externalAirgap,
+      },
     };
     if (integrity.decision === 'pass') {
       const models: { quality?: string; fast?: string } = {};

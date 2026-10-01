@@ -45,6 +45,13 @@ export interface ManifestPackEntry {
 export interface ResourcesManifest {
   version: string | number;
   description?: string;
+  /**
+   * universal-provider-settings-overhaul: an air-gapped build restricts
+   * external model endpoints to loopback/private networks. Missing => false.
+   * Not signed: protected only by write access to the install directory
+   * (ADR-0011); TRAININGAPP_AIRGAP=1 can only tighten it at runtime.
+   */
+  airgap?: boolean;
   models: ManifestModel[];
   packs?: ManifestPackEntry[];
 }

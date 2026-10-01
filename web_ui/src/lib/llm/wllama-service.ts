@@ -300,7 +300,7 @@ export class WllamaService implements LLMService {
           .join(', ');
         throw new Error(
           `Browser LLM not packaged — missing: ${missing}. ` +
-            'Run `npm run prepare-models` with the model present, or use the desktop app or an external model server (Provider server mode). See PACKAGING.md.'
+            'Run `npm run prepare-models` with the model present, or use the desktop app or an external model server (Settings → External model). See PACKAGING.md.'
         );
       }
 

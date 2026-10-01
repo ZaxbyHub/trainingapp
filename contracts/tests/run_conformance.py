@@ -433,12 +433,21 @@ class Conformance:
             return
         spec = yaml.safe_load(SPEC_PATH.read_text(encoding="utf-8"))
         spec_paths = set(spec.get("paths", {}).keys())
+        # Paths declared `x-desktop-only: true` exist only on the desktop
+        # backend (universal-provider-settings-overhaul: the external model
+        # connection test); the Python API surface is out of scope for them.
+        # The exemption is explicit per path, never a wildcard.
+        desktop_only = {
+            path
+            for path, item in spec.get("paths", {}).items()
+            if isinstance(item, dict) and item.get("x-desktop-only") is True
+        }
         live_paths = set(app.openapi()["paths"].keys())
         # "/" serves either the packaged web archive or a health JSON payload
         # (api_server root()); it is the archive mount point, documented
         # outside the API contract. Framework doc routes are likewise exempt.
         exempt = {"/", "/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
-        missing = spec_paths - live_paths
+        missing = spec_paths - live_paths - desktop_only
         extra = {p for p in live_paths - spec_paths if p not in exempt}
         # Bidirectional freeze: an app route missing from the spec AND a spec
         # path missing from the app are both drift — either fails the check.

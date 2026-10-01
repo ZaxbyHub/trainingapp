@@ -13,8 +13,23 @@
 export const INFERENCE_MODE_KEY = 'inference-mode';
 /** Explicit light/dark theme ('system' is the absence of this key). */
 export const THEME_PREFERENCE_KEY = 'theme-preference';
-/** Provider (OpenAI-compatible) API key, kept apart from the blob so it clears independently. */
+/**
+ * LEGACY (PR #138) provider API key. Read once by the external-model
+ * migration (lib/llm/external-migration.ts) and then removed; still cleared by
+ * Clear Cache so a never-migrated profile cannot keep it.
+ */
 export const PROVIDER_API_KEY_KEY = 'openai-provider-apikey';
+/**
+ * External model connection (universal-provider-settings-overhaul):
+ * {enabled, protocol, baseUrl, model, grounded, rememberKey} — NEVER the key.
+ */
+export const EXTERNAL_CONFIG_KEY = 'external-provider-config';
+/**
+ * External model API key. Browser app only: in localStorage only while
+ * "Remember API key" is on, otherwise in sessionStorage under the same name.
+ * The desktop app never stores it in the renderer (main-process secret store).
+ */
+export const EXTERNAL_API_KEY_KEY = 'external-provider-apikey';
 /** Sidebar open/closed state. */
 export const SIDEBAR_OPEN_KEY = 'sidebarOpen';
 /** Last course opened on the Training page. */
@@ -25,9 +40,14 @@ export const USER_SETTING_KEYS: readonly string[] = [
   INFERENCE_MODE_KEY,
   THEME_PREFERENCE_KEY,
   PROVIDER_API_KEY_KEY,
+  EXTERNAL_CONFIG_KEY,
+  EXTERNAL_API_KEY_KEY,
   SIDEBAR_OPEN_KEY,
   LAST_PACK_KEY,
 ];
+
+/** Session-scoped user settings (sessionStorage): Clear Cache removes these too. */
+export const SESSION_SETTING_KEYS: readonly string[] = [EXTERNAL_API_KEY_KEY];
 
 /** Stable profile id that names this browser profile's storage namespace. */
 export const PROFILE_KEY = 'doc-qa-profile-id';
@@ -59,4 +79,15 @@ export function clearUserSettings(storage: Pick<Storage, 'getItem' | 'removeItem
     }
   }
   return removed;
+}
+
+/** Remove every session-scoped user setting (the session-only external API key). */
+export function clearSessionSettings(storage: Pick<Storage, 'removeItem'> = sessionStorage): void {
+  for (const key of SESSION_SETTING_KEYS) {
+    try {
+      storage.removeItem(key);
+    } catch {
+      /* storage unavailable */
+    }
+  }
 }

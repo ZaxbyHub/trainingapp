@@ -2,6 +2,67 @@
 
 ## [Unreleased]
 
+### Added — connect to any OpenAI- or Anthropic-compatible endpoint, grounded, opt-in (trace universal-provider-settings-overhaul)
+
+- **One "External model" region in Settings**, identical in the browser app and the desktop
+  app: "Use external model" switch, Protocol (OpenAI-compatible / Anthropic-compatible), Base
+  URL, API key, Model (typed, or picked from the list that "Test connection" fills) and a
+  "Direct chat (no document grounding)" toggle. Works with a server on this computer (LM Studio,
+  Ollama, llama-server, vLLM), a server on the LAN, or a cloud provider (OpenAI, Anthropic,
+  OpenRouter). **Off by default and opt-in**; this reverses the 2.0.0 "no network access"
+  posture for this feature only (ADR-0011).
+- **Grounded by default.** Retrieval stays local; only the question, the retrieved passages and
+  a bounded window of recent conversation go to the endpoint, and answers keep their citations
+  and sources. Direct chat (opt-in, off by default) sends the question and recent conversation
+  with no retrieval and labels the answer "General knowledge".
+- **One endpoint URL policy** for both apps (`web_ui/src/lib/llm/endpoint-policy.ts`,
+  `desktop/main/security/endpoint-policy.ts`, shared vectors in
+  `contracts/endpoint-policy-vectors.json` and
+  `contracts/endpoint-policy-vectors.supplemental.json`): loopback and private-network hosts
+  may use http or https; every other host requires https (including 100.64.0.0/10 addresses
+  such as Tailscale, and single-label names such as `http://gpu-box`); cloud-metadata,
+  link-local, unspecified, multicast/broadcast addresses, `user:password@` URLs and non-http(s)
+  schemes are always refused. Numeric IPv4 spellings and IPv6 forms that embed an IPv4 address
+  are classified by the embedded address.
+- **Airgap builds refuse public hosts** (loopback and private network still work): the browser
+  build from `npm run build:airgap`, and the desktop app when
+  `installer-resources/manifest.json` says `"airgap": true` or `TRAININGAPP_AIRGAP=1` is set
+  (the variable can only tighten). The desktop manifest flag is not signed; it is protected only
+  by write access to the install directory.
+- **Desktop: the backend makes every external call.** New outbound client
+  `desktop/main/backend/net/guarded-request.ts` (`node:https` / `node:http`, no new
+  dependency) resolves the host, refuses metadata/link-local/unspecified answers, requires
+  answers consistent with the name's class, pins the connection to the validated address,
+  follows no redirects, and trusts Node's bundled CAs plus the operating-system store (and
+  `NODE_EXTRA_CA_CERTS`). Proxies are not used in this release. The renderer's content-security
+  policy is unchanged. Timeouts: 10 minutes to the first byte, 2 minutes between streamed
+  chunks; Stop cancels the request.
+- **Desktop key handling.** The API key is encrypted with Electron `safeStorage` in the profile
+  directory (`secrets.bin`), or kept for the session only when the OS offers no encryption, and
+  is never written to `settings.json`/`external.json`, returned by any endpoint, or logged. A
+  saved key is bound to the endpoint origin it was saved for and is not sent to a different
+  origin. `PUT /settings` accepts `external.*` (key write-only), `GET /settings` reports
+  `external.apiKeySet`, `apiKeyPersisted`, `apiKeyBoundOrigin` and `airgap`, and
+  `POST /settings/external/test` tests a draft connection without saving. Non-secret settings
+  live in `<profile dir>/external.json`, so older app versions still load `settings.json`.
+- **Browser: direct `fetch` with guard rails.** The endpoint must allow CORS from the app's
+  origin; requests use `redirect: 'error'` and omit credentials; Anthropic calls send
+  `anthropic-dangerous-direct-browser-access: true`; the panel warns when a key would travel
+  over plain http to a non-loopback host. The key is kept in `sessionStorage`, or in
+  `localStorage` only while "Remember API key in this browser" is on; Clear Cache removes it.
+  A browser cannot check what a name resolves to (the desktop app does).
+- **PR #138 "Provider server" mode retired and migrated.** The inference-mode radio is gone. A
+  stored provider configuration is migrated once: in the browser into the External model
+  settings as Direct chat (as before); in the desktop app into the desktop backend's settings,
+  with the legacy renderer copy, including its key, deleted.
+- **Desktop runs without local GGUF files** when the external model is on: no missing-model
+  overlay, no local model warm-up, and `GET /status/models` reports engine `external`.
+- Errors are classified with messages that name the fix: authentication, unknown model,
+  network/CORS, timeout.
+- The Python `api_server.py` is unchanged and has no external backend. Decision record:
+  `docs/adr/0011-external-model-endpoints.md`; setup and provider examples:
+  `CONFIGURATION.md` ("External model").
+
 ### Fixed — Settings controls that did nothing now take effect or say so (trace settings-wiring-honesty)
 
 - Desktop Response Quality presets now control the desktop backend's result count,

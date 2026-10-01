@@ -79,10 +79,11 @@ export type LLMModelInfo = {
  * The active inference backend.
  * - 'webgpu': WebLLM (MLC) — fast when WebGPU is available.
  * - 'wasm':   wllama (llama.cpp WASM) — CPU/SIMD, no WebGPU required.
- * - 'openai-compat': remote OpenAI-compatible server (trace
- *   external-llm-provider-settings) — no local model at all.
+ * - 'openai-compat': remote OpenAI-compatible endpoint — no local model at all.
+ * - 'anthropic-compat': remote Anthropic Messages API endpoint — no local
+ *   model at all (universal-provider-settings-overhaul).
  */
-export type LLMInferenceMode = 'webgpu' | 'wasm' | 'openai-compat';
+export type LLMInferenceMode = 'webgpu' | 'wasm' | 'openai-compat' | 'anthropic-compat';
 
 /**
  * Which browser inference engine to use for local generation.

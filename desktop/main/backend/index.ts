@@ -26,6 +26,7 @@ import { PackManager } from './store/pack-manager.js';
 import { createPackSurface } from './packs/surface.js';
 import { resolvePacksSecurity } from './packs/pack-extract.js';
 import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
+import { loadExternalSnapshot, replayExternalSnapshot, saveExternalSnapshot } from './external-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
 import { createRetrievalSurface, type RetrievalSurface } from './retrieval/hybrid.js';
@@ -270,7 +271,11 @@ export class NodeBackendHost implements BackendHost {
 
   constructor(
     private readonly config: BackendHostConfig,
-    private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(config.env ?? process.env),
+    private readonly engine: EngineSurface = config.engine ??
+      resolveNodeEngine(
+        config.env ?? process.env,
+        config.externalProvider !== undefined ? { externalProvider: config.externalProvider } : undefined,
+      ),
   ) {}
 
   async start(): Promise<BackendHandle> {
@@ -322,6 +327,7 @@ export class NodeBackendHost implements BackendHost {
     // rejects simply fails validation and the host boots on defaults.
     // No store path (CI stub runs) => persistence disabled, engine-memory only.
     let persistSettings: ((settings: Record<string, unknown>, removeKeys?: string[]) => void) | undefined;
+    let persistExternal: ((snapshot: Record<string, unknown>) => void) | undefined;
     if (this.config.storePath) {
       const storePath = this.config.storePath;
       let storedPatch = loadSettingsSnapshot(storePath) ?? {};
@@ -349,6 +355,16 @@ export class NodeBackendHost implements BackendHost {
         saveSettingsSnapshot(storePath, merged);
         storedPatch = merged;
       };
+      // universal-provider-settings-overhaul: the non-secret external.*
+      // settings replay from their own sidecar (external.json) BEFORE the
+      // listener exists and before warmup, tolerantly — a stored value the
+      // engine now refuses (e.g. a public URL after airgap was turned on) is
+      // dropped with a log line and the external model stays off.
+      const externalSnapshot = loadExternalSnapshot(storePath);
+      if (externalSnapshot !== null) {
+        replayExternalSnapshot(externalSnapshot, (patch) => this.engine.applySettingsPatch(patch));
+      }
+      persistExternal = (snapshot) => saveExternalSnapshot(storePath, snapshot);
     }
     // #133: the first-run wizard applies the operator's profile choice
     // through the SAME validated seam the settings API uses — live apply +
@@ -399,6 +415,7 @@ export class NodeBackendHost implements BackendHost {
       // path below), so resolve it per request; null -> contract-safe 503.
       packs: () => (this.packManager === null ? null : createPackSurface(this.packManager)),
       persistSettings,
+      persistExternal,
     });
     try {
       const port = await listenOnRandomPort(server);

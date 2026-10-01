@@ -157,5 +157,8 @@ export async function fetchModelStatus(session: DesktopSession): Promise<ModelSt
  */
 export function modelsAbsentForRealEngine(models: ModelStatus | null): boolean {
   if (!models) return false;
-  return models.engine !== 'stub' && !models.models.quality.present && !models.models.fast.present;
+  // universal-provider-settings-overhaul (AC8): an external endpoint generates
+  // without local GGUFs, so engine 'external' never gates on absent profiles.
+  if (models.engine === 'stub' || models.engine === 'external') return false;
+  return !models.models.quality.present && !models.models.fast.present;
 }

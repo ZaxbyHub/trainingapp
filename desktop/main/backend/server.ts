@@ -21,6 +21,12 @@ import { originAllowed, type LoopbackGuard } from '../security/loopback-guard.js
 import { DEFAULT_ALLOWED_ORIGINS, DEFAULT_TOKEN_HEADER_NAME } from '../security/defaults.js';
 import { RESERVED_PROFILE_HEADER_NAME, ModelNotConfiguredError, type Citation, type CitedChunk, type EngineQueryResult, type EngineSurface, type Grounding, type IngestFileInput, type ModelStatus, type PackSurface } from './types.js';
 import { PackManagerError } from './store/pack-manager.js';
+import { ExternalProviderError } from './net/provider-error.js';
+
+/** universal-provider-settings-overhaul: external.* keys never reach settings.json. */
+function isExternalKey(key: string): boolean {
+  return key.startsWith('external.');
+}
 
 const JSON_BODY_CAP_BYTES = 1024 * 1024; // 1 MB for JSON routes
 const MULTIPART_BODY_CAP_BYTES = 60 * 1024 * 1024; // 60 MB (contract cap is 50 MB)
@@ -79,6 +85,14 @@ export interface BackendServerOptions {
    * not replay them as explicit values.
    */
   persistSettings?: (settings: Record<string, unknown>, removeKeys?: string[]) => void;
+  /**
+   * universal-provider-settings-overhaul: persistence sink for the NON-SECRET
+   * external.* settings snapshot (<profileDir>/external.json — a sidecar, so
+   * settings.json never contains external.* and older builds keep loading
+   * it). Called only after the engine accepted a patch/reset touching
+   * external.* keys. The API key is never part of the snapshot.
+   */
+  persistExternal?: (snapshot: Record<string, unknown>) => void;
 }
 
 // The 16 contract operations (contracts/api.openapi.yaml). Unknown paths get
@@ -100,6 +114,9 @@ export const CONTRACT_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map
   ['/documents', new Set(['GET', 'DELETE'])],
   ['/search', new Set(['POST'])],
   ['/settings', new Set(['GET', 'PUT'])],
+  // universal-provider-settings-overhaul: desktop-backend-only connection test
+  // for a draft external endpoint (persists nothing; token-guarded).
+  ['/settings/external/test', new Set(['POST'])],
   ['/stats', new Set(['GET'])],
   ['/telemetry/memory', new Set(['GET'])],
   ['/status/models', new Set(['GET'])],
@@ -466,8 +483,12 @@ export async function runAskStream(
         citations: citationsFromResult(result),
       });
     }
-  } catch {
-    emit({ error: 'An error occurred processing your question' });
+  } catch (err) {
+    // universal-provider-settings-overhaul (AC11): external endpoint failures
+    // carry their classified, key-free message and kind; anything else keeps
+    // the generic frame (no internal detail leaks).
+    if (err instanceof ExternalProviderError) emit({ error: err.message, kind: err.kind });
+    else emit({ error: 'An error occurred processing your question' });
   } finally {
     finish();
   }
@@ -629,6 +650,12 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 // "engine not initialized" response with a load diagnostic.
                 if (err instanceof ModelNotConfiguredError) {
                   sendJson(res, 503, { detail: err.detail }, cors);
+                  return;
+                }
+                // universal-provider-settings-overhaul (AC11): the external
+                // endpoint failed — the classified, key-free message.
+                if (err instanceof ExternalProviderError) {
+                  sendJson(res, 502, { detail: err.message, kind: err.kind }, cors);
                   return;
                 }
                 throw err;
@@ -833,9 +860,20 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 return;
               }
               const afterReset = engine.responseSettings();
-              if (opts.persistSettings) {
+              const resetKeys = patch.reset as string[];
+              if (opts.persistExternal && resetKeys.some(isExternalKey) && typeof engine.externalSnapshot === 'function') {
                 try {
-                  opts.persistSettings({}, patch.reset as string[]);
+                  opts.persistExternal(engine.externalSnapshot());
+                } catch (err) {
+                  sendJson(res, 500, {
+                    detail: rollBackUnsavedSettings(engine, beforeReset, 'reset', err),
+                  }, cors);
+                  return;
+                }
+              }
+              if (opts.persistSettings && resetKeys.some((key) => !isExternalKey(key))) {
+                try {
+                  opts.persistSettings({}, resetKeys.filter((key) => !isExternalKey(key)));
                 } catch (err) {
                   sendJson(res, 500, {
                     detail: rollBackUnsavedSettings(engine, beforeReset, 'reset', err),
@@ -859,17 +897,52 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
             // i.e. the same key names applySettingsPatch validates), so the
             // sidecar round-trips through the boot-time apply exactly. Hosts
             // without a profile dir pass no sink and keep engine-memory only.
-            if (opts.persistSettings) {
-              try {
-                opts.persistSettings(patch);
-              } catch (err) {
-                sendJson(res, 500, {
-                  detail: rollBackUnsavedSettings(engine, beforePatch, 'change', err),
-                }, cors);
-                return;
+            // universal-provider-settings-overhaul: external.* goes to its own
+            // sidecar (never settings.json); the key goes to neither.
+            const settingsPatch: Record<string, unknown> = {};
+            let touchesExternal = false;
+            for (const [key, value] of Object.entries(patch)) {
+              if (isExternalKey(key)) touchesExternal = true;
+              else settingsPatch[key] = value;
+            }
+            try {
+              if (opts.persistSettings && Object.keys(settingsPatch).length > 0) opts.persistSettings(settingsPatch);
+              if (opts.persistExternal && touchesExternal && typeof engine.externalSnapshot === 'function') {
+                opts.persistExternal(engine.externalSnapshot());
               }
+            } catch (err) {
+              // PR #140 review (FB140-001): a failed save rolls the engine back.
+              sendJson(res, 500, {
+                detail: rollBackUnsavedSettings(engine, beforePatch, 'change', err),
+              }, cors);
+              return;
             }
             sendJson(res, 200, responseSettings, cors);
+            return;
+          }
+          case 'POST /settings/external/test': {
+            const body = await readBody(req, JSON_BODY_CAP_BYTES);
+            if (body === null) {
+              sendJson(res, 413, { detail: 'Request body too large' }, cors);
+              return;
+            }
+            let draft: Record<string, unknown>;
+            try {
+              const parsedBody = JSON.parse(body.toString('utf8')) as unknown;
+              if (typeof parsedBody !== 'object' || parsedBody === null || Array.isArray(parsedBody)) {
+                validationError(res, ['body: expected a JSON object'], cors);
+                return;
+              }
+              draft = parsedBody as Record<string, unknown>;
+            } catch {
+              validationError(res, ['body: invalid JSON'], cors);
+              return;
+            }
+            if (typeof engine.probeExternal !== 'function') {
+              sendJson(res, 501, { detail: 'External model endpoints are not supported by this backend engine' }, cors);
+              return;
+            }
+            sendJson(res, 200, await engine.probeExternal(draft), cors);
             return;
           }
           case 'GET /stats':

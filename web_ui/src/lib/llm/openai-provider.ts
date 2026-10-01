@@ -1,20 +1,18 @@
 /**
- * OpenAI-compatible chat provider (trace: external-llm-provider-settings).
+ * OpenAI-compatible chat generator for the browser app
+ * (universal-provider-settings-overhaul; first shipped by PR #138 as a
+ * loopback-only direct-chat provider).
  *
- * Lets the app use a locally served (loopback) server that speaks the OpenAI
- * wire format (`/v1/chat/completions` SSE, `/v1/models`) — llama-server, LM
- * Studio, Ollama's compat layer, etc. Provider mode is DIRECT generation: the
- * question (plus bounded conversation context) goes to the configured server
- * and responses are NOT grounded in the browser document index.
+ * Speaks the OpenAI wire format (`/v1/chat/completions` SSE, `/v1/models`)
+ * used by OpenAI, OpenRouter, LM Studio, Ollama's compat layer, llama-server
+ * and vLLM. The endpoint is checked by the shared URL policy
+ * (endpoint-policy.ts: loopback, private network, or public https; airgap
+ * builds refuse public hosts) BEFORE any request, every request refuses
+ * redirects, and every failure is a classified ProviderError (AC11).
  *
- * Wire contract frozen by trace check C1:
- *   new OpenAICompatChatService({ baseUrl, model, apiKey? }).chat(messages)
- *     -> POST `${normalized base}/chat/completions`
- *        body {model, messages, stream: true} (exactly these fields),
- *        `Authorization: Bearer <key>` when a key is set,
- *        resolves the concatenation of the streamed `delta.content` values.
- * C2 freezes the probe: GET `${normalized base}/models`, never /auth/status,
- * {ok:false, detail} with an actionable message when unreachable.
+ * The service implements LLMService, so the browser app plugs it into
+ * RAGOrchestrator for grounded answers (the default) or calls it directly for
+ * the opt-in ungrounded "Direct chat".
  */
 
 import type {
@@ -25,9 +23,11 @@ import type {
   LLMProgress,
   LLMService,
 } from '../../types/llm';
-import { INFERENCE_MODE_KEY, PROVIDER_API_KEY_KEY } from '../storage/persisted-keys';
+import { validateEndpointUrl } from './endpoint-policy';
+import { openRequest, readBodyBounded, readLines, type TransportOptions } from './external-http';
+import { ProviderError, type FailureContext } from './provider-error';
 
-/** Provider connection settings (persisted via {@link loadProviderConfig}). */
+/** Provider connection settings. */
 export interface ProviderConfig {
   baseUrl: string;
   model: string;
@@ -36,15 +36,11 @@ export interface ProviderConfig {
 }
 
 /**
- * Normalize a user-entered provider base URL to the server root that the
- * OpenAI routes hang off:
- *   trim; strip any query/fragment (pasted full URLs); strip a userinfo
- *   component (`http://user:pass@host` — fetch rejects credential URLs, so
- *   carrying it would only leak it into error strings); strip ALL trailing
- *   slashes; strip a trailing `/chat/completions` or `/models` (users paste
- *   the full endpoint or the models route); append `/v1` unless the final
- *   path segment is already `/v1` (case-insensitive).
- * Shared by chat() and the probe so both always hit the same surface.
+ * Normalize a user-entered base URL to the root the OpenAI routes hang off:
+ * trim; strip query/fragment; strip a userinfo component; strip ALL trailing
+ * slashes; strip a pasted trailing `/chat/completions` or `/models`; append
+ * `/v1` unless the final path segment already is `/v1` (case-insensitive).
+ * Shared by generation, model listing and the probe so all hit one surface.
  */
 export function normalizeProviderBaseUrl(raw: string): string {
   let url = (raw ?? '').trim();
@@ -62,63 +58,35 @@ export function normalizeProviderBaseUrl(raw: string): string {
 }
 
 /**
- * Guard for provider base URLs: HTTP-only (the packaged CSP connect-src has
- * no https:// entries), and LOOPBACK-ONLY on `127.0.0.1` — the ONLY host the
- * packaged app's CSP `connect-src` can actually express. Chromium rejects
- * `http://[::1]:*` as an invalid source-list entry (silently dropped, live
- * Chromium-verified in the PR review), so an IPv6 loopback provider would
- * pass a naive host check and then be connect-src-blocked at runtime in the
- * shipped build; this guard rejects it up front with an actionable message
- * instead. IPv6 metadata/link-local forms that api/streaming.ts blocks are
- * named explicitly for parity even though loopback-only already excludes
- * them. LAN/remote providers are a documented follow-up (requires a desktop
- * CSP decision — do not widen here unilaterally).
+ * Check the RAW configured base URL against the shared endpoint policy and
+ * return the normalized base plus the failure context. Throws a ProviderError
+ * (kind 'other', message naming the policy rule) before any network access.
  */
-export function assertProviderUrlAllowed(raw: string): void {
-  if (!raw || raw.trim() === '') {
-    throw new Error('Provider base URL must not be empty');
+export function resolveEndpoint(
+  rawBase: string,
+  model: string,
+  apiKey: string,
+  normalize: (raw: string) => string,
+): { base: string; ctx: FailureContext } {
+  const verdict = validateEndpointUrl(rawBase);
+  if (!verdict.ok) {
+    throw new ProviderError('other', `${verdict.message}. Fix the base URL in Settings → External model.`);
   }
-  let parsed: URL;
+  const base = normalize(rawBase);
+  let origin = base;
   try {
-    parsed = new URL(raw.trim());
+    origin = new URL(base).origin;
   } catch {
-    throw new Error('Provider base URL must be an absolute http:// URL');
+    /* validated above; keep the raw base for the message */
   }
-  const scheme = parsed.protocol.toLowerCase();
-  if (scheme !== 'http:') {
-    // http-only: the packaged CSP connect-src permits exactly
-    // http://127.0.0.1:* — an https:// loopback URL would pass the host check
-    // but be CSP-blocked mid-flight (reviewer round 2, finding C).
-    throw new Error(
-      `Provider base URL scheme "${scheme}" is not allowed (use http:// for the local server)`
-    );
-  }
-  const hostname = parsed.hostname.toLowerCase().replace(/^\[/, '').replace(/\]$/, '');
-  const blockedMetadataHost =
-    hostname === '::ffff:a9fe:a9fe' ||
-    hostname === 'fe80::a9fe:a9fe' ||
-    hostname === '169.254.169.254' ||
-    hostname.endsWith('.169.254.169.254');
-  if (blockedMetadataHost) {
-    throw new Error(`Provider base URL host "${hostname}" is not allowed`);
-  }
-  if (hostname !== '127.0.0.1') {
-    throw new Error(
-      `Provider base URL must be the loopback address http://127.0.0.1:<port> in this release — got "${hostname}". The packaged app's content-security policy permits only the IPv4 loopback (IPv6 loopback [::1] is not parseable as a CSP source and is blocked at runtime).`
-    );
-  }
+  return { base, ctx: { origin, model, apiKey } };
 }
 
 /**
- * How long to wait for the FIRST byte of the provider stream (headers + first
- * generated token) before giving up. Parity with the desktop SSE precedent
- * (api/streaming.ts #133): the first byte legitimately waits behind the
- * server's prompt evaluation over up to MAX_HISTORY_TURNS x 4000 chars of
- * history on CPU, and behind a cold model load on llama-server / LM Studio /
- * Ollama — measured in minutes, not seconds. A 30s watchdog turned every cold
- * start into a hard failure while the backend kept working. This does NOT cap
- * total stream duration — it is cleared as soon as data arrives, since
- * generation itself may legitimately run long once it has started.
+ * How long to wait for the FIRST byte of the provider response (headers +
+ * first generated token). Parity with the desktop SSE precedent (#133): a
+ * cold model load or long prompt evaluation on a local server takes minutes.
+ * Cleared as soon as data arrives; later gaps are bounded by the idle timeout.
  */
 export const FIRST_BYTE_TIMEOUT_MS = 600_000;
 
@@ -126,10 +94,9 @@ export const FIRST_BYTE_TIMEOUT_MS = 600_000;
  * One classified OpenAI SSE line. `deltas` carries answer text; `error`
  * carries a provider-reported failure (mid-stream `data:{"error":...}` frames
  * and llama-server-style `error:` lines — surfaced as a THROW, never as a
- * silent empty answer); `done` marks the `data: [DONE]` sentinel; `finish`
- * marks any `choices[].finish_reason`. `reasoning_content`-only deltas are
- * deliberately NOT answer text (F-003): a reasoning-only reply must end in an
- * explicit error, not a silent empty bubble.
+ * silent empty answer); `done` marks `data: [DONE]`; `finish` marks any
+ * `choices[].finish_reason`. `reasoning_content`-only deltas are NOT answer
+ * text (F-003): a reasoning-only reply ends in an explicit error.
  */
 export interface OpenAISseLine {
   deltas: string[];
@@ -138,12 +105,11 @@ export interface OpenAISseLine {
   finish?: boolean;
 }
 
-/** Classify ONE SSE line (single parser for chat() and generate()). */
+/** Classify ONE SSE line. */
 export function parseOpenAISseLine(rawLine: string): OpenAISseLine {
   const line = rawLine.trim();
   if (!line) return { deltas: [] };
   if (line.startsWith('error:')) {
-    // llama-server error events: `error: {"message": "..."}` or plain text.
     const payload = line.slice('error:'.length).trim();
     let message = payload;
     try {
@@ -177,7 +143,7 @@ export function parseOpenAISseLine(rawLine: string): OpenAISseLine {
         typeof frame.error === 'string'
           ? frame.error
           : typeof (frame.error as { message?: unknown }).message === 'string'
-            ? ((frame.error as { message: string }).message)
+            ? (frame.error as { message: string }).message
             : JSON.stringify(frame.error);
       return { deltas: [], error: message || 'Provider server reported a stream error' };
     }
@@ -195,24 +161,19 @@ export function parseOpenAISseLine(rawLine: string): OpenAISseLine {
 
 /**
  * Actionable failure message for a stream that produced no answer text
- * (F-003: empty 200s, reasoning-only output, and clean closes before any
- * content previously resolved as SUCCESS with an empty bubble).
+ * (F-003: empty 200s, reasoning-only output, clean closes before content).
  */
 function emptyStreamMessage(sawFinish: boolean, sawDone: boolean): string {
   if (sawFinish) {
-    return 'Provider server finished without producing any answer text (the model may have returned only reasoning content). Check the server logs or try a different model id.';
+    return 'The endpoint finished without producing any answer text (the model may have returned only reasoning content). Check the server logs or try a different model.';
   }
-  return `Provider server closed the stream without sending any content${
+  return `The endpoint closed the stream without sending any content${
     sawDone ? ' (the [DONE] sentinel arrived, but no answer frames preceded it)' : ''
   }. Is the model loaded on the server?`;
 }
 
-/**
- * Extract an answer from a non-streamed JSON completion body (F-003: a server
- * that ignores `stream:true` replies with one JSON object; reading only SSE
- * frames used to resolve that as an empty success).
- */
-function extractNonStreamAnswer(body: string): string {
+/** Answer from a non-streamed JSON completion (server ignored stream:true). */
+function extractNonStreamAnswer(body: string, ctx: FailureContext): string {
   let frame: {
     error?: { message?: unknown } | string;
     choices?: Array<{ message?: { content?: unknown } }>;
@@ -220,9 +181,7 @@ function extractNonStreamAnswer(body: string): string {
   try {
     frame = JSON.parse(body) as typeof frame;
   } catch {
-    throw new Error(
-      `Provider server returned a non-stream JSON response that could not be parsed (${body.slice(0, 200)})`
-    );
+    throw new ProviderError('server', `The endpoint ${ctx.origin} returned a JSON response that could not be parsed.`);
   }
   if (frame.error !== undefined && frame.error !== null) {
     const message =
@@ -231,147 +190,65 @@ function extractNonStreamAnswer(body: string): string {
         : typeof frame.error.message === 'string'
           ? frame.error.message
           : JSON.stringify(frame.error);
-    throw new Error(message || 'Provider server reported an error');
+    throw new ProviderError('server', message || 'The endpoint reported an error');
   }
   const content = frame.choices?.[0]?.message?.content;
   if (typeof content !== 'string') {
-    throw new Error('Provider server returned a JSON response without choices[0].message.content');
+    throw new ProviderError('server', 'The endpoint returned a JSON response without choices[0].message.content');
   }
   if (content.trim() === '') {
-    throw new Error(emptyStreamMessage(true, false));
+    throw new ProviderError('other', emptyStreamMessage(true, false));
   }
   return content;
 }
 
-/**
- * Parse a COMPLETE OpenAI SSE body into the answer text, surfacing provider
- * error frames as throws and an empty stream as an actionable error (F-003).
- * Delegates line classification to parseOpenAISseLine so chat() and generate()
- * parse identically (single parser).
- */
-function parseOpenAISseAnswer(body: string): string {
-  let text = '';
-  let sawFinish = false;
-  let sawDone = false;
-  for (const rawLine of body.split('\n')) {
-    const line = parseOpenAISseLine(rawLine);
-    if (line.error) throw new Error(line.error);
-    text += line.deltas.join('');
-    if (line.done) sawDone = true;
-    if (line.finish) sawFinish = true;
-  }
-  if (text.trim() === '') {
-    throw new Error(emptyStreamMessage(sawFinish, sawDone));
-  }
-  return text;
+function bearerHeaders(apiKey: string, json: boolean): Record<string, string> {
+  const headers: Record<string, string> = json ? { 'Content-Type': 'application/json' } : {};
+  if (apiKey.trim() !== '') headers['Authorization'] = `Bearer ${apiKey}`;
+  return headers;
 }
 
 /**
- * Actionable connection-failure message shared by chat() and generate() so a
- * dead endpoint reads the same in the probe and in the chat bubble.
- */
-function cannotReachMessage(base: string, err: unknown): string {
-  const reason = err instanceof Error ? err.message : String(err);
-  return `Cannot reach the provider server at ${base} (${reason}). Is it running?`;
-}
-
-/**
- * Extract an actionable message from a non-OK or non-SSE response body.
- * Standard OpenAI error shape: {"error": {"message": "..."}}.
- */
-async function extractServerError(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { error?: { message?: string }; detail?: unknown };
-    const message = body?.error?.message;
-    if (typeof message === 'string' && message.trim()) return message;
-    if (typeof body?.detail === 'string' && body.detail.trim()) return body.detail;
-  } catch {
-    // Non-JSON body — fall through to the status-line message.
-  }
-  return `Server returned ${response.status}`;
-}
-
-/**
- * Browser-side OpenAI-compatible chat service.
- *
- * Implements the shared LLMService seam so mode plumbing stays engine-shaped,
- * plus the frozen standalone `chat()` entry point (works without initialize();
- * sends the messages array verbatim — no system-prompt injection, no mutation).
+ * Browser-side OpenAI-compatible chat service (LLMService). Also exposes the
+ * standalone `chat()` entry point: works without initialize(), sends the
+ * messages array verbatim and resolves the concatenated answer.
  */
 export class OpenAICompatChatService implements LLMService {
   private readonly config: ProviderConfig;
   private readonly firstByteTimeoutMs: number;
+  private readonly idleTimeoutMs: number | undefined;
   private ready = false;
   private controller: AbortController | null = null;
 
-  constructor(
-    cfg: { baseUrl: string; model: string; apiKey?: string; firstByteTimeoutMs?: number }
-  ) {
+  constructor(cfg: { baseUrl: string; model: string; apiKey?: string; firstByteTimeoutMs?: number; idleTimeoutMs?: number }) {
     this.config = {
       baseUrl: cfg.baseUrl ?? '',
       model: cfg.model ?? '',
       apiKey: cfg.apiKey ?? '',
     };
     this.firstByteTimeoutMs = cfg.firstByteTimeoutMs ?? FIRST_BYTE_TIMEOUT_MS;
+    this.idleTimeoutMs = cfg.idleTimeoutMs;
   }
 
-  /** The normalized base all provider requests hang off. */
-  private resolvedBase(): string {
-    const base = normalizeProviderBaseUrl(this.config.baseUrl);
-    assertProviderUrlAllowed(base);
-    return base;
+  private endpoint(): { base: string; ctx: FailureContext } {
+    return resolveEndpoint(this.config.baseUrl, this.config.model, this.config.apiKey, normalizeProviderBaseUrl);
   }
 
-  private buildHeaders(): Record<string, string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (this.config.apiKey.trim() !== '') {
-      headers['Authorization'] = `Bearer ${this.config.apiKey}`;
-    }
-    return headers;
-  }
-
-  /**
-   * Frozen C1 entry point: POST {model, messages, stream: true} to
-   * `${base}/chat/completions` and resolve the concatenated SSE deltas.
-   * Sends the caller's messages array verbatim. On the frozen success path
-   * this resolves exactly the concatenated `delta.content` values; beyond it,
-   * provider-reported stream errors and empty streams THROW (F-003) — never a
-   * silent empty answer — and a server that ignores `stream:true` has its
-   * non-stream JSON completion read as choices[0].message.content.
-   */
+  /** Resolve the concatenated answer for `messages` (sent verbatim). */
   async chat(messages: Array<{ role: string; content: string }>): Promise<string> {
-    const base = this.resolvedBase();
-    let response: Response;
-    try {
-      response = await fetch(`${base}/chat/completions`, {
-        method: 'POST',
-        headers: this.buildHeaders(),
-        body: JSON.stringify({ model: this.config.model, messages, stream: true }),
-      });
-    } catch (err) {
-      throw new Error(cannotReachMessage(base, err));
-    }
-    if (!response.ok) {
-      throw new Error(await extractServerError(response));
-    }
-    const contentType = response.headers.get('content-type') ?? '';
-    if (contentType.includes('application/json')) {
-      // Server ignored stream:true — read the single JSON completion (F-003).
-      return extractNonStreamAnswer(await response.text());
-    }
-    return parseOpenAISseAnswer(await response.text());
+    return this.generateComplete(messages as LLMMessage[]);
   }
 
   // ---- LLMService seam -------------------------------------------------
 
   initialize(_modelId?: string, onProgress?: (progress: LLMProgress) => void): Promise<void> {
-    // A provider needs no local load; validate the config so failures surface
-    // as a readiness problem instead of a mid-send network error.
-    assertProviderUrlAllowed(normalizeProviderBaseUrl(this.config.baseUrl));
+    // A remote endpoint needs no local load; validate the config so failures
+    // surface as a readiness problem instead of a mid-send network error.
+    this.endpoint();
     if (!this.config.model.trim()) {
-      throw new Error('Provider model id is not configured');
+      return Promise.reject(new ProviderError('model', 'No model is selected. Choose one in Settings → External model.'));
     }
-    onProgress?.({ progress: 1, timeElapsed: 0, text: 'Provider server configured' });
+    onProgress?.({ progress: 1, timeElapsed: 0, text: 'External model configured' });
     this.ready = true;
     return Promise.resolve();
   }
@@ -380,270 +257,58 @@ export class OpenAICompatChatService implements LLMService {
     messages: LLMMessage[],
     options?: LLMGenerateOptions & { signal?: AbortSignal }
   ): AsyncGenerator<string> {
-    const base = this.resolvedBase();
+    const { base, ctx } = this.endpoint();
     const controller = new AbortController();
     this.controller = controller;
-    let cancelled = false;
-    let activeReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
-    let firstByteTimer: ReturnType<typeof setTimeout> | null = null;
-    const clearWatchdog = () => {
-      if (firstByteTimer) clearTimeout(firstByteTimer);
-      firstByteTimer = null;
+    const onCallerAbort = () => controller.abort();
+    options?.signal?.addEventListener('abort', onCallerAbort);
+    if (options?.signal?.aborted) controller.abort();
+    const transport: TransportOptions = {
+      ctx,
+      firstByteTimeoutMs: this.firstByteTimeoutMs,
+      idleTimeoutMs: this.idleTimeoutMs,
+      signal: controller.signal,
     };
-    const markCancelled = () => {
-      cancelled = true;
-      clearWatchdog();
-      // Release the network immediately on Stop/interrupt (reviewer round 1,
-      // finding 2; round 2 finding A): cancelling the reader tears down the
-      // in-flight response, and the fetch's own signal aborts the pre-headers
-      // window when the environment accepts cross-realm signals.
-      void activeReader?.cancel().catch(() => undefined);
-      controller.abort();
+    const body: Record<string, unknown> = {
+      model: this.config.model,
+      messages: messages.map((m) => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '' })),
+      stream: true,
     };
-    // The AbortSignal is passed into fetch ONLY when this realm's fetch
-    // accepts it — jsdom + undici reject cross-realm instances ("Expected
-    // signal ... to be an instance of AbortSignal"), so the feature-detect
-    // below mirrors streaming.ts's pre-headers abort posture where possible
-    // and falls back to the watchdog + cancel paths where not (reviewer
-    // round 2, finding A).
-    let fetchSignal: AbortSignal | undefined;
+    if (options?.maxTokens !== undefined) body.max_tokens = options.maxTokens;
+    if (options?.temperature !== undefined) body.temperature = options.temperature;
+    let opened: Awaited<ReturnType<typeof openRequest>> = null;
     try {
-      new Request('http://127.0.0.1/', { method: 'POST', signal: controller.signal });
-      fetchSignal = controller.signal;
-    } catch {
-      fetchSignal = undefined;
-    }
-    options?.signal?.addEventListener('abort', markCancelled);
-    controller.signal.addEventListener('abort', markCancelled);
-    const plainMessages = messages.map((m) => ({
-      role: m.role,
-      content: typeof m.content === 'string' ? m.content : '',
-    }));
-    try {
-      let response: Response;
-      // First-byte watchdog armed BEFORE fetch (reviewer round 2, finding
-      // A): races the pre-headers window (a server that accepts but never
-      // answers) and the body-stage leg below, so neither phase can hang past
-      // FIRST_BYTE_TIMEOUT_MS.
-      const watchdogPromise = new Promise<never>((_, reject) => {
-        firstByteTimer = setTimeout(() => {
-          markCancelled();
-          reject(
-            new Error(
-              `Provider server at ${base} accepted the request but sent no data within ${this.firstByteTimeoutMs}ms.`
-            )
-          );
-        }, this.firstByteTimeoutMs);
-      });
-      try {
-        response = await Promise.race([
-          fetch(`${base}/chat/completions`, {
-            method: 'POST',
-            headers: this.buildHeaders(),
-            body: JSON.stringify({ model: this.config.model, messages: plainMessages, stream: true }),
-            signal: fetchSignal,
-          }),
-          watchdogPromise,
-        ]);
-        if (cancelled) {
-          void response.body?.cancel().catch(() => undefined);
-          return;
-        }
-      } catch (err) {
-        // The watchdog's rejection carries cancelled=true (markCancelled ran
-        // first) — surface it as the actionable error, not a silent stop.
-        if (err instanceof Error && /sent no data within/.test(err.message)) throw err;
-        if (cancelled) return;
-        throw new Error(cannotReachMessage(base, err));
-      }
-      // The pre-headers watchdog stays ARMED through the !response.ok
-      // error-body read (reviewer round 4, finding 1): a 5xx whose error body
-      // stalls must fail bounded, not hang. The watchdog firing here yields a
-      // bounded THROW (raced against extractServerError), never a silent
-      // completion. Disarm once we reach the success path — the body-stage
-      // readChunk watchdog owns first-body-byte from there.
-      if (!response.ok) {
-        let message: string;
-        try {
-          // watchdogPromise is REJECT-ONLY (the timer never resolves it), so
-          // the stall arm must be a rejection handler — a .then(onFulfilled)
-          // here would pass the pre-headers rejection through unchanged
-          // (reviewer round 5, finding 1) and surface the wrong-phase
-          // "sent no data" message.
-          message = await Promise.race([
-            extractServerError(response),
-            watchdogPromise.then(
-              () => {
-                throw new Error(
-                  `Provider server at ${base} sent a ${response.status} response whose error body stalled (exceeded ${this.firstByteTimeoutMs}ms).`
-                );
-              },
-              () => {
-                throw new Error(
-                  `Provider server at ${base} sent a ${response.status} response whose error body stalled (exceeded ${this.firstByteTimeoutMs}ms).`
-                );
-              }
-            ),
-          ]);
-        } finally {
-          clearWatchdog();
-        }
-        throw new Error(message);
-      }
-      // Success path: disarm the pre-headers watchdog HERE (reviewer delta
-      // finding — it was armed before fetch with the same duration as any
-      // body bound below, so if it stayed armed it would always fire FIRST in
-      // a real browser, abort the fetch, and the resulting AbortError would be
-      // swallowed by the caller's cancelled-send branch — a stuck loading
-      // state instead of the actionable error). The whole-body reads below own
-      // their bound via readBodyBounded's local timer in every environment.
-      clearWatchdog();
-      // Both whole-body reads below stay BOUNDED by a local copy of the
-      // first-byte bound (reviewer re-gate finding: the original draft
-      // disarmed the watchdog before `response.text()`, so a 200 whose body
-      // stalled mid-flight hung the send forever). The timer is local —
-      // NOT firstByteTimer — so markCancelled's disarm cannot strand an
-      // unbounded body read on the cancel path either; it is always cleared
-      // in the finally, and the raced promise is consumed by Promise.race, so
-      // a late firing is impossible/unobserved.
-      const readBodyBounded = async (): Promise<string> => {
-        let bodyTimer: ReturnType<typeof setTimeout> | null = null;
-        try {
-          return await Promise.race([
-            response.text(),
-            new Promise<never>((_, reject) => {
-              bodyTimer = setTimeout(
-                () =>
-                  reject(
-                    new Error(
-                      `Provider server at ${base} sent a ${response.status} response whose body stalled (exceeded ${this.firstByteTimeoutMs}ms).`
-                    )
-                  ),
-                this.firstByteTimeoutMs
-              );
-            }),
-          ]);
-        } finally {
-          if (bodyTimer) clearTimeout(bodyTimer);
-        }
-      };
-      // Non-stream reply (F-003): a server that ignores `stream:true` answers
-      // with one JSON completion — read choices[0].message.content instead of
-      // scanning for SSE frames that will never come.
+      opened = await openRequest(
+        `${base}/chat/completions`,
+        { method: 'POST', headers: bearerHeaders(this.config.apiKey, true), body: JSON.stringify(body) },
+        transport,
+      );
+      if (opened === null) return; // cancelled before headers
+      const response = opened.response;
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType.includes('application/json')) {
-        yield extractNonStreamAnswer(await readBodyBounded());
+        // Server ignored stream:true — read the single JSON completion (F-003).
+        yield extractNonStreamAnswer(await readBodyBounded(response, transport), ctx);
         return;
       }
-      // TRUE incremental streaming (reviewer round 1, finding 2): read the SSE
-      // body chunk-by-chunk so deltas reach the UI as the server emits them,
-      // with a first-byte watchdog so a hung server cannot spin forever.
-      const readLineDeltas = async function* (text: string): AsyncGenerator<string> {
-        // Buffered fallback shares the line parser + the same empty/error
-        // guards as the streaming path (F-003).
-        let buffered = '';
-        let sawFinish = false;
-        let sawDone = false;
-        for (const rawLine of text.split('\n')) {
-          const line = parseOpenAISseLine(rawLine);
-          if (line.error) throw new Error(line.error);
-          buffered += line.deltas.join('');
-          if (line.done) sawDone = true;
-          if (line.finish) sawFinish = true;
-        }
-        if (buffered.trim() === '') throw new Error(emptyStreamMessage(sawFinish, sawDone));
-        yield buffered;
-      };
-      if (!response.body) {
-        // No streaming body in this environment: buffered fallback (same
-        // bounded body read as the JSON branch).
-        yield* readLineDeltas(await readBodyBounded());
-        return;
-      }
-      const reader = response.body.getReader();
-      activeReader = reader;
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let sawFirstByte = false;
-      // F-003 stream state: provider error frames throw immediately; the
-      // empty-stream guard fires at close, so an empty 200 / reasoning-only
-      // output / clean close before any content can never resolve as success.
-      let streamError: string | null = null;
-      let streamText = '';
+      let text = '';
       let sawFinish = false;
       let sawDone = false;
-      // Body-stage watchdog timer (declared out here so the first-byte .then
-      // below can clear it the moment data arrives).
-      let watchdog: ReturnType<typeof setTimeout> | null = null;
-      const readChunk = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
-        if (sawFirstByte) return reader.read();
-        // Body-stage leg of the same watchdog armed before fetch: a server
-        // that sent headers but never streams a byte must fail with an
-        // actionable error, not spin forever.
-        return Promise.race([
-          reader.read().then((r) => {
-            sawFirstByte = true;
-            if (watchdog) clearTimeout(watchdog);
-            return r;
-          }),
-          new Promise<never>((_, reject) => {
-            watchdog = setTimeout(
-              () =>
-                reject(
-                  new Error(
-                    `Provider server at ${base} accepted the request but sent no data within ${this.firstByteTimeoutMs}ms.`
-                  )
-                ),
-              this.firstByteTimeoutMs
-            );
-          }),
-        ]);
-      };
-      for (;;) {
-        if (cancelled) return;
-        const { done, value } = await readChunk();
-        if (cancelled) return;
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const rawLine of lines) {
-          if (cancelled) return;
-          const line = parseOpenAISseLine(rawLine);
-          if (line.error) {
-            streamError = line.error;
-            break;
-          }
-          if (line.done) sawDone = true;
-          if (line.finish) sawFinish = true;
-          for (const delta of line.deltas) {
-            streamText += delta;
-            yield delta;
-          }
-        }
-        if (streamError) break;
-      }
-      if (!cancelled && !streamError && buffer.trim()) {
-        const line = parseOpenAISseLine(buffer);
-        if (line.error) streamError = line.error;
+      for await (const raw of readLines(response, { ...transport, isCancelled: () => controller.signal.aborted })) {
+        const line = parseOpenAISseLine(raw);
+        if (line.error) throw new ProviderError('server', line.error);
         if (line.done) sawDone = true;
         if (line.finish) sawFinish = true;
         for (const delta of line.deltas) {
-          streamText += delta;
+          text += delta;
           yield delta;
         }
       }
-      if (streamError) throw new Error(streamError);
-      if (!cancelled && streamText.trim() === '') {
-        throw new Error(emptyStreamMessage(sawFinish, sawDone));
-      }
+      if (controller.signal.aborted) return;
+      if (text.trim() === '') throw new ProviderError('other', emptyStreamMessage(sawFinish, sawDone));
     } finally {
-      // Reviewer round 2, finding A: release the connection on EVERY exit path
-      // (error, watchdog, cancellation), not only on explicit Stop.
-      clearWatchdog();
-      void activeReader?.cancel().catch(() => undefined);
-      options?.signal?.removeEventListener('abort', markCancelled);
-      controller.signal.removeEventListener('abort', markCancelled);
+      opened?.abort();
+      options?.signal?.removeEventListener('abort', onCallerAbort);
       if (this.controller === controller) this.controller = null;
     }
   }
@@ -688,134 +353,32 @@ export class OpenAICompatChatService implements LLMService {
 }
 
 /**
- * Connectivity probe against an OpenAI-compatible server (frozen by C2):
- * GET `${normalized base}/models` with a bounded timeout. Never touches the
- * project-only `/auth/status` route, so a standard server (which does not
- * implement it) probes successfully.
+ * List the model ids an OpenAI-compatible endpoint serves (GET {base}/models,
+ * Bearer auth when a key is set), in the server's order. Rejects with a
+ * classified ProviderError — never an empty success — on any failure.
  */
-export async function probeOpenAICompat(
-  baseUrl: string,
-  opts?: { timeoutMs?: number; apiKey?: string }
-): Promise<{ ok: boolean; detail?: string }> {
-  let base: string;
+export async function listOpenAIModels(
+  cfg: { baseUrl: string; apiKey?: string },
+  opts?: { timeoutMs?: number; signal?: AbortSignal; model?: string },
+): Promise<string[]> {
+  const apiKey = cfg.apiKey ?? '';
+  const { base, ctx } = resolveEndpoint(cfg.baseUrl, opts?.model ?? '', apiKey, normalizeProviderBaseUrl);
+  const transport: TransportOptions = { ctx, firstByteTimeoutMs: opts?.timeoutMs ?? 15_000, signal: opts?.signal };
+  const opened = await openRequest(`${base}/models`, { method: 'GET', headers: bearerHeaders(apiKey, false) }, transport);
+  if (opened === null) throw new ProviderError('other', 'Model listing was cancelled.');
   try {
-    base = normalizeProviderBaseUrl(baseUrl);
-    assertProviderUrlAllowed(base);
-  } catch (err) {
-    return {
-      ok: false,
-      detail: err instanceof Error ? err.message : 'Provider base URL is invalid',
-    };
-  }
-  if (!base) {
-    return { ok: false, detail: 'Provider base URL must not be empty' };
-  }
-  const timeoutMs = opts?.timeoutMs ?? 5000;
-  // NOTE: no AbortSignal is passed into fetch (jsdom + undici reject the
-  // cross-realm instance); the bound is enforced with a Promise.race so the
-  // probe always resolves within the timeout.
-  const timeout = new Promise<{ ok: false; detail: string }>((resolve) => {
-    setTimeout(() => {
-      resolve({
-        ok: false,
-        detail: `Cannot reach an OpenAI-compatible server at ${base} (timed out after ${timeoutMs}ms). Is the server running, and does it serve /v1/models?`,
-      });
-    }, timeoutMs);
-  });
-  const attempt = (async (): Promise<{ ok: boolean; detail?: string }> => {
+    const raw = await readBodyBounded(opened.response, transport);
+    let parsed: { data?: Array<{ id?: unknown }> };
     try {
-      // Key-protected servers (e.g. vLLM --api-key) 401 an anonymous probe and
-      // read as "cannot reach" — send the configured Bearer header when set
-      // (review finding: Test Connection must exercise the real auth path).
-      const headers: Record<string, string> =
-        opts?.apiKey && opts.apiKey.trim() !== ''
-          ? { Authorization: `Bearer ${opts.apiKey}` }
-          : {};
-      const response = await fetch(`${base}/models`, { method: 'GET', headers });
-      if (response.ok) return { ok: true };
-      return {
-        ok: false,
-        detail: `Cannot reach an OpenAI-compatible server at ${base} (server returned ${response.status}). Is the server running, and does it serve /v1/models?`,
-      };
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      return {
-        ok: false,
-        detail: `Cannot reach an OpenAI-compatible server at ${base} (${reason}). Is the server running, and does it serve /v1/models?`,
-      };
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      throw new ProviderError('server', `${ctx.origin} did not return a JSON model list from /models.`);
     }
-  })();
-  return Promise.race([attempt, timeout]);
-}
-
-// ---- Provider configuration persistence -----------------------------------
-// Stored in the shared `inference-mode` blob (key `providerConfig`, so it
-// survives alongside mode/engine/preset) with the API key in a separate key so
-// it can be cleared independently. Plain text, local to this browser profile;
-// it is sent ONLY to the configured provider server. (Plan open-question 1 —
-// desktop safeStorage was rejected for v1.)
-
-
-interface StoredInferenceModeLoose {
-  providerConfig?: { baseUrl?: string; model?: string };
-  [k: string]: unknown;
-}
-
-function readStoredBlob(): StoredInferenceModeLoose {
-  try {
-    // Harden the literal-'null'/'5'/garbage blob shapes (review finding: a
-    // literal null blob made loadProviderConfig throw outside the send path's
-    // try and wedge isLoading): anything that is not a plain object reads as
-    // an empty config instead of throwing.
-    const parsed: unknown = JSON.parse(localStorage.getItem(INFERENCE_MODE_KEY) ?? '{}');
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as StoredInferenceModeLoose;
+    if (!Array.isArray(parsed.data)) {
+      throw new ProviderError('server', `${ctx.origin} returned a model list without a data array.`);
     }
-    return {};
-  } catch {
-    return {};
+    return parsed.data.map((m) => m?.id).filter((id): id is string => typeof id === 'string' && id !== '');
+  } finally {
+    opened.abort();
   }
-}
-
-/** Load the persisted provider connection settings (empty strings if unset). */
-export function loadProviderConfig(): ProviderConfig {
-  const blob = readStoredBlob();
-  const cfg = blob.providerConfig ?? {};
-  let apiKey = '';
-  try {
-    apiKey = localStorage.getItem(PROVIDER_API_KEY_KEY) ?? '';
-  } catch {
-    apiKey = '';
-  }
-  return {
-    baseUrl: typeof cfg.baseUrl === 'string' ? cfg.baseUrl : '',
-    model: typeof cfg.model === 'string' ? cfg.model : '',
-    apiKey,
-  };
-}
-
-/** Persist provider connection settings (read-modify-write; key-level merge). */
-export function saveProviderConfig(patch: Partial<ProviderConfig>): void {
-  const blob = readStoredBlob();
-  const prev = blob.providerConfig ?? {};
-  const next = {
-    baseUrl: patch.baseUrl ?? prev.baseUrl ?? '',
-    model: patch.model ?? prev.model ?? '',
-  };
-  try {
-    localStorage.setItem(
-      INFERENCE_MODE_KEY,
-      JSON.stringify({ ...blob, providerConfig: next })
-    );
-    if (patch.apiKey !== undefined) {
-      localStorage.setItem(PROVIDER_API_KEY_KEY, patch.apiKey);
-    }
-  } catch {
-    // localStorage unavailable or quota exceeded — settings stay in-memory.
-  }
-}
-
-/** True when the provider branch may attempt a send. */
-export function isProviderConfigured(cfg: ProviderConfig): boolean {
-  return cfg.baseUrl.trim() !== '' && cfg.model.trim() !== '';
 }

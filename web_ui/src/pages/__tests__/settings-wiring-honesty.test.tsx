@@ -473,11 +473,12 @@ describe('overlay destination (AC10)', () => {
   test('initialSection="model-connection" scrolls to the external-model section and focuses its heading', async () => {
     H.reset({ mode: 'browser-local' });
     render(<SettingsPage initialSection="model-connection" />);
-    const heading = await screen.findByRole('heading', { name: /inference mode/i });
+    // universal-provider-settings-overhaul: the id moved from the Inference
+    // Mode section to the section hosting the External model region.
+    const heading = await screen.findByRole('heading', { name: /^external model$/i });
     await waitFor(() => expect(heading).toHaveFocus());
-    // The destination hosts the external (OpenAI-compatible) model option.
     expect(document.getElementById('model-connection')).toContainElement(
-      screen.getByRole('radio', { name: /provider server/i }),
+      screen.getByRole('switch', { name: /^use external model$/i }),
     );
   });
 
@@ -511,10 +512,12 @@ describe('About (AC8)', () => {
     expect(aboutText()).not.toMatch(/WebGPU/);
   });
 
-  test('provider mode credits the external server', async () => {
-    H.reset({ mode: 'provider' });
+  // universal-provider-settings-overhaul: the provider MODE is retired; the
+  // browser-local credit names the external model option instead.
+  test('browser-local credits the external model option', async () => {
+    H.reset({ mode: 'browser-local' });
     render(<SettingsPage />);
     await settle();
-    expect(aboutText()).toMatch(/external OpenAI-compatible server/i);
+    expect(aboutText()).toMatch(/external model you configured/i);
   });
 });

@@ -4,6 +4,12 @@
  * the refusal of `setMode('api')` outside the desktop app, with the REAL
  * InferenceModeProvider over real localStorage. (A separate file because
  * InferenceModeContext.test.tsx is excluded from CI for pre-existing drift.)
+ *
+ * universal-provider-settings-overhaul: PR #138's 'provider' mode is retired.
+ * A legacy browser blob's provider connection (`providerConfig` + the
+ * `openai-provider-apikey` key) becomes the external-model configuration
+ * once, and the legacy fields are deleted; inside the desktop app a stored
+ * 'provider' mode means the desktop backend ('api').
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,10 +23,11 @@ function wrapper({ children }: { children: React.ReactNode }) {
   return <InferenceModeProvider>{children}</InferenceModeProvider>;
 }
 
-function storedBlob(): Record<string, unknown> | null {
-  const raw = localStorage.getItem('inference-mode');
+function storedJson(key: string): Record<string, unknown> | null {
+  const raw = localStorage.getItem(key);
   return raw === null ? null : (JSON.parse(raw) as Record<string, unknown>);
 }
+const storedBlob = () => storedJson('inference-mode');
 
 const LEGACY_BROWSER_BLOB = {
   mode: 'api',
@@ -32,6 +39,7 @@ const LEGACY_BROWSER_BLOB = {
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('offline (test stub)'))));
 });
 afterEach(() => {
@@ -39,10 +47,11 @@ afterEach(() => {
   removeDesktopBridgeStub();
   vi.unstubAllGlobals();
   localStorage.clear();
+  sessionStorage.clear();
 });
 
 describe('InferenceModeContext legacy browser API-server migration (AC4)', () => {
-  it('browser: legacy mode api migrates to browser-local, drops serverUrl, keeps browserEngine/ragPreset/providerConfig', () => {
+  it('browser: legacy mode api migrates to browser-local, drops serverUrl, keeps browserEngine/ragPreset; a legacy provider connection becomes a DISABLED external config', () => {
     localStorage.setItem('inference-mode', JSON.stringify(LEGACY_BROWSER_BLOB));
     const { result } = renderHook(() => useInferenceMode(), { wrapper });
 
@@ -53,11 +62,15 @@ describe('InferenceModeContext legacy browser API-server migration (AC4)', () =>
     const blob = storedBlob();
     expect(blob).not.toBeNull();
     expect(blob).not.toHaveProperty('serverUrl');
-    expect(blob).toMatchObject({
-      mode: 'browser-local',
-      browserEngine: 'webllm',
-      ragPreset: 'quality',
-      providerConfig: LEGACY_BROWSER_BLOB.providerConfig,
+    expect(blob).not.toHaveProperty('providerConfig');
+    expect(blob).toMatchObject({ mode: 'browser-local', browserEngine: 'webllm', ragPreset: 'quality' });
+    // The mode was not 'provider', so the migrated connection stays off.
+    expect(storedJson('external-provider-config')).toMatchObject({
+      enabled: false,
+      protocol: 'openai',
+      baseUrl: 'http://127.0.0.1:11434/v1',
+      model: 'm',
+      grounded: false,
     });
   });
 
@@ -73,18 +86,16 @@ describe('InferenceModeContext legacy browser API-server migration (AC4)', () =>
     act(() => result.current.setMode('api'));
     expect(result.current.mode).toBe('browser-local');
     act(() => result.current.setRagPreset('fast'));
-    act(() => result.current.setMode('provider'));
-    expect(result.current.mode).toBe('provider');
     const blob = storedBlob();
-    expect(blob).toMatchObject({ mode: 'provider', ragPreset: 'fast' });
+    expect(blob).toMatchObject({ mode: 'browser-local', ragPreset: 'fast' });
     expect(blob).not.toHaveProperty('serverUrl');
   });
 
-  it('desktop app (positive leg): a stored api mode and its backend URL are kept, and setMode("api") works', () => {
+  it('desktop app (positive leg): a stored legacy provider mode loads as the backend, and setMode("api") works', () => {
     installDesktopBridgeStub();
     localStorage.setItem('inference-mode', JSON.stringify({ ...LEGACY_BROWSER_BLOB, mode: 'provider' }));
     const { result } = renderHook(() => useInferenceMode(), { wrapper });
-    expect(result.current.mode).toBe('provider');
+    expect(result.current.mode).toBe('api');
     act(() => result.current.setMode('api'));
     expect(result.current.mode).toBe('api');
     expect(result.current.serverUrl).toBe('http://127.0.0.1:8000');
@@ -178,5 +189,41 @@ describe('InferenceModeContext legacy migration edge cases (FB140-005)', () => {
     } finally {
       getter.mockRestore();
     }
+  });
+});
+
+describe('PR #138 provider-mode migration (universal-provider-settings-overhaul)', () => {
+  it('browser: provider mode + legacy key become an ENABLED, ungrounded external config; legacy state is scrubbed', () => {
+    localStorage.setItem(
+      'inference-mode',
+      JSON.stringify({ mode: 'provider', ragPreset: 'fast', providerConfig: { baseUrl: 'http://127.0.0.1:8080', model: 'llama' } }),
+    );
+    localStorage.setItem('openai-provider-apikey', 'sk-legacy-111');
+    const { result } = renderHook(() => useInferenceMode(), { wrapper });
+
+    expect(result.current.mode).toBe('browser-local');
+    expect(storedBlob()).toMatchObject({ mode: 'browser-local', ragPreset: 'fast' });
+    expect(storedBlob()).not.toHaveProperty('providerConfig');
+    expect(storedJson('external-provider-config')).toEqual({
+      enabled: true,
+      protocol: 'openai',
+      baseUrl: 'http://127.0.0.1:8080',
+      model: 'llama',
+      grounded: false,
+      rememberKey: true,
+    });
+    expect(localStorage.getItem('external-provider-apikey')).toBe('sk-legacy-111');
+    expect(localStorage.getItem('openai-provider-apikey')).toBeNull();
+  });
+
+  it('browser: an existing external config is never overwritten by the migration', () => {
+    const existing = { enabled: true, protocol: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'c', grounded: true, rememberKey: false };
+    localStorage.setItem('external-provider-config', JSON.stringify(existing));
+    localStorage.setItem('inference-mode', JSON.stringify({ mode: 'provider', providerConfig: { baseUrl: 'http://127.0.0.1:8080', model: 'x' } }));
+    localStorage.setItem('openai-provider-apikey', 'sk-legacy-222');
+    renderHook(() => useInferenceMode(), { wrapper });
+    expect(storedJson('external-provider-config')).toEqual(existing);
+    expect(localStorage.getItem('openai-provider-apikey')).toBeNull();
+    expect(localStorage.getItem('external-provider-apikey')).toBeNull();
   });
 });

@@ -21,6 +21,8 @@ import type {
   SettingsUpdate,
   SettingsResponse,
   StatsResponse,
+  ExternalProbeRequest,
+  ExternalProbeResponse,
 } from './types';
 import { getToken } from './auth';
 
@@ -500,6 +502,23 @@ export class ApiClient {
       throw new ApiError(response.status, await parseErrorResponse(response));
     }
 
+    return response.json();
+  }
+
+  /**
+   * Desktop backend only (universal-provider-settings-overhaul): test an
+   * external endpoint from the main process (POST /settings/external/test).
+   * The renderer never contacts the endpoint itself in the desktop app.
+   */
+  async testExternalEndpoint(request: ExternalProbeRequest): Promise<ExternalProbeResponse> {
+    const response = await fetch(`${this.baseUrl}/settings/external/test`, {
+      method: 'POST',
+      headers: this.requestHeaders(),
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await parseErrorResponse(response));
+    }
     return response.json();
   }
 

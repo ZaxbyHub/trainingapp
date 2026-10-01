@@ -312,23 +312,23 @@ describe('SettingsPage', () => {
       setModelLoadingProgress: vi.fn(),
     });
 
-    render(<SettingsPage />);
+    const { container } = render(<SettingsPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Inference Mode')).toBeInTheDocument();
     });
 
     const browserLocalRadio = screen.getByRole('radio', { name: /browser-local/i });
-    const providerRadio = screen.getByRole('radio', { name: /provider server/i });
     // settings-wiring-honesty (AC4): the browser app has no API-server mode.
     expect(screen.queryByRole('radio', { name: /api server/i })).not.toBeInTheDocument();
-
+    // universal-provider-settings-overhaul: PR #138's provider MODE is
+    // retired — external endpoints are the External model setting, usable
+    // from either mode — so Browser-local is the browser app's only mode.
+    expect(screen.queryByRole('radio', { name: /provider server/i })).not.toBeInTheDocument();
+    expect(container.querySelectorAll('input[name="inference-mode"]')).toHaveLength(1);
     expect(browserLocalRadio).toBeChecked();
-    expect(providerRadio).not.toBeChecked();
-
-    fireEvent.click(providerRadio);
-
-    expect(setMode).toHaveBeenCalledWith('provider');
+    expect(screen.getByRole('region', { name: /^external model$/i })).toBeInTheDocument();
+    expect(setMode).not.toHaveBeenCalled();
   });
 
   test('settings-wiring-honesty (AC4): the browser app renders no Server URL input in any mode', async () => {
