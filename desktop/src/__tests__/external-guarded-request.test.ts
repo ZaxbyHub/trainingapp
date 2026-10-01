@@ -18,6 +18,7 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   guardedRequest,
+  pinnedLookupFor,
   RequestCancelledError,
   resolveTarget,
   trustedCertificateAuthorities,
@@ -152,6 +153,110 @@ describe('guarded outbound client', () => {
       expect(target.hits).toHaveLength(0);
     });
   }
+
+  // Review round 1 (F1): every BAD row above uses a PRIVATE-class name, so the
+  // name-class consistency rule refuses it before the per-answer address rule
+  // is ever the deciding guard. For a PUBLIC name the class rule accepts any
+  // allowed answer, so the per-answer refusal is the ONLY guard against a
+  // cloud endpoint name resolving to metadata / link-local / unspecified /
+  // multicast. These rows isolate that guard: each must be refused BY the
+  // address rule (message names the answer and its rule), not by a later
+  // connect failure.
+  const PUBLIC_BAD: Array<[string, Array<{ address: string; family: 4 | 6 }>, RegExp]> = [
+    ['metadata', [{ address: '169.254.169.254', family: 4 }], /\(metadata\)/],
+    ['link-local v4', [{ address: '169.254.10.20', family: 4 }], /\(link-local\)/],
+    ['link-local v6', [{ address: 'fe80::1', family: 6 }], /\(link-local\)/],
+    ['AWS v6 metadata', [{ address: 'fd00:ec2::254', family: 6 }], /\(metadata\)/],
+    ['IPv4-mapped metadata (dotted)', [{ address: '::ffff:169.254.169.254', family: 6 }], /\(metadata\)/],
+    ['IPv4-mapped metadata (hex)', [{ address: '::ffff:a9fe:a9fe', family: 6 }], /\(metadata\)/],
+    ['NAT64 metadata', [{ address: '64:ff9b::a9fe:a9fe', family: 6 }], /\(metadata\)/],
+    ['6to4 metadata', [{ address: '2002:a9fe:a9fe::1', family: 6 }], /\(metadata\)/],
+    ['unspecified v4', [{ address: '0.0.0.0', family: 4 }], /\(invalid-url\)/],
+    ['unspecified v6', [{ address: '::', family: 6 }], /\(invalid-url\)/],
+    ['multicast v4', [{ address: '224.0.0.1', family: 4 }], /\(invalid-url\)/],
+    ['multicast v6', [{ address: 'ff02::1', family: 6 }], /\(invalid-url\)/],
+    [
+      'public answer followed by metadata (every answer is checked, not just the first)',
+      [
+        { address: '8.8.8.8', family: 4 },
+        { address: '169.254.169.254', family: 4 },
+      ],
+      /\(metadata\)/,
+    ],
+  ];
+  for (const [label, answer, rule] of PUBLIC_BAD) {
+    it(`public name: resolveTarget refuses ${label}`, async () => {
+      let calls = 0;
+      const lookup: DnsLookup = async () => {
+        calls += 1;
+        return answer;
+      };
+      const err = await failureOf(resolveTarget('api.example.com', lookup, ctx('https://api.example.com'), false));
+      expect(err.kind).toBe('network');
+      expect(err.message).toMatch(/^Refused to contact https:\/\/api\.example\.com: api\.example\.com resolves to /);
+      expect(err.message).toMatch(rule);
+      expect(calls).toBe(1);
+    });
+
+    it(`public name: guardedRequest refuses ${label} before connecting`, async () => {
+      const target = await server((_req, res) => {
+        res.writeHead(200);
+        res.end('reached');
+      });
+      const err = await failureOf(
+        guardedRequest({
+          url: `https://api.example.com:${target.port}/v1/models`,
+          method: 'GET',
+          headers: { authorization: `Bearer ${KEY}` },
+          ctx: ctx('https://api.example.com'),
+          airgap: false,
+          lookup: async () => answer,
+          // A mutated (unguarded) client would try to connect; fail fast then.
+          firstByteTimeoutMs: 1_000,
+        }),
+      );
+      expect(err.kind).toBe('network');
+      expect(err.message).toMatch(/Refused to contact .* resolves to /);
+      expect(err.message).toMatch(rule);
+      expect(err.message).not.toContain(KEY);
+      expect(target.hits).toHaveLength(0);
+    });
+  }
+
+  it('a public name may resolve to a public answer (the per-answer rule is not over-broad)', async () => {
+    await expect(
+      resolveTarget('api.example.com', async () => [{ address: '8.8.8.8', family: 4 }], ctx('https://api.example.com'), false),
+    ).resolves.toEqual({ address: '8.8.8.8', family: 4 });
+  });
+
+  // Review round 1 (F5): the pinned lookup must hand back ONLY the validated
+  // address in every callback shape net/tls use; Node normally calls the
+  // {all:true} shape, so the single-address shapes are pinned directly here.
+  describe('pinned lookup (every callback shape)', () => {
+    const target4 = { address: '10.1.2.3', family: 4 as const };
+    const target6 = { address: 'fd12::7', family: 6 as const };
+    const call = (fn: ReturnType<typeof pinnedLookupFor>, ...args: unknown[]): unknown[] => {
+      let got: unknown[] = [];
+      (fn as unknown as (...a: unknown[]) => void)(...args, (...cbArgs: unknown[]) => {
+        got = cbArgs;
+      });
+      return got;
+    };
+    it('(host, {all:true}, cb) yields exactly the validated address list', () => {
+      expect(call(pinnedLookupFor(target4), 'gpu-box.lan', { all: true })).toEqual([null, [{ address: '10.1.2.3', family: 4 }]]);
+    });
+    it('(host, {family}, cb) yields the validated address and family (single-address shape)', () => {
+      expect(call(pinnedLookupFor(target4), 'gpu-box.lan', { family: 0 })).toEqual([null, '10.1.2.3', 4]);
+      expect(call(pinnedLookupFor(target6), 'gpu-box.lan', { all: false })).toEqual([null, 'fd12::7', 6]);
+    });
+    it('(host, cb) yields the validated address and family (no options)', () => {
+      let got: unknown[] = [];
+      (pinnedLookupFor(target6) as unknown as (h: string, cb: (...a: unknown[]) => void) => void)('gpu-box.lan', (...a) => {
+        got = a;
+      });
+      expect(got).toEqual([null, 'fd12::7', 6]);
+    });
+  });
 
   it('a loopback name must resolve to loopback only', async () => {
     await expect(resolveTarget('localhost', async () => [{ address: '192.168.1.5', family: 4 }], ctx('x'), false)).rejects.toThrow(

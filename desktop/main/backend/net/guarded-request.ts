@@ -174,6 +174,21 @@ export async function guardedRequest(init: GuardedRequestInit): Promise<GuardedR
   return send(url, hostname, target, init);
 }
 
+/**
+ * Pinned lookup: the socket connects ONLY to the validated address. Handles
+ * every callback shape net.connect / tls.connect use: `(host, {all:true}, cb)`
+ * (autoSelectFamily, an address list), `(host, options, cb)` and `(host, cb)`
+ * (one address + family).
+ */
+export function pinnedLookupFor(target: { address: string; family: 4 | 6 }): net.LookupFunction {
+  return ((_host: string, options: unknown, callback: (...args: unknown[]) => void): void => {
+    const cb = typeof options === 'function' ? (options as (...args: unknown[]) => void) : callback;
+    const all = typeof options === 'object' && options !== null && (options as { all?: boolean }).all === true;
+    if (all) cb(null, [{ address: target.address, family: target.family }]);
+    else cb(null, target.address, target.family);
+  }) as unknown as net.LookupFunction;
+}
+
 function send(
   url: URL,
   hostname: string,
@@ -229,18 +244,7 @@ function send(
       timer = setTimeout(() => fail(timeoutError(ctx, ms, phase, status)), ms);
     };
 
-    // Pinned lookup: connect ONLY to the validated address (handles the
-    // single-address and the {all:true} callback shapes net.connect uses).
-    const pinnedLookup = ((
-      _host: string,
-      options: unknown,
-      callback: (...args: unknown[]) => void,
-    ): void => {
-      const cb = typeof options === 'function' ? (options as (...args: unknown[]) => void) : callback;
-      const all = typeof options === 'object' && options !== null && (options as { all?: boolean }).all === true;
-      if (all) cb(null, [{ address: target.address, family: target.family }]);
-      else cb(null, target.address, target.family);
-    }) as unknown as net.LookupFunction;
+    const pinnedLookup = pinnedLookupFor(target);
 
     const headers: Record<string, string> = { ...init.headers, host: url.host };
     if (init.body !== undefined) headers['content-length'] = String(Buffer.byteLength(init.body));
