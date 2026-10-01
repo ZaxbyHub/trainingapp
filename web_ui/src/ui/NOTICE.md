@@ -1,9 +1,8 @@
 # Third-party notice: icon path data
 
 `icons.tsx` vendors a small subset of SVG path data from the Lucide icon set
-(https://lucide.dev). Lucide is licensed under the ISC License. (design-language.md
-section 4 says "MIT"; the actual upstream license is ISC, with portions derived from
-Feather under MIT. Both are permissive and the notices below are kept.)
+(https://lucide.dev). Lucide is licensed under the ISC License, with portions derived from
+Feather under MIT; both notices are kept below.
 
 ISC License
 
@@ -23,5 +22,6 @@ OR PERFORMANCE OF THIS SOFTWARE.
 
 Feather (MIT): Copyright (c) 2013-2023 Cole Bemis.
 
-Note: the path data was transcribed from memory of upstream Lucide; verify against
-upstream before relying on pixel-exact fidelity (not yet diffed against the package).
+Verification status: UNVERIFIED AGAINST UPSTREAM. No `lucide`, `lucide-react` or `lucide-static`
+package is present in web_ui/node_modules (checked), and no dependency was added for this, so the
+path data in icons.tsx was not diffed against upstream and may differ from it in minor details.

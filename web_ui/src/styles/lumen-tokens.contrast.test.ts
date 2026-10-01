@@ -99,45 +99,9 @@ const STATUSES = ['success', 'warning', 'danger', 'info'] as const;
 const THEMES: Theme[] = ['light', 'dark'];
 
 
-/**
- * Measured spec deviations (design-language.md v1.1 claims "AA-verified" but
- * these pairs do NOT reach the stated threshold when computed with the WCAG
- * formula). Values are NOT adjusted here (the accent is final and the spec is
- * authoritative); they are recorded so the gap is visible and so the test
- * flips to a failure -- forcing removal from this list -- once a token fix
- * lands. `[spec]` = the spec text itself claims the pair; `[extra]` = a pair
- * this test checks beyond the spec's explicit claims.
- */
-const KNOWN_SPEC_DEVIATIONS = new Set<string>([
-  // [spec] "{status}-border = fg @ 40% / 45%: banner edges >= 3:1"
-  'light: --success-border edge vs --bg-surface >= 3',
-  'light: --warning-border edge vs --bg-surface >= 3',
-  'light: --danger-border edge vs --bg-surface >= 3',
-  'light: --info-border edge vs --bg-surface >= 3',
-  'dark: --danger-border edge vs --bg-surface >= 3',
-  'dark: --info-border edge vs --bg-surface >= 3',
-  // [spec] "{status}-subtle: status text on them >= 4.5:1" (light warning 4.42)
-  'light: --warning text on --warning-subtle (over --bg-surface) >= 4.5',
-  'light: --warning text on --warning-subtle (over --bg-canvas) >= 4.5',
-  'light: --warning text on --warning-subtle (over --bg-raised) >= 4.5',
-  // [extra] status text on --bg-sunken (not claimed by the spec)
-  'light: --success text on --bg-sunken >= 4.5',
-  'light: --warning text on --bg-sunken >= 4.5',
-  // [extra] translucent dark danger fill over a raised surface (spec: "over surface")
-  'dark: --danger text on --danger-subtle (over --bg-raised) >= 4.5',
-  // [extra] control border on hover (2.98:1, 0.02 short)
-  'light: --border-control on --bg-sunken-adjacent hover/selected >= 3',
-]);
-
+/** Every listed pair must pass its threshold in both themes (no recorded deviations). */
 function check(theme: Theme, title: string, fn: () => void): void {
-  const name = `${theme}: ${title}`;
-  // The deviation case asserts the SPECIFIC threshold failure (not any throw),
-  // so a renamed/unresolvable token fails loudly instead of passing silently.
-  if (KNOWN_SPEC_DEVIATIONS.has(name)) {
-    it(`[known spec deviation] ${name}`, () => {
-      expect(fn).toThrow(/to be greater than or equal to/);
-    });
-  } else it(name, fn);
+  it(`${theme}: ${title}`, fn);
 }
 
 describe('lumen token contrast (WCAG 2.x relative luminance)', () => {
