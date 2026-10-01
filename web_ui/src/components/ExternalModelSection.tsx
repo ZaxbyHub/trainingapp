@@ -168,7 +168,10 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
 
   const airgap = IS_AIRGAP || keyState.airgap;
 
+  // Desktop: whether any backend snapshot (GET or PUT answer) has been applied.
+  const snapshotAppliedRef = useRef(false);
   const applyDesktopSettings = useCallback((s: Record<string, unknown>) => {
+    snapshotAppliedRef.current = true;
     const current = draftRef.current;
     const nextBaseUrl = typeof s['external.baseUrl'] === 'string' ? (s['external.baseUrl'] as string) : current.baseUrl;
     // A typed key belongs to the URL that was SHOWN when it was typed. When the
@@ -266,6 +269,23 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
         return true;
       } catch (err) {
         if (mountedRef.current) setProblem(`The desktop backend refused this setting: ${errorText(err)}`);
+        // Final critic FC2: the refused PUT bumped the write sequence, so an
+        // initial GET still in flight will be discarded. If no snapshot was
+        // ever applied, read the backend again (same guard: a later PUT still
+        // wins) so the panel never keeps its defaults (e.g. the switch OFF
+        // while the backend generates externally).
+        if (!snapshotAppliedRef.current) {
+          const startedAt = writeSeqRef.current;
+          void session.apiClient
+            .getSettings()
+            .then((s) => {
+              if (!mountedRef.current || writeSeqRef.current !== startedAt) return;
+              applyDesktopSettings(s as Record<string, unknown>);
+            })
+            .catch(() => {
+              /* the Desktop backend section reports settings errors */
+            });
+        }
         return false;
       }
     },

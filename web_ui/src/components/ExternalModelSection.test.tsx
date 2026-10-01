@@ -314,6 +314,46 @@ describe('desktop app', () => {
     expect(updateSettings.mock.calls.some(([body]) => body['external.baseUrl'] === 'http://192.168.1.50:8080')).toBe(false);
   });
 
+  // Final critic FC2: a PUT refused while the first GET is still in flight
+  // must not leave the panel on its defaults (switch OFF while the backend
+  // generates externally): the panel re-reads the backend.
+  test('a refused PUT before the first settings load arrives still shows the backend state', async () => {
+    installDesktopBridgeStub();
+    const backend = {
+      'external.enabled': true,
+      'external.protocol': 'anthropic',
+      'external.baseUrl': 'https://api.anthropic.com',
+      'external.model': 'claude-x',
+      'external.apiKeySet': true,
+      'external.apiKeyBoundOrigin': 'https://api.anthropic.com',
+      'external.airgap': true,
+    };
+    const { s, updateSettings } = session(backend);
+    let release: (v: unknown) => void = () => undefined;
+    const first = new Promise((resolve) => {
+      release = resolve;
+    });
+    let gets = 0;
+    (s.apiClient as unknown as { getSettings: () => Promise<unknown> }).getSettings = () => {
+      gets += 1;
+      return gets === 1 ? first : Promise.resolve(backend);
+    };
+    updateSettings.mockImplementation(async () => {
+      throw new Error('external.baseUrl: Endpoint refused (airgap-public)');
+    });
+    renderDesktop(s);
+    const q = within(panel());
+    const base = q.getByLabelText(/^base url$/i) as HTMLInputElement;
+    fireEvent.change(base, { target: { value: 'https://api.openai.com' } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(updateSettings).toHaveBeenCalled());
+    release(backend);
+    await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+    expect((q.getByRole('combobox', { name: /^protocol$/i }) as HTMLSelectElement).value).toBe('anthropic');
+    expect(q.getByTestId('external-airgap-notice')).toBeInTheDocument();
+    expect(gets).toBe(2);
+  });
+
   test('PUT answers arriving out of order: only the latest PUT repaints the panel', async () => {
     installDesktopBridgeStub();
     const { s, updateSettings } = session({ 'external.baseUrl': 'http://192.168.1.50:8080', 'external.model': 'm' });
