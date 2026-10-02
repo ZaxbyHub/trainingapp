@@ -13,6 +13,7 @@
 // one thing — asking the app to repeat that handshake — and only when its
 // source is the CURRENT boot frame window; relay traffic itself never flows
 // through window messages.
+import { isFramedContext } from './player-origin';
 import { TrainingRelay } from './training-relay';
 
 export interface TrainingPlayerHostOptions {
@@ -34,6 +35,8 @@ export interface RelayReadyInfo {
 const BOOT_PATH = '/training-boot.html';
 /** Minimum spacing between window-requested re-handshakes. */
 export const RELAY_REQUEST_MIN_INTERVAL_MS = 1000;
+/** Why a framed app does not start the course player. */
+export const FRAMED_DETAIL = 'course playback is disabled because this app is embedded in another page';
 
 export class TrainingPlayerHost {
   readonly relay: TrainingRelay;
@@ -107,6 +110,11 @@ export class TrainingPlayerHost {
   }
 
   private recreateBootFrame(): Promise<RelayReadyInfo> {
+    // Defense in depth for review round 1 F1: a framed app never embeds the
+    // boot frame or hands out a relay port (browserTrainingHost also refuses).
+    if (isFramedContext()) {
+      return Promise.resolve({ ready: false, hadActiveWorker: false, detail: FRAMED_DETAIL });
+    }
     this.generation += 1;
     const generation = this.generation;
     this.bootFrame?.remove();

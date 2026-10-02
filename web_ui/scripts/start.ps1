@@ -199,6 +199,11 @@ while ($Listener.IsListening) {
             $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
         } elseif ($IsTrainingWorker) {
             $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
+        } else {
+            # App shell: never frameable (course content on the player origin
+            # shares this server and must not load a live app in a frame).
+            $Response.Headers.Set('Content-Security-Policy', "frame-ancestors 'none'")
+            $Response.Headers.Set('X-Frame-Options', 'DENY')
         }
         $Response.ContentType = $ContentType
 

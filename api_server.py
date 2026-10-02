@@ -582,6 +582,12 @@ async def cross_origin_isolation(request: Request, call_next):
         elif path == TRAINING_SW_PATH:
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["Cache-Control"] = "no-cache"
+        else:
+            # App shell (and everything else): never frameable. Untrusted
+            # course content on the player origin shares this server and must
+            # not load a live app instance in a frame.
+            response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+            response.headers["X-Frame-Options"] = "DENY"
     return response
 
 

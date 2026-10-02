@@ -20,6 +20,24 @@
 // unsafe same-origin fallback.
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * True when this app document is NOT the top-level browsing context (it was
+ * loaded inside a frame). The app shell is never frameable by design (every
+ * host sends frame-ancestors 'none' / X-Frame-Options: DENY), and course
+ * playback refuses to start in a framed app: the player origin is derived
+ * from THIS document's origin, so an app instance nested inside other
+ * content would treat a wrong origin as its player (review round 1, F1).
+ * A cross-origin top that throws on access counts as framed.
+ */
+export function isFramedContext(win: Window | undefined = typeof window === 'undefined' ? undefined : window): boolean {
+  if (win === undefined) return false;
+  try {
+    return win.top !== win.self || win.parent !== win.self;
+  } catch {
+    return true;
+  }
+}
 export const PLAYER_ORIGIN_CONFIG_PATH = 'player-origin.json';
 export const PLAYER_ORIGIN_FETCH_TIMEOUT_MS = 2000;
 
@@ -95,6 +113,7 @@ let pending: Promise<string | null> | null = null;
  * config fetch is bounded; any failure falls through to the next step.
  */
 export function resolvePlayerOrigin(fetchImpl: typeof fetch = (...args) => fetch(...args)): Promise<string | null> {
+  if (isFramedContext()) return Promise.resolve(null);
   if (resolved !== undefined) return Promise.resolve(resolved);
   if (pending !== null) return pending;
   const appOrigin = currentAppOrigin();
@@ -133,6 +152,7 @@ export function resolvePlayerOrigin(fetchImpl: typeof fetch = (...args) => fetch
  * answer.
  */
 export function getPlayerOrigin(): string | null {
+  if (isFramedContext()) return null;
   if (resolved !== undefined) return resolved;
   const appOrigin = currentAppOrigin();
   return appOrigin === null ? null : resolvePlayerOriginStatic(appOrigin);

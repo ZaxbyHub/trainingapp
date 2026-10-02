@@ -5,12 +5,14 @@
 // the desktop app (app://training is served by the Electron main process).
 import { isElectron } from '../desktop-session';
 import { embedPendingPackChunks, getBrowserPackManager } from './browser-pack-manager';
-import { getPlayerOrigin, resolvePlayerOrigin } from './player-origin';
+import { getPlayerOrigin, isFramedContext, resolvePlayerOrigin } from './player-origin';
 import { TrainingPlayerHost, getTrainingPlayerHost } from './training-player-host';
 
 /** The browser course host, or null inside Electron / without a player origin. */
 export function browserTrainingHost(): TrainingPlayerHost | null {
   if (typeof window === 'undefined' || isElectron()) return null;
+  // Never in a framed app (review round 1, F1): no boot frame, no relay port.
+  if (isFramedContext()) return null;
   const playerOrigin = getPlayerOrigin();
   if (playerOrigin === null) return null;
   return getTrainingPlayerHost(
@@ -30,6 +32,10 @@ export function browserTrainingHost(): TrainingPlayerHost | null {
  */
 export async function startBrowserTraining(): Promise<void> {
   if (typeof window === 'undefined' || isElectron()) return;
+  if (isFramedContext()) {
+    console.warn('[training] course playback is disabled: this app is embedded in another page (open it in its own tab)');
+    return;
+  }
   // Pack chunks installed before the embedding model was ready are embedded
   // as soon as it is (resumable across reloads: the registry marks each
   // version once embedded).

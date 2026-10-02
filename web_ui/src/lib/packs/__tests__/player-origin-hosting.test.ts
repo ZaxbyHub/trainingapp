@@ -65,6 +65,25 @@ describe('vite dev/preview player-origin routes', () => {
     expect(r.headers['cross-origin-resource-policy']).toBeUndefined();
   });
 
+  it.each(['/', '/index.html', '/some/spa/route', '/assets/index.js', '/trainingfoo'])(
+    'app shell %s is never frameable (frame-ancestors none + X-Frame-Options DENY)',
+    (url) => {
+      const r = run(url);
+      expect(r.nextCalled).toBe(true);
+      expect(r.headers['content-security-policy']).toBe("frame-ancestors 'none'");
+      expect(r.headers['x-frame-options']).toBe('DENY');
+    },
+  );
+
+  it.each(['/training-boot.html', '/training-boot.js', '/training/sw.js', '/training/pack/story.html'])(
+    'player-origin route %s carries no app-shell anti-framing header (the app embeds the boot frame)',
+    (url) => {
+      const r = run(url);
+      expect(r.headers['x-frame-options']).toBeUndefined();
+      expect(r.headers['content-security-policy']).toBeUndefined();
+    },
+  );
+
   it('binds dev and preview to the IPv4 loopback (both loopback names reach one listener; never 0.0.0.0)', () => {
     const config = (viteConfig as unknown as (env: { command: string; mode: string }) => { server: { host: string }; preview: { host: string } })({
       command: 'serve',
@@ -85,6 +104,16 @@ describe('standalone servers (source scan)', () => {
     expect(offline).toMatch(/'Cross-Origin-Resource-Policy': 'cross-origin'/);
     expect(offline).toMatch(/rawPath\.startsWith\('\/training\/'\)\) && rawPath !== TRAINING_SW_PATH\)\s*\{\s*res\.writeHead\(404/);
     expect(offline).toMatch(/server\.listen\(PORT, '127\.0\.0\.1'/);
+  });
+
+  it('serve-offline.mjs: every non-player response is unframeable', () => {
+    expect(offline).toContain(`'Content-Security-Policy': "frame-ancestors 'none'"`);
+    expect(offline).toContain(`'X-Frame-Options': 'DENY'`);
+    expect(offline).toMatch(/\? \{ 'X-Content-Type-Options': 'nosniff' \}\s*: APP_SHELL_FRAME_HEADERS;/);
+  });
+
+  it('start.ps1: every non-player response is unframeable', () => {
+    expect(ps1).toMatch(/\} else \{[^}]*Headers\.Set\('Content-Security-Policy', "frame-ancestors 'none'"\)[^}]*Headers\.Set\('X-Frame-Options', 'DENY'\)/);
   });
 
   it('start.ps1: boot files cross-origin, worker served, other /training/* 404, loopback prefix', () => {

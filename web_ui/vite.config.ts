@@ -90,12 +90,23 @@ export default IndexedDbBackend;
  *   - /training/sw.js (the course service worker, scope /training/) carries
  *     nosniff and no-cache;
  *   - every other /training/* request is 404 — never the SPA shell — because
- *     course paths are answered by the player-origin service worker only.
+ *     course paths are answered by the player-origin service worker only;
+ *   - EVERY other response (the app shell and its assets) carries
+ *     `Content-Security-Policy: frame-ancestors 'none'` and
+ *     `X-Frame-Options: DENY`: the app is never frameable by anyone, so
+ *     untrusted course content on the player origin (which shares this
+ *     server) can never load a live app instance in a frame (desktop parity:
+ *     desktop/main/security/csp.ts frame-ancestors 'none').
  * Mirrored by scripts/serve-offline.mjs, scripts/start.ps1 and api_server.py;
  * pinned by src/lib/packs/__tests__/player-origin-hosting.test.ts.
  */
 export const TRAINING_BOOT_PATHS = new Set(['/training-boot.html', '/training-boot.js']);
 export const TRAINING_SW_PATH = '/training/sw.js';
+/** Anti-framing headers for every app-shell (non-player-route) response. */
+export const APP_SHELL_FRAME_HEADERS: Readonly<Record<string, string>> = {
+  'Content-Security-Policy': "frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
+};
 
 export function trainingRouteMiddleware(
   req: { url?: string },
@@ -125,6 +136,7 @@ export function trainingRouteMiddleware(
     res.end('Not Found');
     return;
   }
+  for (const [name, value] of Object.entries(APP_SHELL_FRAME_HEADERS)) res.setHeader(name, value);
   next();
 }
 

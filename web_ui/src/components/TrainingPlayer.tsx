@@ -31,7 +31,17 @@ import {
 } from './training-player-bridge';
 import { isElectron } from '../lib/desktop-session';
 import { browserTrainingHost } from '../lib/packs/browser-training';
-import { browserTrainingUrl, getPlayerOrigin } from '../lib/packs/player-origin';
+import { browserTrainingUrl, getPlayerOrigin, isFramedContext } from '../lib/packs/player-origin';
+
+/**
+ * Sandbox of the course frame (review round 1, F2; desktop parity with the
+ * main-process window-open/navigation denial). allow-same-origin keeps the
+ * course on its OWN origin — the player origin in the browser, app://training
+ * on desktop — which is never the app origin, so it grants no access to app
+ * storage or DOM; the player-origin service worker and the course's own
+ * storage need it. No popups, no top navigation, no storage-access prompts.
+ */
+export const TRAINING_FRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms';
 
 /** The course id of a pack key ('<id>' or the desktop dir key '<id>/<version>'). */
 export function courseIdOf(packKey: string): string {
@@ -70,6 +80,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
     onSlideChangeRef.current = onSlideChange;
 
     const location = trainingPlayerSrc(packId);
+    const framed = !isElectron() && isFramedContext();
     const courseId = courseIdOf(packId);
     const [playerError, setPlayerError] = useState<string | null>(null);
     const reloadedRef = useRef(false);
@@ -215,7 +226,13 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             </span>
           </span>
         </div>
-        {location === null && (
+        {location === null && framed && (
+          <p role="alert" data-testid="training-player-framed" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+            Course playback is disabled because this app is embedded in another page. Open the app directly in its own
+            browser tab to play courses.
+          </p>
+        )}
+        {location === null && !framed && (
           <p role="alert" data-testid="training-player-unavailable" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
             Course playback needs a player origin: open the app at http://localhost or http://127.0.0.1 (its loopback
             alias serves the player), or configure player-origin.json / VITE_TRAININGAPP_PLAYER_ORIGIN for this host.
@@ -233,6 +250,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
         <iframe
           ref={frameRef}
           data-testid="training-player-frame"
+          sandbox={TRAINING_FRAME_SANDBOX}
           src={location?.src ?? 'about:blank'}
           onLoad={handleFrameLoad}
           title={`Training player (${packId})`}

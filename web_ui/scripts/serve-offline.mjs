@@ -71,6 +71,13 @@ const BOOT_HEADERS = {
   'Cross-Origin-Resource-Policy': 'cross-origin',
   'X-Content-Type-Options': 'nosniff',
 };
+// Every app-shell response (anything that is not a player-origin route) is
+// unframeable: untrusted course content on the player origin shares this
+// server and must never load a live app instance in a frame.
+const APP_SHELL_FRAME_HEADERS = {
+  'Content-Security-Policy': "frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
+};
 
 const server = createServer((req, res) => {
   try {
@@ -86,7 +93,7 @@ const server = createServer((req, res) => {
       ? BOOT_HEADERS
       : rawPath === TRAINING_SW_PATH
         ? { 'X-Content-Type-Options': 'nosniff' }
-        : {};
+        : APP_SHELL_FRAME_HEADERS;
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === '/') pathname = '/index.html';
 

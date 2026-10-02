@@ -61,7 +61,24 @@ def test_course_worker_path_is_not_short_circuited(archive_client):
     assert response.headers.get("cross-origin-resource-policy") != "cross-origin"
 
 
+@pytest.mark.parametrize("path", ["/", "/index.html", "/some/spa/route", "/health"])
+def test_app_shell_responses_are_never_frameable(archive_client, path):
+    """Review round 1 F1: course content on the player origin shares this
+    server, so the app shell must never render inside a frame."""
+    response = archive_client.get(path)
+    assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert response.headers["x-frame-options"] == "DENY"
+
+
+@pytest.mark.parametrize("path", ["/training-boot.html", "/training-boot.js", "/training/sw.js", "/training/pack-a/story.html"])
+def test_player_routes_carry_no_app_shell_anti_framing(archive_client, path):
+    response = archive_client.get(path)
+    assert "x-frame-options" not in response.headers
+    assert "content-security-policy" not in response.headers
+
+
 def test_api_only_deployments_are_untouched(monkeypatch):
     monkeypatch.setattr(api_server, "_web_archive_dir", None)
     response = TestClient(api_server.app).get("/training/pack-a/story.html")
     assert "cross-origin-embedder-policy" not in response.headers
+    assert "x-frame-options" not in response.headers

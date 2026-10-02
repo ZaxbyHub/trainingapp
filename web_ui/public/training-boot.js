@@ -3,7 +3,11 @@
  * ADR-0012). Plain ES5-style JS (served as a static file, never bundled).
  *
  *  1. Registers the course service worker /training/sw.js (scope /training/).
- *  2. Accepts the relay handshake ONLY from its parent window at the parent's
+ *  2. Runs ONLY when its parent is the top-level page (window.parent ===
+ *     window.top): the app embeds it directly, and a boot frame nested any
+ *     deeper (e.g. inside course content, or inside an app instance that was
+ *     itself framed) does nothing (review round 1, F1).
+ *     Accepts the relay handshake ONLY from its parent window at the parent's
  *     exact origin (location.ancestorOrigins[0], else the referrer origin):
  *     { type: 'trainingapp-relay-handshake' } carrying the app-created
  *     MessagePort, and transfers that port to the ACTIVE worker.
@@ -34,8 +38,16 @@
     return null;
   }
 
+  function parentIsTop() {
+    try {
+      return window.parent !== window && window.parent === window.top;
+    } catch (err) {
+      return false;
+    }
+  }
+
   var expectedParent = parentOrigin();
-  if (window.parent === window || expectedParent === null || !('serviceWorker' in navigator)) return;
+  if (!parentIsTop() || expectedParent === null || !('serviceWorker' in navigator)) return;
 
   var SCOPE = '/training/';
   var hadActiveWorker = false;
@@ -79,7 +91,7 @@
   }
 
   window.addEventListener('message', function (event) {
-    if (event.source !== window.parent || event.origin !== expectedParent) return;
+    if (event.source !== window.parent || event.origin !== expectedParent || !parentIsTop()) return;
     var data = event.data;
     if (!data || typeof data !== 'object') return;
     if (data.type === 'trainingapp-relay-handshake' && event.ports && event.ports[0]) {
