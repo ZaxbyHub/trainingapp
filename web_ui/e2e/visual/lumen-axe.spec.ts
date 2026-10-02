@@ -41,13 +41,11 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
     "color-contrast | nav > div:nth-child(3) > div",
   ],
   'documents:light:1440': [
-    "color-contrast | div:nth-child(3) > div > p",
     "color-contrast | nav > div:nth-child(3) > div",
     "color-contrast | p:nth-child(4)",
   ],
   'training:light:1440': [
     "color-contrast | div:nth-child(3) > div",
-    "color-contrast | main > div",
   ],
   'settings:light:1440': [
     "color-contrast | #browser-local-desc",
@@ -63,11 +61,7 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
     "color-contrast | div[role=\"region\"] > div:nth-child(3)",
   ],
   'documents:light:500': [
-    "color-contrast | div:nth-child(3) > div > p",
     "color-contrast | p:nth-child(4)",
-  ],
-  'training:light:500': [
-    "color-contrast | main > div",
   ],
   'settings:light:500': [
     "color-contrast | #browser-local-desc",

@@ -264,7 +264,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
         <label
           htmlFor="training-pack-select"
-          style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}
+          style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-primary)' }}
         >
           Course:
         </label>
@@ -286,7 +286,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
           })}
         </select>
         {courses.length > 0 && (
-          <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}>
+          <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-primary)' }}>
             To update the course, install a newer training pack zip on the Documents page, then select it here.
           </span>
         )}
@@ -305,7 +305,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
             flex: 1,
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'var(--color-text-muted)',
+            color: 'var(--color-text-primary)',
             fontFamily: 'var(--font-family)',
             fontSize: 'var(--font-size-body)',
             flexDirection: 'column',
