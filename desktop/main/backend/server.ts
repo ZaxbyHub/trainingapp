@@ -269,6 +269,29 @@ function validationError(res: ServerResponse, errors: string[], cors?: CorsConte
 }
 
 /**
+ * PR #140 review (FB140-001): the settings sidecar write failed after the
+ * engine accepted a change. Restore the engine to `snapshot` (taken with
+ * captureSettingsState() before the change) so memory matches what is saved
+ * on disk, and return the 500 detail. An engine without the snapshot seam
+ * (test doubles) cannot be rolled back, and the detail says so.
+ */
+export function rollBackUnsavedSettings(
+  engine: EngineSurface,
+  snapshot: unknown,
+  kind: 'change' | 'reset',
+  err: unknown,
+): string {
+  const reason = err instanceof Error ? err.message : String(err);
+  if (snapshot !== undefined && typeof engine.restoreSettingsState === 'function') {
+    engine.restoreSettingsState(snapshot);
+    return `Settings could not be saved, so nothing was changed: ${reason}`;
+  }
+  return kind === 'reset'
+    ? `Settings were reset but could not be persisted: ${reason}`
+    : `Settings were applied but could not be persisted: ${reason}`;
+}
+
+/**
  * C7 (issue #74): parse a JSON body of two optional string fields
  * (pack_id required non-empty; version/to_version rules vary per route).
  */
@@ -799,6 +822,10 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 validationError(res, ['reset: not supported by this engine'], cors);
                 return;
               }
+              // PR #140 review (FB140-001): capture before committing so a
+              // failed save rolls the engine back — memory never claims a
+              // change the sidecar did not record.
+              const beforeReset = engine.captureSettingsState?.();
               const resetResult = engine.resetSettings(patch.reset);
               if (!resetResult.ok) {
                 if (resetResult.status === 400) sendJson(res, 400, { detail: resetResult.detail }, cors);
@@ -811,7 +838,7 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                   opts.persistSettings({}, patch.reset as string[]);
                 } catch (err) {
                   sendJson(res, 500, {
-                    detail: `Settings were reset but could not be persisted: ${err instanceof Error ? err.message : String(err)}`,
+                    detail: rollBackUnsavedSettings(engine, beforeReset, 'reset', err),
                   }, cors);
                   return;
                 }
@@ -819,6 +846,7 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               sendJson(res, 200, afterReset, cors);
               return;
             }
+            const beforePatch = engine.captureSettingsState?.();
             const result = engine.applySettingsPatch(patch);
             if (!result.ok) {
               if (result.status === 400) sendJson(res, 400, { detail: result.detail }, cors);
@@ -836,7 +864,7 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 opts.persistSettings(patch);
               } catch (err) {
                 sendJson(res, 500, {
-                  detail: `Settings were applied but could not be persisted: ${err instanceof Error ? err.message : String(err)}`,
+                  detail: rollBackUnsavedSettings(engine, beforePatch, 'change', err),
                 }, cors);
                 return;
               }

@@ -25,7 +25,7 @@ import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChatHistoryItem } from 'node-llama-cpp';
-import { StubEngine } from '../engine.js';
+import { StubEngine, type StubSettingsState } from '../engine.js';
 import type { PackManager } from '../store/pack-manager.js';
 import { ModelNotConfiguredError } from '../types.js';
 import type {
@@ -290,6 +290,16 @@ interface ResidentEntry {
   inFlight: number;
 }
 
+/** LlamaEngine.captureSettingsState() snapshot (PR #140 review FB140-001). */
+export interface LlamaSettingsState {
+  readonly stub: StubSettingsState;
+  readonly profileSetting: ProfileSetting;
+  readonly thresholdGb: number;
+  readonly threadsSetting: number | undefined;
+  readonly vulkanSetting: boolean | undefined;
+  readonly stickyAuto: InferenceProfileName | null;
+}
+
 export class LlamaEngine implements EngineSurface {
   /** rag_* settings + retrieval/document surfaces stay stub-owned (B5/B6/B7). */
   private readonly stub = new StubEngine();
@@ -539,6 +549,12 @@ export class LlamaEngine implements EngineSurface {
   async query(question: string, opts: EngineQueryOptions = {}): Promise<EngineQueryResult> {
     const started = Date.now();
     const profile = this.effectiveProfile();
+    // PR #140 review (FB140-006): read the generation overrides together with
+    // the profile and BEFORE retrieval / the queue wait — the retrieval step
+    // reads n_results and the rerank flag synchronously below — so one query
+    // uses one settings snapshot even if a PUT /settings lands mid-flight.
+    // Still per query, never frozen at model load.
+    const overrides = this.stub.generationOverrides();
     const modelPath = this.assertModelAvailable(profile);
     // B7 (issue #65): the retrieval step inside /ask//ask/stream. When the
     // host attached a retrieval surface, the hybrid pipeline runs BEFORE
@@ -558,10 +574,9 @@ export class LlamaEngine implements EngineSurface {
       const entry = await this.ensureResident(profile, modelPath);
       entry.inFlight += 1;
       try {
-        // settings-wiring-honesty: explicit rag_max_tokens/rag_temperature are
-        // read here, per generation (never frozen at model load), and passed
-        // only when set so the profile defaults apply otherwise.
-        const overrides = this.stub.generationOverrides();
+        // settings-wiring-honesty: explicit rag_max_tokens/rag_temperature
+        // (read at query start, above) are passed only when set so the
+        // profile defaults apply otherwise.
         const result = await entry.backend.generate(groundedQuestion, {
           history: opts.history,
           streamCallback: opts.streamCallback,
@@ -712,6 +727,33 @@ export class LlamaEngine implements EngineSurface {
       }
     }
     return { ok: true };
+  }
+
+  /**
+   * PR #140 review (FB140-001): everything applySettingsPatch / resetSettings
+   * can change — the stub's rag_* values and explicit key set, plus the
+   * inference.* fields and the sticky AUTO latch an inference.profile /
+   * profileThresholdGb patch clears. Resident-model and load state are not
+   * settings and are never touched.
+   */
+  captureSettingsState(): LlamaSettingsState {
+    return {
+      stub: this.stub.captureSettingsState(),
+      profileSetting: this.profileSetting,
+      thresholdGb: this.thresholdGb,
+      threadsSetting: this.threadsSetting,
+      vulkanSetting: this.vulkanSetting,
+      stickyAuto: this.stickyAuto,
+    };
+  }
+
+  restoreSettingsState(snapshot: LlamaSettingsState): void {
+    this.stub.restoreSettingsState(snapshot.stub);
+    this.profileSetting = snapshot.profileSetting;
+    this.thresholdGb = snapshot.thresholdGb;
+    this.threadsSetting = snapshot.threadsSetting;
+    this.vulkanSetting = snapshot.vulkanSetting;
+    this.stickyAuto = snapshot.stickyAuto;
   }
 
   /** settings-wiring-honesty: the rag_* reset directive (rag keys only). */

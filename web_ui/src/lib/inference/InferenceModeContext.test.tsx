@@ -198,70 +198,8 @@ describe('InferenceModeContext', () => {
       expect(screen.getByTestId('mode').textContent).toBe('api');
     });
 
-    it('falls back to default when localStorage is corrupted', () => {
-      localStorage.setItem('inference-mode', 'not valid json');
-
-      function TestComponent() {
-        const { mode } = useInferenceMode();
-        return <div data-testid="mode">{mode}</div>;
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      expect(screen.getByTestId('mode').textContent).toBe('browser-local');
-    });
-
-    it('handles localStorage being unavailable', () => {
-      const localStorageSpy = vi.spyOn(global, 'localStorage', 'get');
-      localStorageSpy.mockImplementation(() => {
-        throw new Error('localStorage not available');
-      });
-
-      function TestComponent() {
-        const { mode } = useInferenceMode();
-        return <div data-testid="mode">{mode}</div>;
-      }
-
-      // Should not throw, should use default
-      expect(() => {
-        render(
-          <InferenceModeProvider>
-            <TestComponent />
-          </InferenceModeProvider>
-        );
-      }).not.toThrow();
-
-      expect(screen.getByTestId('mode').textContent).toBe('browser-local');
-
-      localStorageSpy.mockRestore();
-    });
-
-    it('handles localStorage quota exceeded', () => {
-      const localStorageSpy = vi.spyOn(global, 'localStorage', 'set');
-      localStorageSpy.mockImplementation(() => {
-        throw new Error('Quota exceeded');
-      });
-
-      function TestComponent() {
-        const { setMode } = useInferenceMode();
-        return <button onClick={() => setMode('api')}>Set API</button>;
-      }
-
-      // Should not throw
-      expect(() => {
-        render(
-          <InferenceModeProvider>
-            <TestComponent />
-          </InferenceModeProvider>
-        );
-      }).not.toThrow();
-
-      localStorageSpy.mockRestore();
-    });
+    // The corrupt / unavailable / quota cases moved to
+    // InferenceModeContext.migration.test.tsx (PR #140 review FB140-005), which runs in CI.
   });
 
   describe('checkServerConnectivity', () => {

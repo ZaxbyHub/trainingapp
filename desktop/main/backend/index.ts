@@ -17,7 +17,7 @@ import { createLoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEV_ORIGINS_ENV } from '../security/defaults.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
-import { createBackendServer, listenOnRandomPort } from './server.js';
+import { createBackendServer, listenOnRandomPort, rollBackUnsavedSettings } from './server.js';
 import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js';
 import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
@@ -336,7 +336,12 @@ export class NodeBackendHost implements BackendHost {
       }
       persistSettings = (patch, removeKeys = []) => {
         // Adopt the merged patch ONLY after the disk write succeeds, so a
-        // failed save cannot desynchronize memory from the sidecar.
+        // failed save leaves `storedPatch` equal to the sidecar on disk. The
+        // ENGINE already holds the change at this point: every caller (the
+        // PUT /settings route and applyEngineSettings below) captures the
+        // engine's settings state first and restores it when this throws
+        // (PR #140 review FB140-001), so engine memory cannot drift from
+        // the sidecar either.
         const merged: Record<string, unknown> = { ...storedPatch, ...patch };
         // settings-wiring-honesty: a reset directive's keys leave the
         // snapshot, so the next boot no longer replays them as explicit.
@@ -350,12 +355,13 @@ export class NodeBackendHost implements BackendHost {
     // sidecar persistence — exposed to the bootstrap IPC layer as an own
     // property (getFirstRunPackTools precedent; prototypes stay start/stop).
     this.applyEngineSettings = (patch: Record<string, unknown>) => {
+      const before = this.engine.captureSettingsState?.();
       const applied = this.engine.applySettingsPatch(patch);
       if (!applied.ok) return applied;
       try {
         persistSettings?.(patch);
       } catch (err) {
-        return { ok: false as const, status: 500 as const, detail: `Settings were applied but could not be persisted: ${err instanceof Error ? err.message : String(err)}` };
+        return { ok: false as const, status: 500 as const, detail: rollBackUnsavedSettings(this.engine, before, 'change', err) };
       }
       return applied;
     };

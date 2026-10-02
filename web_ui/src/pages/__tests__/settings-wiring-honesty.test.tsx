@@ -108,7 +108,7 @@ vi.mock('../../lib/first-run', () => ({
   emitFirstRunReopen: vi.fn(),
 }));
 
-import { SettingsPage } from '../SettingsPage';
+import { RELOAD_AFTER_CLEAR_MS, SettingsPage } from '../SettingsPage';
 import { DesktopSessionProvider, type DesktopSession } from '../../lib/desktop-session';
 import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../../test/desktop-bridge-stub';
 import type { ApiClient } from '../../lib/api';
@@ -404,11 +404,14 @@ describe('Clear Cache (AC5)', () => {
 
     for (const key of USER_SETTING_KEYS) expect(localStorage.getItem(key)).toBeNull();
     for (const key of INTERNAL_KEYS) expect(localStorage.getItem(key)).toBe('keep');
-    await waitFor(() => expect(reloadPage).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(reloadPage).toHaveBeenCalledTimes(1), { timeout: RELOAD_AFTER_CLEAR_MS + 1000 });
   });
 
-  test('a failed clear reports the error and does not reload', async () => {
+  // PR #140 review (FB140-011): a failed step no longer skips the rest — the
+  // saved settings are still removed, so the page reloads after reporting.
+  test('a failed step reports the error, still removes the saved settings, and reloads', async () => {
     H.reset({ mode: 'browser-local' });
+    for (const key of USER_SETTING_KEYS) localStorage.setItem(key, 'x');
     deleteNamespaceMock.mockImplementation(() => Promise.reject(new Error('blocked')));
     const reloadPage = vi.fn();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -417,10 +420,13 @@ describe('Clear Cache (AC5)', () => {
     fireEvent.click(button);
     fireEvent.click(button);
     await screen.findByText(/could not clear all data/i);
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 700));
-    });
-    expect(reloadPage).not.toHaveBeenCalled();
+    for (const key of USER_SETTING_KEYS) expect(localStorage.getItem(key)).toBeNull();
+    expect(document.getElementById('clear-cache-status')?.textContent).toMatch(/saved settings were removed; reloading/i);
+    // Visible, not screen-reader-only: sighted users see why the page reloads.
+    const note = screen.getByText(/your saved settings were removed; reloading the page/i);
+    expect(note.style.position).not.toBe('absolute');
+    expect(note.style.clip).toBe('');
+    await waitFor(() => expect(reloadPage).toHaveBeenCalledTimes(1), { timeout: RELOAD_AFTER_CLEAR_MS + 1000 });
   });
 
   const clearCopy = () => document.getElementById('clear-cache-desc')?.textContent ?? '';
@@ -433,8 +439,13 @@ describe('Clear Cache (AC5)', () => {
     fireEvent.click(button);
     const confirming = clearCopy();
     expect(confirming).toMatch(/documents and keyword\/vector indexes stored in this browser/i);
-    expect(confirming).toMatch(/downloaded model weights/i);
+    // FB140-014: the model files named are WebLLM's (wllama stores none).
+    expect(confirming).toMatch(/downloaded WebLLM model files \(the default wllama engine stores none\)/i);
     expect(confirming).toMatch(/your chat history \(conversations\) is kept/i);
+    // AC5: the removed settings are enumerated.
+    expect(confirming).toMatch(
+      /inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course/i,
+    );
   });
 
   test('desktop app: copy names the browser-side data removed and keeps chat history and backend documents/settings (final-critic F1)', async () => {
@@ -447,7 +458,12 @@ describe('Clear Cache (AC5)', () => {
     fireEvent.click(button);
     const confirming = clearCopy();
     expect(confirming).toMatch(/browser-side document and keyword\/vector index databases/i);
-    expect(confirming).toMatch(/downloaded browser-model files/i);
+    // FB140-014: only WebLLM files downloaded in this window are deleted.
+    expect(confirming).toMatch(/any WebLLM model files downloaded in this window/i);
+    expect(confirming).not.toMatch(/browser-model/i);
+    expect(confirming).toMatch(
+      /inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course/i,
+    );
     expect(confirming).toMatch(/kept: your chat history \(conversations\), and the documents and settings stored by the desktop backend/i);
     expect(confirming).not.toMatch(/local caches/i);
   });

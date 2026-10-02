@@ -91,3 +91,92 @@ describe('InferenceModeContext legacy browser API-server migration (AC4)', () =>
     expect(storedBlob()).toMatchObject({ mode: 'api', serverUrl: 'http://127.0.0.1:8000' });
   });
 });
+
+// PR #140 review (FB140-005): migration edge cases, plus the corrupt /
+// unavailable / quota cases moved here from the CI-excluded
+// InferenceModeContext.test.tsx so they actually run.
+describe('InferenceModeContext legacy migration edge cases (FB140-005)', () => {
+  it('is idempotent: a second load of the migrated blob changes nothing', () => {
+    localStorage.setItem('inference-mode', JSON.stringify(LEGACY_BROWSER_BLOB));
+    const first = renderHook(() => useInferenceMode(), { wrapper });
+    const afterFirst = localStorage.getItem('inference-mode');
+    const firstState = { mode: first.result.current.mode, serverUrl: first.result.current.serverUrl, ragPreset: first.result.current.ragPreset, browserEngine: first.result.current.browserEngine };
+    first.unmount();
+
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    try {
+      const second = renderHook(() => useInferenceMode(), { wrapper });
+      expect(localStorage.getItem('inference-mode')).toBe(afterFirst);
+      // Nothing left to migrate, so the second load writes nothing.
+      expect(setItem).not.toHaveBeenCalled();
+      expect({ mode: second.result.current.mode, serverUrl: second.result.current.serverUrl, ragPreset: second.result.current.ragPreset, browserEngine: second.result.current.browserEngine }).toEqual(firstState);
+    } finally {
+      setItem.mockRestore();
+    }
+  });
+
+  it('keeps unknown sibling keys (written by other owners or newer builds) through the migration', () => {
+    const futureFields = { futureFeature: { enabled: true, level: 3 }, someOtherOwnerKey: 'kept' };
+    localStorage.setItem('inference-mode', JSON.stringify({ ...LEGACY_BROWSER_BLOB, ...futureFields }));
+    renderHook(() => useInferenceMode(), { wrapper });
+    const blob = storedBlob();
+    expect(blob).not.toHaveProperty('serverUrl');
+    expect(blob).toMatchObject({ mode: 'browser-local', ...futureFields, providerConfig: LEGACY_BROWSER_BLOB.providerConfig });
+  });
+
+  it('a quota error on the migration write still migrates the in-memory state', () => {
+    localStorage.setItem('inference-mode', JSON.stringify(LEGACY_BROWSER_BLOB));
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota exceeded', 'QuotaExceededError');
+    });
+    try {
+      const { result } = renderHook(() => useInferenceMode(), { wrapper });
+      expect(setItem).toHaveBeenCalled();
+      expect(result.current.mode).toBe('browser-local');
+      expect(result.current.serverUrl).toBe('');
+      expect(result.current.ragPreset).toBe('quality');
+      expect(result.current.browserEngine).toBe('webllm');
+    } finally {
+      setItem.mockRestore();
+    }
+    // The write failed, so the stored blob is untouched (it migrates on a later load).
+    expect(storedBlob()).toEqual(LEGACY_BROWSER_BLOB);
+  });
+
+  it.each([
+    ['a JSON string', JSON.stringify('api')],
+    ['a JSON array', JSON.stringify(['api', 'http://127.0.0.1:8000'])],
+    ['JSON null', 'null'],
+    ['a JSON number', '42'],
+  ])('a non-object legacy blob (%s) loads the defaults without throwing or rewriting it', (_label, raw) => {
+    localStorage.setItem('inference-mode', raw);
+    const { result } = renderHook(() => useInferenceMode(), { wrapper });
+    expect(result.current.mode).toBe('browser-local');
+    expect(result.current.serverUrl).toBe('');
+    expect(localStorage.getItem('inference-mode')).toBe(raw);
+  });
+
+  it('a corrupt (unparseable) blob falls back to the defaults', () => {
+    localStorage.setItem('inference-mode', 'not valid json');
+    const { result } = renderHook(() => useInferenceMode(), { wrapper });
+    expect(result.current.mode).toBe('browser-local');
+    expect(result.current.serverUrl).toBe('');
+  });
+
+  it('a throwing localStorage getter (storage disabled) falls back to the defaults', () => {
+    const getter = vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('storage disabled', 'SecurityError');
+    });
+    try {
+      const { result } = renderHook(() => useInferenceMode(), { wrapper });
+      expect(getter).toHaveBeenCalled();
+      expect(result.current.mode).toBe('browser-local');
+      expect(result.current.serverUrl).toBe('');
+      // A later persist with storage still disabled must not throw either.
+      act(() => result.current.setRagPreset('fast'));
+      expect(result.current.ragPreset).toBe('fast');
+    } finally {
+      getter.mockRestore();
+    }
+  });
+});

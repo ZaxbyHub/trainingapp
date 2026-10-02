@@ -405,6 +405,15 @@ export interface EngineSurface {
    * route answers 422 for engines without it (test doubles).
    */
   resetSettings?(keys: unknown): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
+  /**
+   * PR #140 review (FB140-001): an opaque copy of every value
+   * applySettingsPatch / resetSettings can change, and its inverse. The host
+   * captures before applying and restores when persisting the change fails,
+   * so a 500 leaves the engine exactly as it was. Optional (test doubles);
+   * a host without them cannot roll back and says so in its 500 detail.
+   */
+  captureSettingsState?(): unknown;
+  restoreSettingsState?(snapshot: unknown): void;
   responseSettings(): Record<string, unknown>;
   ingestDirectory(directory: string): Promise<IngestResult>;
   /** B6 (issue #64): input carries the uploaded file; the no-input form is

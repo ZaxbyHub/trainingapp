@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { SettingsRequestedValues } from '../api/types';
 import {
   RAG_PRESETS,
   presetOptions,
@@ -73,7 +74,7 @@ describe('desktop preset contract', () => {
 });
 
 describe('presetFromBackend', () => {
-  const requested = (r: Partial<Record<'n_results' | 'reranking_enabled' | 'max_tokens' | 'temperature', unknown>>) => ({
+  const requested = (r: SettingsRequestedValues): SettingsRequestedValues => ({
     n_results: null,
     reranking_enabled: null,
     max_tokens: null,

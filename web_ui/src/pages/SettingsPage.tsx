@@ -16,7 +16,7 @@ import { useInferenceMode } from '../lib/inference';
 import { fetchModelStatus, isElectron, useDesktopSession } from '../lib/desktop-session';
 import type { RAGPreset } from '../lib/rag/rag-presets';
 import { fetchFirstRunStatus, resetFirstRun, emitFirstRunReopen } from '../lib/first-run';
-import type { ModelStatus } from '../lib/api/types';
+import type { ModelStatus, SettingsResponse } from '../lib/api/types';
 import { useTheme, type ThemePreference } from '../lib/theme';
 import { ModelDownloadManager, type DownloadProgress } from '../lib/llm/model-download';
 import { ModelReadinessGate } from '../lib/llm/model-readiness';
@@ -580,8 +580,26 @@ const aboutSectionStyle: React.CSSProperties = {
 const CLEARED_SETTINGS_COPY =
   'inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course';
 
-/** Delay between "Cache cleared" and the reload, so the status is visible/announced. */
-const RELOAD_AFTER_CLEAR_MS = 500;
+/**
+ * Delay between the final Clear Cache status and the reload (PR #140 review
+ * FB140-002): long enough for a screen reader to announce the polite status
+ * (500 ms could tear the page down mid-announcement), and below the 3 s
+ * status reset so the message is still showing when the page reloads.
+ */
+export const RELOAD_AFTER_CLEAR_MS = 2000;
+
+/** Screen-reader-only text (same inline pattern as the radio-group legends). */
+const visuallyHiddenStyle: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0,0,0,0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+};
 
 interface SettingsPageProps {
   /**
@@ -637,6 +655,9 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
   // Clear cache confirm + result state (issue #24 F1)
   const [clearCacheState, setClearCacheState] = useState<'idle' | 'confirming'>('idle');
   const [clearCacheResult, setClearCacheResult] = useState<'idle' | 'clearing' | 'cleared' | 'error'>('idle');
+  // True once the clear removed the saved settings, so the page reloads (the
+  // status then tells screen-reader users a reload is coming).
+  const [clearCacheReloading, setClearCacheReloading] = useState(false);
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const reloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -703,7 +724,7 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
   // browser-local `ragPreset`. null = not read yet (no radio checked).
   const [desktopPreset, setDesktopPreset] = useState<DesktopPresetState | null>(null);
   // The last desktop settings body (reranker availability for the cards).
-  const [desktopSettings, setDesktopSettings] = useState<Record<string, unknown> | null>(null);
+  const [desktopSettings, setDesktopSettings] = useState<SettingsResponse | null>(null);
   // True when the backend matched a preset on rag_n_results alone (a profile
   // saved before presets wrote the full patch): the preset's reranking and
   // answer settings are NOT applied until the user re-selects it.
@@ -714,7 +735,7 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
   // issued before a PUT can never overwrite that PUT's result.
   const presetTicketRef = useRef(0);
 
-  const applyDesktopSettings = useCallback((settings: Record<string, unknown>) => {
+  const applyDesktopSettings = useCallback((settings: SettingsResponse) => {
     setDesktopSettings(settings);
     setDesktopPreset(presetFromBackend(settings));
     setPresetNeedsReapply(presetIsNResultsOnly(settings));
@@ -741,7 +762,7 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
         if (profile === 'quality' || profile === 'fast' || profile === 'auto') {
           setDesktopProfile(profile);
         }
-        if (ticket === presetTicketRef.current) applyDesktopSettings(settings as Record<string, unknown>);
+        if (ticket === presetTicketRef.current) applyDesktopSettings(settings);
       } catch (err) {
         if (isMountedRef.current) setDesktopSettingsError(err instanceof Error ? err.message : String(err));
       }
@@ -796,10 +817,10 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
         .updateSettings({ ...DESKTOP_PRESET_SETTINGS[preset] })
         .then((response) => {
           if (!isMountedRef.current || ticket !== presetTicketRef.current) return;
-          const body = response as unknown as Record<string, unknown> | null;
-          // A backend that reports explicit_keys confirms what it stored.
-          if (body !== null && typeof body === 'object' && Array.isArray(body.explicit_keys)) {
-            applyDesktopSettings(body);
+          // A backend that reports explicit_keys confirms what it stored
+          // (runtime-guarded: older desktop builds omit the field).
+          if (response !== null && typeof response === 'object' && Array.isArray(response.explicit_keys)) {
+            applyDesktopSettings(response);
           }
         })
         .catch((err) => {
@@ -826,11 +847,10 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
     desktopSession.apiClient
       .updateSettings({ reset: [...DESKTOP_PRESET_KEYS] })
       .then(async (response) => {
-        const body = response as unknown as Record<string, unknown> | null;
         const settings =
-          body !== null && typeof body === 'object' && Array.isArray(body.explicit_keys)
-            ? body
-            : ((await desktopSession.apiClient.getSettings()) as Record<string, unknown>);
+          response !== null && typeof response === 'object' && Array.isArray(response.explicit_keys)
+            ? response
+            : await desktopSession.apiClient.getSettings();
         if (!isMountedRef.current || ticket !== presetTicketRef.current) return;
         applyDesktopSettings(settings);
       })
@@ -1003,36 +1023,55 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
       }
       setClearCacheState('idle');
       setClearCacheResult('clearing');
+      setClearCacheReloading(false);
       // An in-flight model download is cancelled first (its cache entries are
       // about to be deleted underneath it).
       if (isDownloading) handleCancelDownload();
 
-      let cleared = false;
-      try {
-        // 1. Current profile's document/keyword/vector-mapping IndexedDBs.
-        const prefix = getProfilePrefix();
-        await deleteNamespace(prefix);
+      // PR #140 review (FB140-011): every step runs in its own try/catch, so
+      // one failure (realistically the EdgeVec delete) no longer skips the
+      // rest — above all the saved-settings removal the copy promises.
+      let failed = false;
+      const attempt = async (step: string, run: () => Promise<void>): Promise<void> => {
+        try {
+          await run();
+        } catch (err) {
+          failed = true;
+          console.error(`Error clearing cache (${step}):`, err);
+        }
+      };
 
-        // 2. EdgeVec HNSW blob (key in shared edgevec-db, store 'data').
-        //    Resolves PRR-008: deleteNamespace cannot reach this shared DB.
-        await deleteEdgeVecBlob(prefix);
+      // getProfilePrefix never throws (storage failures fall back internally).
+      const prefix = getProfilePrefix();
 
-        // 3. Stale/orphan namespaces from prior sessions/profiles.
+      // 1. Current profile's document/keyword/vector-mapping IndexedDBs.
+      await attempt('profile databases', () => deleteNamespace(prefix));
+
+      // 2. EdgeVec HNSW blob (key in shared edgevec-db, store 'data').
+      //    Resolves PRR-008: deleteNamespace cannot reach this shared DB.
+      await attempt('vector index', () => deleteEdgeVecBlob(prefix));
+
+      // 3. Stale/orphan namespaces from prior sessions/profiles.
+      await attempt('orphaned data', async () => {
         const stale = await listStalePrefixes();
         if (stale.length > 0) {
           await Promise.all(stale.map((p) => deleteNamespace(p)));
         }
+      });
 
-        // 4. Legacy settings IndexedDB (non-prefixed; written by earlier builds).
-        await new Promise<void>((resolve) => {
+      // 4. Legacy settings IndexedDB (non-prefixed; written by earlier builds).
+      await attempt('legacy settings database', () =>
+        new Promise<void>((resolve) => {
           const settingsDeleteReq = indexedDB.deleteDatabase(SETTINGS_DB_NAME);
           settingsDeleteReq.onsuccess = () => resolve();
           settingsDeleteReq.onerror = () => resolve();
           settingsDeleteReq.onblocked = () => resolve();
-        });
+        })
+      );
 
-        // 5. WebLLM Cache Storage (web-llm scopes artifacts across three
-        //    named caches: model weights, model config, and the wasm runtime).
+      // 5. WebLLM Cache Storage (web-llm scopes artifacts across three
+      //    named caches: model weights, model config, and the wasm runtime).
+      await attempt('WebLLM model files', async () => {
         if (typeof caches !== 'undefined' && typeof caches.delete === 'function') {
           await Promise.all(
             ['webllm/model', 'webllm/config', 'webllm/wasm'].map((cacheName) =>
@@ -1040,22 +1079,27 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
             )
           );
         }
+      });
 
-        // 6. Every registered browser-stored user setting (inference mode
-        //    blob incl. provider connection, theme, provider API key, sidebar,
-        //    last-opened course). Internal bookkeeping keys are kept.
+      // 6. ALWAYS: every registered browser-stored user setting (inference
+      //    mode blob incl. provider connection, theme, provider API key,
+      //    sidebar, last-opened course). Internal bookkeeping keys are kept.
+      let settingsCleared = false;
+      try {
         clearUserSettings();
-
-        setClearCacheResult('cleared');
-        cleared = true;
+        settingsCleared = true;
       } catch (err) {
-        console.error('Error clearing cache:', err);
-        setClearCacheResult('error');
+        failed = true;
+        console.error('Error clearing cache (saved settings):', err);
       }
 
-      // Reload so every context starts from the cleared storage (the React
+      setClearCacheResult(failed ? 'error' : 'cleared');
+      setClearCacheReloading(settingsCleared);
+
+      // Reload whenever the saved settings were removed — even after a failed
+      // step — so every context starts from the cleared storage (the React
       // state still holds the old values until then).
-      if (cleared) {
+      if (settingsCleared) {
         reloadTimeoutRef.current = setTimeout(() => {
           reloadTimeoutRef.current = null;
           if (isMountedRef.current) (reloadPage ?? (() => window.location.reload()))();
@@ -1068,6 +1112,7 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
       }
       clearTimeoutRef.current = setTimeout(() => {
         setClearCacheResult('idle');
+        setClearCacheReloading(false);
         clearTimeoutRef.current = null;
       }, 3000);
     }
@@ -1746,28 +1791,43 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                   what is removed and what is kept in each app. */}
               {clearCacheState === 'confirming'
                 ? desktopApp
-                  ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, downloaded browser-model files, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
-                  : `This deletes the documents and keyword/vector indexes stored in this browser, downloaded model weights, and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
+                  ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
+                  : `This deletes the documents and keyword/vector indexes stored in this browser, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
                 : desktopApp
-                  ? "Clear this app's browser-side indexes, downloaded browser-model files and saved settings. Chat history and documents in the desktop library are kept."
-                  : 'Clear downloaded models, search indexes, and saved settings in this browser. Chat history is kept.'}
+                  ? "Clear this app's browser-side indexes, any WebLLM model files downloaded in this window, and saved settings. Chat history and documents in the desktop library are kept."
+                  : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, and saved settings in this browser. Chat history is kept.'}
             </span>
-            {/* Result feedback (issue #24 F1) — announced to screen readers */}
-            {clearCacheResult === 'clearing' && (
-              <span role="status" aria-live="polite" style={descriptionStyle}>
-                Clearing…
-              </span>
-            )}
-            {clearCacheResult === 'cleared' && (
-              <span role="status" aria-live="polite" style={{ ...descriptionStyle, color: 'var(--color-success)' }}>
-                Cache cleared
-              </span>
-            )}
-            {clearCacheResult === 'error' && (
-              <span role="status" aria-live="polite" style={{ ...descriptionStyle, color: 'var(--color-danger)' }}>
-                Could not clear all data
-              </span>
-            )}
+            {/* Result feedback (issue #24 F1). PR #140 review (FB140-002): the
+                polite live region is ALWAYS mounted and only its text changes
+                (a region inserted together with its message is not reliably
+                announced). Its own text node is the status badge. After a
+                successful clear a visually-hidden suffix tells screen-reader
+                users the page is about to reload; after a partial failure the
+                explanation is VISIBLE (a child span, so the badge text stays
+                exact), since a reload right after an error would otherwise
+                surprise sighted users too (Stage B review L2). */}
+            <span
+              id="clear-cache-status"
+              role="status"
+              aria-live="polite"
+              style={
+                clearCacheResult === 'cleared'
+                  ? { ...descriptionStyle, color: 'var(--color-success)' }
+                  : clearCacheResult === 'error'
+                    ? { ...descriptionStyle, color: 'var(--color-danger)' }
+                    : descriptionStyle
+              }
+            >
+              {clearCacheResult === 'clearing' && 'Clearing…'}
+              {clearCacheResult === 'cleared' && 'Cache cleared'}
+              {clearCacheResult === 'error' && 'Could not clear all data'}
+              {clearCacheResult === 'cleared' && clearCacheReloading && (
+                <span style={visuallyHiddenStyle}>. Reloading the page…</span>
+              )}
+              {clearCacheResult === 'error' && clearCacheReloading && (
+                <span>. Your saved settings were removed; reloading the page…</span>
+              )}
+            </span>
           </div>
         </SectionCard>
 

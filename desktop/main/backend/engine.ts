@@ -118,6 +118,12 @@ export interface GenerationDefaults {
 
 type SettingsResult = { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
 
+/** StubEngine.captureSettingsState() snapshot: the stored rag_* values and the explicit key set. */
+export interface StubSettingsState {
+  readonly settings: Readonly<Record<string, number | string | boolean>>;
+  readonly explicitKeys: readonly string[];
+}
+
 /** The stub streams a short deterministic token sequence (suite-shaped). */
 const STUB_TOKENS = ['Desktop ', 'stub ', 'answer.'];
 
@@ -380,6 +386,24 @@ export class StubEngine implements EngineSurface {
     if (this.retrievalSurface === null) return false;
     const live = this.retrievalSurface.floorActive;
     return typeof live === 'boolean' ? live : true;
+  }
+
+  /**
+   * PR #140 review (FB140-001): a copy of every field applySettingsPatch and
+   * resetSettings mutate (the stored values and the explicit key set), so a
+   * caller whose follow-up step fails (the sidecar write) can put the engine
+   * back exactly as it was. The snapshot shares no mutable state with the
+   * engine.
+   */
+  captureSettingsState(): StubSettingsState {
+    return { settings: { ...this.settings }, explicitKeys: [...this.explicitKeys] };
+  }
+
+  /** Restore a captureSettingsState() snapshot (copies it again, so the snapshot stays reusable). */
+  restoreSettingsState(snapshot: StubSettingsState): void {
+    this.settings = { ...snapshot.settings };
+    this.explicitKeys.clear();
+    for (const key of snapshot.explicitKeys) this.explicitKeys.add(key);
   }
 
   /** Explicitly set generation values (omitted keys follow the profile). */

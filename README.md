@@ -215,7 +215,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
   (see PACKAGING.md)
 - **Model Download Manager**: Progress tracking with speed/ETA calculation, cancellation support, and storage quota error handling
 - **ModelDownloadProgress UI**: Accessible progress bar with ARIA attributes, download speed, ETA countdown, and cancel button
-- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to the wllama engine, the desktop app or an external model server (Provider server mode) when requirements aren't met
+- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to the wllama engine or an external model server (Provider server mode) when requirements aren't met
 - **RAG Orchestrator**: Full retrieval pipeline connecting embedding→vector search→keyword search→RRF fusion→reranking→LLM generation; emits typed `RAGEvent` stream for UI progress
 - **WebGPU Watchdog**: Context loss detection via `GPUDevice.lost` promise/event monitoring; `createRecoveryHandler` automatically re-initializes the service after loss
 

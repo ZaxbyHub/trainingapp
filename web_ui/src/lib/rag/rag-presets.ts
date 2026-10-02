@@ -7,6 +7,7 @@
  */
 
 import type { RAGQueryOptions } from './rag-orchestrator';
+import type { SettingsRequestedValues, SettingsResponse } from '../api/types';
 
 export type RAGPreset = 'fast' | 'balanced' | 'quality';
 
@@ -89,7 +90,13 @@ export type DesktopPresetState =
   | { kind: 'custom' }
   | { kind: 'defaults' };
 
-const REQUESTED_FIELD: Record<(typeof DESKTOP_PRESET_KEYS)[number], string> = {
+/**
+ * A GET/PUT /settings body as the preset display reads it. Every field is
+ * optional: older desktop builds omit the settings-wiring-honesty fields.
+ */
+export type DesktopSettingsBody = Partial<SettingsResponse>;
+
+const REQUESTED_FIELD: Record<(typeof DESKTOP_PRESET_KEYS)[number], keyof SettingsRequestedValues> = {
   rag_n_results: 'n_results',
   rag_reranking_enabled: 'reranking_enabled',
   rag_max_tokens: 'max_tokens',
@@ -114,7 +121,7 @@ function sameValue(a: unknown, b: unknown): boolean {
  * A backend without `explicit_keys` (older desktop build) falls back to the
  * flat n_results value.
  */
-export function presetFromBackend(settings: Record<string, unknown>): DesktopPresetState {
+export function presetFromBackend(settings: DesktopSettingsBody): DesktopPresetState {
   const flatN = settings.n_results ?? settings.rag_n_results;
   const explicitKeys = settings.explicit_keys;
   if (!Array.isArray(explicitKeys)) {
@@ -124,12 +131,12 @@ export function presetFromBackend(settings: Record<string, unknown>): DesktopPre
   const explicitPresetKeys = DESKTOP_PRESET_KEYS.filter((key) => explicitKeys.includes(key));
   if (explicitPresetKeys.length === 0) return { kind: 'defaults' };
   if (!explicitPresetKeys.includes('rag_n_results')) return { kind: 'custom' };
-  const requested = (settings.requested ?? {}) as Record<string, unknown>;
+  const requested = settings.requested;
   const rerankComparable = settings.reranking_available !== false;
   const match = PRESET_ORDER.find((preset) =>
     explicitPresetKeys.every((key) => {
       if (key === 'rag_reranking_enabled' && !rerankComparable) return true;
-      return sameValue(requested[REQUESTED_FIELD[key]], DESKTOP_PRESET_SETTINGS[preset][key]);
+      return sameValue(requested?.[REQUESTED_FIELD[key]], DESKTOP_PRESET_SETTINGS[preset][key]);
     }),
   );
   return match !== undefined ? { kind: 'preset', preset: match } : { kind: 'custom' };
@@ -142,7 +149,7 @@ export function presetFromBackend(settings: Record<string, unknown>): DesktopPre
  * preset's reranking, answer length or temperature, so the UI must not claim
  * it is. False when the backend does not report explicit_keys.
  */
-export function presetIsNResultsOnly(settings: Record<string, unknown>): boolean {
+export function presetIsNResultsOnly(settings: DesktopSettingsBody): boolean {
   const explicitKeys = settings.explicit_keys;
   if (!Array.isArray(explicitKeys)) return false;
   const explicitPresetKeys = DESKTOP_PRESET_KEYS.filter((key) => explicitKeys.includes(key));

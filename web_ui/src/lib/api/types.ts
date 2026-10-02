@@ -194,12 +194,43 @@ export interface SettingsUpdate {
   [key: string]: unknown;
 }
 
+/**
+ * settings-wiring-honesty: the explicitly set preset values (null when not
+ * set), per contracts/api.openapi.yaml SettingsResponse.requested.
+ */
+export interface SettingsRequestedValues {
+  n_results?: number | null;
+  reranking_enabled?: boolean | null;
+  max_tokens?: number | null;
+  temperature?: number | null;
+}
+
+/** settings-wiring-honesty: the values the next desktop query uses (SettingsResponse.effective). */
+export interface SettingsEffectiveValues {
+  n_results?: number;
+  reranking_enabled?: boolean;
+  max_tokens?: number;
+  temperature?: number;
+}
+
 export interface SettingsResponse {
   chunk_size: number;
   chunk_overlap: number;
   n_results: number;
   embedding_model: string;
   llm_backend?: string;
+  // settings-wiring-honesty: OPTIONAL desktop-backend properties (the Python
+  // backend and older desktop builds omit them), matching the OpenAPI schema.
+  /** rag_* keys a client explicitly set. */
+  explicit_keys?: string[];
+  /** Explicitly set preset values, null when not set. */
+  requested?: SettingsRequestedValues;
+  /** The values the next query uses. */
+  effective?: SettingsEffectiveValues;
+  /** Whether a reranker can run on this installation. */
+  reranking_available?: boolean;
+  /** Stored rag_* keys no desktop query or ingest reads. */
+  not_applied?: string[];
   [key: string]: unknown;
 }
 
