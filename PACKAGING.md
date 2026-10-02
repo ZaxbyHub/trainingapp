@@ -161,6 +161,9 @@ root.
 >   `X-Frame-Options: DENY` on **every other** response, errors included, so
 >   course content can never frame a same-origin page that runs under a
 >   weaker policy than its own (final-critic FC6);
+> - send no `frame-src` / `child-src` / restrictive `default-src` on the app
+>   pages: the app installs its own runtime `frame-src <player origin>`
+>   (ADR-0012 threat model item 6), and a host policy would intersect with it;
 > - answer the player origin from a **static-only** host: course JS can
 >   navigate its own frame or the app's boot frame to any same-origin path (a
 >   GET request the course worker never sees), so no API routes, proxies or

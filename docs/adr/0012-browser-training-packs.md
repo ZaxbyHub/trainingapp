@@ -309,7 +309,10 @@ server:
 - serves `/training-boot.html` with the boot page header CSP, whose `frame-ancestors` is the app
   origin only, and no `X-Frame-Options`;
 - sends `Content-Security-Policy: frame-ancestors 'none'` plus `X-Frame-Options: DENY` on every
-  other response, error responses included.
+  other response, error responses included;
+- sends no `frame-src`, `child-src` or restrictive `default-src` on the APP pages. The app adds its
+  own runtime `frame-src <player origin>` (threat model item 6), and a host policy would intersect
+  with it and could block the player frames.
 
 Compliant hosts: `vite preview`, `serve-offline.mjs` and `start.ps1`, and `vite dev` with the
 dev-only residual above. The vite middleware and `serve-offline.mjs` are pinned behaviorally by
