@@ -18,6 +18,8 @@
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test --config playwright.config.ts",
     "test:visual": "npm run build && playwright test --config playwright.visual.config.ts",
+    "test:visual:a11y": "npm run build && playwright test --config playwright.visual.config.ts lumen-axe lumen-tooltip-overflow",
+    "test:visual:a11y:ci": "playwright test --config playwright.visual.config.ts lumen-axe lumen-tooltip-overflow",
     "validate-build:no-llm": "node scripts/validate-build.mjs --no-llm"
   },
   "dependencies": {

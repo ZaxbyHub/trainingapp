@@ -7,9 +7,13 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * Opt-in and NOT part of `npm run test:e2e`: the default config
  * (playwright.config.ts) ignores e2e/visual/. Baselines are rendered by
- * Windows chromium, so they are stored per-platform (`-win32` suffix, see
- * snapshotPathTemplate) and CI (ubuntu) never runs this config until Linux
- * baselines are generated deliberately.
+ * Windows chromium, so they are stored per-platform under
+ * `e2e/visual/__screenshots__/win32/` (see snapshotPathTemplate). CI (ubuntu) runs
+ * only the axe + tooltip-overflow specs from this config (`npm run test:visual:a11y:ci`
+ * in the required web-ui-e2e job) and never the pixel spec (lumen-baseline) until
+ * Linux baselines are generated deliberately. No updateSnapshots is set, so on another
+ * platform the default 'missing' mode fails and writes untracked PNGs under
+ * __screenshots__/<platform>/: delete them, never commit them. Runbook: e2e/visual/README.md.
  *
  * Run (builds first, so dist/ is never stale or foreign):
  *   npm run test:visual

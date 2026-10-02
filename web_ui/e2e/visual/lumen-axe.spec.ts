@@ -1,7 +1,8 @@
 /**
  * lumen-axe.spec.ts — Lumen phase 0 accessibility pass: axe-core (WCAG 2.0/2.1/2.2
  * A + AA tags) over every browser-mode surface, light + dark, at 1440 and 500.
- * Run through playwright.visual.config.ts (opt-in).
+ * Run through playwright.visual.config.ts; CI runs it in the required web-ui e2e
+ * job via `npm run test:visual:a11y:ci` (see e2e/visual/README.md).
  *
  * Fails on any serious/critical violation NODE (rule id + selector) that is not
  * a named known-baseline entry. KNOWN_BASELINE records PRE-EXISTING master

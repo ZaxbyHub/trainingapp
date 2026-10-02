@@ -19,6 +19,8 @@
  *   5. (Issue #37 P4) Sanity-check that known Vite asset chunks exist under
  *      dist/assets/ (pdf worker, fonts). Catches a broken Rollup config that
  *      silently dropped a chunk.
+ *   6. (Lumen) No dist/assets/*.js contains the dev-only gallery marker
+ *      (src/ui/gallery/Gallery.tsx), so the gallery never ships.
  *
  * Group handling (manifest v2 `group` field):
  *   - `core`    — always enforced (ORT runtime; embedding + reranker now have
@@ -271,6 +273,23 @@ if (AIRGAP_CHECK) {
   } catch (e) {
     fail(`airgap scan failed: ${e.message}`);
   }
+}
+
+// 6. (Lumen) The dev-only component gallery must never ship. Its chunk carries
+//    GALLERY_MARKER (src/ui/gallery/Gallery.tsx); the DEV gate in main should have
+//    dropped it from the production bundle, so assert that at the artifact level.
+const GALLERY_MARKER = 'LUMEN-GALLERY-DEV-ONLY';
+try {
+  const assetsDir = join(DIST, 'assets');
+  if (existsSync(assetsDir)) {
+    for (const chunk of readdirSync(assetsDir).filter((e) => e.endsWith('.js'))) {
+      if (readFileSync(join(assetsDir, chunk), 'utf8').includes(GALLERY_MARKER)) {
+        fail(`dev-only gallery leaked into production: ${chunk} contains ${GALLERY_MARKER}. Check the import.meta.env.DEV gate in src/main.tsx.`);
+      }
+    }
+  }
+} catch (e) {
+  fail(`gallery marker scan failed: ${e.message}`);
 }
 
 if (errors.length > 0) {

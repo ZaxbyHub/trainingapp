@@ -143,7 +143,7 @@ All blocking states use `Dialog` + `Banner`; the missing-model state offers "Use
 
 ## 6. Implementation plan (phased; each phase ships independently)
 
-0. **Baseline** — Playwright `toHaveScreenshot` baselines of every surface in light + dark at 1440, 1024, 768, 500 widths (today there are none), plus an axe pass (`@axe-core/playwright`, MPL-2.0, devDependency only), so every later phase shows its visual diff explicitly.
+0. **Baseline** (re-baselining runbook: `web_ui/e2e/visual/README.md`) — Playwright `toHaveScreenshot` baselines of every surface in light + dark at 1440, 1024, 768, 500 widths (today there are none), plus an axe pass (`@axe-core/playwright`, MPL-2.0, devDependency only), so every later phase shows its visual diff explicitly.
 1. **Foundations (additive)** — add primitive + semantic tokens NEXT TO the existing `--color-*`/`--radius-*` tokens (old values untouched, no consumers changed ⇒ zero visual change is actually true here); global base styles scoped to new classes only; a token contrast test covering text pairs (4.5:1) AND UI/state pairs (3:1) in both themes, plus forced-colors rules.
 2. **Primitives** — `web_ui/src/ui/*` with role/label unit tests and a dev-only gallery route.
 3. **Shell & navigation** — AppShell, sidebar rework, PageHeader everywhere, one product name, favicon/theme-color.
@@ -155,5 +155,5 @@ All blocking states use `Dialog` + `Banner`; the missing-model state offers "Use
 
 Test budget: existing tests that assert inline style strings (`ToastProvider.test.tsx:117,129`, `LoadingSkeleton.test.tsx:61-109`, `SidebarConversationItem.test.tsx:78-79`, `ChatInput.test.tsx:270`, `SettingsMetrics.test.tsx:61`) are rewritten to role/state assertions in the phase that migrates their component; label changes (e.g. "Browser-local", "API Server") update `SettingsPage.test.tsx` queries in phase 4. New acceptance checks in traces T1–T3 assert roles and labels only.
 
-## 7. Open decision for the user
-- **Accent hue.** Iris (#4a55f0 / #7a8fff) is in common indigo territory; the alternative is keeping today's Google-style blue (#1a73e8 family) re-tuned for AA. Both pass contrast; this is a brand choice.
+## 7. Decisions
+- **Accent hue.** Resolved. Decided 2026-10-01: Iris (#4a55f0 / #7a8fff). The alternative (keeping today's Google-style blue, #1a73e8 family, re-tuned for AA) was not taken; both passed contrast, so this was a brand choice.

@@ -185,7 +185,7 @@ describe('lumen token contrast (WCAG 2.x relative luminance)', () => {
           expect(contrast(theme, '--focus-ring', bg)).toBeGreaterThanOrEqual(3);
         }
       });
-      check(theme, '--border-control on --bg-sunken-adjacent hover/selected >= 3', () => {
+      check(theme, '--border-control on --bg-selected / --bg-hover >= 3', () => {
         for (const bg of ['--bg-selected', '--bg-hover']) {
           expect(contrast(theme, '--border-control', bg)).toBeGreaterThanOrEqual(3);
         }

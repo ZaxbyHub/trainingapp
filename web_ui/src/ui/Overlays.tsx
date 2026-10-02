@@ -11,8 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { mergeIds } from './cx';
-import { cx } from './cx';
+import { cx, mergeIds } from './cx';
 import { computeTooltipShift } from './tooltip-position';
 
 const FOCUSABLE =
@@ -114,14 +113,69 @@ export function Dialog({ open, onClose, title, children, footer, alert, classNam
 export interface TooltipProps {
   content: ReactNode;
   /** A single focusable element; it receives aria-describedby. */
-  children: ReactElement<{ 'aria-describedby'?: string; 'aria-label'?: string }>;
+  children: ReactElement<{ 'aria-describedby'?: string; 'aria-label'?: string; 'aria-labelledby'?: string }>;
 }
 
-/** Shows on hover and keyboard focus; Escape dismisses. */
+/**
+ * Shows on hover and keyboard focus; Escape dismisses. Hover/focus-only is by design:
+ * the tooltip supplements the trigger's accessible name (WAI-ARIA tooltip pattern) and
+ * must never be the only carrier of essential information. A tooltip on a natively
+ * disabled control is hover-only (it cannot take focus), so the reason it is disabled
+ * must also be stated elsewhere; prefer Button's aria-disabled, which stays focusable.
+ */
 export function Tooltip({ content, children }: TooltipProps) {
   const id = useId();
   const [shown, setShown] = useState(false);
+  const [labelledDuplicate, setLabelledDuplicate] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
   const tipRef = useRef<HTMLSpanElement>(null);
+  const labelledBy = children.props['aria-labelledby'];
+  // A trigger named via aria-labelledby: resolve the referenced elements' text from the DOM.
+  useLayoutEffect(() => {
+    let dup = false;
+    if (typeof content === 'string' && labelledBy) {
+      const text = labelledBy
+        .split(/\s+/)
+        .map((ref) => document.getElementById(ref)?.textContent ?? '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      dup = text === content.trim();
+    }
+    setLabelledDuplicate(dup);
+  });
+  // While shown, dismiss when the trigger goes away without a blur/mouseleave event:
+  // pointer-down or focus landing outside, or the trigger becoming disabled/disconnected.
+  useEffect(() => {
+    if (!shown) return;
+    const wrap = wrapRef.current;
+    const outside = (e: Event) => {
+      if (wrap && e.target instanceof Node && !wrap.contains(e.target)) setShown(false);
+    };
+    const findTrigger = () => (wrap ? Array.from(wrap.children).find((el) => el !== tipRef.current) : undefined);
+    // A trigger that is ALREADY disabled when shown keeps its tooltip (the "why is this
+    // disabled" pattern); only a transition to disabled while shown dismisses it.
+    let wasDisabled = findTrigger()?.matches(':disabled') ?? false;
+    const triggerGone = () => {
+      // The trigger is the first child that is not the tooltip itself (once the trigger stops
+      // rendering, the tooltip span would otherwise be mistaken for it).
+      const trigger = findTrigger();
+      if (!trigger || !trigger.isConnected) return setShown(false);
+      const disabled = trigger.matches(':disabled');
+      if (disabled && !wasDisabled) setShown(false);
+      wasDisabled = disabled;
+    };
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('focusin', outside, true);
+    const observer = new MutationObserver(triggerGone);
+    if (wrap) observer.observe(wrap, { attributes: true, attributeFilter: ['disabled'], subtree: true, childList: true });
+    triggerGone();
+    return () => {
+      document.removeEventListener('pointerdown', outside, true);
+      document.removeEventListener('focusin', outside, true);
+      observer.disconnect();
+    };
+  }, [shown]);
   // Keep the tooltip inside the viewport: measure unshifted, then apply the correction.
   useLayoutEffect(() => {
     const tip = tipRef.current;
@@ -132,9 +186,12 @@ export function Tooltip({ content, children }: TooltipProps) {
   }, [shown, content]);
   // When the tooltip text just repeats the trigger's accessible name, do not also
   // expose it as the description (screen readers would announce it twice).
-  const duplicatesName = typeof content === 'string' && children.props['aria-label'] === content;
+  const duplicatesName = labelledBy
+    ? labelledDuplicate // aria-labelledby takes precedence over aria-label in the accessible name
+    : typeof content === 'string' && children.props['aria-label'] === content;
   return (
     <span
+      ref={wrapRef}
       className="ui-tooltip-wrap"
       onMouseEnter={() => setShown(true)}
       onMouseLeave={() => setShown(false)}

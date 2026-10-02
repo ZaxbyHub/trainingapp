@@ -222,6 +222,12 @@ jobs:
       - name: Run pack-gate e2e
         run: npm run test:e2e
 
+      # Lumen a11y subset (axe + tooltip overflow) of the visual harness. Reuses the
+      # dist/ built by the step above; the pixel-baseline spec is Windows-only and
+      # is deliberately not run here (see web_ui/e2e/visual/README.md).
+      - name: Run Lumen a11y visual subset
+        run: npm run test:visual:a11y:ci
+
       # Traces (trace: retain-on-failure) land in test-results/ — the config
       # uses the console-only list reporter, so no playwright-report/ dir is
       # ever written.

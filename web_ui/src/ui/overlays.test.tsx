@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { Button, Dialog, Tabs, Tooltip, type TabItem } from './index';
@@ -158,6 +158,157 @@ describe('Tooltip', () => {
     await userEvent.tab();
     expect(screen.getByRole('tooltip')).toHaveTextContent('Show password'); // still visible
     expect(btn).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('does not expose the tooltip as a description when it repeats the text of the aria-labelledby name', async () => {
+    render(
+      <>
+        <span id="lbl-a">Copy</span> <span id="lbl-b">link</span>
+        <Tooltip content="Copy link">
+          <Button aria-labelledby="lbl-a lbl-b">i</Button>
+        </Tooltip>
+      </>
+    );
+    const btn = screen.getByRole('button', { name: 'Copy link' });
+    await userEvent.tab();
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Copy link');
+    expect(btn).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('still describes an aria-labelledby trigger when the text differs from its name', async () => {
+    render(
+      <>
+        <span id="lbl">Copy</span>
+        <Tooltip content="Copies the share link">
+          <Button aria-labelledby="lbl">i</Button>
+        </Tooltip>
+      </>
+    );
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Copy' })).toHaveAccessibleDescription('Copies the share link');
+  });
+
+  it('dismisses on a pointer-down outside the trigger (hover-shown, no mouseleave)', async () => {
+    render(
+      <>
+        <Tooltip content="Hint">
+          <Button>Hover me</Button>
+        </Tooltip>
+        <p>elsewhere</p>
+      </>
+    );
+    await userEvent.hover(screen.getByRole('button', { name: 'Hover me' }));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByText('elsewhere'));
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  it('keeps the tooltip on a pointer-down inside the trigger', async () => {
+    render(
+      <Tooltip content="Hint">
+        <Button>Hover me</Button>
+      </Tooltip>
+    );
+    const btn = screen.getByRole('button', { name: 'Hover me' });
+    await userEvent.hover(btn);
+    fireEvent.pointerDown(btn);
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+  });
+
+  it('dismisses when focus moves elsewhere without a blur on the trigger', async () => {
+    render(
+      <>
+        <Tooltip content="Hint">
+          <Button>Hover me</Button>
+        </Tooltip>
+        <input aria-label="other" />
+      </>
+    );
+    await userEvent.hover(screen.getByRole('button', { name: 'Hover me' }));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    act(() => screen.getByLabelText('other').focus());
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+  });
+
+  it('shows the tooltip for a trigger that is already disabled (the "why is this disabled" pattern)', () => {
+    render(
+      <Tooltip content="Add a document first">
+        <Button disabled>Ask</Button>
+      </Tooltip>
+    );
+    const btn = screen.getByRole('button', { name: 'Ask' });
+    // Disabled buttons receive no pointer events; the wrapper span does.
+    fireEvent.mouseEnter(btn.parentElement as HTMLElement);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Add a document first');
+    expect(btn).toHaveAccessibleDescription('Add a document first');
+  });
+
+  it('dismisses when the trigger stops rendering (the tooltip span must not be mistaken for it)', async () => {
+    function Maybe({ show }: { show: boolean }) {
+      return show ? <Button>Gone soon</Button> : null;
+    }
+    function Harness() {
+      const [show, setShow] = useState(true);
+      return (
+        <>
+          <Tooltip content="Hint">
+            {/* Tooltip clones its child: Maybe forwards nothing, which is fine for this case. */}
+            <Maybe show={show} />
+          </Tooltip>
+          <button type="button" onClick={() => setShow(false)}>
+            Remove
+          </button>
+        </>
+      );
+    }
+    render(<Harness />);
+    await userEvent.hover(screen.getByRole('button', { name: 'Gone soon' }));
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(screen.queryByRole('button', { name: 'Gone soon' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
+  });
+
+  it('aria-labelledby takes precedence over aria-label for the duplicate decision', async () => {
+    render(
+      <>
+        <span id="lbl">Copy link</span>
+        <Tooltip content="Copy">
+          <Button aria-labelledby="lbl" aria-label="Copy">
+            i
+          </Button>
+        </Tooltip>
+      </>
+    );
+    const btn = screen.getByRole('button', { name: 'Copy link' });
+    await userEvent.tab();
+    // The name is "Copy link" (labelledby wins), so "Copy" is NOT a duplicate and still describes.
+    expect(btn).toHaveAccessibleDescription('Copy');
+  });
+
+  it('dismisses when the focused trigger becomes disabled (browsers fire no blur)', async () => {
+    function Harness() {
+      const [disabled, setDisabled] = useState(false);
+      return (
+        <>
+          <Tooltip content="Hint">
+            <Button disabled={disabled}>Save</Button>
+          </Tooltip>
+          <button type="button" onClick={() => setDisabled(true)}>
+            Disable
+          </button>
+        </>
+      );
+    }
+    render(<Harness />);
+    const save = screen.getByRole('button', { name: 'Save' });
+    await userEvent.tab();
+    expect(save).toHaveFocus();
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Programmatic click keeps focus on Save (a user click would blur it and mask the case).
+    fireEvent.click(screen.getByRole('button', { name: 'Disable' }));
+    expect(save).toBeDisabled();
+    await waitFor(() => expect(screen.queryByRole('tooltip')).not.toBeInTheDocument());
   });
 
   it('still describes the trigger when the text differs from its aria-label', async () => {
