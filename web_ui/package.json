@@ -17,6 +17,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test --config playwright.config.ts",
+    "test:visual": "npm run build && playwright test --config playwright.visual.config.ts",
+    "test:visual:a11y": "npm run build && playwright test --config playwright.visual.config.ts lumen-axe lumen-tooltip-overflow",
+    "test:visual:a11y:ci": "playwright test --config playwright.visual.config.ts lumen-axe lumen-tooltip-overflow",
     "validate-build:no-llm": "node scripts/validate-build.mjs --no-llm"
   },
   "dependencies": {
@@ -37,7 +40,9 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@mlc-ai/web-llm": "^0.2.83",
+    "@playwright/test": "^1.63.0",
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.0.0",
@@ -49,7 +54,6 @@
     "jsdom": "^25.0.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
-    "vitest": "^3.0.0",
-    "@playwright/test": "^1.63.0"
+    "vitest": "^3.0.0"
   }
 }

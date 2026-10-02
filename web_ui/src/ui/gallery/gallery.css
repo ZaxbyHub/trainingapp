@@ -1,0 +1,7 @@
+/* Dev-only gallery layout. Tokens only (see ui-token-hygiene.test.ts). */
+.gallery { max-width: var(--w-wide); margin: 0 auto; padding: var(--space-4) var(--space-6) var(--space-16); background: var(--bg-canvas); color: var(--text-primary); font-family: inherit; min-height: 100%; }
+.gallery__row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.gallery__stack { display: grid; gap: var(--space-3); margin-top: var(--space-4); max-width: var(--w-form); }
+.gallery__grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-4); margin-bottom: var(--space-4); }
+.gallery__icon { display: inline-flex; padding: var(--space-2); border: 1px solid var(--border-subtle); border-radius: var(--r-control); color: var(--text-primary); }
+.gallery__icon:focus-visible { outline: var(--focus-outline-width) solid var(--focus-ring); outline-offset: var(--focus-outline-offset); }

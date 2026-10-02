@@ -17,7 +17,8 @@
     "src/**/__mocks__/**/*",
     "src/test/**/*",
     "e2e/**/*.ts",
-    "playwright.config.ts"
+    "playwright.config.ts",
+    "playwright.visual.config.ts"
   ],
   "exclude": []
 }

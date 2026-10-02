@@ -42,7 +42,7 @@ Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (f
 ### 2. Web UI (`web-ui.yml`) — path-scoped (`webui` bucket: `web_ui/**`, `contracts/**`, the workflow file)
 
 **Triggers:** push to main/master, all PRs (unfiltered; scoping at job level).
-**Jobs:** `web-ui` (typecheck app+tests, build, vitest, prepare-models/validate-build packaging checks) and `web-ui e2e` (browser-mode pack-gate Playwright spec, C9/ADR-0009). Both required.
+**Jobs:** `web-ui` (typecheck app+tests, build, vitest, prepare-models/validate-build packaging checks) and `web-ui e2e` (browser-mode pack-gate Playwright spec, C9/ADR-0009, then the Lumen a11y visual subset `npm run test:visual:a11y:ci` — axe + tooltip-overflow only; the screenshot spec is a manual Windows gate, see `web_ui/e2e/visual/README.md`). Both required.
 
 ### 3. Conformance (`conformance.yml`) — path-scoped (`conformance`, `pack` buckets) — required
 
