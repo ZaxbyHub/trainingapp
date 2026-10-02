@@ -219,12 +219,23 @@ export function getBrowserUpdatesController(): BrowserUpdatesController {
       fetchFeed: fetchFeedText,
       downloadArtifact: downloadArtifactBytes,
       trustedKeys: updateFeedTrustedKeys,
+      // A narrow adapter, never the raw localStorage handle: it can only read
+      // and write the registered PACK_UPDATES_STATE_KEY, so every storage
+      // write in this file names a persisted-keys identifier (the hardened
+      // persisted-keys guardrail rejects a bare storage reference).
       storage: () => {
         try {
-          return typeof localStorage === 'undefined' ? null : localStorage;
+          if (typeof localStorage === 'undefined') return null;
         } catch {
           return null;
         }
+        return {
+          getItem: (key: string) => (key === PACK_UPDATES_STATE_KEY ? localStorage.getItem(PACK_UPDATES_STATE_KEY) : null),
+          setItem: (key: string, value: string) => {
+            if (key !== PACK_UPDATES_STATE_KEY) throw new Error(`unregistered storage key: ${key}`);
+            localStorage.setItem(PACK_UPDATES_STATE_KEY, value);
+          },
+        };
       },
       airgap: IS_AIRGAP,
       now: () => new Date(),
