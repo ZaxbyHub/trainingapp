@@ -5,9 +5,9 @@
  */
 
 /**
- * The section that hosts the external-model (local server / cloud,
- * OpenAI-compatible) controls. Whichever section hosts those controls carries
- * this id; today that is the always-rendered Inference Mode section, whose
- * "Provider server (OpenAI-compatible)" option is the external-model path.
+ * The section that hosts the external-model (OpenAI- or Anthropic-compatible
+ * endpoint: local server, LAN or cloud) controls. Whichever section hosts
+ * those controls carries this id; today that is the always-rendered External
+ * model section (components/ExternalModelSection.tsx) in both apps.
  */
 export const MODEL_CONNECTION_SECTION_ID = 'model-connection';

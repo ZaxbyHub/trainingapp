@@ -7,19 +7,46 @@
  * renders it as a one-liner and never grows overlay logic of its own.
  *
  * A11y parity with ModelBlockedOverlay (PR-review F8): remembers and restores
- * the previously focused element, traps Tab within the dialog, and closes on
- * Escape. Documents/Settings remain reachable through the nav rail after
- * close; this overlay blocks only the chat send path, matching AC5's
- * "informative state instead of a silently failing /ask".
+ * the previously focused element and traps Tab within the dialog. It does NOT
+ * close on Escape: it is a blocking state with no dismiss path (no onClose),
+ * so Escape is swallowed (preventDefault) and the overlay stays until the
+ * backend reports staged models or an external engine. Documents/Settings
+ * remain reachable through the nav rail and the overlay's Settings actions;
+ * this overlay blocks only the chat send path, matching AC5's "informative
+ * state instead of a silently failing /ask".
  */
 import React, { useEffect, useRef } from 'react';
+import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
 
 export interface DesktopModelBlockedOverlayProps {
   open: boolean;
+  /**
+   * Open Settings; with a section id, Settings scrolls to and focuses it
+   * (the same section-aware seam ModelBlockedOverlay uses). When provided,
+   * the overlay offers "Open Settings" and "Use a local server or cloud
+   * model" (universal-provider-settings-overhaul: parity with the browser
+   * overlay — an external model needs no staged GGUF).
+   */
+  onOpenSettings?: (section?: string) => void;
 }
 
-export function DesktopModelBlockedOverlay({ open }: DesktopModelBlockedOverlayProps) {
+const FOCUSABLE_SELECTOR =
+  'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+const secondaryButtonStyle: React.CSSProperties = {
+  backgroundColor: 'transparent',
+  color: 'var(--color-text-primary)',
+  border: '1px solid var(--color-border, #ddd)',
+  borderRadius: 'var(--radius-sm)',
+  padding: 'var(--spacing-xs) var(--spacing-sm)',
+  fontFamily: 'var(--font-family)',
+  fontSize: 'var(--font-size-caption)',
+  cursor: 'pointer',
+};
+
+export function DesktopModelBlockedOverlay({ open, onOpenSettings }: DesktopModelBlockedOverlayProps) {
   const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
@@ -35,15 +62,33 @@ export function DesktopModelBlockedOverlay({ open }: DesktopModelBlockedOverlayP
     if (e.key === 'Escape') {
       e.preventDefault();
     }
-    // The dialog has a single focusable element (the heading); keep Tab from
-    // escaping into the blocked page beneath.
-    if (e.key === 'Tab') e.preventDefault();
+    if (e.key !== 'Tab') return;
+    // Keep Tab inside the dialog: cycle through its actions (the heading is
+    // focusable only programmatically). With no actions, Tab stays put.
+    const dialog = dialogRef.current;
+    const focusables = dialog === null ? [] : Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    if (focusables.length === 0) {
+      e.preventDefault();
+      return;
+    }
+    const first = focusables[0] as HTMLElement;
+    const last = focusables[focusables.length - 1] as HTMLElement;
+    const active = document.activeElement;
+    const inside = active !== null && focusables.includes(active as HTMLElement);
+    if (e.shiftKey && (active === first || !inside)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && (active === last || !inside)) {
+      e.preventDefault();
+      first.focus();
+    }
   };
 
   if (!open) return null;
 
   return (
     <div
+      ref={dialogRef}
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="desktop-model-gate-title"
@@ -87,7 +132,27 @@ export function DesktopModelBlockedOverlay({ open }: DesktopModelBlockedOverlayP
           model directory, so asking questions is unavailable right now. Documents and
           Settings remain available. Re-run the app installer or add the model files to
           the models directory, then restart the app.
+          {onOpenSettings !== undefined && ' Or connect an external model (a local server or a cloud provider) in Settings.'}
         </p>
+        {onOpenSettings !== undefined && (
+          <div style={{ display: 'flex', gap: 'var(--spacing-sm)', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => onOpenSettings()} style={secondaryButtonStyle}>
+              Open Settings
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}
+              style={{
+                ...secondaryButtonStyle,
+                backgroundColor: 'var(--color-primary)',
+                color: 'var(--color-text-on-primary)',
+                border: 'none',
+              }}
+            >
+              Use a local server or cloud model
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

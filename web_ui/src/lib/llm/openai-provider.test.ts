@@ -1,27 +1,25 @@
 /**
- * Permanent regression tests for the OpenAI-compatible provider (trace
- * external-llm-provider-settings, AC1/AC2 + Round-3 plan tests).
+ * Permanent regression tests for the OpenAI-compatible generator (first
+ * shipped by PR #138; widened by universal-provider-settings-overhaul).
  *
  * Covers: URL normalization edges (bare, /v1, /v1/, full-endpoint paste,
- * /V1 case), the standalone verbatim chat() wire contract, probe behavior
- * against an OpenAI-shaped server (never /auth/status) and unreachable
- * targets, config persistence, and cancellation.
+ * /V1 case), the shared endpoint-policy gate before any request (the PR #138
+ * loopback-only guard is retired), the standalone verbatim chat() wire
+ * contract, model listing (never /auth/status), hostile SSE bodies, the
+ * first-byte / body / error-body watchdogs, and cancellation.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, afterEach, vi } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 
 import {
   FIRST_BYTE_TIMEOUT_MS,
   OpenAICompatChatService,
-  assertProviderUrlAllowed,
-  isProviderConfigured,
-  loadProviderConfig,
+  listOpenAIModels,
   normalizeProviderBaseUrl,
   parseOpenAISseLine,
-  probeOpenAICompat,
-  saveProviderConfig,
 } from './openai-provider';
+import { ProviderError } from './provider-error';
 
 describe('normalizeProviderBaseUrl', () => {
   test('bare host gains /v1', () => {
@@ -62,38 +60,53 @@ describe('normalizeProviderBaseUrl', () => {
   });
 });
 
-describe('assertProviderUrlAllowed', () => {
-  test('the IPv4 loopback passes', () => {
-    expect(() => assertProviderUrlAllowed('http://127.0.0.1:8080/v1')).not.toThrow();
+describe('shared endpoint policy gate (replaces the PR #138 loopback-only guard)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
-  test('IPv6 loopback [::1] is REJECTED with an actionable message (PRR-002)', () => {
-    // Chromium cannot parse http://[::1]:* as a CSP source-list entry (it is
-    // silently dropped from connect-src — live-verified in the PR #138
-    // review), so a [::1] provider would pass a naive host check and then be
-    // network-blocked at runtime in the packaged build. The guard must reject
-    // it up front and name the working host form.
-    expect(() => assertProviderUrlAllowed('http://[::1]:8080/v1')).toThrow(
-      /http:\/\/127\.0\.0\.1:<port>/
+  const refusedBeforeFetch = async (baseUrl: string, rule: RegExp) => {
+    const fetchSpy = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetchSpy);
+    const svc = new OpenAICompatChatService({ baseUrl, model: 'm', apiKey: 'sk-gate-key-123456' });
+    const err = await svc.generate([{ role: 'user', content: 'hi' }]).next().then(
+      () => null,
+      (e: unknown) => e,
     );
-    expect(() => assertProviderUrlAllowed('http://[::1]:8080/v1')).toThrow(/loopback/i);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).message).toMatch(rule);
+    expect((err as ProviderError).message).not.toContain('sk-gate-key-123456');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  };
+  test('cloud metadata, link-local and mapped forms are refused before any request', async () => {
+    await refusedBeforeFetch('http://169.254.169.254/v1', /metadata/);
+    await refusedBeforeFetch('http://[::ffff:a9fe:a9fe]/v1', /metadata/);
+    await refusedBeforeFetch('http://[fe80::a9fe:a9fe]/v1', /link-local/);
   });
-  test('non-loopback hosts are rejected (packaged CSP permits loopback only)', () => {
-    expect(() => assertProviderUrlAllowed('http://localhost:8080/v1')).toThrow(/loopback/i);
-    expect(() => assertProviderUrlAllowed('http://192.168.1.10:8080/v1')).toThrow(/loopback/i);
-    // https on a loopback host passes the host check but fails the http-only
-    // scheme guard (packaged CSP connect-src is http-only).
-    expect(() => assertProviderUrlAllowed('https://ai.example.com/v1')).toThrow();
-    expect(() => assertProviderUrlAllowed('https://127.0.0.1:8443/v1')).toThrow(/use http/);
+  test('dangerous schemes, userinfo and public plain http are refused before any request', async () => {
+    await refusedBeforeFetch('javascript:alert(1)', /scheme|invalid-url/);
+    await refusedBeforeFetch('file:///etc/passwd', /scheme/);
+    await refusedBeforeFetch('http://user:pw@127.0.0.1:8080', /userinfo/);
+    await refusedBeforeFetch('http://api.openai.com', /public-requires-https/);
   });
-  test('non-http schemes are rejected even on loopback hosts (CSP is http-only)', () => {
-    expect(() => assertProviderUrlAllowed('https://127.0.0.1:8443/v1')).toThrow(/http:\/\//);
-  });
-  test('dangerous schemes and metadata/IPv6 forms are blocked', () => {
-    expect(() => assertProviderUrlAllowed('javascript:alert(1)')).toThrow();
-    expect(() => assertProviderUrlAllowed('file:///etc/passwd')).toThrow();
-    expect(() => assertProviderUrlAllowed('http://169.254.169.254/v1')).toThrow();
-    expect(() => assertProviderUrlAllowed('http://[::ffff:a9fe:a9fe]/v1')).toThrow();
-    expect(() => assertProviderUrlAllowed('http://[fe80::a9fe:a9fe]/v1')).toThrow();
+  test('loopback, localhost, [::1], LAN and public https pass the gate (the request is attempted)', async () => {
+    for (const baseUrl of [
+      'http://127.0.0.1:8080',
+      'http://localhost:1234',
+      'http://[::1]:8080',
+      'http://192.168.1.10:8080/v1',
+      'https://api.openai.com',
+    ]) {
+      const fetchSpy = vi.fn(async () => {
+        throw new TypeError('offline (test stub)');
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+      const svc = new OpenAICompatChatService({ baseUrl, model: 'm' });
+      await expect(svc.generate([{ role: 'user', content: 'hi' }]).next()).rejects.toMatchObject({ kind: 'network' });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const init = (fetchSpy.mock.calls[0] as unknown[])[1] as RequestInit;
+      expect(init.redirect).toBe('error');
+      expect(init.credentials).toBe('omit');
+    }
   });
   test('the first-byte watchdog is 10 minutes (#133 desktop-stream parity, F-005)', () => {
     expect(FIRST_BYTE_TIMEOUT_MS).toBe(600_000);
@@ -252,14 +265,14 @@ describe('OpenAICompatChatService.chat (frozen C1 wire contract)', () => {
   });
 });
 
-describe('probeOpenAICompat (frozen C2 contract)', () => {
-  test('succeeds against /v1/models-only servers and never requests /auth/status', async () => {
+describe('listOpenAIModels (model picker)', () => {
+  test('lists /v1/models ids and never requests /auth/status', async () => {
     const hits: string[] = [];
     const server = http.createServer((req, res) => {
       hits.push(`${req.method} ${req.url}`);
       if ((req.url ?? '').startsWith('/v1/models')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ object: 'list', data: [] }));
+        res.end(JSON.stringify({ object: 'list', data: [{ id: 'a' }, { id: 'b' }] }));
         return;
       }
       res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -269,33 +282,29 @@ describe('probeOpenAICompat (frozen C2 contract)', () => {
       server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
     });
     try {
-      const result = await probeOpenAICompat(`http://127.0.0.1:${port}`);
-      expect(result.ok).toBe(true);
+      await expect(listOpenAIModels({ baseUrl: `http://127.0.0.1:${port}` })).resolves.toEqual(['a', 'b']);
       expect(hits.some((h) => h.includes('/auth/status'))).toBe(false);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
-  test('unreachable endpoints resolve ok:false with a non-empty actionable detail', async () => {
-    const result = await probeOpenAICompat('http://127.0.0.1:1');
-    expect(result.ok).toBe(false);
-    expect((result.detail ?? '').length).toBeGreaterThan(0);
+  test('unreachable endpoints reject with a classified network error', async () => {
+    await expect(listOpenAIModels({ baseUrl: 'http://127.0.0.1:1' })).rejects.toMatchObject({ kind: 'network' });
   });
 
-  test('sends the configured Bearer header so key-protected servers probe green', async () => {
+  test('sends the configured Bearer header so key-protected servers list models', async () => {
     let sawAuth: string | undefined;
     const server = http.createServer((req, res) => {
       sawAuth = req.headers.authorization;
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{}');
+      res.end('{"data":[]}');
     });
     const port = await new Promise<number>((resolve) => {
       server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
     });
     try {
-      const keyed = await probeOpenAICompat(`http://127.0.0.1:${port}`, { apiKey: 'probe-key' });
-      expect(keyed.ok).toBe(true);
+      await expect(listOpenAIModels({ baseUrl: `http://127.0.0.1:${port}`, apiKey: 'probe-key' })).resolves.toEqual([]);
       expect(sawAuth).toBe('Bearer probe-key');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -341,6 +350,42 @@ describe('F-003: hostile/degenerate SSE bodies fail loudly, never as silent succ
       await expect(svc.chat([{ role: 'user', content: 'hi' }])).rejects.toThrow(
         'kv cache overflow'
       );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test('F-010: a mid-stream error frame (and a non-stream JSON error) that echoes the key is scrubbed', async () => {
+    // Not `sk-` shaped: the generic sk- mask must not be what hides the key.
+    const key = 'Ztoken-FORTEST-0123456789abcdef';
+    let mode: 'sse' | 'sse-llama' | 'json' = 'sse';
+    const server = http.createServer((req, res) => {
+      if (mode === 'json') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: `invalid key ${key}` } }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"par"}}]}\n\n');
+      if (mode === 'sse') res.end(`data: ${JSON.stringify({ error: { message: `bad key ${key}` } })}\n\n`);
+      else res.end(`error: ${JSON.stringify({ message: `bad key ${key}` })}\n\n`);
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
+    });
+    try {
+      for (const m of ['sse', 'sse-llama', 'json'] as const) {
+        mode = m;
+        const svc = new OpenAICompatChatService({ baseUrl: `http://127.0.0.1:${port}`, model: 'm', apiKey: key });
+        const err = await svc.chat([{ role: 'user', content: 'hi' }]).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err, m).toBeInstanceOf(ProviderError);
+        expect((err as ProviderError).kind, m).toBe('server');
+        expect((err as ProviderError).message, m).toContain('[redacted]');
+        expect((err as ProviderError).message, m).not.toContain('0123456789');
+      }
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
@@ -463,26 +508,6 @@ describe('F-003: hostile/degenerate SSE bodies fail loudly, never as silent succ
   });
 });
 
-describe('provider config persistence', () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  test('round-trips through the shared blob + separate key', () => {
-    saveProviderConfig({ baseUrl: 'http://127.0.0.1:8080', model: 'local-model', apiKey: 'sek' });
-    const cfg = loadProviderConfig();
-    expect(cfg.baseUrl).toBe('http://127.0.0.1:8080');
-    expect(cfg.model).toBe('local-model');
-    expect(cfg.apiKey).toBe('sek');
-    expect(isProviderConfigured(cfg)).toBe(true);
-    expect(isProviderConfigured({ baseUrl: '', model: 'x', apiKey: '' })).toBe(false);
-  });
-
-  test('unconfigured loads are empty and safe', () => {
-    const cfg = loadProviderConfig();
-    expect(cfg).toEqual({ baseUrl: '', model: '', apiKey: '' });
-  });
-});
 
 describe('watchdog bounded-fail tests (reviewer round 4, findings 1+3)', () => {
   test('a 5xx whose error body stalls fails bounded, not a hang', async () => {

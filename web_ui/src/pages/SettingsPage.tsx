@@ -1,7 +1,8 @@
 /**
- * Settings page — inference mode (desktop backend / external provider
- * connection), browser engine & model cache status, response quality,
- * appearance, storage management, and about info.
+ * Settings page — inference mode (desktop backend / browser-local), External
+ * model (OpenAI- or Anthropic-compatible endpoint), browser engine & model
+ * cache status, response quality, appearance, storage management, and about
+ * info.
  *
  * Issue #24 rebuild: the page was almost entirely useless — Clear Cache was a
  * no-op (deleted a nonexistent DB), the Model Selection dropdown was dead
@@ -40,18 +41,12 @@ import {
   presetIsNResultsOnly,
   type DesktopPresetState,
 } from '../lib/rag/rag-presets';
-import { clearUserSettings } from '../lib/storage/persisted-keys';
+import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
 import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
 // AC8 (settings-wiring-honesty): the single version source is
 // web_ui/package.json (desktop/package.json is kept in lockstep by test).
 import { version as APP_VERSION } from '../../package.json';
-import {
-  isProviderConfigured,
-  loadProviderConfig,
-  probeOpenAICompat,
-  saveProviderConfig,
-  type ProviderConfig,
-} from '../lib/llm/openai-provider';
+import { ExternalModelSection } from '../components/ExternalModelSection';
 import type { UpdateStatus } from '../types/desktop';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
@@ -486,18 +481,6 @@ const radioLabelStyle: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: 'var(--spacing-md)',
-  backgroundColor: 'var(--color-bubble-system)',
-  border: '1px solid var(--color-secondary)',
-  borderRadius: '6px',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-on-bubble-assistant)',
-  boxSizing: 'border-box',
-};
-
 const buttonRowStyle: React.CSSProperties = {
   display: 'flex',
   gap: 'var(--spacing-md)',
@@ -578,7 +561,7 @@ const aboutSectionStyle: React.CSSProperties = {
 
 /** The browser-stored user settings Clear Cache removes (persisted-keys.ts USER_SETTING_KEYS). */
 const CLEARED_SETTINGS_COPY =
-  'inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course';
+  'inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state and last-opened course';
 
 /**
  * Delay between the final Clear Cache status and the reload (PR #140 review
@@ -663,57 +646,6 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
   const reloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
-  // Provider connection state (trace external-llm-provider-settings): local
-  // draft seeded from the persisted config; blur-persists via the storage
-  // helpers in lib/llm/openai-provider.
-  const [providerDraft, setProviderDraft] = useState<ProviderConfig>(() => loadProviderConfig());
-  const [isTestingProvider, setIsTestingProvider] = useState(false);
-  const [providerProbe, setProviderProbe] = useState<'success' | 'error' | null>(null);
-  const [providerProbeDetail, setProviderProbeDetail] = useState<string | null>(null);
-  // Latest draft as a ref so an in-flight probe result can be validated against
-  // the CURRENT fields before it lands (review finding: a result computed for
-  // an edited-out URL must not be displayed as if it described the new one).
-  const providerDraftRef = useRef(providerDraft);
-  providerDraftRef.current = providerDraft;
-  const handleProviderFieldChange = useCallback((patch: Partial<ProviderConfig>) => {
-    // Any field edit invalidates a prior probe result — a stale Connected
-    // badge must never survive an edited URL (review finding).
-    setProviderProbe(null);
-    setProviderProbeDetail(null);
-    setProviderDraft((prev) => ({ ...prev, ...patch }));
-  }, []);
-  const handleProviderFieldBlur = useCallback(
-    (patch: Partial<ProviderConfig>) => {
-      setProviderDraft((prev) => {
-        const next = { ...prev, ...patch };
-        saveProviderConfig(next);
-        return next;
-      });
-    },
-    []
-  );
-  const handleTestProvider = useCallback(async () => {
-    const requestedBaseUrl = providerDraft.baseUrl;
-    setIsTestingProvider(true);
-    setProviderProbe(null);
-    setProviderProbeDetail(null);
-    // Send the configured key so key-protected servers (vLLM --api-key, LM
-    // Studio auth) exercise their real auth path instead of 401-ing as
-    // "cannot reach" (review finding).
-    const result = await probeOpenAICompat(providerDraft.baseUrl, {
-      apiKey: providerDraft.apiKey,
-    });
-    if (!isMountedRef.current) return;
-    if (providerDraftRef.current.baseUrl !== requestedBaseUrl) {
-      // The URL was edited while the probe was in flight — the result is
-      // about a server the user is no longer looking at.
-      setIsTestingProvider(false);
-      return;
-    }
-    setIsTestingProvider(false);
-    setProviderProbe(result.ok ? 'success' : 'error');
-    setProviderProbeDetail(result.ok ? null : (result.detail ?? 'Connection failed'));
-  }, [providerDraft.baseUrl, providerDraft.apiKey]);
 
   // Hardware capability + packaged-model readiness (Phase 3)
   const [capability, setCapability] = useState<EngineCapability | null>(null);
@@ -1082,12 +1014,16 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
       });
 
       // 6. ALWAYS: every registered browser-stored user setting (inference
-      //    mode blob incl. provider connection, theme, provider API key,
-      //    sidebar, last-opened course). Internal bookkeeping keys are kept.
+      //    mode blob, theme, external model connection and API key —
+      //    including the session-only key — sidebar, last-opened course).
+      //    Internal bookkeeping keys are kept. The session-only entries are
+      //    cleared after settingsCleared is set, so a sessionStorage failure
+      //    still reports an error AND still reloads.
       let settingsCleared = false;
       try {
         clearUserSettings();
         settingsCleared = true;
+        clearSessionSettings();
       } catch (err) {
         failed = true;
         console.error('Error clearing cache (saved settings):', err);
@@ -1125,9 +1061,6 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
     electronMode
       ? desktopPreset?.kind === 'preset' && desktopPreset.preset === preset
       : ragPreset === preset;
-  // The browser app's preset only feeds browser-local chat, which provider
-  // mode bypasses; the desktop app's preset is a backend setting (any mode).
-  const presetDisabled = mode === 'provider' && !electronMode;
   const rerankUnavailable = electronMode && desktopSettings?.reranking_available === false;
 
   // Format memory for display
@@ -1148,11 +1081,7 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
         {/* ================================================================== */}
         {/* 1. Inference Mode */}
         {/* ================================================================== */}
-        {/* settings-wiring-honesty (AC10): id={MODEL_CONNECTION_SECTION_ID}
-            marks the section hosting the external-model (OpenAI-compatible
-            provider) controls — the model-blocked overlay's destination. */}
         <section
-          id={MODEL_CONNECTION_SECTION_ID}
           style={sectionStyle}
           aria-labelledby="inference-mode-heading"
         >
@@ -1213,35 +1142,19 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                   </label>
                 )}
 
-                {/* Provider option (trace external-llm-provider-settings):
-                    direct chat against a user-configured OpenAI-compatible
-                    server. The card text must not contain "model", "base url",
-                    or "api key" (any case) — the provider section's labeled
-                    inputs below must stay the ONLY matches for those queries. */}
-                <label
-                  style={mode === 'provider' ? radioOptionSelectedStyle : radioOptionStyle}
-                >
-                  <input
-                    type="radio"
-                    name="inference-mode"
-                    value="provider"
-                    checked={mode === 'provider'}
-                    onChange={() => setMode('provider')}
-                    style={radioInputStyle}
-                    aria-describedby="provider-desc"
-                  />
-                  <div>
-                    <span style={radioLabelStyle}>Provider server (OpenAI-compatible)</span>
-                    <p id="provider-desc" style={descriptionStyle}>
-                      Send chat directly to an OpenAI-compatible server on this machine (loopback
-                      only in this release). Configure the connection below.
-                    </p>
-                  </div>
-                </label>
               </div>
             </fieldset>
           </div>
         </section>
+
+        {/* ================================================================== */}
+        {/* 1b. External model (universal-provider-settings-overhaul): one     */}
+        {/* region, same controls in the browser app and the desktop app.      */}
+        {/* id={MODEL_CONNECTION_SECTION_ID} marks the section that hosts the  */}
+        {/* external-model controls — the model-blocked overlay's destination */}
+        {/* (settings-wiring-honesty AC10).                                    */}
+        {/* ================================================================== */}
+        <ExternalModelSection id={MODEL_CONNECTION_SECTION_ID} />
 
         {/* ================================================================== */}
         {/* 2a. Desktop backend status (Electron mode only — issue #67).       */}
@@ -1330,112 +1243,6 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
         {/* 2a-2. First-run setup (E2, issue #85): status + Re-run setup.      */}
         {/* ================================================================== */}
         {electronMode && <FirstRunSetupCard />}
-
-        {/* ================================================================== */}
-        {/* 2c. Provider connection (provider mode — OpenAI-compatible server) */}
-        {/* ================================================================== */}
-        {mode === 'provider' && (
-          <section style={sectionStyle} aria-labelledby="provider-config-heading">
-            <h2 id="provider-config-heading" style={sectionTitleStyle}>
-              Provider connection
-            </h2>
-            <div style={fieldGroupStyle}>
-              <p style={descriptionStyle}>
-                Provider mode sends your question directly to the configured server; responses
-                are not grounded in your documents. Your conversation context is sent to that
-                server.
-              </p>
-              <div>
-                <label htmlFor="provider-base-url" style={labelStyle}>
-                  Base URL
-                </label>
-                <p id="provider-base-url-desc" style={descriptionStyle}>
-                  Root of a locally served OpenAI-compatible server, e.g. http://127.0.0.1:8080
-                  (loopback only in this release; a /v1 suffix is optional)
-                </p>
-                <input
-                  id="provider-base-url"
-                  type="url"
-                  name="provider-base-url"
-                  autoComplete="off"
-                  value={providerDraft.baseUrl}
-                  onChange={(e) => handleProviderFieldChange({ baseUrl: e.target.value })}
-                  onBlur={() => handleProviderFieldBlur({ baseUrl: providerDraft.baseUrl })}
-                  placeholder="http://127.0.0.1:8080"
-                  style={inputStyle}
-                  aria-describedby="provider-base-url-desc"
-                />
-              </div>
-              <div>
-                <label htmlFor="provider-model" style={labelStyle}>
-                  Model id
-                </label>
-                <p id="provider-model-desc" style={descriptionStyle}>
-                  Model name the server exposes, e.g. llama-server's loaded GGUF id
-                </p>
-                <input
-                  id="provider-model"
-                  type="text"
-                  name="provider-model"
-                  autoComplete="off"
-                  value={providerDraft.model}
-                  onChange={(e) => handleProviderFieldChange({ model: e.target.value })}
-                  onBlur={() => handleProviderFieldBlur({ model: providerDraft.model })}
-                  placeholder="local-model"
-                  style={inputStyle}
-                  aria-describedby="provider-model-desc"
-                />
-              </div>
-              <div>
-                <label htmlFor="provider-api-key" style={labelStyle}>
-                  API key (optional)
-                </label>
-                <p id="provider-api-key-desc" style={descriptionStyle}>
-                  Sent as a Bearer header. Stored locally in plain text; it is sent only to
-                  this server.
-                </p>
-                <input
-                  id="provider-api-key"
-                  type="password"
-                  name="provider-api-key"
-                  autoComplete="new-password"
-                  value={providerDraft.apiKey}
-                  onChange={(e) => handleProviderFieldChange({ apiKey: e.target.value })}
-                  onBlur={() => handleProviderFieldBlur({ apiKey: providerDraft.apiKey })}
-                  placeholder="empty for servers without auth"
-                  style={inputStyle}
-                  aria-describedby="provider-api-key-desc"
-                />
-              </div>
-
-              <div style={buttonRowStyle} role="status" aria-live="polite">
-                <button
-                  type="button"
-                  onClick={() => void handleTestProvider()}
-                  disabled={isTestingProvider || !isProviderConfigured(providerDraft)}
-                  style={
-                    isTestingProvider
-                      ? { ...secondaryButtonStyle, opacity: 0.6, cursor: 'not-allowed' }
-                      : secondaryButtonStyle
-                  }
-                  aria-busy={isTestingProvider}
-                >
-                  {isTestingProvider ? 'Testing...' : 'Test Connection'}
-                </button>
-
-                {providerProbe === 'success' && <StatusBadge status="ready" label="Connected" />}
-                {providerProbe === 'error' && (
-                  <StatusBadge status="error" label="Connection failed" />
-                )}
-              </div>
-              {providerProbeDetail && (
-                <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }} role="alert">
-                  {providerProbeDetail}
-                </p>
-              )}
-            </div>
-          </section>
-        )}
 
         {/* ================================================================== */}
         {/* 3. Browser Engine (browser-local only) + model cache status */}
@@ -1582,14 +1389,10 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
           <div style={fieldGroupStyle}>
             <p style={descriptionStyle}>
               {electronMode
-                ? "Trade speed for answer quality. Each preset sets the desktop backend's result count, reranking, answer length and temperature, and also applies to browser-local chat. Provider mode does not use retrieval."
-                : 'Trade speed for answer quality in browser-local chat. Provider mode does not use retrieval.'}
+                ? "Trade speed for answer quality. Each preset sets the desktop backend's result count, reranking, answer length and temperature, and also applies to browser-local chat."
+                : 'Trade speed for answer quality in browser-local chat (an external model also uses its answer length and temperature).'}
             </p>
-            <fieldset
-              style={{ border: 'none', margin: 0, padding: 0 }}
-              disabled={presetDisabled}
-              aria-describedby={presetDisabled ? 'rag-preset-disabled-desc' : undefined}
-            >
+            <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
               <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select response quality preset</legend>
               <div style={radioGroupStyle}>
                 {(['fast', 'balanced', 'quality'] as const).map((preset) => (
@@ -1628,15 +1431,6 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                   </label>
                 ))}
               </div>
-              {/* Sibling of the preset cards (NOT inside a card label): shown
-                  exactly when the group is disabled, i.e. whenever the preset
-                  cannot affect the active chat path. */}
-              {presetDisabled && (
-                <p id="rag-preset-disabled-desc" style={descriptionStyle}>
-                  Applies to browser-local inference only. Provider mode does not use retrieval —
-                  responses come directly from the provider server.
-                </p>
-              )}
             </fieldset>
             {/* settings-wiring-honesty (AC1): the desktop display state comes
                 from the backend; say so when it is not one of the presets. */}
@@ -1898,9 +1692,7 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
             <p style={{ marginTop: 'var(--spacing-md)', fontSize: 'var(--font-size-caption)' }}>
               {mode === 'api'
                 ? 'Answers come from the built-in desktop backend: llama.cpp (node-llama-cpp) generation with hybrid retrieval over the desktop document library.'
-                : mode === 'provider'
-                  ? 'Answers come from the external OpenAI-compatible server you configured, without document retrieval.'
-                  : 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly); documents are stored in IndexedDB.'}
+                : 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'}
             </p>
           </div>
         </section>

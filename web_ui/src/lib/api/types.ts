@@ -235,15 +235,38 @@ export interface SettingsResponse {
 }
 
 /**
+ * Desktop backend only (universal-provider-settings-overhaul): body and result
+ * of POST /settings/external/test. The key is optional (a draft key is used
+ * for this probe only and never persisted); without one, the backend uses the
+ * stored key only when the draft URL's origin equals the key's bound origin.
+ */
+export interface ExternalProbeRequest {
+  protocol: 'openai' | 'anthropic';
+  baseUrl: string;
+  model?: string;
+  apiKey?: string;
+}
+
+export interface ExternalProbeResponse {
+  ok: boolean;
+  kind?: 'network' | 'auth' | 'model' | 'timeout' | 'server' | 'other';
+  message: string;
+  models: string[];
+}
+
+/**
  * Stats Types
  */
 /**
  * B9 (issue #67): GET /status/models payload — per-profile GGUF presence.
  * `engine` distinguishes the CI/dev stub fixture (answers /ask without
  * weights; never gated) from a real engine whose weights are missing.
+ * 'external' (desktop backend only, universal-provider-settings-overhaul):
+ * generation runs on a configured external endpoint, so absent local GGUFs
+ * never gate chat.
  */
 export interface ModelStatus {
-  engine: 'stub' | 'llama.cpp';
+  engine: 'stub' | 'llama.cpp' | 'external';
   profile: string;
   models: {
     quality: { present: boolean; path?: string };

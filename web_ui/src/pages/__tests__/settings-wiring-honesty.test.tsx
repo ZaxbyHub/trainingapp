@@ -444,7 +444,7 @@ describe('Clear Cache (AC5)', () => {
     expect(confirming).toMatch(/your chat history \(conversations\) is kept/i);
     // AC5: the removed settings are enumerated.
     expect(confirming).toMatch(
-      /inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course/i,
+      /inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state and last-opened course/i,
     );
   });
 
@@ -462,7 +462,7 @@ describe('Clear Cache (AC5)', () => {
     expect(confirming).toMatch(/any WebLLM model files downloaded in this window/i);
     expect(confirming).not.toMatch(/browser-model/i);
     expect(confirming).toMatch(
-      /inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course/i,
+      /inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state and last-opened course/i,
     );
     expect(confirming).toMatch(/kept: your chat history \(conversations\), and the documents and settings stored by the desktop backend/i);
     expect(confirming).not.toMatch(/local caches/i);
@@ -473,11 +473,26 @@ describe('overlay destination (AC10)', () => {
   test('initialSection="model-connection" scrolls to the external-model section and focuses its heading', async () => {
     H.reset({ mode: 'browser-local' });
     render(<SettingsPage initialSection="model-connection" />);
-    const heading = await screen.findByRole('heading', { name: /inference mode/i });
+    // universal-provider-settings-overhaul: the id moved from the Inference
+    // Mode section to the section hosting the External model region.
+    const heading = await screen.findByRole('heading', { name: /^external model$/i });
     await waitFor(() => expect(heading).toHaveFocus());
-    // The destination hosts the external (OpenAI-compatible) model option.
     expect(document.getElementById('model-connection')).toContainElement(
-      screen.getByRole('radio', { name: /provider server/i }),
+      screen.getByRole('switch', { name: /^use external model$/i }),
+    );
+  });
+
+  test('Electron app (desktop overlay destination): initialSection="model-connection" focuses the External model heading', async () => {
+    // universal-provider-settings-overhaul: DesktopModelBlockedOverlay's
+    // "Use a local server or cloud model" calls onOpenSettings('model-connection');
+    // inside Electron (api mode, desktop bridge + session) that lands here.
+    H.reset({ mode: 'api' });
+    const { session } = makeSession(backend([], {}));
+    renderElectron(session, { initialSection: 'model-connection' });
+    const heading = await screen.findByRole('heading', { name: /^external model$/i });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(document.getElementById('model-connection')).toContainElement(
+      screen.getByRole('switch', { name: /^use external model$/i }),
     );
   });
 
@@ -511,10 +526,12 @@ describe('About (AC8)', () => {
     expect(aboutText()).not.toMatch(/WebGPU/);
   });
 
-  test('provider mode credits the external server', async () => {
-    H.reset({ mode: 'provider' });
+  // universal-provider-settings-overhaul: the provider MODE is retired; the
+  // browser-local credit names the external model option instead.
+  test('browser-local credits the external model option', async () => {
+    H.reset({ mode: 'browser-local' });
     render(<SettingsPage />);
     await settle();
-    expect(aboutText()).toMatch(/external OpenAI-compatible server/i);
+    expect(aboutText()).toMatch(/external model you configured/i);
   });
 });

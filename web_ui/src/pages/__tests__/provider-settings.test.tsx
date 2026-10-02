@@ -1,13 +1,11 @@
 /**
- * Permanent regression tests for the provider-mode settings surface (trace
- * external-llm-provider-settings):
- *   - the frozen C1 label queries (/base url/i, /model/i, /api key/i) each
- *     resolve to EXACTLY ONE input — the label-collision guard;
+ * Permanent regression tests for the settings surface PR #138 introduced
+ * (trace external-llm-provider-settings), kept after
+ * universal-provider-settings-overhaul retired its provider MODE (the
+ * External model region is pinned by components/ExternalModelSection.test.tsx):
  *   - every RAG preset PUT is bounded (1..10), DISTINCT per preset, and
- *     carries no `rag_reranking_enabled` (the AC4 permanent companion);
- *   - the Response Quality group is disabled in provider mode (AC5);
- *   - InferenceModeToggle renders null in provider mode even with a
- *     non-empty serverUrl.
+ *     carries the full desktop patch;
+ *   - InferenceModeToggle renders only for the desktop app's backend.
  */
 import React from 'react';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -124,52 +122,6 @@ function mockContext(overrides: Record<string, unknown>): void {
   } as unknown as ReturnType<typeof themeModule.useTheme>);
 }
 
-describe('provider-mode settings surface', () => {
-  beforeEach(() => {
-    localStorage.clear();
-    mockContext({ mode: 'provider' });
-  });
-
-  afterEach(() => {
-    cleanup();
-    removeDesktopBridgeStub();
-  });
-
-  test('provider section renders and the frozen label queries are each unique', async () => {
-    render(<SettingsPage />);
-    expect(await screen.findByText('Provider connection')).toBeInTheDocument();
-    for (const query of [/base url/i, /model/i, /api key/i]) {
-      const matches = screen.getAllByLabelText(query);
-      const inputs = matches.filter((el): el is HTMLInputElement => el.tagName === 'INPUT');
-      expect(
-        inputs.length,
-        `query ${String(query)} must match exactly one INPUT (got ${inputs.length})`
-      ).toBe(1);
-    }
-    // The provider section discloses that context leaves the machine and that
-    // answers are ungrounded (privacy + honesty copy).
-    expect(screen.getByText(/conversation context is sent to that server/i)).toBeInTheDocument();
-    expect(screen.getByText(/not grounded in your documents/i)).toBeInTheDocument();
-  });
-
-  test('Response Quality group is disabled in provider mode with the only-browser-local caption', async () => {
-    const { container } = render(<SettingsPage />);
-    // Sections mount after the settingsLoaded effect — await the section first.
-    await screen.findByText('Response Quality');
-    // Query by the frozen input selector (a11y-role visibility of disabled
-    // fieldsets varies by environment; the C4 frozen check uses the same
-    // selector).
-    const quality = container.querySelector(
-      'input[name="rag-preset"][value="quality"]'
-    ) as HTMLInputElement | null;
-    expect(quality, 'rag-preset quality input must render').not.toBeNull();
-    // jsdom does not propagate <fieldset disabled> to descendants; assert the
-    // fieldset's own disabled property (browsers propagate it natively).
-    expect(quality?.closest('fieldset')?.disabled).toBe(true);
-    expect(screen.getByText(/Applies to browser-local inference only/i)).toBeInTheDocument();
-  });
-});
-
 describe('RAG preset mirror (Electron api mode)', () => {
   beforeEach(() => {
     installDesktopBridgeStub();
@@ -238,12 +190,6 @@ describe('RAG preset mirror (Electron api mode)', () => {
 describe('InferenceModeToggle', () => {
   afterEach(() => {
     cleanup();
-  });
-
-  test('renders null in provider mode even with a non-empty serverUrl', () => {
-    mockContext({ mode: 'provider', serverUrl: 'http://127.0.0.1:4567' });
-    const { container } = render(<InferenceModeToggle />);
-    expect(container).toBeEmptyDOMElement();
   });
 
   test('still renders for api mode with a serverUrl inside the desktop app (existing behavior)', () => {

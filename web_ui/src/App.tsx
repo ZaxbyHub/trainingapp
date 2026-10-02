@@ -10,6 +10,8 @@ import {
   isElectron,
   type DesktopSessionState,
 } from './lib/desktop-session';
+import { subscribeLatestModelStatus } from './lib/desktop-models-events';
+import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
 import { AppLayout } from './layouts/AppLayout';
 import { FirstRunGate } from './components/FirstRunWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -97,9 +99,9 @@ function LoadingOverlay({
 /**
  * B9 (issue #67): seed the inference-mode store BEFORE InferenceModeProvider
  * mounts so a desktop launch boots in `api` mode pointed at the Electron
- * backend. Extracted to lib/inference/desktop-seed (trace
- * external-llm-provider-settings) for unit testing; a persisted 'provider'
- * mode survives the re-seed.
+ * backend. Extracted to lib/inference/desktop-seed for unit testing; a
+ * persisted legacy 'provider' mode (PR #138) also becomes 'api' and is
+ * migrated into the backend's external.* settings.
  */
 function seedInferenceModeForDesktop(baseUrl: string): void {
   seedInferenceModeForDesktopImpl(baseUrl);
@@ -125,11 +127,16 @@ function DesktopBootGate({ children }: { children: ReactNode }) {
     (async () => {
       try {
         const session = await initDesktopSession();
+        if (cancelled) return;
+        seedInferenceModeForDesktop(session.baseUrl);
+        // universal-provider-settings-overhaul: move a legacy PR #138
+        // provider connection into the backend's external.* settings once,
+        // BEFORE reading model status (it may switch the engine to external).
+        await migrateLegacyProviderToDesktop(session.apiClient).catch(() => false);
         // Presence fetch failure is degraded-but-live: the first-run gate
         // treats null as "not blocking" and the status UI shows the error.
         const models = await fetchModelStatus(session).catch(() => null);
         if (cancelled) return;
-        seedInferenceModeForDesktop(session.baseUrl);
         setState({ session, models, loading: false, error: null });
       } catch (err) {
         if (cancelled) return;
@@ -145,6 +152,20 @@ function DesktopBootGate({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, []);
+
+  // universal-provider-settings-overhaul: toggling "Use external model" flips
+  // the backend engine between llama.cpp and external — re-read model status
+  // so the first-run gate and chat routing follow without a restart.
+  const session = state.session;
+  useEffect(() => {
+    if (session === null) return undefined;
+    // F-006: latest-request guard — an older fetch resolving after a newer
+    // one never overwrites it; unsubscribing on unmount drops in-flight ones.
+    return subscribeLatestModelStatus(
+      () => fetchModelStatus(session),
+      (models) => setState((prev) => ({ ...prev, models })),
+    );
+  }, [session]);
 
   if (state.loading) {
     return <LoadingOverlay currentStep="Connecting to the desktop backend..." initError={null} />;

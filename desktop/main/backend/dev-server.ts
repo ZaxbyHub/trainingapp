@@ -15,6 +15,7 @@ import path from 'node:path';
 import { createBackendHost, resolveBackendMode } from './index.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { resolvePacksSecurity } from './packs/pack-extract.js';
+import { createMemorySecretStore } from '../security/secret-store.js';
 import type { BackendMode } from './types.js';
 
 interface DevServerArgs {
@@ -94,7 +95,13 @@ async function main(): Promise<void> {
   // conformance harness can run REAL inference purely via inherited env.
   const engineEnv = { ...process.env };
   if (args.modelDir !== undefined) engineEnv.TRAININGAPP_INFERENCE_MODEL_DIR = args.modelDir;
-  const engine = resolveNodeEngine(args.engine === 'stub' ? { ...engineEnv, TRAININGAPP_DESKTOP_ENGINE: 'stub' } : engineEnv);
+  // universal-provider-settings-overhaul: the headless host has no Electron
+  // safeStorage, so an external model API key lives in process memory only
+  // (never on disk); the airgap flag comes from TRAININGAPP_AIRGAP alone.
+  const engine = resolveNodeEngine(
+    args.engine === 'stub' ? { ...engineEnv, TRAININGAPP_DESKTOP_ENGINE: 'stub' } : engineEnv,
+    { externalProvider: { secretStore: createMemorySecretStore() } },
+  );
   const host = createBackendHost({
     token: args.token,
     mode: resolveBackendMode({ mode: args.mode }),

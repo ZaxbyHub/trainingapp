@@ -356,6 +356,44 @@ are detect-and-notify only: the notice opens the download through an
 allowlisted external-open handler and the user runs the installer. Operator
 runbook: [docs/updates.md](docs/updates.md).
 
+## External model endpoints (ADR-0011)
+
+Generation can be sent to a user-configured OpenAI- or Anthropic-compatible
+endpoint (a local server, a LAN server, or a cloud provider) instead of the
+local model. The feature is off by default and opt-in; it is the only
+generation path that leaves the machine, and retrieval always stays local
+(grounded by default; an ungrounded Direct chat is a separate opt-in toggle).
+Rationale and rejected alternatives: [docs/adr/0011-external-model-endpoints.md](docs/adr/0011-external-model-endpoints.md).
+
+- **Shared URL policy.** One policy, implemented twice and pinned by shared
+  vectors: [web_ui/src/lib/llm/endpoint-policy.ts](web_ui/src/lib/llm/endpoint-policy.ts),
+  [desktop/main/security/endpoint-policy.ts](desktop/main/security/endpoint-policy.ts),
+  [contracts/endpoint-policy-vectors.json](contracts/endpoint-policy-vectors.json) and
+  [contracts/endpoint-policy-vectors.supplemental.json](contracts/endpoint-policy-vectors.supplemental.json).
+  Loopback and private-network hosts may use http or https, every other host
+  requires https, and metadata, link-local and unspecified addresses are always
+  refused. Airgap builds refuse public hosts.
+- **Browser.** The generators
+  [web_ui/src/lib/llm/openai-provider.ts](web_ui/src/lib/llm/openai-provider.ts) and
+  [web_ui/src/lib/llm/anthropic-provider.ts](web_ui/src/lib/llm/anthropic-provider.ts),
+  built by the factory in [web_ui/src/lib/llm/external-provider.ts](web_ui/src/lib/llm/external-provider.ts)
+  (which also holds the stored configuration and the connection probe), plug into
+  `RAGOrchestrator` as its LLM service in place of the in-browser model. The browser calls the
+  endpoint directly with `fetch` (the endpoint must allow CORS from the app's
+  origin), never follows redirects, and omits credentials.
+- **Desktop.** The renderer never calls the endpoint and never holds the key.
+  [desktop/main/backend/inference/external-generator.ts](desktop/main/backend/inference/external-generator.ts)
+  fills the engine's generation slot; every request goes through
+  [desktop/main/backend/net/guarded-request.ts](desktop/main/backend/net/guarded-request.ts)
+  (`node:https` / `node:http`; resolves the host, validates every address,
+  pins the connection to the validated address, follows no redirects). The key
+  is held by [desktop/main/security/secret-store.ts](desktop/main/security/secret-store.ts)
+  (Electron `safeStorage`, bound to the endpoint origin it was saved for).
+  With the external model on, no local GGUF model is required and
+  `GET /status/models` reports engine `external`.
+- **Unchanged.** The Python `api_server.py` has no external backend, and the
+  renderer's content-security policy is not widened.
+
 ## Browser surface & capability gate
 
 In plain-browser mode the web_ui runs its own stack: the wllama (llama.cpp
@@ -441,6 +479,7 @@ contract; measured performance numbers are recorded machine-tagged in
 | [0008](docs/adr/0008-memory-budget.md) | Runtime memory budget, concurrency governance, idle-session unloading. |
 | [0009](docs/adr/0009-browser-packs.md) | Browser surface gets an explicit pack capability gate, not a browser adapter. |
 | [0010](docs/adr/0010-update-channels.md) | Opt-in Ed25519-signed update channels for packs (installable) and the app binary (notify-only). |
+| [0011](docs/adr/0011-external-model-endpoints.md) | Opt-in, grounded external model endpoints (OpenAI- and Anthropic-compatible); reverses the 2.0.0 no-network posture for this feature only; desktop backend owns the outbound call with pinned-address `node:https`. |
 
 ## Known limits & pending work
 

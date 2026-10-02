@@ -18,13 +18,14 @@ import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
 import { DESKTOP_FIRST_BYTE_TIMEOUT_MS, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../lib/api/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
-import { buildHistorySnapshot } from '../lib/chat/history-snapshot';
+import { buildDesktopHistorySnapshot, buildHistorySnapshot } from '../lib/chat/history-snapshot';
 import { getLLMService } from '../lib/llm/llm-factory';
+import { createExternalLLMService, isExternalActive, loadExternalConfig } from '../lib/llm/external-provider';
 import {
-  OpenAICompatChatService,
-  isProviderConfigured,
-  loadProviderConfig,
-} from '../lib/llm/openai-provider';
+  EXTERNAL_GROUNDED_INSTRUCTION,
+  EXTERNAL_GROUNDED_QUESTION_LABEL,
+  EXTERNAL_SYSTEM_PROMPT,
+} from '../lib/llm/external-prompts';
 import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessCache } from '../lib/llm/readiness-gate';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
@@ -35,7 +36,7 @@ import { presetOptions } from '../lib/rag/rag-presets';
 import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { fetchModelStatus, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
+import { fetchModelStatus, isElectron, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
 
 function generateId(): string {
@@ -138,13 +139,13 @@ function citationsFromDone(data: {
 }
 
 /**
- * Storage tag for a persisted conversation (PR #138 review hygiene): api and
- * provider turns ride the server surface; browser-local turns the wllama
- * engine. Extracted from six identical inline ternaries so the mode→surface
- * mapping has exactly one definition.
+ * Storage tag for a persisted conversation (PR #138 review hygiene): api turns
+ * ride the server surface; browser-local turns the browser surface. Extracted
+ * from six identical inline ternaries so the mode→surface mapping has exactly
+ * one definition.
  */
 function conversationStorageTag(mode: ReturnType<typeof useInferenceMode>['mode']): 'server' | 'wllama' {
-  return mode === 'api' || mode === 'provider' ? 'server' : 'wllama';
+  return mode === 'api' ? 'server' : 'wllama';
 }
 
 function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConversation, currentConversationId, setCurrentConversationId, onNewChat, onOpenSettings, onNavigateToDocuments, onOpenTraining, pinnedSlide, onDismissPinnedSlide }: ChatPageProps) {
@@ -153,11 +154,16 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // first-run model gate. Both are inert outside Electron (session null,
   // predicate false).
   const { session: desktopSession, models: desktopModels } = useDesktopSession();
-  const desktopModelBlocked =
-    // Provider mode never touches staged local models (trace
-    // external-llm-provider-settings reviewer round 1, finding 3): the B9
-    // model gate must not dead-end provider chat when no GGUF is staged.
-    mode !== 'provider' && modelsAbsentForRealEngine(desktopModels);
+  // universal-provider-settings-overhaul: an enabled external endpoint
+  // replaces the GENERATOR (retrieval stays local). Desktop app: the backend
+  // generates through it and reports engine 'external' — chat then always
+  // routes to the backend, the only place that holds the key and may reach
+  // the endpoint (renderer CSP unchanged). Browser app: the renderer's own
+  // generators (never inside Electron).
+  const desktopExternal = desktopSession !== null && desktopModels?.engine === 'external';
+  const browserExternal = !isElectron() && mode === 'browser-local' && isExternalActive(loadExternalConfig());
+  // AC8: engine 'external' never gates on absent local GGUFs.
+  const desktopModelBlocked = modelsAbsentForRealEngine(desktopModels);
   const messages = messagesProp;
   const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
@@ -173,21 +179,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // Poll /status/models every 2s while eligible (a real engine with models
   // present) so the banner also catches mid-session reloads after a profile
   // switch; a missing `resident` field never gates.
-  // F-002 (PR #138 review): BOTH gates ignore provider mode — provider chat
-  // never touches the staged local models, but the desktop host warms them on
-  // every launch (and the installer always stages the GGUFs), so ungated these
-  // deterministically disabled the provider input for the whole multi-minute
-  // local load on every packaged launch.
+  // F-002 (PR #138 review): BOTH gates ignore an external engine — it never
+  // touches the staged local models, so a local load must not disable chat.
   const residentLoad = modelLoad;
   const isModelLoading =
-    mode !== 'provider' && desktopSession !== null && residentLoad?.state === 'loading';
-  // Poll only when a load is plausibly in flight: a real engine with models
-  // present. When the models are absent (blocked overlay already explains it),
-  // in provider mode (no local load can gate the input), or in browser mode,
-  // no poll ever fires — the gate stays inert.
+    !desktopExternal && desktopSession !== null && residentLoad?.state === 'loading';
+  // Poll only when a load is plausibly in flight: a real local engine with
+  // models present. When the models are absent (blocked overlay already
+  // explains it), with an external engine (no local load can gate the input),
+  // or in browser mode, no poll ever fires — the gate stays inert.
   const modelsAbsent = desktopModels !== null && modelsAbsentForRealEngine(desktopModels);
   const pollEligible =
-    mode !== 'provider' && desktopSession !== null && !modelsAbsent;
+    !desktopExternal && desktopSession !== null && !modelsAbsent;
   useEffect(() => {
     if (!pollEligible) return;
     let cancelled = false;
@@ -328,7 +331,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   }, [currentConversationId, cancelActiveStream, setMessages, onSaveConversation, mode, browserEngine]);
 
   const isBrowserMode = mode === 'browser-local';
-  const isModelBlocked = isBrowserMode && !isModelReady;
+  // The local browser model gates input only when it is the generator.
+  const isModelBlocked = isBrowserMode && !isModelReady && !browserExternal && !desktopExternal;
   const isInputDisabled = isLoading || isModelBlocked || isModelLoading;
   // U8c: image upload requires the multimodal wllama engine AND the loaded
   // model's actual image-modality support. The previous check only verified
@@ -337,13 +341,13 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // supportsImages() consults wllama's supportInputModality('image'). Guarded
   // with try/catch because the service singleton may not be initialized yet.
   const engineSupportsImages = useMemo(() => {
-    if (!isBrowserMode || browserEngine !== 'wllama' || !isModelReady) return false;
+    if (!isBrowserMode || browserExternal || desktopExternal || browserEngine !== 'wllama' || !isModelReady) return false;
     try {
       const svc = getLLMService(browserEngine);
       return typeof svc.supportsImages === 'function' ? svc.supportsImages() : false;
     }
     catch { return false; }
-  }, [isBrowserMode, browserEngine, isModelReady]);
+  }, [isBrowserMode, browserExternal, desktopExternal, browserEngine, isModelReady]);
   const canAttachImages = engineSupportsImages;
 
   // Abort any in-flight generation on a genuine engine switch — NOT on unmount.
@@ -595,7 +599,12 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       }
     });
 
-    if (mode === 'api') {
+    // universal-provider-settings-overhaul: with the desktop backend on an
+    // external engine, every turn goes to the backend regardless of the
+    // renderer's local mode (the "Use external model" switch is the single
+    // control; only the backend can reach the endpoint).
+    const toDesktopBackend = mode === 'api' || (desktopSession !== null && desktopModels?.engine === 'external');
+    if (toDesktopBackend) {
       // Desktop backend mode — SSE streaming via /ask/stream endpoint. Wrap
       // setup so a synchronous throw (e.g. URL validation) routes to onError
       // and clears the stream ref instead of wedging the send pipeline
@@ -609,108 +618,117 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         streamManager.error('The desktop backend is not available yet. Wait for it to start, then try again.');
         return;
       }
-      const url = desktopSession.sseUrl();
-      const sseToken = desktopSession.token;
-      try {
-        // Issue #40 RC1: thread conversation history into the desktop backend
-        // request so api mode benefits from multi-turn memory + retrieval
-        // rewriting too. The desktop backend's /ask/stream accepts and validates
-        // `history` (at most 20 turns; parseQuestionRequest in
-        // desktop/main/backend/server.ts).
-        streamManager.startSSEStream(
-          url,
-          { question: text, history: buildHistorySnapshot(owningMessages) },
-          sseToken,
-          'X-Desktop-Token'
-        );
-      } catch (err) {
-        streamManager.error(err instanceof Error ? err.message : String(err));
-      }
-    } else if (mode === 'provider') {
-      // Provider mode (trace external-llm-provider-settings) — DIRECT
-      // generation against a user-configured OpenAI-compatible server. No RAG
-      // orchestrator in this path: responses are ungrounded (labeled so in
-      // Settings + CONFIGURATION.md), and routing through the orchestrator
-      // would dead-end in its zero-chunk abstain short-circuit wherever the
-      // browser retrieval pipeline is not live. Conversation context (bounded
-      // by buildHistorySnapshot) IS threaded, so multi-turn chat works.
-      const abortController = new AbortController();
-      abortControllerRef.current = abortController;
-
-      (async () => {
-        const cfg = loadProviderConfig();
-        if (!isProviderConfigured(cfg)) {
-          streamManager.error(
-            'Provider server is not configured. Add the Base URL and Model in Settings → Provider server (OpenAI-compatible).'
-          );
-          return;
-        }
-        const svc = new OpenAICompatChatService(cfg);
-        // Cancellation: aborting the send signal interrupts the in-flight
-        // provider request (svc.interrupt is wired to the same signal).
-        abortController.signal.addEventListener('abort', () => svc.interrupt());
-        // Multi-turn context, bounded for the wire: the shared snapshot's
-        // turn cap (MAX_HISTORY_TURNS) with the api_server.py per-HISTORY-turn
-        // 4000-char bound applied client-side (issue #37 R6 — that bound
-        // covers history turns, NOT the question; api mode instead 422s
-        // questions over 2000 chars, which provider mode does not inherit).
-        const openaiMessages = [
-          ...buildHistorySnapshot(owningMessages).map((turn) => ({
-            role: turn.role,
-            content: turn.content.slice(0, 4000),
-          })),
-          { role: 'user' as const, content: text },
-        ];
-        const startTime = Date.now();
-        let fullAnswer = '';
+      const session = desktopSession;
+      void (async () => {
+        // F-012 (PR #142 Stage B): with the backend on an external model in
+        // Direct chat (external.grounded=false), retrieval-grounded answers
+        // must not ride along to the external endpoint. The backend's own
+        // settings are read fresh for every send; a failed read excludes
+        // them (fail closed).
+        const history = await buildDesktopHistorySnapshot(session.apiClient, owningMessages);
+        // Stopped, or superseded by a newer send, while the settings loaded.
+        if (tokenStreamManagerRef.current !== streamManager) return;
         try {
-          for await (const delta of svc.generate(openaiMessages, {
-            signal: abortController.signal,
-          })) {
-            if (abortController.signal.aborted) return;
-            if (tokenStreamManagerRef.current !== streamManager) return;
-            fullAnswer += delta;
-            streamManager.pushToken(delta);
-          }
-          if (abortController.signal.aborted) return;
-          if (tokenStreamManagerRef.current !== streamManager) return;
-          streamManager.complete({
-            sources: [],
-            // Ungrounded by design: never emit 'grounded' provenance here.
-            grounding: 'general',
-            contextLength: fullAnswer.length,
-            inferenceTime: Date.now() - startTime,
-          });
-        } catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') {
-            return; // User cancelled — no error message needed
-          }
-          streamManager.error(error instanceof Error ? error.message : 'Provider request failed');
+          // Issue #40 RC1: thread conversation history into the desktop backend
+          // request so api mode benefits from multi-turn memory + retrieval
+          // rewriting too. The desktop backend's /ask/stream accepts and validates
+          // `history` (at most 20 turns; parseQuestionRequest in
+          // desktop/main/backend/server.ts).
+          streamManager.startSSEStream(
+            session.sseUrl(),
+            { question: text, history },
+            session.token,
+            'X-Desktop-Token'
+          );
+        } catch (err) {
+          streamManager.error(err instanceof Error ? err.message : String(err));
         }
       })();
     } else {
-      // Browser-local mode — RAG pipeline AsyncGenerator.
-      // The LLM service singleton is fetched uninitialized from the factory; we
-      // MUST initialize it before the orchestrator calls generate(), otherwise
-      // generate() throws "not initialized" and the assistant bubble shows the
-      // raw error (issue #21 F1). initialize() is idempotent — fast no-op when
-      // the model is already loaded — so calling it on every send is safe.
+      // Browser-local mode. The generator is the external endpoint when one
+      // is enabled (universal-provider-settings-overhaul; browser app only —
+      // inside Electron the backend owns external generation), else the local
+      // engine singleton.
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
+      const externalConfig = isElectron() ? null : loadExternalConfig();
+      const externalService = externalConfig !== null ? createExternalLLMService(externalConfig) : null;
 
-      const llmService = getLLMService(browserEngine);
+      if (externalService !== null && externalConfig !== null && !externalConfig.grounded) {
+        // Opt-in Direct chat (AC13): ungrounded — no retrieval, labeled
+        // "General knowledge". Conversation context (bounded by
+        // buildHistorySnapshot, 4000 chars per history turn) IS threaded —
+        // fail closed (F-012): only 'general' answers that showed no sources
+        // or citations ride along, so an answer built from document passages
+        // (or a Stopped, untagged one) never rides into an ungrounded turn.
+        abortController.signal.addEventListener('abort', () => externalService.interrupt());
+        (async () => {
+          const wireMessages = [
+            // F-004: the same system prompt the desktop backend sends.
+            { role: 'system' as const, content: EXTERNAL_SYSTEM_PROMPT },
+            ...buildHistorySnapshot(owningMessages, { excludeGrounded: true }).map((turn) => ({
+              role: turn.role,
+              content: turn.content.slice(0, 4000),
+            })),
+            { role: 'user' as const, content: text },
+          ];
+          const startTime = Date.now();
+          let fullAnswer = '';
+          try {
+            for await (const delta of externalService.generate(wireMessages, {
+              ...presetOptions(ragPreset),
+              signal: abortController.signal,
+            })) {
+              if (abortController.signal.aborted) return;
+              if (tokenStreamManagerRef.current !== streamManager) return;
+              fullAnswer += delta;
+              streamManager.pushToken(delta);
+            }
+            if (abortController.signal.aborted) return;
+            if (tokenStreamManagerRef.current !== streamManager) return;
+            streamManager.complete({
+              sources: [],
+              // Ungrounded by design: never emit 'grounded' provenance here.
+              grounding: 'general',
+              contextLength: fullAnswer.length,
+              inferenceTime: Date.now() - startTime,
+            });
+          } catch (error) {
+            if (abortController.signal.aborted) return;
+            if (error instanceof DOMException && error.name === 'AbortError') return;
+            streamManager.error(error instanceof Error ? error.message : 'External model request failed');
+          }
+        })();
+        return;
+      }
+
+      // RAG pipeline AsyncGenerator (grounded). The local LLM service
+      // singleton is fetched uninitialized from the factory; we MUST
+      // initialize it before the orchestrator calls generate(), otherwise
+      // generate() throws "not initialized" and the assistant bubble shows the
+      // raw error (issue #21 F1). initialize() is idempotent — fast no-op when
+      // the model is already loaded — so calling it on every send is safe. An
+      // external generator needs no local load at all.
+      const llmService = externalService ?? getLLMService(browserEngine);
       const initModelId = browserEngine === 'wllama' ? LLM_MODEL_DIR : WEBLLM_DEFAULT_MODEL_ID;
+      if (externalService !== null) {
+        abortController.signal.addEventListener('abort', () => externalService.interrupt());
+      }
 
       (async () => {
         try {
-          // Ensure the model is loaded before the pipeline touches generate().
-          // Route real load progress into the overlay so a cold first send shows
-          // progress instead of an apparent hang.
-          setModelLoadingProgress(0);
-          await llmService.initialize(initModelId, (p) => {
-            if (tokenStreamManagerRef.current !== streamManager) return;
-            setModelLoadingProgress(Math.min(100, Math.max(0, Math.round((p.progress ?? 0) * 100))));
-          });
+          if (externalService !== null) {
+            await externalService.initialize();
+          } else {
+            // Ensure the model is loaded before the pipeline touches
+            // generate(). Route real load progress into the overlay so a cold
+            // first send shows progress instead of an apparent hang.
+            setModelLoadingProgress(0);
+            await llmService.initialize(initModelId, (p) => {
+              if (tokenStreamManagerRef.current !== streamManager) return;
+              setModelLoadingProgress(Math.min(100, Math.max(0, Math.round((p.progress ?? 0) * 100))));
+            });
+          }
           if (abortController.signal.aborted) return;
           if (tokenStreamManagerRef.current !== streamManager) return;
 
@@ -738,6 +756,17 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
             // memory + retrieval contextualization (RC3).
             history: buildHistorySnapshot(owningMessages),
             pinnedContext,
+            // F-004: an external generator gets the desktop's prompt text
+            // (system prompt + grounded framing); local engines keep theirs.
+            ...(externalService !== null
+              ? {
+                  systemPrompt: EXTERNAL_SYSTEM_PROMPT,
+                  groundedFraming: {
+                    instruction: EXTERNAL_GROUNDED_INSTRUCTION,
+                    questionLabel: EXTERNAL_GROUNDED_QUESTION_LABEL,
+                  },
+                }
+              : {}),
           })) {
             if (abortController.signal.aborted) return;
             if (tokenStreamManagerRef.current !== streamManager) return;
@@ -790,7 +819,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         }
       })();
     }
-  }, [mode, desktopSession, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages]);
+  }, [mode, desktopSession, desktopModels, browserEngine, ragPreset, onSaveConversation, setModelLoadingProgress, currentConversationId, setMessages]);
 
   const handleSend = useCallback(async (text: string, attachedImages?: AttachedImage[]) => {
     // Prevent overlapping streams
@@ -1078,7 +1107,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       {/* B9 (issue #67): desktop first-run gate — real engine, no staged
           models. Blocks send with an informative state instead of a doomed
           /ask (AC5). Extracted component per the shared-file convention. */}
-      <DesktopModelBlockedOverlay open={desktopModelBlocked} />
+      <DesktopModelBlockedOverlay open={desktopModelBlocked} onOpenSettings={onOpenSettings} />
 
       {isModelBlocked && (
         <ModelBlockedOverlay

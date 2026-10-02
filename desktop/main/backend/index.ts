@@ -17,7 +17,7 @@ import { createLoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEV_ORIGINS_ENV } from '../security/defaults.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
-import { createBackendServer, listenOnRandomPort, rollBackUnsavedSettings } from './server.js';
+import { commitSettingsChange, createBackendServer, listenOnRandomPort } from './server.js';
 import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js';
 import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
@@ -26,6 +26,7 @@ import { PackManager } from './store/pack-manager.js';
 import { createPackSurface } from './packs/surface.js';
 import { resolvePacksSecurity } from './packs/pack-extract.js';
 import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
+import { loadExternalSnapshot, replayExternalSnapshot, saveExternalSnapshot } from './external-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
 import { createRetrievalSurface, type RetrievalSurface } from './retrieval/hybrid.js';
@@ -270,7 +271,11 @@ export class NodeBackendHost implements BackendHost {
 
   constructor(
     private readonly config: BackendHostConfig,
-    private readonly engine: EngineSurface = config.engine ?? resolveNodeEngine(config.env ?? process.env),
+    private readonly engine: EngineSurface = config.engine ??
+      resolveNodeEngine(
+        config.env ?? process.env,
+        config.externalProvider !== undefined ? { externalProvider: config.externalProvider } : undefined,
+      ),
   ) {}
 
   async start(): Promise<BackendHandle> {
@@ -322,9 +327,15 @@ export class NodeBackendHost implements BackendHost {
     // rejects simply fails validation and the host boots on defaults.
     // No store path (CI stub runs) => persistence disabled, engine-memory only.
     let persistSettings: ((settings: Record<string, unknown>, removeKeys?: string[]) => void) | undefined;
+    let persistExternal: ((snapshot: Record<string, unknown>) => void) | undefined;
     if (this.config.storePath) {
       const storePath = this.config.storePath;
-      let storedPatch = loadSettingsSnapshot(storePath) ?? {};
+      // universal-provider-settings-overhaul: external.* never comes from
+      // settings.json (a stale or hand-edited file must not apply or keep an
+      // API key there); those settings replay from external.json below.
+      let storedPatch = Object.fromEntries(
+        Object.entries(loadSettingsSnapshot(storePath) ?? {}).filter(([key]) => !key.startsWith('external.')),
+      );
       if (Object.keys(storedPatch).length > 0) {
         const applied = this.engine.applySettingsPatch(storedPatch);
         if (!applied.ok) {
@@ -337,33 +348,58 @@ export class NodeBackendHost implements BackendHost {
       persistSettings = (patch, removeKeys = []) => {
         // Adopt the merged patch ONLY after the disk write succeeds, so a
         // failed save leaves `storedPatch` equal to the sidecar on disk. The
-        // ENGINE already holds the change at this point: every caller (the
-        // PUT /settings route and applyEngineSettings below) captures the
-        // engine's settings state first and restores it when this throws
-        // (PR #140 review FB140-001), so engine memory cannot drift from
-        // the sidecar either.
-        const merged: Record<string, unknown> = { ...storedPatch, ...patch };
+        // ENGINE already holds the change at this point: every caller goes
+        // through commitSettingsChange (server.ts), which captured the
+        // engine's settings state first — incl. external.* and the
+        // SecretStore entries (PR #142 RB-001) — and restores it when this
+        // throws (PR #140 review FB140-001). external.json is written before
+        // this file and is re-written from the restored engine if this
+        // write fails. The one gap left: when a compensating write (the
+        // SecretStore or external.json) fails too, memory and disk can
+        // differ — the 500 detail then names what could not be undone
+        // instead of claiming that nothing changed.
+        // universal-provider-settings-overhaul: settings.json NEVER carries
+        // external.* (above all external.apiKey, which lives only in the
+        // SecretStore) whichever caller hands a patch in; those keys persist
+        // through persistExternal (external.json, key stripped) instead.
+        const merged: Record<string, unknown> = { ...storedPatch };
+        for (const [key, value] of Object.entries(patch)) {
+          if (!key.startsWith('external.')) merged[key] = value;
+        }
         // settings-wiring-honesty: a reset directive's keys leave the
         // snapshot, so the next boot no longer replays them as explicit.
         for (const key of removeKeys) delete merged[key];
         saveSettingsSnapshot(storePath, merged);
         storedPatch = merged;
       };
+      // universal-provider-settings-overhaul: the non-secret external.*
+      // settings replay from their own sidecar (external.json) BEFORE the
+      // listener exists and before warmup, tolerantly — a stored value the
+      // engine now refuses (e.g. a public URL after airgap was turned on) is
+      // dropped with a log line and the external model stays off.
+      const externalSnapshot = loadExternalSnapshot(storePath);
+      if (externalSnapshot !== null) {
+        replayExternalSnapshot(externalSnapshot, (patch) => this.engine.applySettingsPatch(patch));
+      }
+      persistExternal = (snapshot) => saveExternalSnapshot(storePath, snapshot);
     }
     // #133: the first-run wizard applies the operator's profile choice
     // through the SAME validated seam the settings API uses — live apply +
     // sidecar persistence — exposed to the bootstrap IPC layer as an own
     // property (getFirstRunPackTools precedent; prototypes stay start/stop).
     this.applyEngineSettings = (patch: Record<string, unknown>) => {
-      const before = this.engine.captureSettingsState?.();
-      const applied = this.engine.applySettingsPatch(patch);
-      if (!applied.ok) return applied;
-      try {
-        persistSettings?.(patch);
-      } catch (err) {
-        return { ok: false as const, status: 500 as const, detail: rollBackUnsavedSettings(this.engine, before, 'change', err) };
-      }
-      return applied;
+      // Same all-or-nothing commit as PUT /settings: external.json first,
+      // settings.json last; any failure restores the engine (incl. external.*
+      // and the SecretStore) and re-writes an already-written external.json.
+      const engine = this.engine;
+      const touchesExternal = Object.keys(patch).some((key) => key.startsWith('external.'));
+      const result = commitSettingsChange(engine, 'change', () => engine.applySettingsPatch(patch), {
+        ...(persistExternal !== undefined && touchesExternal && typeof engine.externalSnapshot === 'function'
+          ? { external: () => persistExternal?.(engine.externalSnapshot?.() ?? {}) }
+          : {}),
+        ...(persistSettings !== undefined ? { settings: () => persistSettings?.(patch) } : {}),
+      });
+      return result;
     };
     const server = createBackendServer({
       guard: createLoopbackGuard({
@@ -399,6 +435,7 @@ export class NodeBackendHost implements BackendHost {
       // path below), so resolve it per request; null -> contract-safe 503.
       packs: () => (this.packManager === null ? null : createPackSurface(this.packManager)),
       persistSettings,
+      persistExternal,
     });
     try {
       const port = await listenOnRandomPort(server);

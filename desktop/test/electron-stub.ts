@@ -126,6 +126,17 @@ export const dialog = {
   showErrorBox: vi.fn(),
 };
 
+/** universal-provider-settings-overhaul: no OS encryption in tests (keys stay session-only). */
+export const safeStorage = {
+  isEncryptionAvailable: vi.fn(() => false),
+  encryptString: vi.fn((plain: string) => {
+    throw new Error(`safeStorage stub cannot encrypt (${plain.length} chars)`);
+  }),
+  decryptString: vi.fn(() => {
+    throw new Error('safeStorage stub cannot decrypt');
+  }),
+};
+
 /** Reset all stub state; call from beforeEach in every spec. */
 export function __resetElectronStub(): void {
   app.requestSingleInstanceLock.mockClear();

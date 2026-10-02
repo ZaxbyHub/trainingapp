@@ -9,7 +9,7 @@ Comprehensive guide to configuring the Document Q&A Assistant, including environ
 1. [Overview](#overview)
 2. [Environment Variables](#environment-variables)
 3. [GUI Settings](#gui-settings)
-4. [Provider Server (OpenAI-compatible)](#provider-server-openai-compatible)
+4. [External model (OpenAI- and Anthropic-compatible endpoints)](#external-model-openai--and-anthropic-compatible-endpoints)
 5. [App Settings (desktop and browser app)](#app-settings-desktop-and-browser-app)
 6. [LLM Backend Configuration](#llm-backend-configuration)
 7. [RAG Pipeline Configuration](#rag-pipeline-configuration)
@@ -259,54 +259,213 @@ Window=0: No expansion
 - Disable for speed
 
 
-## Provider Server (OpenAI-compatible)
+## External model (OpenAI- and Anthropic-compatible endpoints)
 
-The web/desktop app can send its chat directly to a locally served LLM that speaks the
-standard OpenAI wire format — llama-server (`llama-server`), LM Studio, Ollama's compat
-endpoint, or vLLM. **This release accepts loopback servers only**
-(`http://127.0.0.1:<port>`): the packaged desktop app's content-security policy permits only
-the IPv4 loopback, and the app validates this up front. (IPv6 loopback `[::1]` is NOT
-supported: Chromium cannot parse it as a CSP source-list entry, so a `[::1]` server would be
-network-blocked at runtime in the packaged build.) Serving on a LAN address? Bind the
-server to loopback for now — widening to LAN/remote hosts is a deliberate desktop-CSP decision
-flagged for maintainers.
+The browser app and the desktop app can send answer generation to a model served somewhere
+else instead of the local model: a server on this computer (LM Studio, Ollama, llama-server,
+vLLM), a server on your LAN, or a cloud provider with an API key (OpenAI, Anthropic,
+OpenRouter). The decision and its security consequences are recorded in
+`docs/adr/0011-external-model-endpoints.md`.
 
-**Setup (Settings → Inference Mode → "Provider server (OpenAI-compatible)")**:
+- **Off by default and opt-in.** A fresh install never contacts an external model. Nothing is
+  sent until you turn on "Use external model" and enter a base URL.
+- **Grounded by default.** Retrieval over your documents still runs locally. Only the
+  question, the retrieved passages and a bounded window of recent conversation are sent to the
+  endpoint, and answers keep their citations and sources. Because the retrieved passages are
+  document text, that text leaves your machine for the endpoint you configured.
+- **Direct chat is a separate opt-in.** "Direct chat (no document grounding)" is off by
+  default. When on, the question and recent conversation are sent with no retrieval, and the
+  answer is labelled "General knowledge".
+- The old "Provider server (OpenAI-compatible)" inference-mode choice is gone. A stored
+  provider configuration from the previous release is migrated once automatically: in the
+  browser app into the External model settings (as Direct chat, as before); in the desktop app
+  into the desktop backend's settings, with the legacy renderer copy, including its key,
+  deleted.
 
-1. **Base URL** — the server root, e.g. `http://127.0.0.1:8080`. Loopback only in this
-   release. A `/v1` suffix is optional (the app appends it when missing); pasting the full
-   `.../v1/chat/completions` or `.../v1/models` also works, and a pasted query/fragment or
-   `user:pass@` prefix is stripped.
-2. **Model id** — the model name the server exposes (e.g. the loaded GGUF id llama-server
-   reports on `/v1/models`).
-3. **API key (optional)** — sent as `Authorization: Bearer <key>`. Stored locally in plain
-   text in the app's profile storage; it is sent ONLY to the configured server. Local servers
-   usually need no key.
-4. **Test Connection** — probes `{base}/v1/models` (sending the configured API key, when
-   one is set, so key-protected servers exercise their real auth path); it never requires the
-   project's own `/auth/status` route, so a standard OpenAI-compatible server probes green.
-   Editing any connection field clears a previous result, and a result that lands after the
-   URL changed is discarded.
-5. **First token** — chat waits up to 10 minutes for the first streamed byte (cold model
-   loads and CPU prompt evaluation over bounded history legitimately take minutes; the bound
-   clears on first byte and does not cap total generation length).
+### Setup (Settings → External model)
 
-**What provider mode does and does not do**:
+The same controls appear in the browser app and the desktop app:
 
-- Chat is DIRECT generation: your question plus bounded recent conversation context is POSTed
-  to `{base}/v1/chat/completions` (streamed). **Your conversation context is sent to that
-  server**, and responses are NOT grounded in your documents — provider mode is plain chat,
-  not RAG. Document Q&A stays available in the other modes.
-- The server must allow browser requests from the app origin (CORS). This varies by server:
-  llama-server and vLLM typically accept browser origins out of the box, while LM Studio and
-  Ollama may require enabling a CORS toggle or allow-listing origins — if Test Connection
-  fails on a healthy server, check its CORS/origins setting first.
-- In the desktop app the selection persists across restarts (the built-in backend does not
-  override it); the quick mode toggle in the chat header is hidden in provider mode — switch
-  modes from Settings.
-- The "API Server" option is different: it exists only in the desktop app and means the
-  app's OWN built-in backend (the `/ask` contract), not an OpenAI endpoint. The browser build
-  has no API-server mode.
+1. **Use external model** — the switch.
+2. **Protocol** — "OpenAI-compatible" or "Anthropic-compatible".
+3. **Base URL** — the server root, for example `http://localhost:1234`. See the URL rules
+   below.
+4. **API key** — a password field. Local servers usually need none.
+5. **Model** — type the model id, or pick it from the list that "Test connection" fills in.
+6. **Test connection** — lists the server's models and checks the chosen model. In the desktop
+   app it tests the draft values without saving anything. It gives up after 30 seconds in
+   total, including every page of a paged model list, and stops at once if the app window
+   closes or reloads while it is running.
+7. **Direct chat (no document grounding)** — the toggle described above.
+8. **Remember API key in this browser** — browser app only (see Key storage).
+
+**Response limits (both apps).** An endpoint may send at most 1 MiB per streamed line or
+event, 8 MiB in total for a streamed answer, 8 MiB for a non-streamed answer, 4 MiB for a model list (all pages combined) and 64 KiB
+of an error body. A response over a limit stops the request with a "server" error; an
+oversized error body is cut rather than rejected, so a 401 or 404 is still reported as an
+authentication or model error. In the desktop app an endpoint's error body must also finish
+within 15 seconds. If saving desktop settings fails, the app restores the previous settings,
+including the stored API key and the origin it is bound to; the error says "nothing was
+changed" only when that restore fully succeeded, and otherwise names what could not be
+undone.
+
+### URL rules
+
+One policy applies in both apps (`web_ui/src/lib/llm/endpoint-policy.ts`,
+`desktop/main/security/endpoint-policy.ts`; shared vectors in
+`contracts/endpoint-policy-vectors.json` and
+`contracts/endpoint-policy-vectors.supplemental.json`):
+
+- **Loopback** (127.0.0.0/8, `::1`, `localhost`) and **private network** (10.0.0.0/8,
+  172.16.0.0/12, 192.168.0.0/16; IPv6 ULA fc00::/7; names ending `.local`, `.lan`,
+  `.home.arpa` or `.internal`) may use `http` or `https`.
+- **Every other host is public and requires `https`.** This includes 100.64.0.0/10
+  carrier-grade NAT addresses such as Tailscale: use `https`, or a `.lan` / `.internal` name
+  that you control. A single-label name such as `http://gpu-box` also counts as public: use
+  `gpu-box.lan` or the IP address.
+- **Always refused:** cloud metadata (169.254.169.254, `fd00:ec2::254`,
+  `metadata.google.internal`), link-local (169.254.0.0/16, fe80::/10), `0.0.0.0` and `::`,
+  multicast and broadcast addresses, URLs containing `user:password@`, and any scheme other
+  than `http` or `https`.
+- Numeric IPv4 spellings (decimal, octal, hex, short forms such as `127.1`) and IPv6 forms that
+  embed an IPv4 address (`::ffff:...`, SIIT `::ffff:0:0:0/96`, NAT64 `64:ff9b::/96`, local-use
+  NAT64 `64:ff9b:1::/48` in its `/96` layout, 6to4 `2002::/16`) are classified by the embedded
+  address. Teredo (`2001::/32`) is refused when either IPv4 address it carries is refused and is
+  otherwise public (https required, refused in air-gapped builds). Local-use NAT64 addresses
+  outside the `/96` layout are refused.
+
+In the desktop app a refused URL is a 422 whose message names the rule.
+
+### Providers and base URLs
+
+Each entry gives the protocol and a base URL example. Pick the protocol first; the base URL is
+the server root.
+
+- **OpenAI** — OpenAI-compatible protocol, base URL `https://api.openai.com`. Needs an API
+  key.
+- **Anthropic** — Anthropic-compatible protocol, base URL `https://api.anthropic.com`. Needs
+  an API key. From the browser app the header `anthropic-dangerous-direct-browser-access: true`
+  is sent automatically.
+- **OpenRouter** — OpenAI-compatible protocol, base URL `https://openrouter.ai/api`. Needs an
+  API key.
+- **LM Studio** — OpenAI-compatible protocol, base URL `http://localhost:1234`. For the browser
+  app, enable CORS in LM Studio's server settings.
+- **Ollama** — OpenAI-compatible protocol, base URL `http://localhost:11434`. For the browser
+  app, set `OLLAMA_ORIGINS` to the app's origin if it is not one of Ollama's default allowed
+  origins.
+- **llama-server** — OpenAI-compatible protocol, base URL `http://localhost:8080`. For the
+  browser app, allow the app origin with `--cors-origins` or the equivalent option your
+  llama-server version supports.
+- **vLLM** — OpenAI-compatible protocol, base URL `http://localhost:8000`. A server on your
+  LAN works the same way, for example `http://192.168.1.20:8000`.
+
+A `/v1` suffix on the base URL is optional.
+
+When the browser app itself is served over https, the browser blocks plain-http model servers
+(mixed content) and Chromium may ask for permission to reach the local network; use https on the
+model server, or the desktop app.
+
+### CORS
+
+- **Browser app:** the browser calls the endpoint directly, so the endpoint must allow the
+  app's origin (CORS). If "Test connection" fails against a server you know is running, check
+  the server's CORS or allowed-origins setting first; the error is reported as a network/CORS
+  error. Cloud providers differ: Anthropic accepts browser calls only with the header above;
+  check your provider's documentation for the others.
+- **Desktop app:** CORS does not apply. The desktop backend makes the request, not the
+  renderer, so no server-side CORS setting is needed.
+
+### Airgap builds
+
+Airgap builds refuse public hosts; loopback and private-network endpoints still work.
+
+- Browser app: the build made with `npm run build:airgap` (`VITE_AIRGAP=1`).
+- Desktop app: when the installer resources manifest (`installer-resources/manifest.json`,
+  field `"airgap": true`, staged by `desktop:build`) says so, or when the environment variable
+  `TRAININGAPP_AIRGAP=1` is set. The environment variable can only tighten the restriction.
+  To produce an air-gapped desktop build, set `TRAININGAPP_INSTALLER_AIRGAP=1` for
+  `npm run desktop:build` (or pass `--airgap` to `desktop/scripts/build-installer-manifest.mjs`);
+  every build writes the field explicitly as `true` or `false`.
+  The manifest flag is not signed: it is protected only by write access to the install
+  directory (administrator for per-machine installs, none for portable builds).
+
+An airgap build silently refuses (disables) a previously stored public external endpoint (for example one saved before upgrading to an airgap build): the desktop app drops the stored base URL when it starts and turns the external model off. This is reported only in the backend log; Settings shows the external model as off with an empty base URL. Point it at a loopback or private-network server to use the external model again.
+
+### Key storage
+
+- **Browser app:** the key is stored in this browser. While "Remember API key in this browser"
+  is on it is kept in `localStorage` (`external-provider-apikey`); otherwise it is kept in
+  `sessionStorage` and cleared when the browser session ends. The rest of the configuration
+  (never the key) is in `localStorage` (`external-provider-config`). Clear Cache removes both.
+  Any script running in the page can read a browser-stored key.
+- **Desktop app:** the key is encrypted with Electron `safeStorage` (Windows DPAPI, macOS
+  Keychain, Linux secret service) in the profile directory (`secrets.bin`). If the operating
+  system offers no encryption the key is kept for the current session only and the panel says
+  "Key kept for this session only". The renderer never stores the key or receives it back
+  (it holds the key only while you type it and sends it once with the save); it is never
+  written to `settings.json` or `external.json`, never returned by any endpoint and never
+  logged.
+- **Both apps: the key is bound to its origin.** A saved key is bound to the endpoint origin
+  (`scheme://host:port`, compared case-insensitively with default ports dropped, so
+  `https://api.example.com` and `https://api.example.com:443` are the same origin while
+  `http://localhost:1234` and `http://127.0.0.1:1234` are not) it was entered for. If you point
+  the base URL at a different origin the key is NOT sent there (neither for answers nor for
+  "Test connection"); the panel says "Your saved key is for <origin>. Enter the key for this
+  server to use it." Entering the key again binds it to the new origin. Changing or clearing
+  the base URL never moves the key to another origin, and pointing back uses it again. A key is
+  saved only together with the base URL shown in the panel; while that field is empty or shows a
+  refused URL the key is not saved: it is saved only with the next valid base URL you enter
+  (never with one saved earlier unless you enter it again), as the panel says. The
+  browser app keeps the bound origin next to the key (`external-provider-apikey-origin`, in the
+  same storage); a key saved by an earlier version without an origin is bound to the base URL
+  saved with it, or discarded if there is none.
+
+### Browser app transport limits
+
+The browser app uses `redirect: 'error'` (redirects are never followed, so a key is never
+replayed to another host) and omits credentials. A browser cannot resolve DNS, so it cannot
+check what a name resolves to; the desktop app does. When a key would be sent over plain
+`http` to a network (non-loopback) host the panel warns.
+
+### Desktop app transport
+
+The desktop backend (Node main process) makes all external calls
+(`desktop/main/backend/net/guarded-request.ts`); the renderer's content-security policy is
+unchanged. For each request it resolves the host name and refuses if any resolved address is
+cloud metadata, link-local or unspecified; requires the answers to match the name's class (a
+private name may resolve only to private or loopback addresses, a loopback name only to
+loopback); connects to the validated address with the lookup pinned; and follows no redirects.
+
+- **Timeouts:** 10 minutes for the first byte (cold model loads and long prompt evaluation
+  legitimately take minutes) and 2 minutes of silence between streamed chunks. Stop cancels the
+  request.
+- **Certificates:** Node's bundled CAs plus the operating system's certificate store are
+  trusted; `NODE_EXTRA_CA_CERTS` is also honoured, which is the way to trust a corporate or
+  private CA.
+- **Proxies:** not used in this release. A public endpoint reachable only through a mandatory
+  HTTP proxy will not work; loopback and LAN endpoints are never proxied.
+- **Settings channel:** `PUT /settings` accepts `external.enabled`, `external.protocol`
+  (`openai` or `anthropic`), `external.baseUrl`, `external.model`, `external.apiKey`
+  (write-only; an empty string clears it) and `external.grounded`. `GET /settings` returns the
+  same fields without the key, plus `external.apiKeySet`, `external.apiKeyPersisted`,
+  `external.apiKeyBoundOrigin` and `external.airgap`. The non-secret settings are saved in
+  `<profile dir>/external.json`, not `settings.json`, so older app versions still load
+  `settings.json`. `POST /settings/external/test` tests a draft connection without saving.
+- **No local model files needed:** with the external model on, the desktop app does not need
+  the local GGUF model files (no missing-model overlay, no local warm-up), and
+  `GET /status/models` reports engine `external`.
+
+### Errors
+
+Errors name the fix: authentication (401/403: check the API key), unknown model (404 or not in
+the list: pick a model from the list), network/CORS (cannot reach the server: check that it is
+running, the base URL and, in the browser app, the server's CORS setting) and timeout.
+
+### What this does not change
+
+The Python `api_server.py` has no external backend and is unchanged. The desktop app's
+"API Server" inference mode is different: it means the desktop app's own built-in backend
+(the `/ask` contract), not an external endpoint. The browser app has no API-server mode.
 
 ## App Settings (desktop and browser app)
 
@@ -320,8 +479,9 @@ the path the app is actually using or is hidden with a one-line reason.
 - **API Server**: the desktop app's own built-in backend. It exists **only in the desktop app**.
   The browser build has no API-server mode: a browser profile that stored the old
   `mode: "api"` is migrated once to Browser-local on load, its stored server URL is dropped,
-  and its engine, response-quality and provider choices are kept. The migration is one-way.
-- **Provider server (OpenAI-compatible)**: see the section above.
+  and its engine, response-quality and external model choices are kept. The migration is one-way.
+External endpoints are not an inference mode: they are the External model setting (see the
+section above), which you can use from either mode.
 
 Mode-specific controls are shown only where they can act: Browser Engine, browser memory use
 and Hardware Capability only in Browser-local mode; the desktop inference profile only in the
@@ -392,7 +552,7 @@ preset's reranking, answer length or temperature, and selecting the preset again
 Clear Cache removes, in this browser profile: the document library and its keyword/vector
 indexes, downloaded WebLLM weights, orphaned data from earlier sessions, and every saved
 setting registered in `web_ui/src/lib/storage/persisted-keys.ts` (inference mode, browser
-engine and response-quality choices, theme, provider connection and API key, sidebar state,
+engine and response-quality choices, theme, external model connection and API key, sidebar state,
 last-opened course). It keeps your chat history (conversations, stored separately from the
 document library) and the internal profile id, migration marker and re-index notice flag, then
 reloads the page. The desktop app removes the same browser-side data from its app window (the

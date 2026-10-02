@@ -37,9 +37,10 @@ export interface EngineCapability {
   /**
    * Inference mode we recommend. 'api' (the desktop backend) only inside the
    * desktop app; the browser app has no API-server mode, so a device that
-   * cannot run browser inference is pointed at an external model ('provider').
+   * cannot run browser inference is pointed at an external model ('external',
+   * Settings → External model).
    */
-  recommendedMode: 'browser-local' | 'api' | 'provider';
+  recommendedMode: 'browser-local' | 'api' | 'external';
   /** Overall browser-inference suitability for this device. */
   tier: CapabilityTier;
   /** Human-readable reasons backing the recommendation. */
@@ -98,12 +99,12 @@ export async function detectEngineCapability(): Promise<EngineCapability> {
 
   if (!wasm) {
     recommendedEngine = 'wllama';
-    recommendedMode = isElectron() ? 'api' : 'provider';
+    recommendedMode = isElectron() ? 'api' : 'external';
     tier = 'red';
     reasons.push(
       isElectron()
         ? 'WebAssembly is unavailable; browser inference is not supported — use the desktop backend (API Server mode).'
-        : 'WebAssembly is unavailable; browser inference is not supported — use the desktop app or an external model server (Provider server mode).'
+        : 'WebAssembly is unavailable; browser inference is not supported — use the desktop app or an external model server (Settings → External model).'
     );
   } else if (webgpu) {
     recommendedEngine = 'webllm';

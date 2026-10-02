@@ -43,6 +43,18 @@ import type {
 } from '../types.js';
 import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
 import {
+  EXTERNAL_SETTING_KEYS,
+  ExternalProviderState,
+  isHeaderSafeValue,
+  UNSENDABLE_KEY_MESSAGE,
+  type ExternalProviderOptions,
+  type ExternalProviderSettingsState,
+} from './external-provider.js';
+import { generateExternal, listExternalModels, originOf } from './external-generator.js';
+import { RequestCancelledError } from '../net/guarded-request.js';
+import { ExternalProviderError, scrubSecrets } from '../net/provider-error.js';
+import { validateEndpointUrl } from '../../security/endpoint-policy.js';
+import {
   defaultThreadCount,
   selectProfile,
   type InferenceProfileName,
@@ -100,6 +112,13 @@ export interface LlamaEngineOptions {
   freeMemBytes?: () => number;
   cpuCount?: () => number;
   llamaFactory?: (opts: LlamaEngineFactoryOptions) => Promise<LlamaEngineBackend>;
+  /**
+   * universal-provider-settings-overhaul: external model endpoint wiring —
+   * the main-process SecretStore for the API key, the DNS lookup seam for the
+   * guarded outbound client, and the airgap flag (TRAININGAPP_AIRGAP=1 read at
+   * call time can only tighten it).
+   */
+  externalProvider?: ExternalProviderOptions;
 }
 
 /** Generation params per profile, mirroring the browser RAG presets
@@ -263,6 +282,8 @@ export function resolveNodeEngine(
     /** E1 (issue #84): packaged per-profile model file overrides, derived by
      *  the startup integrity gate from the VERIFIED installer manifest. */
     models?: { quality?: string; fast?: string };
+    /** universal-provider-settings-overhaul: SecretStore + airgap flag. */
+    externalProvider?: ExternalProviderOptions;
   },
 ): EngineSurface {
   if (env.TRAININGAPP_DESKTOP_ENGINE === 'stub') {
@@ -279,6 +300,7 @@ export function resolveNodeEngine(
     modelDir: env.TRAININGAPP_INFERENCE_MODEL_DIR,
     userDataPath: overrides?.userDataPath,
     ...(overrides?.models !== undefined ? { models: overrides.models } : {}),
+    ...(overrides?.externalProvider !== undefined ? { externalProvider: overrides.externalProvider } : {}),
     profile,
     ...(threads !== undefined ? { threads } : {}),
   });
@@ -298,6 +320,8 @@ export interface LlamaSettingsState {
   readonly threadsSetting: number | undefined;
   readonly vulkanSetting: boolean | undefined;
   readonly stickyAuto: InferenceProfileName | null;
+  /** PR #142 rebase RB-001: external.* values, the session key and the SecretStore entries. */
+  readonly external: ExternalProviderSettingsState;
 }
 
 export class LlamaEngine implements EngineSurface {
@@ -346,6 +370,8 @@ export class LlamaEngine implements EngineSurface {
   private loadingProfile: InferenceProfileName | null = null;
   /** Single-flight load: concurrent warmup + first query load ONE backend. */
   private loadInFlight: Promise<ResidentEntry> | null = null;
+  /** universal-provider-settings-overhaul: external endpoint state (off by default). */
+  private readonly external: ExternalProviderState;
 
   constructor(options: LlamaEngineOptions = {}) {
     this.freeMemBytes = options.freeMemBytes ?? (() => os.freemem());
@@ -358,6 +384,7 @@ export class LlamaEngine implements EngineSurface {
     this.modelDirOption = options.modelDir;
     this.userDataPath = options.userDataPath;
     this.modelOverrides = options.models ?? {};
+    this.external = new ExternalProviderState(options.externalProvider);
   }
 
   /** Headless-safe model dir: option -> <userData>/models -> ~/.trainingapp/models. */
@@ -407,6 +434,8 @@ export class LlamaEngine implements EngineSurface {
    * throws: a failed warmup leaves state idle and the first /ask retries.
    */
   async warmup(): Promise<void> {
+    // An external endpoint generates: no local model is loaded or warmed.
+    if (this.external.active()) return;
     try {
       const profile = this.effectiveProfile();
       const modelPath = this.assertModelAvailable(profile);
@@ -462,6 +491,8 @@ export class LlamaEngine implements EngineSurface {
    * error. Throws ModelNotConfiguredError when the model is unavailable.
    */
   async preflight(): Promise<void> {
+    // AC8: an external endpoint needs no local model file.
+    if (this.external.active()) return;
     this.assertModelAvailable(this.effectiveProfile());
   }
 
@@ -480,11 +511,13 @@ export class LlamaEngine implements EngineSurface {
       const modelPath = this.modelPathFor(profile);
       return existsSync(modelPath) ? { present: true, path: modelPath } : { present: false };
     };
+    const external = this.external.active();
     return {
-      engine: 'llama.cpp',
+      // AC8: 'external' tells the renderer that absent GGUFs never gate chat.
+      engine: external ? 'external' : 'llama.cpp',
       profile: this.effectiveProfile(),
       models: { quality: statusFor('quality'), fast: statusFor('fast') },
-      resident: this.residentLoadStatus(),
+      resident: external ? { state: 'idle', profile: null, loadStartedAt: null } : this.residentLoadStatus(),
     };
   }
 
@@ -547,6 +580,7 @@ export class LlamaEngine implements EngineSurface {
   }
 
   async query(question: string, opts: EngineQueryOptions = {}): Promise<EngineQueryResult> {
+    if (this.external.active()) return this.queryExternal(question, opts);
     const started = Date.now();
     const profile = this.effectiveProfile();
     // PR #140 review (FB140-006): read the generation overrides together with
@@ -622,6 +656,118 @@ export class LlamaEngine implements EngineSurface {
     return run;
   }
 
+  /**
+   * universal-provider-settings-overhaul (AC5/AC6/AC13): generation through
+   * the configured external endpoint. Retrieval is the SAME local pipeline
+   * (skipped only for opt-in Direct chat, external.grounded=false); the
+   * external generator builds its own message list, so the local llama.cpp
+   * prompt above is untouched. Runs inside the engine queue (and the host's
+   * generation mutex), so cancellation and timeouts always release it.
+   */
+  private async queryExternal(question: string, opts: EngineQueryOptions): Promise<EngineQueryResult> {
+    const started = Date.now();
+    const grounded = this.external.grounded();
+    const context = grounded ? await this.stub.retrieveContext(question, opts.nResults) : null;
+    const run = this.queue.then(async () => {
+      const overrides = this.stub.generationOverrides();
+      const result = await generateExternal({
+        config: this.external.endpoint(),
+        question,
+        contextTexts: context?.texts ?? null,
+        history: opts.history,
+        ...(overrides.maxTokens !== undefined ? { maxTokens: overrides.maxTokens } : {}),
+        ...(overrides.temperature !== undefined ? { temperature: overrides.temperature } : {}),
+        streamCallback: opts.streamCallback,
+        cancellationEvent: opts.cancellationEvent,
+        airgap: this.external.airgap(),
+        lookup: this.external.lookup,
+        firstByteTimeoutMs: this.external.firstByteTimeoutMs,
+        idleTimeoutMs: this.external.idleTimeoutMs,
+      });
+      const out: EngineQueryResult = {
+        answer: result.answer,
+        sources: context?.sources ?? [],
+        context_length: context?.contextLength ?? 0,
+        inference_time: (Date.now() - started) / 1000,
+      };
+      if (result.cancelled) out.cancelled = true;
+      // Same grounded/general rule as the local path (C5, issue #72).
+      out.grounding =
+        !result.cancelled && context !== null && context.cited.length > 0 && context.floorActive ? 'grounded' : 'general';
+      if (context !== null) out.cited = context.cited;
+      if (!result.cancelled && context !== null && context.cited.length > 0 && this.learnAssembler !== null) {
+        const learn = this.learnAssembler(context.cited, out.grounding);
+        if (learn !== null) out.learn = learn;
+      }
+      return out;
+    });
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  /** universal-provider-settings-overhaul: non-secret external.* snapshot (external.json). */
+  externalSnapshot(): Record<string, unknown> {
+    return { ...this.external.snapshot() };
+  }
+
+  /**
+   * universal-provider-settings-overhaul: POST /settings/external/test. Lists
+   * the draft endpoint's models and checks the chosen model. Key selection: a
+   * key in the body (never persisted) is used for this probe; otherwise the
+   * stored key ONLY when the draft URL's origin equals the key's bound origin;
+   * otherwise no key is sent. Persists nothing.
+   *
+   * PR #142 review F-002: the whole test runs under one aggregate deadline
+   * (listExternalModels), and `opts.signal` (the route aborts it when the
+   * client disconnects) aborts the upstream request.
+   */
+  async probeExternal(
+    body: Record<string, unknown>,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<{ ok: boolean; kind?: string; message: string; models: string[] }> {
+    const protocol = body.protocol === 'anthropic' ? 'anthropic' : body.protocol === 'openai' ? 'openai' : null;
+    const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
+    const model = typeof body.model === 'string' ? body.model.trim() : '';
+    const draftKey = typeof body.apiKey === 'string' ? body.apiKey : '';
+    if (protocol === null) return { ok: false, kind: 'other', message: "protocol: expected 'openai' or 'anthropic'", models: [] };
+    // The draft key is refused (never echoed) when it cannot travel in a header.
+    if (!isHeaderSafeValue(draftKey)) return { ok: false, kind: 'other', message: `apiKey: ${UNSENDABLE_KEY_MESSAGE}`, models: [] };
+    const verdict = validateEndpointUrl(baseUrl, { airgap: this.external.airgap() });
+    if (!verdict.ok) return { ok: false, kind: 'other', message: verdict.message, models: [] };
+    const apiKey = draftKey !== '' ? draftKey : this.external.keyFor(baseUrl);
+    let models: string[];
+    try {
+      models = await listExternalModels({
+        config: { protocol, baseUrl, model, apiKey },
+        airgap: this.external.airgap(),
+        lookup: this.external.lookup,
+        ...(this.external.probeTimeoutMs !== undefined ? { totalTimeoutMs: this.external.probeTimeoutMs } : {}),
+        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+      });
+    } catch (err) {
+      if (err instanceof RequestCancelledError) {
+        return { ok: false, kind: 'other', message: 'The connection test was cancelled.', models: [] };
+      }
+      if (err instanceof ExternalProviderError) {
+        return { ok: false, kind: err.kind, message: scrubSecrets(err.message, apiKey), models: [] };
+      }
+      return { ok: false, kind: 'other', message: scrubSecrets(err instanceof Error ? err.message : String(err), apiKey), models: [] };
+    }
+    if (model !== '' && !models.includes(model)) {
+      return {
+        ok: false,
+        kind: 'model',
+        message: `Unknown model "${model}": ${originOf(baseUrl)} does not list it. Pick a model from the endpoint's list in Settings → External model.`,
+        models,
+      };
+    }
+    return {
+      ok: true,
+      message: model === '' ? `Connected: ${models.length} model${models.length === 1 ? '' : 's'} available. Choose one.` : `Connected: ${model} is available.`,
+      models,
+    };
+  }
+
   /** Test telemetry: how many backend constructions have completed. */
   getLoadCount(): number {
     return this.loads;
@@ -642,17 +788,25 @@ export class LlamaEngine implements EngineSurface {
       // (also what meta.embedding_model_id records) replaces the stub value.
       embedding_model:
         this.documents !== null ? this.documents.embedderModelId : stubStats.embedding_model,
-      llm_backend: `llama.cpp (node-llama-cpp) profile=${profile} model=${path.basename(this.modelPathFor(profile))}`,
+      llm_backend: this.external.active()
+        ? this.external.describe()
+        : `llama.cpp (node-llama-cpp) profile=${profile} model=${path.basename(this.modelPathFor(profile))}`,
     };
   }
 
   applySettingsPatch(patch: Record<string, unknown>): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
     const inferenceSubset: Record<string, unknown> = {};
+    const externalSubset: Record<string, unknown> = {};
     const rest: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(patch)) {
       if (key.startsWith('inference.')) inferenceSubset[key] = value;
+      else if (key.startsWith('external.')) externalSubset[key] = value;
       else rest[key] = value;
     }
+    // universal-provider-settings-overhaul: every external.* key (incl. the
+    // URL policy and airgap) is validated BEFORE anything commits; the
+    // SecretStore write happens only on the commit path below.
+    const externalErrors = Object.keys(externalSubset).length > 0 ? this.external.validate(externalSubset) : [];
     const errors: string[] = [];
     let profile: ProfileSetting | undefined;
     let thresholdGb: number | undefined;
@@ -699,7 +853,10 @@ export class LlamaEngine implements EngineSurface {
       }
     }
     if (errors.length > 0) {
-      return { ok: false, status: 422, detail: 'Invalid inference settings', errors };
+      return { ok: false, status: 422, detail: 'Invalid inference settings', errors: [...errors, ...externalErrors] };
+    }
+    if (externalErrors.length > 0) {
+      return { ok: false, status: 422, detail: 'Invalid external model settings', errors: externalErrors };
     }
     if (Object.keys(rest).length > 0) {
       const stubResult = this.stub.applySettingsPatch(rest);
@@ -726,6 +883,16 @@ export class LlamaEngine implements EngineSurface {
           break;
       }
     }
+    if (Object.keys(externalSubset).length > 0) {
+      const wasActive = this.external.active();
+      this.external.commit(externalSubset);
+      // Switching to an external endpoint releases a resident local GGUF
+      // (deferred behind any in-flight local generation).
+      if (!wasActive && this.external.active()) {
+        const release = this.queue.then(() => this.dispose());
+        this.queue = release.catch(() => {});
+      }
+    }
     return { ok: true };
   }
 
@@ -735,6 +902,10 @@ export class LlamaEngine implements EngineSurface {
    * inference.* fields and the sticky AUTO latch an inference.profile /
    * profileThresholdGb patch clears. Resident-model and load state are not
    * settings and are never touched.
+   *
+   * PR #142 rebase RB-001: also the external.* state — the non-secret values,
+   * the session-only key, and the two SecretStore entries — so a failed save
+   * that touched external.* (above all external.apiKey) is undone too.
    */
   captureSettingsState(): LlamaSettingsState {
     return {
@@ -744,9 +915,16 @@ export class LlamaEngine implements EngineSurface {
       threadsSetting: this.threadsSetting,
       vulkanSetting: this.vulkanSetting,
       stickyAuto: this.stickyAuto,
+      external: this.external.captureState(),
     };
   }
 
+  /**
+   * Restore a captureSettingsState() snapshot. Every in-memory value is
+   * restored first; the SecretStore entries are then written back where they
+   * differ, which THROWS when that write fails (the caller must then not
+   * claim that nothing changed — see rollBackUnsavedSettings).
+   */
   restoreSettingsState(snapshot: LlamaSettingsState): void {
     this.stub.restoreSettingsState(snapshot.stub);
     this.profileSetting = snapshot.profileSetting;
@@ -754,11 +932,35 @@ export class LlamaEngine implements EngineSurface {
     this.threadsSetting = snapshot.threadsSetting;
     this.vulkanSetting = snapshot.vulkanSetting;
     this.stickyAuto = snapshot.stickyAuto;
+    this.external.restoreState(snapshot.external);
   }
 
-  /** settings-wiring-honesty: the rag_* reset directive (rag keys only). */
+  /**
+   * settings-wiring-honesty: the reset directive. rag_* keys go to the stub;
+   * external.* keys (universal-provider-settings-overhaul) restore their
+   * defaults — resetting external.apiKey deletes BOTH secret entries (the key
+   * and its bound origin). All-or-nothing: an unknown key commits nothing.
+   */
   resetSettings(keys: unknown): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
-    return this.stub.resetSettings(keys);
+    if (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string')) return this.stub.resetSettings(keys);
+    const externalKeys = (keys as string[]).filter((key) => key.startsWith('external.'));
+    const ragKeys = (keys as string[]).filter((key) => !key.startsWith('external.'));
+    const known: readonly string[] = EXTERNAL_SETTING_KEYS;
+    const unknown = externalKeys.filter((key) => !known.includes(key));
+    if (unknown.length > 0) {
+      return {
+        ok: false,
+        status: 422,
+        detail: 'Request validation failed',
+        errors: unknown.map((key) => `reset: ${key}: unknown setting`),
+      };
+    }
+    if (ragKeys.length > 0 || externalKeys.length === 0) {
+      const ragResult = this.stub.resetSettings(ragKeys);
+      if (!ragResult.ok) return ragResult;
+    }
+    if (externalKeys.length > 0) this.external.reset(externalKeys);
+    return { ok: true };
   }
 
   responseSettings(): Record<string, unknown> {
@@ -771,6 +973,8 @@ export class LlamaEngine implements EngineSurface {
       'inference.profileThresholdGb': this.thresholdGb,
       'inference.threads': this.effectiveThreads(),
       'inference.vulkan': this.effectiveVulkan(),
+      // universal-provider-settings-overhaul: external.* (never the key).
+      ...this.external.responseFields(),
     };
   }
 

@@ -257,7 +257,7 @@ export class WebLLMService implements LLMService {
     if (!detection.available) {
       throw new Error(
         'WebGPU is not available in this browser. ' +
-        'Please switch to the wllama engine or an external model server (Provider server mode) for LLM inference (per FR-015).'
+        'Please switch to the wllama engine or an external model server (Settings → External model) for LLM inference (per FR-015).'
       );
     }
     this._inferenceMode = 'webgpu';
@@ -322,7 +322,7 @@ export class WebLLMService implements LLMService {
         console.error('[WebLLM] WebGPU not available:', msg);
         throw new Error(
           'WebGPU is not available in this browser. ' +
-          'Please switch to the wllama engine or an external model server (Provider server mode) for LLM inference (per FR-015).'
+          'Please switch to the wllama engine or an external model server (Settings → External model) for LLM inference (per FR-015).'
         );
       }
 

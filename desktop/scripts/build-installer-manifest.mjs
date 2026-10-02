@@ -56,18 +56,20 @@ function fail(message) {
 
 function usage() {
   return [
-    `usage: node desktop/scripts/${SCRIPT}.mjs --stage-dir <dir> [--out <path>] [--note <text>]`,
+    `usage: node desktop/scripts/${SCRIPT}.mjs --stage-dir <dir> [--out <path>] [--note <text>] [--airgap]`,
     `       node desktop/scripts/${SCRIPT}.mjs --stage-dir <dir> --out <path> --verify`,
     '',
     '  --stage-dir <dir>  staged resources tree (alias: --stage; positional accepted)',
     '  --out <path>       manifest output path (default <stage>/manifest.json)',
     '  --note <text>      appended to the manifest description (e.g. "MODE: fixture-models")',
+    '  --airgap           mark the build air-gapped (external model endpoints limited to',
+    '                     loopback/private network); env TRAININGAPP_INSTALLER_AIRGAP=1 does the same',
     '  --verify           read-only completeness + integrity check; never regenerates',
   ].join('\n');
 }
 
 function parseArgs(argv) {
-  const out = { stage: undefined, out: undefined, note: undefined, verify: false, help: false };
+  const out = { stage: undefined, out: undefined, note: undefined, verify: false, help: false, airgap: false };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const next = () => {
@@ -79,6 +81,7 @@ function parseArgs(argv) {
     else if (arg === '--out') out.out = next();
     else if (arg === '--note') out.note = next();
     else if (arg === '--verify' || arg === '--check') out.verify = true;
+    else if (arg === '--airgap') out.airgap = true;
     else if (arg === '--help' || arg === '-h') out.help = true;
     else if (!arg.startsWith('-') && out.stage === undefined) out.stage = arg;
     else throw new Error(`unknown argument: ${arg}`);
@@ -88,6 +91,10 @@ function parseArgs(argv) {
   if (out.note === undefined && process.env.TRAININGAPP_INSTALLER_MANIFEST_NOTE !== undefined) {
     out.note = process.env.TRAININGAPP_INSTALLER_MANIFEST_NOTE;
   }
+  // universal-provider-settings-overhaul: an air-gapped desktop build refuses
+  // public external model endpoints (loopback/private network only). The flag
+  // rides the manifest (always written, true|false) and is read at startup.
+  if (process.env.TRAININGAPP_INSTALLER_AIRGAP === '1') out.airgap = true;
   return out;
 }
 
@@ -156,7 +163,7 @@ async function readPackMeta(packDirAbs) {
 
 let stage; // resolved stage root, used by toRel inside helpers
 
-async function buildManifest(stageRoot, outPath, note) {
+async function buildManifest(stageRoot, outPath, note, airgap = false) {
   const files = await walkFiles(stageRoot);
   if (files.length === 0) fail('staged tree is empty — nothing to enumerate');
   const outAbs = path.resolve(outPath);
@@ -252,7 +259,7 @@ async function buildManifest(stageRoot, outPath, note) {
     `desktop/scripts/${SCRIPT}.mjs; verified at startup by desktop/main/integrity-check.ts.` +
     (note !== undefined ? ` ${note}` : '');
 
-  const manifest = { version: '1', description, models, packs };
+  const manifest = { version: '1', description, airgap: airgap === true, models, packs };
   if (models.length === 0) fail('no models staged — the installer resources tree requires at least one models/ group');
 
   return manifest;
@@ -348,7 +355,7 @@ async function main() {
     return;
   }
 
-  const manifest = await buildManifest(stage, outPath, args.note);
+  const manifest = await buildManifest(stage, outPath, args.note, args.airgap);
   if (errors.length > 0) {
     for (const message of errors) console.error(`${SCRIPT}: FAIL ${message}`);
     console.error(`${SCRIPT}: generation FAILED (${errors.length} problem${errors.length === 1 ? '' : 's'}); no manifest written`);

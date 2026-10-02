@@ -72,14 +72,6 @@ export function InferenceModeToggle() {
 
   const statusColor = getStatusColor();
 
-  // Trace external-llm-provider-settings: provider mode has its own switching
-  // surface (Settings → Inference Mode). Rendering the binary flip here would
-  // label provider mode "Desktop backend" and one click would silently
-  // discard it — hide the toggle entirely in that mode.
-  if (mode === 'provider') {
-    return null;
-  }
-
   // U7b air-gap safety: the toggle is a one-click flip to API mode, so only
   // render it when the desktop app's built-in backend is the target
   // (settings-wiring-honesty: the browser app has no API-server mode, and its

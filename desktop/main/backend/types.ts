@@ -131,6 +131,15 @@ export interface BackendHostConfig {
    *  the current Python embedder) until ADR-0001 (#55) decides the
    *  production value. */
   storeEmbeddingDims?: number;
+  /** Node mode only (universal-provider-settings-overhaul): external model
+   *  endpoint wiring for the default engine — the main-process SecretStore
+   *  (safeStorage-backed in Electron, in-memory in the headless dev-server)
+   *  and the installer-manifest airgap flag. Ignored when `engine` is
+   *  injected (the injected engine carries its own). */
+  externalProvider?: {
+    secretStore?: import('../security/secret-store.js').SecretStore;
+    airgap?: boolean;
+  };
   /** Node mode only (B6, issue #64): directory for store backups created by
    *  the recovery/backup surfaces. Defaults to <storeDir>/backups. */
   storeBackupsDir?: string;
@@ -334,9 +343,11 @@ export interface EngineQueryResult {
  * renderer tell the CI/dev stub fixture (which answers /ask without weights)
  * apart from a real engine whose weights are missing — only the latter is a
  * first-run blocking state. `path` is informational (staged file location).
+ * 'external' (universal-provider-settings-overhaul): generation runs on a
+ * configured external endpoint, so absent local GGUFs never block chat.
  */
 export interface ModelStatus {
-  engine: 'stub' | 'llama.cpp';
+  engine: 'stub' | 'llama.cpp' | 'external';
   profile: string;
   models: {
     quality: { present: boolean; path?: string };
@@ -411,10 +422,33 @@ export interface EngineSurface {
    * captures before applying and restores when persisting the change fails,
    * so a 500 leaves the engine exactly as it was. Optional (test doubles);
    * a host without them cannot roll back and says so in its 500 detail.
+   * PR #142 RB-001: for an engine with external.* settings the copy includes
+   * the SecretStore entries, and restoreSettingsState() writes them back —
+   * it restores memory first and THROWS only when that write fails.
    */
   captureSettingsState?(): unknown;
   restoreSettingsState?(snapshot: unknown): void;
   responseSettings(): Record<string, unknown>;
+  /**
+   * universal-provider-settings-overhaul: the non-secret external.* settings
+   * snapshot the host persists to <profileDir>/external.json (never
+   * settings.json, never the key). Optional: engines without external
+   * support return nothing to persist.
+   */
+  externalSnapshot?(): Record<string, unknown>;
+  /**
+   * universal-provider-settings-overhaul: POST /settings/external/test — test
+   * a draft external endpoint (list models, check the chosen model) without
+   * persisting anything. Optional: the route answers 404-equivalent 501 for
+   * engines without it. `opts.signal` aborts the upstream work (the route
+   * fires it when the client disconnects, PR #142 review F-002).
+   */
+  probeExternal?(body: Record<string, unknown>, opts?: { signal?: AbortSignal }): Promise<{
+    ok: boolean;
+    kind?: string;
+    message: string;
+    models: string[];
+  }>;
   ingestDirectory(directory: string): Promise<IngestResult>;
   /** B6 (issue #64): input carries the uploaded file; the no-input form is
    *  kept so pre-B6 callers/test doubles stay source-compatible (the stub

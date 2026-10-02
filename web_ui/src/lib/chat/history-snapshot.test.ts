@@ -9,7 +9,12 @@
  */
 
 import { describe, test, expect } from 'vitest';
-import { buildHistorySnapshot, MAX_HISTORY_TURNS } from './history-snapshot';
+import {
+  buildDesktopHistorySnapshot,
+  buildHistorySnapshot,
+  desktopSettingsExcludeGrounded,
+  MAX_HISTORY_TURNS,
+} from './history-snapshot';
 import type { ChatMessage } from '../../types/chat';
 
 const user = (content: string, id = content): ChatMessage => ({
@@ -196,5 +201,146 @@ describe('buildHistorySnapshot (Issue #40 RC1)', () => {
     for (const turn of snap) {
       expect(turn.role === 'user' || turn.role === 'assistant').toBe(true);
     }
+  });
+});
+
+describe('F-012: Direct chat never threads retrieval-grounded answers', () => {
+  const grounded = (content: string): ChatMessage => ({ ...assistant(content), grounding: 'grounded' });
+  const general = (content: string): ChatMessage => ({ ...assistant(content), grounding: 'general' });
+
+  test('excludeGrounded drops a grounded exchange (answer AND its question)', () => {
+    const msgs = [user('u1'), grounded('from docs [1]'), user('u2'), general('a2'), user('now'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs, { excludeGrounded: true })).toEqual([
+      { role: 'user', content: 'u2' },
+      { role: 'assistant', content: 'a2' },
+    ]);
+  });
+
+  test('a conversation of only grounded turns threads nothing into Direct chat', () => {
+    const msgs = [user('u1'), grounded('g1'), user('u2'), grounded('g2'), user('now'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs, { excludeGrounded: true })).toEqual([]);
+  });
+
+  test('untagged legacy turns are dropped from Direct chat (fail closed), with their question', () => {
+    const msgs = [user('u1'), assistant('legacy'), user('now'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs, { excludeGrounded: true })).toEqual([]);
+  });
+
+  test('a turn Stopped mid-stream (untagged partial answer) is dropped, with its question', () => {
+    // The shape handleCancel leaves: partial content, isStreaming cleared, no
+    // grounding/sources/citations (those only arrive with the done event).
+    const stopped: ChatMessage = { ...assistant('Per the SOP [1], restart the'), isStreaming: false };
+    const msgs = [user('u1'), general('a1'), user('what does the SOP say?'), stopped, user('now'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs, { excludeGrounded: true })).toEqual([
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'a1' },
+    ]);
+  });
+
+  test("a 'general' answer that showed sources is dropped (rerank-off answers are tagged general)", () => {
+    const withSources: ChatMessage = { ...general('From the handbook: 20 days.'), sources: ['handbook.pdf'] };
+    const msgs = [user('leave?'), withSources, user('now'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs, { excludeGrounded: true })).toEqual([]);
+  });
+
+  test("a 'general' answer that showed only citations is dropped", () => {
+    const withCitations: ChatMessage = {
+      ...general('From the handbook [1].'),
+      sources: [],
+      citations: [{ docId: 'd1', chunkIndex: 0, source: 'handbook.pdf' }],
+    };
+    const msgs = [user('leave?'), withCitations, user('now'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs, { excludeGrounded: true })).toEqual([]);
+  });
+
+  test("a sourceless 'general' answer is kept (Direct-to-Direct continuity; desktop sends [] arrays)", () => {
+    const desktopDirect: ChatMessage = { ...general('A device that moves fluid.'), sources: [], citations: [] };
+    const browserDirect: ChatMessage = { ...general('A valve controls flow.'), sources: [] };
+    const msgs = [user('pump?'), desktopDirect, user('valve?'), browserDirect, user('now'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs, { excludeGrounded: true })).toEqual([
+      { role: 'user', content: 'pump?' },
+      { role: 'assistant', content: 'A device that moves fluid.' },
+      { role: 'user', content: 'valve?' },
+      { role: 'assistant', content: 'A valve controls flow.' },
+    ]);
+  });
+
+  test('without the option (grounded RAG / desktop callers) grounded answers still thread', () => {
+    const msgs = [user('u1'), grounded('from docs [1]'), user('now'), emptyAssistant()];
+    expect(buildHistorySnapshot(msgs)).toEqual([
+      { role: 'user', content: 'u1' },
+      { role: 'assistant', content: 'from docs [1]' },
+    ]);
+  });
+});
+
+describe('F-012 (Stage B): desktop backend settings decide the grounded-answer filter', () => {
+  const grounded = (content: string): ChatMessage => ({ ...assistant(content), grounding: 'grounded' });
+  const ext = { 'external.enabled': true, 'external.baseUrl': 'http://127.0.0.1:1/v1', 'external.model': 'm' };
+
+  test('desktopSettingsExcludeGrounded: only an active, ungrounded external model (or unknown settings) excludes', () => {
+    expect(desktopSettingsExcludeGrounded({ ...ext, 'external.grounded': false })).toBe(true);
+    expect(desktopSettingsExcludeGrounded({ ...ext, 'external.grounded': true })).toBe(false);
+    expect(desktopSettingsExcludeGrounded({ ...ext, 'external.enabled': false, 'external.grounded': false })).toBe(false);
+    expect(desktopSettingsExcludeGrounded({ ...ext, 'external.model': '', 'external.grounded': false })).toBe(false);
+    expect(desktopSettingsExcludeGrounded({ ...ext, 'external.baseUrl': '', 'external.grounded': false })).toBe(false);
+    // Unknown / malformed: fail closed.
+    expect(desktopSettingsExcludeGrounded(null)).toBe(true);
+    expect(desktopSettingsExcludeGrounded('nope')).toBe(true);
+    expect(desktopSettingsExcludeGrounded({})).toBe(true);
+    // external.grounded missing on an active external model: not "true", so exclude.
+    expect(desktopSettingsExcludeGrounded({ ...ext })).toBe(true);
+  });
+
+  test('buildDesktopHistorySnapshot drops grounded answers unless the backend says grounded', async () => {
+    // 'plain' has the exact shape a desktop Direct answer is finalized with
+    // (done event: grounding 'general', sources [], citations []).
+    const plain: ChatMessage = { ...assistant('plain'), grounding: 'general', sources: [], citations: [] };
+    const msgs = [user('q1'), grounded('G-ANSWER'), user('q2'), plain, user('now'), emptyAssistant()];
+    const contents = (turns: Array<{ content: string }>) => turns.map((t) => t.content);
+    const ungrounded = await buildDesktopHistorySnapshot(
+      { getSettings: async () => ({ ...ext, 'external.grounded': false }) },
+      msgs,
+    );
+    expect(contents(ungrounded)).toEqual(['q2', 'plain']);
+    const groundedMode = await buildDesktopHistorySnapshot(
+      { getSettings: async () => ({ ...ext, 'external.grounded': true }) },
+      msgs,
+    );
+    expect(contents(groundedMode)).toEqual(['q1', 'G-ANSWER', 'q2', 'plain']);
+    const failing = await buildDesktopHistorySnapshot({ getSettings: () => Promise.reject(new Error('down')) }, msgs);
+    expect(contents(failing)).toEqual(['q2', 'plain']);
+    expect(contents(await buildDesktopHistorySnapshot({}, msgs))).toEqual(['q2', 'plain']);
+    expect(contents(await buildDesktopHistorySnapshot(null, msgs))).toEqual(['q2', 'plain']);
+  });
+
+  test('buildDesktopHistorySnapshot (external Direct) drops a Stopped turn and a sourced general answer', async () => {
+    const plain: ChatMessage = { ...assistant('plain'), grounding: 'general', sources: [], citations: [] };
+    const stopped: ChatMessage = { ...assistant('STOPPED-PARTIAL from the handbook'), isStreaming: false };
+    const rerankOff: ChatMessage = {
+      ...assistant('RERANK-OFF from the handbook'),
+      grounding: 'general',
+      sources: ['handbook.pdf'],
+      citations: [],
+    };
+    const msgs = [
+      user('q1'),
+      plain,
+      user('q2'),
+      stopped,
+      user('q3'),
+      rerankOff,
+      user('now'),
+      emptyAssistant(),
+    ];
+    const contents = (turns: Array<{ content: string }>) => turns.map((t) => t.content);
+    const ungrounded = await buildDesktopHistorySnapshot(
+      { getSettings: async () => ({ ...ext, 'external.grounded': false }) },
+      msgs,
+    );
+    expect(contents(ungrounded)).toEqual(['q1', 'plain']);
+    // A failed settings read is fail-closed too.
+    const failing = await buildDesktopHistorySnapshot({ getSettings: () => Promise.reject(new Error('down')) }, msgs);
+    expect(contents(failing)).toEqual(['q1', 'plain']);
   });
 });
