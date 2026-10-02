@@ -19,8 +19,8 @@
 
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
-import { fileURLToPath, dirname } from 'node:url';
+import { dirname, extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

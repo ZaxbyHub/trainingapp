@@ -61,6 +61,21 @@ def test_player_paths_are_404_never_served(archive_client, path):
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cross-origin-embedder-policy"] == "require-corp"
     assert response.headers.get("cross-origin-resource-policy") != "cross-origin"
+    # Every response of the archive mount is unframeable, the 404s included.
+    assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert response.headers["x-frame-options"] == "DENY"
+
+
+@pytest.mark.parametrize(
+    "path", ["/training-boot.html", "/training-boot.js", "/training/sw.js"]
+)
+def test_player_paths_answer_head_with_a_non_html_404(archive_client, path):
+    # The browser app probes HEAD /training-boot.html before using the
+    # loopback-alias player origin; a non-HTML 404 makes it report course
+    # playback as unavailable on this host (framed-refusal.test.tsx HU1).
+    response = archive_client.head(path)
+    assert response.status_code == 404
+    assert "text/html" not in response.headers.get("content-type", "")
 
 
 @pytest.mark.parametrize("path", ["/", "/index.html", "/some/spa/route", "/health"])

@@ -191,6 +191,11 @@ export default defineConfig(({ command }) => ({
   // validated with the SharedArrayBuffer/threads it needs for WASM inference.
   preview: {
     host: '127.0.0.1',
+    // No proxy (final-critic FC1): preview.proxy otherwise inherits
+    // server.proxy, and this server also answers the course player origin,
+    // whose uncontrolled same-origin documents (the boot page) course JS can
+    // open. A player host must serve only static files.
+    proxy: {},
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',

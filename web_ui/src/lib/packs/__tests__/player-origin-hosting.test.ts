@@ -97,6 +97,22 @@ describe('vite dev/preview player-origin routes', () => {
     expect(config.server.host).toBe('127.0.0.1');
     expect(config.preview.host).toBe('127.0.0.1');
   });
+
+  it('vite preview proxies nothing: a player host serves only static files (final-critic FC1)', async () => {
+    // preview.proxy inherits server.proxy (/api, /auth -> :8000) unless set;
+    // the preview server also answers the player origin, where course JS can
+    // reach every same-origin endpoint through the boot page.
+    const { resolveConfig } = await import('vite');
+    const resolved = await resolveConfig(
+      { configFile: path.join(WEB_ROOT, 'vite.config.ts'), logLevel: 'silent' },
+      'serve',
+      'production',
+      'production',
+      true,
+    );
+    expect(Object.keys(resolved.server.proxy ?? {})).toEqual(expect.arrayContaining(['/api', '/auth']));
+    expect(resolved.preview.proxy ?? {}).toEqual({});
+  });
 });
 
 describe('standalone servers (source scan)', () => {
@@ -109,6 +125,17 @@ describe('standalone servers (source scan)', () => {
     expect(offline).toMatch(/'Cross-Origin-Resource-Policy': 'cross-origin'/);
     expect(offline).toMatch(/rawPath\.startsWith\('\/training\/'\)\) && rawPath !== TRAINING_SW_PATH\)\s*\{\s*res\.writeHead\(404/);
     expect(offline).toMatch(/server\.listen\(PORT, '127\.0\.0\.1'/);
+  });
+
+  it('serve-offline.mjs: every named node: import exists (the script has no harness; start.command runs it)', async () => {
+    const imports = [...offline.matchAll(/^import \{([^}]+)\} from '(node:[a-z_]+)';\r?$/gm)];
+    expect(imports.length).toBeGreaterThan(2);
+    for (const [, names, specifier] of imports) {
+      const mod = (await import(specifier)) as Record<string, unknown>;
+      for (const name of names.split(',').map((n) => n.trim()).filter((n) => n.length > 0)) {
+        expect(mod[name], `${specifier} exports ${name}`).toBeDefined();
+      }
+    }
   });
 
   it('serve-offline.mjs: every non-player response is unframeable', () => {

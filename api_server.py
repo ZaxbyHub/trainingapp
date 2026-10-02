@@ -542,8 +542,9 @@ app.add_middleware(
 # settings/packs API, so it must never answer as a player origin: the player
 # boot files, the course worker and every /training/* path are a plain 404, and
 # the browser app served from here reports course playback as unavailable on
-# this host. Static player hosts: web_ui/scripts/serve-offline.mjs, start.ps1,
-# vite dev/preview.
+# this host. Static player hosts: web_ui/scripts/serve-offline.mjs, start.ps1
+# and vite preview (vite dev also answers the player origin, with a dev-only
+# /@fs and /api proxy residual).
 TRAINING_PLAYER_PATHS = frozenset({"/training-boot.html", "/training-boot.js"})
 
 
@@ -558,7 +559,9 @@ async def cross_origin_isolation(request: Request, call_next):
     affect external API consumers and iframe embedders."""
     path = request.url.path
     if _web_archive_dir is not None and (
-        path in TRAINING_PLAYER_PATHS or path == "/training" or path.startswith("/training/")
+        path in TRAINING_PLAYER_PATHS
+        or path == "/training"
+        or path.startswith("/training/")
     ):
         return PlainTextResponse(
             "Not Found",
@@ -568,6 +571,8 @@ async def cross_origin_isolation(request: Request, call_next):
                 "Cross-Origin-Embedder-Policy": "require-corp",
                 "Cross-Origin-Resource-Policy": "same-origin",
                 "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "frame-ancestors 'none'",
+                "X-Frame-Options": "DENY",
             },
         )
     response = await call_next(request)
