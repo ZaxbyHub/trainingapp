@@ -260,6 +260,12 @@ Courses run on a dedicated player origin instead:
   answers other `/training/*` paths with 404 (vite dev/preview,
   `web_ui/scripts/serve-offline.mjs`, `web_ui/scripts/start.ps1`,
   `api_server.py`).
+- **Framing.** The app shell is never frameable (every host sends
+  `frame-ancestors 'none'` and `X-Frame-Options: DENY`), a framed app never starts
+  the course player, and the boot page runs only directly under the top-level page.
+- **Sandbox.** The course iframe is `sandbox="allow-scripts allow-same-origin
+  allow-forms"` in both apps: no popups, no top navigation. `allow-same-origin`
+  keeps the course on its own origin, never the app's.
 - **First load.** If a course page loaded before the worker controlled it, the
   Training page reloads the frame once.
 - **Support.** Chrome and Edge; Safari is not supported; Firefox is untested.

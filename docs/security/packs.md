@@ -186,6 +186,15 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   active version, with the desktop `resolveTrainingRequest` containment rules
   (shared vectors `contracts/training-path-vectors.json`), bounded reads and a
   request-rate window. The player-origin worker and boot page store nothing.
+- **Framing.** The app shell is never frameable: every host sends
+  `frame-ancestors 'none'` and `X-Frame-Options: DENY` on app-shell responses. A framed app
+  never runs training (no player origin, no boot frame, no relay port), and the boot frame runs
+  only directly under the top-level page.
+- **Course frame sandbox.** `allow-scripts allow-same-origin allow-forms`: no popups, no top
+  navigation, no storage-access prompts. `allow-same-origin` keeps the course on its own origin
+  (player origin / `app://training`), never the app's.
+- **Relay memory bound.** At most 32 reads / 64 MiB in flight across every relay port; excess
+  reads are answered `busy` and retried by the worker.
 - **Shared player origin (accepted, desktop parity).** All packs share one
   player origin, as all packs share `app://training` on desktop. A live
   malicious pack can interfere with the player origin within a session (for
@@ -197,8 +206,12 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   opt-in), https-only on the request and final URL, credential-free, size
   capped, verifies the Ed25519 feed signature and the artifact sha256, and
   installs through the guarded path. It cannot validate intermediate redirect
-  hops (`fetch` hides them; desktop checks each hop) and needs a CORS-enabled
-  feed host. Air-gapped builds refuse it.
+  hops (`fetch` hides them; desktop checks each hop): an accepted residual, since
+  hops carry no credentials or referrer and integrity rests on the signed sha256
+  plus Ed25519. It needs a CORS-enabled feed host. Air-gapped builds refuse it.
+- **Parity difference (accepted).** Slide documents without a `text` field are
+  accepted in the browser (slide fields are re-indexed there) but refused on
+  desktop unless the pack ships a prebuilt index.
 
 ## Configuration surface
 

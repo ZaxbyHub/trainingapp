@@ -89,6 +89,33 @@ could be served were not isolated from app storage.
   response is built from relay bytes. It waits up to 10 s for a relay port, then answers 503.
   `skipWaiting` is deferred while a course page is open.
 
+### Framing rules (review round 1)
+
+- **The app shell is never frameable.** Every host sends
+  `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on app-shell
+  responses (vite dev/preview, `serve-offline.mjs`, `start.ps1`, `api_server.py`), as the
+  desktop renderer CSP does (`frame-ancestors 'none'`). Only the player-origin routes differ:
+  the boot files stay embeddable (the app embeds them), and `/training/*` is the worker's.
+  Without this, course content on the player origin (which shares the server) could load a
+  live app instance in a frame, and that instance would treat the real app origin as its
+  "player origin".
+- **A framed app never runs training.** When the app document is not the top-level page
+  (`isFramedContext`), it has no player origin, fetches no `player-origin.json`, embeds no boot
+  frame, hands out no relay port, and the Training page says the app is embedded in another
+  page. This is defense in depth for a host that omits the headers.
+- **The boot frame runs only directly under the top-level page** (`window.parent ===
+  window.top`), with the exact parent-origin check as before.
+- **The course frame is sandboxed** with `allow-scripts allow-same-origin allow-forms`: no
+  popups, no top navigation, no storage-access prompts (desktop parity: the main process denies
+  window.open and navigation). `allow-same-origin` keeps the course on its own origin (the
+  player origin in the browser, `app://training` on desktop), which is never the app origin, so
+  it grants no access to app storage or DOM; the player-origin service worker and the course's
+  own storage need it.
+- **Course CSP keeps `frame-src 'self'`** (desktop parity: publishes may embed their own web
+  objects). On the player origin `'self'` only reaches the open pack's files, the boot page
+  (inert unless its parent is the top-level page) and the app shell, which refuses to render in
+  any frame.
+
 ### The byte relay (all enforcement is app-side)
 
 `web_ui/src/lib/packs/training-relay.ts`, driven by `training-player-host.ts`:
@@ -104,7 +131,9 @@ could be served were not isolated from app storage.
   containment uses the same rules as desktop `resolveTrainingRequest` (`..`, encoded traversal,
   backslash, NUL, bad pack ids), pinned by `contracts/training-path-vectors.json` on both
   runtimes. Reads are bounded (16 MiB per message, 64 open handles, 2000 requests per 10 s
-  window). Range requests get 206/416 with desktop parsing.
+  window, and at most 32 reads / 64 MiB materialized at once across every port; excess reads
+  are answered `busy` and the worker retries). Range requests get 206/416 with desktop
+  parsing.
 - Responses carry the desktop MIME table, `Cross-Origin-Resource-Policy: cross-origin`,
   `nosniff`, `no-cache`, and the training CSP: the desktop `buildTrainingCspPolicy()` without the
   private `app:` sources plus `frame-ancestors 'self' <app origin>` (pinned by
@@ -177,7 +206,9 @@ off by default with zero network before opt-in, the E5 feed schema, Ed25519 over
 sha256 against the build-time feed key, artifact sha256 re-verified before install, and install
 through the same guarded path. Requests are https-only (request and final URL), omit credentials
 and the referrer, never cache, and are size-capped. Browser limits: `fetch` cannot inspect
-intermediate redirect hops (desktop validates each hop), and the feed and artifact hosts must
+intermediate redirect hops (desktop validates each hop). This is an accepted residual (review
+round 1 ruling): hops carry no credentials or referrer, and integrity rests on the signed sha256
+plus the Ed25519 signature, re-verified before install. The feed and artifact hosts must
 allow CORS from the app origin; a GitHub Releases redirect does not, so browser updates need a
 CORS-enabled mirror or the desktop app. The air-gapped build (`VITE_AIRGAP=1`) refuses the
 opt-in and never fetches.
@@ -186,8 +217,9 @@ opt-in and never fetches.
 
 Every server that hosts the web app serves `/training-boot.html` and `/training-boot.js` with
 `Cross-Origin-Resource-Policy: cross-origin`, `Cross-Origin-Embedder-Policy: require-corp` and
-`nosniff`, serves `/training/sw.js`, and answers every other `/training/*` path with 404, never
-the SPA shell: vite dev and preview, `serve-offline.mjs`, `start.ps1`, and `api_server.py`'s
+`nosniff`, serves `/training/sw.js`, answers every other `/training/*` path with 404, never
+the SPA shell, and sends `Content-Security-Policy: frame-ancestors 'none'` plus
+`X-Frame-Options: DENY` on every other (app-shell) response: vite dev and preview, `serve-offline.mjs`, `start.ps1`, and `api_server.py`'s
 web-archive mount (pinned by `player-origin-hosting.test.ts` and
 `tests/test_api_server_training_routes.py`).
 
@@ -209,6 +241,7 @@ web-archive mount (pinned by `player-origin-hosting.test.ts` and
 | Prebuilt index | mounted (`index.sqlite`) | not used; slide docs re-indexed in the browser | no SQLite in the browser (ADR-0009) |
 | Linked Learn rows | `links` table | computed at ask time (cosine ≥ 0.5, top 3, 4 s budget) | no links store in the browser |
 | Archive CRC | JSZip default (not verified) | not verified | JSZip parity |
+| Slide docs without a `text` field | refused unless the pack ships a prebuilt index | accepted (slide fields are re-indexed in the browser) | the browser never uses the prebuilt index; accepted parity difference (review round 1 ruling) |
 | Large-entry memory | JSZip inflates whole entries | streams to OPFS; in-memory reads capped at 256 MiB, central directory at 64 MiB | bounded memory on 292 MB publishes |
 | Quota | disk | refused below 2× declared size free | OPFS quota is shared and smaller |
 | Update redirects | each hop https-checked | final URL https-checked; CORS required | `fetch` hides hops |

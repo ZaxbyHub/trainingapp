@@ -22,6 +22,9 @@
   `Cross-Origin-Resource-Policy: cross-origin`, and answers other `/training/*` paths with 404.
   Other hosts can name a player origin with `player-origin.json` or
   `VITE_TRAININGAPP_PLAYER_ORIGIN` (CONFIGURATION.md).
+- **The app is never shown inside a frame.** Every bundled host sends
+  `frame-ancestors 'none'` and `X-Frame-Options: DENY` on app pages; a framed app refuses to
+  play courses, and the course frame is sandboxed (no popups, no top navigation).
 - **Slide bridge messages use exact origins.** The renderer bridge and the fixture's pack-side
   bridge post to exact origins with one-shot `MessagePort` replies; no first-party
   `postMessage` uses `'*'` (source guardrail test).

@@ -588,8 +588,10 @@ player that serves the same files.
 
 Any server that hosts the web app must serve `/training-boot.html` and `/training-boot.js` with
 `Cross-Origin-Resource-Policy: cross-origin` (and the app's `Cross-Origin-Embedder-Policy:
-require-corp`), serve `/training/sw.js`, and answer every other `/training/*` path with 404, not
-the app shell. The bundled servers (vite dev/preview, `web_ui/scripts/serve-offline.mjs`,
+require-corp`), serve `/training/sw.js`, answer every other `/training/*` path with 404, not
+the app shell, and send `Content-Security-Policy: frame-ancestors 'none'` and
+`X-Frame-Options: DENY` on every other response (the app is never shown inside a frame; a
+framed app also refuses to play courses). The bundled servers (vite dev/preview, `web_ui/scripts/serve-offline.mjs`,
 `web_ui/scripts/start.ps1`, the `api_server.py` web-archive mount) already do.
 
 Build-time pack trust policy (same meaning as the desktop `TRAININGAPP_PACKS_*` variables):
