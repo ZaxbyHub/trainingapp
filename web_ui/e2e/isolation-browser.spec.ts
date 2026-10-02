@@ -26,6 +26,7 @@ import JSZip from 'jszip';
 import { expect, test, type Page } from '@playwright/test';
 
 const PROBE_PACK = 'isolation-probe-course';
+const CLICK_PACK = 'isolation-click-course';
 const OTHER_PACK = 'isolation-other-course';
 const SLIDE_DOC_PATH = 'docs/slide-001-5rN4PvXJM5d.json';
 const SLIDE_DOC = Buffer.from(
@@ -70,7 +71,17 @@ function probeStoryHtml(): string {
   r.popup = popup === null ? 'null' : typeof popup === 'string' ? popup : 'window';
   r.topNavigation = errName(function () { window.top.location.href = appOrigin + '/#isolation-hijacked'; });
   document.getElementById('probe').textContent = JSON.stringify(r);
-})();
+})();`;
+  return `<!doctype html><html><head><title>isolation probe</title></head><body><pre id="probe"></pre><script>${script}</script></body></html>`;
+}
+
+/**
+ * The click-probe course (FC5): does nothing on load (a script-initiated top
+ * navigation in the probe course above would already move an unsandboxed app
+ * away); its buttons attempt a popup and a top navigation from a real click.
+ */
+function clickStoryHtml(): string {
+  const script = `
 (function () {
   var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
   function record(key, value) {
@@ -89,7 +100,7 @@ function probeStoryHtml(): string {
     catch (e) { record('topNavigation', (e && e.name) || String(e)); }
   });
 })();`;
-  return `<!doctype html><html><head><title>isolation probe</title></head><body><pre id="probe"></pre><button id="escape-popup">popup</button><button id="escape-top">top</button><pre id="click-probe"></pre><script>${script}</script></body></html>`;
+  return `<!doctype html><html><head><title>click probe</title></head><body><button id="escape-popup">popup</button><button id="escape-top">top</button><pre id="click-probe"></pre><script>${script}</script></body></html>`;
 }
 
 function manifest(id: string, version: string): Record<string, unknown> {
@@ -170,32 +181,48 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   expect(r.inactiveVersion).toBe(404);
   expect(r.appShellOnPlayerOrigin).toBe(404);
   expect(r.appOrigin_root).not.toBe(200);
-  // Sandbox, user-activated attempts (FC5): a real click inside the course
-  // frame grants transient activation, which would let an unsandboxed
-  // cross-origin frame open a popup and navigate the top page. The sandbox
-  // (no allow-popups, no allow-top-navigation[-by-user-activation]) refuses
-  // both: no popup event, top URL unchanged.
-  const popups: string[] = [];
-  page.on('popup', (p) => popups.push(p.url()));
-  page.context().on('page', (p) => popups.push(p.url()));
-  const course = page.frameLocator('iframe[data-testid="training-player-frame"]');
-  const topBefore = page.url();
-  await course.locator('#escape-popup').click();
-  await expect(course.locator('#click-probe')).toContainText('"popup"', { timeout: 10_000 });
-  await course.locator('#escape-top').click();
-  await page.waitForTimeout(1000);
-  expect(popups, 'FC5 click-initiated popup').toEqual([]);
-  expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
-  const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
-  expect(clicked.popup, 'FC5 click-initiated window.open').toBe('null');
   // Sandbox, script-initiated attempts (no user activation): window.open
-  // returns null and top navigation throws.
+  // returns null and top navigation throws. Click-initiated attempts are the
+  // next test.
   expect(r.popup).toBe('null');
   expect(r.topNavigation).not.toBe('no-error');
+  await page.waitForTimeout(1000);
   expect(page.url()).not.toContain('isolation-hijacked');
   expect(new URL(page.url()).origin).toBe(appOrigin);
   // Forged messages changed nothing the app shows.
   await expect(page.getByTestId('training-player-slide')).not.toContainText('FORGED');
   // Checked last so the behavioral rows above decide a sandbox regression.
   await expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+});
+
+test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Documents', exact: true }).click();
+  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+  await install(page, await packZip(CLICK_PACK, '1.0.0', { 'story.html': clickStoryHtml() }), 'click.zip', CLICK_PACK, '1.0.0');
+  await page.getByRole('button', { name: 'Training', exact: true }).click();
+  const option = page.getByTestId('training-pack-select').locator('option', { hasText: CLICK_PACK });
+  await expect(option).toHaveCount(1, { timeout: 30_000 });
+  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+  const course = page.frameLocator('iframe[data-testid="training-player-frame"]');
+  await expect(course.locator('#escape-popup')).toBeVisible({ timeout: 60_000 });
+
+  // A real click grants the course frame transient activation, which would
+  // let an unsandboxed cross-origin frame open a popup and navigate the top
+  // page. The sandbox (no allow-popups, no allow-top-navigation[-by-user-
+  // activation]) refuses both: no popup event, top URL unchanged (FC5).
+  const popups: string[] = [];
+  page.on('popup', (p) => popups.push(p.url()));
+  page.context().on('page', (p) => popups.push(p.url()));
+  const topBefore = page.url();
+  await course.locator('#escape-popup').click();
+  await expect(course.locator('#click-probe')).toContainText('"popup"', { timeout: 10_000 });
+  await page.waitForTimeout(500);
+  expect(popups, 'FC5 click-initiated popup').toEqual([]);
+  await course.locator('#escape-top').click();
+  await page.waitForTimeout(1000);
+  expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
+  const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
+  expect(clicked.popup, 'FC5 click-initiated window.open').toBe('null');
+  expect(clicked.topNavigation, 'FC5 click-initiated top navigation throws').not.toBe('no-error');
 });
