@@ -18,9 +18,13 @@
   it runs on a separate player origin (by default the loopback alias, `localhost` <->
   `127.0.0.1`) and is served by a player-origin service worker from bytes the app relays for the
   open pack only, with desktop path containment (`contracts/training-path-vectors.json`), MIME
-  types and training CSP. Every bundled server now binds 127.0.0.1, serves the boot files with
-  `Cross-Origin-Resource-Policy: cross-origin`, and answers other `/training/*` paths with 404.
-  Other hosts can name a player origin with `player-origin.json` or
+  types and training CSP. The bundled static servers (vite, `serve-offline.mjs`, `start.ps1`)
+  bind 127.0.0.1, serve the boot files with `Cross-Origin-Resource-Policy: cross-origin`, and
+  answer other `/training/*` paths with 404. The player origin must be served by a static-only
+  host (course JS can reach every same-origin endpoint through the boot page), so
+  `api_server.py` is not a player host: it answers the boot files and every `/training/*` path
+  with 404, and the browser app served from it says course playback is not available on this
+  host. Other hosts can name a player origin with `player-origin.json` or
   `VITE_TRAININGAPP_PLAYER_ORIGIN` (CONFIGURATION.md).
 - **The app is never shown inside a frame.** Every bundled host sends
   `frame-ancestors 'none'` and `X-Frame-Options: DENY` on app pages; a framed app refuses to
@@ -33,6 +37,9 @@
 - **Retrieval:** pack slide documents are indexed in the browser with their pack id, so Learn
   rows carry `pack_id` and linked slides are computed at question time.
 - **Clear Cache** in the browser app also removes installed packs and the pack update setting.
+- **`start.command` works again:** `serve-offline.mjs` imported `dirname` from `node:url` and
+  failed at startup; `vite preview` no longer inherits the dev server's `/api` and `/auth`
+  proxy.
 - Supported browsers: current Chrome and Edge. Safari is not supported; Firefox is untested.
   Manual checks on the real 292 MB publish and under enterprise cookie policies are still open
   (ADR-0012).
