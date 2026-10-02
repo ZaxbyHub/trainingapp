@@ -73,9 +73,10 @@ could be served were not isolated from app storage.
   from the app origin, and must be `https:` unless its host is loopback; anything else is
   ignored. If nothing resolves, course playback is disabled with an explanation. There is no
   same-origin fallback.
-- **Remote hosting** (the app served from a non-loopback name, for example behind
-  `api_server.py`) needs a second hostname that serves the same files, configured through
-  `player-origin.json` or the build variable.
+- **Remote hosting** (the app served from a non-loopback name) needs a second hostname for the
+  player, configured through `player-origin.json` or the build variable and answered by a
+  static-only host that serves the same files (see Hosting requirements). `api_server.py` is not
+  such a host.
 
 ### Player-origin components (stateless)
 
@@ -84,8 +85,11 @@ could be served were not isolated from app storage.
   the app transfers to it; it accepts the handshake only from `window.parent` at the exact
   expected parent origin. It stores nothing.
 - `/training/sw.js` (scope `/training/`): serves only `/training/<packId>/<rest>`; every other
-  request from a player client (other paths, other origins, the app shell, app APIs) is refused
-  with 404; methods other than GET/HEAD get 405. It holds no cache and writes no storage; every
+  request from a worker-controlled course page (a document under `/training/`) is refused with
+  404, whether it targets another path, another origin, the app shell or an app API; methods
+  other than GET/HEAD get 405. The worker never sees requests from uncontrolled player-origin
+  documents such as the boot page (see the static-only hosting rule below). It holds no cache
+  and writes no storage; every
   response is built from relay bytes. It waits up to 10 s for a relay port, then answers 503.
   `skipWaiting` is deferred while a course page is open.
 
@@ -93,8 +97,8 @@ could be served were not isolated from app storage.
 
 - **The app shell is never frameable.** Every host sends
   `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on app-shell
-  responses (vite dev/preview, `serve-offline.mjs`, `start.ps1`, `api_server.py`), as the
-  desktop renderer CSP does (`frame-ancestors 'none'`). Only the player-origin routes differ:
+  responses (vite dev/preview, `serve-offline.mjs`, `start.ps1`, and `api_server.py` when it
+  serves the web archive), as the desktop renderer CSP does (`frame-ancestors 'none'`). Only the player-origin routes differ:
   the boot files stay embeddable (the app embeds them), and `/training/*` is the worker's.
   Without this, course content on the player origin (which shares the server) could load a
   live app instance in a frame, and that instance would treat the real app origin as its
@@ -115,6 +119,22 @@ could be served were not isolated from app storage.
   objects). On the player origin `'self'` only reaches the open pack's files, the boot page
   (inert unless its parent is the top-level page) and the app shell, which refuses to render in
   any frame.
+- **The player origin is served by a static-only host.** The worker controls only documents
+  under `/training/`. Every other document on the player origin, notably `/training-boot.html`,
+  is uncontrolled: course JS can open it (same origin) and send requests from it that the worker
+  never sees. Any same-origin endpoint of the server that answers the player origin is therefore
+  reachable by course JS. That server must serve only static files: no API routes, no proxies,
+  no authenticated or state-changing endpoints. `api_server.py` carries the unauthenticated
+  document, ask, settings and packs API, so it is not a player host: it answers the boot files,
+  `/training/sw.js` and every `/training/*` path with 404, and the browser app it serves reports
+  that course playback is not available on this host (it probes `/training-boot.html` before
+  falling back to the loopback alias). It can still serve the app with `player-origin.json`
+  naming a separate static player host.
+- **Dev-only residual.** The vite dev server answers the player origin too, and it is not
+  static-only: it serves `/@fs/` (files allowed by vite's `server.fs` rules) and proxies `/api`
+  and `/auth` to the local API server on port 8000, all reachable by course JS through the boot
+  page. Play only trusted courses under `npm run dev`; `vite preview`, `serve-offline.mjs` and
+  `start.ps1` are static-only.
 
 ### The byte relay (all enforcement is app-side)
 
@@ -157,7 +177,10 @@ could be served were not isolated from app storage.
    limits this, but it is not prevented. This is parity with desktop.
 5. Isolation from the app is by origin: app IndexedDB, localStorage, OPFS, Cache Storage and DOM
    are unreachable from course JS. Course JS reaches the app only through the slide bridge
-   (exact origins, below) and the scoped relay.
+   (exact origins, below) and the scoped relay, provided the player origin is served by a
+   static-only host. The worker refuses only requests from worker-controlled course pages; from
+   an uncontrolled same-origin document such as the boot page, course JS reaches every endpoint
+   of the server that answers the player origin.
 
 ### Slide bridge
 
@@ -215,13 +238,19 @@ opt-in and never fetches.
 
 ### Hosting requirements
 
-Every server that hosts the web app serves `/training-boot.html` and `/training-boot.js` with
+A server that answers the player origin must serve only static files (no API routes, proxies
+or authenticated endpoints; see "The player origin is served by a static-only host"). Such a
+server serves `/training-boot.html` and `/training-boot.js` with
 `Cross-Origin-Resource-Policy: cross-origin`, `Cross-Origin-Embedder-Policy: require-corp` and
 `nosniff`, serves `/training/sw.js`, answers every other `/training/*` path with 404, never
 the SPA shell, and sends `Content-Security-Policy: frame-ancestors 'none'` plus
-`X-Frame-Options: DENY` on every other (app-shell) response: vite dev and preview, `serve-offline.mjs`, `start.ps1`, and `api_server.py`'s
-web-archive mount (pinned by `player-origin-hosting.test.ts` and
-`tests/test_api_server_training_routes.py`).
+`X-Frame-Options: DENY` on every other (app-shell) response. Compliant hosts: `vite preview`,
+`serve-offline.mjs` and `start.ps1` (pinned by `player-origin-hosting.test.ts`); `vite dev`
+with the dev-only residual above.
+
+`api_server.py`'s web-archive mount is an app host only: it sends COOP/COEP and the anti-framing
+headers on every response and answers the boot files, `/training/sw.js` and every `/training/*`
+path with 404 (pinned by `tests/test_api_server_training_routes.py`).
 
 ### Browser support
 
@@ -252,7 +281,12 @@ web-archive mount (pinned by `player-origin-hosting.test.ts` and
   UI as desktop. The ADR-0009 gate, its `pack-detect.ts` classifier and its e2e specs are
   retired; `web_ui/e2e/packs-browser.spec.ts` replaces them.
 - Every new host for the web app must meet the hosting requirements above, or courses will not
-  play there (installs still work).
+  play there (installs still work). A host that also runs an API must not answer the player
+  origin; the browser app served by `api_server.py` plays no courses unless `player-origin.json`
+  names a separate static player host.
+- The course-frame sandbox (`allow-scripts allow-same-origin allow-forms`) also applies on
+  desktop: courses there can no longer open modal dialogs (`alert`, `confirm`, `prompt`) or start
+  downloads from the frame.
 - A future packtool bridge injection, a per-pack player origin, or signing player assets would
   each need their own decision record.
 - Manual measurements the plan called for (the real 292 MB publish in Chrome and Edge, the

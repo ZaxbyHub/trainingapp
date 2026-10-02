@@ -584,15 +584,25 @@ from the app origin, and must be `https:` unless its host is `localhost`, `127.0
 otherwise it is ignored. If nothing resolves (for example the app is opened on a LAN hostname
 with no configured player origin) course playback is disabled with an explanation; pack install
 still works. Hosting the app on a non-loopback name therefore needs a second hostname for the
-player that serves the same files.
+player, answered by a static-only host that serves the same files (not `api_server.py`).
 
-Any server that hosts the web app must serve `/training-boot.html` and `/training-boot.js` with
+The server that answers the player origin must serve **only static files**: course JS can open
+any same-origin page there (for example the boot page `/training-boot.html`) and from it reach
+every endpoint of that server, so no API routes, proxies or authenticated endpoints. It must
+serve `/training-boot.html` and `/training-boot.js` with
 `Cross-Origin-Resource-Policy: cross-origin` (and the app's `Cross-Origin-Embedder-Policy:
 require-corp`), serve `/training/sw.js`, answer every other `/training/*` path with 404, not
 the app shell, and send `Content-Security-Policy: frame-ancestors 'none'` and
 `X-Frame-Options: DENY` on every other response (the app is never shown inside a frame; a
-framed app also refuses to play courses). The bundled servers (vite dev/preview, `web_ui/scripts/serve-offline.mjs`,
-`web_ui/scripts/start.ps1`, the `api_server.py` web-archive mount) already do.
+framed app also refuses to play courses). `vite preview`, `web_ui/scripts/serve-offline.mjs`
+and `web_ui/scripts/start.ps1` (used by `start.bat` / `start.command`) already do. `vite dev`
+does too, but it also serves `/@fs/` and proxies `/api` and `/auth`, so play only trusted
+courses under `npm run dev`.
+
+`api_server.py` is not a player host: when it serves the web archive it answers the boot files,
+`/training/sw.js` and every `/training/*` path with 404, and the Training page says course
+playback is not available on this host. Packs still install there. To play courses from an app
+served by `api_server.py`, name a separate static player host in `player-origin.json`.
 
 Build-time pack trust policy (same meaning as the desktop `TRAININGAPP_PACKS_*` variables):
 

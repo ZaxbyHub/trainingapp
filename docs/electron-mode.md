@@ -71,11 +71,11 @@ browser `api` mode migrates to browser-local on load.
 - `App.tsx` — `DesktopBootGate` (discovery, model status, mode seeding) and
   the `skip` flag for `useServiceInitialization`.
 - `DocumentsPage.tsx` — load/upload/delete handlers, plus the C7 Knowledge
-  Packs surface (issue #74): the `PacksPanel` mounts only in Electron mode,
-  a dropped `.zip` routes to `POST /packs/install`, and pack operations never
-  touch the browser-profile IndexedDB namespaces. In the browser app the
-  same Packs panel installs packs into the browser pack store through the
-  shared PackClient (ADR-0012, which superseded the ADR-0009 gate).
+  Packs surface (issue #74): the `PacksPanel` mounts in both apps over the
+  shared PackClient (ADR-0012, which superseded the ADR-0009 gate). In
+  Electron mode a dropped `.zip` routes to `POST /packs/install` and pack
+  operations never touch the browser-profile IndexedDB namespaces; in the
+  browser app the same panel installs into the browser pack store.
 - `SettingsPage.tsx` — settings load/save via the backend, "Desktop backend"
   status section; server-URL + browser-model sections hidden.
 - `ChatPage.tsx` — SSE URL/token/header from the session; model gate. C7

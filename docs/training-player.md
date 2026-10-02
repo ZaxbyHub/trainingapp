@@ -187,12 +187,13 @@ navigates to the training page through a lifted `trainingTarget` in
 `App.tsx`. `TrainingPage` accepts `initialPackId` + `pendingSlideId`; the
 pending slide is passed to `TrainingPlayer` as `initialSlideId` only once a
 pack resolves, so the mount-time auto-jump fires exactly once (readiness-
-deferred per the pack bridge). The Node backend's `learn[]` rows carry
-`pack_id`, so Electron-mode deep links open the right pack directly; on
-surfaces without a pack id the page shows its no-pack prompt (open a pack
-via `?pack=<packId>`) and the pending slide jumps once a pack is opened —
-there is deliberately no in-app pack picker yet (pack support on non-Node
-surfaces is #76).
+deferred per the pack bridge). `learn[]` rows carry `pack_id` in both apps
+(the Node backend's rows on desktop; in the browser app the Learn kernel
+stamps it from the pack's ingested chunks, `web_ui/src/lib/rag/learn-kernel.ts`),
+so deep links open the right pack directly. On a row without a pack id the
+page shows its no-pack prompt and the pending slide jumps once a course is
+chosen in the Training page's course picker (`training-pack-select` in
+`web_ui/src/pages/TrainingPage.tsx`) or opened via `?pack=<packId>`.
 
 ### Ask-about-this-slide: pinned slide context (D7, #83)
 
@@ -255,11 +256,15 @@ Courses run on a dedicated player origin instead:
 - **Headers.** Course responses carry CORP `cross-origin`, `nosniff`,
   `no-cache` and the training CSP without the private `app:` sources plus
   `frame-ancestors 'self' <app origin>`; course documents also carry COEP
-  `require-corp` (without it the app's COEP blocks the frame). Every server
-  that hosts the web app serves the boot files with CORP `cross-origin` and
-  answers other `/training/*` paths with 404 (vite dev/preview,
-  `web_ui/scripts/serve-offline.mjs`, `web_ui/scripts/start.ps1`,
-  `api_server.py`).
+  `require-corp` (without it the app's COEP blocks the frame). The server
+  that answers the player origin serves only static files (course JS can
+  reach every same-origin endpoint through the uncontrolled boot page), serves
+  the boot files with CORP `cross-origin` and answers other `/training/*`
+  paths with 404: `vite preview`, `web_ui/scripts/serve-offline.mjs`,
+  `web_ui/scripts/start.ps1`, and `vite dev` (dev only: it also serves
+  `/@fs/` and proxies `/api`). `api_server.py` is not a player host: it
+  answers the player paths 404 and the Training page reports playback as
+  unavailable there.
 - **Framing.** The app shell is never frameable (every host sends
   `frame-ancestors 'none'` and `X-Frame-Options: DENY`), a framed app never starts
   the course player, and the boot page runs only directly under the top-level page.

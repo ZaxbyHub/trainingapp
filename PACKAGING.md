@@ -137,6 +137,23 @@ requires.
 > the threaded ORT build. When the desktop app's FastAPI server hosts the archive
 > (Phase 6) it must send these headers; document the same for any third-party host.
 
+> **Course player hosting (Knowledge Packs):** courses play on a separate player
+> origin (ADR-0012, CONFIGURATION.md "Browser app: Knowledge Packs and course
+> player"). A host that should play courses must also:
+>
+> - serve `/training-boot.html` and `/training-boot.js` with
+>   `Cross-Origin-Resource-Policy: cross-origin` and `nosniff`, and serve
+>   `/training/sw.js`;
+> - answer every other `/training/*` path with 404 (no SPA fallback);
+> - send `Content-Security-Policy: frame-ancestors 'none'` and
+>   `X-Frame-Options: DENY` on app-shell responses;
+> - answer the player origin from a **static-only** host: course JS can reach
+>   every same-origin endpoint through the boot page, so no API routes,
+>   proxies or authenticated endpoints there.
+>
+> `serve-offline.mjs` and `start.ps1` meet these. The FastAPI server does not
+> host the player (see §6).
+
 ## 4. Validate (no network)
 
 1. Disconnect from the network (or block egress).
@@ -219,9 +236,17 @@ The desktop app can serve the self-contained archive locally:
    `_resolve_web_archive_dir()` (env `WEB_UI_DIST` → `sys._MEIPASS/web_ui_dist`
    → repo `web_ui/dist`) and mounts it at `/` **after** the API routes, so
    `/ask`, `/auth`, etc. still take precedence.
-4. A COOP/COEP middleware sets `Cross-Origin-Opener-Policy: same-origin` and
+4. A middleware sets `Cross-Origin-Opener-Policy: same-origin` and
    `Cross-Origin-Embedder-Policy: require-corp` on every response, enabling
-   wllama's threaded WASM (`SharedArrayBuffer`).
+   wllama's threaded WASM (`SharedArrayBuffer`), plus
+   `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`
+   (the app is never frameable). It is not a course-player host: it answers
+   `/training-boot.html`, `/training-boot.js`, `/training/sw.js` and every
+   `/training/*` path with 404, because course JS on a player origin can reach
+   every endpoint of the server answering it and this server carries the
+   unauthenticated API. The browser app served from here installs packs but
+   reports course playback as unavailable on this host, unless
+   `player-origin.json` names a separate static player host.
 
 To run the server serving the archive: `python api_server.py` (or
 `WEB_UI_DIST=/path/to/dist python api_server.py`), then open the server root.

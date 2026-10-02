@@ -186,6 +186,14 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   active version, with the desktop `resolveTrainingRequest` containment rules
   (shared vectors `contracts/training-path-vectors.json`), bounded reads and a
   request-rate window. The player-origin worker and boot page store nothing.
+  The worker refuses other requests only from worker-controlled course pages
+  (documents under `/training/`); from an uncontrolled same-origin document
+  such as the boot page, course JS reaches every endpoint of the server that
+  answers the player origin. That server must therefore serve only static
+  files. `api_server.py` (unauthenticated API) is not a player host: it
+  answers the boot files, the worker and every `/training/*` path with 404.
+  `vite dev` also serves `/@fs/` and proxies `/api`/`/auth` on the player
+  origin (dev-only residual).
 - **Framing.** The app shell is never frameable: every host sends
   `frame-ancestors 'none'` and `X-Frame-Options: DENY` on app-shell responses. A framed app
   never runs training (no player origin, no boot frame, no relay port), and the boot frame runs
