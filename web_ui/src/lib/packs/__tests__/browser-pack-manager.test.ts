@@ -93,10 +93,12 @@ describe('BrowserPackManager', () => {
     // The production activation hook (searchIndexHooks) calls markEmbedded,
     // which takes the same per-pack lock rollbackPack holds.
     hooks.onActivated = vi.fn(async (record: { packId: string; version: string }) => manager.markEmbedded(record.packId, record.version, false));
-    await manager.installPack(packZip('1.0.0'));
-    await manager.installPack(packZip('1.1.0'));
+    // A pack id of its own: a deadlock here must not poison the module-level
+    // in-tab lock chain the other rows use for 'course-a'.
+    await manager.installPack(packZip('1.0.0', { id: 'course-lock' }));
+    await manager.installPack(packZip('1.1.0', { id: 'course-lock' }));
     const outcome = await Promise.race([
-      manager.rollbackPack('course-a', '1.0.0').then(() => 'done'),
+      manager.rollbackPack('course-lock', '1.0.0').then(() => 'done'),
       new Promise<string>((resolve) => setTimeout(() => resolve('deadlocked'), 2000)),
     ]);
     expect(outcome).toBe('done');
