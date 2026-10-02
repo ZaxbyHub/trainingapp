@@ -387,11 +387,13 @@ export class NodeBackendHost implements BackendHost {
       const applied = this.engine.applySettingsPatch(patch);
       if (!applied.ok) return applied;
       try {
-        persistSettings?.(patch);
+        // external.json first, settings.json last: the rollback below restores
+        // only the settings.json-backed state (same order as PUT /settings).
         if (Object.keys(patch).some((key) => key.startsWith('external.'))) {
           const snapshot = this.engine.externalSnapshot?.();
           if (snapshot !== undefined) persistExternal?.(snapshot);
         }
+        persistSettings?.(patch);
       } catch (err) {
         return { ok: false as const, status: 500 as const, detail: rollBackUnsavedSettings(this.engine, before, 'change', err) };
       }

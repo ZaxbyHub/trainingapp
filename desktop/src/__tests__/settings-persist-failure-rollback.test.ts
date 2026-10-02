@@ -17,6 +17,7 @@ import path from 'node:path';
 import { NodeBackendHost } from '../../main/backend';
 import type { BackendHandle } from '../../main/backend/types';
 import { LlamaEngine } from '../../main/backend/inference/llama-engine';
+import { loadSettingsSnapshot } from '../../main/backend/settings-store';
 
 const TOKEN = 'settings-persist-failure-spec-token';
 const tmpDirs: string[] = [];
@@ -151,6 +152,33 @@ describe('settings persist failure: the engine is rolled back, nothing changes',
       expect(after['inference.profile']).toBe('quality');
       expect(after).toEqual(before);
       if (applied !== undefined && !applied.ok) expect(applied.detail).toMatch(/nothing was changed/i);
+    } finally {
+      await host.stop();
+    }
+  });
+
+  // universal-provider-settings-overhaul, composed with FB140-001 on rebase:
+  // the rollback restores only the settings.json-backed state, so a mixed
+  // rag + external.* patch writes external.json BEFORE settings.json. In the
+  // other order a failed external.json write would leave settings.json
+  // holding values the engine just rolled back, and the next boot would
+  // replay them. (external.* itself is not in the rollback snapshot.)
+  it('PUT mixed rag + external.* patch: a failed external.json write leaves settings.json unwritten', async () => {
+    const { storePath, sidecar, models } = tempProfile();
+    const host = hostFor(storePath, models);
+    const handle = await host.start();
+    try {
+      const before = await getSettings(handle);
+      breakSidecar(path.join(path.dirname(sidecar), 'external.json'));
+
+      const res = await put(handle, { rag_n_results: 7, 'external.grounded': false });
+      expect(res.status).toBe(500);
+      expect(String(res.body.detail)).toMatch(/could not be saved/i);
+
+      const after = await getSettings(handle);
+      expect(after.n_results).toBe(before.n_results);
+      expect(after.explicit_keys).toEqual(before.explicit_keys);
+      expect(loadSettingsSnapshot(storePath)?.rag_n_results).toBeUndefined();
     } finally {
       await host.stop();
     }

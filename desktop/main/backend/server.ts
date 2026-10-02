@@ -905,11 +905,14 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               if (isExternalKey(key)) touchesExternal = true;
               else settingsPatch[key] = value;
             }
+            // external.json is written FIRST (the reset path's order): the
+            // rollback below restores only the settings.json-backed state, so
+            // settings.json must never be written ahead of a later failure.
             try {
-              if (opts.persistSettings && Object.keys(settingsPatch).length > 0) opts.persistSettings(settingsPatch);
               if (opts.persistExternal && touchesExternal && typeof engine.externalSnapshot === 'function') {
                 opts.persistExternal(engine.externalSnapshot());
               }
+              if (opts.persistSettings && Object.keys(settingsPatch).length > 0) opts.persistSettings(settingsPatch);
             } catch (err) {
               // PR #140 review (FB140-001): a failed save rolls the engine back.
               sendJson(res, 500, {
