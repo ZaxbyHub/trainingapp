@@ -261,6 +261,12 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             the bundled start scripts (start.bat / start.command) or play courses in the desktop app.
           </p>
         )}
+        {location === null && originStatus === 'policy-failed' && (
+          <p role="alert" data-testid="training-player-unsecured" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+            Course playback is unavailable: the course player could not be secured in this page. Reload the app; if this
+            persists, play courses in the desktop app.
+          </p>
+        )}
         {location === null && originStatus === 'no-origin' && (
           <p role="alert" data-testid="training-player-unavailable" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
             Course playback needs a player origin: open the app at http://localhost or http://127.0.0.1 (its loopback

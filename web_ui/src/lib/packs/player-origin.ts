@@ -130,7 +130,13 @@ let hostUnsupported = false;
 /** The boot page every player host serves (TrainingPlayerHost embeds it). */
 export const PLAYER_BOOT_PATH = '/training-boot.html';
 
-export type PlayerOriginStatus = 'ok' | 'framed' | 'no-origin' | 'host-unsupported';
+/**
+ * 'policy-failed': the player origin resolved, but the app-shell frame
+ * policy could not be installed, so no player frame may load (ADR-0012
+ * threat model item 6) — reported instead of a silently blank course frame
+ * (review round 4, F2).
+ */
+export type PlayerOriginStatus = 'ok' | 'framed' | 'no-origin' | 'host-unsupported' | 'policy-failed';
 
 /**
  * The one request resolvePlayerOrigin makes (the same-origin runtime config
@@ -270,6 +276,7 @@ export async function playerFramePolicyReady(playerOrigin: string): Promise<bool
 export function getPlayerOriginStatus(): PlayerOriginStatus {
   if (isFramedContext()) return 'framed';
   if (hostUnsupported) return 'host-unsupported';
+  if (typeof resolved === 'string' && framePolicyOrigin !== resolved) return 'policy-failed';
   return getPlayerOrigin() === null ? 'no-origin' : 'ok';
 }
 

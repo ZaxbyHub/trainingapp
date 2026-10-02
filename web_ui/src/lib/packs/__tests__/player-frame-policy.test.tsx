@@ -28,6 +28,7 @@ import { TrainingPlayer, trainingPlayerSrc } from '../../../components/TrainingP
 import { browserTrainingHost } from '../browser-training';
 import {
   FRAME_POLICY_MARKER,
+  getPlayerOriginStatus,
   getResolvedPlayerOrigin,
   installPlayerFramePolicy,
   loopbackAliasOrigin,
@@ -141,6 +142,28 @@ describe('app-shell frame policy (navigation egress, ADR-0012 item 6)', () => {
     expect(browserTrainingHost()).toBe(host);
     expect(trainingPlayerSrc('pack-a')?.origin).toBe(configured);
     expect(policies().map((m) => m.getAttribute('content'))).toEqual([`frame-src ${configured}`]);
+  });
+});
+
+describe('frame policy that cannot be installed (review round 4, F2)', () => {
+  it('NF7 reports policy-failed with a visible notice instead of a silently blank course frame', async () => {
+    resetPlayerOriginForTests();
+    Object.defineProperty(document, 'head', { configurable: true, get: () => null });
+    try {
+      const alias = loopbackAliasOrigin(window.location.origin)!;
+      await expect(resolvePlayerOrigin((async () => spaFallback()) as unknown as typeof fetch)).resolves.toBe(alias);
+    } finally {
+      // Back to the Document.prototype getter for the rest of the suite.
+      delete (document as unknown as { head?: unknown }).head;
+    }
+    expect(document.head).not.toBeNull();
+    expect(policies()).toHaveLength(0);
+    expect(getResolvedPlayerOrigin()).toBeNull();
+    expect(getPlayerOriginStatus()).toBe('policy-failed');
+    render(<TrainingPlayer packId="pack-a" />);
+    expect(screen.getByTestId('training-player-unsecured')).toHaveTextContent(/could not be secured/);
+    expect(screen.getByTestId('training-player-frame').getAttribute('src')).toBe('about:blank');
+    expect(bootFrames()).toHaveLength(0);
   });
 });
 
