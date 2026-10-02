@@ -290,7 +290,11 @@ Courses run on a dedicated player origin instead:
 - **Support.** Chrome and Edge; Safari is not supported; Firefox is untested.
 
 Threat model: nothing on the player origin is trusted. A malicious course can
-take the relay port, but the relay serves only the open pack's files. All
+take the relay port, but the app's relay serves only the open pack's files. It
+can also hand the worker a relay port of its own; the worker then still forces
+the course CSP and transport headers on every response and takes only status,
+body and content type from the relay, so the course gains nothing beyond
+serving its own bytes under the course CSP (ADR-0012 item 1). All
 packs share one player origin (as all packs share `app://training` on
 desktop), so a live malicious pack can interfere with the player origin within
 a session, for example spoof what another pack's frame displays; it cannot

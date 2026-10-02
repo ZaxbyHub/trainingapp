@@ -209,10 +209,31 @@ could be served were not isolated from app storage.
 
 1. Course JS can read the app's boot frame DOM (a same-origin sibling), take any port the boot
    frame holds, and send the worker its own handshake. It cannot frame a boot page of its own
-   (`frame-ancestors`). It then holds a relay port and gains only what item 2 allows. Recreating the boot frame and port on every
-   course open raises the bar against stale instances but does not stop a live malicious course.
-2. A relay port can read only files of the open pack's active version, inside its player asset
-   directory, with bounded sizes and rates.
+   (`frame-ancestors`). It can also SUPPLY the worker a relay port of its own and answer the
+   worker's requests itself (final-critic round 3, NC1). The worker accepts a relay port only
+   from the boot page client, but that check is defense in depth only: course JS can post
+   through the boot frame's own controller. What bounds this is that the worker OWNS the
+   security headers of every relay-served response. It computes the course CSP itself, with the
+   pack id from the request path and its own origin (`courseCsp` in `sw.js`, kept in lockstep with
+   `buildBrowserTrainingCsp` by `player-origin-hosting.test.ts`). It forces COEP, COOP, CORP,
+   nosniff and cache-control. From the relay it takes only an allowlisted status
+   (200/206/403/404/405/416/429; anything else becomes a deny-all 502), the body, and
+   `content-type`, `content-range` and `accept-ranges`. A relay-supplied CSP, `Set-Cookie`,
+   `Location` or other header is dropped. A course that becomes its own relay can therefore only
+   serve bytes that run under the course CSP on pack paths, which it could do anyway by shipping
+   them in its pack; on another pack's path they get that pack's pinned `worker-src`. The app
+   origin in the worker's `frame-ancestors` comes from the worker's own script URL
+   (`/training/sw.js?app=<origin>`, set by the boot page from `location.ancestorOrigins`). It is
+   validated (a bare origin, http only for loopback, loopback-only for a loopback player),
+   falls back to the loopback alias, and otherwise to `'self'` only. Course JS can re-register the
+   worker with a different `app` value through the boot frame; that changes only who may frame
+   course documents, never the content directives. Residual, not fixed: a course that displaces
+   the app's relay port denies playback to itself and, until their next re-handshake, to course
+   frames in other app tabs of the same profile, and can show them content of its choosing under
+   their pack's CSP (an extension of item 4). Recreating the boot frame and port on every course
+   open raises the bar against stale instances but does not stop a live malicious course.
+2. The app's relay port can read only files of the open pack's active version, inside its player
+   asset directory, with bounded sizes and rates.
 3. The worker and boot page never read or write player-origin Cache Storage, IndexedDB, OPFS or
    localStorage, so nothing a course writes is served to another pack.
 4. **Shared untrusted player origin.** All packs share one player origin, as all packs share

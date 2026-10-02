@@ -256,6 +256,18 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   player origin, as all packs share `app://training` on desktop. A live
   malicious pack can interfere with the player origin within a session (for
   example spoof what another pack's frame displays) but cannot reach app data.
+- **Relay-port injection (final-critic round 3, NC1).** Course JS can hand
+  the player-origin worker a relay port of its own, directly or through the
+  boot frame's controller, and answer the worker's requests itself. The
+  worker accepts ports only from the boot page client (defense in depth), and
+  it OWNS the security headers of every relay-served response: it computes the
+  course CSP from the request path, forces COEP/COOP/CORP/nosniff, and takes
+  from the relay only an allowlisted status, the body, and
+  `content-type`/`content-range`/`accept-ranges`. A course that becomes its
+  own relay can therefore serve only bytes that run under the course CSP on
+  pack paths. Residual: it can deny playback (and spoof course content under
+  the other pack's CSP) in other app tabs until they re-handshake. Pinned by
+  the worker unit tests in `player-origin-hosting.test.ts`.
 - **Messaging.** The slide bridge uses exact target origins and one-shot
   `MessagePort` replies; no first-party `postMessage` uses `'*'` (source
   guardrail `web_ui/src/lib/packs/__tests__/browser-isolation-guards.test.ts`).

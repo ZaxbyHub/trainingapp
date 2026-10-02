@@ -12,6 +12,17 @@
  * The worker is stateless and untrusted: no Cache Storage, IndexedDB, OPFS
  * or localStorage; path containment, pack scoping and size/rate bounds are
  * enforced by the app-side relay (web_ui/src/lib/packs/training-relay.ts).
+ *
+ * The relay port is NOT trusted for security headers (final-critic round 3,
+ * NC1): course JS is a same-origin client of this worker and can hand it a
+ * port of its own (directly, or through the boot frame it can script), and
+ * then answer the worker's requests itself. So the worker OWNS every
+ * security header of a relay-served response: the course CSP (computed here,
+ * in lockstep with buildBrowserTrainingCsp), COEP, CORP, COOP, nosniff and
+ * cache-control. From the relay it takes only an allowlisted status, the
+ * body, and content-type / content-range / accept-ranges. A course that
+ * becomes its own relay can therefore only serve bytes that run under the
+ * course CSP on pack paths: the same power as shipping them in its pack.
  * While no relay port exists (first start, or after the browser stopped an
  * idle worker) a request WAITS up to 10 s for one, asking the boot frame to
  * have the app run a fresh handshake; after the bound it answers 503.
@@ -23,6 +34,79 @@ var TRAINING_PREFIX = '/training/';
 var RELAY_WAIT_MS = 10000;
 var REQUEST_TIMEOUT_MS = 30000;
 var READ_CHUNK_BYTES = 1024 * 1024;
+
+// Mirror of PACK_ID_PATTERN (web_ui/src/lib/packs/training-relay.ts and
+// desktop/main/protocol.ts); pinned by player-origin-hosting.test.ts.
+var PACK_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]$/;
+var LOOPBACK_ALIAS = { localhost: '127.0.0.1', '127.0.0.1': 'localhost' };
+
+function isLoopbackHost(hostname) {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
+}
+
+/**
+ * The app origin allowed to frame course documents (frame-ancestors). The
+ * boot page registers this worker as /training/sw.js?app=<its parent origin>
+ * (location.ancestorOrigins[0], supplied by the browser). Nothing on the
+ * player origin is unforgeable by course JS, which is same-origin with the
+ * boot frame, so the value is validated and only ever WIDENS framing to one
+ * origin; it never touches the content directives. Accepted: a bare http(s)
+ * origin, http only for a loopback host, different from the player origin,
+ * and a loopback host whenever the player is loopback. Otherwise the
+ * loopback alias of the player (the bundled hosts), else null:
+ * frame-ancestors 'self' only (fail closed).
+ */
+function workerAppOrigin(href) {
+  var player = new URL(href);
+  var raw = player.searchParams.get('app');
+  if (raw) {
+    try {
+      var app = new URL(raw);
+      var bare = (app.protocol === 'https:' || app.protocol === 'http:') && app.username === '' && app.password === '' &&
+        app.pathname === '/' && app.search === '' && app.hash === '' && raw.replace(/\/$/, '') === app.origin;
+      var schemeOk = app.protocol === 'https:' || isLoopbackHost(app.hostname);
+      var loopbackOk = !isLoopbackHost(player.hostname) || isLoopbackHost(app.hostname);
+      if (bare && schemeOk && loopbackOk && app.origin !== player.origin) return app.origin;
+    } catch (err) {
+      /* fall through */
+    }
+  }
+  var alias = LOOPBACK_ALIAS[player.hostname];
+  return alias ? player.protocol + '//' + alias + (player.port ? ':' + player.port : '') : null;
+}
+
+var PLAYER_ORIGIN = self.location.origin;
+var APP_ORIGIN = workerAppOrigin(self.location.href);
+
+/** The pack id of a /training/<packId>/... path, or null (raw segment; never decoded). */
+function packIdFromPath(pathname) {
+  var segment = pathname.slice(TRAINING_PREFIX.length).split('/')[0];
+  return PACK_ID_PATTERN.test(segment) ? segment : null;
+}
+
+/** The course CSP; in lockstep with buildBrowserTrainingCsp (training-relay.ts). */
+function courseCsp(packId) {
+  return [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    'worker-src ' + (packId !== null ? 'blob: ' + PLAYER_ORIGIN + TRAINING_PREFIX + packId + '/' : 'blob:'),
+    "frame-src 'self'",
+    "media-src 'self' data:",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    'frame-ancestors ' + (APP_ORIGIN !== null ? "'self' " + APP_ORIGIN : "'self'"),
+  ].join('; ');
+}
+
+/** Statuses a relay may answer with; anything else (1xx, 3xx, 5xx...) becomes 502. */
+var RELAY_STATUSES = { 200: true, 206: true, 403: true, 404: true, 405: true, 416: true, 429: true };
+/** The only relay-supplied headers the worker passes on. */
+var RELAY_HEADERS = ['content-type', 'content-range', 'accept-ranges'];
 
 var relayPort = null;
 var nextId = 1;
@@ -91,10 +175,19 @@ function attachPort(port) {
   });
 }
 
+/** Defense in depth only (NC1): course JS can post through the boot frame's controller too. */
+function isBootClient(source) {
+  try {
+    return !!source && typeof source.url === 'string' && new URL(source.url).pathname === '/training-boot.html';
+  } catch (err) {
+    return false;
+  }
+}
+
 self.addEventListener('message', function (event) {
   var data = event.data;
   if (!data || typeof data !== 'object') return;
-  if (data.type === 'trainingapp-relay-port' && event.ports && event.ports[0]) {
+  if (data.type === 'trainingapp-relay-port' && event.ports && event.ports[0] && isBootClient(event.source)) {
     var port = event.ports[0];
     attachPort(port);
     port.postMessage({ type: 'relay-ready', version: SW_VERSION, hadActiveWorker: data.hadActiveWorker === true });
@@ -182,23 +275,31 @@ function refusal(status, text) {
   });
 }
 
-function buildResponse(result, method) {
-  var headers = new Headers();
-  var source = result.headers || {};
-  Object.keys(source).forEach(function (name) {
-    headers.set(name, String(source[name]));
+function buildResponse(result, method, pathname) {
+  if (!result || typeof result !== 'object' || RELAY_STATUSES[result.status] !== true) return refusal(502, 'Bad Gateway');
+  // The worker's own security headers (NC1), whatever the relay said.
+  var headers = new Headers({
+    'content-security-policy': courseCsp(packIdFromPath(pathname)),
+    'cross-origin-embedder-policy': 'require-corp',
+    'cross-origin-opener-policy': 'same-origin',
+    'cross-origin-resource-policy': 'cross-origin',
+    'x-content-type-options': 'nosniff',
+    'cache-control': 'no-cache',
+    'content-type': 'application/octet-stream',
   });
-  // Fixed transport headers, whatever the relay said.
-  headers.set('x-content-type-options', 'nosniff');
-  headers.set('cross-origin-resource-policy', 'cross-origin');
-  headers.set('cache-control', 'no-cache');
-  if (!headers.has('content-security-policy')) {
-    headers.set('content-security-policy', REFUSAL_CSP);
-    headers.set('x-frame-options', 'DENY');
+  var source = result.headers && typeof result.headers === 'object' ? result.headers : {};
+  for (var i = 0; i < RELAY_HEADERS.length; i++) {
+    var value = source[RELAY_HEADERS[i]];
+    if (typeof value !== 'string') continue;
+    try {
+      headers.set(RELAY_HEADERS[i], value);
+    } catch (err) {
+      return refusal(502, 'Bad Gateway');
+    }
   }
   var status = result.status;
-  if (status === 204 || status === 304 || method === 'HEAD') return new Response(null, { status: status, headers: headers });
-  if (typeof result.handle !== 'number') return new Response(result.body || '', { status: status, headers: headers });
+  if (method === 'HEAD') return new Response(null, { status: status, headers: headers });
+  if (typeof result.handle !== 'number') return new Response(typeof result.body === 'string' ? result.body : '', { status: status, headers: headers });
   var handle = result.handle;
   var offset = result.start;
   var end = result.end;
@@ -262,7 +363,7 @@ self.addEventListener('fetch', function (event) {
   event.respondWith(
     relayRequest({ type: 'open', path: rawPath, method: method, range: request.headers.get('range') }).then(
       function (result) {
-        return buildResponse(result, method);
+        return buildResponse(result, method, url.pathname);
       },
       function () {
         return refusal(503, 'Service Unavailable');

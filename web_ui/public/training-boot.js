@@ -56,7 +56,10 @@
     .getRegistration(SCOPE)
     .then(function (existing) {
       hadActiveWorker = !!(existing && existing.active);
-      return navigator.serviceWorker.register('/training/sw.js', { scope: SCOPE });
+      // The worker learns the app origin (its course frame-ancestors) from
+      // its own script URL; the browser supplies expectedParent
+      // (location.ancestorOrigins). The worker validates it (sw.js).
+      return navigator.serviceWorker.register('/training/sw.js?app=' + encodeURIComponent(expectedParent), { scope: SCOPE });
     });
 
   function activeWorker(reg) {

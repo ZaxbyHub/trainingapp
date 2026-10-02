@@ -34,6 +34,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { PACK_ID_PATTERN, buildBrowserTrainingCsp } from '../training-relay';
 import viteConfig, { bootPageCsp, bootPageFrameAncestor, bootPagePlayerOrigin, trainingRouteMiddleware } from '../../../../vite.config';
 
 const WEB_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
@@ -388,10 +389,10 @@ describe('course worker refusals are never usable documents (FC6)', () => {
   const PLAYER = 'http://localhost:4174';
   type Listener = (event: unknown) => void;
 
-  function loadWorker(): Record<string, Listener> {
+  function loadWorker(href = `${PLAYER}/training/sw.js`): Record<string, Listener> {
     const listeners: Record<string, Listener> = {};
     const self = {
-      location: new URL(`${PLAYER}/training/sw.js`),
+      location: new URL(href),
       clients: { matchAll: () => Promise.resolve([]), claim: () => Promise.resolve() },
       skipWaiting: () => Promise.resolve(),
       addEventListener: (type: string, fn: Listener) => {
@@ -421,22 +422,143 @@ describe('course worker refusals are never usable documents (FC6)', () => {
     expect(response.headers.get('x-frame-options')).toBe('DENY');
   });
 
-  it('a relay answer that carries no CSP gets the deny-all policy; one that does keeps it', async () => {
-    const listeners = loadWorker();
-    const channel = new MessageChannel();
-    const relayAnswers: Array<Record<string, string>> = [{ 'content-type': 'text/html' }, { 'content-type': 'text/html', 'content-security-policy': "default-src 'self'" }];
-    channel.port1.onmessage = (event: MessageEvent<{ type: string; id: number }>) => {
-      if (event.data.type !== 'open') return;
-      channel.port1.postMessage({ type: 'open-result', id: event.data.id, status: 200, headers: relayAnswers.shift(), body: 'x' });
+});
+
+// ---------------------------------------------------------------------------
+// final-critic round 3, NC1: the relay port is untrusted for headers. Course
+// JS can hand the worker a port of its own (directly, or through the boot
+// frame's controller) and answer its requests; the worker must force the
+// course security headers on every relay-served response.
+
+describe('course worker owns the security headers of relay answers (NC1)', () => {
+  const PLAYER = 'http://localhost:4174';
+  const ALIAS_APP = 'http://127.0.0.1:4174';
+  type Listener = (event: unknown) => void;
+  type RelayAnswer = { status: number; headers?: Record<string, string>; body?: string };
+  const channels: MessageChannel[] = [];
+
+  afterAll(() => {
+    for (const channel of channels) channel.port1.close();
+  });
+
+  function loadWorker(href = `${PLAYER}/training/sw.js`): Record<string, Listener> {
+    const listeners: Record<string, Listener> = {};
+    const self = {
+      location: new URL(href),
+      clients: { matchAll: () => Promise.resolve([]), claim: () => Promise.resolve() },
+      skipWaiting: () => Promise.resolve(),
+      addEventListener: (type: string, fn: Listener) => {
+        listeners[type] = fn;
+      },
     };
-    listeners.message?.({ data: { type: 'trainingapp-relay-port' }, ports: [channel.port2] });
-    const bare = await fetchEvent(listeners, `${PLAYER}/training/pack/a.html`);
-    expect(bare.headers.get('content-security-policy')).toContain("frame-ancestors 'none'");
-    expect(bare.headers.get('x-frame-options')).toBe('DENY');
-    const kept = await fetchEvent(listeners, `${PLAYER}/training/pack/b.html`);
-    expect(kept.headers.get('content-security-policy')).toBe("default-src 'self'");
-    expect(kept.headers.get('x-frame-options')).toBeNull();
-    channel.port1.close();
+    const source = fs.readFileSync(path.join(WEB_ROOT, 'public', 'training', 'sw.js'), 'utf8');
+    vm.runInNewContext(source, { self, URL, Response, Headers, ReadableStream, Map, Promise, setTimeout, clearTimeout, Uint8Array });
+    return listeners;
+  }
+
+  /** Hand the worker a relay port that answers every open with `answer`, posted from a client at `clientPath`. */
+  function attachRelay(listeners: Record<string, Listener>, answer: (path: string) => RelayAnswer, clientPath = '/training-boot.html', origin = PLAYER): void {
+    const channel = new MessageChannel();
+    channels.push(channel);
+    channel.port1.onmessage = (event: MessageEvent<{ type: string; id: number; path: string }>) => {
+      if (event.data.type !== 'open') return;
+      channel.port1.postMessage({ type: 'open-result', id: event.data.id, ...answer(event.data.path) });
+    };
+    listeners.message?.({ data: { type: 'trainingapp-relay-port' }, ports: [channel.port2], source: { url: `${origin}${clientPath}` } });
+  }
+
+  function fetchEvent(listeners: Record<string, Listener>, url: string): Promise<Response> {
+    return new Promise((resolve) => {
+      listeners.fetch?.({ request: new Request(url), respondWith: (p: Promise<Response> | Response) => void Promise.resolve(p).then(resolve) });
+    });
+  }
+
+  it('a hostile relay answer gets the forced course CSP and transport headers; its own CSP, cookies and redirects are dropped', async () => {
+    const listeners = loadWorker();
+    attachRelay(listeners, () => ({
+      status: 200,
+      headers: {
+        'content-type': 'text/html; charset=utf-8',
+        'content-security-policy': "default-src * 'unsafe-inline'",
+        'cross-origin-embedder-policy': 'unsafe-none',
+        'set-cookie': 'a=b',
+        location: 'https://evil.example/',
+        refresh: '0; url=https://evil.example/',
+        'x-frame-options': 'ALLOWALL',
+      },
+      body: '<p>minted</p>',
+    }));
+    const response = await fetchEvent(listeners, `${PLAYER}/training/pack-a/minted.html`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-security-policy')).toBe(buildBrowserTrainingCsp(ALIAS_APP, PLAYER, 'pack-a'));
+    expect(response.headers.get('cross-origin-embedder-policy')).toBe('require-corp');
+    expect(response.headers.get('cross-origin-opener-policy')).toBe('same-origin');
+    expect(response.headers.get('cross-origin-resource-policy')).toBe('cross-origin');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    for (const dropped of ['set-cookie', 'location', 'refresh', 'x-frame-options']) expect(response.headers.get(dropped), dropped).toBeNull();
+    expect(await response.text()).toBe('<p>minted</p>');
+  });
+
+  it('a minted document on ANOTHER pack path gets that pack\'s pinned worker-src (still confined)', async () => {
+    const listeners = loadWorker();
+    attachRelay(listeners, () => ({ status: 200, headers: { 'content-type': 'text/html', 'content-security-policy': 'default-src *' }, body: 'x' }));
+    const other = await fetchEvent(listeners, `${PLAYER}/training/other-pack/x.html`);
+    expect(other.headers.get('content-security-policy')).toBe(buildBrowserTrainingCsp(ALIAS_APP, PLAYER, 'other-pack'));
+    const odd = await fetchEvent(listeners, `${PLAYER}/training/%6fther/x.html`);
+    expect(odd.headers.get('content-security-policy')).toBe(buildBrowserTrainingCsp(ALIAS_APP, PLAYER, null));
+  });
+
+  it.each([101, 204, 301, 302, 304, 500, 503, 999])('a relay status %i outside the allowlist becomes a deny-all 502', async (status) => {
+    const listeners = loadWorker();
+    attachRelay(listeners, () => ({ status, headers: { location: 'https://evil.example/', 'content-type': 'text/html' }, body: 'x' }));
+    const response = await fetchEvent(listeners, `${PLAYER}/training/pack-a/x.html`);
+    expect(response.status).toBe(502);
+    expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
+    expect(response.headers.get('location')).toBeNull();
+  });
+
+  it('accepts a relay port only from the boot page client (defense in depth)', async () => {
+    const listeners = loadWorker();
+    attachRelay(listeners, () => ({ status: 200, headers: { 'content-type': 'text/plain' }, body: 'LEGIT' }));
+    // A course client and a client-less message are both ignored: the boot
+    // page's relay keeps answering.
+    attachRelay(listeners, () => ({ status: 200, headers: { 'content-type': 'text/plain' }, body: 'COURSE' }), '/training/pack-a/story.html');
+    listeners.message?.({ data: { type: 'trainingapp-relay-port' }, ports: [new MessageChannel().port2] });
+    const response = await fetchEvent(listeners, `${PLAYER}/training/pack-a/a.txt`);
+    expect(await response.text()).toBe('LEGIT');
+  });
+
+  it.each([
+    [`${PLAYER}/training/sw.js`, `'self' ${ALIAS_APP}`],
+    [`${PLAYER}/training/sw.js?app=${encodeURIComponent(ALIAS_APP)}`, `'self' ${ALIAS_APP}`],
+    [`${PLAYER}/training/sw.js?app=${encodeURIComponent('http://localhost:8080')}`, "'self' http://localhost:8080"],
+    // A loopback player never admits a non-loopback app (a forged ?app=).
+    [`${PLAYER}/training/sw.js?app=${encodeURIComponent('https://evil.example')}`, `'self' ${ALIAS_APP}`],
+    [`${PLAYER}/training/sw.js?app=${encodeURIComponent(PLAYER)}`, `'self' ${ALIAS_APP}`],
+    ['https://player.example/training/sw.js?app=https%3A%2F%2Fapp.example', "'self' https://app.example"],
+    ['https://player.example/training/sw.js', "'self'"],
+    ['https://player.example/training/sw.js?app=http%3A%2F%2Fapp.example', "'self'"],
+    ['https://player.example/training/sw.js?app=https%3A%2F%2Fapp.example%2Fpath', "'self'"],
+    ['https://player.example/training/sw.js?app=https%3A%2F%2Fu%40app.example', "'self'"],
+  ])('worker %s: frame-ancestors %s', async (href, ancestors) => {
+    const listeners = loadWorker(href);
+    const origin = new URL(href).origin;
+    attachRelay(listeners, () => ({ status: 200, headers: { 'content-type': 'text/html' }, body: 'x' }), '/training-boot.html', origin);
+    const response = await fetchEvent(listeners, `${origin}/training/pack-a/story.html`);
+    const csp = response.headers.get('content-security-policy') ?? '';
+    expect(/frame-ancestors ([^;]*)$/.exec(csp)?.[1]).toBe(ancestors);
+  });
+
+  it('sw.js courseCsp stays in lockstep with buildBrowserTrainingCsp (and mirrors PACK_ID_PATTERN)', async () => {
+    const listeners = loadWorker(`${PLAYER}/training/sw.js?app=${encodeURIComponent(ALIAS_APP)}`);
+    attachRelay(listeners, () => ({ status: 200, headers: { 'content-type': 'text/html' }, body: 'x' }));
+    for (const packId of ['pack-a', 'opmed-cdp-mlc', 'a.b_c-1']) {
+      const response = await fetchEvent(listeners, `${PLAYER}/training/${packId}/story.html`);
+      expect(response.headers.get('content-security-policy'), packId).toBe(buildBrowserTrainingCsp(ALIAS_APP, PLAYER, packId));
+    }
+    const sw = fs.readFileSync(path.join(WEB_ROOT, 'public', 'training', 'sw.js'), 'utf8');
+    expect(sw).toContain(`var PACK_ID_PATTERN = ${PACK_ID_PATTERN.toString()};`);
   });
 });
 
