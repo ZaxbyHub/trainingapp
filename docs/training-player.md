@@ -258,9 +258,9 @@ Courses run on a dedicated player origin instead:
   `frame-ancestors 'self' <app origin>`; course documents also carry COEP
   `require-corp` (without it the app's COEP blocks the frame). The server
   that answers the player origin serves only static files (course JS can
-  script the app's uncontrolled boot frame and send same-origin GET requests
-  from it), serves the boot files with CORP `cross-origin` and answers other
-  `/training/*` paths with 404: `vite preview`, `web_ui/scripts/serve-offline.mjs`,
+  send same-origin GET requests to it by navigating its own frame or the
+  app's boot frame), serves the boot files with CORP `cross-origin` and
+  answers other `/training/*` paths with 404: `vite preview`, `web_ui/scripts/serve-offline.mjs`,
   `web_ui/scripts/start.ps1`, and `vite dev` (dev only: it also serves
   `/@fs/` and proxies `/api`). `api_server.py` is not a player host: it
   answers the player paths 404 and the Training page reports playback as
@@ -268,13 +268,15 @@ Courses run on a dedicated player origin instead:
 - **Framing.** Every player-origin response except the boot page carries
   `frame-ancestors 'none'` and `X-Frame-Options: DENY` (the app shell, its
   assets, the boot script, the worker script, 404s and errors). The boot page
-  carries a restrictive header CSP (no `fetch`, no forms, `frame-ancestors`
-  limited to the app origin). A course therefore cannot frame a same-origin
-  page that runs under a weaker policy than its own (final-critic FC6). A
-  framed app never starts the course player, and the boot page runs only
-  directly under the top-level page. CSP does not govern navigation: a course
-  can navigate its own frame to any URL in the browser app (open residual,
-  ADR-0012 threat model item 6).
+  carries a restrictive header CSP (no `fetch`, no forms, scripts and workers
+  pinned to its own two files, `frame-ancestors` limited to the app origin),
+  and the app sandboxes the boot frame (`allow-scripts allow-same-origin`). A
+  course therefore cannot frame a same-origin page that runs under a weaker
+  policy than its own (final-critic FC6). A framed app never starts the course
+  player, and the boot page runs only directly under the top-level page. CSP
+  does not govern navigation: a course can navigate its own frame, or the boot
+  frame, to any URL in the browser app (open residual, ADR-0012 threat model
+  item 6).
 - **Sandbox.** The course iframe is `sandbox="allow-scripts allow-same-origin
   allow-forms"` in both apps: no popups, no top navigation. `allow-same-origin`
   keeps the course on its own origin, never the app's.

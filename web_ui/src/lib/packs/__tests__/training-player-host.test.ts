@@ -6,6 +6,9 @@
  * handshake. Course JS shares the boot frame's origin and can send that signal
  * at will, so the host must ignore other sources/origins and coalesce bursts.
  *
+ *   HS0 the boot frame is sandboxed (allow-scripts allow-same-origin): course
+ *       JS can script it as a same-origin sibling, so it must not grant
+ *       popups or top navigation the course frame's sandbox withholds (FC6).
  *   HS1 the handshake is posted to the boot frame at the exact player origin
  *       with one transferred port (never '*').
  *   HS2 a relay request from a window other than the current boot frame is ignored.
@@ -15,7 +18,7 @@
  *       request is honored again.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { RELAY_REQUEST_MIN_INTERVAL_MS, TrainingPlayerHost } from '../training-player-host';
+import { BOOT_FRAME_SANDBOX, RELAY_REQUEST_MIN_INTERVAL_MS, TrainingPlayerHost } from '../training-player-host';
 
 const PLAYER = 'http://127.0.0.1:4183';
 const APP = 'http://localhost:4183';
@@ -60,6 +63,13 @@ afterEach(() => {
 });
 
 describe('TrainingPlayerHost window-message discipline', () => {
+  it('HS0 sandboxes the boot frame: scripts and its own origin only, no popups, top navigation, forms or modals (FC6)', async () => {
+    const { host, frame } = await startHost(60_000);
+    expect(frame.getAttribute('sandbox')).toBe(BOOT_FRAME_SANDBOX);
+    expect(BOOT_FRAME_SANDBOX).toBe('allow-scripts allow-same-origin');
+    host.dispose();
+  });
+
   it('HS1 posts the handshake to the exact player origin with one transferred port', async () => {
     const { host, handshakes } = await startHost(60_000);
     expect(handshakes()).toHaveLength(1);

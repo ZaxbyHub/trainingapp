@@ -34,7 +34,7 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import viteConfig, { bootPageCsp, bootPageFrameAncestor, trainingRouteMiddleware } from '../../../../vite.config';
+import viteConfig, { bootPageCsp, bootPageFrameAncestor, bootPagePlayerOrigin, trainingRouteMiddleware } from '../../../../vite.config';
 
 const WEB_ROOT = path.resolve(__dirname, '..', '..', '..', '..');
 const FRAME_DENY_CSP = "frame-ancestors 'none'";
@@ -59,7 +59,7 @@ function run(url: string, host = '127.0.0.1:4174'): { status: number; headers: R
 }
 
 describe('boot page CSP (final-critic FC6)', () => {
-  it('confines the boot page: no fetch, no form, no subresource but its own script and the course worker', () => {
+  it('confines the boot page: no fetch, no form, no subresource; scripts and workers pinned to its own script and the course worker', () => {
     const directives = new Map(
       bootPageCsp('127.0.0.1:4174')
         .split(';')
@@ -68,8 +68,11 @@ describe('boot page CSP (final-critic FC6)', () => {
     );
     expect(Object.fromEntries(directives)).toEqual({
       'default-src': "'none'",
-      'script-src': "'self'",
-      'worker-src': "'self'",
+      // Exact URLs, not 'self': a worker course JS starts from the boot
+      // window runs under its own script's policy, so 'self' would let it
+      // run any same-origin script unconfined.
+      'script-src': 'http://127.0.0.1:4174/training-boot.js',
+      'worker-src': 'http://127.0.0.1:4174/training/sw.js',
       'connect-src': "'none'",
       'base-uri': "'none'",
       'form-action': "'none'",
@@ -86,13 +89,21 @@ describe('boot page CSP (final-critic FC6)', () => {
   ])('Host %s may only be framed by its app origin %s (never by the player origin itself)', (host, appOrigin) => {
     expect(bootPageFrameAncestor(host)).toBe(appOrigin);
     expect(bootPageCsp(host)).toContain(`frame-ancestors ${appOrigin}`);
-    expect(bootPageCsp(host)).not.toContain(`http://${host.toLowerCase()}`);
+    const player = `http://${host.toLowerCase()}`;
+    expect(bootPagePlayerOrigin(host)).toBe(player);
+    expect(bootPageCsp(host)).toContain(`script-src ${player}/training-boot.js;`);
+    expect(bootPageCsp(host)).toContain(`worker-src ${player}/training/sw.js;`);
+    expect(bootPageCsp(host)).not.toContain("'self'");
   });
 
   it.each([undefined, '', 'evil.example', 'evil.example:4174', 'localhost.evil.example:4174', '127.0.0.1:4174.evil', '127.0.0.1:4174 x', '[::1]:4174', '127.0.0.1:123456'])(
     'any other Host (%s) fails closed to frame-ancestors none; a Host is never reflected',
     (host) => {
       expect(bootPageFrameAncestor(host)).toBe("'none'");
+      expect(bootPagePlayerOrigin(host)).toBeNull();
+      expect(bootPageCsp(host)).toBe(
+        "default-src 'none'; script-src 'none'; worker-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'",
+      );
     },
   );
 });
@@ -343,12 +354,19 @@ describe('start.ps1 (source scan)', () => {
 
   it('builds the same boot page CSP as vite (alias Host only, fail closed otherwise)', () => {
     const fn = /function Get-BootPageCsp\(\[string\]\$HostHeader\) \{([\s\S]*?)\n\}/.exec(ps1)?.[1] ?? '';
-    expect(fn).toContain("$Ancestor = \"'none'\"");
+    for (const name of ['Script', 'Worker', 'Ancestor']) expect(fn).toContain(`$${name} = "'none'"`);
     expect(fn).toContain("if ($HostHeader -match '^(localhost|127\\.0\\.0\\.1)(:\\d{1,5})?$') {");
-    expect(fn).toContain("$Alias = if ($Matches[1] -ieq 'localhost') { '127.0.0.1' } else { 'localhost' }");
+    expect(fn).toContain('$Name = $Matches[1].ToLowerInvariant()');
+    expect(fn).toContain("$Alias = if ($Name -eq 'localhost') { '127.0.0.1' } else { 'localhost' }");
+    expect(fn).toContain('$Script = "http://$Name$($Matches[2])/training-boot.js"');
+    expect(fn).toContain('$Worker = "http://$Name$($Matches[2])/training/sw.js"');
     expect(fn).toContain('$Ancestor = "http://$Alias$($Matches[2])"');
     const literal = /return "([^"]+)"/.exec(fn)?.[1] ?? '';
-    expect(literal.replace('$Ancestor', 'http://localhost:4174')).toBe(bootPageCsp('127.0.0.1:4174'));
+    const fill = (values: Record<string, string>): string => Object.entries(values).reduce((acc, [k, v]) => acc.replace(k, v), literal);
+    expect(
+      fill({ $Script: 'http://127.0.0.1:4174/training-boot.js', $Worker: 'http://127.0.0.1:4174/training/sw.js', $Ancestor: 'http://localhost:4174' }),
+    ).toBe(bootPageCsp('127.0.0.1:4174'));
+    expect(fill({ $Script: "'none'", $Worker: "'none'", $Ancestor: "'none'" })).toBe(bootPageCsp('evil.example'));
   });
 
   it('boot files cross-origin, worker served, other /training/* 404, loopback prefix', () => {

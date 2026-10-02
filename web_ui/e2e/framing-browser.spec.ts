@@ -49,7 +49,7 @@ test('app-shell responses refuse framing; the player boot file stays embeddable'
   const boot = await page.request.get(`${player.origin}/training-boot.html`);
   expect(boot.headers()['x-frame-options']).toBeUndefined();
   expect(boot.headers()['content-security-policy']).toBe(
-    `default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors ${app.origin}`,
+    `default-src 'none'; script-src ${player.origin}/training-boot.js; worker-src ${player.origin}/training/sw.js; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors ${app.origin}`,
   );
   expect(boot.headers()['cross-origin-resource-policy']).toBe('cross-origin');
   for (const path of ['/training-boot.js', '/training/sw.js', '/training', '/training/pack/story.html']) {

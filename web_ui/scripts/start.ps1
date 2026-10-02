@@ -68,17 +68,23 @@ $MimeTypes = @{
 # frame-ancestors 'none' + X-Frame-Options: DENY (set right after the request
 # is taken, before any branch, so the 403/404/416/500 answers carry them too).
 # /training-boot.html is the single exception: it gets this restrictive HEADER
-# CSP (no fetch, no form, no subresource but its own script and the course
-# worker), and only the app origin, the loopback alias of the Host the request
-# was sent to, may frame it. Any other Host fails closed to 'none'. Mirrors
+# CSP (no fetch, no form, no subresource; scripts and workers pinned to the
+# exact URLs of its own script and the course worker), and only the app
+# origin, the loopback alias of the Host the request was sent to, may frame
+# it. Any other Host gets 'none' for all three (fail closed). Mirrors
 # web_ui/vite.config.ts bootPageCsp.
 function Get-BootPageCsp([string]$HostHeader) {
+    $Script = "'none'"
+    $Worker = "'none'"
     $Ancestor = "'none'"
     if ($HostHeader -match '^(localhost|127\.0\.0\.1)(:\d{1,5})?$') {
-        $Alias = if ($Matches[1] -ieq 'localhost') { '127.0.0.1' } else { 'localhost' }
+        $Name = $Matches[1].ToLowerInvariant()
+        $Alias = if ($Name -eq 'localhost') { '127.0.0.1' } else { 'localhost' }
+        $Script = "http://$Name$($Matches[2])/training-boot.js"
+        $Worker = "http://$Name$($Matches[2])/training/sw.js"
         $Ancestor = "http://$Alias$($Matches[2])"
     }
-    return "default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors $Ancestor"
+    return "default-src 'none'; script-src $Script; worker-src $Worker; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors $Ancestor"
 }
 
 # ---- Create the listener -----------------------------------------------------

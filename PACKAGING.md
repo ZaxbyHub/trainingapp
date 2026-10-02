@@ -153,16 +153,18 @@ root.
 >   `/training/sw.js`;
 > - answer every other `/training/*` path with 404 (no SPA fallback);
 > - serve `/training-boot.html` with the restrictive header CSP
->   `default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'none';
->   base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors <app origin>`
->   and no `X-Frame-Options`;
+>   `default-src 'none'; script-src <player origin>/training-boot.js; worker-src
+>   <player origin>/training/sw.js; connect-src 'none'; base-uri 'none';
+>   form-action 'none'; object-src 'none'; frame-ancestors <app origin>` and no
+>   `X-Frame-Options`;
 > - send `Content-Security-Policy: frame-ancestors 'none'` and
 >   `X-Frame-Options: DENY` on **every other** response, errors included, so
 >   course content can never frame a same-origin page that runs under a
 >   weaker policy than its own (final-critic FC6);
 > - answer the player origin from a **static-only** host: course JS can
->   script the app's boot frame and send same-origin GET requests from it
->   (script loads), so no API routes, proxies or authenticated endpoints there.
+>   navigate its own frame or the app's boot frame to any same-origin path (a
+>   GET request the course worker never sees), so no API routes, proxies or
+>   authenticated endpoints there.
 >
 > `serve-offline.mjs` and `start.ps1` meet these. The FastAPI server does not
 > host the player (see §6).
@@ -256,10 +258,13 @@ The desktop app can serve the self-contained archive locally:
    (the app is never frameable). It is not a course-player host: it answers
    `/training-boot.html`, `/training-boot.js`, `/training/sw.js` and every
    `/training/*` path with 404, because course JS on a player origin can send
-   requests to any path of the server answering it (from the boot frame) and
+   GET requests to any path of the server answering it (by navigation) and
    this server carries the unauthenticated API. The browser app served from here installs packs but
    reports course playback as unavailable on this host, unless
-   `player-origin.json` names a separate static player host.
+   `player-origin.json` names a separate static player host that sends the §3
+   headers for this app origin. The bundled `serve-offline.mjs` / `start.ps1`
+   cannot be that host: they only admit their own loopback alias as the app
+   origin.
 
 To run the server serving the archive: `python api_server.py` (or
 `WEB_UI_DIST=/path/to/dist python api_server.py`), then open the server root.

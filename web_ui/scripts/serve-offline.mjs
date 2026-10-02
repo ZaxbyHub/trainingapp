@@ -82,27 +82,28 @@ const FRAME_DENY_HEADERS = {
   'Content-Security-Policy': "frame-ancestors 'none'",
   'X-Frame-Options': 'DENY',
 };
-// The only origin allowed to frame the boot page: the app origin, i.e. the
-// loopback alias of the Host the request was sent to. Any other Host fails
-// closed to 'none' (a Host is never reflected).
-function bootPageFrameAncestor(host) {
-  const match = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/i.exec(typeof host === 'string' ? host : '');
-  if (match === null) return "'none'";
-  const alias = match[1].toLowerCase() === 'localhost' ? '127.0.0.1' : 'localhost';
-  return `http://${alias}${match[2] || ''}`;
-}
 // The boot page's HEADER CSP (a meta tag would race same-origin scripting):
-// no fetch, no form, no subresource but its own script and the course worker.
+// no fetch, no form, no subresource; scripts and workers pinned to the exact
+// URLs of its own script and the course worker (a worker course JS starts
+// from the boot window would otherwise run any same-origin script under that
+// script's own, unrestricted policy). Only the app origin, the loopback alias
+// of the Host the request was sent to, may frame it. Any other Host gets
+// 'none' for all three (fail closed; a Host is never reflected).
 function bootPageCsp(host) {
+  const match = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/i.exec(typeof host === 'string' ? host : '');
+  const name = match === null ? null : match[1].toLowerCase();
+  const port = match === null ? '' : match[2] || '';
+  const player = name === null ? null : `http://${name}${port}`;
+  const app = name === null ? "'none'" : `http://${name === 'localhost' ? '127.0.0.1' : 'localhost'}${port}`;
   return [
     "default-src 'none'",
-    "script-src 'self'",
-    "worker-src 'self'",
+    `script-src ${player === null ? "'none'" : `${player}/training-boot.js`}`,
+    `worker-src ${player === null ? "'none'" : `${player}${TRAINING_SW_PATH}`}`,
     "connect-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
     "object-src 'none'",
-    `frame-ancestors ${bootPageFrameAncestor(host)}`,
+    `frame-ancestors ${app}`,
   ].join('; ');
 }
 

@@ -587,18 +587,19 @@ still works. Hosting the app on a non-loopback name therefore needs a second hos
 player, answered by a static-only host that serves the same files (not `api_server.py`).
 
 The server that answers the player origin must serve **only static files**: no API routes,
-proxies or authenticated endpoints. Course JS can script the app's boot frame
-(`/training-boot.html`, same origin), and from it can still send GET requests to any path of
-that server by loading scripts. It must:
+proxies or authenticated endpoints. Course JS can still send GET requests to any path of that
+server by navigating its own frame or the app's boot frame (`/training-boot.html`, same origin;
+the request leaves even though the answer is never shown). It must:
 
 - serve `/training-boot.html` and `/training-boot.js` with
   `Cross-Origin-Resource-Policy: cross-origin` (and the app's `Cross-Origin-Embedder-Policy:
   require-corp`), and serve `/training/sw.js`;
 - answer every other `/training/*` path with 404, not the app shell;
 - serve `/training-boot.html` with the restrictive header CSP `default-src 'none'; script-src
-  'self'; worker-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none';
-  object-src 'none'; frame-ancestors <app origin>`, so only the app can frame it and nothing in
-  it can fetch or submit anywhere;
+  <player origin>/training-boot.js; worker-src <player origin>/training/sw.js; connect-src
+  'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors <app
+  origin>`, so only the app can frame it, nothing in it can fetch or submit anywhere, and it can
+  run no script or worker but its own two files;
 - send `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on every
   other response, errors included. Course content cannot frame another player-origin page that
   would run under a weaker policy than its own, the app is never shown inside a frame, and a
@@ -607,17 +608,20 @@ that server by loading scripts. It must:
 `vite preview`, `web_ui/scripts/serve-offline.mjs` (run by `start.command`) and
 `web_ui/scripts/start.ps1` (run by `start.bat`) already do. `vite dev` does too, but it also
 serves `/@fs/` and proxies `/api` and `/auth`, so play only trusted courses under `npm run dev`.
-The bundled hosts compute `<app origin>` as the loopback alias of the Host the boot page was
-requested on. Any other Host gets `frame-ancestors 'none'`, which turns course playback off
-rather than weakening it. A separately configured player host must send the same headers with
-its own app origin. CSP does not cover navigation: a course can still navigate its own frame to
-any web address (data in the address). The desktop app blocks that, and the browser app does
-not yet (ADR-0012, threat model item 6).
+The app also sandboxes the boot frame (`allow-scripts allow-same-origin`), so course JS that
+scripts it gets no popups or top-level navigation from it either. The bundled hosts compute
+`<player origin>` from the Host the boot page was requested on and `<app origin>` as its loopback
+alias. Any other Host gets `'none'` for all three, which turns course playback off rather than
+weakening it. A separately configured player host must send the same headers, with `frame-ancestors` naming its app origin and the script and worker sources naming its own origin. The bundled servers cannot be that host: they derive these origins only for the loopback alias of their own port, so their boot page refuses any other app origin, and the Training page then reports that the player service did not start. CSP does not cover navigation: a course can still navigate
+its own frame, or the boot frame, to any web address (data in the address). The desktop app
+blocks that for the course frame, and the browser app does not yet (ADR-0012, threat model item
+6).
 
 `api_server.py` is not a player host: when it serves the web archive it answers the boot files,
 `/training/sw.js` and every `/training/*` path with 404, and the Training page says course
 playback is not available on this host. Packs still install there. To play courses from an app
-served by `api_server.py`, name a separate static player host in `player-origin.json`.
+served by `api_server.py`, name a separate static player host in `player-origin.json`; that host
+must send the headers above for the `api_server.py` app origin (see the previous paragraph).
 
 Build-time pack trust policy (same meaning as the desktop `TRAININGAPP_PACKS_*` variables):
 

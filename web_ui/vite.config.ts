@@ -97,13 +97,16 @@ export default IndexedDbBackend;
  *     parity: desktop/main/security/csp.ts frame-ancestors 'none');
  *   - /training-boot.html (the boot frame embedded by the COEP require-corp
  *     app page) is the one embeddable document: it carries a restrictive
- *     HEADER CSP (bootPageCsp: no fetch, no form, no subresource but its own
- *     script and the course worker) whose frame-ancestors names ONLY the app
- *     origin, i.e. the loopback alias of the Host this request was sent to,
- *     so course content cannot frame it either; a header (not a meta tag) so
- *     no same-origin script can act in the document before the policy
- *     applies. Any Host other than localhost / 127.0.0.1 gets
- *     frame-ancestors 'none' (fail closed; a Host is never reflected);
+ *     HEADER CSP (bootPageCsp: no fetch, no form, no subresource; scripts and
+ *     workers pinned to the exact URLs of its own script and the course
+ *     worker, because a worker that course JS starts from the boot window
+ *     would otherwise run any same-origin script under that script's own,
+ *     unrestricted policy) whose frame-ancestors names ONLY the app origin,
+ *     i.e. the loopback alias of the Host this request was sent to, so course
+ *     content cannot frame it either; a header (not a meta tag) so no
+ *     same-origin script can act in the document before the policy applies.
+ *     Any Host other than localhost / 127.0.0.1 gets 'none' for all three
+ *     (fail closed; a Host is never reflected);
  *   - /training-boot.html and /training-boot.js carry CORP cross-origin +
  *     COEP require-corp, nosniff and no-cache;
  *   - /training/sw.js (the course service worker, scope /training/) carries
@@ -116,7 +119,8 @@ export default IndexedDbBackend;
  * e2e/isolation-browser.spec.ts (FC6).
  */
 export const TRAINING_BOOT_PAGE_PATH = '/training-boot.html';
-export const TRAINING_BOOT_PATHS = new Set([TRAINING_BOOT_PAGE_PATH, '/training-boot.js']);
+export const TRAINING_BOOT_SCRIPT_PATH = '/training-boot.js';
+export const TRAINING_BOOT_PATHS = new Set([TRAINING_BOOT_PAGE_PATH, TRAINING_BOOT_SCRIPT_PATH]);
 export const TRAINING_SW_PATH = '/training/sw.js';
 /** Anti-framing headers for every response except the boot page. */
 export const FRAME_DENY_HEADERS: Readonly<Record<string, string>> = {
@@ -124,14 +128,25 @@ export const FRAME_DENY_HEADERS: Readonly<Record<string, string>> = {
   'X-Frame-Options': 'DENY',
 };
 
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/i;
+
+/**
+ * The player origin the boot page was requested on, when the Host is a
+ * loopback name the bundled hosts serve (every bundled host speaks http);
+ * null for anything else.
+ */
+export function bootPagePlayerOrigin(host: string | undefined): string | null {
+  const match = LOOPBACK_HOST.exec(host ?? '');
+  return match === null ? null : `http://${(match[1] ?? '').toLowerCase()}${match[2] ?? ''}`;
+}
+
 /**
  * The only origin allowed to frame the boot page: the app origin, which is
  * the loopback alias of the player Host this request was sent to
- * (localhost <-> 127.0.0.1, same port; every bundled host speaks http).
- * Anything else fails closed to 'none'.
+ * (localhost <-> 127.0.0.1, same port). Anything else fails closed to 'none'.
  */
 export function bootPageFrameAncestor(host: string | undefined): string {
-  const match = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/i.exec(host ?? '');
+  const match = LOOPBACK_HOST.exec(host ?? '');
   if (match === null) return "'none'";
   const alias = match[1]?.toLowerCase() === 'localhost' ? '127.0.0.1' : 'localhost';
   return `http://${alias}${match[2] ?? ''}`;
@@ -139,10 +154,11 @@ export function bootPageFrameAncestor(host: string | undefined): string {
 
 /** The boot page's header CSP (final-critic FC6). */
 export function bootPageCsp(host: string | undefined): string {
+  const player = bootPagePlayerOrigin(host);
   return [
     "default-src 'none'",
-    "script-src 'self'",
-    "worker-src 'self'",
+    `script-src ${player === null ? "'none'" : `${player}${TRAINING_BOOT_SCRIPT_PATH}`}`,
+    `worker-src ${player === null ? "'none'" : `${player}${TRAINING_SW_PATH}`}`,
     "connect-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",

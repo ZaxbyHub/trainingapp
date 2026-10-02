@@ -33,6 +33,15 @@ export interface RelayReadyInfo {
 }
 
 const BOOT_PATH = '/training-boot.html';
+/**
+ * The boot frame's sandbox (final-critic FC6). Course JS on the player origin
+ * can script the boot frame as a same-origin sibling, so the boot frame must
+ * not grant what the course frame's sandbox withholds: no popups, no top
+ * navigation, no forms, no modals. `allow-same-origin` keeps the player
+ * origin (the worker registration needs it); `allow-scripts` runs the boot
+ * script.
+ */
+export const BOOT_FRAME_SANDBOX = 'allow-scripts allow-same-origin';
 /** Minimum spacing between window-requested re-handshakes. */
 export const RELAY_REQUEST_MIN_INTERVAL_MS = 1000;
 /** Why a framed app does not start the course player. */
@@ -122,6 +131,7 @@ export class TrainingPlayerHost {
     const container = (this.opts.container ?? (() => document.body))();
     if (container === null) return Promise.resolve({ ready: false, hadActiveWorker: false, detail: 'no document' });
     const frame = document.createElement('iframe');
+    frame.setAttribute('sandbox', BOOT_FRAME_SANDBOX);
     frame.src = `${this.opts.playerOrigin}${BOOT_PATH}`;
     frame.title = 'Training player service';
     frame.setAttribute('aria-hidden', 'true');

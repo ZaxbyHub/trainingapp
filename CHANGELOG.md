@@ -21,10 +21,11 @@
   types and training CSP. The bundled static servers (vite, `serve-offline.mjs`, `start.ps1`)
   bind 127.0.0.1, serve the boot files with `Cross-Origin-Resource-Policy: cross-origin`, and
   answer other `/training/*` paths with 404. Every other player-origin response refuses framing,
-  and the boot page carries a restrictive header CSP that only the app origin may frame, so a
-  course cannot step outside its own CSP through a same-origin page (final-critic FC6). The
-  player origin must be served by a static-only host (course JS can still send same-origin GET
-  requests from the app's boot frame), so
+  the boot page carries a restrictive header CSP that only the app origin may frame (scripts and
+  workers pinned to its own two files), and the app sandboxes the boot frame, so a course cannot
+  step outside its own CSP or sandbox through a same-origin page (final-critic FC6). The player
+  origin must be served by a static-only host (course JS can still send same-origin GET requests
+  by navigation), so
   `api_server.py` is not a player host: it answers the boot files and every `/training/*` path
   with 404, and the browser app served from it says course playback is not available on this
   host. Other hosts can name a player origin with `player-origin.json` or

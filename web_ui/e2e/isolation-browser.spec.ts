@@ -117,7 +117,11 @@ function clickStoryHtml(): string {
  *     document, of the server's /training 404 and of the worker's own
  *     /training/sw.js refusal;
  *   - sibling: the app's own boot frame, reached through window.parent.frames
- *     (same origin as the course; no framing involved).
+ *     (same origin as the course; no framing involved). There it also tries
+ *     to start a worker, register a service worker and load a script from
+ *     same-origin files other than the boot script and the course worker: a
+ *     worker runs under its own script's (unrestricted) policy, so the boot
+ *     page's script-src / worker-src must name those two exact URLs.
  * From every document it reaches, it attempts fetch / image / beacon / form
  * egress to a cross-origin sink the test counts. The page only records
  * outcomes; it carries no payload.
@@ -169,7 +173,47 @@ function escapeStoryHtml(): string {
       if (c !== window && c.location.pathname === '/training-boot.html') { sibling = c; break; }
     } catch (e) { /* cross-origin frame */ }
   }
-  r.sibling = sibling ? { found: true, egress: await egress(sibling, 'sibling-boot') } : { found: false };
+  async function siblingCode(w) {
+    var out = { violations: [] };
+    w.document.addEventListener('securitypolicyviolation', function (e) { out.violations.push(e.effectiveDirective || e.violatedDirective); });
+    try {
+      var worker = new w.Worker('/training-boot.js');
+      out.worker = 'constructed';
+      await new Promise(function (res) { worker.onerror = function () { out.worker = 'error'; res(); }; setTimeout(res, 1500); });
+    } catch (e) { out.worker = 'threw:' + name(e); }
+    try {
+      var s = w.document.createElement('script');
+      await new Promise(function (res) {
+        s.onload = function () { out.script = 'loaded'; res(); };
+        s.onerror = function () { out.script = 'error'; res(); };
+        s.src = '/training/sw.js';
+        w.document.body.appendChild(s);
+        setTimeout(res, 1500);
+      });
+    } catch (e) { out.script = 'threw:' + name(e); }
+    try {
+      var reg = await w.navigator.serviceWorker.register('/training-boot.js', { scope: '/' });
+      out.register = 'registered';
+      try { await reg.unregister(); } catch (e) { /* best effort */ }
+    } catch (e) { out.register = 'rejected:' + name(e); }
+    // The boot frame must not grant what the course sandbox withholds.
+    try {
+      var a = w.document.createElement('a');
+      a.href = SINK + 'sibling-popup/anchor';
+      a.target = '_blank';
+      w.document.body.appendChild(a);
+      a.click();
+      out.anchorPopup = 'clicked';
+    } catch (e) { out.anchorPopup = name(e); }
+    try {
+      var opened = w.open(SINK + 'sibling-popup/open', '_blank');
+      out.openPopup = opened === null ? 'null' : 'window';
+    } catch (e) { out.openPopup = 'threw:' + name(e); }
+    try { w.top.location.href = appOrigin + '/#fc6-boot-hijacked'; out.topNavigation = 'no-error'; } catch (e) { out.topNavigation = name(e); }
+    await wait(300);
+    return out;
+  }
+  r.sibling = sibling ? { found: true, code: await siblingCode(sibling), egress: await egress(sibling, 'sibling-boot') } : { found: false };
   await wait(1500);
   document.getElementById('escape-probe').textContent = JSON.stringify(r);
 })();`;
@@ -273,6 +317,9 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   const appOrigin = new URL(page.url()).origin;
   // The cross-origin egress sink: every request that reaches it is an escape.
   const hits: string[] = [];
+  const popups: string[] = [];
+  page.on('popup', (p) => popups.push(p.url()));
+  page.context().on('page', (p) => popups.push(p.url()));
   await page.route(`${appOrigin}/__fc6-sink/**`, (route) => {
     hits.push(new URL(route.request().url()).pathname);
     return route.fulfill({ status: 204, headers: { 'cross-origin-resource-policy': 'cross-origin' } });
@@ -286,7 +333,22 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
   const probe = page.frameLocator('iframe[data-testid="training-player-frame"]').locator('#escape-probe');
   await expect(probe).not.toHaveText('', { timeout: 90_000 });
-  const r = JSON.parse((await probe.textContent()) ?? '{}') as Record<string, { framed?: string; found?: boolean; egress?: Record<string, string> }>;
+  const r = JSON.parse((await probe.textContent()) ?? '{}') as Record<
+    string,
+    {
+      framed?: string;
+      found?: boolean;
+      egress?: Record<string, string>;
+      code?: {
+        worker?: string;
+        script?: string;
+        register?: string;
+        violations?: string[];
+        openPopup?: string;
+        topNavigation?: string;
+      };
+    }
+  >;
   await page.waitForTimeout(1000);
   test.info().annotations.push({ type: 'fc6-probe', description: `${JSON.stringify(r)} sink hits: ${JSON.stringify(hits)}` });
 
@@ -300,6 +362,17 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   // its own header CSP must refuse every egress channel.
   expect(r.sibling?.found, 'FC6 sibling boot frame reachable (non-vacuous row)').toBe(true);
   expect(r.sibling?.egress?.fetch, 'FC6 sibling boot fetch').not.toBe('sent');
+  // ...and runs no same-origin script or worker but its own two files.
+  expect(r.sibling?.code?.worker, 'FC6 sibling boot starts a worker from another same-origin script').not.toBe('constructed');
+  expect(r.sibling?.code?.script, 'FC6 sibling boot loads another same-origin script').toBe('error');
+  expect(r.sibling?.code?.register ?? '', 'FC6 sibling boot registers another service worker').toMatch(/^rejected:/);
+  expect(r.sibling?.code?.violations ?? [], 'FC6 sibling boot CSP violations').toEqual(expect.arrayContaining(['worker-src', 'script-src-elem']));
+  // ...and is sandboxed like the course frame: no popup, no top navigation.
+  expect(popups, 'FC6 popup opened from the sibling boot frame').toEqual([]);
+  expect(r.sibling?.code?.openPopup, 'FC6 sibling boot window.open').toBe('null');
+  expect(r.sibling?.code?.topNavigation, 'FC6 sibling boot top navigation').not.toBe('no-error');
+  expect(page.url()).not.toContain('fc6-boot-hijacked');
+  await expect(page.locator('iframe[data-testid="training-player-boot"]')).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin');
   // Nothing reached the sink from any document.
   expect(hits, 'FC6 cross-origin egress from a same-origin player document').toEqual([]);
 });
