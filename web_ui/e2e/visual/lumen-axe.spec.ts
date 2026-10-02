@@ -51,17 +51,12 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
   ],
   'settings:light:1440': [
     "color-contrast | #browser-local-desc",
-    "color-contrast | #webllm-desc",
-    "color-contrast | #wllama-desc",
     "color-contrast | div[role=\"status\"][aria-live=\"polite\"] > p",
     "color-contrast | nav > div:nth-child(3) > div",
-    "color-contrast | section[aria-labelledby=\"browser-engine-heading\"] > div > p",
-    "color-contrast | section[aria-labelledby=\"browser-engine-heading\"] > div > p > strong",
     "color-contrast | span > span[role=\"status\"][aria-live=\"polite\"]",
   ],
   'overlay:light:500': [
     "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-    "color-contrast | ul:nth-child(3) > li",
   ],
   'chat:light:500': [
     "color-contrast | div[role=\"region\"] > div:nth-child(1) > p",
@@ -76,10 +71,6 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
   ],
   'settings:light:500': [
     "color-contrast | #browser-local-desc",
-    "color-contrast | #webllm-desc",
-    "color-contrast | #wllama-desc",
-    "color-contrast | section[aria-labelledby=\"browser-engine-heading\"] > div > p",
-    "color-contrast | section[aria-labelledby=\"browser-engine-heading\"] > div > p > strong",
   ],
 };
 
