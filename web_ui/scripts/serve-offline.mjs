@@ -65,25 +65,57 @@ const COI_HEADERS = {
 // worker is served at /training/sw.js; every other /training/* path is 404,
 // never the SPA shell (course paths are served by that worker only).
 // Mirrors web_ui/vite.config.ts trainingRouteMiddleware.
-const TRAINING_BOOT_PATHS = new Set(['/training-boot.html', '/training-boot.js']);
+const TRAINING_BOOT_PAGE_PATH = '/training-boot.html';
+const TRAINING_BOOT_PATHS = new Set([TRAINING_BOOT_PAGE_PATH, '/training-boot.js']);
 const TRAINING_SW_PATH = '/training/sw.js';
 const BOOT_HEADERS = {
   'Cross-Origin-Resource-Policy': 'cross-origin',
   'X-Content-Type-Options': 'nosniff',
 };
-// Every app-shell response (anything that is not a player-origin route) is
-// unframeable: untrusted course content on the player origin shares this
-// server and must never load a live app instance in a frame.
-const APP_SHELL_FRAME_HEADERS = {
+// Framing is denied by default (final-critic FC6): untrusted course JS on the
+// player origin can script any same-origin document it frames, so EVERY
+// response (app shell, assets, /training-boot.js, /training/sw.js, the
+// /training/* 404, and every 403/404/416/500 below) carries these headers,
+// set on the response before any branch runs. The boot page is the single
+// exception: it carries bootPageCsp instead.
+const FRAME_DENY_HEADERS = {
   'Content-Security-Policy': "frame-ancestors 'none'",
   'X-Frame-Options': 'DENY',
 };
+// The only origin allowed to frame the boot page: the app origin, i.e. the
+// loopback alias of the Host the request was sent to. Any other Host fails
+// closed to 'none' (a Host is never reflected).
+function bootPageFrameAncestor(host) {
+  const match = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/i.exec(typeof host === 'string' ? host : '');
+  if (match === null) return "'none'";
+  const alias = match[1].toLowerCase() === 'localhost' ? '127.0.0.1' : 'localhost';
+  return `http://${alias}${match[2] || ''}`;
+}
+// The boot page's HEADER CSP (a meta tag would race same-origin scripting):
+// no fetch, no form, no subresource but its own script and the course worker.
+function bootPageCsp(host) {
+  return [
+    "default-src 'none'",
+    "script-src 'self'",
+    "worker-src 'self'",
+    "connect-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "object-src 'none'",
+    `frame-ancestors ${bootPageFrameAncestor(host)}`,
+  ].join('; ');
+}
 
 const server = createServer((req, res) => {
+  for (const [name, value] of Object.entries(FRAME_DENY_HEADERS)) res.setHeader(name, value);
   try {
     // Parse the URL and prevent path traversal.
     const url = new URL(req.url || '/', `http://localhost:${PORT}`);
     const rawPath = url.pathname;
+    if (rawPath === TRAINING_BOOT_PAGE_PATH) {
+      res.removeHeader('X-Frame-Options');
+      res.setHeader('Content-Security-Policy', bootPageCsp(req.headers.host));
+    }
     if ((rawPath === '/training' || rawPath.startsWith('/training/')) && rawPath !== TRAINING_SW_PATH) {
       res.writeHead(404, { ...COI_HEADERS, 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
       res.end('Not Found');
@@ -93,7 +125,7 @@ const server = createServer((req, res) => {
       ? BOOT_HEADERS
       : rawPath === TRAINING_SW_PATH
         ? { 'X-Content-Type-Options': 'nosniff' }
-        : APP_SHELL_FRAME_HEADERS;
+        : {};
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === '/') pathname = '/index.html';
 

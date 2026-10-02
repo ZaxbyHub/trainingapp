@@ -15,7 +15,12 @@
  *   - window.open returns null and top navigation is blocked (course frame
  *     sandbox without allow-popups / allow-top-navigation), both from the page
  *     script and from a real click inside the course frame (user activation,
- *     final-critic FC5).
+ *     final-critic FC5);
+ *   - course content cannot leave its own CSP through a same-origin
+ *     player-origin document (final-critic FC6): it cannot frame the boot
+ *     page, the boot script, the /training 404 or the worker's refusal
+ *     (frame-ancestors), and the app's boot frame it CAN reach as a sibling
+ *     sends nothing to a cross-origin sink (the boot page's header CSP).
  *
  * The course script only records outcomes; it carries no payload beyond what
  * the assertions need. Run under web_ui/playwright.config.ts (vite preview of
@@ -28,6 +33,7 @@ import { expect, test, type Page } from '@playwright/test';
 const PROBE_PACK = 'isolation-probe-course';
 const CLICK_PACK = 'isolation-click-course';
 const OTHER_PACK = 'isolation-other-course';
+const ESCAPE_PACK = 'isolation-escape-course';
 const SLIDE_DOC_PATH = 'docs/slide-001-5rN4PvXJM5d.json';
 const SLIDE_DOC = Buffer.from(
   JSON.stringify({ slide_id: '5rN4PvXJM5d', slide_title: 'Welcome', section_title: 'Launch Menu', on_screen_text: 'Start' }),
@@ -101,6 +107,73 @@ function clickStoryHtml(): string {
   });
 })();`;
   return `<!doctype html><html><head><title>click probe</title></head><body><button id="escape-popup">popup</button><button id="escape-top">top</button><pre id="click-probe"></pre><script>${script}</script></body></html>`;
+}
+
+/**
+ * The escape-probe course (final-critic FC6): course JS tries to leave its own
+ * CSP (connect-src 'self', form-action 'none') through a SAME-ORIGIN
+ * player-origin document that would run under a weaker policy:
+ *   - nested: a child frame of the boot page, of the boot script loaded as a
+ *     document, of the server's /training 404 and of the worker's own
+ *     /training/sw.js refusal;
+ *   - sibling: the app's own boot frame, reached through window.parent.frames
+ *     (same origin as the course; no framing involved).
+ * From every document it reaches, it attempts fetch / image / beacon / form
+ * egress to a cross-origin sink the test counts. The page only records
+ * outcomes; it carries no payload.
+ */
+function escapeStoryHtml(): string {
+  const script = `
+(async function () {
+  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  var SINK = appOrigin + '/__fc6-sink/';
+  var r = {};
+  function wait(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+  function name(e) { return (e && e.name) || String(e); }
+  async function egress(w, label) {
+    var out = {};
+    try { await w.fetch(SINK + label + '/fetch', { mode: 'no-cors', cache: 'no-store' }); out.fetch = 'sent'; } catch (e) { out.fetch = name(e); }
+    try { var img = new w.Image(); img.src = SINK + label + '/img'; out.img = 'set'; } catch (e) { out.img = name(e); }
+    try { out.beacon = String(w.navigator.sendBeacon(SINK + label + '/beacon', 'x')); } catch (e) { out.beacon = name(e); }
+    try {
+      var form = w.document.createElement('form');
+      form.method = 'GET';
+      form.action = SINK + label + '/form';
+      (w.document.body || w.document.documentElement).appendChild(form);
+      form.submit();
+      out.form = 'submitted';
+    } catch (e) { out.form = name(e); }
+    return out;
+  }
+  async function nested(label, src) {
+    var f = document.createElement('iframe');
+    var loaded = new Promise(function (res) { f.addEventListener('load', res, { once: true }); });
+    f.src = src;
+    document.body.appendChild(f);
+    await Promise.race([loaded, wait(5000)]);
+    var w = f.contentWindow;
+    try {
+      void w.document.documentElement;
+      if (w.location.href === 'about:blank') return { framed: 'not-loaded' };
+    } catch (e) { return { framed: 'blocked:' + name(e) }; }
+    return { framed: 'same-origin-document', egress: await egress(w, label) };
+  }
+  r.nestedBoot = await nested('nested-boot', '/training-boot.html');
+  r.nestedBootScript = await nested('nested-boot-js', '/training-boot.js');
+  r.nestedTraining404 = await nested('nested-training-404', '/training');
+  r.nestedWorkerRefusal = await nested('nested-sw-refusal', '/training/sw.js');
+  var sibling = null;
+  for (var i = 0; i < window.parent.frames.length; i++) {
+    try {
+      var c = window.parent.frames[i];
+      if (c !== window && c.location.pathname === '/training-boot.html') { sibling = c; break; }
+    } catch (e) { /* cross-origin frame */ }
+  }
+  r.sibling = sibling ? { found: true, egress: await egress(sibling, 'sibling-boot') } : { found: false };
+  await wait(1500);
+  document.getElementById('escape-probe').textContent = JSON.stringify(r);
+})();`;
+  return `<!doctype html><html><head><title>escape probe</title></head><body><pre id="escape-probe"></pre><script>${script}</script></body></html>`;
 }
 
 function manifest(id: string, version: string): Record<string, unknown> {
@@ -193,6 +266,42 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   await expect(page.getByTestId('training-player-slide')).not.toContainText('FORGED');
   // Checked last so the behavioral rows above decide a sandbox regression.
   await expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
+});
+
+test('course content cannot escape its CSP through a same-origin player-origin document (FC6)', async ({ page }) => {
+  await page.goto('/');
+  const appOrigin = new URL(page.url()).origin;
+  // The cross-origin egress sink: every request that reaches it is an escape.
+  const hits: string[] = [];
+  await page.route(`${appOrigin}/__fc6-sink/**`, (route) => {
+    hits.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 204, headers: { 'cross-origin-resource-policy': 'cross-origin' } });
+  });
+  await page.getByRole('button', { name: 'Documents', exact: true }).click();
+  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+  await install(page, await packZip(ESCAPE_PACK, '1.0.0', { 'story.html': escapeStoryHtml() }), 'escape.zip', ESCAPE_PACK, '1.0.0');
+  await page.getByRole('button', { name: 'Training', exact: true }).click();
+  const option = page.getByTestId('training-pack-select').locator('option', { hasText: ESCAPE_PACK });
+  await expect(option).toHaveCount(1, { timeout: 30_000 });
+  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+  const probe = page.frameLocator('iframe[data-testid="training-player-frame"]').locator('#escape-probe');
+  await expect(probe).not.toHaveText('', { timeout: 90_000 });
+  const r = JSON.parse((await probe.textContent()) ?? '{}') as Record<string, { framed?: string; found?: boolean; egress?: Record<string, string> }>;
+  await page.waitForTimeout(1000);
+  test.info().annotations.push({ type: 'fc6-probe', description: `${JSON.stringify(r)} sink hits: ${JSON.stringify(hits)}` });
+
+  // Nested: every same-origin player document refuses to be framed by course
+  // content (frame-ancestors), so the course never gets a window under a
+  // weaker policy.
+  for (const key of ['nestedBoot', 'nestedBootScript', 'nestedTraining404', 'nestedWorkerRefusal']) {
+    expect(r[key]?.framed ?? '', `FC6 ${key} framed by course content`).toMatch(/^blocked:/);
+  }
+  // Sibling: the app's boot frame IS reachable (same origin, no framing), so
+  // its own header CSP must refuse every egress channel.
+  expect(r.sibling?.found, 'FC6 sibling boot frame reachable (non-vacuous row)').toBe(true);
+  expect(r.sibling?.egress?.fetch, 'FC6 sibling boot fetch').not.toBe('sent');
+  // Nothing reached the sink from any document.
+  expect(hits, 'FC6 cross-origin egress from a same-origin player document').toEqual([]);
 });
 
 test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page }) => {

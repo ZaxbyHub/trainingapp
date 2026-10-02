@@ -62,6 +62,25 @@ $MimeTypes = @{
     '.txt'  = 'text/plain; charset=utf-8'
 }
 
+# ---- Player-origin framing policy (final-critic FC6) -------------------------
+# Untrusted course JS on the player origin can script any same-origin document
+# it frames, so framing is denied by default: EVERY response gets
+# frame-ancestors 'none' + X-Frame-Options: DENY (set right after the request
+# is taken, before any branch, so the 403/404/416/500 answers carry them too).
+# /training-boot.html is the single exception: it gets this restrictive HEADER
+# CSP (no fetch, no form, no subresource but its own script and the course
+# worker), and only the app origin, the loopback alias of the Host the request
+# was sent to, may frame it. Any other Host fails closed to 'none'. Mirrors
+# web_ui/vite.config.ts bootPageCsp.
+function Get-BootPageCsp([string]$HostHeader) {
+    $Ancestor = "'none'"
+    if ($HostHeader -match '^(localhost|127\.0\.0\.1)(:\d{1,5})?$') {
+        $Alias = if ($Matches[1] -ieq 'localhost') { '127.0.0.1' } else { 'localhost' }
+        $Ancestor = "http://$Alias$($Matches[2])"
+    }
+    return "default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors $Ancestor"
+}
+
 # ---- Create the listener -----------------------------------------------------
 $Listener = New-Object System.Net.HttpListener
 $Listener.Prefixes.Add("http://127.0.0.1:${Port}/")
@@ -108,6 +127,9 @@ while ($Listener.IsListening) {
 
     $Request  = $Context.Request
     $Response = $Context.Response
+    # Framing denied by default (FC6); only the boot page overrides it below.
+    $Response.Headers.Set('Content-Security-Policy', "frame-ancestors 'none'")
+    $Response.Headers.Set('X-Frame-Options', 'DENY')
 
     try {
         $Path = [System.Uri]::UnescapeDataString($Request.Url.AbsolutePath)
@@ -130,6 +152,10 @@ while ($Listener.IsListening) {
         $RawPath = $Request.Url.AbsolutePath
         $IsTrainingBoot = ($RawPath -ceq '/training-boot.html' -or $RawPath -ceq '/training-boot.js')
         $IsTrainingWorker = ($RawPath -ceq '/training/sw.js')
+        if ($RawPath -ceq '/training-boot.html') {
+            $Response.Headers.Remove('X-Frame-Options')
+            $Response.Headers.Set('Content-Security-Policy', (Get-BootPageCsp $Request.Headers['Host']))
+        }
         if (($RawPath -ceq '/training' -or $RawPath.StartsWith('/training/', [StringComparison]::Ordinal)) -and -not $IsTrainingWorker) {
             $Response.StatusCode = 404
             $Response.Headers.Set('Cross-Origin-Opener-Policy', 'same-origin')
@@ -203,12 +229,9 @@ while ($Listener.IsListening) {
             $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
         } elseif ($IsTrainingWorker) {
             $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
-        } else {
-            # App shell: never frameable (course content on the player origin
-            # shares this server and must not load a live app in a frame).
-            $Response.Headers.Set('Content-Security-Policy', "frame-ancestors 'none'")
-            $Response.Headers.Set('X-Frame-Options', 'DENY')
         }
+        # Every other response keeps the deny-by-default framing headers set
+        # when the request was taken (the app shell is never frameable).
         $Response.ContentType = $ContentType
 
         $FileLen = (Get-Item $ResolvedPath).Length

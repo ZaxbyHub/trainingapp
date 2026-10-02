@@ -3,9 +3,10 @@
  * playback refuses to start in a framed app (browser-training-parity AC11,
  * ADR-0012; review round 1 F1).
  *
- *   1. Hosting: app-shell responses carry frame-ancestors 'none' and
- *      X-Frame-Options: DENY; the player-origin boot file does not (the app
- *      embeds it).
+ *   1. Hosting: app-shell responses (and every player-origin file but the
+ *      boot page) carry frame-ancestors 'none' and X-Frame-Options: DENY; the
+ *      boot page carries a restrictive header CSP that only the app origin
+ *      may frame (the app embeds it; final-critic FC6).
  *   2. A foreign top-level page that frames the app gets no app document.
  *   3. Defense in depth: even when a host omits those headers (stripped here
  *      by a route), a framed app never embeds the training boot frame.
@@ -39,10 +40,23 @@ test('app-shell responses refuse framing; the player boot file stays embeddable'
     expect(res.headers()['content-security-policy'], path).toBe("frame-ancestors 'none'");
     expect(res.headers()['x-frame-options'], path).toBe('DENY');
   }
-  const boot = await page.request.get(`${baseURL}/training-boot.html`);
+  // The boot page, requested on the PLAYER origin (the app origin's loopback
+  // alias), is embeddable by the app origin only, under a restrictive header
+  // CSP (final-critic FC6); every other player-origin file refuses framing.
+  const app = new URL(baseURL ?? 'http://127.0.0.1:4174');
+  const player = new URL(app.href);
+  player.hostname = app.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
+  const boot = await page.request.get(`${player.origin}/training-boot.html`);
   expect(boot.headers()['x-frame-options']).toBeUndefined();
-  expect(boot.headers()['content-security-policy'] ?? '').not.toContain("frame-ancestors 'none'");
+  expect(boot.headers()['content-security-policy']).toBe(
+    `default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors ${app.origin}`,
+  );
   expect(boot.headers()['cross-origin-resource-policy']).toBe('cross-origin');
+  for (const path of ['/training-boot.js', '/training/sw.js', '/training', '/training/pack/story.html']) {
+    const res = await page.request.get(`${player.origin}${path}`);
+    expect(res.headers()['content-security-policy'], path).toBe("frame-ancestors 'none'");
+    expect(res.headers()['x-frame-options'], path).toBe('DENY');
+  }
 });
 
 test('a foreign page cannot frame the app', async ({ page, baseURL }) => {

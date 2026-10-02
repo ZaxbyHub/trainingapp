@@ -145,11 +145,17 @@ requires.
 >   `Cross-Origin-Resource-Policy: cross-origin` and `nosniff`, and serve
 >   `/training/sw.js`;
 > - answer every other `/training/*` path with 404 (no SPA fallback);
+> - serve `/training-boot.html` with the restrictive header CSP
+>   `default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'none';
+>   base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors <app origin>`
+>   and no `X-Frame-Options`;
 > - send `Content-Security-Policy: frame-ancestors 'none'` and
->   `X-Frame-Options: DENY` on app-shell responses;
-> - answer the player origin from a **static-only** host: course JS can reach
->   every same-origin endpoint through the boot page, so no API routes,
->   proxies or authenticated endpoints there.
+>   `X-Frame-Options: DENY` on **every other** response, errors included, so
+>   course content can never frame a same-origin page that runs under a
+>   weaker policy than its own (final-critic FC6);
+> - answer the player origin from a **static-only** host: course JS can
+>   script the app's boot frame and send same-origin GET requests from it
+>   (script loads), so no API routes, proxies or authenticated endpoints there.
 >
 > `serve-offline.mjs` and `start.ps1` meet these. The FastAPI server does not
 > host the player (see §6).
@@ -242,9 +248,9 @@ The desktop app can serve the self-contained archive locally:
    `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`
    (the app is never frameable). It is not a course-player host: it answers
    `/training-boot.html`, `/training-boot.js`, `/training/sw.js` and every
-   `/training/*` path with 404, because course JS on a player origin can reach
-   every endpoint of the server answering it and this server carries the
-   unauthenticated API. The browser app served from here installs packs but
+   `/training/*` path with 404, because course JS on a player origin can send
+   requests to any path of the server answering it (from the boot frame) and
+   this server carries the unauthenticated API. The browser app served from here installs packs but
    reports course playback as unavailable on this host, unless
    `player-origin.json` names a separate static player host.
 

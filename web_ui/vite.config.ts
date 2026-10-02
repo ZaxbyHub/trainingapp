@@ -83,37 +83,87 @@ export default IndexedDbBackend;
  * Player-origin routes (browser-training-parity, ADR-0012). The course player
  * runs on the app server's loopback alias (app http://localhost:PORT, player
  * http://127.0.0.1:PORT, or the reverse); this server therefore also answers
- * as the PLAYER origin, where:
- *   - /training-boot.html and /training-boot.js (the boot frame embedded by
- *     the COEP require-corp app page) carry CORP cross-origin + COEP
- *     require-corp, nosniff and no-cache;
+ * as the PLAYER origin. Untrusted course JS runs on that origin under the
+ * relay-built training CSP (connect-src 'self', form-action 'none'), and it
+ * can script ANY same-origin document it can reach (a child frame it creates,
+ * or the app's own boot frame through window.parent.frames). So every
+ * player-origin document must be at least as confined as a course
+ * (final-critic FC6):
+ *   - framing is denied by default: EVERY response except the boot page
+ *     carries `Content-Security-Policy: frame-ancestors 'none'` and
+ *     `X-Frame-Options: DENY` (the app shell, its assets, /training-boot.js,
+ *     /training/sw.js, the /training/* 404 and any error the server returns),
+ *     so course content can never load one of them in a frame (desktop
+ *     parity: desktop/main/security/csp.ts frame-ancestors 'none');
+ *   - /training-boot.html (the boot frame embedded by the COEP require-corp
+ *     app page) is the one embeddable document: it carries a restrictive
+ *     HEADER CSP (bootPageCsp: no fetch, no form, no subresource but its own
+ *     script and the course worker) whose frame-ancestors names ONLY the app
+ *     origin, i.e. the loopback alias of the Host this request was sent to,
+ *     so course content cannot frame it either; a header (not a meta tag) so
+ *     no same-origin script can act in the document before the policy
+ *     applies. Any Host other than localhost / 127.0.0.1 gets
+ *     frame-ancestors 'none' (fail closed; a Host is never reflected);
+ *   - /training-boot.html and /training-boot.js carry CORP cross-origin +
+ *     COEP require-corp, nosniff and no-cache;
  *   - /training/sw.js (the course service worker, scope /training/) carries
  *     nosniff and no-cache;
  *   - every other /training/* request is 404 — never the SPA shell — because
- *     course paths are answered by the player-origin service worker only;
- *   - EVERY other response (the app shell and its assets) carries
- *     `Content-Security-Policy: frame-ancestors 'none'` and
- *     `X-Frame-Options: DENY`: the app is never frameable by anyone, so
- *     untrusted course content on the player origin (which shares this
- *     server) can never load a live app instance in a frame (desktop parity:
- *     desktop/main/security/csp.ts frame-ancestors 'none').
- * Mirrored by scripts/serve-offline.mjs, scripts/start.ps1 and api_server.py;
- * pinned by src/lib/packs/__tests__/player-origin-hosting.test.ts.
+ *     course paths are answered by the player-origin service worker only.
+ * Mirrored by scripts/serve-offline.mjs and scripts/start.ps1 (api_server.py
+ * is not a player host); pinned by
+ * src/lib/packs/__tests__/player-origin-hosting.test.ts and
+ * e2e/isolation-browser.spec.ts (FC6).
  */
-export const TRAINING_BOOT_PATHS = new Set(['/training-boot.html', '/training-boot.js']);
+export const TRAINING_BOOT_PAGE_PATH = '/training-boot.html';
+export const TRAINING_BOOT_PATHS = new Set([TRAINING_BOOT_PAGE_PATH, '/training-boot.js']);
 export const TRAINING_SW_PATH = '/training/sw.js';
-/** Anti-framing headers for every app-shell (non-player-route) response. */
-export const APP_SHELL_FRAME_HEADERS: Readonly<Record<string, string>> = {
+/** Anti-framing headers for every response except the boot page. */
+export const FRAME_DENY_HEADERS: Readonly<Record<string, string>> = {
   'Content-Security-Policy': "frame-ancestors 'none'",
   'X-Frame-Options': 'DENY',
 };
 
+/**
+ * The only origin allowed to frame the boot page: the app origin, which is
+ * the loopback alias of the player Host this request was sent to
+ * (localhost <-> 127.0.0.1, same port; every bundled host speaks http).
+ * Anything else fails closed to 'none'.
+ */
+export function bootPageFrameAncestor(host: string | undefined): string {
+  const match = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/i.exec(host ?? '');
+  if (match === null) return "'none'";
+  const alias = match[1]?.toLowerCase() === 'localhost' ? '127.0.0.1' : 'localhost';
+  return `http://${alias}${match[2] ?? ''}`;
+}
+
+/** The boot page's header CSP (final-critic FC6). */
+export function bootPageCsp(host: string | undefined): string {
+  return [
+    "default-src 'none'",
+    "script-src 'self'",
+    "worker-src 'self'",
+    "connect-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "object-src 'none'",
+    `frame-ancestors ${bootPageFrameAncestor(host)}`,
+  ].join('; ');
+}
+
 export function trainingRouteMiddleware(
-  req: { url?: string },
+  req: { url?: string; headers?: { host?: string } },
   res: { statusCode: number; setHeader(name: string, value: string): void; end(body?: string): void },
   next: () => void,
 ): void {
   const path = (req.url ?? '').split(/[?#]/)[0] ?? '';
+  // Deny framing first, for every response this server sends (errors
+  // included); the boot page is the single exception.
+  if (path === TRAINING_BOOT_PAGE_PATH) {
+    res.setHeader('Content-Security-Policy', bootPageCsp(req.headers?.host));
+  } else {
+    for (const [name, value] of Object.entries(FRAME_DENY_HEADERS)) res.setHeader(name, value);
+  }
   if (TRAINING_BOOT_PATHS.has(path)) {
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
@@ -136,7 +186,6 @@ export function trainingRouteMiddleware(
     res.end('Not Found');
     return;
   }
-  for (const [name, value] of Object.entries(APP_SHELL_FRAME_HEADERS)) res.setHeader(name, value);
   next();
 }
 

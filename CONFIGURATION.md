@@ -586,15 +586,30 @@ with no configured player origin) course playback is disabled with an explanatio
 still works. Hosting the app on a non-loopback name therefore needs a second hostname for the
 player, answered by a static-only host that serves the same files (not `api_server.py`).
 
-The server that answers the player origin must serve **only static files**: course JS can open
-any same-origin page there (for example the boot page `/training-boot.html`) and from it reach
-every endpoint of that server, so no API routes, proxies or authenticated endpoints. It must
-serve `/training-boot.html` and `/training-boot.js` with
-`Cross-Origin-Resource-Policy: cross-origin` (and the app's `Cross-Origin-Embedder-Policy:
-require-corp`), serve `/training/sw.js`, answer every other `/training/*` path with 404, not
-the app shell, and send `Content-Security-Policy: frame-ancestors 'none'` and
-`X-Frame-Options: DENY` on every other response (the app is never shown inside a frame; a
-framed app also refuses to play courses). `vite preview`, `web_ui/scripts/serve-offline.mjs`
+The server that answers the player origin must serve **only static files**: no API routes,
+proxies or authenticated endpoints. Course JS can script the app's boot frame
+(`/training-boot.html`, same origin), and from it can still send GET requests to any path of
+that server by loading scripts. It must:
+
+- serve `/training-boot.html` and `/training-boot.js` with
+  `Cross-Origin-Resource-Policy: cross-origin` (and the app's `Cross-Origin-Embedder-Policy:
+  require-corp`), and serve `/training/sw.js`;
+- answer every other `/training/*` path with 404, not the app shell;
+- serve `/training-boot.html` with the restrictive header CSP `default-src 'none'; script-src
+  'self'; worker-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none';
+  object-src 'none'; frame-ancestors <app origin>`, so only the app can frame it and nothing in
+  it can fetch or submit anywhere;
+- send `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on every
+  other response, errors included. Course content cannot frame another player-origin page that
+  would run under a weaker policy than its own, the app is never shown inside a frame, and a
+  framed app also refuses to play courses.
+
+The bundled hosts compute `<app origin>` as the loopback alias of the Host the boot page was
+requested on. Any other Host gets `frame-ancestors 'none'`, which turns course playback off
+rather than weakening it. A separately configured player host must send the same headers with
+its own app origin. CSP does not cover navigation: a course can still navigate its own frame to
+any web address (data in the address). The desktop app blocks that, and the browser app does
+not yet (ADR-0012, threat model item 6). `vite preview`, `web_ui/scripts/serve-offline.mjs`
 and `web_ui/scripts/start.ps1` (used by `start.bat` / `start.command`) already do. `vite dev`
 does too, but it also serves `/@fs/` and proxies `/api` and `/auth`, so play only trusted
 courses under `npm run dev`.

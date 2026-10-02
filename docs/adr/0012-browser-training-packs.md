@@ -83,7 +83,10 @@ could be served were not isolated from app storage.
 - `/training-boot.html` + `/training-boot.js` (`web_ui/public/`): a hidden frame the app page
   embeds on the player origin. It registers the course service worker and passes the relay port
   the app transfers to it; it accepts the handshake only from `window.parent` at the exact
-  expected parent origin. It stores nothing.
+  expected parent origin. It stores nothing. The boot page is served with a restrictive header
+  CSP (`default-src 'none'; script-src 'self'; worker-src 'self'; connect-src 'none'; base-uri
+  'none'; form-action 'none'; object-src 'none'`) whose `frame-ancestors` names only the app
+  origin (final-critic FC6, below).
 - `/training/sw.js` (scope `/training/`): serves only `/training/<packId>/<rest>`; every other
   request from a worker-controlled course page (a document under `/training/`) is refused with
   404, whether it targets another path, another origin, the app shell or an app API; methods
@@ -95,14 +98,26 @@ could be served were not isolated from app storage.
 
 ### Framing rules (review round 1)
 
-- **The app shell is never frameable.** Every host sends
-  `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on app-shell
-  responses (vite dev/preview, `serve-offline.mjs`, `start.ps1`, and `api_server.py` when it
-  serves the web archive), as the desktop renderer CSP does (`frame-ancestors 'none'`). Only the player-origin routes differ:
-  the boot files stay embeddable (the app embeds them), and `/training/*` is the worker's.
-  Without this, course content on the player origin (which shares the server) could load a
-  live app instance in a frame, and that instance would treat the real app origin as its
-  "player origin".
+- **Framing is denied by default (final-critic FC6).** Every player host (vite dev/preview,
+  `serve-offline.mjs`, `start.ps1`) sends `Content-Security-Policy: frame-ancestors 'none'` and
+  `X-Frame-Options: DENY` on every response except `/training-boot.html`: the app shell and its
+  assets, `/training-boot.js`, `/training/sw.js`, the `/training/*` 404 and the server's own
+  error responses. The worker's own refusals carry `default-src 'none'; frame-ancestors 'none'`.
+  `api_server.py` sends the same anti-framing headers on every response when it serves the web
+  archive, as the desktop renderer CSP does (`frame-ancestors 'none'`). Two reasons:
+  - course content on the player origin (which shares the server) must not load a live app
+    instance in a frame; that instance would treat the real app origin as its "player origin";
+  - course JS can script any same-origin document it frames, and that document's `fetch`, forms
+    and subresources run under the document's own policy, not the course CSP. Before FC6 a course
+    could frame the CSP-less boot page (or the boot script) and send requests to any origin from
+    it, measured on Chromium by the FC6 row of `web_ui/e2e/isolation-browser.spec.ts`.
+- **The boot page is the one embeddable document.** Its header CSP (above) allows no fetch, no
+  form, no frame and no subresource except its own script and the course worker, and its
+  `frame-ancestors` names only the app origin: the loopback alias of the Host the boot page was
+  requested on (`localhost` <-> `127.0.0.1`, same port). Any other Host gets
+  `frame-ancestors 'none'`, so a host reached under another name fails closed (no course
+  playback) and a Host header is never reflected. The policy is a header, not a meta tag, so no
+  same-origin script can act in the document before it applies.
 - **A framed app never runs training.** When the app document is not the top-level page
   (`isFramedContext`), it has no player origin, fetches no `player-origin.json`, embeds no boot
   frame, hands out no relay port, and the Training page says the app is embedded in another
@@ -116,15 +131,19 @@ could be served were not isolated from app storage.
   it grants no access to app storage or DOM; the player-origin service worker and the course's
   own storage need it.
 - **Course CSP keeps `frame-src 'self'`** (desktop parity: publishes may embed their own web
-  objects). On the player origin `'self'` only reaches the open pack's files, the boot page
-  (inert unless its parent is the top-level page) and the app shell, which refuses to render in
-  any frame.
+  objects). On the player origin `'self'` lets a course frame only the open pack's files: every
+  other player-origin document refuses to be framed by it (`frame-ancestors 'none'`, or the app
+  origin only for the boot page).
 - **The player origin is served by a static-only host.** The worker controls only documents
-  under `/training/`. Every other document on the player origin, notably `/training-boot.html`,
-  is uncontrolled: course JS can open it (same origin) and send requests from it that the worker
-  never sees. Any same-origin endpoint of the server that answers the player origin is therefore
-  reachable by course JS. That server must serve only static files: no API routes, no proxies,
-  no authenticated or state-changing endpoints. `api_server.py` carries the unauthenticated
+  under `/training/`. The app's own boot frame is an uncontrolled same-origin document that
+  course JS can still script directly: it is a sibling in `window.parent.frames`, so no framing
+  is involved. Its header CSP stops `fetch`, beacons, images, forms and frames from it (the FC6
+  e2e row measures zero requests to a cross-origin sink), but it still loads scripts and
+  registers the worker from its own origin. Course JS can therefore send same-origin GET requests
+  that the worker never sees, to any path of the server that answers the player origin, by
+  inserting a script element into the boot frame. That server must serve only static files: no
+  API routes, no proxies, no authenticated or state-changing endpoints. `api_server.py` carries
+  the unauthenticated
   document, ask, settings and packs API, so it is not a player host: it answers the boot files,
   `/training/sw.js` and every `/training/*` path with 404, and the browser app it serves reports
   that course playback is not available on this host (it probes `/training-boot.html` before
@@ -132,8 +151,9 @@ could be served were not isolated from app storage.
   naming a separate static player host.
 - **Dev-only residual.** The vite dev server answers the player origin too, and it is not
   static-only: it serves `/@fs/` (files allowed by vite's `server.fs` rules) and proxies `/api`
-  and `/auth` to the local API server on port 8000, all reachable by course JS through the boot
-  page. Play only trusted courses under `npm run dev`; `vite preview`, `serve-offline.mjs` and
+  and `/auth` to the local API server on port 8000. Course JS can send GET requests to all of
+  them from the boot frame (script loads) and can run any JavaScript file they return in that
+  frame. Play only trusted courses under `npm run dev`; `vite preview`, `serve-offline.mjs` and
   `start.ps1` are static-only.
 
 ### The byte relay (all enforcement is app-side)
@@ -162,9 +182,9 @@ could be served were not isolated from app storage.
 
 ### Threat model — nothing on the player origin is trusted
 
-1. Course JS can read the boot frame's DOM (same origin), take any port the boot frame holds,
-   open its own `/training-boot.html`, and send the worker its own handshake. It then holds a
-   relay port and gains only what item 2 allows. Recreating the boot frame and port on every
+1. Course JS can read the app's boot frame DOM (a same-origin sibling), take any port the boot
+   frame holds, and send the worker its own handshake. It cannot frame a boot page of its own
+   (`frame-ancestors`). It then holds a relay port and gains only what item 2 allows. Recreating the boot frame and port on every
    course open raises the bar against stale instances but does not stop a live malicious course.
 2. A relay port can read only files of the open pack's active version, inside its player asset
    directory, with bounded sizes and rates.
@@ -178,9 +198,16 @@ could be served were not isolated from app storage.
 5. Isolation from the app is by origin: app IndexedDB, localStorage, OPFS, Cache Storage and DOM
    are unreachable from course JS. Course JS reaches the app only through the slide bridge
    (exact origins, below) and the scoped relay, provided the player origin is served by a
-   static-only host. The worker refuses only requests from worker-controlled course pages; from
-   an uncontrolled same-origin document such as the boot page, course JS reaches every endpoint
-   of the server that answers the player origin.
+   static-only host. The worker refuses only requests from worker-controlled course pages.
+   Course JS cannot frame any other player-origin document, and the boot frame it can script
+   allows only same-origin script and worker loads (GET requests to the server that answers the
+   player origin), not `fetch`, forms, beacons or images to any origin.
+6. **Navigation egress (open residual).** CSP does not govern navigation. A course can navigate
+   its own frame to any URL, so data can leave the player origin in the URL of a GET request;
+   the response then fails the app's COEP and does not render. This was measured on Chromium (a
+   throwaway probe, not a committed test). On desktop the renderer CSP's `frame-src 'self' app:`
+   stops it, because the embedding page's `frame-src` decides where its frames may navigate. The
+   browser app shell sends no `frame-src`; see "Divergences".
 
 ### Slide bridge
 
@@ -240,13 +267,25 @@ opt-in and never fetches.
 
 A server that answers the player origin must serve only static files (no API routes, proxies
 or authenticated endpoints; see "The player origin is served by a static-only host"). Such a
-server serves `/training-boot.html` and `/training-boot.js` with
-`Cross-Origin-Resource-Policy: cross-origin`, `Cross-Origin-Embedder-Policy: require-corp` and
-`nosniff`, serves `/training/sw.js`, answers every other `/training/*` path with 404, never
-the SPA shell, and sends `Content-Security-Policy: frame-ancestors 'none'` plus
-`X-Frame-Options: DENY` on every other (app-shell) response. Compliant hosts: `vite preview`,
-`serve-offline.mjs` and `start.ps1` (pinned by `player-origin-hosting.test.ts`); `vite dev`
-with the dev-only residual above.
+server:
+- serves `/training-boot.html` and `/training-boot.js` with
+  `Cross-Origin-Resource-Policy: cross-origin`, `Cross-Origin-Embedder-Policy: require-corp` and
+  `nosniff`, and serves `/training/sw.js`;
+- answers every other `/training/*` path with 404, never the SPA shell;
+- serves `/training-boot.html` with the boot page header CSP, whose `frame-ancestors` is the app
+  origin only, and no `X-Frame-Options`;
+- sends `Content-Security-Policy: frame-ancestors 'none'` plus `X-Frame-Options: DENY` on every
+  other response, error responses included.
+
+Compliant hosts: `vite preview`, `serve-offline.mjs` and `start.ps1`, and `vite dev` with the
+dev-only residual above. The vite middleware and `serve-offline.mjs` are pinned behaviorally by
+`player-origin-hosting.test.ts`, and `start.ps1` by source scan only (Windows PowerShell; no test
+harness). A host that answers the player origin under a separately configured origin
+(`player-origin.json` or `VITE_TRAININGAPP_PLAYER_ORIGIN`) must send the same headers, with
+`frame-ancestors` naming its app origin. The bundled hosts derive it only for the loopback
+alias. Residual: an error the HTTP stack generates before the script sees the request (for
+example an http.sys 400/403 under `start.ps1`) carries none of these headers. It carries no COEP
+either, so the COEP `require-corp` app page and course pages cannot embed it.
 
 `api_server.py`'s web-archive mount is an app host only: it sends COOP/COEP and the anti-framing
 headers on every response and answers the boot files, `/training/sw.js` and every `/training/*`
@@ -266,7 +305,8 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
 | Area | Desktop | Browser | Why |
 |---|---|---|---|
 | Course origin | `app://training` host | dedicated player origin + relay | no custom schemes in a browser |
-| CSP | training CSP | same minus `app:`, plus `frame-ancestors 'self' <app>` | the player is embeddable only by the app |
+| CSP | training CSP | same minus `app:`, plus `frame-ancestors 'self' <app>`; every other player-origin document refuses framing, and the boot page has its own header CSP (FC6) | the player is embeddable only by the app; course JS can frame no weaker same-origin document |
+| Course frame navigation | renderer `frame-src 'self' app:` refuses off-origin navigation of the course frame | not refused: the app shell sends no `frame-src`, so a course can navigate its own frame to any URL (data in a GET URL) | open residual (threat model item 6) |
 | Prebuilt index | mounted (`index.sqlite`) | not used; slide docs re-indexed in the browser | no SQLite in the browser (ADR-0009) |
 | Linked Learn rows | `links` table | computed at ask time (cosine ≥ 0.5, top 3, 4 s budget) | no links store in the browser |
 | Archive CRC | JSZip default (not verified) | not verified | JSZip parity |

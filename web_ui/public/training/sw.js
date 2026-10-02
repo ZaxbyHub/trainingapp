@@ -162,6 +162,12 @@ function readWithRetry(handle, offset, length, attempt) {
   });
 }
 
+// A worker refusal is never a usable document (final-critic FC6): untrusted
+// course JS can script any same-origin document it frames, so refusals (and
+// any relay answer that arrives without a CSP) run under a deny-all policy
+// and refuse framing.
+var REFUSAL_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 function refusal(status, text) {
   return new Response(text, {
     status: status,
@@ -170,6 +176,8 @@ function refusal(status, text) {
       'x-content-type-options': 'nosniff',
       'cross-origin-resource-policy': 'cross-origin',
       'cache-control': 'no-store',
+      'content-security-policy': REFUSAL_CSP,
+      'x-frame-options': 'DENY',
     },
   });
 }
@@ -184,6 +192,10 @@ function buildResponse(result, method) {
   headers.set('x-content-type-options', 'nosniff');
   headers.set('cross-origin-resource-policy', 'cross-origin');
   headers.set('cache-control', 'no-cache');
+  if (!headers.has('content-security-policy')) {
+    headers.set('content-security-policy', REFUSAL_CSP);
+    headers.set('x-frame-options', 'DENY');
+  }
   var status = result.status;
   if (status === 204 || status === 304 || method === 'HEAD') return new Response(null, { status: status, headers: headers });
   if (typeof result.handle !== 'number') return new Response(result.body || '', { status: status, headers: headers });
