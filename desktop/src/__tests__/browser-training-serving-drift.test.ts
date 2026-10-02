@@ -24,9 +24,10 @@ describe('browser course serving mirrors desktop app://training', () => {
       .split(';')
       .map((d) => d.trim().replace(/ app:/g, ''))
       .filter((d) => d.length > 0);
-    // Desktop keeps worker-src 'self' blob: (every app://training response
-    // carries this CSP, so a 'self' worker stays confined); the browser pins
-    // blob: + the open pack's relay path (review round 4 F1).
+    // Desktop keeps worker-src 'self' blob: (every successful app://training
+    // response carries this CSP, so a 'self' worker stays confined; a 4xx
+    // carries the renderer CSP but can never be loaded as a worker script);
+    // the browser pins blob: + the open pack's relay path (review round 4 F1).
     expect(desktopDirectives).toContain("worker-src 'self' blob:");
     const expected = desktopDirectives.map((d) => (d.startsWith('worker-src ') ? `worker-src blob: ${player}/training/pack-a/` : d));
     const browserDirectives = buildBrowserTrainingCsp(app, player, 'pack-a')

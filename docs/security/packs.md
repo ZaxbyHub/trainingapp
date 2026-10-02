@@ -240,7 +240,10 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   workers inherit it, so both stay confined. Pinned by
   `training-relay.test.ts`, the two drift tests and the worker-escape row of
   `web_ui/e2e/isolation-browser.spec.ts`. Desktop keeps `'self' blob:`
-  because every `app://training` response carries the training CSP.
+  because every successful `app://training` response carries the training
+  CSP; its 403/404 responses carry the renderer CSP with
+  `frame-ancestors 'none'`, and a 4xx can never be loaded as a worker
+  script.
 - **Residual egress (both platforms).** Chromium's CSP does not govern WebRTC
   (STUN/TURN) or DNS prefetch. Course JS can still signal out through them.
   Navigation egress is closed; egress is not sealed.

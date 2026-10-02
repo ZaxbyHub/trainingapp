@@ -198,8 +198,11 @@ could be served were not isolated from app storage.
   local-scheme worker URL gets a clone of the owner's policy container). A service worker
   registered on a pack path is fetched past the relay and gets the host's reserved `/training/*`
   404. Relay refusals carry the same pin for the open pack (`blob:` alone when none is open).
-  Desktop keeps `'self' blob:`: every `app://training` response carries the training CSP, so a
-  `'self'` worker stays confined there. Course documents also carry
+  Desktop keeps `'self' blob:`: every successful `app://training` response carries the training
+  CSP, so a `'self'` worker stays confined there. Its error responses (403/404,
+  `desktop/main/protocol.ts` `forbidden`/`notFound`) carry the renderer CSP with
+  `frame-ancestors 'none'` instead, but a 4xx can never be loaded as a worker script, and the
+  renderer CSP belongs to a different origin. Course documents also carry
   `Cross-Origin-Embedder-Policy: require-corp`, without which the app's COEP blocks the frame.
 
 ### Threat model — nothing on the player origin is trusted

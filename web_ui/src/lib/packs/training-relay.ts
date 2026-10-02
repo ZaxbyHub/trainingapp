@@ -98,8 +98,10 @@ export function courseWorkerSources(playerOrigin: string, packId: string | null)
  * origin itself and the app origin (desktop omits frame-ancestors because
  * app: is unreachable from the web; a web origin is not). One deliberate
  * divergence: worker-src is courseWorkerSources, not `'self' blob:` — on
- * desktop every app://training response carries this training CSP, so a
- * `'self'` worker stays confined there; on the player origin it would not.
+ * desktop every successful app://training response carries this training
+ * CSP, so a `'self'` worker stays confined there (its 403/404 responses
+ * carry the renderer CSP with frame-ancestors 'none', but a 4xx can never be
+ * loaded as a worker script); on the player origin it would not.
  */
 export function buildBrowserTrainingCsp(appOrigin: string, playerOrigin: string, packId: string | null): string {
   return [

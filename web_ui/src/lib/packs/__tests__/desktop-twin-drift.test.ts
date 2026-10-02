@@ -87,8 +87,9 @@ describe('desktop twin drift (required web-ui job)', () => {
     const desktop = desktopTrainingCspDirectives().map((d) => d.replace(/ app:/g, ''));
     expect(desktop.length).toBeGreaterThan(5);
     // The one deliberate divergence (review round 4 F1): desktop keeps
-    // worker-src 'self' blob: because every app://training response carries
-    // the training CSP; on the player origin 'self' would admit app assets
+    // worker-src 'self' blob: because every successful app://training
+    // response carries the training CSP (a 4xx carries the renderer CSP but
+    // can never be a worker script); on the player origin 'self' would admit app assets
     // served without it, so the browser pins blob: + the open pack's path.
     expect(desktop).toContain("worker-src 'self' blob:");
     const expected = desktop.map((d) => (d.startsWith('worker-src ') ? `worker-src blob: ${player}/training/pack-a/` : d));
