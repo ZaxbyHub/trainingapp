@@ -107,6 +107,13 @@ export function resolvePlayerOriginStatic(appOrigin: string, buildTime: string |
 
 let resolved: string | null | undefined;
 let pending: Promise<string | null> | null = null;
+/** The app's own host answered that it does not serve the player files. */
+let hostUnsupported = false;
+
+/** The boot page every player host serves (TrainingPlayerHost embeds it). */
+export const PLAYER_BOOT_PATH = '/training-boot.html';
+
+export type PlayerOriginStatus = 'ok' | 'framed' | 'no-origin' | 'host-unsupported';
 
 /**
  * Resolve the player origin once (steps 1-3) and cache it. The runtime
@@ -138,7 +145,30 @@ export function resolvePlayerOrigin(fetchImpl: typeof fetch = (...args) => fetch
     } catch {
       fromRuntime = null;
     }
-    resolved = fromRuntime ?? resolvePlayerOriginStatic(appOrigin);
+    let origin = fromRuntime ?? resolvePlayerOriginStatic(appOrigin);
+    // The loopback-alias player is THIS server under its other name. A host
+    // that does not serve the player files (the Python api_server never
+    // does: it carries an unauthenticated API, final-critic FC1) answers the
+    // boot page with a non-HTML error; course playback is then unavailable
+    // on this host instead of timing out. A network error proves nothing and
+    // keeps the alias.
+    if (origin !== null && fromRuntime === null && origin === loopbackAliasOrigin(appOrigin) && validatePlayerOrigin(buildTimeOrigin(), appOrigin) === null) {
+      try {
+        const probe = await fetchImpl(PLAYER_BOOT_PATH, {
+          method: 'HEAD',
+          cache: 'no-store',
+          credentials: 'same-origin',
+          signal: AbortSignal.timeout(PLAYER_ORIGIN_FETCH_TIMEOUT_MS),
+        });
+        if (!probe.ok || !/text\/html/i.test(probe.headers.get('content-type') ?? '')) {
+          hostUnsupported = true;
+          origin = null;
+        }
+      } catch {
+        /* unknown: keep the alias */
+      }
+    }
+    resolved = origin;
     pending = null;
     return resolved;
   })();
@@ -158,10 +188,18 @@ export function getPlayerOrigin(): string | null {
   return appOrigin === null ? null : resolvePlayerOriginStatic(appOrigin);
 }
 
+/** Why course playback can or cannot run in this app instance. */
+export function getPlayerOriginStatus(): PlayerOriginStatus {
+  if (isFramedContext()) return 'framed';
+  if (hostUnsupported) return 'host-unsupported';
+  return getPlayerOrigin() === null ? 'no-origin' : 'ok';
+}
+
 /** Tests only. */
 export function resetPlayerOriginForTests(value?: string | null): void {
   resolved = value;
   pending = null;
+  hostUnsupported = false;
 }
 
 /** The course frame URL for a pack in the browser app (version-less; the relay serves the active version). */

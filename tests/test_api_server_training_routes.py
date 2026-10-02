@@ -1,17 +1,19 @@
-"""Player-origin routes of api_server's web-archive mount (trace
-browser-training-parity AC3, Phase 4.2 predicate P4).
+"""api_server is NOT a course-player host (trace browser-training-parity,
+ADR-0012, final-critic FC1).
 
-When api_server serves the built web archive it can also be reached as the
-course PLAYER origin: the boot frame files must carry
-Cross-Origin-Resource-Policy: cross-origin (the COEP require-corp app page
-embeds them cross-origin), the course worker stays at /training/sw.js, and
-every other /training/* path is a plain 404 - never the app shell. Mirrors
-web_ui/vite.config.ts trainingRouteMiddleware (pinned by
-web_ui/src/lib/packs/__tests__/player-origin-hosting.test.ts).
+The browser app's course player runs on a dedicated player origin, and every
+same-origin endpoint of the server answering that origin is reachable by
+untrusted course JS through uncontrolled same-origin documents (the boot page).
+api_server carries the unauthenticated document/ask/settings/packs API, so when
+it serves the built web archive it must never answer as a player origin: the
+boot files, the course worker and every /training/* path are a plain 404 (never
+the app shell), while the app shell keeps COOP/COEP and is never frameable
+(frame-ancestors 'none' + X-Frame-Options: DENY).
 
 The TestClient is used WITHOUT its context manager (the lifespan would build
 the real engine); the middleware reads the `_web_archive_dir` module global at
-request time, so it is pointed at a temporary archive directory.
+request time, so it is pointed at a temporary archive directory that contains
+the player files, proving the 404 comes from the middleware, not a missing file.
 """
 
 import sys
@@ -29,52 +31,45 @@ import api_server  # noqa: E402
 @pytest.fixture()
 def archive_client(tmp_path, monkeypatch):
     (tmp_path / "index.html").write_text("<html>app shell</html>", encoding="utf-8")
+    (tmp_path / "training-boot.html").write_text("<html>boot</html>", encoding="utf-8")
+    (tmp_path / "training-boot.js").write_text("// boot", encoding="utf-8")
+    (tmp_path / "training").mkdir()
+    (tmp_path / "training" / "sw.js").write_text("// worker", encoding="utf-8")
     monkeypatch.setattr(api_server, "_web_archive_dir", tmp_path)
     return TestClient(api_server.app)
 
 
 @pytest.mark.parametrize(
     "path",
-    ["/training", "/training/", "/training/pack-a/story.html", "/training/pack-a/assets/x.js", "/training/index.html"],
+    [
+        "/training-boot.html",
+        "/training-boot.js",
+        "/training/sw.js",
+        "/training",
+        "/training/",
+        "/training/pack-a/story.html",
+        "/training/pack-a/assets/x.js",
+        "/training/index.html",
+    ],
 )
-def test_training_paths_are_404_not_the_app_shell(archive_client, path):
+def test_player_paths_are_404_never_served(archive_client, path):
     response = archive_client.get(path)
     assert response.status_code == 404
     assert "app shell" not in response.text
+    assert "boot" not in response.text
+    assert "worker" not in response.text
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["cross-origin-embedder-policy"] == "require-corp"
-
-
-@pytest.mark.parametrize("path", ["/training-boot.html", "/training-boot.js"])
-def test_boot_files_are_embeddable_cross_origin(archive_client, path):
-    response = archive_client.get(path)
-    assert response.headers["cross-origin-resource-policy"] == "cross-origin"
-    assert response.headers["cross-origin-embedder-policy"] == "require-corp"
-    assert response.headers["x-content-type-options"] == "nosniff"
-
-
-def test_course_worker_path_is_not_short_circuited(archive_client):
-    response = archive_client.get("/training/sw.js")
-    # Without a mounted archive the router answers; the point is that the
-    # middleware let the worker path through and stamped nosniff on it.
-    assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers.get("cross-origin-resource-policy") != "cross-origin"
 
 
 @pytest.mark.parametrize("path", ["/", "/index.html", "/some/spa/route", "/health"])
 def test_app_shell_responses_are_never_frameable(archive_client, path):
-    """Review round 1 F1: course content on the player origin shares this
-    server, so the app shell must never render inside a frame."""
     response = archive_client.get(path)
     assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
     assert response.headers["x-frame-options"] == "DENY"
-
-
-@pytest.mark.parametrize("path", ["/training-boot.html", "/training-boot.js", "/training/sw.js", "/training/pack-a/story.html"])
-def test_player_routes_carry_no_app_shell_anti_framing(archive_client, path):
-    response = archive_client.get(path)
-    assert "x-frame-options" not in response.headers
-    assert "content-security-policy" not in response.headers
+    assert response.headers["cross-origin-opener-policy"] == "same-origin"
+    assert response.headers["cross-origin-embedder-policy"] == "require-corp"
 
 
 def test_api_only_deployments_are_untouched(monkeypatch):

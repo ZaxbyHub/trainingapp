@@ -1,7 +1,8 @@
 // @vitest-environment node
 /**
  * Player-origin hosting guardrail (trace browser-training-parity AC3/AC11,
- * Phase 4.2 predicate P4): EVERY server that hosts the web app must
+ * Phase 4.2 predicate P4): EVERY static server that hosts the web app AND the
+ * course player must
  *   - serve /training-boot.html and /training-boot.js with
  *     Cross-Origin-Resource-Policy: cross-origin (the COEP require-corp app
  *     page embeds them cross-origin) and nosniff;
@@ -10,7 +11,11 @@
  *   - bind the IPv4 loopback explicitly (vite).
  * vite dev/preview are exercised through the real middleware; serve-offline.mjs
  * and start.ps1 (no test harness of their own) are pinned by source scan;
- * api_server.py is pinned behaviorally by tests/test_api_server_training_routes.py.
+ * api_server.py is deliberately NOT a player host (final-critic FC1: it carries
+ * the unauthenticated API, reachable by course JS from any uncontrolled
+ * same-origin document such as the boot page) — it answers the boot files, the
+ * worker and every /training/* path 404, pinned behaviorally by
+ * tests/test_api_server_training_routes.py.
  */
 import fs from 'node:fs';
 import path from 'node:path';

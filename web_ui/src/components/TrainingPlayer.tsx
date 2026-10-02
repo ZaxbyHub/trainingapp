@@ -31,7 +31,7 @@ import {
 } from './training-player-bridge';
 import { isElectron } from '../lib/desktop-session';
 import { browserTrainingHost } from '../lib/packs/browser-training';
-import { browserTrainingUrl, getPlayerOrigin, isFramedContext } from '../lib/packs/player-origin';
+import { browserTrainingUrl, getPlayerOrigin, getPlayerOriginStatus, resolvePlayerOrigin } from '../lib/packs/player-origin';
 
 /**
  * Sandbox of the course frame (review round 1, F2; desktop parity with the
@@ -79,8 +79,22 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
     const onSlideChangeRef = useRef(onSlideChange);
     onSlideChangeRef.current = onSlideChange;
 
+    // Re-render once the start-up player-origin resolution settles (it may
+    // find this host does not serve the player).
+    const [, setOriginSettled] = useState(0);
+    useEffect(() => {
+      if (isElectron()) return;
+      let live = true;
+      void resolvePlayerOrigin().then(() => {
+        if (live) setOriginSettled((n) => n + 1);
+      });
+      return () => {
+        live = false;
+      };
+    }, []);
     const location = trainingPlayerSrc(packId);
-    const framed = !isElectron() && isFramedContext();
+    const originStatus = isElectron() ? 'ok' : getPlayerOriginStatus();
+    const framed = originStatus === 'framed';
     const courseId = courseIdOf(packId);
     const [playerError, setPlayerError] = useState<string | null>(null);
     const reloadedRef = useRef(false);
@@ -232,13 +246,19 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             browser tab to play courses.
           </p>
         )}
-        {location === null && !framed && (
+        {location === null && originStatus === 'host-unsupported' && (
+          <p role="alert" data-testid="training-player-host-unsupported" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+            Course playback is not available on this host: it does not serve the course player. Serve the app with
+            the bundled start scripts (start.bat / start.command) or play courses in the desktop app.
+          </p>
+        )}
+        {location === null && originStatus === 'no-origin' && (
           <p role="alert" data-testid="training-player-unavailable" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
             Course playback needs a player origin: open the app at http://localhost or http://127.0.0.1 (its loopback
             alias serves the player), or configure player-origin.json / VITE_TRAININGAPP_PLAYER_ORIGIN for this host.
           </p>
         )}
-        {playerError !== null && (
+        {playerError !== null && location !== null && (
           <p role="alert" data-testid="training-player-error" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
             Course player could not start: {playerError}. Course playback is supported in current Chrome and Edge (Safari is not
             supported).{' '}

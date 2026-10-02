@@ -23,7 +23,7 @@ vi.mock('../../../components/training-player-bridge', () => ({
 
 import { TRAINING_FRAME_SANDBOX, TrainingPlayer } from '../../../components/TrainingPlayer';
 import { browserTrainingHost, startBrowserTraining } from '../browser-training';
-import { getPlayerOrigin, isFramedContext, resetPlayerOriginForTests, resolvePlayerOrigin } from '../player-origin';
+import { getPlayerOrigin, getPlayerOriginStatus, isFramedContext, loopbackAliasOrigin, resetPlayerOriginForTests, resolvePlayerOrigin } from '../player-origin';
 import { FRAMED_DETAIL, TrainingPlayerHost, resetTrainingPlayerHostForTests } from '../training-player-host';
 
 const realTop = Object.getOwnPropertyDescriptor(window, 'top');
@@ -107,5 +107,42 @@ describe('course frame sandbox (F2)', () => {
     expect(sandbox).toBe(TRAINING_FRAME_SANDBOX);
     expect(sandbox).toBe('allow-scripts allow-same-origin allow-forms');
     expect(sandbox).not.toMatch(/allow-popups|allow-top-navigation|allow-storage-access/);
+  });
+});
+
+describe('host that does not serve the player (final-critic FC1)', () => {
+  function fetchWith(boot: Response | Error) {
+    return vi.fn(async (url: string) => {
+      if (url === 'player-origin.json') return new Response('<html>spa</html>', { status: 200, headers: { 'content-type': 'text/html' } });
+      if (url === '/training-boot.html') {
+        if (boot instanceof Error) throw boot;
+        return boot;
+      }
+      throw new Error(`unexpected ${url}`);
+    });
+  }
+
+  it('HU1 a host answering the boot page with 404 (api_server) disables playback with a clear notice', async () => {
+    const fetchImpl = fetchWith(new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } }));
+    await expect(resolvePlayerOrigin(fetchImpl as unknown as typeof fetch)).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledWith('/training-boot.html', expect.objectContaining({ method: 'HEAD' }));
+    expect(getPlayerOriginStatus()).toBe('host-unsupported');
+    expect(getPlayerOrigin()).toBeNull();
+    render(<TrainingPlayer packId="pack-a" />);
+    expect(screen.getByTestId('training-player-host-unsupported')).toHaveTextContent(/not available on this host/);
+    expect(screen.queryByTestId('training-player-unavailable')).toBeNull();
+    expect(screen.getByTestId('training-player-frame').getAttribute('src')).toBe('about:blank');
+  });
+
+  it('HU2 a host that serves the boot page keeps the loopback-alias player origin', async () => {
+    const fetchImpl = fetchWith(new Response(null, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } }));
+    const alias = loopbackAliasOrigin(window.location.origin);
+    await expect(resolvePlayerOrigin(fetchImpl as unknown as typeof fetch)).resolves.toBe(alias);
+    expect(getPlayerOriginStatus()).toBe('ok');
+  });
+
+  it('HU3 a network error on the probe proves nothing and keeps the alias', async () => {
+    const fetchImpl = fetchWith(new Error('offline'));
+    await expect(resolvePlayerOrigin(fetchImpl as unknown as typeof fetch)).resolves.toBe(loopbackAliasOrigin(window.location.origin));
   });
 });

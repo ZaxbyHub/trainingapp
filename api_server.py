@@ -534,16 +534,17 @@ app.add_middleware(
 )
 
 
-# Player-origin routes of the served web archive (browser-training-parity,
-# ADR-0012). The archive's course player runs on a DEDICATED player origin
-# (the app's loopback alias, or the origin named in player-origin.json); when
-# this server answers as that origin, the boot frame files are embedded
-# cross-origin by the COEP require-corp app page (CORP cross-origin), the
-# course service worker is /training/sw.js, and every other /training/* path
-# is 404 - never the app shell - because course paths are served by that
-# worker only. Mirrors web_ui/vite.config.ts trainingRouteMiddleware.
-TRAINING_BOOT_PATHS = frozenset({"/training-boot.html", "/training-boot.js"})
-TRAINING_SW_PATH = "/training/sw.js"
+# This server is NOT a course-player host (browser-training-parity, ADR-0012,
+# final-critic FC1). The browser app's course player runs on a dedicated player
+# origin, and every same-origin endpoint of the server answering that origin is
+# reachable by untrusted course JS through uncontrolled same-origin documents
+# (e.g. the boot page). This server carries the unauthenticated document/ask/
+# settings/packs API, so it must never answer as a player origin: the player
+# boot files, the course worker and every /training/* path are a plain 404, and
+# the browser app served from here reports course playback as unavailable on
+# this host. Static player hosts: web_ui/scripts/serve-offline.mjs, start.ps1,
+# vite dev/preview.
+TRAINING_PLAYER_PATHS = frozenset({"/training-boot.html", "/training-boot.js"})
 
 
 @app.middleware("http")
@@ -556,10 +557,8 @@ async def cross_origin_isolation(request: Request, call_next):
     need cross-origin isolation, and emitting COOP/COEP there would needlessly
     affect external API consumers and iframe embedders."""
     path = request.url.path
-    if (
-        _web_archive_dir is not None
-        and (path == "/training" or path.startswith("/training/"))
-        and path != TRAINING_SW_PATH
+    if _web_archive_dir is not None and (
+        path in TRAINING_PLAYER_PATHS or path == "/training" or path.startswith("/training/")
     ):
         return PlainTextResponse(
             "Not Found",
@@ -575,19 +574,9 @@ async def cross_origin_isolation(request: Request, call_next):
     if _web_archive_dir is not None:
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
-        if path in TRAINING_BOOT_PATHS:
-            response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["Cache-Control"] = "no-cache"
-        elif path == TRAINING_SW_PATH:
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["Cache-Control"] = "no-cache"
-        else:
-            # App shell (and everything else): never frameable. Untrusted
-            # course content on the player origin shares this server and must
-            # not load a live app instance in a frame.
-            response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
-            response.headers["X-Frame-Options"] = "DENY"
+        # App shell (and everything else): never frameable.
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+        response.headers["X-Frame-Options"] = "DENY"
     return response
 
 
