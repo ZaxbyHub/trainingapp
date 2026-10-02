@@ -102,7 +102,8 @@ npm run build:offline      # = prepare-models && tsc/vite build && validate-buil
    **absolute, deploy-aware** prefix (derived from `import.meta.env.BASE_URL`
    against `document.baseURI` in `model-manifest.ts`) so model fetches work
    whether the archive is served at the origin root OR a subpath
-   (e.g. `https://host/training/`). Production builds drop sourcemaps
+   (e.g. `https://host/docqa/`). Course playback is the exception: it needs the
+   origin root (see the course player hosting note in §3). Production builds drop sourcemaps
    (`sourcemap: command === 'serve'`); pass a dev override if you need them.
 3. `validate-build` (`scripts/validate-build.mjs`) — **fails the build** if
    `dist/index.html`/`dist/models/` are missing or if any file required by
@@ -127,9 +128,15 @@ Cross-Origin-Embedder-Policy: require-corp
 `vite preview` sets these for local validation, and the bundled FastAPI server
 sets them for every response (see §6). Model assets are loaded from a
 same-origin path under the deploy root (`/models/...` at the origin root,
-`/training/models/...` under a subpath), so the archive works served from any
-path; `file://` cannot provide the cross-origin isolation that threaded WASM
-requires.
+`/docqa/models/...` under a subpath), so the app works served from any path;
+`file://` cannot provide the cross-origin isolation that threaded WASM
+requires. Course playback needs the archive at the **origin root**:
+`/training-boot.html` is origin-absolute on the player origin, and every
+`/training/*` path is reserved for the course worker (a host answers it 404).
+A `/training/` subpath deploy therefore cannot work at all. An app served under
+another subpath installs packs, but it plays courses only when
+`player-origin.json` names a player host that serves the player files at its
+root.
 
 > **Host requirement:** threaded WASM inference needs `SharedArrayBuffer`, which
 > requires the **cross-origin isolation** headers above. A static host that does

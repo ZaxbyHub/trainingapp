@@ -26,9 +26,11 @@ import { probeAsset } from './probe';
  * it. A relative value like `./models` would resolve against the CURRENT client
  * route (e.g. under `/app/chat/` it would fetch `/app/chat/models/...` — wrong).
  * Resolving against `document.baseURI` yields the HTML document's deploy root, so
- * `/training/` deployments produce `/training/models` while origin-root stays
+ * `/docqa/` deployments produce `/docqa/models` while origin-root stays
  * `/models` — identical to the old hardcoded behavior at root, correct everywhere
- * else. `document.baseURI` is stable across client-side routing.
+ * else. `document.baseURI` is stable across client-side routing. (`/training/`
+ * itself is reserved for the course player, ADR-0012; course playback needs
+ * the archive at the origin root.)
  */
 function resolveAbsoluteBase(): string {
   const baseUrl = import.meta.env.BASE_URL;

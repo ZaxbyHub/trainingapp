@@ -325,8 +325,10 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
   origin; the browser app served by `api_server.py` plays no courses unless `player-origin.json`
   names a separate static player host.
 - The course-frame sandbox (`allow-scripts allow-same-origin allow-forms`) also applies on
-  desktop: courses there can no longer open modal dialogs (`alert`, `confirm`, `prompt`) or start
-  downloads from the frame.
+  desktop. On both runtimes a course can no longer open modal dialogs (`alert`, `confirm`,
+  `prompt`), call `window.print()` (no `allow-modals`), or start downloads from the frame. Course
+  links that open a new window (`target="_blank"` or `window.open`) do nothing (no
+  `allow-popups`).
 - A future packtool bridge injection, a per-pack player origin, or signing player assets would
   each need their own decision record.
 - Manual measurements the plan called for (the real 292 MB publish in Chrome and Edge, the

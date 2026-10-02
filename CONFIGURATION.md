@@ -577,7 +577,7 @@ resolved once at app start, in this order:
 | --- | --- | --- |
 | `player-origin.json` next to `index.html` (runtime) | `{"playerOrigin": "https://player.example.com"}` | For a prebuilt archive hosted behind a server. Fetched same-origin with a 2 s bound; an HTML answer is ignored |
 | `VITE_TRAININGAPP_PLAYER_ORIGIN` (build time) | `https://player.example.com` | Baked into the build |
-| loopback alias (default) | app `http://localhost:4173` -> player `http://127.0.0.1:4173` | Works with every bundled local server, which all bind 127.0.0.1 |
+| loopback alias (default) | app `http://localhost:4173` -> player `http://127.0.0.1:4173` | Works with the bundled static servers (`vite preview`, `vite dev`, `serve-offline.mjs`, `start.ps1`), which bind 127.0.0.1. Not with `api_server.py`, which is not a player host (below) |
 
 A configured value must be a bare origin (no path, query, fragment or credentials), must differ
 from the app origin, and must be `https:` unless its host is `localhost`, `127.0.0.1` or `[::1]`;
@@ -604,15 +604,15 @@ that server by loading scripts. It must:
   would run under a weaker policy than its own, the app is never shown inside a frame, and a
   framed app also refuses to play courses.
 
+`vite preview`, `web_ui/scripts/serve-offline.mjs` (run by `start.command`) and
+`web_ui/scripts/start.ps1` (run by `start.bat`) already do. `vite dev` does too, but it also
+serves `/@fs/` and proxies `/api` and `/auth`, so play only trusted courses under `npm run dev`.
 The bundled hosts compute `<app origin>` as the loopback alias of the Host the boot page was
 requested on. Any other Host gets `frame-ancestors 'none'`, which turns course playback off
 rather than weakening it. A separately configured player host must send the same headers with
 its own app origin. CSP does not cover navigation: a course can still navigate its own frame to
 any web address (data in the address). The desktop app blocks that, and the browser app does
-not yet (ADR-0012, threat model item 6). `vite preview`, `web_ui/scripts/serve-offline.mjs`
-and `web_ui/scripts/start.ps1` (used by `start.bat` / `start.command`) already do. `vite dev`
-does too, but it also serves `/@fs/` and proxies `/api` and `/auth`, so play only trusted
-courses under `npm run dev`.
+not yet (ADR-0012, threat model item 6).
 
 `api_server.py` is not a player host: when it serves the web archive it answers the boot files,
 `/training/sw.js` and every `/training/*` path with 404, and the Training page says course
