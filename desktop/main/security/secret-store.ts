@@ -17,7 +17,9 @@
 //   - set() THROWS when encryption is unavailable and writes nothing — the
 //     store never falls back to plaintext (the host then keeps the key for
 //     the session only);
-//   - a missing, corrupt or undecryptable file / entry reads as null.
+//   - a missing, corrupt or undecryptable file / entry reads as null;
+//   - set() and delete() write the file BEFORE updating memory: a failed
+//     write throws and leaves the entry exactly as it was (PR #142 F-014).
 import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
@@ -123,11 +125,16 @@ export function createSafeStorageSecretStore(opts: { safeStorage: SafeStorageLik
     },
     delete(name: string): void {
       const current = ciphers();
+      if (name in current) {
+        const next = { ...current };
+        delete next[name];
+        // PR #142 review F-014: persist FIRST. A failed write throws with the
+        // in-memory value still in place, so memory keeps matching the file
+        // (the key is still stored, and the caller is told so) instead of
+        // reading as deleted for this session and reviving at the next start.
+        persist(next);
+      }
       plain.delete(name);
-      if (!(name in current)) return;
-      const next = { ...current };
-      delete next[name];
-      persist(next);
     },
   };
 }

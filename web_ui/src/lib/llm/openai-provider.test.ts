@@ -355,6 +355,42 @@ describe('F-003: hostile/degenerate SSE bodies fail loudly, never as silent succ
     }
   });
 
+  test('F-010: a mid-stream error frame (and a non-stream JSON error) that echoes the key is scrubbed', async () => {
+    // Not `sk-` shaped: the generic sk- mask must not be what hides the key.
+    const key = 'Ztoken-FORTEST-0123456789abcdef';
+    let mode: 'sse' | 'sse-llama' | 'json' = 'sse';
+    const server = http.createServer((req, res) => {
+      if (mode === 'json') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: `invalid key ${key}` } }));
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"par"}}]}\n\n');
+      if (mode === 'sse') res.end(`data: ${JSON.stringify({ error: { message: `bad key ${key}` } })}\n\n`);
+      else res.end(`error: ${JSON.stringify({ message: `bad key ${key}` })}\n\n`);
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
+    });
+    try {
+      for (const m of ['sse', 'sse-llama', 'json'] as const) {
+        mode = m;
+        const svc = new OpenAICompatChatService({ baseUrl: `http://127.0.0.1:${port}`, model: 'm', apiKey: key });
+        const err = await svc.chat([{ role: 'user', content: 'hi' }]).then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err, m).toBeInstanceOf(ProviderError);
+        expect((err as ProviderError).kind, m).toBe('server');
+        expect((err as ProviderError).message, m).toContain('[redacted]');
+        expect((err as ProviderError).message, m).not.toContain('0123456789');
+      }
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   test('an llama-server-style error: event rejects', async () => {
     const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });

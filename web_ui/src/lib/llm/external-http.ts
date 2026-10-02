@@ -20,6 +20,7 @@ import {
   errorForStatus,
   isHeaderSafeValue,
   networkError,
+  responseTooLargeError,
   scrubSecrets,
   timeoutError,
   unsendableHeaderError,
@@ -28,6 +29,30 @@ import {
 
 /** Default gap allowed between stream chunks once data is flowing. */
 export const IDLE_TIMEOUT_MS = 120_000;
+
+/*
+ * F-003 (PR #142 review): every upstream-controlled buffer is byte-capped
+ * (twins of the desktop lane's limits). Timeouts bound how LONG a read may
+ * take, these bound how MUCH it may hold. Exceeding a cap aborts the request
+ * with a classified ProviderError (kind 'server'); an over-long error body is
+ * truncated instead, so a 401/404 keeps its auth/model classification.
+ */
+/** One SSE line, and one assembled SSE frame (event + data lines). */
+export const MAX_SSE_LINE_BYTES = 1024 * 1024;
+export const MAX_SSE_FRAME_BYTES = 1024 * 1024;
+/** A non-streamed completion body (server ignored stream:true). */
+export const MAX_COMPLETION_BODY_BYTES = 8 * 1024 * 1024;
+/**
+ * The whole streamed answer, in UTF-8 bytes (PR #142 closeout F-003). The idle
+ * timer bounds only the gap between chunks and a server may ignore
+ * max_tokens, so the accumulated answer text needs its own cap. Enforced by
+ * the providers (openai-provider.ts, anthropic-provider.ts) per delta.
+ */
+export const MAX_STREAMED_ANSWER_BYTES = 8 * 1024 * 1024;
+/** A model listing: the whole listing, every page together. */
+export const MAX_MODEL_LIST_BYTES = 4 * 1024 * 1024;
+/** How much of a non-2xx error body is read for the message. */
+export const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
 export interface TransportOptions {
   ctx: FailureContext;
@@ -67,7 +92,57 @@ export function upstreamMessage(raw: string): string {
   } catch {
     /* not JSON */
   }
-  return raw.trim().slice(0, 300);
+  // PR #142 Stage B (parity with desktop provider-error.ts): callers scrub,
+  // THEN cut to 200-300 characters; this bound only keeps the scrub input
+  // small. Cutting to 300 here, before the scrub, could split an echoed key
+  // across the cut so the scrub no longer recognises (and masks) its prefix.
+  return raw.trim().slice(0, 4096);
+}
+
+/** UTF-8 byte length of a string, without allocating an encoded copy. */
+export function utf8ByteLength(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+      bytes += 4;
+      i += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+/**
+ * Read a body through a counting reader, never holding more than `maxBytes`.
+ * Resolves `{ text, truncated }`; on overflow it stops pulling, cancels the
+ * stream and returns the first `maxBytes` bytes with `truncated: true`.
+ */
+export async function readCapped(response: Response, maxBytes: number): Promise<{ text: string; truncated: boolean }> {
+  if (!response.body) return { text: '', truncated: false };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bytes = 0;
+  let truncated = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (bytes + value.byteLength > maxBytes) {
+        text += decoder.decode(value.subarray(0, maxBytes - bytes), { stream: true });
+        truncated = true;
+        break;
+      }
+      bytes += value.byteLength;
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+  } finally {
+    void reader.cancel().catch(() => undefined);
+  }
+  return { text, truncated };
 }
 
 function race<T>(work: Promise<T>, ms: number, onTimeout: () => ProviderError): { promise: Promise<T>; clear: () => void } {
@@ -153,12 +228,14 @@ export async function openRequest(
     // The pre-headers bound stays armed through the error-body read so a
     // stalled 5xx body fails bounded rather than hanging.
     watchdog.clear();
-    const body = race(response.text(), opts.firstByteTimeoutMs, () =>
+    // F-003: at most MAX_ERROR_BODY_BYTES are buffered; a longer body is
+    // truncated (not a new error kind) so the status keeps its class.
+    const body = race(readCapped(response, MAX_ERROR_BODY_BYTES), opts.firstByteTimeoutMs, () =>
       timeoutError(opts.ctx, opts.firstByteTimeoutMs, 'error-body', response.status),
     );
     let raw = '';
     try {
-      raw = await body.promise;
+      raw = (await body.promise).text;
     } finally {
       body.clear();
       opts.signal?.removeEventListener('abort', abort);
@@ -176,16 +253,35 @@ export async function openRequest(
   };
 }
 
-/** Read a whole (non-stream) body within the first-byte bound. */
-export async function readBodyBounded(response: Response, opts: TransportOptions): Promise<string> {
-  const body = race(response.text(), opts.firstByteTimeoutMs, () =>
+/** What a capped whole-body read is for (names the cap in the error). */
+export interface BodyLimit {
+  maxBytes: number;
+  /** e.g. 'a completion body', 'a model list'. */
+  what: string;
+  /** The cap the error message names when `maxBytes` is what is LEFT of a
+   *  shared budget (multi-page listings). Defaults to `maxBytes`. */
+  namedLimitBytes?: number;
+}
+
+/**
+ * Read a whole (non-stream) body within the first-byte bound and the byte
+ * cap. Over the cap rejects with responseTooLargeError (kind 'server'); the
+ * caller's finally aborts the request.
+ */
+export async function readBodyBounded(response: Response, opts: TransportOptions, limit: BodyLimit): Promise<string> {
+  const body = race(readCapped(response, limit.maxBytes), opts.firstByteTimeoutMs, () =>
     timeoutError(opts.ctx, opts.firstByteTimeoutMs, 'body', response.status),
   );
+  let result: { text: string; truncated: boolean };
   try {
-    return await body.promise;
+    result = await body.promise;
   } finally {
     body.clear();
   }
+  if (result.truncated) {
+    throw responseTooLargeError(opts.ctx, limit.what, limit.namedLimitBytes ?? limit.maxBytes, response.status);
+  }
+  return result.text;
 }
 
 /**
@@ -196,16 +292,34 @@ export async function readBodyBounded(response: Response, opts: TransportOptions
  */
 export async function* readLines(
   response: Response,
-  opts: TransportOptions & { isCancelled: () => boolean },
+  opts: TransportOptions & { isCancelled: () => boolean; maxLineBytes?: number },
 ): AsyncGenerator<string> {
-  if (!response.body) {
-    const text = await readBodyBounded(response, opts);
-    for (const line of text.split('\n')) yield line.replace(/\r$/, '');
-    return;
-  }
+  const maxLineBytes = opts.maxLineBytes ?? MAX_SSE_LINE_BYTES;
+  if (!response.body) return; // no body: no lines
   const reader = response.body.getReader();
+  // Lines are split on the 0x0A BYTE before decoding (0x0A never occurs
+  // inside a multi-byte UTF-8 sequence), so the cap counts real bytes and a
+  // line still waiting for its newline is bounded too (F-003).
   const decoder = new TextDecoder();
-  let buffer = '';
+  let pending: Uint8Array[] = [];
+  let pendingBytes = 0;
+  const tooLong = () => responseTooLargeError(opts.ctx, 'a stream line', maxLineBytes, response.status);
+  const takeLine = (tail: Uint8Array): string => {
+    let bytes: Uint8Array;
+    if (pending.length === 0) bytes = tail;
+    else {
+      bytes = new Uint8Array(pendingBytes + tail.byteLength);
+      let offset = 0;
+      for (const part of pending) {
+        bytes.set(part, offset);
+        offset += part.byteLength;
+      }
+      bytes.set(tail, offset);
+    }
+    pending = [];
+    pendingBytes = 0;
+    return decoder.decode(bytes).replace(/\r$/, '');
+  };
   let first = true;
   try {
     for (;;) {
@@ -226,16 +340,22 @@ export async function* readLines(
       first = false;
       if (opts.isCancelled()) return;
       if (chunk.done) break;
-      buffer += decoder.decode(chunk.value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() ?? '';
-      for (const line of lines) {
+      const value = chunk.value;
+      let start = 0;
+      for (let nl = value.indexOf(0x0a, start); nl !== -1; nl = value.indexOf(0x0a, start)) {
+        if (pendingBytes + (nl - start) > maxLineBytes) throw tooLong();
+        const line = takeLine(value.subarray(start, nl));
+        start = nl + 1;
         if (opts.isCancelled()) return;
-        yield line.replace(/\r$/, '');
+        yield line;
+      }
+      if (start < value.byteLength) {
+        pendingBytes += value.byteLength - start;
+        if (pendingBytes > maxLineBytes) throw tooLong();
+        pending.push(value.slice(start));
       }
     }
-    buffer += decoder.decode();
-    if (buffer.length > 0 && !opts.isCancelled()) yield buffer.replace(/\r$/, '');
+    if (pendingBytes > 0 && !opts.isCancelled()) yield takeLine(new Uint8Array(0));
   } finally {
     void reader.cancel().catch(() => undefined);
   }
@@ -249,11 +369,20 @@ export interface SseFrame {
   errorField?: string;
 }
 
-/** Group streamed lines into SSE frames (blank line terminates a frame). */
-export async function* readSseFrames(lines: AsyncGenerator<string>): AsyncGenerator<SseFrame> {
+/**
+ * Group streamed lines into SSE frames (blank line terminates a frame). The
+ * assembled frame is capped at MAX_SSE_FRAME_BYTES (F-003): a server that
+ * keeps sending `data:` lines without a blank line cannot grow it unbounded.
+ */
+export async function* readSseFrames(
+  lines: AsyncGenerator<string>,
+  limit: { ctx: FailureContext; maxFrameBytes?: number },
+): AsyncGenerator<SseFrame> {
+  const maxFrameBytes = limit.maxFrameBytes ?? MAX_SSE_FRAME_BYTES;
   let event = '';
   let data: string[] = [];
   let errorField: string | undefined;
+  let frameBytes = 0;
   const flush = (): SseFrame | null => {
     if (event === '' && data.length === 0 && errorField === undefined) return null;
     const frame: SseFrame = { event: event || 'message', data: data.join('\n') };
@@ -261,6 +390,7 @@ export async function* readSseFrames(lines: AsyncGenerator<string>): AsyncGenera
     event = '';
     data = [];
     errorField = undefined;
+    frameBytes = 0;
     return frame;
   };
   for await (const line of lines) {
@@ -270,6 +400,8 @@ export async function* readSseFrames(lines: AsyncGenerator<string>): AsyncGenera
       continue;
     }
     if (line.startsWith(':')) continue;
+    frameBytes += utf8ByteLength(line) + 1;
+    if (frameBytes > maxFrameBytes) throw responseTooLargeError(limit.ctx, 'a stream event', maxFrameBytes);
     const colon = line.indexOf(':');
     const field = colon === -1 ? line : line.slice(0, colon);
     let value = colon === -1 ? '' : line.slice(colon + 1);

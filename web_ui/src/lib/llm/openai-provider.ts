@@ -24,8 +24,17 @@ import type {
   LLMService,
 } from '../../types/llm';
 import { validateEndpointUrl } from './endpoint-policy';
-import { openRequest, readBodyBounded, readLines, type TransportOptions } from './external-http';
-import { ProviderError, type FailureContext } from './provider-error';
+import {
+  MAX_COMPLETION_BODY_BYTES,
+  MAX_MODEL_LIST_BYTES,
+  MAX_STREAMED_ANSWER_BYTES,
+  openRequest,
+  readBodyBounded,
+  readLines,
+  utf8ByteLength,
+  type TransportOptions,
+} from './external-http';
+import { ProviderError, responseTooLargeError, scrubSecrets, type FailureContext } from './provider-error';
 
 /** Provider connection settings. */
 export interface ProviderConfig {
@@ -190,7 +199,7 @@ function extractNonStreamAnswer(body: string, ctx: FailureContext): string {
         : typeof frame.error.message === 'string'
           ? frame.error.message
           : JSON.stringify(frame.error);
-    throw new ProviderError('server', message || 'The endpoint reported an error');
+    throw new ProviderError('server', scrubSecrets(message || 'The endpoint reported an error', ctx.apiKey));
   }
   const content = frame.choices?.[0]?.message?.content;
   if (typeof content !== 'string') {
@@ -288,18 +297,33 @@ export class OpenAICompatChatService implements LLMService {
       const contentType = response.headers.get('content-type') ?? '';
       if (contentType.includes('application/json')) {
         // Server ignored stream:true — read the single JSON completion (F-003).
-        yield extractNonStreamAnswer(await readBodyBounded(response, transport), ctx);
+        const raw = await readBodyBounded(response, transport, {
+          maxBytes: MAX_COMPLETION_BODY_BYTES,
+          what: 'a completion body',
+        });
+        yield extractNonStreamAnswer(raw, ctx);
         return;
       }
       let text = '';
+      /** UTF-8 bytes of `text`, counted per delta (never re-measured whole). */
+      let textBytes = 0;
       let sawFinish = false;
       let sawDone = false;
       for await (const raw of readLines(response, { ...transport, isCancelled: () => controller.signal.aborted })) {
         const line = parseOpenAISseLine(raw);
-        if (line.error) throw new ProviderError('server', line.error);
+        // F-010: upstream text is scrubbed of the key like every other error path.
+        if (line.error) throw new ProviderError('server', scrubSecrets(line.error, ctx.apiKey));
         if (line.done) sawDone = true;
         if (line.finish) sawFinish = true;
         for (const delta of line.deltas) {
+          // PR #142 closeout F-003: cap the whole answer in bytes, checked
+          // BEFORE the delta is kept or yielded (what was shown stays shown);
+          // the throw aborts the request (finally below).
+          const deltaBytes = utf8ByteLength(delta);
+          if (textBytes + deltaBytes > MAX_STREAMED_ANSWER_BYTES) {
+            throw responseTooLargeError(ctx, 'an answer', MAX_STREAMED_ANSWER_BYTES);
+          }
+          textBytes += deltaBytes;
           text += delta;
           yield delta;
         }
@@ -367,7 +391,7 @@ export async function listOpenAIModels(
   const opened = await openRequest(`${base}/models`, { method: 'GET', headers: bearerHeaders(apiKey, false) }, transport);
   if (opened === null) throw new ProviderError('other', 'Model listing was cancelled.');
   try {
-    const raw = await readBodyBounded(opened.response, transport);
+    const raw = await readBodyBounded(opened.response, transport, { maxBytes: MAX_MODEL_LIST_BYTES, what: 'a model list' });
     let parsed: { data?: Array<{ id?: unknown }> };
     try {
       parsed = JSON.parse(raw) as typeof parsed;

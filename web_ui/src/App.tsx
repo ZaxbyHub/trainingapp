@@ -10,7 +10,7 @@ import {
   isElectron,
   type DesktopSessionState,
 } from './lib/desktop-session';
-import { onDesktopModelsChanged } from './lib/desktop-models-events';
+import { subscribeLatestModelStatus } from './lib/desktop-models-events';
 import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
 import { AppLayout } from './layouts/AppLayout';
 import { FirstRunGate } from './components/FirstRunWizard';
@@ -159,18 +159,12 @@ function DesktopBootGate({ children }: { children: ReactNode }) {
   const session = state.session;
   useEffect(() => {
     if (session === null) return undefined;
-    let cancelled = false;
-    const off = onDesktopModelsChanged(() => {
-      void fetchModelStatus(session)
-        .then((models) => {
-          if (!cancelled) setState((prev) => ({ ...prev, models }));
-        })
-        .catch(() => undefined);
-    });
-    return () => {
-      cancelled = true;
-      off();
-    };
+    // F-006: latest-request guard — an older fetch resolving after a newer
+    // one never overwrites it; unsubscribing on unmount drops in-flight ones.
+    return subscribeLatestModelStatus(
+      () => fetchModelStatus(session),
+      (models) => setState((prev) => ({ ...prev, models })),
+    );
   }, [session]);
 
   if (state.loading) {

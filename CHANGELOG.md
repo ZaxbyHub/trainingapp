@@ -60,9 +60,22 @@
   they carry; Teredo addresses are refused when an IPv4 address they carry is refused and are
   otherwise public (https required, refused in air-gapped builds); local-use NAT64 addresses
   outside the `/96` layout are refused.
+- **Review hardening.**
+  - Every upstream response buffer is capped: 1 MiB per SSE line/frame, 8 MiB in total for a
+    streamed answer, 8 MiB for a completion body, 4 MiB for a model listing and 64 KiB for an
+    error body.
+  - "Test connection" has an aggregate time budget, and the request is aborted when the caller
+    disconnects.
+  - A failed save now rolls back the external settings and keys as well as `settings.json`; if an
+    undo step itself fails, the error names what could not be undone.
+  - Secret scrubbing covers encoded, case-variant and partial echoes of the API key.
+  - The system prompt and the grounded framing text are identical in the browser and desktop apps
+    (the browser-only pinned-slide block, empty-retrieval handling and history depth still differ).
+  - Direct chat no longer sends earlier answers that were built from your documents.
+  - The outbound-guardrail scanner is widened from `fetch` to other egress paths.
 - **PR #138 "Provider server" mode retired and migrated.** The inference-mode radio is gone. A
   stored provider configuration is migrated once: in the browser into the External model
-  settings as Direct chat (as before); in the desktop app into the desktop backend's settings,
+  settings as Direct chat (as before); in the desktop app into the desktop backend's settings, also as Direct chat,
   with the legacy renderer copy, including its key, deleted.
 - **Desktop runs without local GGUF files** when the external model is on: no missing-model
   overlay, no local model warm-up, and `GET /status/models` reports engine `external`.

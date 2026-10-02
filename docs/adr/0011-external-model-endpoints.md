@@ -127,6 +127,19 @@ land on an address that was not checked.
   setting is off by default, and airgap builds can be restricted to loopback and private
   network. Documentation that described the app as having no network access must say "unless
   you turn on the external model or update checks".
+- **The renderer chooses where the backend sends requests (desktop).** Option B's rule above
+  (the renderer may only ask the backend to answer a question) is not absolute for the shipped
+  design. The renderer's content-security policy allows loopback only, so the guarded backend
+  is its only egress path, and `PUT /settings` is gated only by the desktop launch token. A
+  compromised renderer could therefore repoint `external.baseUrl` at an endpoint it controls,
+  enable external mode and have `/ask` send retrieved document text there (this works without
+  a stored key, because no auth header is sent when no key is bound), and it could bind a
+  freshly typed key to an origin it chose with a same-patch `{baseUrl, apiKey}`. This is
+  accepted because the endpoint URL policy still applies to whatever it picks, and because a
+  compromise is unlikely: the shipped bundle has no realistic injection sink (no
+  `dangerouslySetInnerHTML`; react-markdown with an allowlisted URL transform; navigation and
+  `window.open` are denied). It is a residual risk, not a closed one; a stored key is never
+  readable by the renderer.
 - **Redirects are never followed** on either transport. A key is therefore never replayed to a
   host the user did not configure.
 - **Key-origin binding (both apps).** A saved key is bound to the origin (`scheme://host:port`,
@@ -140,7 +153,11 @@ land on an address that was not checked.
   and is not saved; it is saved only with the next valid base URL the user enters (never with
   one saved earlier unless the user enters it again).
   Desktop: the backend keeps the key and its origin as separate secret-store entries and sends
-  the key only when the configured origin matches. Browser: the origin is stored next to the
+  the key only when the configured origin matches. Saving a key deletes the old key first, then
+  writes the origin, then the new key, so a save that fails part-way leaves no key at all rather
+  than a new key next to the old origin. If undoing a failed save cannot write the secret store
+  back, the backend stops using the saved key until the user enters or clears it again, and the
+  error says so. Browser: the origin is stored next to the
   key in the same browser storage (`external-provider-apikey-origin`), and the configuration
   loader hands the key to the generators and the connection test only for the matching origin.
   A browser key saved before this binding existed is bound to the base URL stored with it, or

@@ -9,6 +9,9 @@
  * pages/__tests__/settings-wiring-honesty.test.tsx ("overlay destination").
  */
 import React from 'react';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
@@ -90,6 +93,23 @@ describe('DesktopModelBlockedOverlay actions', () => {
     expect(openSettings).toHaveFocus();
     fireEvent.keyDown(openSettings, { key: 'Tab', shiftKey: true });
     expect(external).toHaveFocus();
+  });
+
+  it('F-011: Escape is swallowed and the blocking overlay stays open (no dismiss path), as documented', () => {
+    render(<DesktopModelBlockedOverlay open onOpenSettings={vi.fn()} />);
+    const heading = screen.getByRole('heading', DIALOG);
+    // fireEvent returns false when the handler called preventDefault().
+    expect(fireEvent.keyDown(heading, { key: 'Escape' })).toBe(false);
+    expect(screen.getByRole('alertdialog', DIALOG)).toBeInTheDocument();
+    expect(heading).toHaveFocus();
+    // The docstring must describe that behavior, not claim the overlay closes.
+    const source = fs.readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'DesktopModelBlockedOverlay.tsx'),
+      'utf8',
+    );
+    const docblock = source.slice(0, source.indexOf('*/'));
+    expect(docblock).not.toMatch(/closes on\s+(?:\*\s*)?Escape/i);
+    expect(docblock).toMatch(/does NOT\s+(?:\*\s*)?close on Escape/);
   });
 
   it('renders nothing when closed', () => {

@@ -291,21 +291,101 @@ function validationError(res: ServerResponse, errors: string[], cors?: CorsConte
  * captureSettingsState() before the change) so memory matches what is saved
  * on disk, and return the 500 detail. An engine without the snapshot seam
  * (test doubles) cannot be rolled back, and the detail says so.
+ *
+ * PR #142 rebase RB-001: the snapshot also covers external.* and the
+ * SecretStore entries, and restoring them writes the SecretStore back, which
+ * can fail; `rewriteExternal` (passed when external.json was already written
+ * by this change) re-writes external.json from the restored engine. "nothing
+ * was changed" is claimed only when every one of those steps succeeded;
+ * otherwise the detail names what could not be undone.
  */
 export function rollBackUnsavedSettings(
   engine: EngineSurface,
   snapshot: unknown,
   kind: 'change' | 'reset',
   err: unknown,
+  rewriteExternal?: () => void,
 ): string {
   const reason = err instanceof Error ? err.message : String(err);
   if (snapshot !== undefined && typeof engine.restoreSettingsState === 'function') {
-    engine.restoreSettingsState(snapshot);
-    return `Settings could not be saved, so nothing was changed: ${reason}`;
+    const leftovers: string[] = [];
+    let keyRestored = true;
+    try {
+      engine.restoreSettingsState(snapshot);
+    } catch (restoreErr) {
+      // Stage B RB-001: the engine then refuses the stored key (fail closed)
+      // until a key is saved or cleared, so say exactly that — the key is
+      // NOT "back in effect".
+      keyRestored = false;
+      leftovers.push(
+        `the stored API key could not be put back (${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}), so the saved API key will not be used until you enter it again in Settings → External model`,
+      );
+    }
+    if (rewriteExternal !== undefined) {
+      try {
+        rewriteExternal();
+      } catch (rewriteErr) {
+        leftovers.push(
+          `the external model settings file could not be restored (${rewriteErr instanceof Error ? rewriteErr.message : String(rewriteErr)}), so the next start may apply the unsaved external model settings`,
+        );
+      }
+    }
+    if (leftovers.length === 0) return `Settings could not be saved, so nothing was changed: ${reason}`;
+    const restored = keyRestored
+      ? 'The previous settings are back in effect'
+      : 'The previous settings other than the API key are back in effect';
+    return `Settings could not be saved: ${reason}. ${restored}, but ${leftovers.join('; and ')}.`;
   }
   return kind === 'reset'
     ? `Settings were reset but could not be persisted: ${reason}`
     : `Settings were applied but could not be persisted: ${reason}`;
+}
+
+type SettingsCommitResult =
+  | { ok: true }
+  | { ok: false; status: 400 | 422 | 500; detail: string; errors?: string[] };
+
+/**
+ * One settings change (a PUT patch, a PUT reset, or the first-run
+ * applyEngineSettings seam), all-or-nothing as far as the disk allows:
+ *   1. capture the engine's settings state (incl. external.* and the
+ *      SecretStore entries, RB-001);
+ *   2. apply — a SecretStore failure during apply (F-014: a key delete that
+ *      could not be written) THROWS and is rolled back like a failed save;
+ *   3. persist external.json FIRST, settings.json LAST;
+ *   4. on any failure restore the engine (and the SecretStore) and, when
+ *      external.json was already written, re-write it from the restored
+ *      engine, so neither memory nor a sidecar is left ahead of the other.
+ */
+export function commitSettingsChange(
+  engine: EngineSurface,
+  kind: 'change' | 'reset',
+  apply: () => { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] },
+  persist: { external?: () => void; settings?: () => void },
+): SettingsCommitResult {
+  const before = engine.captureSettingsState?.();
+  let applied: ReturnType<typeof apply>;
+  try {
+    applied = apply();
+  } catch (err) {
+    return { ok: false, status: 500, detail: rollBackUnsavedSettings(engine, before, kind, err) };
+  }
+  if (!applied.ok) return applied;
+  let externalWritten = false;
+  try {
+    if (persist.external !== undefined) {
+      persist.external();
+      externalWritten = true;
+    }
+    persist.settings?.();
+  } catch (err) {
+    return {
+      ok: false,
+      status: 500,
+      detail: rollBackUnsavedSettings(engine, before, kind, err, externalWritten ? persist.external : undefined),
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -849,49 +929,31 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
                 validationError(res, ['reset: not supported by this engine'], cors);
                 return;
               }
-              // PR #140 review (FB140-001): capture before committing so a
-              // failed save rolls the engine back — memory never claims a
-              // change the sidecar did not record.
-              const beforeReset = engine.captureSettingsState?.();
-              const resetResult = engine.resetSettings(patch.reset);
+              // PR #140 review (FB140-001) + PR #142 RB-001: a failed save
+              // (or a SecretStore delete that fails) rolls the engine and the
+              // SecretStore back — memory never claims a change the sidecars
+              // did not record. resetSettings validates the array shape.
+              const resetEngine = engine as EngineSurface & { resetSettings: NonNullable<EngineSurface['resetSettings']> };
+              const resetKeys = Array.isArray(patch.reset) ? (patch.reset as unknown[]) : [];
+              const resetExternal = resetKeys.some((key) => typeof key === 'string' && isExternalKey(key));
+              const resetOther = resetKeys.filter((key): key is string => typeof key === 'string' && !isExternalKey(key));
+              const resetResult = commitSettingsChange(engine, 'reset', () => resetEngine.resetSettings(patch.reset), {
+                ...(opts.persistExternal && resetExternal && typeof engine.externalSnapshot === 'function'
+                  ? { external: () => opts.persistExternal?.(engine.externalSnapshot?.() ?? {}) }
+                  : {}),
+                ...(opts.persistSettings && resetOther.length > 0
+                  ? { settings: () => opts.persistSettings?.({}, resetOther) }
+                  : {}),
+              });
               if (!resetResult.ok) {
-                if (resetResult.status === 400) sendJson(res, 400, { detail: resetResult.detail }, cors);
+                if (resetResult.status === 500) sendJson(res, 500, { detail: resetResult.detail }, cors);
+                else if (resetResult.status === 400) sendJson(res, 400, { detail: resetResult.detail }, cors);
                 else validationError(res, resetResult.errors ?? [resetResult.detail], cors);
                 return;
               }
-              const afterReset = engine.responseSettings();
-              const resetKeys = patch.reset as string[];
-              if (opts.persistExternal && resetKeys.some(isExternalKey) && typeof engine.externalSnapshot === 'function') {
-                try {
-                  opts.persistExternal(engine.externalSnapshot());
-                } catch (err) {
-                  sendJson(res, 500, {
-                    detail: rollBackUnsavedSettings(engine, beforeReset, 'reset', err),
-                  }, cors);
-                  return;
-                }
-              }
-              if (opts.persistSettings && resetKeys.some((key) => !isExternalKey(key))) {
-                try {
-                  opts.persistSettings({}, resetKeys.filter((key) => !isExternalKey(key)));
-                } catch (err) {
-                  sendJson(res, 500, {
-                    detail: rollBackUnsavedSettings(engine, beforeReset, 'reset', err),
-                  }, cors);
-                  return;
-                }
-              }
-              sendJson(res, 200, afterReset, cors);
+              sendJson(res, 200, engine.responseSettings(), cors);
               return;
             }
-            const beforePatch = engine.captureSettingsState?.();
-            const result = engine.applySettingsPatch(patch);
-            if (!result.ok) {
-              if (result.status === 400) sendJson(res, 400, { detail: result.detail }, cors);
-              else validationError(res, result.errors ?? [result.detail], cors);
-              return;
-            }
-            const responseSettings = engine.responseSettings();
             // B9 (issue #67): persistence is a post-validation side effect —
             // only a patch the engine ACCEPTED is snapshotted (in PATCH form,
             // i.e. the same key names applySettingsPatch validates), so the
@@ -905,22 +967,24 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               if (isExternalKey(key)) touchesExternal = true;
               else settingsPatch[key] = value;
             }
-            // external.json is written FIRST (the reset path's order): the
-            // rollback below restores only the settings.json-backed state, so
-            // settings.json must never be written ahead of a later failure.
-            try {
-              if (opts.persistExternal && touchesExternal && typeof engine.externalSnapshot === 'function') {
-                opts.persistExternal(engine.externalSnapshot());
-              }
-              if (opts.persistSettings && Object.keys(settingsPatch).length > 0) opts.persistSettings(settingsPatch);
-            } catch (err) {
-              // PR #140 review (FB140-001): a failed save rolls the engine back.
-              sendJson(res, 500, {
-                detail: rollBackUnsavedSettings(engine, beforePatch, 'change', err),
-              }, cors);
+            // external.json is written FIRST and settings.json LAST; a failure
+            // anywhere rolls the engine, the SecretStore and (when already
+            // written) external.json back (commitSettingsChange).
+            const result = commitSettingsChange(engine, 'change', () => engine.applySettingsPatch(patch), {
+              ...(opts.persistExternal && touchesExternal && typeof engine.externalSnapshot === 'function'
+                ? { external: () => opts.persistExternal?.(engine.externalSnapshot?.() ?? {}) }
+                : {}),
+              ...(opts.persistSettings && Object.keys(settingsPatch).length > 0
+                ? { settings: () => opts.persistSettings?.(settingsPatch) }
+                : {}),
+            });
+            if (!result.ok) {
+              if (result.status === 500) sendJson(res, 500, { detail: result.detail }, cors);
+              else if (result.status === 400) sendJson(res, 400, { detail: result.detail }, cors);
+              else validationError(res, result.errors ?? [result.detail], cors);
               return;
             }
-            sendJson(res, 200, responseSettings, cors);
+            sendJson(res, 200, engine.responseSettings(), cors);
             return;
           }
           case 'POST /settings/external/test': {
@@ -945,7 +1009,22 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               sendJson(res, 501, { detail: 'External model endpoints are not supported by this backend engine' }, cors);
               return;
             }
-            sendJson(res, 200, await engine.probeExternal(draft), cors);
+            // PR #142 review F-002: a client that disconnects aborts the
+            // upstream work (the probe also has its own aggregate deadline).
+            // `res` 'close' fires on a dropped connection; after a normal
+            // response it fires with writableEnded already true.
+            const probeAbort = new AbortController();
+            const onProbeClose = (): void => {
+              if (!res.writableEnded) probeAbort.abort();
+            };
+            res.once('close', onProbeClose);
+            if (req.socket.destroyed) probeAbort.abort();
+            try {
+              const outcome = await engine.probeExternal(draft, { signal: probeAbort.signal });
+              if (!probeAbort.signal.aborted) sendJson(res, 200, outcome, cors);
+            } finally {
+              res.off('close', onProbeClose);
+            }
             return;
           }
           case 'GET /stats':

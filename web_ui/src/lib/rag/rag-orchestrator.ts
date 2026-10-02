@@ -98,8 +98,23 @@ export interface RAGQueryOptions {
    * The caller decides staleness; a stale pin must arrive here as `undefined`.
    */
   pinnedContext?: string;
+  /**
+   * F-004 (PR #142 review): the grounded user-turn framing an EXTERNAL
+   * generator gets, shared verbatim with the desktop backend
+   * (lib/llm/external-prompts.ts). When set, the user turn opens with
+   * `instruction` (instead of the local "Context:" header) and the question
+   * follows `questionLabel`. Unset = the local engines' framing, unchanged.
+   * Charged to the token budget like every other prompt channel.
+   */
+  groundedFraming?: GroundedFraming;
   /** AbortSignal for cancelling the in-progress query */
   signal?: AbortSignal;
+}
+
+/** See {@link RAGQueryOptions.groundedFraming}. */
+export interface GroundedFraming {
+  instruction: string;
+  questionLabel: string;
 }
 
 /**
@@ -492,6 +507,9 @@ export class RAGOrchestrator {
       question,
       historyText,
       pinnedContext: options.pinnedContext,
+      groundedInstruction: options.groundedFraming
+        ? `${options.groundedFraming.instruction}${options.groundedFraming.questionLabel}`
+        : undefined,
       maxTokens,
     });
     const contextBudgetChars = Math.max(0, (DEFAULT_N_CTX - reservedTokens) * CHARS_PER_TOKEN);
@@ -561,7 +579,15 @@ export class RAGOrchestrator {
     // the current user turn) so the model has conversational continuity.
     // D7 (issue #83): thread the pinned-slide text into the USER turn (C9 pins
     // the placement: never the system prompt, never a history turn).
-    const contextMessages = this.buildMessages(systemPrompt, question, contextText, options.images, history, options.pinnedContext);
+    const contextMessages = this.buildMessages(
+      systemPrompt,
+      question,
+      contextText,
+      options.images,
+      history,
+      options.pinnedContext,
+      options.groundedFraming,
+    );
 
     yield {
       type: 'generating',
@@ -675,7 +701,8 @@ export class RAGOrchestrator {
     context: string,
     images?: RAGImageInput[],
     history?: RAGHistoryTurn[],
-    pinnedContext?: string
+    pinnedContext?: string,
+    framing?: GroundedFraming
   ): LLMMessage[] {
     // D7 (issue #83): the pinned-slide block lives INSIDE the user turn —
     // after the numbered context (so [i] citation numbering is untouched) and
@@ -684,7 +711,12 @@ export class RAGOrchestrator {
       pinnedContext && pinnedContext.trim().length > 0
         ? `\n\nCurrently viewing this slide:\n${pinnedContext}`
         : '';
-    const userText = `Context:\n${context}${pinBlock}\n\nQuestion: ${question}`;
+    // F-004: an external generator gets the desktop's grounded framing
+    // (instruction, blank line, numbered passages, question label) so both
+    // apps send the same text; local engines keep the "Context:" header.
+    const userText = framing
+      ? `${framing.instruction}\n\n${context}${pinBlock}\n\n${framing.questionLabel}${question}`
+      : `Context:\n${context}${pinBlock}\n\nQuestion: ${question}`;
 
     // Text-only: keep the simple string content. With attached images, build a
     // multimodal content array (text first, then image parts) for the VLM.
@@ -743,6 +775,8 @@ export interface ReservedTokenInputs {
   historyText: string;
   /** D7 (issue #83): pinned-slide text; charged exactly like history. */
   pinnedContext?: string;
+  /** F-004: the external grounded framing text (instruction + question label), when used. */
+  groundedInstruction?: string;
   maxTokens?: number;
 }
 
@@ -758,6 +792,7 @@ export function computeReservedTokens(inputs: ReservedTokenInputs): number {
     estimateTokens(inputs.question, CHARS_PER_TOKEN) +
     estimateTokens(inputs.historyText, CHARS_PER_TOKEN) +
     estimateTokens(inputs.pinnedContext ?? '', CHARS_PER_TOKEN) +
+    estimateTokens(inputs.groundedInstruction ?? '', CHARS_PER_TOKEN) +
     (inputs.maxTokens ?? 512) +
     TOKEN_SAFETY_MARGIN
   );

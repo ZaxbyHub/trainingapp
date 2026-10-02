@@ -232,7 +232,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Time Display**: Relative timestamps in sidebar (e.g., "2 min ago", "Yesterday")
 
 ### Settings Page & Cross-Browser Support (Phase 7)
-> Historical (Phase 7): the Server Configuration / Server URL controls and the Model Selection dropdown listed here no longer exist; the current Settings page is described in CONFIGURATION.md, App Settings.
+> Historical (Phase 7): the Inference Mode toggle (browser-local vs API server), the Server Configuration / Server URL controls, the Model Selection dropdown and the stored `serverUrl` preference listed here no longer exist; the current Settings page, including the External model region, is described in CONFIGURATION.md, App Settings.
 
 - **Dedicated Settings Page** (`SettingsPage.tsx`): Full-featured settings UI with 6 sections:
   - **Inference Mode**: Toggle between browser-local (WebGPU) and API server modes with real-time state sync

@@ -18,3 +18,32 @@ export function onDesktopModelsChanged(listener: () => void): () => void {
   window.addEventListener(DESKTOP_MODELS_CHANGED_EVENT, listener);
   return () => window.removeEventListener(DESKTOP_MODELS_CHANGED_EVENT, listener);
 }
+
+/**
+ * Re-fetch model status on every models-changed signal and apply ONLY the
+ * newest request's answer (F-006, PR #142 review). Two quick toggles start
+ * two fetches; if the older one resolves last, its stale answer must not
+ * overwrite the newer one. A newer request that fails also retires every
+ * older in-flight request. Returns the unsubscribe; after it runs nothing
+ * applies.
+ */
+export function subscribeLatestModelStatus<T>(
+  fetchStatus: () => Promise<T>,
+  apply: (status: T) => void,
+): () => void {
+  let latest = 0;
+  let disposed = false;
+  const off = onDesktopModelsChanged(() => {
+    latest += 1;
+    const seq = latest;
+    void fetchStatus()
+      .then((status) => {
+        if (!disposed && seq === latest) apply(status);
+      })
+      .catch(() => undefined);
+  });
+  return () => {
+    disposed = true;
+    off();
+  };
+}

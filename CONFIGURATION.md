@@ -293,9 +293,21 @@ The same controls appear in the browser app and the desktop app:
 4. **API key** — a password field. Local servers usually need none.
 5. **Model** — type the model id, or pick it from the list that "Test connection" fills in.
 6. **Test connection** — lists the server's models and checks the chosen model. In the desktop
-   app it tests the draft values without saving anything.
+   app it tests the draft values without saving anything. It gives up after 30 seconds in
+   total, including every page of a paged model list, and stops at once if the app window
+   closes or reloads while it is running.
 7. **Direct chat (no document grounding)** — the toggle described above.
 8. **Remember API key in this browser** — browser app only (see Key storage).
+
+**Response limits (both apps).** An endpoint may send at most 1 MiB per streamed line or
+event, 8 MiB in total for a streamed answer, 8 MiB for a non-streamed answer, 4 MiB for a model list (all pages combined) and 64 KiB
+of an error body. A response over a limit stops the request with a "server" error; an
+oversized error body is cut rather than rejected, so a 401 or 404 is still reported as an
+authentication or model error. In the desktop app an endpoint's error body must also finish
+within 15 seconds. If saving desktop settings fails, the app restores the previous settings,
+including the stored API key and the origin it is bound to; the error says "nothing was
+changed" only when that restore fully succeeded, and otherwise names what could not be
+undone.
 
 ### URL rules
 
@@ -376,6 +388,8 @@ Airgap builds refuse public hosts; loopback and private-network endpoints still 
   every build writes the field explicitly as `true` or `false`.
   The manifest flag is not signed: it is protected only by write access to the install
   directory (administrator for per-machine installs, none for portable builds).
+
+An airgap build silently refuses (disables) a previously stored public external endpoint (for example one saved before upgrading to an airgap build): the desktop app drops the stored base URL when it starts and turns the external model off. This is reported only in the backend log; Settings shows the external model as off with an empty base URL. Point it at a loopback or private-network server to use the external model again.
 
 ### Key storage
 

@@ -23,14 +23,22 @@
 //      (tls.getCACertificates('system'), available in Electron 44's Node 24;
 //      NODE_EXTRA_CA_CERTS is part of the 'default' set). No proxy support in
 //      this release; loopback/private endpoints are never proxied.
-//   6. Timeouts: DNS resolution (default 30 s), first byte (default 600 s)
-//      and idle gaps between body chunks (default 120 s) -> kind 'timeout';
+//   6. Timeouts: DNS resolution (default 30 s), first byte (default 600 s),
+//      idle gaps between body chunks (default 120 s) and a non-2xx error
+//      body (its own 15 s bound, PR #142 review F-015) -> kind 'timeout';
 //      cancellation (isCancelled or an AbortSignal) is honoured during the
 //      DNS lookup (no socket is ever opened afterwards) and aborts the socket
 //      once connected.
 //   7. A header value node:http refuses (e.g. a key with characters outside
 //      Latin-1) fails as a classified, key-free ExternalProviderError, never
 //      an untyped TypeError.
+//   8. Memory bounds (PR #142 review F-003/F-009): a non-2xx error body is
+//      read up to ERROR_BODY_LIMIT_BYTES, then the request is aborted;
+//      text(maxBytes) aborts with a classified 'server' error past its cap;
+//      the 2xx chunk queue pauses the socket above
+//      RESPONSE_QUEUE_HIGH_WATER_BYTES and resumes once the consumer drains.
+//      The streamed answer as a whole is capped at MAX_STREAMED_ANSWER_BYTES
+//      by its consumer (inference/external-generator.ts).
 // node:http / node:https only — no new dependency, no electron import.
 import { promises as dnsPromises } from 'node:dns';
 import http from 'node:http';
@@ -43,6 +51,7 @@ import {
   ExternalProviderError,
   errorForStatus,
   networkError,
+  oversizeError,
   refusedError,
   timeoutError,
   upstreamMessage,
@@ -56,7 +65,22 @@ export const FIRST_BYTE_TIMEOUT_MS = 600_000;
 /** Bound on one DNS resolution (an OS resolver can otherwise stall Stop). */
 export const DNS_TIMEOUT_MS = 30_000;
 export const IDLE_TIMEOUT_MS = 120_000;
-const ERROR_BODY_LIMIT_BYTES = 64 * 1024;
+/** Bound on reading a non-2xx error body (separate from the first-byte timer). */
+export const ERROR_BODY_TIMEOUT_MS = 15_000;
+/** PR #142 review F-003 byte caps (the browser app uses the same values). */
+export const ERROR_BODY_LIMIT_BYTES = 64 * 1024;
+export const MAX_SSE_LINE_BYTES = 1024 * 1024;
+export const MAX_COMPLETION_BODY_BYTES = 8 * 1024 * 1024;
+/**
+ * The whole streamed answer, in UTF-8 bytes (PR #142 closeout F-003). The idle
+ * timer bounds only the gap between chunks and a server may ignore
+ * max_tokens, so the accumulated answer text needs its own cap.
+ */
+export const MAX_STREAMED_ANSWER_BYTES = 8 * 1024 * 1024;
+export const MAX_MODEL_LIST_BYTES = 4 * 1024 * 1024;
+/** PR #142 review F-009: the 2xx chunk queue pauses the socket above this. */
+export const RESPONSE_QUEUE_HIGH_WATER_BYTES = 1024 * 1024;
+const RESPONSE_QUEUE_LOW_WATER_BYTES = 256 * 1024;
 const CANCEL_POLL_MS = 20;
 
 /** Thrown when the caller cancelled before a response arrived. */
@@ -219,6 +243,8 @@ export interface GuardedRequestInit {
   idleTimeoutMs?: number;
   /** Bound on the DNS lookup (default DNS_TIMEOUT_MS). */
   dnsTimeoutMs?: number;
+  /** Bound on reading a non-2xx error body (default ERROR_BODY_TIMEOUT_MS). */
+  errorBodyTimeoutMs?: number;
   isCancelled?: () => boolean;
   /** Optional AbortSignal; equivalent to isCancelled() turning true. */
   signal?: AbortSignal;
@@ -229,8 +255,15 @@ export interface GuardedResponse {
   headers: http.IncomingHttpHeaders;
   /** Body as decoded text chunks; ends quietly on cancellation; throws on timeout/reset. */
   chunks(): AsyncGenerator<string>;
-  /** Whole body (bounded by the same timers). */
-  text(): Promise<string>;
+  /**
+   * Whole body (bounded by the same timers). With `maxBytes`, a body larger
+   * than that aborts the request and rejects with a 'server'
+   * ExternalProviderError naming `what` and `reportLimit` (default
+   * `maxBytes`; a caller spending one budget across several responses
+   * passes the remaining bytes as `maxBytes` and the whole budget here)
+   * (PR #142 review F-003).
+   */
+  text(maxBytes?: number, what?: string, reportLimit?: number): Promise<string>;
   abort(): void;
 }
 
@@ -278,6 +311,7 @@ function send(
 ): Promise<GuardedResponse> {
   const firstByteMs = init.firstByteTimeoutMs ?? FIRST_BYTE_TIMEOUT_MS;
   const idleMs = init.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
+  const errorBodyMs = init.errorBodyTimeoutMs ?? ERROR_BODY_TIMEOUT_MS;
   const isHttps = url.protocol === 'https:';
   const ctx = init.ctx;
 
@@ -287,6 +321,11 @@ function send(
     let poll: ReturnType<typeof setInterval> | null = null;
     let response: http.IncomingMessage | null = null;
     const queue: Buffer[] = [];
+    /** Bytes waiting in `queue`; above the high-water mark the socket is paused. */
+    let queuedBytes = 0;
+    let paused = false;
+    /** Body bytes handed to the consumer so far (text() caps on it). */
+    let consumedBytes = 0;
     let ended = false;
     let streamError: Error | null = null;
     let wake: (() => void) | null = null;
@@ -377,29 +416,49 @@ function send(
         return;
       }
       if (status < 200 || status >= 300) {
-        // The error body is bounded by its own timer and size cap.
-        arm(firstByteMs, 'error-body', status);
+        // The error body is bounded by its OWN short timer (not the
+        // first-byte budget, PR #142 review F-015) and by
+        // ERROR_BODY_LIMIT_BYTES: once the cap is reached the request is
+        // aborted and the error is built from what was read (F-003).
+        arm(errorBodyMs, 'error-body', status);
         const parts: Buffer[] = [];
         let size = 0;
-        res.on('data', (chunk: Buffer) => {
-          if (size < ERROR_BODY_LIMIT_BYTES) {
-            parts.push(chunk);
-            size += chunk.length;
-          }
-        });
-        res.on('end', () => {
+        const finishError = (): void => {
           if (settled) return;
           settled = true;
           cleanup();
           reject(errorForStatus(ctx, status, upstreamMessage(Buffer.concat(parts).toString('utf8'))));
+        };
+        res.on('data', (chunk: Buffer) => {
+          if (settled) return;
+          const room = ERROR_BODY_LIMIT_BYTES - size;
+          const part = chunk.length > room ? chunk.subarray(0, room) : chunk;
+          parts.push(part);
+          size += part.length;
+          if (size >= ERROR_BODY_LIMIT_BYTES) {
+            finishError();
+            req.destroy();
+            res.destroy();
+          }
         });
+        res.on('end', finishError);
         res.on('error', (err) => fail(networkError(ctx, err.message)));
         return;
       }
       settled = true;
       res.on('data', (chunk: Buffer) => {
         queue.push(chunk);
-        arm(idleMs, 'idle');
+        queuedBytes += chunk.length;
+        if (!paused && queuedBytes >= RESPONSE_QUEUE_HIGH_WATER_BYTES) {
+          // Backpressure (PR #142 review F-009): stop reading until the
+          // consumer drains. The idle timer is off while WE are the slow
+          // side; it re-arms on resume.
+          paused = true;
+          clearTimer();
+          res.pause();
+        } else if (!paused) {
+          arm(idleMs, 'idle');
+        }
         notify();
       });
       res.on('end', () => {
@@ -413,7 +472,15 @@ function send(
       const chunks = async function* (): AsyncGenerator<string> {
         for (;;) {
           while (queue.length > 0) {
-            const text = decoder.write(queue.shift() as Buffer);
+            const buf = queue.shift() as Buffer;
+            queuedBytes -= buf.length;
+            consumedBytes += buf.length;
+            if (paused && queuedBytes <= RESPONSE_QUEUE_LOW_WATER_BYTES && !ended && streamError === null) {
+              paused = false;
+              arm(idleMs, 'idle');
+              res.resume();
+            }
+            const text = decoder.write(buf);
             if (text !== '') yield text;
           }
           if (streamError !== null) throw streamError;
@@ -427,22 +494,29 @@ function send(
           });
         }
       };
+      const abort = (): void => {
+        ended = true;
+        cleanup();
+        req.destroy();
+        res.destroy();
+        notify();
+      };
       resolve({
         status,
         headers: res.headers,
         chunks,
-        text: async () => {
+        text: async (maxBytes?: number, what = 'a response body', reportLimit?: number) => {
           let out = '';
-          for await (const part of chunks()) out += part;
+          for await (const part of chunks()) {
+            if (maxBytes !== undefined && consumedBytes > maxBytes) {
+              abort();
+              throw oversizeError(ctx, what, reportLimit ?? maxBytes);
+            }
+            out += part;
+          }
           return out;
         },
-        abort: () => {
-          ended = true;
-          cleanup();
-          req.destroy();
-          res.destroy();
-          notify();
-        },
+        abort,
       });
     }
     req.on('error', (err) => {

@@ -7,10 +7,13 @@
  * renders it as a one-liner and never grows overlay logic of its own.
  *
  * A11y parity with ModelBlockedOverlay (PR-review F8): remembers and restores
- * the previously focused element, traps Tab within the dialog, and closes on
- * Escape. Documents/Settings remain reachable through the nav rail after
- * close; this overlay blocks only the chat send path, matching AC5's
- * "informative state instead of a silently failing /ask".
+ * the previously focused element and traps Tab within the dialog. It does NOT
+ * close on Escape: it is a blocking state with no dismiss path (no onClose),
+ * so Escape is swallowed (preventDefault) and the overlay stays until the
+ * backend reports staged models or an external engine. Documents/Settings
+ * remain reachable through the nav rail and the overlay's Settings actions;
+ * this overlay blocks only the chat send path, matching AC5's "informative
+ * state instead of a silently failing /ask".
  */
 import React, { useEffect, useRef } from 'react';
 import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';

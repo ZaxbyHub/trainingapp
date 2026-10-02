@@ -18,9 +18,14 @@ import { InferenceModeToggle } from '../components/InferenceModeToggle';
 import { TokenStreamManager } from '../lib/streaming';
 import { DESKTOP_FIRST_BYTE_TIMEOUT_MS, DEFAULT_FIRST_BYTE_TIMEOUT_MS } from '../lib/api/streaming';
 import { RAGOrchestrator } from '../lib/rag/rag-orchestrator';
-import { buildHistorySnapshot } from '../lib/chat/history-snapshot';
+import { buildDesktopHistorySnapshot, buildHistorySnapshot } from '../lib/chat/history-snapshot';
 import { getLLMService } from '../lib/llm/llm-factory';
 import { createExternalLLMService, isExternalActive, loadExternalConfig } from '../lib/llm/external-provider';
+import {
+  EXTERNAL_GROUNDED_INSTRUCTION,
+  EXTERNAL_GROUNDED_QUESTION_LABEL,
+  EXTERNAL_SYSTEM_PROMPT,
+} from '../lib/llm/external-prompts';
 import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessCache } from '../lib/llm/readiness-gate';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
@@ -613,23 +618,32 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         streamManager.error('The desktop backend is not available yet. Wait for it to start, then try again.');
         return;
       }
-      const url = desktopSession.sseUrl();
-      const sseToken = desktopSession.token;
-      try {
-        // Issue #40 RC1: thread conversation history into the desktop backend
-        // request so api mode benefits from multi-turn memory + retrieval
-        // rewriting too. The desktop backend's /ask/stream accepts and validates
-        // `history` (at most 20 turns; parseQuestionRequest in
-        // desktop/main/backend/server.ts).
-        streamManager.startSSEStream(
-          url,
-          { question: text, history: buildHistorySnapshot(owningMessages) },
-          sseToken,
-          'X-Desktop-Token'
-        );
-      } catch (err) {
-        streamManager.error(err instanceof Error ? err.message : String(err));
-      }
+      const session = desktopSession;
+      void (async () => {
+        // F-012 (PR #142 Stage B): with the backend on an external model in
+        // Direct chat (external.grounded=false), retrieval-grounded answers
+        // must not ride along to the external endpoint. The backend's own
+        // settings are read fresh for every send; a failed read excludes
+        // them (fail closed).
+        const history = await buildDesktopHistorySnapshot(session.apiClient, owningMessages);
+        // Stopped, or superseded by a newer send, while the settings loaded.
+        if (tokenStreamManagerRef.current !== streamManager) return;
+        try {
+          // Issue #40 RC1: thread conversation history into the desktop backend
+          // request so api mode benefits from multi-turn memory + retrieval
+          // rewriting too. The desktop backend's /ask/stream accepts and validates
+          // `history` (at most 20 turns; parseQuestionRequest in
+          // desktop/main/backend/server.ts).
+          streamManager.startSSEStream(
+            session.sseUrl(),
+            { question: text, history },
+            session.token,
+            'X-Desktop-Token'
+          );
+        } catch (err) {
+          streamManager.error(err instanceof Error ? err.message : String(err));
+        }
+      })();
     } else {
       // Browser-local mode. The generator is the external endpoint when one
       // is enabled (universal-provider-settings-overhaul; browser app only —
@@ -643,11 +657,16 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       if (externalService !== null && externalConfig !== null && !externalConfig.grounded) {
         // Opt-in Direct chat (AC13): ungrounded — no retrieval, labeled
         // "General knowledge". Conversation context (bounded by
-        // buildHistorySnapshot, 4000 chars per history turn) IS threaded.
+        // buildHistorySnapshot, 4000 chars per history turn) IS threaded —
+        // fail closed (F-012): only 'general' answers that showed no sources
+        // or citations ride along, so an answer built from document passages
+        // (or a Stopped, untagged one) never rides into an ungrounded turn.
         abortController.signal.addEventListener('abort', () => externalService.interrupt());
         (async () => {
           const wireMessages = [
-            ...buildHistorySnapshot(owningMessages).map((turn) => ({
+            // F-004: the same system prompt the desktop backend sends.
+            { role: 'system' as const, content: EXTERNAL_SYSTEM_PROMPT },
+            ...buildHistorySnapshot(owningMessages, { excludeGrounded: true }).map((turn) => ({
               role: turn.role,
               content: turn.content.slice(0, 4000),
             })),
@@ -737,6 +756,17 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
             // memory + retrieval contextualization (RC3).
             history: buildHistorySnapshot(owningMessages),
             pinnedContext,
+            // F-004: an external generator gets the desktop's prompt text
+            // (system prompt + grounded framing); local engines keep theirs.
+            ...(externalService !== null
+              ? {
+                  systemPrompt: EXTERNAL_SYSTEM_PROMPT,
+                  groundedFraming: {
+                    instruction: EXTERNAL_GROUNDED_INSTRUCTION,
+                    questionLabel: EXTERNAL_GROUNDED_QUESTION_LABEL,
+                  },
+                }
+              : {}),
           })) {
             if (abortController.signal.aborted) return;
             if (tokenStreamManagerRef.current !== streamManager) return;

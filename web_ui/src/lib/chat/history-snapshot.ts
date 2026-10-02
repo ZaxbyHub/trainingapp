@@ -20,6 +20,16 @@ import type { RAGHistoryTurn } from '../rag/rag-orchestrator';
 export const MAX_HISTORY_TURNS = 6;
 
 /**
+ * F-012: the ONLY assistant-turn shape Direct chat may thread — tagged
+ * 'general' AND showing no sources and no citations. Length checks, not
+ * truthiness: a desktop Direct answer arrives with `sources: []` and
+ * `citations: []`, which must still count as "no sources".
+ */
+function isSourcelessGeneralAnswer(m: ChatMessage): boolean {
+  return m.grounding === 'general' && (m.sources?.length ?? 0) === 0 && (m.citations?.length ?? 0) === 0;
+}
+
+/**
  * Build the conversation-history snapshot for the orchestrator / server.
  *
  * `owningMessages` (the snapshot captured at send time) INCLUDES the current
@@ -37,8 +47,23 @@ export const MAX_HISTORY_TURNS = 6;
  *  4. enforce role alternation — collapse consecutive same-role turns by keeping
  *     only the last, so the chat template always sees user/assistant/user/...;
  *  5. cap at the last MAX_HISTORY_TURNS messages (oldest truncated first).
+ *
+ * F-012 (PR #142 review): `excludeGrounded` (set by the browser's ungrounded
+ * Direct chat, and by the desktop snapshot below when the backend answers
+ * with an external model in Direct chat) filters assistant turns FAIL CLOSED:
+ * an answer built from retrieved document passages must not ride into a turn
+ * the user chose to send WITHOUT retrieval (it may have been produced by the
+ * local engine and never left the device). Only assistant turns tagged
+ * 'general' that carry no sources or citations thread; untagged turns (an
+ * answer Stopped mid-stream, legacy turns) and any answer that showed sources
+ * (the desktop backend tags rerank-off answers 'general' even when passages
+ * were used) are dropped (fail closed). A dropped answer's question is then
+ * dropped by rule 4 / the trailing-user rule below.
  */
-export function buildHistorySnapshot(owningMessages: ChatMessage[]): RAGHistoryTurn[] {
+export function buildHistorySnapshot(
+  owningMessages: ChatMessage[],
+  opts?: { excludeGrounded?: boolean },
+): RAGHistoryTurn[] {
   if (!Array.isArray(owningMessages) || owningMessages.length === 0) return [];
   const trimmed = owningMessages.slice();
   // 1. Drop trailing empty assistant placeholder(s) (the current turn in flight).
@@ -53,11 +78,16 @@ export function buildHistorySnapshot(owningMessages: ChatMessage[]): RAGHistoryT
   if (trimmed.length > 0 && trimmed[trimmed.length - 1].role === 'user') {
     trimmed.pop();
   }
-  // 3. Keep only substantive turns.
+  // 3. Keep only substantive turns (F-012: and, for Direct chat, only
+  // 'general' answers that showed no sources or citations — fail closed).
   const substantive = trimmed.filter(
     (m) =>
       m.role === 'user' ||
-      (m.role === 'assistant' && !m.error && !m.abstain && (m.content ?? '').trim().length > 0)
+      (m.role === 'assistant' &&
+        !m.error &&
+        !m.abstain &&
+        (m.content ?? '').trim().length > 0 &&
+        !(opts?.excludeGrounded === true && !isSourcelessGeneralAnswer(m)))
   );
   // 4. Enforce role alternation: collapse consecutive same-role turns (keep last).
   const alternating: ChatMessage[] = [];
@@ -95,4 +125,48 @@ export function buildHistorySnapshot(owningMessages: ChatMessage[]): RAGHistoryT
     role: m.role === 'assistant' ? 'assistant' : 'user',
     content: m.content ?? '',
   }));
+}
+
+/**
+ * F-012 (PR #142 Stage B): the desktop backend's /ask/stream history carries
+ * no grounding tag, so the backend cannot drop retrieval-grounded answers
+ * itself. The renderer decides from the backend's OWN settings, read fresh at
+ * send time: the fail-closed filter (only sourceless 'general' answers
+ * thread; see buildHistorySnapshot) applies when the backend will answer with
+ * an external model in Direct chat (external.enabled with a base URL and a
+ * model, and external.grounded not true). When the settings cannot be read
+ * the answer is fail-closed: exclude (a grounded follow-up then loses some
+ * conversational context; nothing grounded can leave the device by mistake).
+ */
+export function desktopSettingsExcludeGrounded(settings: unknown): boolean {
+  if (typeof settings !== 'object' || settings === null) return true;
+  const s = settings as Record<string, unknown>;
+  if (typeof s['external.enabled'] !== 'boolean') return true;
+  const externalActive =
+    s['external.enabled'] === true &&
+    typeof s['external.baseUrl'] === 'string' &&
+    s['external.baseUrl'] !== '' &&
+    typeof s['external.model'] === 'string' &&
+    s['external.model'] !== '';
+  return externalActive && s['external.grounded'] !== true;
+}
+
+/**
+ * F-012: the history snapshot for a desktop /ask/stream request. Reads the
+ * backend settings (GET /settings) once per send; any failure — no client,
+ * a rejected request, a malformed answer — excludes grounded answers.
+ */
+export async function buildDesktopHistorySnapshot(
+  apiClient: { getSettings?: () => Promise<unknown> } | null | undefined,
+  owningMessages: ChatMessage[],
+): Promise<RAGHistoryTurn[]> {
+  let excludeGrounded = true;
+  try {
+    if (apiClient !== null && apiClient !== undefined && typeof apiClient.getSettings === 'function') {
+      excludeGrounded = desktopSettingsExcludeGrounded(await apiClient.getSettings());
+    }
+  } catch {
+    excludeGrounded = true;
+  }
+  return buildHistorySnapshot(owningMessages, { excludeGrounded });
 }

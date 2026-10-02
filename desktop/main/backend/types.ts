@@ -422,6 +422,9 @@ export interface EngineSurface {
    * captures before applying and restores when persisting the change fails,
    * so a 500 leaves the engine exactly as it was. Optional (test doubles);
    * a host without them cannot roll back and says so in its 500 detail.
+   * PR #142 RB-001: for an engine with external.* settings the copy includes
+   * the SecretStore entries, and restoreSettingsState() writes them back —
+   * it restores memory first and THROWS only when that write fails.
    */
   captureSettingsState?(): unknown;
   restoreSettingsState?(snapshot: unknown): void;
@@ -437,9 +440,10 @@ export interface EngineSurface {
    * universal-provider-settings-overhaul: POST /settings/external/test — test
    * a draft external endpoint (list models, check the chosen model) without
    * persisting anything. Optional: the route answers 404-equivalent 501 for
-   * engines without it.
+   * engines without it. `opts.signal` aborts the upstream work (the route
+   * fires it when the client disconnects, PR #142 review F-002).
    */
-  probeExternal?(body: Record<string, unknown>): Promise<{
+  probeExternal?(body: Record<string, unknown>, opts?: { signal?: AbortSignal }): Promise<{
     ok: boolean;
     kind?: string;
     message: string;

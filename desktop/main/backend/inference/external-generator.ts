@@ -9,19 +9,33 @@
 // and idle timeouts, cancellation. The local llama.cpp prompt is untouched —
 // this module builds its own message list (system + bounded history + the
 // user turn carrying the retrieved passages).
-import { guardedRequest, RequestCancelledError, type DnsLookup } from '../net/guarded-request.js';
-import { ExternalProviderError, scrubSecrets, type FailureContext } from '../net/provider-error.js';
+import {
+  guardedRequest,
+  MAX_COMPLETION_BODY_BYTES,
+  MAX_MODEL_LIST_BYTES,
+  MAX_SSE_LINE_BYTES,
+  MAX_STREAMED_ANSWER_BYTES,
+  RequestCancelledError,
+  type DnsLookup,
+} from '../net/guarded-request.js';
+import { ExternalProviderError, oversizeError, scrubSecrets, timeoutError, type FailureContext } from '../net/provider-error.js';
 import type { CancellationFlag } from '../types.js';
+import { EXTERNAL_GROUNDED_INSTRUCTION, EXTERNAL_GROUNDED_QUESTION_LABEL, EXTERNAL_SYSTEM_PROMPT } from './external-prompts.js';
 
 export type ExternalProtocol = 'openai' | 'anthropic';
 
-/** The system prompt sent to an external model (local prompts are separate). */
-export const EXTERNAL_SYSTEM_PROMPT =
-  "You are TrainingApp's assistant. Answer the user's question directly and concisely. When retrieved context is provided, base your answer on it and say when it does not contain the answer.";
+// The prompt text lives in its own self-contained module (PR #142 review
+// F-004: the browser app keeps a byte-identical twin with a drift test).
+// Re-exported here so existing imports keep working.
+export { EXTERNAL_SYSTEM_PROMPT } from './external-prompts.js';
 export const ANTHROPIC_VERSION = '2023-06-01';
 /** The Messages API requires max_tokens. */
 export const DEFAULT_EXTERNAL_MAX_TOKENS = 1024;
 const MAX_HISTORY_TURNS = 12;
+/** PR #142 review F-002: aggregate deadline for one connection test (all pages). */
+export const PROBE_TOTAL_TIMEOUT_MS = 30_000;
+/** Upstream error text shown in a message (scrubbed first, then cut). */
+const UPSTREAM_TEXT_CHARS = 300;
 const MAX_HISTORY_CHARS = 4000;
 
 export interface ExternalEndpointConfig {
@@ -73,9 +87,9 @@ export function originOf(raw: string): string {
 /** The user turn: the question, prefixed by the retrieved passages when grounded. */
 export function groundedUserContent(question: string, contextTexts: string[] | null): string {
   if (contextTexts === null || contextTexts.length === 0) return question;
-  return `Answer the question using the retrieved context when relevant.\n\n${contextTexts
+  return `${EXTERNAL_GROUNDED_INSTRUCTION}\n\n${contextTexts
     .map((text, index) => `[${index + 1}] ${text}`)
-    .join('\n\n')}\n\n\nQuestion: ${question}`;
+    .join('\n\n')}\n\n\n${EXTERNAL_GROUNDED_QUESTION_LABEL}${question}`;
 }
 
 /** Contract history ({role, content}) -> bounded user/assistant turns. */
@@ -195,7 +209,10 @@ function anthropicFrameError(
   error: { type?: unknown; message?: unknown } | undefined,
 ): ExternalProviderError {
   const type = typeof error?.type === 'string' ? error.type : '';
-  const message = scrubSecrets(typeof error?.message === 'string' ? error.message : 'the endpoint reported a stream error', ctx.apiKey);
+  const message = scrubSecrets(typeof error?.message === 'string' ? error.message : 'the endpoint reported a stream error', ctx.apiKey).slice(
+    0,
+    UPSTREAM_TEXT_CHARS,
+  );
   if (type === 'authentication_error' || type === 'permission_error') {
     return new ExternalProviderError('auth', `Authentication failed: ${ctx.origin} rejected the API key (${message}). Check the API key in Settings → External model.`);
   }
@@ -236,15 +253,26 @@ export async function generateExternal(input: ExternalGenerateInput): Promise<{ 
     throw err;
   }
   let answer = '';
+  /** UTF-8 bytes of `answer`, counted per delta (never re-measured whole). */
+  let answerBytes = 0;
   const emit = (text: string): void => {
+    // PR #142 closeout F-003: the accumulated answer is capped in bytes. The
+    // check runs BEFORE the delta is kept or streamed, so what the user saw
+    // stays at most the cap; the throw aborts the request (finally below).
+    const bytes = Buffer.byteLength(text);
+    if (answerBytes + bytes > MAX_STREAMED_ANSWER_BYTES) {
+      throw oversizeError(ctx, 'an answer', MAX_STREAMED_ANSWER_BYTES);
+    }
+    answerBytes += bytes;
     answer += text;
     input.streamCallback?.(text);
   };
   try {
     const contentType = String(response.headers['content-type'] ?? '');
     if (config.protocol === 'openai' && contentType.includes('application/json')) {
-      // A server that ignored stream:true answers with one JSON completion.
-      const raw = await response.text();
+      // A server that ignored stream:true answers with one JSON completion
+      // (byte-capped before JSON.parse, PR #142 review F-003).
+      const raw = await response.text(MAX_COMPLETION_BODY_BYTES, 'a completion body');
       let frame: { choices?: Array<{ message?: { content?: unknown } }>; error?: unknown };
       try {
         frame = JSON.parse(raw) as typeof frame;
@@ -257,6 +285,8 @@ export async function generateExternal(input: ExternalGenerateInput): Promise<{ 
       let buffer = '';
       let event = '';
       let data: string[] = [];
+      /** Bytes of the pending Anthropic frame's data lines (capped, F-003). */
+      let dataBytes = 0;
       let stop = false;
       const flushAnthropicFrame = (): void => {
         if (data.length === 0 && event === '') return;
@@ -264,6 +294,7 @@ export async function generateExternal(input: ExternalGenerateInput): Promise<{ 
         const name = event;
         event = '';
         data = [];
+        dataBytes = 0;
         if (payload === '') {
           if (name === 'error') throw anthropicFrameError(ctx, undefined);
           return;
@@ -286,7 +317,10 @@ export async function generateExternal(input: ExternalGenerateInput): Promise<{ 
         if (config.protocol === 'openai') {
           const parsed = openAILine(line);
           if (parsed.error !== undefined) {
-            throw new ExternalProviderError('server', `The endpoint ${ctx.origin} reported an error: ${scrubSecrets(parsed.error, ctx.apiKey)}`);
+            throw new ExternalProviderError(
+              'server',
+              `The endpoint ${ctx.origin} reported an error: ${scrubSecrets(parsed.error, ctx.apiKey).slice(0, UPSTREAM_TEXT_CHARS)}`,
+            );
           }
           for (const delta of parsed.deltas) emit(delta);
           if (parsed.done) stop = true;
@@ -302,14 +336,28 @@ export async function generateExternal(input: ExternalGenerateInput): Promise<{ 
         let value = colon === -1 ? '' : line.slice(colon + 1);
         if (value.startsWith(' ')) value = value.slice(1);
         if (field === 'event') event = value;
-        else if (field === 'data') data.push(value);
+        else if (field === 'data') {
+          dataBytes += Buffer.byteLength(value) + 1;
+          if (dataBytes > MAX_SSE_LINE_BYTES) throw oversizeError(ctx, 'a stream frame', MAX_SSE_LINE_BYTES);
+          data.push(value);
+        }
+      };
+      // PR #142 review F-003: no line (complete or pending) may exceed
+      // MAX_SSE_LINE_BYTES, so neither the line buffer nor a JSON.parse input
+      // grows without bound; the throw aborts the request (finally below).
+      const checkLine = (line: string): void => {
+        if (line.length > MAX_SSE_LINE_BYTES / 4 && Buffer.byteLength(line) > MAX_SSE_LINE_BYTES) {
+          throw oversizeError(ctx, 'a stream line', MAX_SSE_LINE_BYTES);
+        }
       };
       for await (const chunk of response.chunks()) {
         if (isCancelled()) break;
         buffer += chunk;
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
+        checkLine(buffer);
         for (const line of lines) {
+          checkLine(line);
           handleLine(line);
           if (stop) break;
         }
@@ -333,17 +381,64 @@ export async function generateExternal(input: ExternalGenerateInput): Promise<{ 
   return { answer, cancelled: false };
 }
 
-/** List model ids (connection test): OpenAI data[].id, or Anthropic pages via has_more/after_id. */
+/**
+ * List model ids (connection test): OpenAI data[].id, or Anthropic pages via
+ * has_more/after_id.
+ *
+ * PR #142 review F-002: the WHOLE listing (every page, every byte) runs under
+ * one aggregate deadline (`totalTimeoutMs`, default PROBE_TOTAL_TIMEOUT_MS):
+ * the per-request first-byte/idle timers re-arm on every chunk, so they alone
+ * never bound a slow-drip endpoint. Past the deadline the in-flight request is
+ * aborted and the listing rejects with a 'timeout' error. `signal` (the
+ * client disconnected) aborts the in-flight request and rejects with
+ * RequestCancelledError. The listing's bodies share ONE MAX_MODEL_LIST_BYTES
+ * budget across every page (F-003; the browser app counts the same way), so
+ * pagination cannot multiply it; each body is capped before JSON.parse.
+ */
 export async function listExternalModels(input: {
   config: ExternalEndpointConfig;
   airgap: boolean;
   lookup?: DnsLookup;
   timeoutMs?: number;
+  totalTimeoutMs?: number;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const { config } = input;
   const ctx: FailureContext = { origin: originOf(config.baseUrl), model: config.model, apiKey: config.apiKey };
   const timeoutMs = input.timeoutMs ?? 15_000;
+  const totalMs = input.totalTimeoutMs ?? PROBE_TOTAL_TIMEOUT_MS;
+  const budget = new AbortController();
+  let expired = false;
+  const deadline = setTimeout(() => {
+    expired = true;
+    budget.abort();
+  }, totalMs);
+  const onCallerAbort = (): void => budget.abort();
+  if (input.signal?.aborted === true) budget.abort();
+  else input.signal?.addEventListener('abort', onCallerAbort);
+  try {
+    return await listModelPages(input, ctx, timeoutMs, budget.signal);
+  } catch (err) {
+    if (expired) throw timeoutError(ctx, totalMs, 'total');
+    if (budget.signal.aborted) throw new RequestCancelledError();
+    throw err;
+  } finally {
+    clearTimeout(deadline);
+    input.signal?.removeEventListener('abort', onCallerAbort);
+  }
+}
+
+async function listModelPages(
+  input: { config: ExternalEndpointConfig; airgap: boolean; lookup?: DnsLookup },
+  ctx: FailureContext,
+  timeoutMs: number,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const { config } = input;
+  /** Body bytes already spent from the listing-wide MAX_MODEL_LIST_BYTES budget. */
+  let listedBytes = 0;
   const fetchJson = async (url: string, headers: Record<string, string>): Promise<Record<string, unknown>> => {
+    if (signal.aborted) throw new RequestCancelledError();
     const response = await guardedRequest({
       url,
       method: 'GET',
@@ -353,14 +448,18 @@ export async function listExternalModels(input: {
       lookup: input.lookup,
       firstByteTimeoutMs: timeoutMs,
       idleTimeoutMs: timeoutMs,
+      signal,
     });
     try {
-      const raw = await response.text();
+      const raw = await response.text(MAX_MODEL_LIST_BYTES - listedBytes, 'a model list', MAX_MODEL_LIST_BYTES);
+      listedBytes += Buffer.byteLength(raw);
+      // An abort ends the body quietly; never parse a truncated page.
+      if (signal.aborted) throw new RequestCancelledError();
       const parsed: unknown = JSON.parse(raw);
       if (typeof parsed !== 'object' || parsed === null) throw new Error('not an object');
       return parsed as Record<string, unknown>;
     } catch (err) {
-      if (err instanceof ExternalProviderError) throw err;
+      if (err instanceof ExternalProviderError || err instanceof RequestCancelledError) throw err;
       throw new ExternalProviderError('server', `${ctx.origin} did not return a JSON model list.`);
     } finally {
       response.abort();

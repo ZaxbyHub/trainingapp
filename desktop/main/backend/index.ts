@@ -17,7 +17,7 @@ import { createLoopbackGuard } from '../security/loopback-guard.js';
 import { DEFAULT_ALLOWED_ORIGINS, DEV_ORIGINS_ENV } from '../security/defaults.js';
 import { resolveNodeEngine } from './inference/llama-engine.js';
 import { SidecarManager } from './sidecar-manager.js';
-import { createBackendServer, listenOnRandomPort, rollBackUnsavedSettings } from './server.js';
+import { commitSettingsChange, createBackendServer, listenOnRandomPort } from './server.js';
 import { closeStore, openStore, type StoreHandle } from './store/sqlite-store.js';
 import { checkStoreIntegrity, recoverStore } from './store/recovery.js';
 import { createBackup } from './store/backup.js';
@@ -348,11 +348,16 @@ export class NodeBackendHost implements BackendHost {
       persistSettings = (patch, removeKeys = []) => {
         // Adopt the merged patch ONLY after the disk write succeeds, so a
         // failed save leaves `storedPatch` equal to the sidecar on disk. The
-        // ENGINE already holds the change at this point: every caller (the
-        // PUT /settings route and applyEngineSettings below) captures the
-        // engine's settings state first and restores it when this throws
-        // (PR #140 review FB140-001), so engine memory cannot drift from
-        // the sidecar either.
+        // ENGINE already holds the change at this point: every caller goes
+        // through commitSettingsChange (server.ts), which captured the
+        // engine's settings state first — incl. external.* and the
+        // SecretStore entries (PR #142 RB-001) — and restores it when this
+        // throws (PR #140 review FB140-001). external.json is written before
+        // this file and is re-written from the restored engine if this
+        // write fails. The one gap left: when a compensating write (the
+        // SecretStore or external.json) fails too, memory and disk can
+        // differ — the 500 detail then names what could not be undone
+        // instead of claiming that nothing changed.
         // universal-provider-settings-overhaul: settings.json NEVER carries
         // external.* (above all external.apiKey, which lives only in the
         // SecretStore) whichever caller hands a patch in; those keys persist
@@ -383,21 +388,18 @@ export class NodeBackendHost implements BackendHost {
     // sidecar persistence — exposed to the bootstrap IPC layer as an own
     // property (getFirstRunPackTools precedent; prototypes stay start/stop).
     this.applyEngineSettings = (patch: Record<string, unknown>) => {
-      const before = this.engine.captureSettingsState?.();
-      const applied = this.engine.applySettingsPatch(patch);
-      if (!applied.ok) return applied;
-      try {
-        // external.json first, settings.json last: the rollback below restores
-        // only the settings.json-backed state (same order as PUT /settings).
-        if (Object.keys(patch).some((key) => key.startsWith('external.'))) {
-          const snapshot = this.engine.externalSnapshot?.();
-          if (snapshot !== undefined) persistExternal?.(snapshot);
-        }
-        persistSettings?.(patch);
-      } catch (err) {
-        return { ok: false as const, status: 500 as const, detail: rollBackUnsavedSettings(this.engine, before, 'change', err) };
-      }
-      return applied;
+      // Same all-or-nothing commit as PUT /settings: external.json first,
+      // settings.json last; any failure restores the engine (incl. external.*
+      // and the SecretStore) and re-writes an already-written external.json.
+      const engine = this.engine;
+      const touchesExternal = Object.keys(patch).some((key) => key.startsWith('external.'));
+      const result = commitSettingsChange(engine, 'change', () => engine.applySettingsPatch(patch), {
+        ...(persistExternal !== undefined && touchesExternal && typeof engine.externalSnapshot === 'function'
+          ? { external: () => persistExternal?.(engine.externalSnapshot?.() ?? {}) }
+          : {}),
+        ...(persistSettings !== undefined ? { settings: () => persistSettings?.(patch) } : {}),
+      });
+      return result;
     };
     const server = createBackendServer({
       guard: createLoopbackGuard({

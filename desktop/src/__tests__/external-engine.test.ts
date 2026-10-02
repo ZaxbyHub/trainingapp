@@ -383,9 +383,13 @@ describe('POST /settings/external/test (connection probe)', () => {
       engine.probeExternal({ protocol: 'openai', baseUrl: hang.base, model: 'm1' }),
       new Promise((resolve) => setTimeout(() => resolve('test-timeout'), 20_000)),
     ]);
+    const elapsed = Date.now() - started;
     expect(result).not.toBe('test-timeout');
     expect(result).toMatchObject({ ok: false, kind: 'timeout' });
-    expect(Date.now() - started).toBeLessThan(20_000);
+    // PR #142 review F-016: a lower bound too — the probe's 15 s first-byte
+    // timer actually ran, so a probe that answered at once cannot pass.
+    expect(elapsed).toBeGreaterThanOrEqual(14_500);
+    expect(elapsed).toBeLessThan(20_000);
   }, 30_000);
 });
 

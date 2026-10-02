@@ -48,8 +48,10 @@ import {
   isHeaderSafeValue,
   UNSENDABLE_KEY_MESSAGE,
   type ExternalProviderOptions,
+  type ExternalProviderSettingsState,
 } from './external-provider.js';
 import { generateExternal, listExternalModels, originOf } from './external-generator.js';
+import { RequestCancelledError } from '../net/guarded-request.js';
 import { ExternalProviderError, scrubSecrets } from '../net/provider-error.js';
 import { validateEndpointUrl } from '../../security/endpoint-policy.js';
 import {
@@ -318,6 +320,8 @@ export interface LlamaSettingsState {
   readonly threadsSetting: number | undefined;
   readonly vulkanSetting: boolean | undefined;
   readonly stickyAuto: InferenceProfileName | null;
+  /** PR #142 rebase RB-001: external.* values, the session key and the SecretStore entries. */
+  readonly external: ExternalProviderSettingsState;
 }
 
 export class LlamaEngine implements EngineSurface {
@@ -712,8 +716,15 @@ export class LlamaEngine implements EngineSurface {
    * key in the body (never persisted) is used for this probe; otherwise the
    * stored key ONLY when the draft URL's origin equals the key's bound origin;
    * otherwise no key is sent. Persists nothing.
+   *
+   * PR #142 review F-002: the whole test runs under one aggregate deadline
+   * (listExternalModels), and `opts.signal` (the route aborts it when the
+   * client disconnects) aborts the upstream request.
    */
-  async probeExternal(body: Record<string, unknown>): Promise<{ ok: boolean; kind?: string; message: string; models: string[] }> {
+  async probeExternal(
+    body: Record<string, unknown>,
+    opts: { signal?: AbortSignal } = {},
+  ): Promise<{ ok: boolean; kind?: string; message: string; models: string[] }> {
     const protocol = body.protocol === 'anthropic' ? 'anthropic' : body.protocol === 'openai' ? 'openai' : null;
     const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
     const model = typeof body.model === 'string' ? body.model.trim() : '';
@@ -730,8 +741,13 @@ export class LlamaEngine implements EngineSurface {
         config: { protocol, baseUrl, model, apiKey },
         airgap: this.external.airgap(),
         lookup: this.external.lookup,
+        ...(this.external.probeTimeoutMs !== undefined ? { totalTimeoutMs: this.external.probeTimeoutMs } : {}),
+        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
       });
     } catch (err) {
+      if (err instanceof RequestCancelledError) {
+        return { ok: false, kind: 'other', message: 'The connection test was cancelled.', models: [] };
+      }
       if (err instanceof ExternalProviderError) {
         return { ok: false, kind: err.kind, message: scrubSecrets(err.message, apiKey), models: [] };
       }
@@ -886,6 +902,10 @@ export class LlamaEngine implements EngineSurface {
    * inference.* fields and the sticky AUTO latch an inference.profile /
    * profileThresholdGb patch clears. Resident-model and load state are not
    * settings and are never touched.
+   *
+   * PR #142 rebase RB-001: also the external.* state — the non-secret values,
+   * the session-only key, and the two SecretStore entries — so a failed save
+   * that touched external.* (above all external.apiKey) is undone too.
    */
   captureSettingsState(): LlamaSettingsState {
     return {
@@ -895,9 +915,16 @@ export class LlamaEngine implements EngineSurface {
       threadsSetting: this.threadsSetting,
       vulkanSetting: this.vulkanSetting,
       stickyAuto: this.stickyAuto,
+      external: this.external.captureState(),
     };
   }
 
+  /**
+   * Restore a captureSettingsState() snapshot. Every in-memory value is
+   * restored first; the SecretStore entries are then written back where they
+   * differ, which THROWS when that write fails (the caller must then not
+   * claim that nothing changed — see rollBackUnsavedSettings).
+   */
   restoreSettingsState(snapshot: LlamaSettingsState): void {
     this.stub.restoreSettingsState(snapshot.stub);
     this.profileSetting = snapshot.profileSetting;
@@ -905,6 +932,7 @@ export class LlamaEngine implements EngineSurface {
     this.threadsSetting = snapshot.threadsSetting;
     this.vulkanSetting = snapshot.vulkanSetting;
     this.stickyAuto = snapshot.stickyAuto;
+    this.external.restoreState(snapshot.external);
   }
 
   /**

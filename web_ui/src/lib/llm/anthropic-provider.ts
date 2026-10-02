@@ -25,9 +25,18 @@ import type {
   LLMProgress,
   LLMService,
 } from '../../types/llm';
-import { openRequest, readBodyBounded, readLines, readSseFrames, type TransportOptions } from './external-http';
+import {
+  MAX_MODEL_LIST_BYTES,
+  MAX_STREAMED_ANSWER_BYTES,
+  openRequest,
+  readBodyBounded,
+  readLines,
+  readSseFrames,
+  utf8ByteLength,
+  type TransportOptions,
+} from './external-http';
 import { FIRST_BYTE_TIMEOUT_MS, resolveEndpoint } from './openai-provider';
-import { ProviderError, authError, modelError, scrubSecrets, type FailureContext } from './provider-error';
+import { ProviderError, authError, modelError, responseTooLargeError, scrubSecrets, type FailureContext } from './provider-error';
 
 export const ANTHROPIC_VERSION = '2023-06-01';
 /** The Messages API requires max_tokens; used when the caller passes none. */
@@ -171,8 +180,10 @@ export class AnthropicCompatChatService implements LLMService {
       );
       if (opened === null) return;
       let text = '';
+      /** UTF-8 bytes of `text`, counted per delta (never re-measured whole). */
+      let textBytes = 0;
       const lines = readLines(opened.response, { ...transport, isCancelled: () => controller.signal.aborted });
-      for await (const frame of readSseFrames(lines)) {
+      for await (const frame of readSseFrames(lines, { ctx })) {
         if (frame.data === '' && frame.event !== 'error') continue;
         let data: { type?: string; delta?: { type?: string; text?: unknown }; error?: { type?: unknown; message?: unknown } } = {};
         try {
@@ -184,6 +195,14 @@ export class AnthropicCompatChatService implements LLMService {
         if (frame.event === 'error' || data.type === 'error') throw anthropicStreamError(ctx, data.error);
         if (data.type === 'content_block_delta' && data.delta?.type === 'text_delta' && typeof data.delta.text === 'string') {
           if (data.delta.text === '') continue;
+          // PR #142 closeout F-003: cap the whole answer in bytes, checked
+          // BEFORE the delta is kept or yielded (what was shown stays shown);
+          // the throw aborts the request (finally below).
+          const deltaBytes = utf8ByteLength(data.delta.text);
+          if (textBytes + deltaBytes > MAX_STREAMED_ANSWER_BYTES) {
+            throw responseTooLargeError(ctx, 'an answer', MAX_STREAMED_ANSWER_BYTES);
+          }
+          textBytes += deltaBytes;
           text += data.delta.text;
           yield data.delta.text;
         }
@@ -239,7 +258,9 @@ export class AnthropicCompatChatService implements LLMService {
  * List model ids from an Anthropic-compatible endpoint: GET {root}/v1/models,
  * following `has_more` with `after_id=<last_id>` (the Anthropic headers ride
  * every page). Stops on a stuck or missing cursor and after MAX_MODEL_PAGES.
- * Rejects with a classified ProviderError on any non-2xx page.
+ * Rejects with a classified ProviderError on any non-2xx page. All pages
+ * together share ONE MAX_MODEL_LIST_BYTES budget (F-003): a server paging
+ * forever cannot make the browser buffer 50 full-size pages.
  */
 export async function listAnthropicModels(
   cfg: { baseUrl: string; apiKey?: string },
@@ -251,6 +272,7 @@ export async function listAnthropicModels(
   const ids: string[] = [];
   const seenCursors = new Set<string>();
   let afterId: string | null = null;
+  let budget = MAX_MODEL_LIST_BYTES;
   for (let page = 0; page < MAX_MODEL_PAGES; page += 1) {
     const url = new URL(`${base}/v1/models`);
     url.searchParams.set('limit', '1000');
@@ -259,7 +281,12 @@ export async function listAnthropicModels(
     if (opened === null) throw new ProviderError('other', 'Model listing was cancelled.');
     let parsed: { data?: Array<{ id?: unknown }>; has_more?: unknown; last_id?: unknown };
     try {
-      const raw = await readBodyBounded(opened.response, transport);
+      const raw = await readBodyBounded(opened.response, transport, {
+        maxBytes: budget,
+        what: 'a model list',
+        namedLimitBytes: MAX_MODEL_LIST_BYTES,
+      });
+      budget -= utf8ByteLength(raw);
       parsed = JSON.parse(raw) as typeof parsed;
     } catch (err) {
       if (err instanceof ProviderError) throw err;

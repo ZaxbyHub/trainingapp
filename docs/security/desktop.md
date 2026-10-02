@@ -66,6 +66,21 @@ gating) has its own threat model in `docs/security/packs.md` (#75).
     `setWindowOpenHandler` denies every `window.open` (C3 spec).
   - COOP/COEP/CORP on every response (same discipline as `start.ps1`), which
     also enables cross-origin isolation for multithreaded WASM.
+- **Residual risk (renderer-directed repointing of the external endpoint):**
+  the CSP limits the renderer's own network access to loopback, so the
+  guarded backend is its only egress path, but the CSP does not stop the
+  renderer from asking the backend to send somewhere else. `PUT /settings`
+  needs only the launch token, so a compromised renderer could set
+  `external.baseUrl` to an endpoint it controls, enable external mode and
+  send retrieved document text there through `/ask` (keylessly; no auth header
+  is sent without a bound key), or bind a freshly typed key to an origin it
+  chose via a same-patch `{baseUrl, apiKey}`. The endpoint URL policy and
+  the guarded client still apply to the chosen URL, and an already stored key
+  is not sent to a different origin. Likelihood is low: no
+  `dangerouslySetInnerHTML` in the shipped bundle, react-markdown with an
+  allowlisted URL transform, and deny-all navigation/window handlers. Accepted
+  and documented in ADR-0011; strict CSP is not an exfiltration control for
+  this path.
 
 ### LAN exposure
 - **Threat:** the backend (or the transport) is reachable from other machines.

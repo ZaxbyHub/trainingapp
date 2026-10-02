@@ -28,7 +28,13 @@ afterEach(() => {
 
 for (const file of ['endpoint-policy-vectors.json', 'endpoint-policy-vectors.supplemental.json']) {
   describe(`desktop endpoint policy vs ${file}`, () => {
-    for (const c of load(file)) {
+    const cases = load(file);
+    // PR #142 review F-017: non-vacuity guard (the web twin has the same) —
+    // an empty or truncated vector file must fail, not pass with zero rows.
+    it('vector file is non-trivial', () => {
+      expect(cases.length).toBeGreaterThan(30);
+    });
+    for (const c of cases) {
       it(`${c.airgap ? '[airgap] ' : ''}${JSON.stringify(c.url)}`, () => {
         const v = validateEndpointUrl(c.url, { airgap: c.airgap === true });
         if (c.ok) {

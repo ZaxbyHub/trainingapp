@@ -25,6 +25,17 @@
 // the bound origin re-enables it.
 // When the store cannot encrypt (set() throws), the key is kept in process
 // memory for this session only (apiKeyPersisted:false) — never in a file.
+// Rollback (PR #142 rebase RB-001): captureState()/restoreState() cover the
+// values, the session key AND the two SecretStore entries, so a settings save
+// that fails after the key was written or deleted is undone. A SecretStore
+// delete that fails is surfaced (thrown), never swallowed (F-014): the caller
+// rolls back and answers 500 instead of reporting a key as cleared while it
+// is still on disk.
+// Binding integrity (PR #142 Stage B RB-001): saving a key deletes the old
+// key, then writes the origin, then writes the key, so no sequence of partial
+// failures stores a key next to an origin it was not entered for. If the
+// rollback's own SecretStore write fails, the stored key is not used at all
+// (fail closed) until a key is saved or cleared successfully.
 import { validateEndpointUrl } from '../../security/endpoint-policy.js';
 import type { SecretStore } from '../../security/secret-store.js';
 import type { DnsLookup } from '../net/guarded-request.js';
@@ -51,6 +62,8 @@ export interface ExternalProviderOptions {
   airgap?: boolean;
   firstByteTimeoutMs?: number;
   idleTimeoutMs?: number;
+  /** Aggregate deadline of one connection test (default PROBE_TOTAL_TIMEOUT_MS). */
+  probeTimeoutMs?: number;
 }
 
 /** Non-secret persisted snapshot (<profileDir>/external.json). */
@@ -68,6 +81,18 @@ interface Values {
   baseUrl: string;
   model: string;
   grounded: boolean;
+}
+
+/**
+ * ExternalProviderState.captureState() snapshot (PR #142 rebase RB-001). It
+ * holds the plaintext key while a settings request is in flight (the
+ * SecretStore already caches it in memory); it is never serialized.
+ */
+export interface ExternalProviderSettingsState {
+  readonly values: Readonly<Values>;
+  readonly sessionKey: { readonly key: string; readonly origin: string | null } | null;
+  /** The SecretStore entries; null when the store could not be read (restore then leaves it alone). */
+  readonly secrets: { readonly key: string | null; readonly origin: string | null } | null;
 }
 
 const MAX_MODEL_CHARS = 512;
@@ -121,8 +146,16 @@ export class ExternalProviderState {
   readonly lookup: DnsLookup | undefined;
   readonly firstByteTimeoutMs: number | undefined;
   readonly idleTimeoutMs: number | undefined;
+  readonly probeTimeoutMs: number | undefined;
   /** Session-only key + origin when secure storage refused (never written to disk). */
   private sessionKey: { key: string; origin: string | null } | null = null;
+  /**
+   * True after restoreState() failed to write the SecretStore back (Stage B
+   * RB-001): the stored key and origin may not be one consistent pair, so the
+   * stored key is not used until saveKey()/clearKey() succeeds. Deliberately
+   * outside captureState()/restoreState(): a snapshot never clears it.
+   */
+  private storeUntrusted = false;
 
   constructor(options: ExternalProviderOptions = {}) {
     this.store = options.secretStore ?? memoryStore();
@@ -130,6 +163,7 @@ export class ExternalProviderState {
     this.lookup = options.lookup;
     this.firstByteTimeoutMs = options.firstByteTimeoutMs;
     this.idleTimeoutMs = options.idleTimeoutMs;
+    this.probeTimeoutMs = options.probeTimeoutMs;
   }
 
   /** Airgap: the configured flag, tightened (never loosened) by TRAININGAPP_AIRGAP=1 at call time. */
@@ -204,7 +238,12 @@ export class ExternalProviderState {
     return errors;
   }
 
-  /** Commit an already-validated patch. Never throws (secret-store failures degrade to session-only). */
+  /**
+   * Commit an already-validated patch. A key the store cannot encrypt
+   * degrades to session-only; a SecretStore delete that fails (clearing the
+   * key, or removing an older key behind a session-only one) THROWS — the
+   * caller restores a captureState() snapshot and reports the failure.
+   */
   commit(patch: Record<string, unknown>): void {
     if (typeof patch['external.enabled'] === 'boolean') this.values.enabled = patch['external.enabled'];
     if (patch['external.protocol'] === 'openai' || patch['external.protocol'] === 'anthropic') {
@@ -257,6 +296,8 @@ export class ExternalProviderState {
 
   private storedKey(): string | null {
     if (this.sessionKey !== null) return this.sessionKey.key;
+    // Fail closed after a rollback whose SecretStore write threw.
+    if (this.storeUntrusted) return null;
     try {
       return this.store.get(EXTERNAL_KEY_SECRET);
     } catch {
@@ -288,35 +329,88 @@ export class ExternalProviderState {
     }
   }
 
+  /**
+   * Store `key` bound to `origin`. Write order (PR #142 Stage B RB-001):
+   * delete the old key, THEN write (or delete) the origin, THEN write the new
+   * key. A failure at any step therefore leaves either no key at all or a
+   * key next to the origin it was entered for — never the new key next to
+   * the old origin (which the old key-first order could leave behind when
+   * the origin write, the fallback delete and the rollback all failed).
+   */
   private saveKey(key: string, origin: string): void {
     this.sessionKey = null;
     try {
-      this.store.set(EXTERNAL_KEY_SECRET, key);
+      this.store.delete(EXTERNAL_KEY_SECRET);
       if (origin !== '') this.store.set(EXTERNAL_KEY_ORIGIN_SECRET, origin);
       else this.store.delete(EXTERNAL_KEY_ORIGIN_SECRET);
+      this.store.set(EXTERNAL_KEY_SECRET, key);
     } catch {
       // Secure storage unavailable: never fall back to plaintext on disk.
-      try {
-        this.store.delete(EXTERNAL_KEY_SECRET);
-        this.store.delete(EXTERNAL_KEY_ORIGIN_SECRET);
-      } catch {
-        /* nothing stored */
-      }
+      // Remove what is stored so an OLDER key cannot resurface at the next
+      // start behind this session-only one. If even that fails, it throws
+      // (F-014): the caller rolls back rather than report a saved key.
+      this.store.delete(EXTERNAL_KEY_SECRET);
+      this.store.delete(EXTERNAL_KEY_ORIGIN_SECRET);
       this.sessionKey = { key, origin: origin === '' ? null : origin };
     }
+    // Both branches above leave the store consistent (a bound pair, or empty).
+    this.storeUntrusted = false;
   }
 
+  /** Delete both entries (key first: no key is ever left bound elsewhere). Throws on a failed delete (F-014). */
   private clearKey(): void {
     this.sessionKey = null;
+    this.store.delete(EXTERNAL_KEY_SECRET);
+    this.store.delete(EXTERNAL_KEY_ORIGIN_SECRET);
+    this.storeUntrusted = false;
+  }
+
+  /** Everything commit()/reset() can change (PR #142 rebase RB-001). */
+  captureState(): ExternalProviderSettingsState {
+    let secrets: ExternalProviderSettingsState['secrets'];
     try {
-      this.store.delete(EXTERNAL_KEY_SECRET);
+      secrets = { key: this.store.get(EXTERNAL_KEY_SECRET), origin: this.store.get(EXTERNAL_KEY_ORIGIN_SECRET) };
     } catch {
-      /* already gone */
+      secrets = null;
     }
+    return {
+      values: { ...this.values },
+      // Copied: bindOrigin() mutates the live session key in place.
+      sessionKey: this.sessionKey === null ? null : { ...this.sessionKey },
+      secrets,
+    };
+  }
+
+  /**
+   * Restore a captureState() snapshot: the values and the session key in
+   * memory first (never fails), then the SecretStore entries that differ.
+   * Write order never leaves a key bound to an origin it was not saved for:
+   * a changed key is deleted first, then the origin is restored, then the
+   * old key. Throws when a SecretStore write fails.
+   *
+   * Fail closed (Stage B RB-001): when a write here throws, the stored
+   * entries are no longer known to be one consistent pair, so the stored key
+   * is not used (keyFor() answers null) until a later saveKey()/clearKey()
+   * succeeds. A restored session-only key is unaffected (memory, not store).
+   */
+  restoreState(snapshot: ExternalProviderSettingsState): void {
+    this.values = { ...snapshot.values };
+    this.sessionKey = snapshot.sessionKey === null ? null : { ...snapshot.sessionKey };
+    const want = snapshot.secrets;
+    if (want === null) return;
     try {
-      this.store.delete(EXTERNAL_KEY_ORIGIN_SECRET);
-    } catch {
-      /* already gone */
+      const currentKey = this.store.get(EXTERNAL_KEY_SECRET);
+      const currentOrigin = this.store.get(EXTERNAL_KEY_ORIGIN_SECRET);
+      const keyDiffers = currentKey !== want.key;
+      if (keyDiffers && currentKey !== null) this.store.delete(EXTERNAL_KEY_SECRET);
+      if (currentOrigin !== want.origin) {
+        if (want.origin === null) this.store.delete(EXTERNAL_KEY_ORIGIN_SECRET);
+        else this.store.set(EXTERNAL_KEY_ORIGIN_SECRET, want.origin);
+      }
+      if (keyDiffers && want.key !== null) this.store.set(EXTERNAL_KEY_SECRET, want.key);
+    } catch (err) {
+      this.storeUntrusted = true;
+      throw err;
     }
   }
 

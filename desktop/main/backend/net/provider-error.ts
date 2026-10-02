@@ -18,15 +18,146 @@ export class ExternalProviderError extends Error {
   }
 }
 
-/** Remove the key (and anything shaped like a provider key) from text. */
+/** Echoes of at least this many consecutive key characters are redacted (mid-key echoes). */
+export const SCRUB_MIN_ECHO_CHARS = 12;
+
+const NAMED_ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
+
+/** Lower-case one UTF-16 unit, keeping it one unit (case-insensitive matching). */
+function foldUnit(unit: string): string {
+  const lower = unit.toLowerCase();
+  return lower.length === 1 ? lower : unit;
+}
+
+interface ScrubView {
+  /** One UTF-16 unit per entry of `starts`/`ends` (string index = unit index). */
+  hay: string;
+  /** [start, end) of the original text each unit came from. */
+  starts: number[];
+  ends: number[];
+}
+
+/**
+ * A case-folded view of `text` for matching. With `decode`, the encodings an
+ * upstream may echo a key in are folded back to the character they encode:
+ * percent-encoding (encodeURIComponent, incl. the 2-byte UTF-8 form of
+ * Latin-1 characters) and HTML character references (&amp; &lt; &gt; &quot;
+ * &apos;, decimal &#NN; and hex &#xHH;). Without it, the view is the text
+ * itself (so a key that literally contains "%41" or "&amp;" still matches).
+ */
+function scrubView(text: string, decode: boolean): ScrubView {
+  let hay = '';
+  const starts: number[] = [];
+  const ends: number[] = [];
+  const push = (unit: string, start: number, end: number): void => {
+    hay += foldUnit(unit);
+    starts.push(start);
+    ends.push(end);
+  };
+  const hexByte = (at: number): number | null => {
+    if (text[at] !== '%') return null;
+    const pair = text.slice(at + 1, at + 3);
+    return /^[0-9a-fA-F]{2}$/.test(pair) ? Number.parseInt(pair, 16) : null;
+  };
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i] as string;
+    if (decode && ch === '%') {
+      const b1 = hexByte(i);
+      if (b1 !== null && b1 < 0x80) {
+        push(String.fromCharCode(b1), i, i + 3);
+        i += 3;
+        continue;
+      }
+      const b2 = b1 !== null && b1 >= 0xc2 && b1 <= 0xdf ? hexByte(i + 3) : null;
+      if (b1 !== null && b2 !== null && b2 >= 0x80 && b2 <= 0xbf) {
+        push(String.fromCharCode(((b1 & 0x1f) << 6) | (b2 & 0x3f)), i, i + 6);
+        i += 6;
+        continue;
+      }
+    } else if (decode && ch === '&') {
+      const match = /^&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|([a-zA-Z]{2,4}));/.exec(text.slice(i, i + 12));
+      if (match !== null) {
+        let decoded: string | null = null;
+        if (match[1] !== undefined || match[2] !== undefined) {
+          const code = match[1] !== undefined ? Number.parseInt(match[1], 10) : Number.parseInt(match[2] as string, 16);
+          if (code > 0 && code <= 0xffff) decoded = String.fromCharCode(code);
+        } else {
+          decoded = NAMED_ENTITIES[(match[3] as string).toLowerCase()] ?? null;
+        }
+        if (decoded !== null) {
+          push(decoded, i, i + match[0].length);
+          i += match[0].length;
+          continue;
+        }
+      }
+    }
+    push(ch, i, i + 1);
+    i += 1;
+  }
+  return { hay, starts, ends };
+}
+
+/** Mark (in `marked`, indexed by original offset) every echo of the key found in `view`. */
+function markEchoes(view: ScrubView, needleKey: string, marked: Uint8Array): void {
+  const { hay } = view;
+  const markUnits = (from: number, to: number): void => {
+    marked.fill(1, view.starts[from] as number, view.ends[to - 1] as number);
+  };
+  const markAll = (needle: string): void => {
+    if (needle.length === 0) return;
+    for (let at = hay.indexOf(needle); at !== -1; at = hay.indexOf(needle, at + 1)) markUnits(at, at + needle.length);
+  };
+  // The whole key, and (>= 8 chars) its first and last 8 characters.
+  markAll(needleKey);
+  if (needleKey.length >= 8) {
+    markAll(needleKey.slice(0, 8));
+    markAll(needleKey.slice(-8));
+  }
+  // Mid-key echoes: every window of SCRUB_MIN_ECHO_CHARS units that occurs
+  // anywhere in the key marks its span, so the union covers every common run
+  // of at least that length.
+  const w = SCRUB_MIN_ECHO_CHARS;
+  if (needleKey.length < w || hay.length < w) return;
+  const grams = new Set<string>();
+  for (let start = 0; start + w <= needleKey.length; start += 1) grams.add(needleKey.slice(start, start + w));
+  for (let start = 0; start + w <= hay.length; start += 1) {
+    if (grams.has(hay.slice(start, start + w))) markUnits(start, start + w);
+  }
+}
+
+/**
+ * Remove the key (and anything shaped like a provider key) from text.
+ *
+ * PR #142 review F-018: besides the verbatim key, redacts its
+ * encodeURIComponent form, its HTML-escaped forms (named and numeric
+ * character references), case-variant echoes, the first/last 8 characters,
+ * and ANY run of SCRUB_MIN_ECHO_CHARS or more consecutive key characters (a
+ * mid-key echo). The browser twin (web_ui/src/lib/llm/provider-error.ts)
+ * implements the same rules.
+ */
 export function scrubSecrets(text: string, apiKey?: string | null): string {
-  let out = String(text ?? '');
+  const source = String(text ?? '');
   const key = (apiKey ?? '').trim();
-  if (key.length > 0) {
-    out = out.split(key).join('[redacted]');
-    if (key.length >= 8) {
-      out = out.split(key.slice(0, 8)).join('[redacted]');
-      out = out.split(key.slice(-8)).join('[redacted]');
+  let out = source;
+  if (key.length > 0 && source.length > 0) {
+    const needleKey = key.split('').map(foldUnit).join('');
+    const marked = new Uint8Array(source.length);
+    markEchoes(scrubView(source, false), needleKey, marked);
+    markEchoes(scrubView(source, true), needleKey, marked);
+    // Each maximal marked run of the original text becomes one marker.
+    out = '';
+    let i = 0;
+    while (i < source.length) {
+      if (marked[i] !== 1) {
+        let j = i;
+        while (j < source.length && marked[j] !== 1) j += 1;
+        out += source.slice(i, j);
+        i = j;
+        continue;
+      }
+      while (i < source.length && marked[i] === 1) i += 1;
+      out += '[redacted]';
     }
   }
   return out.replace(/\bsk-[A-Za-z0-9_-]{4,}/g, 'sk-[redacted]');
@@ -72,10 +203,17 @@ export function refusedError(ctx: FailureContext, reason: string): ExternalProvi
 export function timeoutError(
   ctx: FailureContext,
   ms: number,
-  phase: 'first-byte' | 'idle' | 'error-body' | 'dns',
+  phase: 'first-byte' | 'idle' | 'error-body' | 'dns' | 'total',
   status?: number,
   hostname?: string,
 ): ExternalProviderError {
+  if (phase === 'total') {
+    // PR #142 review F-002: the connection test's aggregate deadline.
+    return new ExternalProviderError(
+      'timeout',
+      `The endpoint at ${ctx.origin} timed out: the connection test took longer than ${ms}ms in total, so it was stopped. Check that the server is responsive, then test again.`,
+    );
+  }
   if (phase === 'dns') {
     return new ExternalProviderError(
       'timeout',
@@ -92,6 +230,18 @@ export function timeoutError(
     'timeout',
     `The endpoint at ${ctx.origin} timed out: ${what}. The model may still be loading; try again, or check the server.`,
     status,
+  );
+}
+
+/**
+ * PR #142 review F-003: an upstream-controlled body, line or frame exceeded
+ * its byte cap. The request is aborted; kind 'server' (the endpoint sent a
+ * response this app cannot use), the same kind as an unparseable response.
+ */
+export function oversizeError(ctx: FailureContext, what: string, limitBytes: number): ExternalProviderError {
+  return new ExternalProviderError(
+    'server',
+    `The endpoint ${ctx.origin} sent ${what} larger than ${limitBytes} bytes, so the request was stopped. Check the base URL and the server.`,
   );
 }
 
@@ -117,5 +267,7 @@ export function upstreamMessage(raw: string): string {
   } catch {
     /* not JSON */
   }
-  return raw.trim().slice(0, 300);
+  // Callers scrub, THEN cut to 200-300 characters; this bound only keeps the
+  // scrub input small (cutting before scrubbing could split a key).
+  return raw.trim().slice(0, 4096);
 }

@@ -1,5 +1,5 @@
 {
-  "_comment": "Shared AC1 vectors: the browser (web_ui), desktop backend and Python server policy twins must agree on EVERY row. kind is loopback|private|public. rules lists the acceptable rejection rule ids (invalid-url, scheme, userinfo, metadata, link-local, public-requires-https, airgap-public).",
+  "_comment": "Shared AC1 vectors: the browser (web_ui/src/lib/llm/endpoint-policy.ts) and desktop backend (desktop/main/security/endpoint-policy.ts) policy twins must agree on EVERY row; both are asserted row-for-row by web_ui/src/lib/llm/endpoint-policy.test.ts and desktop/src/__tests__/endpoint-policy.test.ts (there is no Python twin). kind is loopback|private|public. rules lists the acceptable rejection rule ids (invalid-url, scheme, userinfo, metadata, link-local, public-requires-https, airgap-public).",
   "cases": [
     { "url": "http://127.0.0.1:1234", "ok": true, "kind": "loopback" },
     { "url": "http://localhost:11434", "ok": true, "kind": "loopback" },
