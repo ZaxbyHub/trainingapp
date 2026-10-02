@@ -125,7 +125,6 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   await expect(option).toHaveCount(1, { timeout: 30_000 });
   await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
   const frame = page.locator('iframe[data-testid="training-player-frame"]');
-  await expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
   const probe = page.frameLocator('iframe[data-testid="training-player-frame"]').locator('#probe');
   await expect(probe).not.toHaveText('', { timeout: 60_000 });
   const r = JSON.parse((await probe.textContent()) ?? '{}') as Record<string, unknown>;
@@ -159,4 +158,6 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   expect(new URL(page.url()).origin).toBe(appOrigin);
   // Forged messages changed nothing the app shows.
   await expect(page.getByTestId('training-player-slide')).not.toContainText('FORGED');
+  // Checked last so the behavioral rows above decide a sandbox regression.
+  await expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
 });
