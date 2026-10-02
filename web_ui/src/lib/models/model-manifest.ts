@@ -196,7 +196,7 @@ const packagedManifest = packagedManifestSource as Manifest;
  * Packaging groups the operator intentionally EXCLUDED from this build, so the
  * runtime readiness gate does not report them as missing. Set at build time via
  * the `VITE_EXCLUDE_MODEL_GROUPS` env var (a comma-separated list of group
- * names from `manifest.json`). For example, an embeddings-only / server-mode
+ * names from `manifest.json`). For example, an embeddings-only
  * archive built with `validate-build --no-llm` sets `VITE_EXCLUDE_MODEL_GROUPS=llm`
  * so `checkPackagedModels()` does not flag the (deliberately absent) browser-LLM
  * runtime + weights as missing — which would otherwise leave the UI permanently

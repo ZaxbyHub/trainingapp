@@ -563,7 +563,7 @@ describe('createRecoveryHandler', () => {
     const handler = createRecoveryHandler(service);
 
     await expect(handler('Tab switched')).rejects.toThrow(
-      'Please switch to server API mode'
+      'Please switch to the wllama engine or an external model server'
     );
   });
 

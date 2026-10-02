@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { THEME_PREFERENCE_KEY } from '../storage/persisted-keys';
 
 export type ThemeMode = 'light' | 'dark';
 
@@ -21,8 +22,6 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-const STORAGE_KEY = 'theme-preference';
-
 function getSystemPreference(): ThemeMode {
   if (typeof window === 'undefined') return 'light';
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -31,7 +30,7 @@ function getSystemPreference(): ThemeMode {
 function getStoredPreference(): ThemeMode | null {
   if (typeof window === 'undefined') return null;
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(THEME_PREFERENCE_KEY);
     if (stored === 'light' || stored === 'dark') return stored;
   } catch {
     // localStorage unavailable (Safari private mode, restricted iframe, quota exceeded)
@@ -82,7 +81,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       // and the app follows future OS-preference changes. Do NOT persist —
       // a stored value here would defeat the entire point of 'system'.
       try {
-        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(THEME_PREFERENCE_KEY);
       } catch {
         // localStorage unavailable; theme still updates in memory
       }
@@ -90,7 +89,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     } else {
       // Explicit preference: persist and apply.
       try {
-        localStorage.setItem(STORAGE_KEY, mode);
+        localStorage.setItem(THEME_PREFERENCE_KEY, mode);
       } catch {
         // localStorage unavailable; theme still updates in memory
       }

@@ -159,6 +159,10 @@ function DesktopBootGate({ children }: { children: ReactNode }) {
 
 function AppContent() {
   const [currentPage, setCurrentPage] = useState('chat');
+  // settings-wiring-honesty (AC10): the Settings section a navigation asked
+  // for (null = top of the page), e.g. the model-blocked overlay's external
+  // model action.
+  const [settingsSection, setSettingsSection] = useState<string | null>(null);
   // D6 (issue #82): lifted training navigation target so a chat-side
   // "Open in training" deep link survives the page switch and is consumed by
   // TrainingPage → TrainingPlayer's initialSlideId auto-jump.
@@ -198,7 +202,13 @@ function AppContent() {
     skip: isElectron(),
   });
 
-  const openSettings = () => setCurrentPage('settings');
+  // settings-wiring-honesty (AC10): an optional section id scrolls Settings to
+  // that section. Callers that bind this directly as an onClick handler pass
+  // a click event, so only a string counts as a section request.
+  const openSettings = (section?: unknown) => {
+    setSettingsSection(typeof section === 'string' ? section : null);
+    setCurrentPage('settings');
+  };
   const goToDocuments = () => setCurrentPage('documents');
   // D6 (issue #82): chat → training deep link ("Open in training").
   const openTraining = (target: { packId?: string; slideId: string }) => {
@@ -287,6 +297,8 @@ function AppContent() {
     if (page !== 'training' && trainingTarget !== null) {
       setTrainingTarget(null);
     }
+    // Sidebar navigation opens Settings at the top, never at a stale section.
+    setSettingsSection(null);
     setCurrentPage(page);
   };
 
@@ -324,7 +336,7 @@ function AppContent() {
       case 'settings':
         return (
           <ErrorBoundary>
-            <SettingsPage />
+            <SettingsPage initialSection={settingsSection ?? undefined} />
           </ErrorBoundary>
         );
       case 'training':

@@ -106,15 +106,33 @@ describe('ModelBlockedOverlay (issue #25 F14)', () => {
   it('traps Tab focus within the dialog (wraps from last to first)', () => {
     renderOverlay();
     const retry = screen.getByRole('button', { name: 'Retry' });
-    const settings = screen.getByRole('button', { name: 'Open Settings' });
+    // settings-wiring-honesty (AC10): the external-model action is now the
+    // last focusable control.
+    const last = screen.getByRole('button', { name: 'Use a local server or cloud model' });
 
-    // Focus starts on Retry (first focusable). Tab should move to Settings.
+    // Focus starts on Retry (first focusable).
     expect(retry).toHaveFocus();
     fireEvent.keyDown(document.body, { key: 'Tab' });
-    // After Tab from the last focusable (Settings), wrap to first (Retry).
-    settings.focus();
+    // After Tab from the last focusable, wrap to first (Retry).
+    last.focus();
     fireEvent.keyDown(document.body, { key: 'Tab' });
     // The wrap should land focus back on the first element.
     expect(document.activeElement).toBe(retry);
+  });
+
+  it('settings-wiring-honesty (AC10): the external-model action opens Settings at the model-connection section', () => {
+    const onOpenSettings = vi.fn();
+    renderOverlay({ onOpenSettings });
+    fireEvent.click(screen.getByRole('button', { name: 'Use a local server or cloud model' }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(onOpenSettings).toHaveBeenCalledWith('model-connection');
+  });
+
+  it('settings-wiring-honesty (AC10): Open Settings still navigates with no section', () => {
+    const onOpenSettings = vi.fn();
+    renderOverlay({ onOpenSettings });
+    fireEvent.click(screen.getByRole('button', { name: 'Open Settings' }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(onOpenSettings.mock.calls[0]).toEqual([]);
   });
 });

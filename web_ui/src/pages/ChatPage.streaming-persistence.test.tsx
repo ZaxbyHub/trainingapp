@@ -80,7 +80,7 @@ vi.mock('../lib/llm/readiness-gate', () => ({
   resetReadinessCache: vi.fn(),
 }));
 
-// Mock auth token getter (server-mode only; harmless in browser-local mode).
+// Mock auth token getter (returns no stored Bearer token; ChatPage itself no longer reads it).
 vi.mock('../lib/api/auth', () => ({
   getToken: vi.fn().mockReturnValue(null),
 }));

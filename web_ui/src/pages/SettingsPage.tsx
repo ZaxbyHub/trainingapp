@@ -1,6 +1,7 @@
 /**
- * Settings page — inference mode, server configuration, browser engine &
- * model cache status, appearance, storage management, and about info.
+ * Settings page — inference mode (desktop backend / external provider
+ * connection), browser engine & model cache status, response quality,
+ * appearance, storage management, and about info.
  *
  * Issue #24 rebuild: the page was almost entirely useless — Clear Cache was a
  * no-op (deleted a nonexistent DB), the Model Selection dropdown was dead
@@ -13,8 +14,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useInferenceMode } from '../lib/inference';
 import { fetchModelStatus, isElectron, useDesktopSession } from '../lib/desktop-session';
+import type { RAGPreset } from '../lib/rag/rag-presets';
 import { fetchFirstRunStatus, resetFirstRun, emitFirstRunReopen } from '../lib/first-run';
-import type { ModelStatus } from '../lib/api/types';
+import type { ModelStatus, SettingsResponse } from '../lib/api/types';
 import { useTheme, type ThemePreference } from '../lib/theme';
 import { ModelDownloadManager, type DownloadProgress } from '../lib/llm/model-download';
 import { ModelReadinessGate } from '../lib/llm/model-readiness';
@@ -30,7 +32,19 @@ import {
   type PackagedModelsReport,
   type PackagedModelKind,
 } from '../lib/models/model-manifest';
-import { RAG_PRESET_LABELS } from '../lib/rag/rag-presets';
+import {
+  DESKTOP_PRESET_KEYS,
+  DESKTOP_PRESET_SETTINGS,
+  RAG_PRESET_LABELS,
+  presetFromBackend,
+  presetIsNResultsOnly,
+  type DesktopPresetState,
+} from '../lib/rag/rag-presets';
+import { clearUserSettings } from '../lib/storage/persisted-keys';
+import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
+// AC8 (settings-wiring-honesty): the single version source is
+// web_ui/package.json (desktop/package.json is kept in lockstep by test).
+import { version as APP_VERSION } from '../../package.json';
 import {
   isProviderConfigured,
   loadProviderConfig,
@@ -263,124 +277,16 @@ function UpdatesSection(): React.ReactElement {
 }
 
 // ============================================================================
-// Settings Store (IndexedDB)
+// Legacy settings store (IndexedDB)
 // ============================================================================
 
-const SETTINGS_DB_NAME = 'doc-qa-settings';
-const SETTINGS_STORE_NAME = 'settings';
-const SETTINGS_KEY = 'user-preferences';
-
 /**
- * Persisted user preferences.
- *
- * Note (issue #24 F5): `theme` and `preferredModel` were removed — theme now
- * lives solely in `localStorage['theme-preference']` (owned by ThemeContext),
- * and `preferredModel` was dead (read by no runtime code; the readiness gate
- * resolves the model id per-engine via `modelIdForEngine`). Old IndexedDB
- * records may still carry these stale fields; they are simply ignored on load.
+ * Pre-settings-wiring-honesty builds kept the browser API-server URL in this
+ * IndexedDB database. The browser app no longer has an API-server mode (AC4),
+ * so nothing reads or writes it; Clear Cache still deletes it so data written
+ * by earlier builds does not linger.
  */
-interface UserPreferences {
-  serverUrl: string;
-}
-
-interface StoredSettings extends UserPreferences {
-  key: string;
-  updatedAt: number;
-}
-
-let settingsDbInstance: IDBDatabase | null = null;
-
-async function openSettingsDatabase(): Promise<IDBDatabase> {
-  if (settingsDbInstance) {
-    return settingsDbInstance;
-  }
-
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(SETTINGS_DB_NAME, 1);
-
-    request.onerror = () => {
-      reject(new Error(`Failed to open settings database: ${request.error}`));
-    };
-
-    request.onsuccess = () => {
-      const db = request.result;
-      // PRR-001: close the cached connection when a version change (e.g.
-      // deleteDatabase from Clear Cache) is requested, so the delete is not
-      // permanently blocked by this open connection. Without this, the
-      // settings DB survives "Clear Cache" while the UI reports success.
-      db.onversionchange = () => {
-        db.close();
-        settingsDbInstance = null;
-      };
-      settingsDbInstance = db;
-      resolve(settingsDbInstance);
-    };
-
-    request.onupgradeneeded = (event) => {
-      const db = (event.target as IDBOpenDBRequest).result;
-      if (!db.objectStoreNames.contains(SETTINGS_STORE_NAME)) {
-        db.createObjectStore(SETTINGS_STORE_NAME, { keyPath: 'key' });
-      }
-    };
-  });
-}
-
-async function loadSettings(): Promise<UserPreferences> {
-  const defaults: UserPreferences = {
-    serverUrl: '',
-  };
-
-  try {
-    const db = await openSettingsDatabase();
-
-    return new Promise((resolve) => {
-      const transaction = db.transaction(SETTINGS_STORE_NAME, 'readonly');
-      const store = transaction.objectStore(SETTINGS_STORE_NAME);
-      const request = store.get(SETTINGS_KEY);
-
-      request.onerror = () => {
-        resolve(defaults);
-      };
-
-      request.onsuccess = () => {
-        const result = request.result as StoredSettings | undefined;
-        if (result && result.key === SETTINGS_KEY) {
-          resolve({
-            serverUrl: result.serverUrl ?? defaults.serverUrl,
-          });
-        } else {
-          resolve(defaults);
-        }
-      };
-    });
-  } catch {
-    return defaults;
-  }
-}
-
-async function saveSettings(settings: UserPreferences): Promise<void> {
-  try {
-    const db = await openSettingsDatabase();
-
-    return new Promise((resolve, reject) => {
-      const transaction = db.transaction(SETTINGS_STORE_NAME, 'readwrite');
-      const store = transaction.objectStore(SETTINGS_STORE_NAME);
-      const toStore: StoredSettings = { ...settings, key: SETTINGS_KEY, updatedAt: Date.now() };
-
-      const request = store.put(toStore);
-
-      request.onerror = () => {
-        reject(new Error(`Failed to save settings: ${request.error}`));
-      };
-
-      request.onsuccess = () => {
-        resolve();
-      };
-    });
-  } catch (error) {
-    console.error('Error saving settings to IndexedDB:', error);
-  }
-}
+const SETTINGS_DB_NAME = 'doc-qa-settings';
 
 // ============================================================================
 // EdgeVec blob deletion (Clear Cache — issue #24 F1, resolves PRR-008)
@@ -458,12 +364,6 @@ function deleteEdgeVecBlob(prefix: string): Promise<void> {
     }
   });
 }
-
-// ============================================================================
-// App version
-// ============================================================================
-
-const APP_VERSION = '1.0.0';
 
 // ============================================================================
 // Styles
@@ -676,18 +576,50 @@ const aboutSectionStyle: React.CSSProperties = {
 // SettingsPage (inner component — uses contexts)
 // ============================================================================
 
-function SettingsPageInner(): React.ReactElement {
+/** The browser-stored user settings Clear Cache removes (persisted-keys.ts USER_SETTING_KEYS). */
+const CLEARED_SETTINGS_COPY =
+  'inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course';
+
+/**
+ * Delay between the final Clear Cache status and the reload (PR #140 review
+ * FB140-002): long enough for a screen reader to announce the polite status
+ * (500 ms could tear the page down mid-announcement), and below the 3 s
+ * status reset so the message is still showing when the page reloads.
+ */
+export const RELOAD_AFTER_CLEAR_MS = 2000;
+
+/** Screen-reader-only text (same inline pattern as the radio-group legends). */
+const visuallyHiddenStyle: React.CSSProperties = {
+  position: 'absolute',
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: 'hidden',
+  clip: 'rect(0,0,0,0)',
+  whiteSpace: 'nowrap',
+  border: 0,
+};
+
+interface SettingsPageProps {
+  /**
+   * settings-wiring-honesty (AC10): scroll to the element with this id and
+   * focus its heading on open (e.g. 'model-connection' from the
+   * model-blocked overlay). Omitted: the page opens at the top.
+   */
+  initialSection?: string;
+  /** Clear Cache reload seam (default: window.location.reload()). */
+  reloadPage?: () => void;
+}
+
+function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): React.ReactElement {
   const {
     mode,
     browserEngine,
     setBrowserEngine,
     ragPreset,
     setRagPreset,
-    isServerConnected,
-    serverUrl,
     setMode,
-    setServerUrl,
-    checkServerConnectivity,
   } = useInferenceMode();
 
   // B9 (issue #67): inside Electron, RAG presets and the inference profile
@@ -696,14 +628,14 @@ function SettingsPageInner(): React.ReactElement {
   // shows connectivity + model presence + the active profile.
   const { session: desktopSession } = useDesktopSession();
   const electronMode = isElectron() && desktopSession !== null;
+  // settings-wiring-honesty (AC4): the desktop app (Electron) is the only
+  // place an API-server ("api") mode exists — its built-in backend.
+  const desktopApp = isElectron();
   const [desktopStatus, setDesktopStatus] = useState<ModelStatus | null>(null);
   const [desktopProfile, setDesktopProfile] = useState<'quality' | 'fast' | 'auto' | ''>('');
   const [desktopSettingsError, setDesktopSettingsError] = useState<string | null>(null);
 
   const { themePreference, setTheme } = useTheme();
-
-  // Settings state
-  const [localServerUrl, setLocalServerUrl] = useState<string>(serverUrl);
 
   // Download state
   const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
@@ -723,12 +655,12 @@ function SettingsPageInner(): React.ReactElement {
   // Clear cache confirm + result state (issue #24 F1)
   const [clearCacheState, setClearCacheState] = useState<'idle' | 'confirming'>('idle');
   const [clearCacheResult, setClearCacheResult] = useState<'idle' | 'clearing' | 'cleared' | 'error'>('idle');
+  // True once the clear removed the saved settings, so the page reloads (the
+  // status then tells screen-reader users a reload is coming).
+  const [clearCacheReloading, setClearCacheReloading] = useState(false);
   const clearTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Connection test state
-  const [isTestingConnection, setIsTestingConnection] = useState(false);
-  const [connectionResult, setConnectionResult] = useState<'success' | 'error' | null>(null);
-  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reloadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
 
   // Provider connection state (trace external-llm-provider-settings): local
@@ -787,35 +719,62 @@ function SettingsPageInner(): React.ReactElement {
   const [capability, setCapability] = useState<EngineCapability | null>(null);
   const [packagesReady, setPackagesReady] = useState<PackagedModelsReport | null>(null);
 
-  // Settings loaded flag
-  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // settings-wiring-honesty: the desktop Response Quality display state is
+  // derived from the backend (GET/PUT /settings), never from the persisted
+  // browser-local `ragPreset`. null = not read yet (no radio checked).
+  const [desktopPreset, setDesktopPreset] = useState<DesktopPresetState | null>(null);
+  // The last desktop settings body (reranker availability for the cards).
+  const [desktopSettings, setDesktopSettings] = useState<SettingsResponse | null>(null);
+  // True when the backend matched a preset on rag_n_results alone (a profile
+  // saved before presets wrote the full patch): the preset's reranking and
+  // answer settings are NOT applied until the user re-selects it.
+  const [presetNeedsReapply, setPresetNeedsReapply] = useState(false);
+  const [presetError, setPresetError] = useState<string | null>(null);
+  // Latest-wins: every preset GET/PUT takes a ticket and a response whose
+  // ticket is stale (a newer read or write started) is ignored, so a GET
+  // issued before a PUT can never overwrite that PUT's result.
+  const presetTicketRef = useRef(0);
 
-  // B9 (issue #67): load the desktop backend's settings + model status.
+  const applyDesktopSettings = useCallback((settings: SettingsResponse) => {
+    setDesktopSettings(settings);
+    setDesktopPreset(presetFromBackend(settings));
+    setPresetNeedsReapply(presetIsNResultsOnly(settings));
+  }, []);
+
+  // B9 (issue #67) + settings-wiring-honesty (AC1/AC2): read the desktop
+  // backend's settings when the session appears (mount) AND whenever the app
+  // switches into api mode, and derive the Response Quality display state
+  // from them — never a silent PUT.
+  const desktopReadRef = useRef<{ session: typeof desktopSession; mode: string | null }>({ session: null, mode: null });
   useEffect(() => {
+    const previous = desktopReadRef.current;
+    desktopReadRef.current = { session: desktopSession, mode };
     if (!electronMode || !desktopSession) return;
-    let cancelled = false;
+    const sessionChanged = previous.session !== desktopSession;
+    const enteredApi = mode === 'api' && previous.mode !== 'api';
+    if (!sessionChanged && !enteredApi) return;
+    const ticket = ++presetTicketRef.current;
     (async () => {
       try {
         const settings = await desktopSession.apiClient.getSettings();
-        if (cancelled) return;
+        if (!isMountedRef.current) return;
         const profile = settings['inference.profile'];
         if (profile === 'quality' || profile === 'fast' || profile === 'auto') {
           setDesktopProfile(profile);
         }
+        if (ticket === presetTicketRef.current) applyDesktopSettings(settings);
       } catch (err) {
-        if (!cancelled) setDesktopSettingsError(err instanceof Error ? err.message : String(err));
+        if (isMountedRef.current) setDesktopSettingsError(err instanceof Error ? err.message : String(err));
       }
+      if (!sessionChanged) return;
       try {
         const status = await fetchModelStatus(desktopSession);
-        if (!cancelled) setDesktopStatus(status);
+        if (isMountedRef.current) setDesktopStatus(status);
       } catch {
-        if (!cancelled) setDesktopStatus(null);
+        if (isMountedRef.current) setDesktopStatus(null);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [electronMode, desktopSession]);
+  }, [electronMode, desktopSession, mode, applyDesktopSettings]);
 
   // B9: persist an inference-profile override to the backend (AC3 — survives
   // restart through the backend's settings sidecar).
@@ -830,62 +789,100 @@ function SettingsPageInner(): React.ReactElement {
     [desktopSession]
   );
 
-  // Mirror a RAG preset change onto the backend's `rag_n_results` — the only
-  // server knob the preset drives; rerank/hybrid tuning is env-configured in
-  // desktop/main/backend/retrieval/config.ts and intentionally not
-  // UI-settable. Values are clamped inside the shared API bound (max 10, both
-  // backends) and kept DISTINCT per preset so the change stays observable in
-  // GET /settings. The PUT fires only where the preset can act on server-side
-  // chat: an Electron session in 'api' mode.
+  // settings-wiring-honesty (AC2/AC3; user decision 2026-09-30, reversing PR
+  // #138's rag_n_results-only mirror): with a desktop session, a preset change
+  // PUTs the preset's full patch — result count, reranking, max tokens and
+  // temperature — in EVERY mode, since the preset is a backend setting there.
+  // The browser app has no backend to write; its preset applies to
+  // browser-local chat only (the persisted `ragPreset`).
   const handleRagPresetChange = useCallback(
-    (preset: 'fast' | 'balanced' | 'quality') => {
+    (preset: RAGPreset) => {
+      setPresetError(null);
+      if (desktopApp && !desktopSession) {
+        // Desktop app whose backend session is not up: nothing is applied
+        // and the controlled radios keep showing the previous selection.
+        setPresetError('The desktop backend is not available, so the preset was not applied. Try again once it has started.');
+        return;
+      }
+      const previousRagPreset = ragPreset;
       setRagPreset(preset);
-      if (!electronMode || !desktopSession || mode !== 'api') return;
-      const presetPatch: Record<string, unknown> =
-        preset === 'fast'
-          ? { rag_n_results: 5 }
-          : preset === 'quality'
-            ? { rag_n_results: 10 }
-            : { rag_n_results: 8 };
+      if (!desktopSession) return;
+      const previousDisplay = desktopPreset;
+      const previousNeedsReapply = presetNeedsReapply;
+      const ticket = ++presetTicketRef.current;
+      setDesktopPreset({ kind: 'preset', preset });
+      // The full patch is being sent, so every preset setting will be explicit.
+      setPresetNeedsReapply(false);
       desktopSession.apiClient
-        .updateSettings(presetPatch)
-        .catch((err) => setDesktopSettingsError(err instanceof Error ? err.message : String(err)));
+        .updateSettings({ ...DESKTOP_PRESET_SETTINGS[preset] })
+        .then((response) => {
+          if (!isMountedRef.current || ticket !== presetTicketRef.current) return;
+          // A backend that reports explicit_keys confirms what it stored
+          // (runtime-guarded: older desktop builds omit the field).
+          if (response !== null && typeof response === 'object' && Array.isArray(response.explicit_keys)) {
+            applyDesktopSettings(response);
+          }
+        })
+        .catch((err) => {
+          if (!isMountedRef.current || ticket !== presetTicketRef.current) return;
+          setDesktopPreset(previousDisplay);
+          setPresetNeedsReapply(previousNeedsReapply);
+          setRagPreset(previousRagPreset);
+          setPresetError(
+            `The preset could not be applied to the desktop backend: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
     },
-    [electronMode, desktopSession, mode, setRagPreset]
+    [desktopApp, desktopSession, desktopPreset, presetNeedsReapply, ragPreset, setRagPreset, applyDesktopSettings]
   );
 
-  // Load settings on mount
-  useEffect(() => {
-    if (electronMode) {
-      // Server-backed settings live in the desktop session; skip IndexedDB.
-      setSettingsLoaded(true);
-      return;
-    }
-    loadSettings().then((settings) => {
-      setLocalServerUrl(settings.serverUrl);
-      setSettingsLoaded(true);
-    });
-
-    return () => {
-      if (clearTimeoutRef.current) {
-        clearTimeout(clearTimeoutRef.current);
-      }
-      if (connectionTimeoutRef.current) {
-        clearTimeout(connectionTimeoutRef.current);
-      }
-    };
-  }, []);
+  // settings-wiring-honesty (IC1): "Reset to defaults" clears the preset keys
+  // on the desktop backend (the PUT `reset` directive), so result count,
+  // reranking and generation follow the server/profile defaults again. The
+  // response's explicit_keys confirm the reset.
+  const handlePresetReset = useCallback(() => {
+    if (!desktopSession) return;
+    setPresetError(null);
+    const ticket = ++presetTicketRef.current;
+    desktopSession.apiClient
+      .updateSettings({ reset: [...DESKTOP_PRESET_KEYS] })
+      .then(async (response) => {
+        const settings =
+          response !== null && typeof response === 'object' && Array.isArray(response.explicit_keys)
+            ? response
+            : await desktopSession.apiClient.getSettings();
+        if (!isMountedRef.current || ticket !== presetTicketRef.current) return;
+        applyDesktopSettings(settings);
+      })
+      .catch((err) => {
+        if (!isMountedRef.current || ticket !== presetTicketRef.current) return;
+        setPresetError(
+          `The desktop backend could not reset the preset: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+  }, [desktopSession, applyDesktopSettings]);
 
   // isMountedRef to guard async state updates after unmount
   useEffect(() => {
     isMountedRef.current = true;
-    return () => { isMountedRef.current = false; };
+    return () => {
+      isMountedRef.current = false;
+      if (clearTimeoutRef.current) clearTimeout(clearTimeoutRef.current);
+      if (reloadTimeoutRef.current) clearTimeout(reloadTimeoutRef.current);
+    };
   }, []);
 
-  // Sync serverUrl from context to local state
+  // settings-wiring-honesty (AC10): open at a requested section — scroll it
+  // into view and move focus to its heading (tabIndex -1) so keyboard and
+  // screen-reader users land on the destination, not the page top.
   useEffect(() => {
-    setLocalServerUrl(serverUrl);
-  }, [serverUrl]);
+    if (!initialSection) return;
+    const target = document.getElementById(initialSection);
+    if (target === null) return;
+    if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' });
+    const heading = target.querySelector<HTMLElement>('h2');
+    (heading ?? target).focus();
+  }, [initialSection]);
 
   // Check model cache status — engine-aware (issue #24 F4).
   // Previously this called checkModelCached(preferredModel) which defaulted
@@ -893,8 +890,6 @@ function SettingsPageInner(): React.ReactElement {
   // Now resolve the model id per-engine via modelIdForEngine and pass the
   // actually-selected browserEngine.
   useEffect(() => {
-    if (!settingsLoaded) return;
-
     // PRR-004: cancellation token prevents an older, slower checkModelCached
     // promise from overwriting modelCached with stale data after a rapid
     // engine switch. Mirrors the cancelled-flag pattern in the detect effect.
@@ -906,7 +901,7 @@ function SettingsPageInner(): React.ReactElement {
     return () => {
       cancelled = true;
     };
-  }, [browserEngine, readinessGate, settingsLoaded]);
+  }, [browserEngine, readinessGate]);
 
   // Detect hardware capability + packaged-model readiness once on mount.
   useEffect(() => {
@@ -925,8 +920,6 @@ function SettingsPageInner(): React.ReactElement {
   // Update memory pressure periodically (issue #24 F7).
   // Previously ran exactly once; now refreshes every 5s while Settings is open.
   useEffect(() => {
-    if (!settingsLoaded) return;
-
     const updateMemoryStatus = () => {
       const pressure = getMemoryPressureStatus();
       const budget = getMemoryBudget();
@@ -938,18 +931,7 @@ function SettingsPageInner(): React.ReactElement {
     updateMemoryStatus();
     const intervalId = setInterval(updateMemoryStatus, 5000);
     return () => clearInterval(intervalId);
-  }, [settingsLoaded]);
-
-  // Persist settings when they change
-  const persistSettings = useCallback(
-    (updates: Partial<UserPreferences>) => {
-      saveSettings({
-        serverUrl: localServerUrl,
-        ...updates,
-      });
-    },
-    [localServerUrl]
-  );
+  }, []);
 
   // Handle theme preference change (issue #24 F5).
   // Delegates entirely to ThemeContext.setTheme, which persists/clears
@@ -961,49 +943,6 @@ function SettingsPageInner(): React.ReactElement {
     },
     [setTheme]
   );
-
-  // Handle server URL change
-  const handleServerUrlChange = useCallback(
-    (newUrl: string) => {
-      setLocalServerUrl(newUrl);
-      setConnectionResult(null);
-    },
-    []
-  );
-
-  // Handle server URL blur — persist
-  const handleServerUrlBlur = useCallback(() => {
-    setServerUrl(localServerUrl);
-    persistSettings({ serverUrl: localServerUrl });
-  }, [localServerUrl, persistSettings, setServerUrl]);
-
-  // Test connection
-  const handleTestConnection = useCallback(async () => {
-    setIsTestingConnection(true);
-    setConnectionResult(null);
-
-    // Persist the current local value before testing
-    setServerUrl(localServerUrl);
-
-    if (connectionTimeoutRef.current) {
-      clearTimeout(connectionTimeoutRef.current);
-    }
-    connectionTimeoutRef.current = setTimeout(() => {
-      if (!isMountedRef.current) return;
-      setIsTestingConnection(false);
-      setConnectionResult('error');
-    }, 5000);
-
-    const connected = await checkServerConnectivity();
-
-    if (connectionTimeoutRef.current) {
-      clearTimeout(connectionTimeoutRef.current);
-      connectionTimeoutRef.current = null;
-    }
-    if (!isMountedRef.current) return;
-    setIsTestingConnection(false);
-    setConnectionResult(connected ? 'success' : 'error');
-  }, [checkServerConnectivity, localServerUrl, setServerUrl]);
 
   // Download model (issue #24 F3).
   // webllm-only: downloads weights from the WebLLM CDN into Cache Storage.
@@ -1066,6 +1005,9 @@ function SettingsPageInner(): React.ReactElement {
   // PR-4's profile-scoped namespace utilities to delete the real user-prefixed
   // document/keyword/vector-mapping DBs, the EdgeVec HNSW blob, stale orphan
   // namespaces, the settings DB, and the webllm Cache Storage entries.
+  // settings-wiring-honesty (AC5): it also removes every registered
+  // browser-stored user setting (lib/storage/persisted-keys) and then reloads,
+  // so the in-memory contexts cannot re-persist the cleared values.
   const handleClearCacheClick = useCallback(async () => {
     if (clearCacheState === 'idle') {
       setClearCacheState('confirming');
@@ -1081,43 +1023,55 @@ function SettingsPageInner(): React.ReactElement {
       }
       setClearCacheState('idle');
       setClearCacheResult('clearing');
+      setClearCacheReloading(false);
+      // An in-flight model download is cancelled first (its cache entries are
+      // about to be deleted underneath it).
+      if (isDownloading) handleCancelDownload();
 
-      try {
-        // 1. Current profile's document/keyword/vector-mapping IndexedDBs.
-        const prefix = getProfilePrefix();
-        await deleteNamespace(prefix);
+      // PR #140 review (FB140-011): every step runs in its own try/catch, so
+      // one failure (realistically the EdgeVec delete) no longer skips the
+      // rest — above all the saved-settings removal the copy promises.
+      let failed = false;
+      const attempt = async (step: string, run: () => Promise<void>): Promise<void> => {
+        try {
+          await run();
+        } catch (err) {
+          failed = true;
+          console.error(`Error clearing cache (${step}):`, err);
+        }
+      };
 
-        // 2. EdgeVec HNSW blob (key in shared edgevec-db, store 'data').
-        //    Resolves PRR-008: deleteNamespace cannot reach this shared DB.
-        await deleteEdgeVecBlob(prefix);
+      // getProfilePrefix never throws (storage failures fall back internally).
+      const prefix = getProfilePrefix();
 
-        // 3. Stale/orphan namespaces from prior sessions/profiles.
+      // 1. Current profile's document/keyword/vector-mapping IndexedDBs.
+      await attempt('profile databases', () => deleteNamespace(prefix));
+
+      // 2. EdgeVec HNSW blob (key in shared edgevec-db, store 'data').
+      //    Resolves PRR-008: deleteNamespace cannot reach this shared DB.
+      await attempt('vector index', () => deleteEdgeVecBlob(prefix));
+
+      // 3. Stale/orphan namespaces from prior sessions/profiles.
+      await attempt('orphaned data', async () => {
         const stale = await listStalePrefixes();
         if (stale.length > 0) {
           await Promise.all(stale.map((p) => deleteNamespace(p)));
         }
+      });
 
-        // 4. Settings IndexedDB (non-prefixed).
-        // Close the cached connection first so deleteDatabase is not blocked
-        // (PRR-001). The onversionchange handler in openSettingsDatabase also
-        // fires, but closing here is deterministic and immediate.
-        if (settingsDbInstance) {
-          try {
-            settingsDbInstance.close();
-          } catch {
-            // already closed
-          }
-          settingsDbInstance = null;
-        }
-        await new Promise<void>((resolve) => {
+      // 4. Legacy settings IndexedDB (non-prefixed; written by earlier builds).
+      await attempt('legacy settings database', () =>
+        new Promise<void>((resolve) => {
           const settingsDeleteReq = indexedDB.deleteDatabase(SETTINGS_DB_NAME);
           settingsDeleteReq.onsuccess = () => resolve();
           settingsDeleteReq.onerror = () => resolve();
           settingsDeleteReq.onblocked = () => resolve();
-        });
+        })
+      );
 
-        // 5. WebLLM Cache Storage (web-llm scopes artifacts across three
-        //    named caches: model weights, model config, and the wasm runtime).
+      // 5. WebLLM Cache Storage (web-llm scopes artifacts across three
+      //    named caches: model weights, model config, and the wasm runtime).
+      await attempt('WebLLM model files', async () => {
         if (typeof caches !== 'undefined' && typeof caches.delete === 'function') {
           await Promise.all(
             ['webllm/model', 'webllm/config', 'webllm/wasm'].map((cacheName) =>
@@ -1125,11 +1079,31 @@ function SettingsPageInner(): React.ReactElement {
             )
           );
         }
+      });
 
-        setClearCacheResult('cleared');
+      // 6. ALWAYS: every registered browser-stored user setting (inference
+      //    mode blob incl. provider connection, theme, provider API key,
+      //    sidebar, last-opened course). Internal bookkeeping keys are kept.
+      let settingsCleared = false;
+      try {
+        clearUserSettings();
+        settingsCleared = true;
       } catch (err) {
-        console.error('Error clearing cache:', err);
-        setClearCacheResult('error');
+        failed = true;
+        console.error('Error clearing cache (saved settings):', err);
+      }
+
+      setClearCacheResult(failed ? 'error' : 'cleared');
+      setClearCacheReloading(settingsCleared);
+
+      // Reload whenever the saved settings were removed — even after a failed
+      // step — so every context starts from the cleared storage (the React
+      // state still holds the old values until then).
+      if (settingsCleared) {
+        reloadTimeoutRef.current = setTimeout(() => {
+          reloadTimeoutRef.current = null;
+          if (isMountedRef.current) (reloadPage ?? (() => window.location.reload()))();
+        }, RELOAD_AFTER_CLEAR_MS);
       }
 
       // Clear the result status after a few seconds so it doesn't linger.
@@ -1138,10 +1112,23 @@ function SettingsPageInner(): React.ReactElement {
       }
       clearTimeoutRef.current = setTimeout(() => {
         setClearCacheResult('idle');
+        setClearCacheReloading(false);
         clearTimeoutRef.current = null;
       }, 3000);
     }
-  }, [clearCacheState]);
+  }, [clearCacheState, isDownloading, handleCancelDownload, reloadPage]);
+
+  // settings-wiring-honesty: in the desktop app the checked preset reflects
+  // the BACKEND (none checked while unread, custom, or on defaults); in the
+  // browser app it is the persisted browser-local preset.
+  const presetChecked = (preset: RAGPreset): boolean =>
+    electronMode
+      ? desktopPreset?.kind === 'preset' && desktopPreset.preset === preset
+      : ragPreset === preset;
+  // The browser app's preset only feeds browser-local chat, which provider
+  // mode bypasses; the desktop app's preset is a backend setting (any mode).
+  const presetDisabled = mode === 'provider' && !electronMode;
+  const rerankUnavailable = electronMode && desktopSettings?.reranking_available === false;
 
   // Format memory for display
   const formatMemory = (mb: number): string => {
@@ -1150,19 +1137,6 @@ function SettingsPageInner(): React.ReactElement {
     }
     return `${mb} MB`;
   };
-
-  if (!settingsLoaded) {
-    return (
-      <div style={pageStyle}>
-        <div style={headerStyle}>
-          <h1 style={titleStyle}>Settings</h1>
-        </div>
-        <div style={contentStyle}>
-          <p style={{ color: 'var(--color-text-muted)' }}>Loading settings...</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div style={pageStyle}>
@@ -1174,8 +1148,15 @@ function SettingsPageInner(): React.ReactElement {
         {/* ================================================================== */}
         {/* 1. Inference Mode */}
         {/* ================================================================== */}
-        <section style={sectionStyle} aria-labelledby="inference-mode-heading">
-          <h2 id="inference-mode-heading" style={sectionTitleStyle}>
+        {/* settings-wiring-honesty (AC10): id={MODEL_CONNECTION_SECTION_ID}
+            marks the section hosting the external-model (OpenAI-compatible
+            provider) controls — the model-blocked overlay's destination. */}
+        <section
+          id={MODEL_CONNECTION_SECTION_ID}
+          style={sectionStyle}
+          aria-labelledby="inference-mode-heading"
+        >
+          <h2 id="inference-mode-heading" style={sectionTitleStyle} tabIndex={-1}>
             Inference Mode
           </h2>
           <div style={fieldGroupStyle}>
@@ -1207,28 +1188,30 @@ function SettingsPageInner(): React.ReactElement {
                   </div>
                 </label>
 
-                {/* API server option */}
-                <label
-                  style={mode === 'api' ? radioOptionSelectedStyle : radioOptionStyle}
-                >
-                  <input
-                    type="radio"
-                    name="inference-mode"
-                    value="api"
-                    checked={mode === 'api'}
-                    onChange={() => setMode('api')}
-                    style={radioInputStyle}
-                    aria-describedby="api-desc"
-                  />
-                  <div>
-                    <span style={radioLabelStyle}>API Server</span>
-                    <p id="api-desc" style={descriptionStyle}>
-                      {electronMode
-                        ? 'Use the built-in desktop backend (starts automatically with the app)'
-                        : 'Connect to a remote inference server'}
-                    </p>
-                  </div>
-                </label>
+                {/* API server option — the desktop app's built-in backend.
+                    settings-wiring-honesty (AC4): the browser app has no
+                    API-server mode, so it is offered only inside Electron. */}
+                {desktopApp && (
+                  <label
+                    style={mode === 'api' ? radioOptionSelectedStyle : radioOptionStyle}
+                  >
+                    <input
+                      type="radio"
+                      name="inference-mode"
+                      value="api"
+                      checked={mode === 'api'}
+                      onChange={() => setMode('api')}
+                      style={radioInputStyle}
+                      aria-describedby="api-desc"
+                    />
+                    <div>
+                      <span style={radioLabelStyle}>API Server</span>
+                      <p id="api-desc" style={descriptionStyle}>
+                        Use the built-in desktop backend (starts automatically with the app)
+                      </p>
+                    </div>
+                  </label>
+                )}
 
                 {/* Provider option (trace external-llm-provider-settings):
                     direct chat against a user-configured OpenAI-compatible
@@ -1282,8 +1265,17 @@ function SettingsPageInner(): React.ReactElement {
                   Settings error: {desktopSettingsError}
                 </p>
               )}
+              {/* settings-wiring-honesty (AC7): the profile picks the desktop
+                  backend's local model, so it is shown only while that backend
+                  generates (api mode). */}
+              {mode === 'api' ? (
               <div>
                 <span style={labelStyle}>Inference profile</span>
+                <p style={descriptionStyle}>
+                  Answer length and temperature follow this profile unless a Response
+                  Quality preset set them explicitly; an explicit preset wins until you
+                  reset it.
+                </p>
                 <div role="radiogroup" aria-label="Inference profile">
                   {(['quality', 'fast', 'auto'] as const).map((profile) => (
                     <div key={profile}>
@@ -1305,6 +1297,12 @@ function SettingsPageInner(): React.ReactElement {
                   ))}
                 </div>
               </div>
+              ) : (
+                <p style={descriptionStyle}>
+                  The inference profile applies only when chat uses the desktop backend
+                  (API Server mode).
+                </p>
+              )}
               <div>
                 <span style={labelStyle}>Model availability</span>
                 {desktopStatus === null ? (
@@ -1332,65 +1330,6 @@ function SettingsPageInner(): React.ReactElement {
         {/* 2a-2. First-run setup (E2, issue #85): status + Re-run setup.      */}
         {/* ================================================================== */}
         {electronMode && <FirstRunSetupCard />}
-
-        {/* ================================================================== */}
-        {/* 2b. Server Configuration (API mode; hidden under Electron — the    */}
-        {/* loopback backend is managed by the app itself, issue #67)          */}
-        {/* ================================================================== */}
-        {mode === 'api' && !electronMode && (
-          <section style={sectionStyle} aria-labelledby="server-config-heading">
-            <h2 id="server-config-heading" style={sectionTitleStyle}>
-              Server Configuration
-            </h2>
-            <div style={fieldGroupStyle}>
-              <div>
-                <label htmlFor="server-url" style={labelStyle}>
-                  Server URL
-                </label>
-                <p id="server-url-desc" style={descriptionStyle}>
-                  Enter the base URL of your inference server (e.g., http://localhost:8080)
-                </p>
-                <input
-                  id="server-url"
-                  type="url"
-                  value={localServerUrl}
-                  onChange={(e) => handleServerUrlChange(e.target.value)}
-                  onBlur={handleServerUrlBlur}
-                  placeholder="http://localhost:8080"
-                  style={inputStyle}
-                  aria-describedby="server-url-desc"
-                />
-              </div>
-
-              <div style={buttonRowStyle} role="status" aria-live="polite">
-                <button
-                  type="button"
-                  onClick={handleTestConnection}
-                  disabled={isTestingConnection || !localServerUrl}
-                  style={
-                    isTestingConnection
-                      ? { ...secondaryButtonStyle, opacity: 0.6, cursor: 'not-allowed' }
-                      : secondaryButtonStyle
-                  }
-                  aria-busy={isTestingConnection}
-                >
-                  {isTestingConnection ? 'Testing...' : 'Test Connection'}
-                </button>
-
-                {connectionResult === 'success' && (
-                  <StatusBadge status="ready" label="Connected" />
-                )}
-                {connectionResult === 'error' && (
-                  <StatusBadge status="error" label="Connection failed" />
-                )}
-
-                {isServerConnected && connectionResult === null && (
-                  <StatusBadge status="ready" label="Connected" />
-                )}
-              </div>
-            </div>
-          </section>
-        )}
 
         {/* ================================================================== */}
         {/* 2c. Provider connection (provider mode — OpenAI-compatible server) */}
@@ -1500,7 +1439,14 @@ function SettingsPageInner(): React.ReactElement {
 
         {/* ================================================================== */}
         {/* 3. Browser Engine (browser-local only) + model cache status */}
+        {/* settings-wiring-honesty (AC7): rendered only while browser-local */}
+        {/* generation is active; otherwise one muted line explains why.    */}
         {/* ================================================================== */}
+        {mode !== 'browser-local' ? (
+          <p style={descriptionStyle} data-testid="browser-engine-hidden">
+            The browser engine applies only to Browser-local mode.
+          </p>
+        ) : (
         <section style={sectionStyle} aria-labelledby="browser-engine-heading">
           <h2 id="browser-engine-heading" style={sectionTitleStyle}>
             Browser Engine
@@ -1522,7 +1468,7 @@ function SettingsPageInner(): React.ReactElement {
                   {
                     id: 'wllama' as const,
                     label: 'wllama (CPU / no GPU)',
-                    desc: 'Robust without WebGPU and supports image input (multimodal). Recommended for most hardware.',
+                    desc: 'Robust without WebGPU and supports image input (multimodal).',
                   },
                   {
                     id: 'webllm' as const,
@@ -1545,7 +1491,12 @@ function SettingsPageInner(): React.ReactElement {
                     />
                     <div>
                       <span style={radioLabelStyle}>{opt.label}</span>
-                      <p id={`${opt.id}-desc`} style={descriptionStyle}>{opt.desc}</p>
+                      <p id={`${opt.id}-desc`} style={descriptionStyle}>
+                        {opt.desc}
+                        {/* AC9: the ONE derived recommendation (same source as
+                            the header and the Hardware row). */}
+                        {capability?.recommendedEngine === opt.id && ' Recommended.'}
+                      </p>
                     </div>
                   </label>
                 ))}
@@ -1553,7 +1504,7 @@ function SettingsPageInner(): React.ReactElement {
             </fieldset>
             {capability && browserEngine === 'webllm' && !capability.webgpu && (
               <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }}>
-                WebGPU was not detected — WebLLM will not run on this device. Switch to wllama or use server mode.
+                WebGPU was not detected — WebLLM will not run on this device. Switch to wllama, or use the desktop app or an external model server.
               </p>
             )}
 
@@ -1619,6 +1570,7 @@ function SettingsPageInner(): React.ReactElement {
             )}
           </div>
         </section>
+        )}
 
         {/* ================================================================== */}
         {/* 4. Response Quality (RAG preset) */}
@@ -1629,31 +1581,35 @@ function SettingsPageInner(): React.ReactElement {
           </h2>
           <div style={fieldGroupStyle}>
             <p style={descriptionStyle}>
-              Trade speed for answer quality. Applies to browser-local inference; in API mode the
-              server controls retrieval settings, and provider mode does not use retrieval at all.
+              {electronMode
+                ? "Trade speed for answer quality. Each preset sets the desktop backend's result count, reranking, answer length and temperature, and also applies to browser-local chat. Provider mode does not use retrieval."
+                : 'Trade speed for answer quality in browser-local chat. Provider mode does not use retrieval.'}
             </p>
             <fieldset
               style={{ border: 'none', margin: 0, padding: 0 }}
-              disabled={mode === 'provider' || (mode === 'api' && !electronMode)}
-              aria-describedby={
-                mode === 'provider' || (mode === 'api' && !electronMode)
-                  ? 'rag-preset-disabled-desc'
-                  : undefined
-              }
+              disabled={presetDisabled}
+              aria-describedby={presetDisabled ? 'rag-preset-disabled-desc' : undefined}
             >
               <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select response quality preset</legend>
               <div style={radioGroupStyle}>
                 {(['fast', 'balanced', 'quality'] as const).map((preset) => (
                   <label
                     key={preset}
-                    style={ragPreset === preset ? radioOptionSelectedStyle : radioOptionStyle}
+                    style={presetChecked(preset) ? radioOptionSelectedStyle : radioOptionStyle}
                   >
                     <input
                       type="radio"
                       name="rag-preset"
                       value={preset}
-                      checked={ragPreset === preset}
+                      checked={presetChecked(preset)}
                       onChange={() => handleRagPresetChange(preset)}
+                      // A checked radio fires no change event, so re-selecting
+                      // the preset matched on rag_n_results alone (settings
+                      // saved before presets wrote the full patch) re-applies
+                      // its full patch on click instead.
+                      onClick={() => {
+                        if (electronMode && presetNeedsReapply && presetChecked(preset)) handleRagPresetChange(preset);
+                      }}
                       style={radioInputStyle}
                       aria-describedby={`rag-${preset}-desc`}
                     />
@@ -1661,6 +1617,12 @@ function SettingsPageInner(): React.ReactElement {
                       <span style={radioLabelStyle}>{RAG_PRESET_LABELS[preset].label}</span>
                       <p id={`rag-${preset}-desc`} style={descriptionStyle}>
                         {RAG_PRESET_LABELS[preset].description}
+                        {electronMode &&
+                          (presetNeedsReapply && presetChecked(preset)
+                            ? ' Re-select a preset to apply its reranking and answer settings.'
+                            : " On the desktop backend it overrides the inference profile's answer length and temperature until reset.")}
+                        {rerankUnavailable && DESKTOP_PRESET_SETTINGS[preset].rag_reranking_enabled &&
+                          ' Reranking unavailable on this installation.'}
                       </p>
                     </div>
                   </label>
@@ -1669,14 +1631,43 @@ function SettingsPageInner(): React.ReactElement {
               {/* Sibling of the preset cards (NOT inside a card label): shown
                   exactly when the group is disabled, i.e. whenever the preset
                   cannot affect the active chat path. */}
-              {(mode === 'provider' || (mode === 'api' && !electronMode)) && (
+              {presetDisabled && (
                 <p id="rag-preset-disabled-desc" style={descriptionStyle}>
-                  {mode === 'provider'
-                    ? 'Applies to browser-local inference only. Provider mode does not use retrieval — responses come directly from the provider server.'
-                    : 'Applies to browser-local inference only. The API server controls retrieval settings.'}
+                  Applies to browser-local inference only. Provider mode does not use retrieval —
+                  responses come directly from the provider server.
                 </p>
               )}
             </fieldset>
+            {/* settings-wiring-honesty (AC1): the desktop display state comes
+                from the backend; say so when it is not one of the presets. */}
+            {electronMode && desktopPreset?.kind === 'custom' && (
+              <p style={descriptionStyle} data-testid="rag-preset-state">
+                Custom server settings: the desktop backend&apos;s values match no preset.
+                Browser-local chat uses the {RAG_PRESET_LABELS[ragPreset].label} preset.
+              </p>
+            )}
+            {electronMode && desktopPreset?.kind === 'defaults' && (
+              <p style={descriptionStyle} data-testid="rag-preset-state">
+                Using server defaults: no preset is applied to the desktop backend, so answer
+                length and temperature follow the inference profile.
+              </p>
+            )}
+            {electronMode && desktopPreset !== null && desktopPreset.kind !== 'defaults' && (
+              <div style={buttonRowStyle}>
+                <button type="button" onClick={handlePresetReset} style={secondaryButtonStyle}>
+                  Reset to defaults
+                </button>
+                <span style={descriptionStyle}>
+                  Clears the preset on the desktop backend so it uses its default result count,
+                  reranking and inference-profile answer settings.
+                </span>
+              </div>
+            )}
+            {presetError && (
+              <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }} role="alert">
+                {presetError}
+              </p>
+            )}
           </div>
         </section>
 
@@ -1767,12 +1758,21 @@ function SettingsPageInner(): React.ReactElement {
               )}
             </div>
           )}
-          <ProgressBar
-            value={memoryTotal - memoryAvailable}
-            max={memoryTotal}
-            label={`Memory Used (${formatMemory(memoryTotal - memoryAvailable)} of ${formatMemory(memoryTotal)})`}
-            color={memoryPressure === 'normal' ? 'success' : memoryPressure === 'moderate' ? 'warning' : 'danger'}
-          />
+          {/* settings-wiring-honesty (AC7): browser memory only matters while
+              the model runs in this browser. */}
+          {mode === 'browser-local' ? (
+            <ProgressBar
+              value={memoryTotal - memoryAvailable}
+              max={memoryTotal}
+              label={`Memory Used (${formatMemory(memoryTotal - memoryAvailable)} of ${formatMemory(memoryTotal)})`}
+              color={memoryPressure === 'normal' ? 'success' : memoryPressure === 'moderate' ? 'warning' : 'danger'}
+            />
+          ) : (
+            <p style={descriptionStyle}>
+              Browser memory usage is shown in Browser-local mode, where the model runs in this
+              browser.
+            </p>
+          )}
           <div style={buttonRowStyle}>
             <button
               type="button"
@@ -1787,32 +1787,58 @@ function SettingsPageInner(): React.ReactElement {
               {clearCacheState === 'confirming' ? 'Click Again to Confirm' : 'Clear Cache'}
             </button>
             <span id="clear-cache-desc" style={descriptionStyle} aria-live="polite">
+              {/* settings-wiring-honesty (AC5/AC6): the copy lists exactly
+                  what is removed and what is kept in each app. */}
               {clearCacheState === 'confirming'
-                ? 'This will delete all documents, keyword/vector indexes, cached model weights, and settings for this profile, plus any orphaned data from previous sessions. This cannot be undone.'
-                : 'Clear cached documents, indexes, model weights, and settings from browser storage.'}
+                ? desktopApp
+                  ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
+                  : `This deletes the documents and keyword/vector indexes stored in this browser, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
+                : desktopApp
+                  ? "Clear this app's browser-side indexes, any WebLLM model files downloaded in this window, and saved settings. Chat history and documents in the desktop library are kept."
+                  : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, and saved settings in this browser. Chat history is kept.'}
             </span>
-            {/* Result feedback (issue #24 F1) — announced to screen readers */}
-            {clearCacheResult === 'clearing' && (
-              <span role="status" aria-live="polite" style={descriptionStyle}>
-                Clearing…
-              </span>
-            )}
-            {clearCacheResult === 'cleared' && (
-              <span role="status" aria-live="polite" style={{ ...descriptionStyle, color: 'var(--color-success)' }}>
-                Cache cleared
-              </span>
-            )}
-            {clearCacheResult === 'error' && (
-              <span role="status" aria-live="polite" style={{ ...descriptionStyle, color: 'var(--color-danger)' }}>
-                Could not clear all data
-              </span>
-            )}
+            {/* Result feedback (issue #24 F1). PR #140 review (FB140-002): the
+                polite live region is ALWAYS mounted and only its text changes
+                (a region inserted together with its message is not reliably
+                announced). Its own text node is the status badge. After a
+                successful clear a visually-hidden suffix tells screen-reader
+                users the page is about to reload; after a partial failure the
+                explanation is VISIBLE (a child span, so the badge text stays
+                exact), since a reload right after an error would otherwise
+                surprise sighted users too (Stage B review L2). */}
+            <span
+              id="clear-cache-status"
+              role="status"
+              aria-live="polite"
+              style={
+                clearCacheResult === 'cleared'
+                  ? { ...descriptionStyle, color: 'var(--color-success)' }
+                  : clearCacheResult === 'error'
+                    ? { ...descriptionStyle, color: 'var(--color-danger)' }
+                    : descriptionStyle
+              }
+            >
+              {clearCacheResult === 'clearing' && 'Clearing…'}
+              {clearCacheResult === 'cleared' && 'Cache cleared'}
+              {clearCacheResult === 'error' && 'Could not clear all data'}
+              {clearCacheResult === 'cleared' && clearCacheReloading && (
+                <span style={visuallyHiddenStyle}>. Reloading the page…</span>
+              )}
+              {clearCacheResult === 'error' && clearCacheReloading && (
+                <span>. Your saved settings were removed; reloading the page…</span>
+              )}
+            </span>
           </div>
         </SectionCard>
 
         {/* ================================================================== */}
         {/* 7. Hardware Capability (diagnostic) */}
         {/* ================================================================== */}
+        {mode !== 'browser-local' ? (
+          <p style={descriptionStyle}>
+            Hardware capability is checked for Browser-local mode only.
+          </p>
+        ) : (
         <SectionCard
           title="Hardware Capability"
           id="hardware-heading"
@@ -1823,7 +1849,7 @@ function SettingsPageInner(): React.ReactElement {
               <ProgressBar
                 value={capability.tier === 'green' ? 100 : capability.tier === 'yellow' ? 50 : 10}
                 max={100}
-                label={`Hardware Suitability: ${capability.tier === 'green' ? 'Good' : capability.tier === 'yellow' ? 'Limited' : 'Use Server Mode'}`}
+                label={`Hardware Suitability: ${capability.tier === 'green' ? 'Good' : capability.tier === 'yellow' ? 'Limited' : 'Not suitable — use the desktop app or an external model'}`}
                 color={capability.tier === 'green' ? 'success' : capability.tier === 'yellow' ? 'warning' : 'danger'}
               />
               <div style={storageInfoStyle}>
@@ -1854,6 +1880,7 @@ function SettingsPageInner(): React.ReactElement {
             <p style={descriptionStyle}>Detecting hardware capability…</p>
           )}
         </SectionCard>
+        )}
 
         {/* ================================================================== */}
         {/* 8. About */}
@@ -1864,15 +1891,16 @@ function SettingsPageInner(): React.ReactElement {
           </h2>
           <div style={aboutSectionStyle}>
             <p>
-              <strong>Document Q&amp;A</strong>
+              <strong>TrainingApp</strong>
             </p>
             <p>Version: {APP_VERSION}</p>
-            <p>
-              A RAG-powered document question answering application with offline-first
-              browser-local inference.
-            </p>
+            <p>Answers questions about your training material and documents.</p>
             <p style={{ marginTop: 'var(--spacing-md)', fontSize: 'var(--font-size-caption)' }}>
-              Built with WebGPU, WebLLM, and IndexedDB for privacy-respecting AI assistance.
+              {mode === 'api'
+                ? 'Answers come from the built-in desktop backend: llama.cpp (node-llama-cpp) generation with hybrid retrieval over the desktop document library.'
+                : mode === 'provider'
+                  ? 'Answers come from the external OpenAI-compatible server you configured, without document retrieval.'
+                  : 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly); documents are stored in IndexedDB.'}
             </p>
           </div>
         </section>
@@ -1977,6 +2005,6 @@ function PackagedModelReadiness({
 // SettingsPage (exported component — wraps with context providers)
 // ============================================================================
 
-export function SettingsPage(): React.ReactElement {
-  return <SettingsPageInner />;
+export function SettingsPage(props: SettingsPageProps = {}): React.ReactElement {
+  return <SettingsPageInner {...props} />;
 }

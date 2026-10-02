@@ -5,6 +5,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useInferenceMode, type InferenceMode } from '../lib/inference';
+import { isElectron } from '../lib/desktop-session';
 
 export function InferenceModeToggle() {
   const {
@@ -55,7 +56,7 @@ export function InferenceModeToggle() {
   const getModeLabel = (): string => {
     // U7b: plain-English labels instead of 'Local'/'API' jargon.
     if (mode === 'browser-local') return 'On this computer';
-    return 'Company server';
+    return 'Desktop backend';
   };
 
   const getTooltipText = (): string => {
@@ -63,28 +64,28 @@ export function InferenceModeToggle() {
       if (isModelReady) return 'Browser-local mode (model ready)';
       return 'Browser-local mode (model loading...)';
     }
-    if (isChecking) return 'API mode (checking connectivity...)';
-    if (isServerConnected) return 'API mode (connected)';
-    if (modeError) return `API mode (${modeError})`;
-    return 'API mode (not connected)';
+    if (isChecking) return 'Desktop backend (checking connectivity...)';
+    if (isServerConnected) return 'Desktop backend (connected)';
+    if (modeError) return `Desktop backend (${modeError})`;
+    return 'Desktop backend (not connected)';
   };
 
   const statusColor = getStatusColor();
 
   // Trace external-llm-provider-settings: provider mode has its own switching
   // surface (Settings → Inference Mode). Rendering the binary flip here would
-  // label provider mode "Company server" and one click would silently discard
-  // it — hide the toggle entirely in that mode.
+  // label provider mode "Desktop backend" and one click would silently
+  // discard it — hide the toggle entirely in that mode.
   if (mode === 'provider') {
     return null;
   }
 
   // U7b air-gap safety: the toggle is a one-click flip to API mode, so only
-  // render it when an API server is actually configured. When `serverUrl` is
-  // empty the app is browser-local only and the toggle would be a dead control
-  // (and a confusing "Company server" affordance) — hide it and let the parent
-  // layout collapse the slot.
-  if (!serverUrl) {
+  // render it when the desktop app's built-in backend is the target
+  // (settings-wiring-honesty: the browser app has no API-server mode, and its
+  // `serverUrl` is always empty). Otherwise the toggle would be a dead control
+  // — hide it and let the parent layout collapse the slot.
+  if (!isElectron() || !serverUrl) {
     return null;
   }
 

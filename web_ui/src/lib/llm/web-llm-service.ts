@@ -4,7 +4,7 @@
  * Supports Llama-3.2-3B-Instruct-q4f16_1-MLC (~1.9GB) and uses the Cache Storage API
  * (`caches.open('webllm/model')`, web-llm's default cacheType) for model artifact caching.
  * WebGPU is the only supported backend; if unavailable, the service fails fast
- * with guidance to use server API mode (per FR-015).
+ * with guidance to use wllama or an external model server (per FR-015).
  */
 
 import type {
@@ -257,7 +257,7 @@ export class WebLLMService implements LLMService {
     if (!detection.available) {
       throw new Error(
         'WebGPU is not available in this browser. ' +
-        'Please switch to server API mode for LLM inference (per FR-015).'
+        'Please switch to the wllama engine or an external model server (Provider server mode) for LLM inference (per FR-015).'
       );
     }
     this._inferenceMode = 'webgpu';
@@ -322,7 +322,7 @@ export class WebLLMService implements LLMService {
         console.error('[WebLLM] WebGPU not available:', msg);
         throw new Error(
           'WebGPU is not available in this browser. ' +
-          'Please switch to server API mode for LLM inference (per FR-015).'
+          'Please switch to the wllama engine or an external model server (Provider server mode) for LLM inference (per FR-015).'
         );
       }
 

@@ -9,13 +9,18 @@ environment-specific decision funnels through two modules so pages stay small:
 - `web_ui/src/types/desktop.d.ts` — the ambient `window.desktopApi` type
   (the bridge is exposed by `desktop/preload/index.ts`).
 
-## The three modes
+## The modes
 
 | Mode | When | Documents / ingest / settings | Chat |
 |---|---|---|---|
 | **Electron-hosted** | `window.desktopApi` present (packaged `app://` renderer OR the Electron dev window) | `ApiClient` against the Electron-hosted loopback backend (`GET/DELETE /documents`, `POST /ingest/file`), settings via `GET/PUT /settings` | `mode === 'api'` branch posting to `{backend}/ask/stream` |
-| **Remote Python server** | plain browser, user picks API mode + server URL | browser-local (IndexedDB) | `mode === 'api'` branch to `{serverUrl}/ask/stream` |
 | **Pure-browser (local)** | plain browser, browser-local mode | IndexedDB + WASM pipeline (wllama/ONNX/EdgeVec/FlexSearch) | `RAGOrchestrator` in-page |
+
+Both apps also offer **Provider server (OpenAI-compatible)** mode (direct chat to a
+configured loopback server; see CONFIGURATION.md). The former browser "Remote Python
+server" mode (user-entered server URL, `{serverUrl}/ask/stream`) was removed
+(settings-wiring-honesty): `mode === 'api'` now exists only inside Electron, and a stored
+browser `api` mode migrates to browser-local on load.
 
 ## Transport contract inside Electron
 
@@ -26,8 +31,8 @@ environment-specific decision funnels through two modules so pages stay small:
 2. **Auth** — every request carries the per-launch token in the
    `X-Desktop-Token` header (RAW token value — no `Bearer` prefix; the
    desktop loopback guard compares it directly). The Python surface's
-   `Authorization: Bearer` convention is untouched and remains the default
-   for remote-server mode.
+   `Authorization: Bearer` convention is untouched and remains what direct
+   API clients of `api_server.py` use (the browser app has no server mode).
 3. **CORS** — the guard's allowlist is `['app://*']`; the dev window
    (`ELECTRON_START_URL`, e.g. the `vite preview` origin used by the e2e
    suite) must be added via `TRAININGAPP_DESKTOP_DEV_ORIGINS`. Browser

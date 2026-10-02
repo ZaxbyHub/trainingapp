@@ -228,7 +228,10 @@ describe('b6 C4 (AC2): ingest config resolution', () => {
 });
 
 describe('b6 C4 (AC3): progress events and restart persistence', () => {
-  itReal('onIngestProgress receives well-formed, per-docId monotonic events', async () => {
+  // Explicit timeout: this test starts a real host and runs a cold ingest
+  // (store open + embed + FTS) that can exceed vitest's 5 s default when the
+  // full suite saturates the worker pool (observed flake, settings-wiring-honesty F3).
+  itReal('onIngestProgress receives well-formed, per-docId monotonic events', { timeout: 20_000 }, async () => {
     const root = makeTempDir('b6-prog-');
     const docsDir = path.join(root, 'docs');
     fs.mkdirSync(docsDir);
@@ -275,7 +278,10 @@ describe('b6 C4 (AC3): progress events and restart persistence', () => {
     expect(new Set(events.map((event) => event.docId)).size).toBe(2);
   });
 
-  itReal('the corpus survives a host restart (same store path, fresh host instance)', async () => {
+  // Explicit timeout: this test starts a real host and runs a cold ingest
+  // (store open + embed + FTS) that can exceed vitest's 5 s default when the
+  // full suite saturates the worker pool (observed flake, settings-wiring-honesty F3).
+  itReal('the corpus survives a host restart (same store path, fresh host instance)', { timeout: 20_000 }, async () => {
     const root = makeTempDir('b6-restart-');
     const storePath = path.join(root, 'store.sqlite');
     const docsDir = path.join(root, 'docs');

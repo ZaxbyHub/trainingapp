@@ -469,7 +469,7 @@ describe('getCompatMessage', () => {
     expect(result.level).toBe('degraded');
     expect(result.message).toContain('Safari 17');
     expect(result.message).toContain('partial');
-    expect(result.recommendations).toContain('Consider using API server mode for reliable inference');
+    expect(result.recommendations).toContain('Consider the desktop app or an external model server (Provider server mode) for reliable inference');
   });
 
   test('Safari null version → degraded', () => {

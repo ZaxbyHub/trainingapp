@@ -228,7 +228,7 @@ export class WebGPUWatchdog {
  *   2. Re-checks WebGPU availability via ModelReadinessGate.
  *   3. If WebGPU available: re-initializes with the same model.
  *   4. If WebGPU unavailable: surfaces an error guiding the user to
- *      switch to server API mode (per FR-015).
+ *      switch to wllama or an external model server (per FR-015).
  *
  * @param service  The WebLLMService instance to recover.
  * @returns A callback suitable for passing to WebGPUWatchdog.start().
@@ -272,7 +272,7 @@ export function createRecoveryHandler(service: WebLLMService): (reason: string) 
     if (!webgpuAvailable) {
       const message =
         'WebGPU context was lost and is no longer available. ' +
-        'Please switch to server API mode (wllama or API) for LLM inference.';
+        'Please switch to the wllama engine or an external model server (Provider server mode) for LLM inference.';
       console.error('[WebGPUWatchdog] WebGPU unavailable after context loss.');
       // Surface the failure to the UI via the readiness event + a dedicated
       // recovery-failed event the app can show as a toast/modeError.
@@ -296,7 +296,7 @@ export function createRecoveryHandler(service: WebLLMService): (reason: string) 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[WebGPUWatchdog] Re-initialization failed:', msg);
-      const message = `WebGPU recovery failed: ${msg}. Please switch to server API mode for LLM inference.`;
+      const message = `WebGPU recovery failed: ${msg}. Please switch to the wllama engine or an external model server (Provider server mode) for LLM inference.`;
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('webgpu-recovery-failed', { detail: { message } })

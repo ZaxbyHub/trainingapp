@@ -377,8 +377,7 @@ test.describe.serial('c7 Documents page pack surface (issue #74)', () => {
     await expect(input).toBeVisible({ timeout: 30_000 });
 
     // Bootstrap ask first (issue #118 first-turn state bug drops the terminal
-    // citation fields on the very first ask of a conversation — same
-    // convention as grounding-badge.spec.ts).
+    // citation fields on the very first ask of a conversation).
     await input.fill('Bootstrap question for the conversation.');
     await input.press('Enter');
     await expect(page.getByText(/desktop stub answer/i).first()).toBeVisible({ timeout: 45_000 });

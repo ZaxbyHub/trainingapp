@@ -49,18 +49,22 @@ export default defineConfig({
       // Pre-existing behavioral failures (status-color and mode-switching
       // assertions that don't match the component's actual behavior). Not owned
       // by issue #25; left excluded pending a dedicated fix.
+      // settings-wiring-honesty: this file and the two marked below also still
+      // encode the browser API-server mode that trace removed (api mode outside
+      // Electron, the user-entered server URL, the old 'Local'/'API' toggle
+      // copy). Rework those cases before un-excluding them; they are not
+      // regressions of current behavior.
       'src/components/InferenceModeToggle.test.tsx',
       // Depend on the unbuilt edgevec WASM snippet (node_modules artifact not
       // present without a build step). Owned by RAG retrieval PR #22.
       'src/pages/ChatPage.test.tsx',
-      'src/pages/ChatPage.verification-3.3.test.tsx',
+      'src/pages/ChatPage.verification-3.3.test.tsx', // also encodes the removed browser API-server mode (see above)
       'src/pages/DocumentsPage.test.tsx',
       // Missing fake-timer setup + spy/mock-result drift in chat/streaming
       // integration tests. Owned by chat engine PR #21.
       'src/pages/ChatPage.rag.test.tsx',
-      'src/pages/ChatPage.server-mode.test.tsx',
       'src/pages/ChatPage.shortcuts.test.tsx',
-      'src/lib/inference/InferenceModeContext.test.tsx',
+      'src/lib/inference/InferenceModeContext.test.tsx', // also encodes the removed browser API-server mode (see above)
       // Extractor return-shape drift (asserts string, code returns object) and
       // stale model-id expectations. Owned by document-ingestion PR #23.
       'src/lib/processing/docx-extractor.test.ts',

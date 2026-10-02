@@ -87,6 +87,31 @@ vi.mock('../lib/inference', () => ({
   useInferenceMode: vi.fn(),
 }));
 
+// settings-wiring-honesty (AC4): 'api' mode is the desktop app's built-in
+// backend only — the send path needs a desktop session (the browser-only
+// user-entered server URL branch was removed), so this suite drives the
+// Electron api path through a stub session.
+vi.mock('../lib/desktop-session', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/desktop-session')>()),
+  useDesktopSession: () => ({
+    session: {
+      baseUrl: 'http://127.0.0.1:4567',
+      token: 'test-desktop-token',
+      mode: 'node',
+      apiClient: {},
+      sseUrl: () => 'http://127.0.0.1:4567/ask/stream',
+    },
+    models: null,
+    loading: false,
+    error: null,
+  }),
+  fetchModelStatus: vi.fn(async () => ({
+    engine: 'stub',
+    profile: 'auto',
+    models: { quality: { present: false }, fast: { present: false } },
+  })),
+}));
+
 import { ChatPage } from './ChatPage';
 import { useInferenceMode } from '../lib/inference';
 import type { ChatMessage } from '../types/chat';

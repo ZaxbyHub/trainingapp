@@ -20,12 +20,19 @@ import type {
   RetrievalSurface,
 } from './types.js';
 import type { PackManager } from './store/pack-manager.js';
+import { DEFAULT_RETRIEVAL_CONFIG } from './retrieval/config.js';
 
-// Settings defaults mirror config.py's RAGSettings field defaults so the
-// desktop settings surface stays number-compatible with the Python reference.
-// INTERNAL storage uses the rag_* request-model keys (SettingsUpdateRequest
-// names); responseSettings() maps them to the SettingsResponse names.
-const DEFAULT_SETTINGS = {
+// STORED defaults mirror config.py's RAGSettings field defaults so the
+// desktop keyspace and its PUT bounds stay number-compatible with the Python
+// reference. INTERNAL storage uses the rag_* request-model keys
+// (SettingsUpdateRequest names); responseSettings() maps them to the
+// SettingsResponse names. The REPORTED flat values are not a mirror of
+// config.py (settings-wiring-honesty): GET /settings reports what the next
+// desktop query uses, so max_tokens/temperature follow the inference profile
+// and reranking_enabled the retrieval env default (and reranker
+// availability) unless the user explicitly set them — they differ from the
+// Python backend's flat defaults by design.
+export const DEFAULT_SETTINGS = {
   rag_chunk_size: 1000,
   rag_chunk_overlap: 100,
   rag_n_results: 4,
@@ -45,7 +52,7 @@ const DEFAULT_SETTINGS = {
 } as const;
 
 // SettingsUpdateRequest bounds (api_server.py SettingsUpdateRequest).
-const SETTING_BOUNDS = {
+export const SETTING_BOUNDS = {
   rag_chunk_size: { min: 128, max: 8192, type: 'int' },
   rag_chunk_overlap: { min: 0, max: Number.POSITIVE_INFINITY, type: 'int' },
   rag_n_results: { min: 1, max: 10, type: 'int' },
@@ -92,6 +99,31 @@ const RAG_TO_RESPONSE: Record<string, string> = {
   rag_packs_recency_floor: 'packs_recency_floor',
 };
 
+/**
+ * settings-wiring-honesty: the keyspace keys a desktop query READS at query
+ * time. Retrieval (every engine with a retrieval surface) reads the result
+ * count and the per-query rerank flag; an engine that generates (LlamaEngine)
+ * additionally reads the generation keys. Every other keyspace key is stored
+ * and validated but has no desktop reader, and GET /settings reports it in
+ * `not_applied` (derived from SETTING_BOUNDS minus these sets).
+ */
+const RETRIEVAL_READ_KEYS: readonly string[] = ['rag_n_results', 'rag_reranking_enabled'];
+export const GENERATION_READ_KEYS: readonly string[] = ['rag_max_tokens', 'rag_temperature'];
+
+/** Effective generation values an engine falls back to when not explicitly set. */
+export interface GenerationDefaults {
+  maxTokens: number;
+  temperature: number;
+}
+
+type SettingsResult = { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] };
+
+/** StubEngine.captureSettingsState() snapshot: the stored rag_* values and the explicit key set. */
+export interface StubSettingsState {
+  readonly settings: Readonly<Record<string, number | string | boolean>>;
+  readonly explicitKeys: readonly string[];
+}
+
 /** The stub streams a short deterministic token sequence (suite-shaped). */
 const STUB_TOKENS = ['Desktop ', 'stub ', 'answer.'];
 
@@ -105,6 +137,16 @@ function delay(ms: number): Promise<void> {
  */
 export class StubEngine implements EngineSurface {
   private settings: Record<string, number | string | boolean> = { ...DEFAULT_SETTINGS };
+
+  /**
+   * settings-wiring-honesty: the rag_* keys a client explicitly set — every
+   * key committed by an accepted applySettingsPatch (boot replay of the
+   * persisted sidecar and every accepted PUT /settings), minus keys a
+   * `reset` directive cleared. Precedence for the generation and rerank keys:
+   * an explicit value wins; otherwise the inference-profile (generation) or
+   * retrieval env (rerank) default applies.
+   */
+  private readonly explicitKeys = new Set<string>();
 
   /**
    * B7 (issue #65): late-bound hybrid retrieval surface. The host attaches it
@@ -178,7 +220,10 @@ export class StubEngine implements EngineSurface {
   } | null> {
     if (this.retrievalSurface === null) return null;
     const n = nResults ?? (Number(this.settings.rag_n_results) || 4);
-    const rows = await this.retrievalSurface.search(question, n);
+    // settings-wiring-honesty: the REQUESTED rerank flag rides each query, so
+    // a stored rag_reranking_enabled takes effect without a surface rebuild.
+    const rerank = this.requestedRerank();
+    const rows = await this.retrievalSurface.search(question, n, { rerank });
     if (rows.length === 0) return null;
     const sources: string[] = [];
     for (const row of rows) {
@@ -188,7 +233,9 @@ export class StubEngine implements EngineSurface {
       sources,
       contextLength: rows.reduce((total, row) => total + row.text.length, 0),
       texts: rows.map((row) => row.text),
-      floorActive: this.retrievalSurface.floorActive !== false,
+      // Per-query (issue #72 contract): a rerank-off query skipped the
+      // reranker, so its scores were never floor-gated.
+      floorActive: this.retrievalSurface.floorActive !== false && rerank,
       // D6 (issue #82): cited chunk ids + scores for the learn assembler
       // (rows whose surface predates chunkId are simply absent from cited).
       cited: rows
@@ -265,7 +312,7 @@ export class StubEngine implements EngineSurface {
   // calibrated floor). Detached (null), the deterministic B3 row remains.
   async search(query: string, nResults = 5): Promise<Array<{ text: string; source: string; similarity: number }>> {
     if (this.retrievalSurface !== null) {
-      return this.retrievalSurface.search(query, nResults);
+      return this.retrievalSurface.search(query, nResults, { rerank: this.requestedRerank() });
     }
     return [{ text: `Stub retrieval result for "${query}" (B7, issue #65).`, source: 'desktop-stub', similarity: 0.5 }];
   }
@@ -318,7 +365,83 @@ export class StubEngine implements EngineSurface {
    * Apply a rag_* patch with the frozen bounds. Returns the 400 message for
    * the cross-field rule (overlap >= size), mirroring api_server.py:1088.
    */
-  applySettingsPatch(patch: Record<string, unknown>): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
+  /**
+   * settings-wiring-honesty: the rerank flag the next query requests — the
+   * explicit rag_reranking_enabled when set, else the attached surface's
+   * configured default (TRAININGAPP_RETRIEVAL_RERANK), else the retrieval
+   * default. typeof guards: a custom surface may not carry rerankDefault.
+   */
+  requestedRerank(): boolean {
+    if (this.explicitKeys.has('rag_reranking_enabled')) return this.settings.rag_reranking_enabled === true;
+    const surfaceDefault = this.retrievalSurface?.rerankDefault;
+    return typeof surfaceDefault === 'boolean' ? surfaceDefault : DEFAULT_RETRIEVAL_CONFIG.rerank;
+  }
+
+  /**
+   * Whether a reranker can run right now: a surface is attached and its
+   * reranker path is live (floorActive is false when no reranker was built at
+   * boot, rerank is env-disabled, or the failure latch degraded it).
+   */
+  rerankingAvailable(): boolean {
+    if (this.retrievalSurface === null) return false;
+    const live = this.retrievalSurface.floorActive;
+    return typeof live === 'boolean' ? live : true;
+  }
+
+  /**
+   * PR #140 review (FB140-001): a copy of every field applySettingsPatch and
+   * resetSettings mutate (the stored values and the explicit key set), so a
+   * caller whose follow-up step fails (the sidecar write) can put the engine
+   * back exactly as it was. The snapshot shares no mutable state with the
+   * engine.
+   */
+  captureSettingsState(): StubSettingsState {
+    return { settings: { ...this.settings }, explicitKeys: [...this.explicitKeys] };
+  }
+
+  /** Restore a captureSettingsState() snapshot (copies it again, so the snapshot stays reusable). */
+  restoreSettingsState(snapshot: StubSettingsState): void {
+    this.settings = { ...snapshot.settings };
+    this.explicitKeys.clear();
+    for (const key of snapshot.explicitKeys) this.explicitKeys.add(key);
+  }
+
+  /** Explicitly set generation values (omitted keys follow the profile). */
+  generationOverrides(): { maxTokens?: number; temperature?: number } {
+    const out: { maxTokens?: number; temperature?: number } = {};
+    if (this.explicitKeys.has('rag_max_tokens')) out.maxTokens = Number(this.settings.rag_max_tokens);
+    if (this.explicitKeys.has('rag_temperature')) out.temperature = Number(this.settings.rag_temperature);
+    return out;
+  }
+
+  /**
+   * settings-wiring-honesty: the PUT /settings `reset` directive. Restores
+   * each named key's stored default and drops it from the explicit set, so
+   * it follows the profile/env default again. All-or-nothing: an unknown key
+   * is a 422 and a reset that would break overlap < size is a 400, with
+   * nothing committed in either case.
+   */
+  resetSettings(keys: unknown): SettingsResult {
+    if (!Array.isArray(keys) || keys.some((key) => typeof key !== 'string')) {
+      return { ok: false, status: 422, detail: 'Request validation failed', errors: ['reset: expected an array of setting keys'] };
+    }
+    const errors = (keys as string[])
+      .filter((key) => !Object.prototype.hasOwnProperty.call(SETTING_BOUNDS, key))
+      .map((key) => `reset: ${key}: unknown setting`);
+    if (errors.length > 0) return { ok: false, status: 422, detail: 'Request validation failed', errors };
+    // Every SETTING_BOUNDS key has a DEFAULT_SETTINGS entry (validated above).
+    const defaults: Record<string, number | boolean> = DEFAULT_SETTINGS;
+    const next = { ...this.settings };
+    for (const key of keys as string[]) next[key] = defaults[key] as number | boolean;
+    if (Number(next.rag_chunk_overlap) >= Number(next.rag_chunk_size)) {
+      return { ok: false, status: 400, detail: 'rag_chunk_overlap must be less than rag_chunk_size' };
+    }
+    this.settings = next;
+    for (const key of keys as string[]) this.explicitKeys.delete(key);
+    return { ok: true };
+  }
+
+  applySettingsPatch(patch: Record<string, unknown>): SettingsResult {
     const errors: string[] = [];
     const applied: Record<string, number | string | boolean> = {};
     for (const [key, value] of Object.entries(patch)) {
@@ -363,16 +486,51 @@ export class StubEngine implements EngineSurface {
       return { ok: false, status: 400, detail: 'rag_chunk_overlap must be less than rag_chunk_size' };
     }
     Object.assign(this.settings, applied);
+    // Marked only on this commit path: a rejected patch (400/422 above)
+    // leaves the explicit set unchanged.
+    for (const key of Object.keys(applied)) this.explicitKeys.add(key);
     return { ok: true };
   }
 
-  responseSettings(): Record<string, unknown> {
+  /**
+   * GET /settings body. Flat keys keep their SettingsResponse names but carry
+   * EFFECTIVE values (what the next query uses); the optional
+   * settings-wiring-honesty properties report the explicit key set, the
+   * requested (explicit or null) and effective preset values, reranker
+   * availability, and every keyspace key with no desktop reader. An engine
+   * that generates passes its profile generation defaults.
+   */
+  responseSettings(generationDefaults?: GenerationDefaults): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const [ragKey, responseKey] of Object.entries(RAG_TO_RESPONSE)) {
       const value = this.settings[ragKey];
       out[responseKey] = value;
     }
-    return out;
+    const explicitOrNull = (key: string) => (this.explicitKeys.has(key) ? this.settings[key] : null);
+    const generated = (key: string, fallback: number | undefined) =>
+      this.explicitKeys.has(key) || fallback === undefined ? this.settings[key] : fallback;
+    const available = this.rerankingAvailable();
+    const effective = {
+      n_results: this.settings.rag_n_results,
+      reranking_enabled: available && this.requestedRerank(),
+      max_tokens: generated('rag_max_tokens', generationDefaults?.maxTokens),
+      temperature: generated('rag_temperature', generationDefaults?.temperature),
+    };
+    const readers = new Set([...RETRIEVAL_READ_KEYS, ...(generationDefaults !== undefined ? GENERATION_READ_KEYS : [])]);
+    return {
+      ...out,
+      ...effective,
+      explicit_keys: [...this.explicitKeys].sort(),
+      requested: {
+        n_results: explicitOrNull('rag_n_results'),
+        reranking_enabled: explicitOrNull('rag_reranking_enabled'),
+        max_tokens: explicitOrNull('rag_max_tokens'),
+        temperature: explicitOrNull('rag_temperature'),
+      },
+      effective,
+      reranking_available: available,
+      not_applied: Object.keys(SETTING_BOUNDS).filter((key) => !readers.has(key)),
+    };
   }
 
   // B9 (issue #67): with a store-backed document surface attached, the stub

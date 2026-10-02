@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { SIDEBAR_OPEN_KEY } from '../lib/storage/persisted-keys';
 
 export interface SidebarState {
   isOpen: boolean;
@@ -9,7 +10,7 @@ export interface SidebarState {
 export function useSidebarState(): SidebarState {
   const [isOpen, setIsOpen] = useState(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('sidebarOpen');
+      const saved = localStorage.getItem(SIDEBAR_OPEN_KEY);
       if (saved !== null) return saved === 'true';
       return window.innerWidth > 1024;
     }
@@ -17,7 +18,7 @@ export function useSidebarState(): SidebarState {
   });
 
   useEffect(() => {
-    localStorage.setItem('sidebarOpen', isOpen.toString());
+    localStorage.setItem(SIDEBAR_OPEN_KEY, isOpen.toString());
   }, [isOpen]);
 
   const toggle = () => setIsOpen((prev) => !prev);

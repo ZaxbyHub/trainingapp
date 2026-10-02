@@ -198,70 +198,8 @@ describe('InferenceModeContext', () => {
       expect(screen.getByTestId('mode').textContent).toBe('api');
     });
 
-    it('falls back to default when localStorage is corrupted', () => {
-      localStorage.setItem('inference-mode', 'not valid json');
-
-      function TestComponent() {
-        const { mode } = useInferenceMode();
-        return <div data-testid="mode">{mode}</div>;
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      expect(screen.getByTestId('mode').textContent).toBe('browser-local');
-    });
-
-    it('handles localStorage being unavailable', () => {
-      const localStorageSpy = vi.spyOn(global, 'localStorage', 'get');
-      localStorageSpy.mockImplementation(() => {
-        throw new Error('localStorage not available');
-      });
-
-      function TestComponent() {
-        const { mode } = useInferenceMode();
-        return <div data-testid="mode">{mode}</div>;
-      }
-
-      // Should not throw, should use default
-      expect(() => {
-        render(
-          <InferenceModeProvider>
-            <TestComponent />
-          </InferenceModeProvider>
-        );
-      }).not.toThrow();
-
-      expect(screen.getByTestId('mode').textContent).toBe('browser-local');
-
-      localStorageSpy.mockRestore();
-    });
-
-    it('handles localStorage quota exceeded', () => {
-      const localStorageSpy = vi.spyOn(global, 'localStorage', 'set');
-      localStorageSpy.mockImplementation(() => {
-        throw new Error('Quota exceeded');
-      });
-
-      function TestComponent() {
-        const { setMode } = useInferenceMode();
-        return <button onClick={() => setMode('api')}>Set API</button>;
-      }
-
-      // Should not throw
-      expect(() => {
-        render(
-          <InferenceModeProvider>
-            <TestComponent />
-          </InferenceModeProvider>
-        );
-      }).not.toThrow();
-
-      localStorageSpy.mockRestore();
-    });
+    // The corrupt / unavailable / quota cases moved to
+    // InferenceModeContext.migration.test.tsx (PR #140 review FB140-005), which runs in CI.
   });
 
   describe('checkServerConnectivity', () => {
@@ -427,44 +365,6 @@ describe('InferenceModeContext', () => {
         );
       });
     });
-
-    it('strips trailing slash from serverUrl', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-      });
-
-      function TestComponent() {
-        const { checkServerConnectivity, setServerUrl } = useInferenceMode();
-        return (
-          <div>
-            <button onClick={() => setServerUrl('http://localhost:8000/')}>Set URL</button>
-            <button onClick={() => checkServerConnectivity()}>Check</button>
-          </div>
-        );
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      await act(async () => {
-        screen.getByText('Set URL').click();
-      });
-
-      await act(async () => {
-        screen.getByText('Check').click();
-      });
-
-      await waitFor(() => {
-        expect(mockFetch).toHaveBeenCalledWith(
-          'http://localhost:8000/auth/status',
-          expect.any(Object)
-        );
-      });
-    });
   });
 
   describe('setModelReady', () => {
@@ -570,53 +470,6 @@ describe('InferenceModeContext', () => {
       fireEvent.click(screen.getByText('Set -10%'));
       await waitFor(() => {
         expect(screen.getByTestId('progress').textContent).toBe('0');
-      });
-    });
-  });
-
-  describe('setServerUrl', () => {
-    it('updates serverUrl state', async () => {
-      function TestComponent() {
-        const { serverUrl, setServerUrl } = useInferenceMode();
-        return (
-          <div>
-            <span data-testid="url">{serverUrl}</span>
-            <button onClick={() => setServerUrl('http://localhost:8000')}>Set URL</button>
-          </div>
-        );
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      fireEvent.click(screen.getByText('Set URL'));
-
-      await waitFor(() => {
-        expect(screen.getByTestId('url').textContent).toBe('http://localhost:8000');
-      });
-    });
-
-    it('persists serverUrl to localStorage', async () => {
-      function TestComponent() {
-        const { setServerUrl } = useInferenceMode();
-        return <button onClick={() => setServerUrl('http://localhost:8000')}>Set URL</button>;
-      }
-
-      render(
-        <InferenceModeProvider>
-          <TestComponent />
-        </InferenceModeProvider>
-      );
-
-      fireEvent.click(screen.getByText('Set URL'));
-
-      await waitFor(() => {
-        const stored = localStorage.getItem('inference-mode');
-        const parsed = JSON.parse(stored!);
-        expect(parsed.serverUrl).toBe('http://localhost:8000');
       });
     });
   });

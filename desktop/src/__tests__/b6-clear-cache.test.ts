@@ -93,7 +93,10 @@ function httpJson(
 }
 
 describe('b6 C7 (AC7): host-level clear cache', () => {
-  itReal('DELETE /documents clears the on-disk store and keeps serving at the same path', async () => {
+  // Explicit timeout: this test starts a real host and runs a cold ingest
+  // (store open + embed + FTS) that can exceed vitest's 5 s default when the
+  // full suite saturates the worker pool (observed flake, settings-wiring-honesty F3).
+  itReal('DELETE /documents clears the on-disk store and keeps serving at the same path', { timeout: 20_000 }, async () => {
     const root = makeTempDir('b6-c7-clear-');
     const storePath = path.join(root, 'store.sqlite');
     const docsDir = path.join(root, 'docs');

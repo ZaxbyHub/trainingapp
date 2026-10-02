@@ -11,13 +11,15 @@
 import React, { useEffect, useRef } from 'react';
 import type { ReadinessResult } from '../lib/llm/model-readiness';
 import type { BrowserEngine } from '../types/llm';
+import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
 
 interface ModelBlockedOverlayProps {
   readinessResult: ReadinessResult | null;
   browserEngine: BrowserEngine;
   modelLoadingProgress: number;
   onRetry: () => void;
-  onOpenSettings: () => void;
+  /** Open Settings; with a section id, Settings scrolls to and focuses it. */
+  onOpenSettings: (section?: string) => void;
 }
 
 const FOCUSABLE_SELECTOR =
@@ -207,7 +209,7 @@ export function ModelBlockedOverlay({
           </button>
           <button
             type="button"
-            onClick={onOpenSettings}
+            onClick={() => onOpenSettings()}
             style={{
               backgroundColor: 'transparent',
               color: 'var(--color-text-muted)',
@@ -220,6 +222,26 @@ export function ModelBlockedOverlay({
             }}
           >
             Open Settings
+          </button>
+          {/* settings-wiring-honesty (AC10): the missing-model state has a way
+              forward that needs no packaged weights — an external
+              OpenAI-compatible model (local server or cloud). Opens Settings
+              at the section hosting those controls. */}
+          <button
+            type="button"
+            onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}
+            style={{
+              backgroundColor: 'transparent',
+              color: 'var(--color-text-muted)',
+              border: '1px solid var(--color-text-muted)',
+              borderRadius: 'var(--radius-sm)',
+              padding: 'var(--spacing-xs) var(--spacing-sm)',
+              fontFamily: 'var(--font-family)',
+              fontSize: 'var(--font-size-caption)',
+              cursor: 'pointer',
+            }}
+          >
+            Use a local server or cloud model
           </button>
         </div>
       </div>

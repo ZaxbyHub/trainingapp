@@ -30,7 +30,7 @@ const WEB_UI = resolve(__dirname, '..');
 const REPO_ROOT = resolve(WEB_UI, '..');
 const PUBLIC_MODELS = join(WEB_UI, 'public', 'models');
 
-// `--no-llm`: build an embeddings-only / server-mode archive. Stages only the
+// `--no-llm`: build an embeddings-only archive. Stages only the
 // `core` + `optional` model groups and writes a Vite env marker so the runtime
 // readiness gate (checkPackagedModels) does not flag the deliberately-absent
 // browser-LLM runtime + weights as missing.
@@ -240,7 +240,7 @@ function prepareWllamaRuntime() {
 // ---------------------------------------------------------------------------
 // 1d. Browser LLM weights (OPTIONAL): Gemma 4 E2B-it GGUF + mmproj projector.
 //     Large binaries assembled at packaging time; absence is a warning so an
-//     embeddings-only / server-mode build still succeeds.
+//     embeddings-only build still succeeds.
 // ---------------------------------------------------------------------------
 function prepareBrowserLLM() {
   const srcDir = firstExisting([
@@ -252,7 +252,7 @@ function prepareBrowserLLM() {
   if (!srcDir) {
     warn(
       'browser LLM (Gemma 4 E2B-it) source not found at models/gemma-4-e2b-it/ (optional). ' +
-        'Browser wllama generation will be unavailable; server mode is unaffected. ' +
+        'Browser wllama generation will be unavailable (an external model or the desktop app can still answer). ' +
         'See PACKAGING.md to include model.gguf + mmproj.gguf.'
     );
     return;
@@ -315,7 +315,7 @@ function prepareOnnxRuntimeWasm() {
 }
 
 // ---------------------------------------------------------------------------
-log(`assembling offline model assets${NO_LLM ? ' (--no-llm: embeddings-only / server mode)' : ''}...`);
+log(`assembling offline model assets${NO_LLM ? ' (--no-llm: embeddings-only)' : ''}...`);
 if (!NO_EMBEDDER) {
   prepareEmbeddingModel();
 } else {

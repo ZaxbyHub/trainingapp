@@ -119,7 +119,7 @@ describe('checkPackagedModels', () => {
 });
 
 describe('checkPackagedModels — excluded groups (--no-llm builds)', () => {
-  // Issue #20 feedback F1: an embeddings-only / server-mode build (built with
+  // Issue #20 feedback F1: an embeddings-only build (built with
   // validate-build --no-llm) intentionally omits the llm-group files. Without
   // an exclusion signal, checkPackagedModels would report those required files
   // as missing forever → allReady:false → broken UI on a valid configuration.

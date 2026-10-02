@@ -10,7 +10,7 @@
 
 import React from 'react';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 import * as inferenceModule from '../lib/inference';
@@ -127,7 +127,40 @@ global.indexedDB = {
 } as unknown as IDBDatabase & typeof globalThis.indexedDB;
 
 // Import after mocks, matching SettingsPage.test.tsx's convention.
-import { SettingsPage } from './SettingsPage';
+import { RELOAD_AFTER_CLEAR_MS, SettingsPage } from './SettingsPage';
+import { INTERNAL_KEYS, USER_SETTING_KEYS } from '../lib/storage/persisted-keys';
+
+/** The always-mounted Clear Cache live region (PR #140 review FB140-002). */
+function clearStatusRegion(): HTMLElement | null {
+  return document.getElementById('clear-cache-status');
+}
+
+/**
+ * Under fake timers (installed after the page is ready): step the clock 1 ms
+ * at a time until the clear finishes. The handler schedules the reload in
+ * the same turn it sets the final status, so on return the reload timer was
+ * scheduled at the current fake time.
+ */
+async function stepUntilSettled(): Promise<void> {
+  for (let i = 0; i < 200; i += 1) {
+    const text = document.body.textContent ?? '';
+    if (/cache cleared|could not clear all data/i.test(text)) return;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+  }
+  throw new Error(`Clear Cache never settled; status: ${clearStatusRegion()?.textContent ?? '<no region>'}`);
+}
+
+/** Render, wait for the Storage section with REAL timers, then switch to fake ones. */
+async function renderReadyWithFakeTimers(reloadPage: () => void): Promise<HTMLElement> {
+  render(<SettingsPage reloadPage={reloadPage} />);
+  await waitFor(() => {
+    expect(screen.getByText('Storage')).toBeInTheDocument();
+  });
+  vi.useFakeTimers();
+  return screen.getByRole('button', { name: /clear cache/i });
+}
 
 describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
   beforeEach(() => {
@@ -155,7 +188,6 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
       setMode: vi.fn(),
       setBrowserEngine: vi.fn(),
       setRagPreset: vi.fn(),
-      setServerUrl: vi.fn(),
       checkServerConnectivity: vi.fn(() => Promise.resolve(false)),
       setModelReady: vi.fn(),
       setModelLoadingProgress: vi.fn(),
@@ -335,12 +367,14 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
     fireEvent.click(clearButton);
 
-    // PRR-003: text now mentions orphan cleanup from previous sessions.
+    // PRR-003: text mentions orphan cleanup from previous sessions.
+    // settings-wiring-honesty (AC5): it lists exactly what is removed,
+    // including the browser-stored settings.
     expect(
-      screen.getByText(/this will delete all documents, keyword\/vector indexes/i)
+      screen.getByText(/this deletes the documents and keyword\/vector indexes stored in this browser/i)
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/orphaned data from previous sessions/i)
+      screen.getByText(/orphaned data from earlier sessions/i)
     ).toBeInTheDocument();
   });
 
@@ -477,6 +511,111 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     });
 
     mockDB.objectStoreNames.contains = originalContains;
+  });
+
+  describe('status announcement, reload timing and partial failure (PR #140 review)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      localStorage.clear();
+    });
+
+    // FB140-002: the live region exists BEFORE the click and only its text
+    // changes — a region inserted together with its message is not reliably
+    // announced.
+    test('an always-mounted polite status region carries Clearing… then Cache cleared / Reloading', async () => {
+      const reloadPage = vi.fn();
+      const button = await renderReadyWithFakeTimers(reloadPage);
+      const region = clearStatusRegion();
+      expect(region).not.toBeNull();
+      expect(region).toHaveAttribute('role', 'status');
+      expect(region).toHaveAttribute('aria-live', 'polite');
+      expect(region?.textContent).toBe('');
+
+      fireEvent.click(button);
+      fireEvent.click(button);
+      await act(async () => {});
+      expect(clearStatusRegion()).toBe(region);
+      expect(region?.textContent).toMatch(/clearing/i);
+
+      await stepUntilSettled();
+      expect(clearStatusRegion()).toBe(region);
+      expect(region?.textContent).toMatch(/cache cleared/i);
+      expect(region?.textContent).toMatch(/reloading/i);
+      // The visible badge text stays exactly "Cache cleared".
+      expect(screen.getByText('Cache cleared')).toBe(region);
+    });
+
+    // FB140-002: the reload waits long enough for the announcement, and
+    // happens before the 3 s status reset would clear the message.
+    test('reload fires exactly RELOAD_AFTER_CLEAR_MS after the status, not before', async () => {
+      expect(RELOAD_AFTER_CLEAR_MS).toBeGreaterThanOrEqual(2000);
+      expect(RELOAD_AFTER_CLEAR_MS).toBeLessThan(3000);
+      const reloadPage = vi.fn();
+      const button = await renderReadyWithFakeTimers(reloadPage);
+      fireEvent.click(button);
+      fireEvent.click(button);
+      await stepUntilSettled();
+      expect(reloadPage).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RELOAD_AFTER_CLEAR_MS - 1);
+      });
+      expect(reloadPage).not.toHaveBeenCalled();
+      expect(clearStatusRegion()?.textContent).toMatch(/cache cleared/i);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(reloadPage).toHaveBeenCalledTimes(1);
+    });
+
+    // FB140-011: one failed step (the EdgeVec delete) no longer skips the
+    // rest: saved settings are still removed, the error is reported, and the
+    // page reloads because the settings were cleared.
+    test('an EdgeVec delete failure still clears saved settings, reports the error and reloads', async () => {
+      for (const key of USER_SETTING_KEYS) localStorage.setItem(key, 'x');
+      for (const key of INTERNAL_KEYS) localStorage.setItem(key, 'keep');
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const errorTx = {
+        objectStore: vi.fn(() => {
+          setTimeout(() => {
+            if (errorTx.onerror) errorTx.onerror.call(errorTx, new Event('error'));
+          }, 0);
+          return mockObjectStore;
+        }),
+        oncomplete: null as ((e: Event) => void) | null,
+        onerror: null as ((e: Event) => void) | null,
+        onabort: null as ((e: Event) => void) | null,
+      };
+      const originalTransaction = mockDB.transaction;
+      mockDB.transaction = vi.fn((storeName: string) => (storeName === 'data' ? errorTx : mockTransaction)) as typeof mockDB.transaction;
+      try {
+        const reloadPage = vi.fn();
+        const button = await renderReadyWithFakeTimers(reloadPage);
+        fireEvent.click(button);
+        fireEvent.click(button);
+        await stepUntilSettled();
+
+        expect(screen.getByText('Could not clear all data')).toBe(clearStatusRegion());
+        // Stage B review (L2): sighted users also see why the page reloads.
+        const note = screen.getByText(/your saved settings were removed; reloading the page/i);
+        expect(clearStatusRegion()).toContainElement(note);
+        expect(note.style.position).not.toBe('absolute');
+        expect(note.style.clip).toBe('');
+        for (const key of USER_SETTING_KEYS) expect(localStorage.getItem(key)).toBeNull();
+        for (const key of INTERNAL_KEYS) expect(localStorage.getItem(key)).toBe('keep');
+        // The steps after the failed one still ran.
+        expect(indexedDB.deleteDatabase).toHaveBeenCalledWith('doc-qa-settings');
+        expect(caches.delete).toHaveBeenCalledWith('webllm/model');
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(RELOAD_AFTER_CLEAR_MS);
+        });
+        expect(reloadPage).toHaveBeenCalledTimes(1);
+      } finally {
+        mockDB.transaction = originalTransaction;
+      }
+    });
   });
 
   // ADV-3: stale prefix cleanup path (listStalePrefixes returns non-empty)

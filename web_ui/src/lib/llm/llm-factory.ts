@@ -9,11 +9,10 @@
 import type { BrowserEngine, LLMService } from '../../types/llm';
 import { WebLLMService } from './web-llm-service';
 import { WllamaService } from './wllama-service';
+import { INFERENCE_MODE_KEY } from '../storage/persisted-keys';
 
 /** Default browser engine — wllama, for robustness on hardware without WebGPU. */
 export const DEFAULT_BROWSER_ENGINE: BrowserEngine = 'wllama';
-
-const STORAGE_KEY = 'inference-mode';
 
 /**
  * Return the LLMService singleton for the given engine.
@@ -46,7 +45,7 @@ export function disposeBrowserEngine(engine: BrowserEngine): void {
  */
 export function getPreferredBrowserEngine(): BrowserEngine {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(INFERENCE_MODE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as { browserEngine?: BrowserEngine };
       if (parsed.browserEngine === 'webllm' || parsed.browserEngine === 'wllama') {

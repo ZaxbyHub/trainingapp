@@ -104,7 +104,8 @@ When the backend host lands (#61, per ADR-0003), it MUST:
 4. Read the token header name from `resolveSecurityConfig().tokenHeaderName`
    (default `X-Desktop-Token`) — do not hard-code it, and do not switch the
    desktop transport to `Authorization: Bearer` (the web_ui ApiClient reserves
-   that header for its server-mode JWT flow; B9 renders the desktop token via
+   that header for direct API clients of the Python server's JWT flow — the browser app
+   itself has no server mode; B9 renders the desktop token via
    the `desktopApi.getAuthToken()` bridge instead of `auth.ts` storage).
 5. Never log the token, the raw `Authorization`-equivalent header, or full
    request URLs at info level.

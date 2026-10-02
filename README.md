@@ -126,6 +126,8 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Operation Cancellation**: Cancel button stops `TokenStreamManager`, clears pending mock timers, and marks streaming messages complete
 
 ### Inference Mode Architecture (Phase 3)
+> Historical (Phase 3): the browser API-server mode and its server URL described here were removed by settings-wiring-honesty, and with them the browser-side "Server not connected" header warning; `api` mode now exists only in the desktop app (where that warning still reports the desktop backend). See CONFIGURATION.md, App Settings.
+
 - **Dual-Mode Context**: `InferenceModeContext` (`InferenceModeContext.tsx`) manages `browser-local` vs `api` mode via React context
 - **localStorage Persistence**: Mode preference and server URL stored under `inference-mode` key; survives page refresh
 - **Server Connectivity Check**: `checkServerConnectivity()` pings `/auth/status` with 5s timeout, handles abort for rapid toggles, updates `isServerConnected` and `modeError` state
@@ -213,7 +215,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
   (see PACKAGING.md)
 - **Model Download Manager**: Progress tracking with speed/ETA calculation, cancellation support, and storage quota error handling
 - **ModelDownloadProgress UI**: Accessible progress bar with ARIA attributes, download speed, ETA countdown, and cancel button
-- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to server API mode when requirements aren't met
+- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to the wllama engine or an external model server (Provider server mode) when requirements aren't met
 - **RAG Orchestrator**: Full retrieval pipeline connecting embedding→vector search→keyword search→RRF fusion→reranking→LLM generation; emits typed `RAGEvent` stream for UI progress
 - **WebGPU Watchdog**: Context loss detection via `GPUDevice.lost` promise/event monitoring; `createRecoveryHandler` automatically re-initializes the service after loss
 
@@ -225,6 +227,8 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Time Display**: Relative timestamps in sidebar (e.g., "2 min ago", "Yesterday")
 
 ### Settings Page & Cross-Browser Support (Phase 7)
+> Historical (Phase 7): the Server Configuration / Server URL controls and the Model Selection dropdown listed here no longer exist; the current Settings page is described in CONFIGURATION.md, App Settings.
+
 - **Dedicated Settings Page** (`SettingsPage.tsx`): Full-featured settings UI with 6 sections:
   - **Inference Mode**: Toggle between browser-local (WebGPU) and API server modes with real-time state sync
   - **Server Configuration**: Server URL input with connection test button and status indicators

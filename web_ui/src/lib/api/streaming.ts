@@ -9,10 +9,11 @@ import { ApiError } from './types';
 /**
  * Validates a stream URL.
  *
- * This is a self-hosted, client-side app: the user configures the server URL
- * (commonly a LAN box, or localhost for local development). This client
- * intentionally allows private/LAN/loopback/.local/link-local hostnames so
- * users can point at a self-hosted LAN server (see issue #21 F5). There is
+ * The only caller today is the desktop app's api-mode chat, which streams from
+ * the desktop backend's loopback URL (desktopSession.sseUrl()); the browser app
+ * no longer has a user-configured server URL (settings-wiring-honesty). The
+ * validator still allows private/LAN/loopback/.local/link-local hostnames (a
+ * self-hosted LAN server was the original use, issue #21 F5). There is
  * currently no server-side compensating SSRF control — `validate_url()` in
  * the Python server's security.py is dead code (never called from
  * api_server.py or llm_interface.py), so the only remaining protection here

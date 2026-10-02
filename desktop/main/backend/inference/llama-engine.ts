@@ -25,7 +25,7 @@ import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChatHistoryItem } from 'node-llama-cpp';
-import { StubEngine } from '../engine.js';
+import { StubEngine, type StubSettingsState } from '../engine.js';
 import type { PackManager } from '../store/pack-manager.js';
 import { ModelNotConfiguredError } from '../types.js';
 import type {
@@ -67,6 +67,10 @@ export interface LlamaEngineBackend {
       history?: unknown[];
       streamCallback?: (token: string) => void;
       cancellationEvent?: CancellationFlag;
+      /** settings-wiring-honesty: explicit rag_max_tokens (else the profile's). */
+      maxTokens?: number;
+      /** settings-wiring-honesty: explicit rag_temperature (else the profile's). */
+      temperature?: number;
     },
   ): Promise<{ answer: string; cancelled: boolean }>;
   dispose(): Promise<void>;
@@ -141,19 +145,27 @@ export function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
   return items.slice(-MAX_HISTORY_TURNS);
 }
 
+/** The profile's generation defaults (what GET /settings reports when not explicitly set). */
+export function profileGeneration(profile: InferenceProfileName): { maxTokens: number; temperature: number } {
+  return PROFILE_GENERATION[profile];
+}
+
 /**
  * Prompt sampler options for a profile (PRR-011): the single place the
  * PROFILE_GENERATION/topP/penalties mapping is derived, exported so tests can
- * pin the shape that reaches session.prompt().
+ * pin the shape that reaches session.prompt(). settings-wiring-honesty: an
+ * explicitly set rag_max_tokens/rag_temperature (overrides) wins over the
+ * profile value; an omitted override keeps the profile default.
  */
 export function buildGenerationParams(
   profile: InferenceProfileName,
   penalties: object = {},
+  overrides: { maxTokens?: number; temperature?: number } = {},
 ): Record<string, unknown> {
   const generation = PROFILE_GENERATION[profile];
   return {
-    maxTokens: generation.maxTokens,
-    temperature: generation.temperature,
+    maxTokens: overrides.maxTokens ?? generation.maxTokens,
+    temperature: overrides.temperature ?? generation.temperature,
     topP: SAMPLER_TOP_P,
     ...(Object.keys(penalties).length > 0 ? { repeatPenalty: penalties } : {}),
   };
@@ -202,7 +214,10 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
           },
           signal: abort.signal,
           stopOnAbortSignal: true,
-          ...buildGenerationParams(opts.profile, penalties),
+          ...buildGenerationParams(opts.profile, penalties, {
+            maxTokens: genOpts.maxTokens,
+            temperature: genOpts.temperature,
+          }),
         });
         return { answer, cancelled: genOpts.cancellationEvent?.isSet() ?? false };
       } finally {
@@ -273,6 +288,16 @@ interface ResidentEntry {
   backend: LlamaEngineBackend;
   profile: InferenceProfileName;
   inFlight: number;
+}
+
+/** LlamaEngine.captureSettingsState() snapshot (PR #140 review FB140-001). */
+export interface LlamaSettingsState {
+  readonly stub: StubSettingsState;
+  readonly profileSetting: ProfileSetting;
+  readonly thresholdGb: number;
+  readonly threadsSetting: number | undefined;
+  readonly vulkanSetting: boolean | undefined;
+  readonly stickyAuto: InferenceProfileName | null;
 }
 
 export class LlamaEngine implements EngineSurface {
@@ -524,6 +549,12 @@ export class LlamaEngine implements EngineSurface {
   async query(question: string, opts: EngineQueryOptions = {}): Promise<EngineQueryResult> {
     const started = Date.now();
     const profile = this.effectiveProfile();
+    // PR #140 review (FB140-006): read the generation overrides together with
+    // the profile and BEFORE retrieval / the queue wait — the retrieval step
+    // reads n_results and the rerank flag synchronously below — so one query
+    // uses one settings snapshot even if a PUT /settings lands mid-flight.
+    // Still per query, never frozen at model load.
+    const overrides = this.stub.generationOverrides();
     const modelPath = this.assertModelAvailable(profile);
     // B7 (issue #65): the retrieval step inside /ask//ask/stream. When the
     // host attached a retrieval surface, the hybrid pipeline runs BEFORE
@@ -543,10 +574,15 @@ export class LlamaEngine implements EngineSurface {
       const entry = await this.ensureResident(profile, modelPath);
       entry.inFlight += 1;
       try {
+        // settings-wiring-honesty: explicit rag_max_tokens/rag_temperature
+        // (read at query start, above) are passed only when set so the
+        // profile defaults apply otherwise.
         const result = await entry.backend.generate(groundedQuestion, {
           history: opts.history,
           streamCallback: opts.streamCallback,
           cancellationEvent: opts.cancellationEvent,
+          ...(overrides.maxTokens !== undefined ? { maxTokens: overrides.maxTokens } : {}),
+          ...(overrides.temperature !== undefined ? { temperature: overrides.temperature } : {}),
         });
         const out: EngineQueryResult = {
           answer: result.answer,
@@ -693,9 +729,44 @@ export class LlamaEngine implements EngineSurface {
     return { ok: true };
   }
 
+  /**
+   * PR #140 review (FB140-001): everything applySettingsPatch / resetSettings
+   * can change — the stub's rag_* values and explicit key set, plus the
+   * inference.* fields and the sticky AUTO latch an inference.profile /
+   * profileThresholdGb patch clears. Resident-model and load state are not
+   * settings and are never touched.
+   */
+  captureSettingsState(): LlamaSettingsState {
+    return {
+      stub: this.stub.captureSettingsState(),
+      profileSetting: this.profileSetting,
+      thresholdGb: this.thresholdGb,
+      threadsSetting: this.threadsSetting,
+      vulkanSetting: this.vulkanSetting,
+      stickyAuto: this.stickyAuto,
+    };
+  }
+
+  restoreSettingsState(snapshot: LlamaSettingsState): void {
+    this.stub.restoreSettingsState(snapshot.stub);
+    this.profileSetting = snapshot.profileSetting;
+    this.thresholdGb = snapshot.thresholdGb;
+    this.threadsSetting = snapshot.threadsSetting;
+    this.vulkanSetting = snapshot.vulkanSetting;
+    this.stickyAuto = snapshot.stickyAuto;
+  }
+
+  /** settings-wiring-honesty: the rag_* reset directive (rag keys only). */
+  resetSettings(keys: unknown): { ok: true } | { ok: false; status: 400 | 422; detail: string; errors?: string[] } {
+    return this.stub.resetSettings(keys);
+  }
+
   responseSettings(): Record<string, unknown> {
     return {
-      ...this.stub.responseSettings(),
+      // Effective generation values follow the profile the NEXT query uses
+      // (effectiveProfile() may advance the sticky AUTO latch exactly as
+      // modelStatus() does — see the PRR-240 note there).
+      ...this.stub.responseSettings(profileGeneration(this.effectiveProfile())),
       'inference.profile': this.profileSetting,
       'inference.profileThresholdGb': this.thresholdGb,
       'inference.threads': this.effectiveThreads(),

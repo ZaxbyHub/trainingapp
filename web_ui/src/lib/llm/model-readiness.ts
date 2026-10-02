@@ -5,8 +5,8 @@
  * FR-015: Graceful degradation
  *
  * Runs three independent checks:
- *   1. WebGPU availability  (hard requirement — no WebGPU = must use server mode)
- *   2. Memory sufficiency   (hard requirement — insufficient RAM = must use server mode)
+ *   1. WebGPU availability  (hard requirement — no WebGPU = wllama or an external model)
+ *   2. Memory sufficiency   (hard requirement — insufficient RAM = an external model)
  *   3. Model cache status  (soft requirement — uncached model triggers download, not failure)
  *
  * WebGPU and memory checks (async)
@@ -267,7 +267,7 @@ export class ModelReadinessGate {
     if (webgpuRequired && !webgpu) {
       failures.push('WebGPU is not available in this browser.');
       recommendations.push(
-        'Switch to the wllama engine (runs on CPU, no WebGPU) or use server API mode.'
+        'Switch to the wllama engine (runs on CPU, no WebGPU), or use an external model server (Provider server mode).'
       );
     } else if (!webgpuRequired && !webgpu) {
       // Informational only for wllama — it does not need WebGPU.
@@ -285,7 +285,7 @@ export class ModelReadinessGate {
       );
       recommendations.push(
         `Use a smaller model that fits within ${availableGB} GB of available memory, ` +
-        'or switch to server API mode for memory-intensive inference.'
+        'or use an external model server (Provider server mode) for memory-intensive inference.'
       );
     }
 

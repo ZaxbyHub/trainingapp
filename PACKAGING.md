@@ -42,8 +42,8 @@ optimum-cli export onnx --model Snowflake/snowflake-arctic-embed-m-v1.5 \
 
 Copy the tokenizer/config alongside it (`tokenizer.json`, `config.json`,
 `tokenizer_config.json` from the HF repo). `prepare-models` fails fast if the
-q8 ONNX is missing or is an LFS stub. For CI / embeddings-only / server-mode
-builds that deliberately omit the embedder, pass `--no-embedder`.
+q8 ONNX is missing or is an LFS stub. For CI / embeddings-only builds
+that deliberately omit the embedder, pass `--no-embedder`.
 
 ## 2. Assemble offline assets
 
@@ -79,7 +79,7 @@ This copies into `public/models/`:
   Copy the tokenizer/config alongside it, then place the directory at
   `models/ettin-reranker-32m-v1/` before running `prepare-models`.
 
-  For CI / embeddings-only / server-mode builds that deliberately omit the
+  For CI / embeddings-only builds that deliberately omit the
   reranker, pass `--no-reranker` (mirrors `--no-llm`); the orchestrator then
   degrades to fused results at runtime.
 
@@ -110,7 +110,7 @@ npm run build:offline      # = prepare-models && tsc/vite build && validate-buil
    the **single source of truth** shared with `src/lib/models/model-manifest.ts`
    (imported at runtime), so the TS readiness gate and the build validator
    cannot drift. Pass `--no-llm` to skip the browser-LLM runtime + Gemma 4 E2B-it
-   weights group (for an embeddings-only / server-mode archive where the
+   weights group (for an embeddings-only archive — e.g. CI — where the
    multi-GB LLM weights are deliberately absent). (It does not grep bundled JS
    for CDN hostnames — vendored ML libs embed default-CDN constants that survive
    minification but are never called at runtime; the offline guarantee is
@@ -169,7 +169,8 @@ running **Google Gemma 4 E2B-it GGUF + mmproj**. Two pieces are packaged:
      (both packages are dependencies).
 2. **Model weights** — the GGUF + projector, placed at the repo root so
    `prepare-models` stages them (this step is **optional**; absence only disables
-   browser generation, server mode is unaffected):
+   browser generation; the desktop app's backend and direct API clients of the Python
+   server are unaffected):
 
 ```bash
 # (a) obtain Gemma 4 E2B-it GGUF + mmproj from unsloth/gemma-4-E2B-it-GGUF on HuggingFace:
@@ -235,15 +236,15 @@ it requires constructing a model-specific multimodal chat handler with
 GGUF on real hardware. To add it: build `GGUFBackend` with a clip/mmproj chat
 handler, accept an optional `image_base64` on the `/ask` request, and route
 multimodal turns through `create_chat_completion` with `image_url` content.
-Until that is verified end-to-end, server mode answers text-only and multimodal
-runs in the browser.
+Until that is verified end-to-end, the Python `/ask` API answers text-only (for its
+direct API clients; the browser app has no server mode) and multimodal runs in the browser.
 
 ## 8. Server authentication (opt-in)
 
 The API server (`api_server.py`) authentication is **off by default** — the
 `ENABLE_AUTH` environment variable defaults to `false`, in which case
-`require_auth()` allows all requests. The web UI runs unauthenticated in this
-default configuration: the chat streaming path passes an `Authorization: Bearer
+`require_auth()` allows all requests. Direct API clients run unauthenticated in this
+default configuration. The web UI's `ApiClient` attaches an `Authorization: Bearer
 <token>` header **only** when a token is present in `sessionStorage` under the
 key `doc_qa_access_token`, and no token is stored unless a login flow sets one.
 
@@ -255,5 +256,7 @@ To enable authentication:
    is intentionally deferred; until it ships, an operator scripting a pre-authed
    client can set that `sessionStorage` key directly.
 
-The `ApiClient` (non-streaming requests) and the SSE streaming path both honor
-the stored token, so server mode works uniformly in either auth configuration.
+The stored-token path applies to direct API clients of the Python server (the
+`ApiClient` honors the stored token). The browser app no longer has a server mode
+(settings-wiring-honesty): its chat never streams from `api_server.py`, and the
+desktop app authenticates to its own backend with the per-launch `X-Desktop-Token`.

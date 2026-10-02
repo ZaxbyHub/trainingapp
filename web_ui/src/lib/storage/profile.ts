@@ -13,8 +13,8 @@
  * shape (see document-store.test.ts).
  */
 
-const PROFILE_KEY = 'doc-qa-profile-id';
-const MIGRATION_KEY = 'doc-qa-profile-migrated';
+import { MIGRATION_KEY, PROFILE_KEY, REINDEX_FLAG_KEY } from './persisted-keys';
+
 const PREFIX_LENGTH = 8;
 
 export interface StorageDbNames {
@@ -194,7 +194,7 @@ export async function migrateOrphanedNamespaces(): Promise<void> {
   if (migratedDocCount > 0) {
     try {
       if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('rag-reindex-required', '1');
+        localStorage.setItem(REINDEX_FLAG_KEY, '1');
       }
     } catch {
       /* private mode / storage disabled — non-fatal */

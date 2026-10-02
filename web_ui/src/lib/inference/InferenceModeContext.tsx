@@ -1,5 +1,7 @@
 /**
  * Inference mode context - manages browser-local vs API vs provider mode state.
+ * 'api' is the desktop app's built-in backend and exists only inside Electron
+ * (settings-wiring-honesty: the browser app has no API-server mode).
  * 'provider' (trace external-llm-provider-settings) sends chat directly to a
  * user-configured OpenAI-compatible server; its connection settings live in
  * the same storage blob (key `providerConfig`) and are managed via
@@ -13,6 +15,7 @@ import { DEFAULT_RAG_PRESET } from '../rag/rag-presets';
 import { disposeBrowserEngine } from '../llm/llm-factory';
 import { getToken } from '../api/auth';
 import { initDesktopSession, isElectron } from '../desktop-session';
+import { INFERENCE_MODE_KEY } from '../storage/persisted-keys';
 
 export type InferenceMode = 'browser-local' | 'api' | 'provider';
 
@@ -40,17 +43,15 @@ interface InferenceModeContextValue extends InferenceModeState {
   setMode: (mode: InferenceMode) => void;
   setBrowserEngine: (engine: BrowserEngine) => void;
   setRagPreset: (preset: RAGPreset) => void;
-  setServerUrl: (url: string) => void;
   checkServerConnectivity: () => Promise<boolean>;
   setModelReady: (ready: boolean) => void;
   setModelLoadingProgress: (progress: number) => void;
 }
 
-const STORAGE_KEY = 'inference-mode';
-
 interface StoredInferenceMode {
   mode: InferenceMode;
-  serverUrl: string;
+  /** Desktop app only: the built-in backend URL (seeded per launch). */
+  serverUrl?: string;
   browserEngine?: BrowserEngine;
   ragPreset?: RAGPreset;
   /** Provider connection settings (managed by lib/llm/openai-provider). */
@@ -70,22 +71,47 @@ const defaultState: InferenceModeState = {
 
 const InferenceModeContext = createContext<InferenceModeContextValue | null>(null);
 
+/**
+ * settings-wiring-honesty (AC4): the browser app has no API-server mode — only
+ * the desktop app's built-in backend is an 'api' target. Outside Electron a
+ * legacy stored blob (`mode: 'api'` and/or a user-entered `serverUrl`) is
+ * re-written once as browser-local without `serverUrl`; every other field
+ * (browserEngine, ragPreset, providerConfig) is kept. One-way: a revert does
+ * not restore the dropped mode or URL.
+ */
+function migrateLegacyBrowserBlob(parsed: Record<string, unknown>): void {
+  if (isElectron()) return;
+  if (parsed.mode !== 'api' && !('serverUrl' in parsed)) return;
+  const migrated: Record<string, unknown> = { ...parsed };
+  if (migrated.mode === 'api') migrated.mode = 'browser-local';
+  delete migrated.serverUrl;
+  try {
+    localStorage.setItem(INFERENCE_MODE_KEY, JSON.stringify(migrated));
+  } catch {
+    // localStorage unavailable — the in-memory state below is still migrated
+  }
+}
+
 function loadStoredState(): InferenceModeState {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = localStorage.getItem(INFERENCE_MODE_KEY);
     if (stored) {
       const parsed: StoredInferenceMode = JSON.parse(stored);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        migrateLegacyBrowserBlob(parsed as unknown as Record<string, unknown>);
+      }
+      const desktop = isElectron();
       return {
         ...defaultState,
         // Mode allow-list (PR #138 review): browserEngine and ragPreset are
         // already validated against their unions — a garbage/legacy mode value
         // must degrade to the default the same way instead of flowing into the
-        // dispatch tree unvalidated.
+        // dispatch tree unvalidated. 'api' is valid only inside the desktop app.
         mode:
-          parsed.mode === 'browser-local' || parsed.mode === 'api' || parsed.mode === 'provider'
+          parsed.mode === 'browser-local' || parsed.mode === 'provider' || (parsed.mode === 'api' && desktop)
             ? parsed.mode
             : 'browser-local',
-        serverUrl: parsed.serverUrl || defaultState.serverUrl,
+        serverUrl: desktop ? parsed.serverUrl || defaultState.serverUrl : defaultState.serverUrl,
         browserEngine:
           parsed.browserEngine === 'webllm' || parsed.browserEngine === 'wllama'
             ? parsed.browserEngine
@@ -111,7 +137,7 @@ function persistState(
     // mode/engine/preset persist.
     let prev: StoredInferenceMode = {} as StoredInferenceMode;
     try {
-      prev = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as StoredInferenceMode;
+      prev = JSON.parse(localStorage.getItem(INFERENCE_MODE_KEY) ?? '{}') as StoredInferenceMode;
     } catch {
       prev = {} as StoredInferenceMode;
     }
@@ -122,7 +148,9 @@ function persistState(
       browserEngine,
       ragPreset,
     };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+    // AC4: the browser app never stores a server URL (desktop app only).
+    if (!isElectron()) delete toStore.serverUrl;
+    localStorage.setItem(INFERENCE_MODE_KEY, JSON.stringify(toStore));
   } catch {
     // localStorage not available or quota exceeded
   }
@@ -145,7 +173,7 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
       setState((prev) => ({
         ...prev,
         isModelReady: false,
-        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Consider switching engines or using server mode.',
+        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Switch engines, or use the desktop app or an external model server (Provider server mode).',
       }));
     };
     if (typeof window !== 'undefined') {
@@ -166,6 +194,8 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
   }, []);
 
   const setMode = useCallback((mode: InferenceMode) => {
+    // AC4: outside the desktop app there is no API-server mode to switch to.
+    if (mode === 'api' && !isElectron()) return;
     setState((prev) => {
       const next = { ...prev, mode, modeError: null };
       persistState(mode, prev.serverUrl, prev.browserEngine, prev.ragPreset);
@@ -203,14 +233,6 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
     setState((prev) => {
       const next = { ...prev, ragPreset };
       persistState(prev.mode, prev.serverUrl, prev.browserEngine, ragPreset);
-      return next;
-    });
-  }, []);
-
-  const setServerUrl = useCallback((serverUrl: string) => {
-    setState((prev) => {
-      const next = { ...prev, serverUrl };
-      persistState(prev.mode, serverUrl, prev.browserEngine, prev.ragPreset);
       return next;
     });
   }, []);
@@ -337,7 +359,6 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
     setMode,
     setBrowserEngine,
     setRagPreset,
-    setServerUrl,
     checkServerConnectivity,
     setModelReady,
     setModelLoadingProgress,
