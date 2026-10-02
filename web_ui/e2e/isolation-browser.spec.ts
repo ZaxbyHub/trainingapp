@@ -259,7 +259,7 @@ function escapeStoryHtml(): string {
   }
   async function siblingCode(w) {
     var out = { violations: [] };
-    w.document.addEventListener('securitypolicyviolation', function (e) { out.violations.push(e.effectiveDirective || e.violatedDirective); });
+    w.document.addEventListener('securitypolicyviolation', function (e) { out.violations.push((e.effectiveDirective || e.violatedDirective) + ' ' + e.blockedURI); });
     try {
       var worker = new w.Worker('/training-boot.js');
       out.worker = 'constructed';
@@ -447,10 +447,18 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   expect(r.sibling?.found, 'FC6 sibling boot frame reachable (non-vacuous row)').toBe(true);
   expect(r.sibling?.egress?.fetch, 'FC6 sibling boot fetch').not.toBe('sent');
   // ...and runs no same-origin script or worker but its own two files.
+  // Discriminating (review round 4, F3): the refusal must come from the boot
+  // page's pinned worker-src / script-src, naming the exact blocked script.
+  const playerOrigin = (() => {
+    const u = new URL(appOrigin);
+    u.hostname = u.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
+    return u.origin;
+  })();
+  expect(r.sibling?.code?.violations ?? [], 'FC6 sibling boot worker refused by worker-src').toContain(`worker-src ${playerOrigin}/training-boot.js`);
   expect(r.sibling?.code?.worker, 'FC6 sibling boot starts a worker from another same-origin script').not.toBe('constructed');
   expect(r.sibling?.code?.script, 'FC6 sibling boot loads another same-origin script').toBe('error');
   expect(r.sibling?.code?.register ?? '', 'FC6 sibling boot registers another service worker').toMatch(/^rejected:/);
-  expect(r.sibling?.code?.violations ?? [], 'FC6 sibling boot CSP violations').toEqual(expect.arrayContaining(['worker-src', 'script-src-elem']));
+  expect(r.sibling?.code?.violations ?? [], 'FC6 sibling boot script refused by script-src').toContain(`script-src-elem ${playerOrigin}/training/sw.js`);
   // ...and is sandboxed like the course frame: no popup, no top navigation.
   expect(popups, 'FC6 popup opened from the sibling boot frame').toEqual([]);
   expect(r.sibling?.code?.openPopup, 'FC6 sibling boot window.open').toBe('null');
