@@ -319,16 +319,21 @@ export class BrowserPackManager {
   }
 
   async rollbackPack(packId: string, toVersion: string): Promise<void> {
-    await withPackLock(`pack:${packId}`, async () => {
+    const flipped = await withPackLock(`pack:${packId}`, async () => {
       const rows = await this.deps.registry.list();
       const target = rows.find((r) => r.packId === packId && r.version === toVersion);
       if (target === undefined) throw new PackManagerError(`${packId}@${toVersion} is not installed`);
       if (target.active) throw new PackManagerError(`${packId}@${toVersion} is already the active version`);
       const actives = rows.filter((r) => r.packId === packId && r.active);
       await this.deps.registry.commit([{ ...target, active: true }, ...actives.map((r) => ({ ...r, active: false }))], []);
-      if (actives.length > 0) await this.deps.hooks?.onRemoved(actives).catch(() => undefined);
-      await this.deps.hooks?.onActivated?.({ ...target, active: true }).catch(() => undefined);
+      return { activated: { ...target, active: true }, deactivated: actives };
     });
+    // Index hooks run AFTER the per-pack lock is released, as on install: the
+    // activation hook re-enters the manager (markEmbedded takes the same
+    // lock), and neither Web Locks nor the in-tab chain is re-entrant, so
+    // calling it under the lock deadlocked every rollback.
+    if (flipped.deactivated.length > 0) await this.deps.hooks?.onRemoved(flipped.deactivated).catch(() => undefined);
+    await this.deps.hooks?.onActivated?.(flipped.activated).catch(() => undefined);
     this.notify();
   }
 

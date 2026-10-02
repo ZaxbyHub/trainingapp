@@ -88,6 +88,22 @@ describe('BrowserPackManager', () => {
     expect(await text(await manager.readActiveFile('course-a', ['story.html']))).toBe('<html>1.0.0</html>');
   });
 
+  it('rollback completes when the activation hook re-enters the manager (no self-deadlock on the per-pack lock)', async () => {
+    const { manager, hooks } = setup();
+    // The production activation hook (searchIndexHooks) calls markEmbedded,
+    // which takes the same per-pack lock rollbackPack holds.
+    hooks.onActivated = vi.fn(async (record: { packId: string; version: string }) => manager.markEmbedded(record.packId, record.version, false));
+    await manager.installPack(packZip('1.0.0'));
+    await manager.installPack(packZip('1.1.0'));
+    const outcome = await Promise.race([
+      manager.rollbackPack('course-a', '1.0.0').then(() => 'done'),
+      new Promise<string>((resolve) => setTimeout(() => resolve('deadlocked'), 2000)),
+    ]);
+    expect(outcome).toBe('done');
+    expect(hooks.onActivated).toHaveBeenCalledTimes(1);
+    expect((await manager.listPacks()).find((r) => r.active)?.version).toBe('1.0.0');
+  });
+
   it('refuses a downgrade and a same-version reinstall with the desktop wording', async () => {
     const { manager } = setup();
     await manager.installPack(packZip('1.1.0'));
