@@ -18,7 +18,7 @@
  */
 'use strict';
 
-var SW_VERSION = 1;
+var SW_VERSION = 2;
 var TRAINING_PREFIX = '/training/';
 var RELAY_WAIT_MS = 10000;
 var REQUEST_TIMEOUT_MS = 30000;
@@ -146,6 +146,22 @@ function relayRequest(message) {
   });
 }
 
+// The app relay bounds reads in flight and answers code 'busy' past it
+// (review round 1, F3); back off and retry instead of failing the response.
+var BUSY_RETRIES = 50;
+function readWithRetry(handle, offset, length, attempt) {
+  return relayRequest({ type: 'read', handle: handle, offset: offset, length: length }).then(function (reply) {
+    if (reply && reply.code === 'busy' && attempt < BUSY_RETRIES) {
+      return new Promise(function (resolve) {
+        setTimeout(resolve, Math.min(200, 10 * (attempt + 1)));
+      }).then(function () {
+        return readWithRetry(handle, offset, length, attempt + 1);
+      });
+    }
+    return reply;
+  });
+}
+
 function refusal(status, text) {
   return new Response(text, {
     status: status,
@@ -182,7 +198,7 @@ function buildResponse(result, method) {
         return undefined;
       }
       var length = Math.min(READ_CHUNK_BYTES, end - offset + 1);
-      return relayRequest({ type: 'read', handle: handle, offset: offset, length: length }).then(
+      return readWithRetry(handle, offset, length, 0).then(
         function (reply) {
           if (reply.error || !reply.bytes) {
             controller.error(new Error(reply.error || 'relay read failed'));

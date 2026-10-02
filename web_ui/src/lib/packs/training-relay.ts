@@ -28,6 +28,14 @@ export const RELAY_RATE_LIMIT = 2000;
 export const RELAY_RATE_WINDOW_MS = 10_000;
 /** Open file handles allowed per relay (bounds memory held for the worker). */
 export const MAX_OPEN_HANDLES = 64;
+/**
+ * Reads materialized at once, across every port (review round 1, F3): a
+ * course that takes the relay port could otherwise queue thousands of 16 MiB
+ * reads inside the rate window and exhaust the app tab's memory. Excess
+ * reads are refused with code 'busy'; the player-origin worker retries them.
+ */
+export const MAX_INFLIGHT_READS = 32;
+export const MAX_INFLIGHT_BYTES = 64 * 1024 * 1024;
 
 /** Mirror of desktop protocol.ts MIME_TYPES (drift-tested). */
 export const TRAINING_MIME_TYPES: Readonly<Record<string, string>> = {
@@ -194,6 +202,8 @@ export interface RelayReadResponse {
   id: number;
   bytes?: ArrayBuffer;
   error?: string;
+  /** 'busy': refused by the in-flight bound; retry later. */
+  code?: 'busy';
 }
 export type RelayResponse = RelayOpenResponse | RelayReadResponse;
 
@@ -241,6 +251,8 @@ export class TrainingRelay {
   private port: MessagePort | null = null;
   private windowStart = 0;
   private windowCount = 0;
+  private inFlightReads = 0;
+  private inFlightBytes = 0;
 
   constructor(private readonly opts: TrainingRelayOptions) {}
 
@@ -388,11 +400,20 @@ export class TrainingRelay {
       return { type: 'read-result', id, error: 'invalid read' };
     }
     if (msg.offset < entry.start || msg.offset + msg.length - 1 > entry.end) return { type: 'read-result', id, error: 'read outside range' };
+    // In-flight bound, shared across ports like the rate window.
+    if (this.inFlightReads >= MAX_INFLIGHT_READS || this.inFlightBytes + msg.length > MAX_INFLIGHT_BYTES) {
+      return { type: 'read-result', id, error: 'busy', code: 'busy' };
+    }
+    this.inFlightReads += 1;
+    this.inFlightBytes += msg.length;
     try {
       const bytes = await entry.blob.slice(msg.offset, msg.offset + msg.length).arrayBuffer();
       return { type: 'read-result', id, bytes };
     } catch (error) {
       return { type: 'read-result', id, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      this.inFlightReads -= 1;
+      this.inFlightBytes -= msg.length;
     }
   }
 }

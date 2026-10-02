@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_INFLIGHT_BYTES,
+  MAX_INFLIGHT_READS,
   MAX_RELAY_READ_BYTES,
   RELAY_RATE_LIMIT,
   TrainingRelay,
@@ -141,6 +143,38 @@ describe('TrainingRelay scoping and serving', () => {
     expect((await open(relay, '/training/pack-a/story.html')).status).toBe(429);
     now += 20_000;
     expect((await open(relay, '/training/pack-a/story.html')).status).toBe(200);
+  });
+
+  it('bounds reads in flight (count and bytes, across ports) and refuses the excess as busy (review round 1 F3)', async () => {
+    // A blob whose reads stay pending until released: models a port holder
+    // queueing reads faster than the app can materialize them.
+    const SIZE = 64 * MAX_RELAY_READ_BYTES;
+    const releases: Array<() => void> = [];
+    const slowBlob = {
+      size: SIZE,
+      slice: () => ({
+        arrayBuffer: () => new Promise<ArrayBuffer>((resolve) => releases.push(() => resolve(new ArrayBuffer(1)))),
+      }),
+    } as unknown as Blob;
+    const relay = new TrainingRelay({ appOrigin: APP, readActiveFile: async () => slowBlob });
+    relay.setOpenPack('pack-a');
+    const opened = await open(relay, '/training/pack-a/media/big.bin');
+    // Count bound: MAX_INFLIGHT_READS one-byte reads are accepted, the next is busy.
+    const pending = Array.from({ length: MAX_INFLIGHT_READS }, (_, i) => read(relay, opened.handle!, i, 1, 100 + i));
+    const busy = await read(relay, opened.handle!, 0, 1, 999);
+    expect(busy).toEqual({ type: 'read-result', id: 999, error: 'busy', code: 'busy' });
+    releases.splice(0).forEach((release) => release());
+    expect((await Promise.all(pending)).every((r) => r.bytes !== undefined)).toBe(true);
+    // Released: reads are accepted again.
+    const again = read(relay, opened.handle!, 0, 1, 1000);
+    releases.splice(0).forEach((release) => release());
+    expect((await again).bytes).toBeDefined();
+    // Byte bound: MAX_INFLIGHT_BYTES / MAX_RELAY_READ_BYTES full-size reads fill it.
+    const fill = MAX_INFLIGHT_BYTES / MAX_RELAY_READ_BYTES;
+    const big = Array.from({ length: fill }, (_, i) => read(relay, opened.handle!, i * MAX_RELAY_READ_BYTES, MAX_RELAY_READ_BYTES, 2000 + i));
+    expect(await read(relay, opened.handle!, 0, 1, 3000)).toMatchObject({ error: 'busy', code: 'busy' });
+    releases.splice(0).forEach((release) => release());
+    await Promise.all(big);
   });
 
   it('counts requests served for the open pack (first-load detection)', async () => {
