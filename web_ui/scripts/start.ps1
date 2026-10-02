@@ -139,7 +139,11 @@ while ($Listener.IsListening) {
             $Response.ContentType = 'text/plain; charset=utf-8'
             $Bytes = [System.Text.Encoding]::UTF8.GetBytes('404 Not Found')
             $Response.ContentLength64 = $Bytes.Length
-            $Response.OutputStream.Write($Bytes, 0, $Bytes.Length)
+            # HEAD gets the headers only: writing a body throws and the catch
+            # below turns the answer into a 500.
+            if ($Request.HttpMethod -ne 'HEAD') {
+                $Response.OutputStream.Write($Bytes, 0, $Bytes.Length)
+            }
             $Response.Close()
             continue
         }

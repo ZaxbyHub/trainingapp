@@ -152,6 +152,9 @@ describe('standalone servers (source scan)', () => {
     expect(ps1).toContain("$IsTrainingBoot = ($RawPath -ceq '/training-boot.html' -or $RawPath -ceq '/training-boot.js')");
     expect(ps1).toContain("$IsTrainingWorker = ($RawPath -ceq '/training/sw.js')");
     expect(ps1).toMatch(/StartsWith\('\/training\/', \[StringComparison\]::Ordinal\)\) -and -not \$IsTrainingWorker\) \{\s*\$Response\.StatusCode = 404/);
+    // HEAD on a refused /training/* path stays a 404 (no body write, which
+    // would throw and become a 500).
+    expect(ps1).toMatch(/if \(\$Request\.HttpMethod -ne 'HEAD'\) \{\s*\$Response\.OutputStream\.Write\(\$Bytes, 0, \$Bytes\.Length\)\s*\}\s*\$Response\.Close\(\)\s*continue/);
     expect(ps1).toContain("$Response.Headers.Set('Cross-Origin-Resource-Policy', 'cross-origin')");
     expect(ps1).toContain('http://127.0.0.1:${Port}/');
   });
