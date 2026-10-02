@@ -136,6 +136,12 @@ _WEBUI = [
     "web_ui/**",
     "contracts/**",
     ".github/workflows/web-ui.yml",
+    # desktop twins the web-ui job's desktop-twin-drift.test.ts pins against
+    # web_ui (browser-training-parity final-critic FC9): a desktop-only edit
+    # that drifts one of them must run the required job, not skip it green
+    "desktop/main/security/csp.ts",
+    "desktop/main/protocol.ts",
+    "desktop/main/backend/packs/pack-archive-rules.ts",
 ]
 
 _PACK = [

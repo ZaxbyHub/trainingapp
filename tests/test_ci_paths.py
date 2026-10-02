@@ -175,6 +175,12 @@ def test_python_empty_diff_fails_open():
         ("webui", ["contracts/api.openapi.yaml"], True),
         ("webui", [".github/workflows/web-ui.yml"], True),
         ("webui", ["api_server.py", "tests/test_a.py"], False),
+        # FC9: the desktop twins desktop-twin-drift.test.ts pins (run by the
+        # required web-ui job) must trigger it on a desktop-only diff
+        ("webui", ["desktop/main/security/csp.ts"], True),
+        ("webui", ["desktop/main/protocol.ts"], True),
+        ("webui", ["desktop/main/backend/packs/pack-archive-rules.ts"], True),
+        ("webui", ["desktop/main/index.ts", "desktop/main/backend/server.ts"], False),
         ("conformance", ["contracts/api.openapi.yaml", "api_server.py"], True),
         ("conformance", ["contracts/tests/run_conformance.py"], True),
         ("conformance", ["web_ui/src/lib/x.ts"], False),
