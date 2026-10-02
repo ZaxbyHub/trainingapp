@@ -31,7 +31,7 @@
  */
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { expect, test, type Page } from '@playwright/test';
 
@@ -44,15 +44,21 @@ const WORKER_PACK = 'isolation-worker-course';
 
 /**
  * Real built app assets, picked deterministically from the build the preview
- * serves: the embedding worker (classic) and the pdf.js worker (module).
+ * serves (web_ui/dist/assets, resolved from this spec file, never the cwd):
+ * the embedding worker (classic), the pdf.js worker (module) and the app's
+ * entry module named by dist/index.html (the SharedWorker target).
  */
-function builtWorkerAssets(): { classic: string; module: string } {
-  const dir = path.resolve(process.cwd(), 'dist', 'assets');
+function builtWorkerAssets(): { classic: string; module: string; shared: string } {
+  const dir = fileURLToPath(new URL('../dist/assets/', import.meta.url));
   const files = fs.readdirSync(dir).sort();
   const classic = files.find((f) => /^embedding\.worker-.*\.js$/.test(f));
   const module = files.find((f) => /^pdf\.worker\.min-.*\.mjs$/.test(f));
-  if (classic === undefined || module === undefined) throw new Error(`built worker assets not found in ${dir}`);
-  return { classic: `/assets/${classic}`, module: `/assets/${module}` };
+  // The app's entry module, named by the built index.html (exactly one).
+  const entries = [...fs.readFileSync(fileURLToPath(new URL('../dist/index.html', import.meta.url)), 'utf8').matchAll(/src="\.?\/?assets\/(index-[^"]+\.js)"/g)].map((m) => m[1]);
+  if (entries.length !== 1) throw new Error(`expected exactly one entry script in dist/index.html, found ${entries.length}`);
+  const shared = files.find((f) => f === entries[0]);
+  if (classic === undefined || module === undefined || shared === undefined) throw new Error(`built worker assets not found in ${dir}`);
+  return { classic: `/assets/${classic}`, module: `/assets/${module}`, shared: `/assets/${shared}` };
 }
 
 /**
@@ -65,7 +71,7 @@ function builtWorkerAssets(): { classic: string; module: string } {
  * own relay-served script and a blob: worker both run, and both stay confined
  * (their fetch to the sink is refused).
  */
-function workerEscapeStoryHtml(assets: { classic: string; module: string }): string {
+function workerEscapeStoryHtml(assets: { classic: string; module: string; shared: string }): string {
   const script = `
 (async function () {
   var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
@@ -90,6 +96,16 @@ function workerEscapeStoryHtml(assets: { classic: string; module: string }): str
   await tryWorker('appModule', ${JSON.stringify(assets.module)}, { type: 'module' });
   await tryWorker('bootScript', '/training-boot.js');
   await tryWorker('courseServiceWorker', '/training/sw.js');
+  // A SharedWorker is governed by worker-src too (review round 5, I1).
+  var shared = 'constructed';
+  try {
+    var sw = new SharedWorker(${JSON.stringify(assets.shared)});
+    sw.port.onmessage = function () { shared = 'running'; };
+    sw.onerror = function () { if (shared === 'constructed') shared = 'error'; };
+    sw.port.start();
+  } catch (e) { shared = 'threw:' + name(e); }
+  await wait(1500);
+  r.attempts.appShared = shared;
   async function tryRegister(label, url, scope) {
     try { await navigator.serviceWorker.register(url, { scope: scope }); r.register[label] = 'registered'; }
     catch (e) { r.register[label] = 'rejected:' + name(e); }
@@ -578,9 +594,11 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
     ['appModule', assets.module],
     ['bootScript', '/training-boot.js'],
     ['courseServiceWorker', '/training/sw.js'],
+    ['appShared', assets.shared],
   ] as const) {
-    expect(r.violations, `F1 ${label}: worker-src violation for ${target}`).toContain(`worker-src ${player.origin}${target}`);
-    expect(r.attempts[label], `F1 ${label}: a worker that runs`).not.toBe('running');
+    // Soft: every refused target is reported, not only the first.
+    expect.soft(r.violations, `F1 ${label}: worker-src violation for ${target}`).toContain(`worker-src ${player.origin}${target}`);
+    expect.soft(r.attempts[label], `F1 ${label}: a worker that runs`).not.toBe('running');
   }
   // Service workers: an app asset is refused by worker-src; a pack-path
   // script is fetched past the relay and gets the host's reserved 404.
