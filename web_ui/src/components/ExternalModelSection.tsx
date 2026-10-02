@@ -82,7 +82,7 @@ const descStyle: React.CSSProperties = {
   margin: 0,
   fontSize: 'var(--font-size-caption)',
   fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-muted)',
+  color: 'var(--color-text-primary)',
 };
 const labelStyle: React.CSSProperties = {
   display: 'block',

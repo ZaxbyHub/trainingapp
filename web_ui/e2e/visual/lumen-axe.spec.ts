@@ -50,9 +50,7 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
     "color-contrast | main > div",
   ],
   'settings:light:1440': [
-    "color-contrast | #api-desc",
     "color-contrast | #browser-local-desc",
-    "color-contrast | #provider-desc",
     "color-contrast | #webllm-desc",
     "color-contrast | #wllama-desc",
     "color-contrast | div[role=\"status\"][aria-live=\"polite\"] > p",
@@ -77,15 +75,24 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
     "color-contrast | main > div",
   ],
   'settings:light:500': [
-    "color-contrast | #api-desc",
     "color-contrast | #browser-local-desc",
-    "color-contrast | #provider-desc",
     "color-contrast | #webllm-desc",
     "color-contrast | #wllama-desc",
     "color-contrast | section[aria-labelledby=\"browser-engine-heading\"] > div > p",
     "color-contrast | section[aria-labelledby=\"browser-engine-heading\"] > div > p > strong",
   ],
 };
+
+/**
+ * Settings status messages that are timing- and cache-state-dependent: on ubuntu CI they
+ * reproduced at 1440, appeared unexpectedly at 500 on master, and were absent at 500 on
+ * 39bf1d2. Excluded from BOTH the unexpected and the stale check on the settings light
+ * keys. Pre-existing #140/#141 debt: fix by darkening --color-text-muted, then drop this set.
+ */
+const MAY_APPEAR: readonly string[] = [
+  'color-contrast | div[role="status"][aria-live="polite"] > p',
+  'color-contrast | span > span[role="status"][aria-live="polite"]',
+];
 
 async function blockExternalNetwork(page: Page): Promise<void> {
   await page.route('**/*', (route) => {
@@ -153,9 +160,12 @@ for (const theme of THEMES) {
           if (process.env.LUMEN_AXE_INVENTORY) {
             console.info(`AXE ${key} ${JSON.stringify(found)}`);
           }
-          const unexpected = found.filter((f) => !known.includes(f));
+          const flaky = surface === 'settings' && theme === 'light' ? MAY_APPEAR : [];
+          const observed = found.filter((f) => !flaky.includes(f));
+          const expected = known.filter((f) => !flaky.includes(f));
+          const unexpected = observed.filter((f) => !expected.includes(f));
           expect(unexpected, `new serious/critical axe nodes on ${key}`).toEqual([]);
-          const stale = known.filter((f) => !found.includes(f));
+          const stale = expected.filter((f) => !observed.includes(f));
           expect(stale, `stale baseline entries on ${key} (fixed? remove them)`).toEqual([]);
         });
       }

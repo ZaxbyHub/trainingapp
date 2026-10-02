@@ -232,7 +232,7 @@ export function ModelBlockedOverlay({
             onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}
             style={{
               backgroundColor: 'transparent',
-              color: 'var(--color-text-muted)',
+              color: 'var(--color-text-primary)',
               border: '1px solid var(--color-text-muted)',
               borderRadius: 'var(--radius-sm)',
               padding: 'var(--spacing-xs) var(--spacing-sm)',
