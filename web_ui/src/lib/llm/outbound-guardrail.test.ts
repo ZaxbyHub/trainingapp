@@ -45,10 +45,17 @@ const ALLOWLIST: Record<string, [number, string]> = {
   // F-008 additions (JSX src): local-only sources, recorded so a new one is reviewed.
   'components/ChatInput.tsx': [1, '<img src> of a user-attached image read locally as a data: URL (no network)'],
   'components/ChatMessageBubble.tsx': [1, '<img src> of a stored attached image data: URL (no network)'],
-  'components/TrainingPlayer.tsx': [1, '<iframe src> of the app:// training-pack protocol (Electron-served, local)'],
+  'components/TrainingPlayer.tsx': [
+    2,
+    'course <iframe src> + its one same-element setAttribute("src") reload (browser-training-parity), both from trainingPlayerSrc: the app:// training-pack protocol in Electron (local), or in the browser app the dedicated player origin (player-origin.ts: the loopback alias of the app\'s own server, or an operator-configured bare https origin hosting the app\'s own static player files); course bytes come from the app page through the service-worker relay, so no user data leaves',
+  ],
   // PR #142 Stage B (Worker constructions): same-origin bundled module worker.
   'lib/embeddings/embedding-service.ts': [1, 'new Worker(new URL("./embedding.worker.ts", import.meta.url)): the same-origin bundled embedding worker (its own outbound calls are scanned in its file)'],
-  'lib/packs/player-origin.ts': [1, 'same-origin runtime config player-origin.json (browser-training-parity), bounded 2 s, read once at app start'],
+  'lib/packs/training-player-host.ts': [
+    1,
+    'hidden boot <iframe>.src = `${playerOrigin}/training-boot.html` (browser-training-parity, ADR-0012): the validated player origin (loopback alias of the app\'s own server, or an operator-configured bare https origin serving the app\'s own static player files); it registers the course service worker and carries no user data',
+  ],
+  'lib/packs/player-origin.ts': [1,'same-origin runtime config player-origin.json (browser-training-parity), bounded 2 s, read once at app start'],
   'lib/packs/pack-update-browser.ts': [
     1,
     'opt-in signed pack update feed + artifact (browser-training-parity AC8): zero calls before opt-in, https-only request and final URL, credentials omit, no-referrer, size-capped, compiled out under VITE_AIRGAP; bytes are sha256 + Ed25519 verified before install',

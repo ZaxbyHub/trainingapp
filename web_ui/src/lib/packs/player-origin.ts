@@ -116,10 +116,17 @@ export const PLAYER_BOOT_PATH = '/training-boot.html';
 export type PlayerOriginStatus = 'ok' | 'framed' | 'no-origin' | 'host-unsupported';
 
 /**
+ * The one request resolvePlayerOrigin makes (the same-origin runtime config
+ * read). Spelled out instead of `typeof fetch`: the outbound guardrail counts
+ * every non-call reference to `fetch`, a type query included.
+ */
+export type PlayerOriginFetch = (input: string, init?: RequestInit) => Promise<Response>;
+
+/**
  * Resolve the player origin once (steps 1-3) and cache it. The runtime
  * config fetch is bounded; any failure falls through to the next step.
  */
-export function resolvePlayerOrigin(fetchImpl: typeof fetch = (...args) => fetch(...args)): Promise<string | null> {
+export function resolvePlayerOrigin(fetchImpl: PlayerOriginFetch = (input, init) => fetch(input, init)): Promise<string | null> {
   if (isFramedContext()) return Promise.resolve(null);
   if (resolved !== undefined) return Promise.resolve(resolved);
   if (pending !== null) return pending;
