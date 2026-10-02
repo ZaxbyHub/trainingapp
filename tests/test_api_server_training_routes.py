@@ -16,6 +16,7 @@ request time, so it is pointed at a temporary archive directory that contains
 the player files, proving the 404 comes from the middleware, not a missing file.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -116,6 +117,51 @@ def test_the_variant_folding_matches_every_variant(path):
     from urllib.parse import unquote
 
     assert api_server._is_player_path(unquote(path)) is True
+
+
+def _short_name(path):
+    """The NTFS 8.3 short name of an existing file, or None where the volume
+    has none (8dot3 disabled, or not Windows)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+
+    buffer = ctypes.create_unicode_buffer(1024)
+    if ctypes.windll.kernel32.GetShortPathNameW(str(path), buffer, 1024) == 0:
+        return None
+    short = Path(buffer.value).name
+    return None if short.lower() == path.name.lower() else short
+
+
+def test_an_8dot3_short_name_of_a_player_file_is_404_too(archive_client, tmp_path):
+    # Spelling folding cannot enumerate short names; the filesystem identity
+    # check behind it (_resolves_to_player_file) refuses whatever name the OS
+    # resolves to a player file (final-critic FC8 follow-up).
+    short = _short_name(tmp_path / "training-boot.html")
+    if short is None:
+        pytest.skip("this volume has no 8.3 short names (the symlink row covers the identity check)")
+    assert api_server._is_player_path("/" + short) is False  # the key alone misses it
+    response = archive_client.get("/" + short)
+    assert response.status_code == 404
+    assert response.text == "Not Found"
+
+
+def test_an_alias_that_resolves_to_a_player_file_is_refused(tmp_path):
+    (tmp_path / "training-boot.html").write_text("<html>boot</html>", encoding="utf-8")
+    (tmp_path / "training").mkdir()
+    (tmp_path / "training" / "sw.js").write_text("// worker", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<html>app shell</html>", encoding="utf-8")
+    try:
+        os.symlink(tmp_path / "training-boot.html", tmp_path / "alias.html")
+        os.symlink(tmp_path / "training", tmp_path / "alias-dir", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable here (the 8.3 row covers the identity check on Windows)")
+    assert api_server._is_player_path("/alias.html") is False  # the key alone misses it
+    assert api_server._resolves_to_player_file(tmp_path, "/alias.html") is True
+    assert api_server._resolves_to_player_file(tmp_path, "/alias-dir/sw.js") is True
+    assert api_server._resolves_to_player_file(tmp_path, "/index.html") is False
+    assert api_server._resolves_to_player_file(tmp_path, "/") is False
+    assert api_server._resolves_to_player_file(None, "/alias.html") is False
 
 
 @pytest.mark.parametrize(

@@ -575,6 +575,33 @@ def _is_player_path(path: str) -> bool:
     return key in TRAINING_PLAYER_PATHS or key == "/training" or key.startswith("/training/")
 
 
+def _resolves_to_player_file(archive_dir: Optional[Path], path: str) -> bool:
+    """Filesystem identity check behind the spelling key (final-critic FC8):
+    an NTFS 8.3 short name (`/TRAINI~1.HTM`) or any other alias the key cannot
+    enumerate still resolves to the boot files or the `training` directory.
+    `os.path.realpath` canonicalizes the requested file the way the OS opens
+    it (long name, on-disk case), so the request is refused when it lands on
+    a player file whatever its spelling. Any error answers False (the key
+    check still applies)."""
+    if archive_dir is None:
+        return False
+    try:
+        root = os.path.realpath(archive_dir)
+        candidate = os.path.normcase(os.path.realpath(os.path.join(root, path.lstrip("/\\"))))
+        player_files = {
+            os.path.normcase(os.path.realpath(os.path.join(root, name.lstrip("/"))))
+            for name in TRAINING_PLAYER_PATHS
+        }
+        training_dir = os.path.normcase(os.path.realpath(os.path.join(root, "training")))
+    except (OSError, ValueError):
+        return False
+    return (
+        candidate in player_files
+        or candidate == training_dir
+        or candidate.startswith(training_dir + os.sep)
+    )
+
+
 @app.middleware("http")
 async def cross_origin_isolation(request: Request, call_next):
     """Send COOP/COEP so the served HTML5 archive can use SharedArrayBuffer
@@ -584,7 +611,10 @@ async def cross_origin_isolation(request: Request, call_next):
     (`_web_archive_dir` resolved at startup). Pure API-only deployments don't
     need cross-origin isolation, and emitting COOP/COEP there would needlessly
     affect external API consumers and iframe embedders."""
-    if _web_archive_dir is not None and _is_player_path(request.url.path):
+    path = request.url.path
+    if _web_archive_dir is not None and (
+        _is_player_path(path) or _resolves_to_player_file(_web_archive_dir, path)
+    ):
         return PlainTextResponse(
             "Not Found",
             status_code=404,
