@@ -58,9 +58,12 @@ export function migrateUnboundExternalKey(): void {
     /* unreadable config: treated as no base URL */
   }
   try {
-    const storage = remember ? localStorage : sessionStorage;
-    const key = storage.getItem(EXTERNAL_API_KEY_KEY) ?? '';
-    if (key === '' || storage.getItem(EXTERNAL_API_KEY_ORIGIN_KEY) !== null) return;
+    // Branch per read rather than aliasing a Storage object, so the
+    // persisted-keys guardrail (PR #140 review FB140-009) sees member calls.
+    const read = (name: string): string | null =>
+      remember ? localStorage.getItem(name) : sessionStorage.getItem(name);
+    const key = read(EXTERNAL_API_KEY_KEY) ?? '';
+    if (key === '' || read(EXTERNAL_API_KEY_ORIGIN_KEY) !== null) return;
     const origin = keyOriginOf(baseUrl);
     if (origin !== '') {
       if (remember) localStorage.setItem(EXTERNAL_API_KEY_ORIGIN_KEY, origin);

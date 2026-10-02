@@ -444,7 +444,7 @@ describe('Clear Cache (AC5)', () => {
     expect(confirming).toMatch(/your chat history \(conversations\) is kept/i);
     // AC5: the removed settings are enumerated.
     expect(confirming).toMatch(
-      /inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course/i,
+      /inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state and last-opened course/i,
     );
   });
 
@@ -462,7 +462,7 @@ describe('Clear Cache (AC5)', () => {
     expect(confirming).toMatch(/any WebLLM model files downloaded in this window/i);
     expect(confirming).not.toMatch(/browser-model/i);
     expect(confirming).toMatch(
-      /inference mode, browser engine and response-quality choices, theme, provider connection and API key, sidebar state and last-opened course/i,
+      /inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state and last-opened course/i,
     );
     expect(confirming).toMatch(/kept: your chat history \(conversations\), and the documents and settings stored by the desktop backend/i);
     expect(confirming).not.toMatch(/local caches/i);

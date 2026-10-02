@@ -132,7 +132,11 @@ describe('InferenceModeContext legacy migration edge cases (FB140-005)', () => {
     renderHook(() => useInferenceMode(), { wrapper });
     const blob = storedBlob();
     expect(blob).not.toHaveProperty('serverUrl');
-    expect(blob).toMatchObject({ mode: 'browser-local', ...futureFields, providerConfig: LEGACY_BROWSER_BLOB.providerConfig });
+    // universal-provider-settings-overhaul: the legacy providerConfig moves
+    // into the external-model config (asserted in the AC4 block above), so
+    // only it leaves the blob; unknown sibling keys survive.
+    expect(blob).not.toHaveProperty('providerConfig');
+    expect(blob).toMatchObject({ mode: 'browser-local', ...futureFields });
   });
 
   it('a quota error on the migration write still migrates the in-memory state', () => {

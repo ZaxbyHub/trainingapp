@@ -122,17 +122,16 @@ function readStored(): StoredConfig {
   };
 }
 
-function storageOf(remember: boolean): Storage | null {
+/**
+ * Read one key-record entry from the storage the Remember rule selects (null
+ * when unset or when storage is unavailable). It branches per call instead of
+ * handing a Storage object around, so the persisted-keys guardrail (PR #140
+ * review FB140-009: a bare storage reference is a violation) sees every
+ * localStorage use as a member call.
+ */
+function readKeyEntry(remember: boolean, name: string): string | null {
   try {
-    return remember ? localStorage : sessionStorage;
-  } catch {
-    return null;
-  }
-}
-
-function getIn(storage: Storage | null, name: string): string | null {
-  try {
-    return storage?.getItem(name) ?? null;
+    return (remember ? localStorage.getItem(name) : sessionStorage.getItem(name)) ?? null;
   } catch {
     return null;
   }
@@ -186,10 +185,9 @@ function writeKeyRecord(rec: KeyRecord, remember: boolean): void {
  * to the stored base URL's origin, or no key when there is none).
  */
 function readKeyRecord(stored: StoredConfig): KeyRecord {
-  const storage = storageOf(stored.rememberKey);
-  const key = getIn(storage, EXTERNAL_API_KEY_KEY) ?? '';
+  const key = readKeyEntry(stored.rememberKey, EXTERNAL_API_KEY_KEY) ?? '';
   if (key === '') return { key: '', origin: null };
-  const origin = getIn(storage, EXTERNAL_API_KEY_ORIGIN_KEY);
+  const origin = readKeyEntry(stored.rememberKey, EXTERNAL_API_KEY_ORIGIN_KEY);
   if (origin !== null) return { key, origin };
   const migrated = keyOriginOf(stored.baseUrl);
   return migrated === '' ? { key: '', origin: null } : { key, origin: migrated };
