@@ -8,6 +8,7 @@ import contextlib
 import json
 import logging
 import os
+import posixpath
 import shutil
 import sys
 import threading
@@ -548,6 +549,32 @@ app.add_middleware(
 TRAINING_PLAYER_PATHS = frozenset({"/training-boot.html", "/training-boot.js"})
 
 
+def _player_path_key(path: str) -> str:
+    """Reduce a request path to the archive file a Windows (NTFS) host would
+    serve for it, so the player-path 404 cannot be sidestepped by a spelling
+    variant (final-critic FC8). The PyInstaller bundle ships on Windows, where
+    the static mount resolves `/Training-Boot.html`, `/training-boot.html/`,
+    `/training-boot.html.`, `/training-boot.html::$DATA`, `/training%5Csw.js`
+    and `/TRAINING/sw.js` to the player files. The key folds case, treats a
+    backslash as a separator, drops an NTFS stream suffix and trailing dots or
+    spaces per segment, resolves `.`/`..`, and drops empty segments (so a
+    trailing slash never matters; the root stays `/`)."""
+    segments = []
+    for segment in path.replace("\\", "/").split("/"):
+        segment = segment.split(":", 1)[0]
+        stripped = segment.rstrip(" ")
+        segment = stripped if stripped in (".", "..") else segment.rstrip(" .")
+        segments.append(segment)
+    normalized = posixpath.normpath("/" + "/".join(s for s in segments if s))
+    parts = [s.casefold() for s in normalized.split("/") if s]
+    return "/" + "/".join(parts)
+
+
+def _is_player_path(path: str) -> bool:
+    key = _player_path_key(path)
+    return key in TRAINING_PLAYER_PATHS or key == "/training" or key.startswith("/training/")
+
+
 @app.middleware("http")
 async def cross_origin_isolation(request: Request, call_next):
     """Send COOP/COEP so the served HTML5 archive can use SharedArrayBuffer
@@ -557,12 +584,7 @@ async def cross_origin_isolation(request: Request, call_next):
     (`_web_archive_dir` resolved at startup). Pure API-only deployments don't
     need cross-origin isolation, and emitting COOP/COEP there would needlessly
     affect external API consumers and iframe embedders."""
-    path = request.url.path
-    if _web_archive_dir is not None and (
-        path in TRAINING_PLAYER_PATHS
-        or path == "/training"
-        or path.startswith("/training/")
-    ):
+    if _web_archive_dir is not None and _is_player_path(request.url.path):
         return PlainTextResponse(
             "Not Found",
             status_code=404,

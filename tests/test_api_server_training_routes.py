@@ -66,6 +66,58 @@ def test_player_paths_are_404_never_served(archive_client, path):
     assert response.headers["x-frame-options"] == "DENY"
 
 
+# Spelling variants a Windows (NTFS, case-insensitive) static mount resolves to
+# the player files (final-critic FC8): case, trailing slash, trailing dot or
+# space, an NTFS stream suffix, a backslash separator and a dot segment. The
+# PyInstaller bundle ships on Windows, so "every /training/* path is 404" must
+# hold for them too.
+PLAYER_PATH_VARIANTS = [
+    "/Training-Boot.html",
+    "/TRAINING-BOOT.HTML",
+    "/training-boot.html/",
+    "/Training-Boot.JS",
+    "/training-boot.js/",
+    "/TRAINING/sw.js",
+    "/Training/SW.JS",
+    "/TRAINING",
+    "/Training/",
+    "/training-boot.html.",
+    "/training-boot.html%20",
+    "/training-boot.html. .",
+    "/training-boot.html::$DATA",
+    "/training-boot.js:x",
+    "/training./sw.js",
+    "/training%20./sw.js",
+    "/training%5Csw.js",
+    "/assets/../training/sw.js",
+    "/./training-boot.html",
+]
+
+
+@pytest.mark.parametrize("path", PLAYER_PATH_VARIANTS)
+def test_player_path_spelling_variants_are_404_too(archive_client, path):
+    response = archive_client.get(path)
+    assert response.status_code == 404
+    assert response.text == "Not Found"
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert response.headers["x-frame-options"] == "DENY"
+
+
+@pytest.mark.parametrize(
+    "path", ["/", "/index.html", "/trainingfoo", "/assets/training/x.js", "/training-boot.htm", "/some/spa/route"]
+)
+def test_the_variant_folding_never_swallows_app_paths(path):
+    assert api_server._is_player_path(path) is False
+
+
+@pytest.mark.parametrize("path", PLAYER_PATH_VARIANTS)
+def test_the_variant_folding_matches_every_variant(path):
+    from urllib.parse import unquote
+
+    assert api_server._is_player_path(unquote(path)) is True
+
+
 @pytest.mark.parametrize(
     "path", ["/training-boot.html", "/training-boot.js", "/training/sw.js"]
 )
