@@ -30,6 +30,8 @@
  * the production build on 127.0.0.1:4174; player origin http://localhost:4174).
  */
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import JSZip from 'jszip';
 import { expect, test, type Page } from '@playwright/test';
 
@@ -38,6 +40,84 @@ const CLICK_PACK = 'isolation-click-course';
 const OTHER_PACK = 'isolation-other-course';
 const ESCAPE_PACK = 'isolation-escape-course';
 const NAV_PACK = 'isolation-nav-egress-course';
+const WORKER_PACK = 'isolation-worker-course';
+
+/**
+ * Real built app assets, picked deterministically from the build the preview
+ * serves: the embedding worker (classic) and the pdf.js worker (module).
+ */
+function builtWorkerAssets(): { classic: string; module: string } {
+  const dir = path.resolve(process.cwd(), 'dist', 'assets');
+  const files = fs.readdirSync(dir).sort();
+  const classic = files.find((f) => /^embedding\.worker-.*\.js$/.test(f));
+  const module = files.find((f) => /^pdf\.worker\.min-.*\.mjs$/.test(f));
+  if (classic === undefined || module === undefined) throw new Error(`built worker assets not found in ${dir}`);
+  return { classic: `/assets/${classic}`, module: `/assets/${module}` };
+}
+
+/**
+ * The worker-escape course (review round 4, F1): a worker takes its CSP from
+ * its own script response, so a worker built from a same-origin APP asset
+ * (served with only frame-ancestors 'none') would run unconfined. The course
+ * tries a classic worker on the embedding worker, a module worker on the
+ * pdf.js worker, the boot script and the course service worker as dedicated
+ * workers, and service worker registrations. Controls: a worker on the pack's
+ * own relay-served script and a blob: worker both run, and both stay confined
+ * (their fetch to the sink is refused).
+ */
+function workerEscapeStoryHtml(assets: { classic: string; module: string }): string {
+  const script = `
+(async function () {
+  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  var SINK = appOrigin + '/__worker-sink/';
+  var r = { violations: [], attempts: {}, controls: {}, register: {} };
+  document.addEventListener('securitypolicyviolation', function (e) {
+    r.violations.push((e.effectiveDirective || e.violatedDirective) + ' ' + e.blockedURI);
+  });
+  function wait(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
+  function name(e) { return (e && e.name) || String(e); }
+  async function tryWorker(label, url, options) {
+    var out = 'constructed';
+    try {
+      var w = options ? new Worker(url, options) : new Worker(url);
+      w.onmessage = function () { out = 'running'; };
+      w.onerror = function () { if (out === 'constructed') out = 'error'; };
+    } catch (e) { out = 'threw:' + name(e); }
+    await wait(1500);
+    r.attempts[label] = out;
+  }
+  await tryWorker('appClassic', ${JSON.stringify(assets.classic)});
+  await tryWorker('appModule', ${JSON.stringify(assets.module)}, { type: 'module' });
+  await tryWorker('bootScript', '/training-boot.js');
+  await tryWorker('courseServiceWorker', '/training/sw.js');
+  async function tryRegister(label, url, scope) {
+    try { await navigator.serviceWorker.register(url, { scope: scope }); r.register[label] = 'registered'; }
+    catch (e) { r.register[label] = 'rejected:' + name(e); }
+  }
+  await tryRegister('appAsset', ${JSON.stringify(assets.classic)}, '/assets/');
+  await tryRegister('packPath', '/training/${WORKER_PACK}/probe-sw.js', '/training/${WORKER_PACK}/');
+  async function control(label, url) {
+    var result = { state: 'silent' };
+    try {
+      var w = new Worker(url);
+      w.onmessage = function (event) { result = event.data; };
+      w.onerror = function () { result = { state: 'error' }; };
+      w.postMessage(SINK + label);
+    } catch (e) { result = { state: 'threw:' + name(e) }; }
+    await wait(2500);
+    r.controls[label] = result;
+  }
+  var body = "onmessage = async function (e) { var out = { state: 'running' }; try { await fetch(e.data, { mode: 'no-cors' }); out.fetch = 'sent'; } catch (err) { out.fetch = (err && err.name) || String(err); } postMessage(out); };";
+  await control('packWorker', '/training/${WORKER_PACK}/ok-worker.js');
+  await control('blobWorker', URL.createObjectURL(new Blob([body], { type: 'text/javascript' })));
+  await wait(500);
+  document.getElementById('worker-probe').textContent = JSON.stringify(r);
+})();`;
+  return `<!doctype html><html><head><title>worker probe</title></head><body><pre id="worker-probe"></pre><script>${script}</script></body></html>`;
+}
+
+const OK_WORKER_JS =
+  "onmessage = async function (e) { var out = { state: 'running' }; try { await fetch(e.data, { mode: 'no-cors' }); out.fetch = 'sent'; } catch (err) { out.fetch = (err && err.name) || String(err); } postMessage(out); };";
 const SLIDE_DOC_PATH = 'docs/slide-001-5rN4PvXJM5d.json';
 const SLIDE_DOC = Buffer.from(
   JSON.stringify({ slide_id: '5rN4PvXJM5d', slide_title: 'Welcome', section_title: 'Launch Menu', on_screen_text: 'Start' }),
@@ -447,6 +527,63 @@ test('a course cannot navigate its own frame or the boot frame off the player or
   const player = new URL(appOrigin);
   player.hostname = player.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
   await expect(page.locator('head meta[http-equiv="Content-Security-Policy"]')).toHaveAttribute('content', `frame-src ${player.origin}`);
+});
+
+test('course content cannot run a same-origin app asset as an unconfined worker (review round 4 F1)', async ({ page }) => {
+  const assets = builtWorkerAssets();
+  await page.goto('/');
+  const appOrigin = new URL(page.url()).origin;
+  const player = new URL(appOrigin);
+  player.hostname = player.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
+  const hits: string[] = [];
+  await page.route(`${appOrigin}/__worker-sink/**`, (route) => {
+    hits.push(new URL(route.request().url()).pathname);
+    return route.fulfill({ status: 204, headers: { 'cross-origin-resource-policy': 'cross-origin' } });
+  });
+  await page.getByRole('button', { name: 'Documents', exact: true }).click();
+  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+  await install(
+    page,
+    await packZip(WORKER_PACK, '1.0.0', { 'story.html': workerEscapeStoryHtml(assets), 'ok-worker.js': OK_WORKER_JS }),
+    'worker.zip',
+    WORKER_PACK,
+    '1.0.0',
+  );
+  await page.getByRole('button', { name: 'Training', exact: true }).click();
+  const option = page.getByTestId('training-pack-select').locator('option', { hasText: WORKER_PACK });
+  await expect(option).toHaveCount(1, { timeout: 30_000 });
+  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+  const probe = page.frameLocator('iframe[data-testid="training-player-frame"]').locator('#worker-probe');
+  await expect(probe).not.toHaveText('', { timeout: 90_000 });
+  const r = JSON.parse((await probe.textContent()) ?? '{}') as {
+    violations: string[];
+    attempts: Record<string, string>;
+    controls: Record<string, { state?: string; fetch?: string }>;
+    register: Record<string, string>;
+  };
+  test.info().annotations.push({ type: 'worker-probe', description: `${JSON.stringify(r)} sink hits: ${JSON.stringify(hits)}` });
+
+  // Every same-origin script outside the open pack is refused by worker-src
+  // before it runs: a violation per target, and none of them ever messages.
+  for (const [label, target] of [
+    ['appClassic', assets.classic],
+    ['appModule', assets.module],
+    ['bootScript', '/training-boot.js'],
+    ['courseServiceWorker', '/training/sw.js'],
+  ] as const) {
+    expect(r.violations, `F1 ${label}: worker-src violation for ${target}`).toContain(`worker-src ${player.origin}${target}`);
+    expect(r.attempts[label], `F1 ${label}: a worker that runs`).not.toBe('running');
+  }
+  // Service workers: an app asset is refused by worker-src; a pack-path
+  // script is fetched past the relay and gets the host's reserved 404.
+  expect(r.register.appAsset ?? '').toMatch(/^rejected:/);
+  expect(r.violations).toContain(`worker-src ${player.origin}${assets.classic}`);
+  expect(r.register.packPath ?? '').toMatch(/^rejected:/);
+  // Controls (non-vacuous): workers run, and stay confined by the course CSP
+  // (a pack script carries it; a blob: worker inherits it).
+  expect(r.controls.packWorker).toEqual({ state: 'running', fetch: 'TypeError' });
+  expect(r.controls.blobWorker).toEqual({ state: 'running', fetch: 'TypeError' });
+  expect(hits, 'F1 worker egress').toEqual([]);
 });
 
 test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page }) => {

@@ -186,8 +186,20 @@ could be served were not isolated from app storage.
   parsing.
 - Responses carry the desktop MIME table, `Cross-Origin-Resource-Policy: cross-origin`,
   `nosniff`, `no-cache`, and the training CSP: the desktop `buildTrainingCspPolicy()` without the
-  private `app:` sources plus `frame-ancestors 'self' <app origin>` (pinned by
-  `desktop/src/__tests__/browser-training-serving-drift.test.ts`). Course documents also carry
+  private `app:` sources plus `frame-ancestors 'self' <app origin>`, with one deliberate
+  divergence: `worker-src blob: <player origin>/training/<open pack>/` instead of `'self' blob:` (pinned by
+  `desktop/src/__tests__/browser-training-serving-drift.test.ts`). A worker takes its CSP from
+  its own script response. On the player origin `'self'` would admit every app asset
+  (`/assets/*.js`, `/training-boot.js`, `/training/sw.js`), which the host serves with only
+  `frame-ancestors 'none'`, so a worker built from one would run unconfined (review round 4 F1,
+  measured: the pdf.js worker ran, and an app asset registered as a service worker at
+  `/assets/`). Pack scripts come from the relay with this CSP, so a worker built from one stays
+  confined, and a `blob:` worker inherits its creator's policy (HTML Standard, "run a worker": a
+  local-scheme worker URL gets a clone of the owner's policy container). A service worker
+  registered on a pack path is fetched past the relay and gets the host's reserved `/training/*`
+  404. Relay refusals carry the same pin for the open pack (`blob:` alone when none is open).
+  Desktop keeps `'self' blob:`: every `app://training` response carries the training CSP, so a
+  `'self'` worker stays confined there. Course documents also carry
   `Cross-Origin-Embedder-Policy: require-corp`, without which the app's COEP blocks the frame.
 
 ### Threat model — nothing on the player origin is trusted
@@ -211,7 +223,9 @@ could be served were not isolated from app storage.
    static-only host. The worker refuses only requests from worker-controlled course pages.
    Course JS cannot frame any other player-origin document, and the boot frame it can script
    allows no `fetch`, forms, beacons, images, popups or top navigation, and runs no script or
-   worker but its own two files.
+   worker but its own two files. The course's own `worker-src` admits only `blob:` and the open
+   pack's relay path, so it cannot start an app asset as an unconfined worker or service worker
+   (review round 4 F1; the worker-escape row of `web_ui/e2e/isolation-browser.spec.ts`).
 6. **Navigation egress (closed).** CSP on a course document does not govern navigation: a course
    could navigate its own frame, or the boot frame through the boot frame's DOM (a link it inserts
    and clicks), to any URL and carry data in the address. Both were measured on Chromium before
@@ -343,7 +357,7 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
 | Area | Desktop | Browser | Why |
 |---|---|---|---|
 | Course origin | `app://training` host | dedicated player origin + relay | no custom schemes in a browser |
-| CSP | training CSP | same minus `app:`, plus `frame-ancestors 'self' <app>`; every other player-origin document refuses framing, and the boot page has its own header CSP (FC6) | the player is embeddable only by the app; course JS can frame no weaker same-origin document |
+| CSP | training CSP | same minus `app:`, plus `frame-ancestors 'self' <app>`, and `worker-src blob: <player origin>/training/<open pack>/` instead of `'self' blob:`; every other player-origin document refuses framing, and the boot page has its own header CSP (FC6) | the player is embeddable only by the app; course JS can frame no weaker same-origin document and start no app asset as a worker (on the player origin `'self'` reaches app assets served without the course CSP) |
 | Course frame navigation | renderer `frame-src 'self' app:` refuses off-origin navigation of the course frame | runtime app-shell meta `frame-src <player origin>` refuses off-origin navigation of the course frame and the boot frame | a browser host cannot know a configured player origin, and header policies intersect (threat model item 6) |
 | Prebuilt index | mounted (`index.sqlite`) | not used; slide docs re-indexed in the browser | no SQLite in the browser (ADR-0009) |
 | Linked Learn rows | `links` table | computed at ask time (cosine ≥ 0.5, top 3, 4 s budget) | no links store in the browser |

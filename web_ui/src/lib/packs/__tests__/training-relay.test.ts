@@ -16,6 +16,7 @@ import {
   RELAY_RATE_LIMIT,
   TrainingRelay,
   buildBrowserTrainingCsp,
+  courseWorkerSources,
   mimeTypeFor,
   parseRange,
   resolveTrainingPath,
@@ -28,11 +29,13 @@ const VECTORS = JSON.parse(
 ) as { pack_id: string; files: string[]; vectors: Array<{ id: string; path: string; status: number }> };
 
 const APP = 'http://localhost:4183';
+const PLAYER = 'http://127.0.0.1:4183';
 
 function relayWith(files: Record<string, string>, packId = VECTORS.pack_id, opts: { now?: () => number } = {}) {
   const reads: string[] = [];
   const relay = new TrainingRelay({
     appOrigin: APP,
+    playerOrigin: PLAYER,
     readActiveFile: async (id, segments) => {
       reads.push(`${id}:${segments.join('/')}`);
       if (id !== packId) return null;
@@ -82,7 +85,8 @@ describe('TrainingRelay scoping and serving', () => {
       expect(r.headers['cross-origin-resource-policy']).toBe('cross-origin');
       expect(r.headers['x-content-type-options']).toBe('nosniff');
       expect(r.headers['cross-origin-embedder-policy']).toBe('require-corp');
-      expect(r.headers['content-security-policy']).toBe(buildBrowserTrainingCsp(APP));
+      expect(r.headers['content-security-policy']).toBe(buildBrowserTrainingCsp(APP, PLAYER, 'pack-a'));
+      expect(r.headers['content-security-policy']).toContain(`worker-src blob: ${PLAYER}/training/pack-a/;`);
     }
   });
 
@@ -156,7 +160,7 @@ describe('TrainingRelay scoping and serving', () => {
         arrayBuffer: () => new Promise<ArrayBuffer>((resolve) => releases.push(() => resolve(new ArrayBuffer(1)))),
       }),
     } as unknown as Blob;
-    const relay = new TrainingRelay({ appOrigin: APP, readActiveFile: async () => slowBlob });
+    const relay = new TrainingRelay({ appOrigin: APP, playerOrigin: PLAYER, readActiveFile: async () => slowBlob });
     relay.setOpenPack('pack-a');
     const opened = await open(relay, '/training/pack-a/media/big.bin');
     // Count bound: MAX_INFLIGHT_READS one-byte reads are accepted, the next is busy.
@@ -211,10 +215,49 @@ describe('relay helpers', () => {
   });
 
   it('the training CSP restricts connect-src and framing, never allows a wildcard', () => {
-    const csp = buildBrowserTrainingCsp(APP);
+    const csp = buildBrowserTrainingCsp(APP, PLAYER, 'pack-a');
     expect(csp).toContain("connect-src 'self'");
     expect(csp).toContain(`frame-ancestors 'self' ${APP}`);
     expect(csp).toContain("object-src 'none'");
     expect(csp).not.toMatch(/\*/);
+  });
+
+  it('pins the course worker sources to blob: and the open pack path, never self (review round 4 F1)', () => {
+    expect(buildBrowserTrainingCsp(APP, PLAYER, 'pack-a')).toBe(
+      [
+        "default-src 'self'",
+        "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        `worker-src blob: ${PLAYER}/training/pack-a/`,
+        "frame-src 'self'",
+        "media-src 'self' data:",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "form-action 'none'",
+        `frame-ancestors 'self' ${APP}`,
+      ].join('; '),
+    );
+    expect(courseWorkerSources(PLAYER, null)).toBe('blob:');
+    expect(courseWorkerSources(PLAYER, '../assets')).toBe('blob:');
+    expect(courseWorkerSources(PLAYER, 'Pack A')).toBe('blob:');
+    for (const id of ['pack-a', null, 'x']) {
+      const workerSrc = /worker-src ([^;]*)/.exec(buildBrowserTrainingCsp(APP, PLAYER, id))?.[1] ?? '';
+      expect(workerSrc).not.toContain("'self'");
+      expect(workerSrc).not.toMatch(/\/assets|training-boot|sw\.js/);
+    }
+  });
+
+  it('relay refusals pin workers to the open pack too, and to blob: alone when no pack is open', async () => {
+    const { relay } = relayWith({ 'story.html': '<html>course</html>' }, 'pack-a');
+    const closed = await open(relay, '/training/pack-a/story.html');
+    expect(closed.status).toBe(404);
+    expect(closed.headers['content-security-policy']).toContain('worker-src blob:;');
+    relay.setOpenPack('pack-a');
+    const refused = await open(relay, '/training/pack-b/story.html');
+    expect(refused.status).toBe(404);
+    expect(refused.headers['content-security-policy']).toContain(`worker-src blob: ${PLAYER}/training/pack-a/;`);
   });
 });

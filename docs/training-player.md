@@ -255,7 +255,9 @@ Courses run on a dedicated player origin instead:
   206/416, and bounded reads.
 - **Headers.** Course responses carry CORP `cross-origin`, `nosniff`,
   `no-cache` and the training CSP without the private `app:` sources plus
-  `frame-ancestors 'self' <app origin>`; course documents also carry COEP
+  `frame-ancestors 'self' <app origin>`, with `worker-src` pinned to `blob:`
+  and the open pack's relay path (on the player origin `'self'` would admit
+  app assets served without the course CSP); course documents also carry COEP
   `require-corp` (without it the app's COEP blocks the frame). The server
   that answers the player origin serves only static files (course JS can
   send same-origin GET requests to it by navigating its own frame or the

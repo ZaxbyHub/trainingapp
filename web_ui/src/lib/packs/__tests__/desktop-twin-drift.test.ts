@@ -81,14 +81,21 @@ describe('desktop twin drift (required web-ui job)', () => {
     expect({ ...TRAINING_MIME_TYPES }).toEqual(desktop);
   });
 
-  it('TD3 the course CSP is the desktop training CSP without app: plus the frame-ancestors pin', () => {
+  it('TD3 the course CSP is the desktop training CSP without app: plus the frame-ancestors pin; worker-src pinned to the pack path', () => {
     const app = 'http://localhost:4183';
+    const player = 'http://127.0.0.1:4183';
     const desktop = desktopTrainingCspDirectives().map((d) => d.replace(/ app:/g, ''));
     expect(desktop.length).toBeGreaterThan(5);
-    const browser = buildBrowserTrainingCsp(app)
+    // The one deliberate divergence (review round 4 F1): desktop keeps
+    // worker-src 'self' blob: because every app://training response carries
+    // the training CSP; on the player origin 'self' would admit app assets
+    // served without it, so the browser pins blob: + the open pack's path.
+    expect(desktop).toContain("worker-src 'self' blob:");
+    const expected = desktop.map((d) => (d.startsWith('worker-src ') ? `worker-src blob: ${player}/training/pack-a/` : d));
+    const browser = buildBrowserTrainingCsp(app, player, 'pack-a')
       .split(';')
       .map((d) => d.trim())
       .filter((d) => d.length > 0);
-    expect(browser).toEqual([...desktop, `frame-ancestors 'self' ${app}`]);
+    expect(browser).toEqual([...expected, `frame-ancestors 'self' ${app}`]);
   });
 });

@@ -88,7 +88,7 @@ export class TrainingPlayerHost {
   }
 
   constructor(private readonly opts: TrainingPlayerHostOptions) {
-    this.relay = new TrainingRelay({ readActiveFile: opts.readActiveFile, appOrigin: opts.appOrigin });
+    this.relay = new TrainingRelay({ readActiveFile: opts.readActiveFile, appOrigin: opts.appOrigin, playerOrigin: opts.playerOrigin });
     window.addEventListener('message', this.onWindowMessage);
   }
 

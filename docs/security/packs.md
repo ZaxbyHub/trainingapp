@@ -230,6 +230,17 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   `web_ui/e2e/isolation-browser.spec.ts` (ADR-0012, threat model item 6).
   Navigation within the player origin stays allowed, hence the static-only
   host rule.
+- **Course workers (review round 4 F1).** The course CSP's `worker-src` is
+  `blob:` plus the open pack's relay path
+  (`<player origin>/training/<pack>/`), not `'self'`. On the player origin
+  `'self'` admits every app asset, which the host serves without the course
+  CSP, and a worker takes its policy from its own script response; before the
+  pin, a course could run the pdf.js worker unconfined and register an app
+  asset as a service worker. Pack scripts carry the course CSP and `blob:`
+  workers inherit it, so both stay confined. Pinned by
+  `training-relay.test.ts`, the two drift tests and the worker-escape row of
+  `web_ui/e2e/isolation-browser.spec.ts`. Desktop keeps `'self' blob:`
+  because every `app://training` response carries the training CSP.
 - **Residual egress (both platforms).** Chromium's CSP does not govern WebRTC
   (STUN/TURN) or DNS prefetch. Course JS can still signal out through them.
   Navigation egress is closed; egress is not sealed.

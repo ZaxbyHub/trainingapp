@@ -76,13 +76,32 @@ export function mimeTypeFor(name: string): string {
 }
 
 /**
+ * The course worker sources (review round 4, F1): `blob:` plus the OPEN
+ * pack's own relay path, never `'self'`. On the player origin `'self'`
+ * would admit every app asset (`/assets/*.js`, `/training-boot.js`,
+ * `/training/sw.js`), which the host serves with only frame-ancestors
+ * 'none'. A worker takes its policy from its own script response, so a
+ * worker built from one of them would run unconfined. Pack scripts are
+ * answered by the relay with this course CSP, so a worker built from one
+ * stays confined, and a `blob:` worker inherits its creator's policy (HTML
+ * Standard, "run a worker": a local-scheme worker URL gets a clone of the
+ * owner's policy container). Without a valid open pack: `blob:` only.
+ */
+export function courseWorkerSources(playerOrigin: string, packId: string | null): string {
+  return packId !== null && PACK_ID_PATTERN.test(packId) ? `blob: ${playerOrigin}/training/${packId}/` : 'blob:';
+}
+
+/**
  * The training-pack CSP for an http(s) player origin: the desktop
  * buildTrainingCspPolicy (desktop/main/security/csp.ts) with the private
  * `app:` scheme sources dropped, plus frame-ancestors pinned to the player
  * origin itself and the app origin (desktop omits frame-ancestors because
- * app: is unreachable from the web; a web origin is not).
+ * app: is unreachable from the web; a web origin is not). One deliberate
+ * divergence: worker-src is courseWorkerSources, not `'self' blob:` — on
+ * desktop every app://training response carries this training CSP, so a
+ * `'self'` worker stays confined there; on the player origin it would not.
  */
-export function buildBrowserTrainingCsp(appOrigin: string): string {
+export function buildBrowserTrainingCsp(appOrigin: string, playerOrigin: string, packId: string | null): string {
   return [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline'",
@@ -90,7 +109,7 @@ export function buildBrowserTrainingCsp(appOrigin: string): string {
     "img-src 'self' data:",
     "font-src 'self' data:",
     "connect-src 'self'",
-    "worker-src 'self' blob:",
+    `worker-src ${courseWorkerSources(playerOrigin, packId)}`,
     "frame-src 'self'",
     "media-src 'self' data:",
     "object-src 'none'",
@@ -212,6 +231,8 @@ export interface TrainingRelayOptions {
   readActiveFile(packId: string, segments: readonly string[]): Promise<Blob | null>;
   /** The app origin (for the training CSP's frame-ancestors). */
   appOrigin: string;
+  /** The player origin (for the training CSP's pinned worker-src). */
+  playerOrigin: string;
   now?: () => number;
 }
 
@@ -224,9 +245,9 @@ interface OpenHandle {
 
 const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
-function baseHeaders(appOrigin: string): Record<string, string> {
+function baseHeaders(appOrigin: string, playerOrigin: string, packId: string | null): Record<string, string> {
   return {
-    'content-security-policy': buildBrowserTrainingCsp(appOrigin),
+    'content-security-policy': buildBrowserTrainingCsp(appOrigin, playerOrigin, packId),
     'cross-origin-resource-policy': 'cross-origin',
     'cross-origin-embedder-policy': 'require-corp',
     'cross-origin-opener-policy': 'same-origin',
@@ -323,7 +344,9 @@ export class TrainingRelay {
       type: 'open-result',
       id,
       status,
-      headers: { ...baseHeaders(this.opts.appOrigin), 'content-type': 'text/plain; charset=utf-8', ...extra },
+      // Refusals pin workers to the open pack too: course JS can frame a
+      // relay refusal and script it.
+      headers: { ...baseHeaders(this.opts.appOrigin, this.opts.playerOrigin, this.openPackId), 'content-type': 'text/plain; charset=utf-8', ...extra },
       body,
     };
   }
@@ -367,7 +390,7 @@ export class TrainingRelay {
     if (this.openPackId !== resolved.packId) return this.status(id, 404);
     const total = blob.size;
     const headers: Record<string, string> = {
-      ...baseHeaders(this.opts.appOrigin),
+      ...baseHeaders(this.opts.appOrigin, this.opts.playerOrigin, resolved.packId),
       'content-type': mimeTypeFor(resolved.segments[resolved.segments.length - 1] ?? ''),
       'accept-ranges': 'bytes',
     };

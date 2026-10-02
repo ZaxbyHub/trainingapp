@@ -17,15 +17,21 @@ describe('browser course serving mirrors desktop app://training', () => {
     expect({ ...TRAINING_MIME_TYPES }).toEqual({ ...MIME_TYPES });
   });
 
-  it('training CSP = desktop training CSP without app: sources + frame-ancestors pinned to self and the app origin', () => {
+  it('training CSP = desktop training CSP without app: sources + frame-ancestors pinned to self and the app origin; worker-src pinned to the open pack path', () => {
     const app = 'http://localhost:4183';
+    const player = 'http://127.0.0.1:4183';
     const desktopDirectives = buildTrainingCspPolicy()
       .split(';')
       .map((d) => d.trim().replace(/ app:/g, ''))
       .filter((d) => d.length > 0);
-    const browserDirectives = buildBrowserTrainingCsp(app)
+    // Desktop keeps worker-src 'self' blob: (every app://training response
+    // carries this CSP, so a 'self' worker stays confined); the browser pins
+    // blob: + the open pack's relay path (review round 4 F1).
+    expect(desktopDirectives).toContain("worker-src 'self' blob:");
+    const expected = desktopDirectives.map((d) => (d.startsWith('worker-src ') ? `worker-src blob: ${player}/training/pack-a/` : d));
+    const browserDirectives = buildBrowserTrainingCsp(app, player, 'pack-a')
       .split(';')
       .map((d) => d.trim());
-    expect(browserDirectives).toEqual([...desktopDirectives, `frame-ancestors 'self' ${app}`]);
+    expect(browserDirectives).toEqual([...expected, `frame-ancestors 'self' ${app}`]);
   });
 });
