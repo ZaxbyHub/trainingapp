@@ -18,6 +18,23 @@
 // content under an https app); anything else is ignored. If nothing
 // resolves, course playback is disabled with an explanation — there is no
 // unsafe same-origin fallback.
+//
+// Navigation egress (ADR-0012 threat model item 6): CSP on a course document
+// does not govern navigation, so course JS could navigate its own frame, or
+// the boot frame through its DOM, to any URL and carry data in the address.
+// What decides where a frame may navigate is the EMBEDDING page's frame-src.
+// When the player origin resolves, the browser app therefore installs ONCE a
+// `<meta http-equiv="Content-Security-Policy" content="frame-src <player
+// origin>">` in its own document (never in Electron, whose renderer CSP
+// already carries frame-src 'self' app:, and never in a framed app). Both
+// player frames load a player-origin URL only after that policy is in place
+// (getResolvedPlayerOrigin), because a meta CSP can only tighten: the app
+// cannot install the loopback alias first and widen it to a configured origin
+// later. A host header cannot carry it: policies from several headers
+// intersect, and a host cannot know a player origin configured by
+// player-origin.json or VITE_TRAININGAPP_PLAYER_ORIGIN.
+
+import { isElectron } from '../desktop-session';
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -176,6 +193,9 @@ export function resolvePlayerOrigin(fetchImpl: PlayerOriginFetch = (input, init)
       }
     }
     resolved = origin;
+    // Before anyone can observe the resolved origin: the frame policy must be
+    // in place before either player frame loads a player-origin URL.
+    if (origin !== null) installPlayerFramePolicy(origin);
     pending = null;
     return resolved;
   })();
@@ -183,16 +203,67 @@ export function resolvePlayerOrigin(fetchImpl: PlayerOriginFetch = (input, init)
 }
 
 /**
- * The cached player origin for synchronous consumers (the Training page sets
- * the course frame src from it on first render). Before the start-up
- * resolution finished, the synchronous steps (build time, loopback alias)
- * answer.
+ * The cached player origin, or (before the start-up resolution finished) the
+ * synchronous prediction (build time, loopback alias). For STATUS only (no
+ * "unavailable" notice flashes while resolution runs): a frame never loads
+ * from it, because the prediction can differ from the resolved origin and
+ * the frame policy is not installed yet — frames use getResolvedPlayerOrigin.
  */
 export function getPlayerOrigin(): string | null {
   if (isFramedContext()) return null;
   if (resolved !== undefined) return resolved;
   const appOrigin = currentAppOrigin();
   return appOrigin === null ? null : resolvePlayerOriginStatic(appOrigin);
+}
+
+/** Marks the app-shell frame policy meta (its value is the player origin). */
+export const FRAME_POLICY_MARKER = 'data-trainingapp-frame-policy';
+/** The player origin the installed frame policy admits; null until installed. */
+let framePolicyOrigin: string | null = null;
+
+/** The app-shell frame policy for a player origin. */
+export function playerFramePolicy(playerOrigin: string): string {
+  return `frame-src ${playerOrigin}`;
+}
+
+/**
+ * Install the app-shell `frame-src <player origin>` meta CSP, exactly once
+ * (navigation egress, ADR-0012 threat model item 6). Browser app only: never
+ * under Electron (its renderer CSP has frame-src 'self' app:, and a second
+ * policy would intersect with it and block app://training) and never in a
+ * framed app (it plays nothing). Returns true when the policy for THIS
+ * origin is in place; a second call for another origin installs nothing and
+ * answers false (a meta CSP can only tighten, never be replaced).
+ */
+export function installPlayerFramePolicy(playerOrigin: string): boolean {
+  if (typeof document === 'undefined' || isElectron() || isFramedContext()) return false;
+  if (framePolicyOrigin !== null) return framePolicyOrigin === playerOrigin;
+  const head = document.head;
+  if (head === null) return false;
+  const meta = document.createElement('meta');
+  meta.setAttribute('http-equiv', 'Content-Security-Policy');
+  meta.setAttribute('content', playerFramePolicy(playerOrigin));
+  meta.setAttribute(FRAME_POLICY_MARKER, playerOrigin);
+  head.appendChild(meta);
+  framePolicyOrigin = playerOrigin;
+  return true;
+}
+
+/**
+ * The player origin the course and boot frames may load: set only once
+ * start-up resolution settled AND the frame policy for that exact origin is
+ * installed. null before that (the course frame stays about:blank and no
+ * boot frame is embedded), in a framed app, and when nothing resolved.
+ */
+export function getResolvedPlayerOrigin(): string | null {
+  if (isFramedContext() || resolved === undefined || resolved === null) return null;
+  return framePolicyOrigin === resolved ? resolved : null;
+}
+
+/** Resolves once start-up resolution settled: true iff `playerOrigin` is resolved and its frame policy installed. */
+export async function playerFramePolicyReady(playerOrigin: string): Promise<boolean> {
+  await resolvePlayerOrigin();
+  return getResolvedPlayerOrigin() === playerOrigin;
 }
 
 /** Why course playback can or cannot run in this app instance. */
@@ -202,11 +273,19 @@ export function getPlayerOriginStatus(): PlayerOriginStatus {
   return getPlayerOrigin() === null ? 'no-origin' : 'ok';
 }
 
-/** Tests only. */
-export function resetPlayerOriginForTests(value?: string | null): void {
+/**
+ * Tests only. A string value simulates a settled resolution, so the frame
+ * policy for it is installed too unless `installPolicy` is false.
+ */
+export function resetPlayerOriginForTests(value?: string | null, installPolicy = true): void {
   resolved = value;
   pending = null;
   hostUnsupported = false;
+  framePolicyOrigin = null;
+  if (typeof document !== 'undefined') {
+    document.querySelectorAll(`meta[${FRAME_POLICY_MARKER}]`).forEach((meta) => meta.remove());
+  }
+  if (typeof value === 'string' && installPolicy) installPlayerFramePolicy(value);
 }
 
 /** The course frame URL for a pack in the browser app (version-less; the relay serves the active version). */

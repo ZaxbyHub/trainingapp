@@ -192,7 +192,8 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   forms, beacons, images, frames and every script or worker but its own two
   files, and its sandbox blocks popups and top navigation. Course JS can still
   send GET requests to any path of the server that answers the player origin by
-  navigating its own frame or the boot frame. That server must therefore serve
+  navigating its own frame or the boot frame (the app-shell frame policy admits
+  the player origin itself). That server must therefore serve
   only static files. `api_server.py` (unauthenticated API) is not a player
   host: it answers the boot files, the worker and every `/training/*` path
   with 404. `vite dev` also serves `/@fs/` and proxies `/api`/`/auth` on the
@@ -217,13 +218,21 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   requests to a cross-origin sink. A framed app never runs training (no player
   origin, no boot frame, no relay port), and the boot frame runs only directly
   under the top-level page.
-- **Navigation egress (open residual).** CSP does not govern navigation. A
-  course can navigate its own frame, or the boot frame through its DOM, to
-  any URL, so data can leave in the URL of a GET request (measured on
-  Chromium); the response then fails the app's COEP or `frame-ancestors` and
-  does not render. On desktop the renderer CSP's `frame-src` blocks this for
-  the course frame. The browser app shell sends no `frame-src` (ADR-0012,
-  threat model item 6).
+- **Navigation egress (closed).** CSP on a course document does not govern
+  navigation; the embedding page's `frame-src` does. Desktop's renderer CSP
+  carries `frame-src 'self' app:`. Once the player origin resolves, the
+  browser app installs a runtime `frame-src <player origin>` meta CSP, once,
+  never under Electron or in a framed app. Neither player frame loads a
+  player-origin URL before it is in place. So a course can no longer navigate
+  its own frame, or the boot frame through its DOM, to another origin with
+  data in the URL; Chromium refuses it before a request is sent. Pinned by
+  `player-frame-policy.test.tsx` and the navigation-egress row of
+  `web_ui/e2e/isolation-browser.spec.ts` (ADR-0012, threat model item 6).
+  Navigation within the player origin stays allowed, hence the static-only
+  host rule.
+- **Residual egress (both platforms).** Chromium's CSP does not govern WebRTC
+  (STUN/TURN) or DNS prefetch. Course JS can still signal out through them.
+  Navigation egress is closed; egress is not sealed.
 - **Course frame sandbox.** `allow-scripts allow-same-origin allow-forms`: no popups, no top
   navigation, no storage-access prompts. `allow-same-origin` keeps the course on its own origin
   (player origin / `app://training`), never the app's.

@@ -274,9 +274,12 @@ Courses run on a dedicated player origin instead:
   course therefore cannot frame a same-origin page that runs under a weaker
   policy than its own (final-critic FC6). A framed app never starts the course
   player, and the boot page runs only directly under the top-level page. CSP
-  does not govern navigation: a course can navigate its own frame, or the boot
-  frame, to any URL in the browser app (open residual, ADR-0012 threat model
-  item 6).
+  on the course does not govern navigation; the app page's `frame-src` does.
+  The browser app installs `frame-src <player origin>` (a runtime meta CSP)
+  once the player origin resolves, and loads neither player frame before
+  that. A course therefore cannot navigate its own frame, or the boot frame,
+  to another origin (ADR-0012 threat model item 6). Chromium's CSP does not
+  cover WebRTC or DNS prefetch (residual on both apps).
 - **Sandbox.** The course iframe is `sandbox="allow-scripts allow-same-origin
   allow-forms"` in both apps: no popups, no top navigation. `allow-same-origin`
   keeps the course on its own origin, never the app's.

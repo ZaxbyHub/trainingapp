@@ -8,7 +8,10 @@
  * DEDICATED origin distinct from the app's — served by that origin's service
  * worker from bytes the app page relays out of its private storage. The src
  * is version-less in the browser (the relay serves the pack's ACTIVE version)
- * and is computed synchronously from the pack id and the player origin.
+ * and is computed from the pack id and the RESOLVED player origin: until the
+ * start-up resolution settled and the app-shell frame-src policy for that
+ * origin is installed (ADR-0012 threat model item 6) the frame stays
+ * about:blank.
  *
  * The player document and this renderer are distinct WHATWG origins in both
  * apps, so ALL player communication goes through ./training-player-bridge
@@ -31,7 +34,7 @@ import {
 } from './training-player-bridge';
 import { isElectron } from '../lib/desktop-session';
 import { browserTrainingHost } from '../lib/packs/browser-training';
-import { browserTrainingUrl, getPlayerOrigin, getPlayerOriginStatus, resolvePlayerOrigin } from '../lib/packs/player-origin';
+import { browserTrainingUrl, getPlayerOriginStatus, getResolvedPlayerOrigin, resolvePlayerOrigin } from '../lib/packs/player-origin';
 
 /**
  * Sandbox of the course frame (review round 1, F2; desktop parity with the
@@ -51,7 +54,9 @@ export function courseIdOf(packKey: string): string {
 /** Where the course document loads from in THIS app, or null when it cannot be played here. */
 export function trainingPlayerSrc(packKey: string): { src: string; origin: string | null } | null {
   if (isElectron()) return { src: `app://training/${packKey}/story.html`, origin: null };
-  const playerOrigin = getPlayerOrigin();
+  // Only the resolved origin, and only once its frame policy is installed:
+  // a frame never loads from the synchronous alias prediction.
+  const playerOrigin = getResolvedPlayerOrigin();
   if (playerOrigin === null) return null;
   return { src: browserTrainingUrl(playerOrigin, courseIdOf(packKey)), origin: playerOrigin };
 }
@@ -93,6 +98,9 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
       };
     }, []);
     const location = trainingPlayerSrc(packId);
+    // The browser host exists only once the player origin resolved with its
+    // frame policy installed; the effects below re-run when it appears.
+    const resolvedOrigin = isElectron() ? null : getResolvedPlayerOrigin();
     const originStatus = isElectron() ? 'ok' : getPlayerOriginStatus();
     const framed = originStatus === 'framed';
     const courseId = courseIdOf(packId);
@@ -123,7 +131,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
         return info;
       });
       return () => host.closeCourse(courseId);
-    }, [courseId]);
+    }, [courseId, resolvedOrigin]);
 
     // First-ever activation: the worker did not exist when the frame first
     // loaded, so that load never reached the relay. Once the relay is ready,
@@ -167,7 +175,8 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
         bridgeRef.current?.destroy?.();
         bridgeRef.current = null;
       };
-    }, [packId]);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [packId, location?.origin]);
 
     // Drive the initial slide once the player reports readable state (before
     // course start the player has no state; the pack bridge defers jumps

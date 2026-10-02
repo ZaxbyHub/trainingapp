@@ -23,7 +23,10 @@
   answer other `/training/*` paths with 404. Every other player-origin response refuses framing,
   the boot page carries a restrictive header CSP that only the app origin may frame (scripts and
   workers pinned to its own two files), and the app sandboxes the boot frame, so a course cannot
-  step outside its own CSP or sandbox through a same-origin page (final-critic FC6). The player
+  step outside its own CSP or sandbox through a same-origin page (final-critic FC6). Once the
+  player origin resolves, the app page adds a runtime `frame-src <player origin>` policy, before
+  either player frame loads, so a course cannot navigate its own frame or the boot frame to
+  another origin with data in the URL (desktop parity with the renderer's `frame-src`). The player
   origin must be served by a static-only host (course JS can still send same-origin GET requests
   by navigation), so
   `api_server.py` is not a player host: it answers the boot files and every `/training/*` path

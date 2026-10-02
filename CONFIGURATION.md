@@ -612,10 +612,12 @@ The app also sandboxes the boot frame (`allow-scripts allow-same-origin`), so co
 scripts it gets no popups or top-level navigation from it either. The bundled hosts compute
 `<player origin>` from the Host the boot page was requested on and `<app origin>` as its loopback
 alias. Any other Host gets `'none'` for all three, which turns course playback off rather than
-weakening it. A separately configured player host must send the same headers, with `frame-ancestors` naming its app origin and the script and worker sources naming its own origin. The bundled servers cannot be that host: they derive these origins only for the loopback alias of their own port, so their boot page refuses any other app origin, and the Training page then reports that the player service did not start. CSP does not cover navigation: a course can still navigate
-its own frame, or the boot frame, to any web address (data in the address). The desktop app
-blocks that for the course frame, and the browser app does not yet (ADR-0012, threat model item
-6).
+weakening it. A separately configured player host must send the same headers, with `frame-ancestors` naming its app origin and the script and worker sources naming its own origin. The bundled servers cannot be that host: they derive these origins only for the loopback alias of their own port, so their boot page refuses any other app origin, and the Training page then reports that the player service did not start. Navigation is covered by the app itself, not by the host: once
+the player origin resolves, the browser app adds a `frame-src <player origin>` policy to its own
+page. A course therefore cannot navigate its own frame, or the boot frame, to another web
+address (ADR-0012, threat model item 6). Nothing needs to be configured on the host for this;
+a host must not send its own `frame-src` for the app pages either, because it would combine
+with the app's. Chromium's CSP does not cover WebRTC or DNS prefetch, on either app.
 
 `api_server.py` is not a player host: when it serves the web archive it answers the boot files,
 `/training/sw.js` and every `/training/*` path with 404, and the Training page says course

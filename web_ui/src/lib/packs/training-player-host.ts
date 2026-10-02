@@ -23,6 +23,12 @@ export interface TrainingPlayerHostOptions {
   /** Where the hidden boot frame is attached (default document.body). */
   container?: () => HTMLElement | null;
   readyTimeoutMs?: number;
+  /**
+   * Awaited before every boot frame is appended: resolves true once the
+   * app-shell frame-src policy for `playerOrigin` is installed (browser app,
+   * ADR-0012 threat model item 6). false embeds nothing.
+   */
+  framePolicyReady?: () => Promise<boolean>;
 }
 
 export interface RelayReadyInfo {
@@ -46,6 +52,8 @@ export const BOOT_FRAME_SANDBOX = 'allow-scripts allow-same-origin';
 export const RELAY_REQUEST_MIN_INTERVAL_MS = 1000;
 /** Why a framed app does not start the course player. */
 export const FRAMED_DETAIL = 'course playback is disabled because this app is embedded in another page';
+/** Why the boot frame was not embedded without the app-shell frame policy. */
+export const FRAME_POLICY_DETAIL = 'the course player frame policy is not in place';
 
 export class TrainingPlayerHost {
   readonly relay: TrainingRelay;
@@ -73,6 +81,11 @@ export class TrainingPlayerHost {
       this.relayRequestInFlight = false;
     });
   };
+
+  /** The player origin this host embeds the boot frame on. */
+  get playerOrigin(): string {
+    return this.opts.playerOrigin;
+  }
 
   constructor(private readonly opts: TrainingPlayerHostOptions) {
     this.relay = new TrainingRelay({ readActiveFile: opts.readActiveFile, appOrigin: opts.appOrigin });
@@ -128,6 +141,18 @@ export class TrainingPlayerHost {
     const generation = this.generation;
     this.bootFrame?.remove();
     this.bootFrame = null;
+    const gate = this.opts.framePolicyReady;
+    if (gate === undefined) return this.embedBootFrame(generation);
+    return gate().then((ok): Promise<RelayReadyInfo> => {
+      if (!ok) return Promise.resolve({ ready: false, hadActiveWorker: false, detail: FRAME_POLICY_DETAIL });
+      // A newer open superseded this one while the gate was pending: answer
+      // with the newest attempt, never with a second boot frame.
+      if (generation !== this.generation) return this.readyPromise ?? Promise.resolve({ ready: false, hadActiveWorker: false });
+      return this.embedBootFrame(generation);
+    });
+  }
+
+  private embedBootFrame(generation: number): Promise<RelayReadyInfo> {
     const container = (this.opts.container ?? (() => document.body))();
     if (container === null) return Promise.resolve({ ready: false, hadActiveWorker: false, detail: 'no document' });
     const frame = document.createElement('iframe');

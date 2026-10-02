@@ -5,15 +5,21 @@
 // the desktop app (app://training is served by the Electron main process).
 import { isElectron } from '../desktop-session';
 import { embedPendingPackChunks, getBrowserPackManager } from './browser-pack-manager';
-import { getPlayerOrigin, isFramedContext, resolvePlayerOrigin } from './player-origin';
+import { getResolvedPlayerOrigin, isFramedContext, playerFramePolicyReady, resolvePlayerOrigin } from './player-origin';
 import { TrainingPlayerHost, getTrainingPlayerHost } from './training-player-host';
 
-/** The browser course host, or null inside Electron / without a player origin. */
+/**
+ * The browser course host, or null inside Electron, in a framed app, and
+ * until the player origin RESOLVED with its app-shell frame policy installed
+ * (ADR-0012 threat model item 6). The app-wide host is therefore always built
+ * for the resolved origin, never for the synchronous loopback-alias
+ * prediction (which a configured origin would contradict).
+ */
 export function browserTrainingHost(): TrainingPlayerHost | null {
   if (typeof window === 'undefined' || isElectron()) return null;
   // Never in a framed app (review round 1, F1): no boot frame, no relay port.
   if (isFramedContext()) return null;
-  const playerOrigin = getPlayerOrigin();
+  const playerOrigin = getResolvedPlayerOrigin();
   if (playerOrigin === null) return null;
   return getTrainingPlayerHost(
     () =>
@@ -21,6 +27,9 @@ export function browserTrainingHost(): TrainingPlayerHost | null {
         playerOrigin,
         appOrigin: window.location.origin,
         readActiveFile: (packId, segments) => getBrowserPackManager().readActiveFile(packId, segments),
+        // Defense in depth: the boot frame is appended only once the frame
+        // policy for this origin is in place.
+        framePolicyReady: () => playerFramePolicyReady(playerOrigin),
       }),
   );
 }

@@ -46,7 +46,7 @@
  */
 import React, { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 
 // Controllable fake bridge (hoisted so vi.mock's factory can close over it).
 const bridge = vi.hoisted(() => {
@@ -129,9 +129,15 @@ describe('D5 C5: TrainingPlayer component (issue #81 AC5)', () => {
     restore();
   });
 
-  it('in the browser app the course loads from the dedicated player origin, never app:// or the app origin', () => {
+  it('in the browser app the course loads from the dedicated player origin, never app:// or the app origin', async () => {
     bridge.stateQueue = [null];
     render(<TrainingPlayer packId={`${OPMED}/1.0.0`} />);
+    // Only once the player origin resolved with its app-shell frame policy
+    // installed (ADR-0012 threat model item 6); about:blank until then.
+    await waitFor(() => expect(frameElement().getAttribute('src')).not.toBe('about:blank'));
+    expect(document.head.querySelector('meta[data-trainingapp-frame-policy]')?.getAttribute('content')).toBe(
+      `frame-src ${new URL(frameElement().src).origin}`,
+    );
     const src = new URL(frameElement().src);
     expect(src.protocol).toBe('http:');
     expect(src.origin).not.toBe(window.location.origin);
