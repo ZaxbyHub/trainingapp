@@ -447,16 +447,77 @@ describe('DocumentList', () => {
       expect(tops(container)[1]).toBe('60px/60px');
     });
 
-    it('keeps the same row at the top of the list across a layout switch (index, not pixels)', () => {
-      width = 1000;
-      const { container, getByTestId } = renderList(40);
-      const scroller = getByTestId('scroller');
-      scroller.scrollTop = 600; // row 10 at 60px
-      resizeTo(700);
-      expect(scroller.scrollTop).toBe(10 * STACKED_ITEM_HEIGHT);
-      expect(tops(container).some((t) => t.startsWith(`${10 * STACKED_ITEM_HEIGHT}px/`))).toBe(true);
-      resizeTo(1000);
-      expect(scroller.scrollTop).toBe(10 * ITEM_HEIGHT);
+    // Review B-1. A real browser clamps scrollTop to scrollHeight - clientHeight the
+    // moment the placeholder shrinks, so a layout effect that reads scrollTop after
+    // the commit has already lost the position. This models that clamp, a 37px table
+    // head that exists only in the wide layout, and a focused row control.
+    describe('scroll position survives the browser clamp (review B-1)', () => {
+      const HEAD = 37;
+      const CLIENT_HEIGHT = 300;
+      const names = Array.from({ length: 80 }, (_, i) => `Doc-${String(i).padStart(3, '0')}.pdf`);
+
+      const setup = (initialWidth: number) => {
+        width = initialWidth;
+        let raw = 0;
+        const view = render(
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList
+              documents={names.map((fileName, i) => createDocument({ id: `d${i}`, fileName }))}
+              onDelete={vi.fn()}
+              deletingId={null}
+            />
+          </div>
+        );
+        const scroller = view.getByTestId('scroller');
+        const head = () => (width > STACKED_MAX_WIDTH ? HEAD : 0);
+        const maxScroll = () => {
+          const placeholder = scroller.querySelector<HTMLElement>('[role="list"] > div');
+          return head() + parseFloat(placeholder?.style.height ?? '0') - CLIENT_HEIGHT;
+        };
+        Object.defineProperty(scroller, 'clientHeight', { configurable: true, get: () => CLIENT_HEIGHT });
+        Object.defineProperty(scroller, 'scrollTop', {
+          configurable: true,
+          // The clamp is applied on every read, like a browser does at layout.
+          get: () => Math.min(Math.max(raw, 0), Math.max(maxScroll(), 0)),
+          set: (value: number) => {
+            raw = value;
+          },
+        });
+        rectSpy.mockImplementation(function (this: HTMLElement) {
+          const w = this.classList.contains('app-doc-table') ? width : 0;
+          const top = this.getAttribute('role') === 'list' ? head() - scroller.scrollTop : 0;
+          return { width: w, height: 0, top, left: 0, right: w, bottom: top, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
+        });
+        return { ...view, scroller };
+      };
+      const deleteLabels = (container: HTMLElement): string[] =>
+        Array.from(container.querySelectorAll('[role="listitem"] [aria-label^="Delete "]')).map(
+          (el) => el.getAttribute('aria-label') ?? ''
+        );
+
+      it('keeps row 60 of 80 at the top across stacked -> wide -> stacked', () => {
+        const { container, scroller } = setup(700);
+        scroller.scrollTop = 60 * STACKED_ITEM_HEIGHT; // 6720, past the wide-layout maximum
+        fireEvent.scroll(scroller);
+        resizeTo(1000);
+        expect(scroller.scrollTop).toBe(HEAD + 60 * ITEM_HEIGHT);
+        resizeTo(700);
+        expect(scroller.scrollTop).toBe(60 * STACKED_ITEM_HEIGHT);
+        expect(deleteLabels(container)).toContain('Delete Doc-060.pdf');
+      });
+
+      it('keeps keyboard focus on the same row control across the switch', () => {
+        const { scroller } = setup(700);
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        const trigger = screen.getByRole('button', { name: 'Delete Doc-070.pdf' });
+        trigger.focus();
+        expect(document.activeElement).toBe(trigger);
+        resizeTo(1000);
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-070.pdf' }));
+        resizeTo(700);
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-070.pdf' }));
+      });
     });
   });
 

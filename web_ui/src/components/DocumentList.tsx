@@ -143,6 +143,12 @@ function useItemHeight(tableRef: React.RefObject<HTMLElement | null>, active: bo
 }
 const BUFFER = 5;
 
+/** Distance from the top of the scroller's content to the top of the list (the
+ *  wide layout shows a table head above it; the stacked layout does not). */
+function measureListOffset(scroller: HTMLElement, listEl: HTMLElement): number {
+  return listEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+}
+
 const DocumentItem = React.memo<{
   doc: DocumentEntry;
   onDelete?: (docId: string) => void;
@@ -287,23 +293,36 @@ DocumentItem.displayName = 'DocumentItem';
 
 export const DocumentList: React.FC<DocumentListProps> = React.memo(
   ({ documents, onDelete, deletingId, onCancelIndexing }) => {
-    const [scrollTop, setScrollTop] = useState(0);
     const [containerHeight, setContainerHeight] = useState(300);
     const listRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLElement | null>(null);
     const tableRef = useRef<HTMLDivElement>(null);
     const itemHeight = useItemHeight(tableRef, documents.length > 0);
-    // A layout switch changes the row height: keep the same ROW at the top of the
-    // list (scroll position by item index, not by pixels).
+    // The scroll position is stored with the row height it was measured at, so a
+    // layout switch can re-derive the same ROW at the top (see below).
+    const [scroll, setScroll] = useState({ top: 0, height: itemHeight });
+    // Last scroll position and list offset seen under the CURRENT layout. A layout
+    // switch must never read scroller.scrollTop after the commit: the new row
+    // height has already resized the placeholder and the browser has clamped it.
+    const lastScrollTopRef = useRef(0);
+    const listOffsetRef = useRef(0);
     const previousHeightRef = useRef(itemHeight);
+    // A layout switch changes the row height: keep the same ROW at the top of the
+    // list (scroll position by item index, not by pixels). The list does not start
+    // at the scroller's top (the wide layout shows a table head above it), so the
+    // offset is subtracted before and re-added after the conversion.
     useLayoutEffect(() => {
       const previous = previousHeightRef.current;
       previousHeightRef.current = itemHeight;
       const scroller = scrollContainerRef.current;
-      if (previous === itemHeight || scroller === null) return;
-      const next = (scroller.scrollTop / previous) * itemHeight;
-      scroller.scrollTop = next;
-      setScrollTop(scroller.scrollTop);
+      const listEl = listRef.current;
+      if (previous === itemHeight || scroller === null || listEl === null) return;
+      const row = (lastScrollTopRef.current - listOffsetRef.current) / previous;
+      const offset = measureListOffset(scroller, listEl);
+      scroller.scrollTop = offset + row * itemHeight;
+      lastScrollTopRef.current = scroller.scrollTop;
+      listOffsetRef.current = offset;
+      setScroll({ top: scroller.scrollTop, height: itemHeight });
     }, [itemHeight]);
 
     useLayoutEffect(() => {
@@ -336,12 +355,15 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       scrollContainerRef.current = scroller;
 
       const handleScroll = () => {
-        setScrollTop(scroller!.scrollTop);
+        lastScrollTopRef.current = scroller!.scrollTop;
+        setScroll({ top: scroller!.scrollTop, height: previousHeightRef.current });
         setContainerHeight(scroller!.clientHeight);
       };
 
       // Initialize with current scroll position and viewport height
-      setScrollTop(scroller.scrollTop);
+      lastScrollTopRef.current = scroller.scrollTop;
+      listOffsetRef.current = measureListOffset(scroller, listEl);
+      setScroll({ top: scroller.scrollTop, height: previousHeightRef.current });
       setContainerHeight(scroller.clientHeight || 300);
 
       scroller.addEventListener('scroll', handleScroll, { passive: true });
@@ -374,6 +396,10 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       );
     }
 
+    // Between a layout switch committing and its layout effect re-aiming the
+    // scroller, `scroll` still holds the old row height: render the rows around the
+    // same index so a focused row is never unmounted (focus would fall to body).
+    const scrollTop = scroll.height === itemHeight ? scroll.top : (scroll.top / scroll.height) * itemHeight;
     const totalItems = documents.length;
     const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - BUFFER);
     const endIndex = Math.min(
