@@ -82,9 +82,13 @@ describe('Training library and player page (Lumen phase 6)', () => {
     listPacks.mockResolvedValue([COURSE_A]);
     render(<TrainingPage />);
     expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+    // Slim header on the player view: the H1 stays, the page description goes.
+    expect(screen.getByRole('heading', { level: 1, name: 'Training' })).toBeTruthy();
+    expect(screen.queryByText('Play the training courses installed on this device.')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
     expect(screen.queryByTestId('training-player-frame')).toBeNull();
+    expect(screen.getByText('Play the training courses installed on this device.')).toBeTruthy();
     const card = screen.getByTestId('training-course-course-a');
     expect(card).toHaveTextContent('Safety Onboarding');
     expect(card).toHaveTextContent('v1.0.0');

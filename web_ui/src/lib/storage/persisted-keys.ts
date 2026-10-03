@@ -41,6 +41,8 @@ export const EXTERNAL_API_KEY_ORIGIN_KEY = 'external-provider-apikey-origin';
 export const SIDEBAR_OPEN_KEY = 'sidebarOpen';
 /** Last course opened on the Training page. */
 export const LAST_PACK_KEY = 'training.lastPackDir';
+/** Furthest slide reached per course on the Training page: {[courseId]: 1-based position}. */
+export const TRAINING_PROGRESS_KEY = 'training.progress';
 /**
  * Browser app pack update channel opt-in {optIn, feedUrl?}
  * (browser-training-parity AC8; desktop keeps it in the profile's updates.json).
@@ -57,6 +59,7 @@ export const USER_SETTING_KEYS: readonly string[] = [
   EXTERNAL_API_KEY_ORIGIN_KEY,
   SIDEBAR_OPEN_KEY,
   LAST_PACK_KEY,
+  TRAINING_PROGRESS_KEY,
   PACK_UPDATES_STATE_KEY,
 ];
 

@@ -554,7 +554,7 @@ Clear Cache removes, in this browser profile: the document library and its keywo
 indexes, downloaded WebLLM weights, orphaned data from earlier sessions, and every saved
 setting registered in `web_ui/src/lib/storage/persisted-keys.ts` (inference mode, browser
 engine and response-quality choices, theme, external model connection and API key, sidebar state,
-last-opened course, pack update setting), and the browser app's installed Knowledge Packs and
+last-opened course, course progress, pack update setting), and the browser app's installed Knowledge Packs and
 courses. It keeps your chat history (conversations, stored separately from the
 document library) and the internal profile id, migration marker and re-index notice flag, then
 reloads the page. The desktop app removes the same browser-side data from its app window (the
