@@ -11,6 +11,7 @@ import React, { useCallback, useState, useRef, useLayoutEffect } from 'react';
 import type { DocumentEntry } from '../types/document';
 import { Button, Icon, IconButton, ProgressBar, StatusPill, type IconName } from '../ui';
 import { cx } from '../ui/cx';
+import { ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from './documentRowLayout';
 import '../pages/documents.css';
 
 interface DocumentListProps {
@@ -107,24 +108,37 @@ export function documentKind(fileName: string): DocKind {
   return KIND_BY_EXTENSION[extension] ?? 'other';
 }
 
-/** Must match the `.app-doc` row height in pages/documents.css. */
-const ITEM_HEIGHT = 60;
-/** Stacked (wrapped) row height; must match the `.app-doc` height in the
- *  `max-width: 760px` block of pages/documents.css. */
-const STACKED_ITEM_HEIGHT = 112;
-const STACKED_QUERY = '(max-width: 760px)';
+/** Content-box width of `el` in CSS px, fractional like the `@container` query
+ *  measures it (clientWidth rounds, so it is derived from the border box). */
+function contentWidth(el: HTMLElement): number {
+  const style = window.getComputedStyle(el);
+  const sides = ['borderLeftWidth', 'borderRightWidth', 'paddingLeft', 'paddingRight'] as const;
+  const inset = sides.reduce((sum, side) => sum + (parseFloat(style[side]) || 0), 0);
+  return el.getBoundingClientRect().width - inset;
+}
 
-function useItemHeight(): number {
-  const [stacked, setStacked] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(STACKED_QUERY).matches
-  );
+/**
+ * Row height for the layout the CSS has active. The table is a size container
+ * (`@container (max-width: STACKED_MAX_WIDTH px)` in pages/documents.css), so the
+ * hook measures that SAME element's content width with a ResizeObserver and
+ * applies the same threshold: the 60px / 112px virtualization heights cannot
+ * disagree with the layout. An unmeasured (0px) container keeps the wide height.
+ */
+function useItemHeight(tableRef: React.RefObject<HTMLElement | null>, active: boolean): number {
+  const [stacked, setStacked] = useState(false);
   useLayoutEffect(() => {
-    const mql = window.matchMedia(STACKED_QUERY);
-    const sync = () => setStacked(mql.matches);
-    sync();
-    mql.addEventListener('change', sync);
-    return () => mql.removeEventListener('change', sync);
-  }, []);
+    const el = tableRef.current;
+    if (!active || el === null) return undefined;
+    const apply = (width: number) => setStacked(width > 0 && width <= STACKED_MAX_WIDTH);
+    apply(contentWidth(el));
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (entry !== undefined) apply(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tableRef, active]);
   return stacked ? STACKED_ITEM_HEIGHT : ITEM_HEIGHT;
 }
 const BUFFER = 5;
@@ -226,7 +240,7 @@ const DocumentItem = React.memo<{
           the Lumen disabled look). */}
       {isConfirming ? (
         <div role="alert" aria-label={`Delete ${doc.fileName}?`} className="app-doc__confirm">
-          <span className="app-doc__confirm-text">Delete {doc.fileName}?</span>
+          <span className="app-doc__confirm-text" title={`Delete ${doc.fileName}?`}>Delete {doc.fileName}?</span>
           <Button
             size="sm"
             variant="danger"
@@ -277,7 +291,20 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     const [containerHeight, setContainerHeight] = useState(300);
     const listRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLElement | null>(null);
-    const itemHeight = useItemHeight();
+    const tableRef = useRef<HTMLDivElement>(null);
+    const itemHeight = useItemHeight(tableRef, documents.length > 0);
+    // A layout switch changes the row height: keep the same ROW at the top of the
+    // list (scroll position by item index, not by pixels).
+    const previousHeightRef = useRef(itemHeight);
+    useLayoutEffect(() => {
+      const previous = previousHeightRef.current;
+      previousHeightRef.current = itemHeight;
+      const scroller = scrollContainerRef.current;
+      if (previous === itemHeight || scroller === null) return;
+      const next = (scroller.scrollTop / previous) * itemHeight;
+      scroller.scrollTop = next;
+      setScrollTop(scroller.scrollTop);
+    }, [itemHeight]);
 
     useLayoutEffect(() => {
       if (documents.length === 0) {
@@ -357,7 +384,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     const totalHeight = totalItems * itemHeight;
 
     return (
-      <div className="app-doc-table">
+      <div ref={tableRef} className="app-doc-table">
         {/* Column headings: decorative only (aria-hidden; labels drawn from
             data-label by CSS, so they add no text). Each row's cells carry their
             own self-describing text ("117.2 KB", "12 chunks", the status pill). */}
