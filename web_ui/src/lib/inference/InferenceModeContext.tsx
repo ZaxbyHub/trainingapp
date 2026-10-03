@@ -4,7 +4,7 @@
  * (settings-wiring-honesty: the browser app has no API-server mode).
  * External OpenAI/Anthropic-compatible endpoints are NOT a mode
  * (universal-provider-settings-overhaul): they replace the generator inside
- * either mode and are configured in Settings -> External model
+ * either mode and are configured in Settings -> Model & connection
  * (lib/llm/external-provider.ts). PR #138's 'provider' mode is retired; a
  * stored legacy blob is migrated once by lib/llm/external-migration.ts.
  */

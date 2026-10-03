@@ -75,7 +75,8 @@ describe('browser app', () => {
     // "Use my documents (grounded)": on by default (Direct chat off).
     expect(q.getByRole('switch', { name: /^use my documents \(grounded\)$/i })).toBeChecked();
     expect(q.getByRole('button', { name: /^show api key$/i })).toHaveAttribute('aria-pressed', 'false');
-    expect(q.getByText(/stored in this browser/i)).toBeInTheDocument();
+    // M4: the browser note says plainly how the key is stored (Remember off by default).
+    expect(q.getByText(/kept for this browser session only, unencrypted: any script running on this site can read it/i)).toBeInTheDocument();
   });
 
   test('Test connection probes the endpoint directly and fills the model list', async () => {
@@ -183,6 +184,35 @@ describe('desktop app', () => {
         <ExternalModelSection />
       </DesktopSessionProvider>,
     );
+
+  // Review M3: the desktop key note follows apiKeyPersisted and never contradicts itself.
+  test('M3: a saved, OS-encrypted key is described as encrypted (and never as session-only)', async () => {
+    installDesktopBridgeStub();
+    const { s } = session({ 'external.baseUrl': 'http://192.168.1.20:8000', 'external.apiKeySet': true, 'external.apiKeyPersisted': true });
+    renderDesktop(s);
+    const q = within(panel());
+    await waitFor(() => expect(q.getByText(/a key is saved, encrypted by the operating system/i)).toBeInTheDocument());
+    expect(q.queryByText(/session only/i)).toBeNull();
+  });
+
+  test('M3: a key kept in memory (secure storage unavailable) is described as session-only (and never as encrypted)', async () => {
+    installDesktopBridgeStub();
+    const { s } = session({ 'external.baseUrl': 'http://192.168.1.20:8000', 'external.apiKeySet': true, 'external.apiKeyPersisted': false });
+    renderDesktop(s);
+    const q = within(panel());
+    await waitFor(() => expect(q.getByText(/set for this session only: secure storage is unavailable/i)).toBeInTheDocument());
+    expect(q.queryByText(/encrypted by the operating system/i)).toBeNull();
+  });
+
+  test('M3: with secure storage known to be unavailable and no key here, a new key is announced as session-only', async () => {
+    installDesktopBridgeStub();
+    const { s } = session({ 'external.baseUrl': 'http://192.168.1.20:8000', 'external.apiKeySet': false, 'external.apiKeyPersisted': false });
+    renderDesktop(s);
+    const q = within(panel());
+    await waitFor(() =>
+      expect(q.getByText(/secure storage is unavailable on this computer: a key you enter is kept for this session only/i)).toBeInTheDocument(),
+    );
+  });
 
   test('Test connection uses the backend probe route, never the browser probe', async () => {
     installDesktopBridgeStub();
@@ -573,7 +603,9 @@ describe('browser app: key-origin binding (F2)', () => {
     localStorage.setItem('external-provider-apikey', KEY);
     render(<ExternalModelSection />);
     const q = within(panel());
-    expect((q.getByLabelText(/^api key$/i) as HTMLInputElement).value).toBe(KEY);
+    // L1: the saved key is never written into the field's DOM value.
+    expect((q.getByLabelText(/^api key$/i) as HTMLInputElement).value).toBe('');
+    expect(q.getByTestId('external-key-saved')).toBeInTheDocument();
     fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: b.base } });
     fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
     await waitFor(() => expect(b.hits).toHaveLength(1));
@@ -636,7 +668,8 @@ describe('browser app: key-origin binding (F2)', () => {
     const q = within(panel());
     const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
     const base = q.getByLabelText(/^base url$/i);
-    expect(key.value).toBe(KEY);
+    expect(key.value).toBe('');
+    expect(q.getByTestId('external-key-saved')).toBeInTheDocument();
     fireEvent.change(base, { target: { value: 'http://169.254.169.254' } });
     fireEvent.blur(base);
     expect(await q.findByRole('alert')).toHaveTextContent(/metadata/);
@@ -645,7 +678,8 @@ describe('browser app: key-origin binding (F2)', () => {
     expect(localStorage.getItem('external-provider-apikey-origin')).toBe(a.base);
     fireEvent.change(base, { target: { value: b.base } });
     fireEvent.blur(base);
-    await waitFor(() => expect(key.value).toBe(''));
+    await waitFor(() => expect(q.queryByTestId('external-key-saved')).toBeNull());
+    expect(key.value).toBe('');
     expect(localStorage.getItem('external-provider-apikey-origin')).toBe(a.base);
     fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
     await waitFor(() => expect(b.hits).toHaveLength(1));
@@ -661,11 +695,12 @@ describe('browser app: key-origin binding (F2)', () => {
     render(<ExternalModelSection />);
     const q = within(panel());
     const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
-    expect(key.value).toBe(KEY);
+    expect(key.value).toBe('');
+    expect(q.getByTestId('external-key-saved')).toBeInTheDocument();
     const base = q.getByLabelText(/^base url$/i);
     fireEvent.change(base, { target: { value: b.base } });
     fireEvent.blur(base);
-    await waitFor(() => expect(key.value).toBe(''));
+    await waitFor(() => expect(q.queryByTestId('external-key-saved')).toBeNull());
     fireEvent.focus(key);
     fireEvent.blur(key);
     fireEvent.click(q.getByRole('checkbox', { name: /remember api key/i }));
@@ -675,7 +710,8 @@ describe('browser app: key-origin binding (F2)', () => {
     // Pointing back at A shows (and uses) the key again.
     fireEvent.change(base, { target: { value: `${a.base}/v1` } });
     fireEvent.blur(base);
-    await waitFor(() => expect(key.value).toBe(KEY));
+    await waitFor(() => expect(q.getByTestId('external-key-saved')).toBeInTheDocument());
+    expect(key.value).toBe('');
     expect(q.queryByTestId('external-key-elsewhere')).toBeNull();
   });
 });
@@ -758,7 +794,9 @@ describe('generator source (Lumen phase 4, design-language.md section 5)', () =>
     const q = within(region());
     fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
     expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
-    expect(q.queryByText('BUILT-IN SETTINGS')).toBeNull();
+    // M2: egress is still off, so the built-in model answers and its settings stay.
+    expect(q.getByText('BUILT-IN SETTINGS')).toBeInTheDocument();
+    expect(q.getByTestId('builtin-still-answering')).toBeInTheDocument();
     expect(q.getByLabelText(/^base url$/i)).toHaveAttribute('placeholder', 'https://api.openai.com');
     expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
     expect(q.getByTestId('external-usage-state')).toHaveTextContent(/not in use yet/i);
@@ -787,7 +825,6 @@ describe('generator source (Lumen phase 4, design-language.md section 5)', () =>
     const q = within(region());
     expect(q.getByRole('alert')).toHaveTextContent('Settings error: boom');
     fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
-    expect(q.queryByText('BUILT-IN')).toBeNull();
     expect(q.getByRole('alert')).toHaveTextContent('Settings error: boom');
   });
 
@@ -823,5 +860,104 @@ describe('generator source (Lumen phase 4, design-language.md section 5)', () =>
     fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://169.254.169.254' } });
     fireEvent.blur(q.getByLabelText(/^base url$/i));
     await waitFor(() => expect(q.getByRole('alert')).toHaveTextContent(/check this setting/i));
+  });
+});
+
+describe('review round 3 (M4, L1, L2, L3, L5, L7)', () => {
+  const region = () => screen.getByRole('region', { name: /^model & connection$/i });
+
+  test('M4: with Remember on, the note says the key is saved unencrypted and readable by scripts on this site', () => {
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    fireEvent.click(q.getByRole('checkbox', { name: /remember api key/i }));
+    expect(
+      q.getByText(/with remember on, the key is saved in this browser unencrypted: any script running on this site can read it/i),
+    ).toBeInTheDocument();
+  });
+
+  test('L1: a saved browser key never reaches the DOM value, and emptying a typed key keeps the saved one', async () => {
+    localStorage.setItem('external-provider-config', JSON.stringify({ protocol: 'openai', baseUrl: 'http://localhost:1234', model: 'm', rememberKey: true }));
+    localStorage.setItem('external-provider-apikey-origin', 'http://localhost:1234');
+    localStorage.setItem('external-provider-apikey', KEY);
+    const { container } = render(<ExternalModelSection />);
+    const q = within(panel());
+    const key = q.getByLabelText(/^api key$/i) as HTMLInputElement;
+    expect(key.value).toBe('');
+    expect(container.innerHTML).not.toContain(KEY);
+    expect(q.getByTestId('external-key-saved')).toBeInTheDocument();
+    expect(key).toHaveAttribute('placeholder', 'Saved');
+    // Typing then erasing is "no new key", never an accidental delete.
+    fireEvent.change(key, { target: { value: 'sk-x' } });
+    fireEvent.change(key, { target: { value: '' } });
+    fireEvent.blur(key);
+    await waitFor(() => expect(q.getByTestId('external-key-saved')).toBeInTheDocument());
+    expect(localStorage.getItem('external-provider-apikey')).toBe(KEY);
+    // Clear saved key is the explicit way to forget it.
+    fireEvent.click(q.getByRole('button', { name: /^clear saved key$/i }));
+    await waitFor(() => expect(localStorage.getItem('external-provider-apikey')).toBeNull());
+    expect(q.queryByTestId('external-key-saved')).toBeNull();
+  });
+
+  test('L2: while egress is on, the other server type is locked so the radio never contradicts the live endpoint', async () => {
+    localStorage.setItem(
+      'external-provider-config',
+      JSON.stringify({ enabled: true, protocol: 'openai', baseUrl: 'http://localhost:1234', model: 'm', grounded: true }),
+    );
+    render(<ExternalModelSection />);
+    const q = within(region());
+    expect(q.getByRole('radio', { name: /^local or network server$/i })).toBeChecked();
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeDisabled();
+    expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeEnabled();
+    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
+    await waitFor(() => expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeEnabled());
+  });
+
+  test('L3: a model picked from the list is saved at once (Enter), not only on blur', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ data: [{ id: 'llama-3' }, { id: 'qwen' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+      ),
+    );
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://localhost:1234' } });
+    fireEvent.blur(q.getByLabelText(/^base url$/i));
+    fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+    await waitFor(() => expect(q.getByRole('status')).toHaveTextContent(/available|connected|models/i));
+    const model = q.getByRole('combobox', { name: /^model$/i });
+    model.focus();
+    fireEvent.keyDown(model, { key: 'ArrowDown' });
+    fireEvent.keyDown(model, { key: 'ArrowDown' });
+    fireEvent.keyDown(model, { key: 'ArrowDown' });
+    fireEvent.keyDown(model, { key: 'Enter' });
+    expect(model).toHaveValue('qwen');
+    expect(model).toHaveFocus();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('external-provider-config') ?? '{}').model).toBe('qwen'));
+  });
+
+  test('L5: Test connection says it contacts the server once, with the key', () => {
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    expect(q.getByTestId('external-test-note')).toHaveTextContent(
+      /contacts this server once \(from this browser\), with your api key if one is set/i,
+    );
+  });
+
+  test('L7: the feedback live regions are mounted before any message and keep their identity', async () => {
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    const live = region().querySelectorAll('.settings-live');
+    expect(live).toHaveLength(2);
+    expect(live[0]).toHaveAttribute('aria-live', 'polite');
+    expect(live[1]).toHaveAttribute('aria-live', 'assertive');
+    expect(live[1]).not.toHaveAttribute('role');
+    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
+    const alert = await q.findByRole('alert');
+    expect(alert).toBe(live[1]);
+    expect(alert).toHaveTextContent(/base URL and choose a model/i);
   });
 });

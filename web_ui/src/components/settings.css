@@ -77,9 +77,10 @@
 .settings-tone--warning { color: var(--warning); }
 .settings-tone--danger { color: var(--danger); }
 .settings-tone--accent { color: var(--accent); }
-/* A non-applicable control collapsed to one explanation line (section 5: "Non-applicable
-   controls collapse to a single muted explanation line"). Sits on the canvas. */
-.settings-note { margin: 0; padding: 0 var(--space-1); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+/* Always-mounted live regions (feedback banners): while empty they take no space
+   (the negative margin cancels the section body's flex gap) yet stay in the
+   accessibility tree, so the next message is announced. */
+.settings-section > .ui-section__body > .settings-live:empty { margin-top: calc(-1 * var(--space-4)); }
 
 .settings-group { display: flex; flex-direction: column; gap: var(--space-2); }
 .settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
@@ -134,13 +135,15 @@
   .settings-nav__link.ui-selected::before { left: var(--space-3); right: var(--space-3); top: auto; bottom: 0; width: auto; height: 3px; }
   /* WCAG 2.2 SC 2.4.11 (focus not obscured): anything scrolled into view, by focus or
      by a jump, stops below the sticky nav bar instead of underneath it. */
-  .settings-section, .settings-page__sections * { scroll-margin-top: calc(var(--space-16) + var(--space-2)); }
+  /* --settings-nav-h is measured by SettingsNav (wrapped rows included). */
+  .settings-section, .settings-page__sections * { scroll-margin-top: calc(var(--settings-nav-h, var(--space-16)) + var(--space-2)); }
 }
 /* <= 768px: a compact "Jump to section" select replaces the link row. */
 @media (max-width: 768px) {
   .settings-nav__list { display: none; }
   .settings-nav__jump { display: flex; align-items: center; gap: var(--space-3); }
   .settings-nav__jump .ui-select { flex: 1; min-width: 0; }
+  .settings-nav__jump .ui-button { flex: none; }
 }
 
 @media (forced-colors: active) {

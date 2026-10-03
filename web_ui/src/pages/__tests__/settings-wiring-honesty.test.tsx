@@ -547,8 +547,54 @@ describe('Lumen phase 4: six sections + section nav (design-language.md section 
     expect(screen.getByRole('heading', { level: 2, name: /^storage & privacy$/i })).toHaveFocus();
     expect(link).toHaveAttribute('aria-current', 'true');
     expect(within(nav).getByRole('link', { name: 'Answers' })).not.toHaveAttribute('aria-current');
-    fireEvent.change(within(nav).getByLabelText(/^jump to section$/i), { target: { value: 'updates' } });
+    // M1 (WCAG 3.2.2): changing the select only scrolls; focus stays on the select.
+    const select = within(nav).getByLabelText(/^jump to section$/i) as HTMLSelectElement;
+    select.focus();
+    fireEvent.change(select, { target: { value: 'updates' } });
+    fireEvent.change(select, { target: { value: 'about' } });
+    expect(select).toHaveFocus();
+    expect(select.value).toBe('about');
+    // Explicit activation moves focus: Enter on the select ...
+    fireEvent.keyDown(select, { key: 'Enter' });
+    expect(screen.getByRole('heading', { level: 2, name: /^about$/i })).toHaveFocus();
+    // ... or the adjacent Go button.
+    select.focus();
+    fireEvent.change(select, { target: { value: 'updates' } });
+    expect(select).toHaveFocus();
+    fireEvent.click(within(nav).getByRole('button', { name: /^go$/i, hidden: true }));
     expect(screen.getByRole('heading', { level: 2, name: /^updates$/i })).toHaveFocus();
+  });
+
+  // M1 with REAL arrow keys (which change a select's value only in a real browser) is
+  // pinned in e2e/visual/lumen-axe-settings-full.spec.ts; jsdom/user-event does not
+  // move a <select> on ArrowDown, so a unit test here would pass vacuously.
+
+  test('M2: a server source with egress OFF keeps every built-in control (browser app)', async () => {
+    H.reset({ mode: 'browser-local' });
+    render(<SettingsPage />);
+    await settle();
+    const model = within(screen.getByRole('region', { name: /^model & connection$/i }));
+    fireEvent.click(model.getByRole('radio', { name: /^local or network server$/i }));
+    expect(model.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+    expect(model.getByTestId('builtin-still-answering')).toBeInTheDocument();
+    expect(model.getByRole('radio', { name: /wllama \(cpu/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^browser engine$/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^hardware capability$/i })).toBeInTheDocument();
+    expect(model.getByText(/^Status:/)).toBeInTheDocument();
+  });
+
+  test('M2: a server source with egress OFF keeps the desktop run location, profile and backend status', async () => {
+    H.reset({ mode: 'api' });
+    const { session } = makeSession(backend([], {}));
+    renderElectron(session);
+    await settle();
+    const model = within(screen.getByRole('region', { name: /^model & connection$/i }));
+    fireEvent.click(model.getByRole('radio', { name: /^cloud provider$/i }));
+    expect(model.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+    expect(model.getByRole('radio', { name: /^desktop backend$/i })).toBeChecked();
+    expect(model.getByRole('radio', { name: /^in this window$/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^desktop backend$/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^inference profile$/i })).toBeInTheDocument();
   });
 
   test('every control lives in its section (nothing lost in the regroup)', async () => {

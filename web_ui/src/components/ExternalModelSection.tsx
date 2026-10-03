@@ -1,9 +1,12 @@
 /**
  * Settings → Model & connection (universal-provider-settings-overhaul, AC10/
- * AC11/AC12/AC13). ONE region, rendered identically in the browser app and
- * the desktop app, with the same seven controls (located by role and
- * accessible name): Protocol, Base URL, API key (password), Model, Test
- * connection, Use external model, Direct chat (default off).
+ * AC11/AC12/AC13; Lumen phase 4, design-language.md section 5). ONE region,
+ * rendered identically in the browser app and the desktop app: the generator
+ * source (Built-in model / Local or network server / Cloud provider) and, for a
+ * server source, the same controls (located by role and accessible name):
+ * Protocol, Base URL, API key (write-only password field), Model (combobox),
+ * Test connection, Use external model (the egress opt-in, default off), and
+ * Use my documents (grounded, default on; off = Direct chat).
  *
  *   Browser app: the configuration lives in this browser
  *     (lib/llm/external-provider.ts) and "Test connection" calls the endpoint
@@ -363,6 +366,12 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     await persist({ model: draftRef.current.model });
   };
 
+  /** A model picked from the endpoint's list (Enter / click) is saved at once. */
+  const handleModelPick = async (model: string) => {
+    setProblem(null);
+    await persist({ model });
+  };
+
   const handleKeyBlur = async () => {
     const key = draftRef.current.apiKey;
     // Inline validation (both apps): a key that cannot travel in an HTTP
@@ -384,12 +393,14 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     if (!keyDirtyRef.current) return;
     const url = draftRef.current.baseUrl;
     if (key === '') {
+      // Write-only field (review L1): an emptied field is "no new key", never an
+      // accidental delete. The saved key bound to this URL (if any) stays in use;
+      // "Clear saved key" is the explicit way to forget it.
       keyDirtyRef.current = false;
       setKeyHeld(false);
-      // The user emptied the field: forget the key that was shown here (a key
-      // bound to another origin was never shown, so it is kept).
-      if (loadExternalKeyState(url).status === 'bound') await persist({ apiKey: '' });
-      fieldKeyOriginRef.current = '';
+      const bound = keyForBaseUrl(url);
+      fieldKeyOriginRef.current = bound !== '' ? keyOriginOf(url) : '';
+      if (mountedRef.current) setDraft((prev) => ({ ...prev, apiKey: bound }));
       return;
     }
     await saveTypedKey();
@@ -509,6 +520,24 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   const headingId = 'external-model-heading';
   const cloudBlocked = airgap;
   const isServer = source !== 'builtin';
+  // Browser: the saved key bound to the URL shown is in memory (draft) but is never
+  // written into the field's DOM value (review L1): the field is write-only, as on
+  // the desktop, and a line says a key is saved.
+  const browserKeySaved = !desktop && !keyDirtyRef.current && draft.apiKey !== '';
+  const keySavedHere = desktop ? keyState.apiKeySet : browserKeySaved;
+  // While egress is on, the server type follows the live endpoint (review L2).
+  const serverLocked = draft.enabled;
+  const keyHelp = desktop
+    ? keyState.apiKeySet
+      ? keyState.apiKeyPersisted
+        ? 'A key is saved, encrypted by the operating system. Type a new key to replace it.'
+        : 'A key is set for this session only: secure storage is unavailable on this computer, so it is not saved to disk. Type a new key to replace it.'
+      : keyState.apiKeyPersisted
+        ? 'Optional. Saved encrypted by the operating system when secure storage is available (otherwise kept for this session only), and sent only to this endpoint.'
+        : 'Optional. Secure storage is unavailable on this computer: a key you enter is kept for this session only, and sent only to this endpoint.'
+    : draft.rememberKey
+      ? 'Optional. With Remember on, the key is saved in this browser unencrypted: any script running on this site can read it. It is sent only to the server it was entered for.'
+      : 'Optional. Kept for this browser session only, unencrypted: any script running on this site can read it. It is sent only to the server it was entered for.';
 
   return (
     <SettingsSection
@@ -537,15 +566,18 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
             value: 'local',
             label: 'Local or network server',
             description:
-              'A model server on this computer or your network (for example LM Studio, Ollama or a llama.cpp server), OpenAI- or Anthropic-compatible.',
+              'A model server on this computer or your network (for example LM Studio, Ollama or a llama.cpp server), OpenAI- or Anthropic-compatible.' +
+              (serverLocked && source !== 'local' ? ' Switch off Use external model to change the server type.' : ''),
+            disabled: serverLocked && source !== 'local',
           },
           {
             value: 'cloud',
             label: 'Cloud provider',
             description: cloudBlocked
               ? 'Not available in this air-gapped build: only loopback and private-network endpoints can be used.'
-              : 'A hosted provider such as OpenAI or Anthropic. Needs https and usually an API key.',
-            disabled: cloudBlocked && source !== 'cloud',
+              : 'A hosted provider such as OpenAI or Anthropic. Needs https and usually an API key.' +
+                (serverLocked && source !== 'cloud' ? ' Switch off Use external model to change the server type.' : ''),
+            disabled: (cloudBlocked || serverLocked) && source !== 'cloud',
           },
         ]}
       />
@@ -627,13 +659,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
             <Field
               label="API key"
               className="settings-field"
-              help={
-                desktop
-                  ? keyState.apiKeySet
-                    ? 'A key is saved, encrypted by the operating system. Type a new key to replace it.'
-                    : 'Optional. Saved encrypted by the desktop app and sent only to this endpoint.'
-                  : 'Optional. Stored in this browser and sent only to the server it was entered for.'
-              }
+              help={keyHelp}
             >
               {(control) => (
                 <PasswordInput
@@ -641,7 +667,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
                   revealLabel="Show API key"
                   autoComplete="new-password"
                   spellCheck={false}
-                  value={draft.apiKey}
+                  value={browserKeySaved ? '' : draft.apiKey}
                   onChange={(e) => {
                     setKeyDropped(false);
                     keyDirtyRef.current = true;
@@ -649,10 +675,15 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
                     update({ apiKey: e.target.value });
                   }}
                   onBlur={() => void handleKeyBlur()}
-                  placeholder={desktop && keyState.apiKeySet ? 'Saved' : 'Leave empty for servers without a key'}
+                  placeholder={keySavedHere ? 'Saved' : 'Leave empty for servers without a key'}
                 />
               )}
             </Field>
+            {browserKeySaved && (
+              <p className="settings-text" data-testid="external-key-saved">
+                A key is saved for this server. Type a new key to replace it, or clear it.
+              </p>
+            )}
             {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '' || browserKey.status !== 'none') && (
               <div className="settings-row">
                 <Button variant="secondary" onClick={() => void handleClearKey()}>
@@ -671,9 +702,6 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
                 }}
                 label="Remember API key in this browser (otherwise it is kept for this browser session only)"
               />
-            )}
-            {desktop && !keyState.apiKeyPersisted && keyState.apiKeySet && (
-              <p className="settings-text">Key kept for this session only: secure storage is unavailable on this computer.</p>
             )}
             {keyDropped && draft.apiKey === '' && (
               <p className="settings-text" data-testid="external-key-dropped">
@@ -712,6 +740,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
                 value={draft.model}
                 options={models}
                 onValueChange={(model) => update({ model })}
+                onPick={(model) => void handleModelPick(model)}
                 onBlur={() => void handleModelBlur()}
                 placeholder="Test the connection to list models"
               />
@@ -724,6 +753,10 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
             </Button>
             {testing && <span className="settings-text">Testing…</span>}
           </div>
+          <p className="settings-text" data-testid="external-test-note">
+            Test connection contacts this server once{desktop ? ' (from the desktop app)' : ' (from this browser)'}, with your
+            API key if one is set.
+          </p>
 
           <Switch
             id="external-grounded"
@@ -737,18 +770,44 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
             description="On: answers use your documents, with citations. Off (Direct chat): questions go straight to the model without retrieval, and answers are labeled General knowledge."
           />
 
-          {status !== null && (
-            <Banner tone="success" title="Connection works">
-              {status}
-            </Banner>
-          )}
-          {problem !== null && (
-            <Banner tone="danger" title={problemTitle()}>
-              {problem}
-            </Banner>
-          )}
         </SettingsSubsection>
       )}
+
+      {/* M2: whenever egress is off, the built-in model is what answers, so its
+          controls stay rendered (engine, download, cache status, run location,
+          profile, backend status) under every source. */}
+      {isServer && !draft.enabled && (
+        <>
+          <p className="settings-text" data-testid="builtin-still-answering">
+            Until you switch on Use external model, answers come from the built-in model. Its settings:
+          </p>
+          {builtIn}
+        </>
+      )}
+      {isServer && draft.enabled && (
+        <p className="settings-text" data-testid="builtin-not-used">
+          The built-in model is not used while the external model answers. Its settings return when you switch
+          off Use external model or choose Built-in model.
+        </p>
+      )}
+
+      {/* L7: the feedback regions are ALWAYS mounted (aria-live from the start, as
+          Clear Cache does) and only their content changes, so each message is
+          announced; the role is present while there is a message. */}
+      <div className="settings-live" aria-live="polite" aria-atomic="true" role={status !== null ? 'status' : undefined}>
+        {status !== null && (
+          <Banner live={false} tone="success" title="Connection works">
+            {status}
+          </Banner>
+        )}
+      </div>
+      <div className="settings-live" aria-live="assertive" aria-atomic="true" role={problem !== null ? 'alert' : undefined}>
+        {problem !== null && (
+          <Banner live={false} tone="danger" title={problemTitle()}>
+            {problem}
+          </Banner>
+        )}
+      </div>
     </SettingsSection>
   );
 }

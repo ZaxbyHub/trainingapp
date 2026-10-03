@@ -37,7 +37,18 @@ const ESCAPE_HATCH = /\bcssText\b|\binsertRule\b|dangerouslySetInnerHTML|\.inner
 const ALLOWED_STYLE = /style=\{\{\s*width:\s*`[^`]*`\s*\}\}/g;
 const INLINE_STYLE = /\bstyle=\{/;
 
+/** --settings-* properties a Settings component sets at runtime via style.setProperty. */
+const PRIVATE = new Set(
+  SETTINGS_FILES.filter((f) => f.endsWith('.tsx')).flatMap((f) =>
+    [...readFileSync(resolve(SRC, f), 'utf8').matchAll(/setProperty\(\s*['"`](--settings-[\w-]+)/g)].map((m) => m[1]),
+  ),
+);
+
 describe('Settings token hygiene (phase 4)', () => {
+  it('the private-property allowance is derived from setProperty calls (not a blanket pass)', () => {
+    expect([...PRIVATE]).toEqual(['--settings-nav-h']);
+  });
+
   it('the legacy token list and the style rule are live (guards against a vacuous pass)', () => {
     expect(LEGACY_NAMES).toContain('--color-text-muted');
     expect(LEGACY_NAMES).toContain('--spacing-md');
@@ -55,7 +66,11 @@ describe('Settings token hygiene (phase 4)', () => {
       expect(text.match(COLOR_LITERAL)?.[0]).toBeUndefined();
       expect(text.match(ESCAPE_HATCH)?.[0]).toBeUndefined();
       if (rel.endsWith('.tsx')) expect(text.replace(ALLOWED_STYLE, '').match(INLINE_STYLE)?.[0]).toBeUndefined();
-      const missing = [...text.matchAll(/var\(\s*(--[\w-]+)/g)].map((m) => m[1]).filter((n) => !LUMEN.has(n));
+      // Component-private runtime properties (--settings-*) are allowed when a Settings
+      // component sets them itself (SettingsNav's measured --settings-nav-h).
+      const missing = [...text.matchAll(/var\(\s*(--[\w-]+)/g)]
+        .map((m) => m[1])
+        .filter((n) => !LUMEN.has(n) && !PRIVATE.has(n));
       expect(missing).toEqual([]);
     });
   }

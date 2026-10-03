@@ -16,9 +16,18 @@
  * The native `<input type="radio">` stays the only AT-facing radio (issue #24 F9): the
  * wrapping `<label>` has no role, and clicking the card checks the input natively.
  */
-import { useEffect, useId, useRef, useState, type HTMLAttributes, type MouseEvent, type ReactNode } from 'react';
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type HTMLAttributes,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
+import { Button } from '../ui';
 import { cx } from '../ui/cx';
-import '../ui';
 import './settings.css';
 
 export interface SettingsSectionProps extends Omit<HTMLAttributes<HTMLElement>, 'title'> {
@@ -155,14 +164,21 @@ export interface SettingsNavItem {
   label: string;
 }
 
+/** Bring a section into view without moving focus. */
+function scrollToSection(id: string): boolean {
+  const target = document.getElementById(id);
+  if (target === null) return false;
+  if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' });
+  return true;
+}
+
 /**
  * Move to a section the way `initialSection` does: scroll it into view and focus its
  * h2 (tabIndex -1), so keyboard and screen-reader users land on the destination.
  */
 export function goToSettingsSection(id: string): boolean {
-  const target = document.getElementById(id);
-  if (target === null) return false;
-  if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' });
+  if (!scrollToSection(id)) return false;
+  const target = document.getElementById(id) as HTMLElement;
   const heading = target.querySelector<HTMLElement>('h2');
   (heading ?? target).focus({ preventScroll: true });
   return true;
@@ -172,15 +188,27 @@ export function goToSettingsSection(id: string): boolean {
  * In-page section nav (design-language.md sections 3.5 and 5): a sticky list of links
  * beside the form at > 1024px, a wrapped row at 769-1024px, and a "Jump to section"
  * select at <= 768px (CSS picks one; the other is display:none, so it leaves the
- * accessibility tree). The current section carries aria-current="true" (link) and is
- * the select's value; it follows the scroll position of <main>.
+ * accessibility tree).
+ *
+ * - A link jumps and moves focus to the section heading (an explicit activation).
+ * - The select only SCROLLS on change (WCAG 3.2.2: Windows Chrome fires `change` on
+ *   every arrow key, so focus must stay on the select); Enter on the select or the
+ *   adjacent "Go" button moves focus to the heading.
+ * - The current section (aria-current on the link, the select's value) follows the
+ *   scroll position of <main>, is synced on mount and again after a jump settles.
+ * - The nav publishes its own height as --settings-nav-h on its parent, so content
+ *   scrolled or focused into view clears the sticky bar even when its links wrap.
  */
 export function SettingsNav({ items, label = 'Settings sections' }: { items: readonly SettingsNavItem[]; label?: string }) {
   const [current, setCurrent] = useState<string>(items[0]?.id ?? '');
   const selectId = useId();
-
-  // Set by a nav jump: the jump's own scroll must not override the chosen section.
+  const navRef = useRef<HTMLElement>(null);
+  // Set by a jump: the jump's own scroll must not override the chosen section.
   const lockUntilRef = useRef(0);
+  // The section a jump targeted: kept current after the jump while it sits at the line.
+  const jumpTargetRef = useRef<string | null>(null);
+  const syncRef = useRef<() => void>(() => undefined);
+  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const first = document.getElementById(items[0]?.id ?? '');
@@ -192,37 +220,72 @@ export function SettingsNav({ items, label = 'Settings sections' }: { items: rea
       frame = 0;
       if (performance.now() < lockUntilRef.current) return;
       const top = scroller.getBoundingClientRect().top;
+      const offset = (id: string) => {
+        const el = document.getElementById(id);
+        return el ? el.getBoundingClientRect().top - top : Number.POSITIVE_INFINITY;
+      };
+      const jumped = jumpTargetRef.current;
+      if (jumped !== null && offset(jumped) >= -2 && offset(jumped) <= SECTION_LINE_PX) {
+        setCurrent(jumped);
+        return;
+      }
       let next = items[0].id;
-      if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) {
+      if (scroller.scrollHeight > scroller.clientHeight + 1 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) {
         // At the bottom a short last section can never reach the line.
         next = items[items.length - 1].id;
       } else {
-        // The current section is the last one whose top has passed a line just below
-        // the sticky nav (narrow widths) / the top of the scroller.
-        for (const item of items) {
-          const el = document.getElementById(item.id);
-          if (el && el.getBoundingClientRect().top - top <= SECTION_LINE_PX) next = item.id;
-        }
+        // The last section whose top has passed a line just below the top of the scroller.
+        for (const item of items) if (offset(item.id) <= SECTION_LINE_PX) next = item.id;
       }
       setCurrent(next);
     };
+    syncRef.current = sync;
     const onScroll = () => {
+      // A user scroll after the jump settles ends the jump's claim on "current".
+      if (performance.now() >= lockUntilRef.current) jumpTargetRef.current = null;
       if (frame === 0) frame = requestAnimationFrame(sync);
     };
     scroller.addEventListener('scroll', onScroll, { passive: true });
+    // Sync once on mount (the page may open scrolled, e.g. at an initialSection).
+    frame = requestAnimationFrame(sync);
     return () => {
       scroller.removeEventListener('scroll', onScroll);
       if (frame !== 0) cancelAnimationFrame(frame);
+      if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
+      syncRef.current = () => undefined;
     };
   }, [items]);
 
-  const go = (id: string) => {
+  // Publish the nav's height for scroll-margin (sticky bar at <= 1024px).
+  useEffect(() => {
+    const nav = navRef.current;
+    const host = nav?.parentElement;
+    if (!nav || !host) return undefined;
+    const publish = () => host.style.setProperty('--settings-nav-h', `${Math.ceil(nav.getBoundingClientRect().height)}px`);
+    publish();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(publish);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, []);
+
+  /** Shared jump bookkeeping; `focus` decides whether focus moves to the heading. */
+  const jump = (id: string, focus: boolean) => {
     lockUntilRef.current = performance.now() + JUMP_LOCK_MS;
-    if (goToSettingsSection(id)) setCurrent(id);
+    jumpTargetRef.current = id;
+    const ok = focus ? goToSettingsSection(id) : scrollToSection(id);
+    if (!ok) return;
+    setCurrent(id);
+    // Re-sync once the jump's scroll has settled (L8).
+    if (settleTimerRef.current !== null) clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = setTimeout(() => {
+      settleTimerRef.current = null;
+      syncRef.current();
+    }, JUMP_LOCK_MS + 50);
   };
 
   return (
-    <nav aria-label={label} className="settings-nav">
+    <nav ref={navRef} aria-label={label} className="settings-nav">
       <ul className="settings-nav__list">
         {items.map((item) => (
           <li key={item.id}>
@@ -233,7 +296,7 @@ export function SettingsNav({ items, label = 'Settings sections' }: { items: rea
               onClick={(e: MouseEvent<HTMLAnchorElement>) => {
                 // In-page move without touching location.hash (the app does not route by hash).
                 e.preventDefault();
-                go(item.id);
+                jump(item.id, true);
               }}
             >
               {item.label}
@@ -249,7 +312,14 @@ export function SettingsNav({ items, label = 'Settings sections' }: { items: rea
           id={selectId}
           className="ui-select ui-focusable"
           value={current}
-          onChange={(e) => go(e.target.value)}
+          // Scroll only: focus stays on the select (arrow keys fire change on Windows).
+          onChange={(e) => jump(e.target.value, false)}
+          onKeyDown={(e: KeyboardEvent<HTMLSelectElement>) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              jump(e.currentTarget.value, true);
+            }
+          }}
         >
           {items.map((item) => (
             <option key={item.id} value={item.id}>
@@ -257,6 +327,9 @@ export function SettingsNav({ items, label = 'Settings sections' }: { items: rea
             </option>
           ))}
         </select>
+        <Button variant="secondary" onClick={() => jump(current, true)}>
+          Go
+        </Button>
       </div>
     </nav>
   );

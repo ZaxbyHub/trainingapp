@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useId,
   useMemo,
   useState,
@@ -16,6 +17,8 @@ export interface ComboboxProps
   options: readonly string[];
   /** Shown as the only (disabled) row when the list opens with nothing to suggest. */
   emptyText?: ReactNode;
+  /** An option was picked (Enter on the highlighted option, or a click): commit it. */
+  onPick?: (value: string) => void;
 }
 
 /**
@@ -31,6 +34,7 @@ export function Combobox({
   onValueChange,
   options,
   emptyText,
+  onPick,
   className,
   onKeyDown,
   onBlur,
@@ -48,10 +52,15 @@ export function Combobox({
   }, [value, options]);
   const expanded = open && !disabled && (shown.length > 0 || emptyText !== undefined);
   const optionId = (i: number) => `${listId}-opt-${i}`;
+  // The suggestions changed (typing, a new list): a highlight past the end is dropped.
+  useEffect(() => {
+    setActive((a) => (a >= shown.length ? -1 : a));
+  }, [shown]);
 
+  /** Open; highlight `index` only when it names a real option (-1: nothing highlighted). */
   const openList = (index: number) => {
     setOpen(true);
-    setActive(shown.length === 0 ? -1 : Math.max(0, Math.min(index, shown.length - 1)));
+    setActive(index >= 0 && index < shown.length ? index : -1);
   };
   const close = () => {
     setOpen(false);
@@ -59,6 +68,7 @@ export function Combobox({
   };
   const pick = (option: string) => {
     onValueChange(option);
+    onPick?.(option);
     close();
   };
 
@@ -67,14 +77,14 @@ export function Combobox({
     if (e.defaultPrevented) return;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (e.altKey || !expanded) {
-        const current = shown.indexOf(value);
-        openList(current >= 0 ? current : 0);
-      } else if (shown.length > 0) setActive((a) => (a + 1) % shown.length);
+      // Opening highlights the current value's option only; with no match, nothing is
+      // highlighted until the next ArrowDown (never a silent option 0).
+      if (e.altKey || !expanded) openList(shown.indexOf(value));
+      else if (shown.length > 0) setActive((a) => (a + 1) % shown.length);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (e.altKey) close();
-      else if (!expanded) openList(shown.length - 1);
+      else if (!expanded) openList(shown.indexOf(value));
       else if (shown.length > 0) setActive((a) => (a <= 0 ? shown.length - 1 : a - 1));
     } else if (e.key === 'Enter' && expanded && active >= 0 && active < shown.length) {
       e.preventDefault();
@@ -119,7 +129,8 @@ export function Combobox({
         ) : (
           shown.map((o, i) => (
             <li
-              key={o}
+              // Index keys: an endpoint may list the same name twice.
+              key={i}
               id={optionId(i)}
               role="option"
               aria-selected={o === value}
