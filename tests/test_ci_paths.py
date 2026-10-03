@@ -181,6 +181,10 @@ def test_python_empty_diff_fails_open():
         ("webui", ["desktop/main/protocol.ts"], True),
         ("webui", ["desktop/main/backend/packs/pack-archive-rules.ts"], True),
         ("webui", ["desktop/main/index.ts", "desktop/main/backend/server.ts"], False),
+        # PR 144 F9: the corpus-vs-generator test runs in the required web-ui
+        # job, so a generator or corpus edit must trigger it
+        ("webui", ["contracts/tests/gen-pack-signature-vectors.mjs"], True),
+        ("webui", ["contracts/pack-signature-vectors.json"], True),
         ("conformance", ["contracts/api.openapi.yaml", "api_server.py"], True),
         ("conformance", ["contracts/tests/run_conformance.py"], True),
         ("conformance", ["web_ui/src/lib/x.ts"], False),
