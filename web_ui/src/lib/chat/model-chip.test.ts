@@ -73,7 +73,7 @@ describe('describeChatModel', () => {
     const d = describeChatModel({ ...base, externalConfig: external({}) });
     expect(d.kind).toBe('external');
     const text = chatModelText(d);
-    expect(text).toBe('192.168.1.20 · qwen2.5-7b-instruct');
+    expect(text).toBe('192.168.1.20:1234 · qwen2.5-7b-instruct');
     const everything = `${text} ${d.detail}`;
     expect(everything).not.toContain('token');
     expect(everything).not.toContain('secret');
@@ -171,5 +171,48 @@ describe('packagedModelLabel', () => {
   });
   it('returns the id for unknown models', () => {
     expect(packagedModelLabel('nope')).toBe('nope');
+  });
+});
+
+describe('port display and readiness (review L4 / nit)', () => {
+  it('shows host:port for a non-default port so two localhost servers differ; never scheme, userinfo, path or query', () => {
+    const a = describeChatModel({ ...base, externalConfig: external({ baseUrl: 'http://localhost:1234/v1?k=1' }) });
+    const b = describeChatModel({ ...base, externalConfig: external({ baseUrl: 'http://localhost:11434' }) });
+    expect(a.host).toBe('localhost:1234');
+    expect(b.host).toBe('localhost:11434');
+    expect(chatModelText(a)).toBe('localhost:1234 · qwen2.5-7b-instruct');
+    for (const secret of ['/v1', 'k=1', 'http', '@']) expect(chatModelText(a)).not.toContain(secret);
+  });
+
+  it('omits a scheme-default port', () => {
+    const d = describeChatModel({ ...base, externalConfig: external({ baseUrl: 'https://llm.example.com:443/v1' }) });
+    expect(d.host).toBe('llm.example.com');
+  });
+
+  it('browser local: not ready only when the model gate flag is explicitly false', () => {
+    const notReady = describeChatModel({ ...base, modelReady: false });
+    expect(notReady.notReady).toBe(true);
+    expect(chatModelText(notReady)).toBe('Local · Google Gemma 4 E2B-it — not ready');
+    expect(notReady.detail).toContain('not loaded yet');
+    expect(describeChatModel({ ...base, modelReady: true }).notReady).toBe(false);
+    expect(chatModelText(describeChatModel({ ...base, modelReady: true }))).toBe('Local · Google Gemma 4 E2B-it');
+    expect(describeChatModel(base).notReady).toBe(false);
+  });
+
+  it('an external endpoint is never marked not ready, whatever the local model flag says', () => {
+    const d = describeChatModel({ ...base, modelReady: false, externalConfig: external({}) });
+    expect(d.notReady).toBe(false);
+  });
+
+  it('desktop llama.cpp: not ready when no profile is staged (the desktop gate predicate), ready otherwise', () => {
+    const absent = { engine: 'llama.cpp' as const, profile: 'fast', models: { quality: { present: false }, fast: { present: false } } };
+    const staged = { ...absent, models: { quality: { present: false }, fast: { present: true } } };
+    const input = { ...base, mode: 'api' as const, hasDesktopSession: true };
+    const a = describeChatModel({ ...input, desktopModels: absent as never });
+    expect(chatModelText(a)).toBe('Desktop · Fast profile — not ready');
+    expect(describeChatModel({ ...input, desktopModels: staged as never }).notReady).toBe(false);
+    // stub and external engines never claim a missing model
+    expect(describeChatModel({ ...input, desktopModels: { ...absent, engine: 'stub' } as never }).notReady).toBe(false);
+    expect(describeChatModel({ ...input, desktopModels: { ...absent, engine: 'external' } as never }).notReady).toBe(false);
   });
 });

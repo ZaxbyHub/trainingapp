@@ -20,6 +20,7 @@ import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { useExternalConfig } from '../lib/llm/use-external-config';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
+import { focusSettingsSection, MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
 import { chatModelText, describeChatModel } from '../lib/chat/model-chip';
 import { IconButton, useAppShell } from '../ui';
 import { ModelChip, MODEL_CHIP_ICON } from './ModelChip';
@@ -32,7 +33,7 @@ export interface SidebarConnectionChipProps {
 
 export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnectionChipProps) {
   const { collapsed, drawer, closeDrawer } = useAppShell();
-  const { mode, browserEngine } = useInferenceMode();
+  const { mode, browserEngine, isModelReady } = useInferenceMode();
   const { session, models } = useDesktopSession();
   // Live: the sidebar stays mounted while Settings saves a new endpoint.
   const externalConfig = useExternalConfig();
@@ -48,10 +49,16 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
     browserEngine,
     wllamaModelId: LLM_MODEL_DIR,
     webllmModelId: WEBLLM_DEFAULT_MODEL_ID,
+    // The model gate's flag (what ChatPage's overlay reads); the desktop side comes from
+    // the same /status/models snapshot via desktopModels above.
+    modelReady: isModelReady,
   });
   const open = () => {
     onOpenModelSettings();
-    if (drawer) closeDrawer('navigate');
+    // Settings focuses its own heading, but <main> is still inert while the drawer
+    // is open and AppShell would then focus <main> itself. Hand AppShell the focus
+    // step to run once the drawer has closed instead of that default.
+    if (drawer) closeDrawer('navigate', () => focusSettingsSection(MODEL_CONNECTION_SECTION_ID));
   };
 
   if (collapsed) {

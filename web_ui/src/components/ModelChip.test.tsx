@@ -10,6 +10,7 @@ const local: ChatModelDescription = {
   model: 'Google Gemma 4 E2B-it',
   host: null,
   detail: 'Runs on this computer in the app (wllama engine).',
+  notReady: false,
 };
 
 describe('ModelChip', () => {
@@ -27,13 +28,20 @@ describe('ModelChip', () => {
   it('names only the mode when there is no reliable model name', () => {
     render(
       <ModelChip
-        description={{ kind: 'desktop-external', source: 'External model', model: null, host: null, detail: 'd' }}
+        description={{ kind: 'desktop-external', source: 'External model', model: null, host: null, detail: 'd', notReady: false }}
         onOpenSettings={() => {}}
       />
     );
     const chip = screen.getByTestId('chat-model-chip');
     expect(chip).toHaveTextContent(/^External model$/);
     expect(chip).toHaveAccessibleName('Model: External model. Open model settings');
+  });
+
+  it('not ready: the suffix is in the visible text and the accessible name (label-in-name)', () => {
+    render(<ModelChip description={{ ...local, notReady: true }} onOpenSettings={() => {}} />);
+    const chip = screen.getByTestId('chat-model-chip');
+    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it — not ready');
+    expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it — not ready. Open model settings');
   });
 
   it('renders static text (not a button) without an open handler', () => {

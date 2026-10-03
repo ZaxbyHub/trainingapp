@@ -46,7 +46,11 @@ import {
   type DesktopPresetState,
 } from '../lib/rag/rag-presets';
 import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
-import { MODEL_CONNECTION_SECTION_ID, SETTINGS_SECTIONS } from '../lib/settings-sections';
+import {
+  focusSettingsSection,
+  MODEL_CONNECTION_SECTION_ID,
+  SETTINGS_SECTIONS,
+} from '../lib/settings-sections';
 // AC8 (settings-wiring-honesty): the single version source is
 // web_ui/package.json (desktop/package.json is kept in lockstep by test).
 import { version as APP_VERSION } from '../../package.json';
@@ -415,11 +419,16 @@ interface SettingsPageProps {
    * model-blocked overlay). Omitted: the page opens at the top.
    */
   initialSection?: string;
+  /**
+   * Changes on every request for a section (App bumps a counter), so a repeated
+   * request for the same `initialSection` still re-runs the scroll-and-focus.
+   */
+  sectionRequest?: number;
   /** Clear Cache reload seam (default: window.location.reload()). */
   reloadPage?: () => void;
 }
 
-function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): React.ReactElement {
+function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: SettingsPageProps): React.ReactElement {
   const {
     mode,
     browserEngine,
@@ -633,12 +642,10 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
   // screen-reader users land on the destination, not the page top.
   useEffect(() => {
     if (!initialSection) return;
-    const target = document.getElementById(initialSection);
-    if (target === null) return;
-    if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' });
-    const heading = target.querySelector<HTMLElement>('h2');
-    (heading ?? target).focus();
-  }, [initialSection]);
+    focusSettingsSection(initialSection);
+    // sectionRequest changes on every request, so re-clicking a link to the section
+    // Settings already targets scrolls and focuses again (state alone would not change).
+  }, [initialSection, sectionRequest]);
 
   // Check model cache status — engine-aware (issue #24 F4).
   // Previously this called checkModelCached(preferredModel) which defaulted

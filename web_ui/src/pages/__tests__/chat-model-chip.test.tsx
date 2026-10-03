@@ -138,7 +138,7 @@ describe('ChatPage header model chip', () => {
     renderChat();
     const chip = screen.getByTestId('chat-model-chip');
     expect(chip).toHaveAttribute('data-kind', 'external');
-    expect(chip).toHaveTextContent('127.0.0.1 · local-model');
+    expect(chip).toHaveTextContent('127.0.0.1:1234 · local-model');
     expect(chip.textContent).not.toContain('/v1');
   });
 
@@ -178,6 +178,6 @@ describe('ChatPage header model chip', () => {
     act(() => {
       saveExternalConfig({ enabled: true, protocol: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', model: 'saved-model' });
     });
-    expect(screen.getByTestId('chat-model-chip')).toHaveTextContent('127.0.0.1 · saved-model');
+    expect(screen.getByTestId('chat-model-chip')).toHaveTextContent('127.0.0.1:1234 · saved-model');
   });
 });

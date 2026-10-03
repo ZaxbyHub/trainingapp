@@ -4,7 +4,7 @@
  * path routes on. Clicking it opens Settings at the model-connection section.
  */
 import { Icon, type IconName } from '../ui';
-import { chatModelText, type ChatModelDescription } from '../lib/chat/model-chip';
+import { chatModelText, NOT_READY_SUFFIX, type ChatModelDescription } from '../lib/chat/model-chip';
 import '../pages/chat.css';
 
 /** Glyph per generator kind (shared with the sidebar footer chip). */
@@ -31,6 +31,7 @@ export function ModelChip({ description, onOpenSettings, testId = 'chat-model-ch
       <span className="chat-model-chip__text">
         <span className="chat-model-chip__source">{description.source}</span>
         {description.model ? ` · ${description.model}` : null}
+        {description.notReady ? NOT_READY_SUFFIX : null}
       </span>
     </>
   );

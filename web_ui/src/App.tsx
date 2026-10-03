@@ -185,6 +185,9 @@ function AppContent() {
   // for (null = top of the page), e.g. the model-blocked overlay's external
   // model action.
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
+  // Bumped on every openSettings call so a repeated request for the section Settings
+  // already targets (same state value, no re-render) still scrolls and focuses it.
+  const [settingsRequest, setSettingsRequest] = useState(0);
   // D6 (issue #82): lifted training navigation target so a chat-side
   // "Open in training" deep link survives the page switch and is consumed by
   // TrainingPage → TrainingPlayer's initialSlideId auto-jump.
@@ -234,6 +237,7 @@ function AppContent() {
   // a click event, so only a string counts as a section request.
   const openSettings = (section?: unknown) => {
     setSettingsSection(typeof section === 'string' ? section : null);
+    setSettingsRequest((n) => n + 1);
     setCurrentPage('settings');
   };
   const goToDocuments = () => setCurrentPage('documents');
@@ -363,7 +367,7 @@ function AppContent() {
       case 'settings':
         return (
           <ErrorBoundary>
-            <SettingsPage initialSection={settingsSection ?? undefined} />
+            <SettingsPage initialSection={settingsSection ?? undefined} sectionRequest={settingsRequest} />
           </ErrorBoundary>
         );
       case 'training':

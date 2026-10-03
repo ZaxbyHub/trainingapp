@@ -71,9 +71,12 @@ interface AppShellContextValue {
   /**
    * Close the drawer (no-op outside drawer mode). 'navigate' moves focus to
    * the main region (the user went somewhere); 'dismiss' returns it to the
-   * menu button that opened the drawer.
+   * menu button that opened the drawer. A destination that manages its own focus
+   * passes `afterNavigate` (with 'navigate'): it runs once the drawer has closed and
+   * <main> is no longer inert, and returns true if it placed focus; when it returns
+   * false <main> gets focus as usual.
    */
-  closeDrawer: (reason: DrawerCloseReason) => void;
+  closeDrawer: (reason: DrawerCloseReason, afterNavigate?: () => boolean) => void;
 }
 
 const AppShellContext = createContext<AppShellContextValue>({
@@ -151,6 +154,7 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
   /** Same idea for the drawer-mode top bar (its menu button unmounts on widening). */
   const topbarFocusRef = useRef(false);
   const pendingFocus = useRef<DrawerCloseReason | null>(null);
+  const pendingAfterNavigate = useRef<(() => boolean) | null>(null);
 
   /**
    * Focus <main> as a programmatic target only: tabindex is removed again on
@@ -170,9 +174,10 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
   }, [drawer]);
 
   const closeDrawer = useCallback(
-    (reason: DrawerCloseReason) => {
+    (reason: DrawerCloseReason, afterNavigate?: () => boolean) => {
       if (!drawer) return;
       pendingFocus.current = reason;
+      pendingAfterNavigate.current = reason === 'navigate' ? (afterNavigate ?? null) : null;
       setDrawerOpen(false);
     },
     [drawer]
@@ -232,10 +237,12 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
     }
     const reason = pendingFocus.current;
     pendingFocus.current = null;
+    const afterNavigate = pendingAfterNavigate.current;
+    pendingAfterNavigate.current = null;
     if (reason === 'dismiss') {
       document.getElementById(menuButtonId)?.focus();
     } else if (reason === 'navigate') {
-      focusMain();
+      if (afterNavigate?.() !== true) focusMain();
     }
   }, [drawerOpen, menuButtonId]);
 

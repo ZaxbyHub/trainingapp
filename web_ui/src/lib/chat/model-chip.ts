@@ -15,7 +15,10 @@
  *      engine 'stub'      -> "test stub".
  *      no status / no session -> "Desktop backend" only.
  *  - Browser app with an active external endpoint -> protocol family plus the
- *      configured model and the base URL's HOSTNAME only (never path, query or key).
+ *      configured model and the base URL's host (plus the port when not the scheme default,
+ *      so two localhost servers differ; never scheme, userinfo, path, query or key).
+ *  Readiness: the built-in model ("Local", or the desktop llama.cpp profile) gets
+ *  `notReady` from the model gate's own flags (isModelReady / no staged GGUF); no probe.
  *  - Otherwise the local engine and the model id its load path actually uses
  *      (wllama: LLM_MODEL_DIR, labelled from public/models/manifest.json when listed;
  *      WebLLM: WEBLLM_DEFAULT_MODEL_ID).
@@ -38,6 +41,12 @@ export interface ChatModelDescription {
   host: string | null;
   /** One plain sentence for the tooltip / accessible description. */
   detail: string;
+  /**
+   * The built-in model is missing or not loaded yet, i.e. the same condition that
+   * raises the model-gate overlay (ModelBlockedOverlay / DesktopModelBlockedOverlay).
+   * Never set for external endpoints or modes with no local model claim.
+   */
+  notReady: boolean;
 }
 
 /**
@@ -55,7 +64,7 @@ export function routesToDesktopBackend(
 export interface DescribeChatModelInput {
   mode: InferenceMode;
   hasDesktopSession: boolean;
-  desktopModels: Pick<ModelStatus, 'engine' | 'profile'> | null;
+  desktopModels: (Pick<ModelStatus, 'engine' | 'profile'> & Partial<Pick<ModelStatus, 'models'>>) | null;
   /** Profile the polled resident-load status reports (null when unknown). */
   residentProfile: string | null;
   /** Browser app only: the stored external-model config. Pass null inside Electron. */
@@ -64,6 +73,11 @@ export interface DescribeChatModelInput {
   /** The model ids the local load path uses (ChatPage passes its own constants). */
   wllamaModelId: string;
   webllmModelId: string;
+  /**
+   * Browser app: InferenceModeContext.isModelReady, the flag ChatPage's model gate
+   * (isModelBlocked) reads. Omitted = unknown, which is treated as ready (no claim).
+   */
+  modelReady?: boolean;
 }
 
 interface ManifestEntry {
@@ -80,10 +94,15 @@ export function packagedModelLabel(id: string): string {
   return short || id;
 }
 
+/** Endpoint host, plus the port when it is not the scheme default (so two localhost servers differ). */
 function hostOf(baseUrl: string): string | null {
   try {
-    const host = new URL(baseUrl).hostname;
-    return host || null;
+    const url = new URL(baseUrl);
+    // `host` would carry userinfo-free host:port too, but build it explicitly so
+    // scheme, userinfo, path and query can never leak. URL.port is '' for a
+    // scheme-default port, so https://x:443 and https://x read the same.
+    if (!url.hostname) return null;
+    return url.port ? `${url.hostname}:${url.port}` : url.hostname;
   } catch {
     return null;
   }
@@ -103,6 +122,7 @@ export function describeChatModel(input: DescribeChatModelInput): ChatModelDescr
         model: null,
         host: null,
         detail: 'Answers come from the desktop app’s built-in backend.',
+        notReady: false,
       };
     }
     if (engine === 'external') {
@@ -112,6 +132,7 @@ export function describeChatModel(input: DescribeChatModelInput): ChatModelDescr
         model: null,
         host: null,
         detail: 'The desktop app answers through the external endpoint set in Settings.',
+        notReady: false,
       };
     }
     if (engine === 'stub') {
@@ -121,17 +142,25 @@ export function describeChatModel(input: DescribeChatModelInput): ChatModelDescr
         model: 'test stub',
         host: null,
         detail: 'The desktop backend is running its test stub engine (no model).',
+        notReady: false,
       };
     }
     const profile = input.residentProfile ?? input.desktopModels.profile;
+    // Same predicate as desktop-session.modelsAbsentForRealEngine (the desktop gate),
+    // inlined because this module stays free of the React session module. The stub
+    // and external engines were handled above, so only a real engine reaches here.
+    const staged = input.desktopModels.models;
+    const notReady = staged !== undefined && !staged.quality.present && !staged.fast.present;
     return {
       kind: 'desktop',
       source: 'Desktop',
       model: profile ? `${capitalize(profile)} profile` : null,
       host: null,
-      detail: profile
-        ? `The desktop app answers with its local ${profile} model profile.`
-        : 'The desktop app answers with its local model.',
+      detail:
+        (profile
+          ? `The desktop app answers with its local ${profile} model profile.`
+          : 'The desktop app answers with its local model.') + (notReady ? ' The model is not installed yet.' : ''),
+      notReady,
     };
   }
 
@@ -148,22 +177,31 @@ export function describeChatModel(input: DescribeChatModelInput): ChatModelDescr
       detail: `${family} endpoint${host ? ` at ${host}` : ''}, model ${model}. ${
         cfg.grounded ? 'Answers use your documents.' : 'Direct chat: your documents are not searched.'
       }`,
+      notReady: false,
     };
   }
 
   const model =
     input.browserEngine === 'wllama' ? packagedModelLabel(input.wllamaModelId) : input.webllmModelId;
   const engineName = input.browserEngine === 'wllama' ? 'wllama' : 'WebLLM';
+  const notReady = input.modelReady === false;
   return {
     kind: 'local',
     source: 'Local',
     model,
     host: null,
-    detail: `Runs on this computer in the app (${engineName} engine).`,
+    detail:
+      `Runs on this computer in the app (${engineName} engine).` +
+      (notReady ? ' The model is not loaded yet.' : ''),
+    notReady,
   };
 }
 
-/** Visible chip text, e.g. "Local · Gemma 4 E2B-it". */
+/** Suffix appended to the chip text while the built-in model is missing or not loaded. */
+export const NOT_READY_SUFFIX = ' — not ready';
+
+/** Visible chip text, e.g. "Local · Gemma 4 E2B-it" or "Local · Gemma 4 E2B-it — not ready". */
 export function chatModelText(d: ChatModelDescription): string {
-  return d.model ? `${d.source} · ${d.model}` : d.source;
+  const base = d.model ? `${d.source} · ${d.model}` : d.source;
+  return d.notReady ? `${base}${NOT_READY_SUFFIX}` : base;
 }

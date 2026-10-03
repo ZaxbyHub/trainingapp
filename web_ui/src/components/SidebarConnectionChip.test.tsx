@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 vi.mock('../lib/inference', () => ({ useInferenceMode: vi.fn() }));
 vi.mock('../lib/desktop-session', () => ({ isElectron: vi.fn(() => false), useDesktopSession: vi.fn() }));
@@ -16,12 +16,18 @@ import { AppShell, DRAWER_MEDIA_QUERY } from '../ui';
 import * as inference from '../lib/inference';
 import * as desktop from '../lib/desktop-session';
 import * as endpointPolicy from '../lib/llm/endpoint-policy';
+import { focusSettingsSection, MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
 import { saveExternalConfig } from '../lib/llm/external-provider';
 import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
 import type { ModelStatus } from '../lib/api/types';
 
 function setMode(mode: 'browser-local' | 'api', browserEngine: 'wllama' | 'webllm' = 'wllama') {
-  vi.mocked(inference.useInferenceMode).mockReturnValue({ mode, browserEngine } as unknown as ReturnType<
+  vi.mocked(inference.useInferenceMode).mockReturnValue({ mode, browserEngine, isModelReady: true } as unknown as ReturnType<
+    typeof inference.useInferenceMode
+  >);
+}
+function setModelReady(isModelReady: boolean, mode: 'browser-local' | 'api' = 'browser-local') {
+  vi.mocked(inference.useInferenceMode).mockReturnValue({ mode, browserEngine: 'wllama', isModelReady } as unknown as ReturnType<
     typeof inference.useInferenceMode
   >);
 }
@@ -183,7 +189,7 @@ describe('SidebarConnectionChip', () => {
     act(() => {
       saveExternalConfig({ enabled: true, protocol: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', model: 'model-two' });
     });
-    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1 · model-two');
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1:1234 · model-two');
     act(() => {
       saveExternalConfig({ enabled: false });
     });
@@ -200,7 +206,7 @@ describe('SidebarConnectionChip', () => {
       );
       window.dispatchEvent(new StorageEvent('storage', { key: 'external-provider-config' }));
     });
-    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1 · other-tab');
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1:8080 · other-tab');
   });
 
   // Final-critic note: Settings > Clear Cache removes the external config; the chip
@@ -208,7 +214,7 @@ describe('SidebarConnectionChip', () => {
   it('reverts to the local model as soon as Clear Cache removes the external config', () => {
     saveExternalConfig({ enabled: true, protocol: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', model: 'cached-model' });
     render(<Shell />);
-    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1 · cached-model');
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1:1234 · cached-model');
     act(() => {
       clearUserSettings();
       clearSessionSettings();
@@ -216,3 +222,99 @@ describe('SidebarConnectionChip', () => {
     expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
   });
 });
+
+/**
+ * Review L1: in drawer layouts the destination's heading must end up focused, not
+ * <main>. Real AppShell + real chip; the destination mimics SettingsPage (mounts the
+ * model-connection section and focuses its heading from its own effect, via the
+ * shared focusSettingsSection helper SettingsPage also uses).
+ */
+function SettingsDestination({ request }: { request: number }) {
+  useEffect(() => {
+    focusSettingsSection(MODEL_CONNECTION_SECTION_ID);
+  }, [request]);
+  return (
+    <section id={MODEL_CONNECTION_SECTION_ID}>
+      <h2 tabIndex={-1}>Model &amp; connection</h2>
+    </section>
+  );
+}
+function ShellWithDestination({ failToFocus = false }: { failToFocus?: boolean }) {
+  const [request, setRequest] = useState(0);
+  return (
+    <AppShell
+      productName="TrainingApp"
+      collapsed={false}
+      onToggleCollapsed={() => {}}
+      sidebar={<SidebarConnectionChip onOpenModelSettings={() => setRequest((n) => n + 1)} />}
+    >
+      {request > 0 && !failToFocus ? <SettingsDestination request={request} /> : <h1>page</h1>}
+    </AppShell>
+  );
+}
+
+describe('SidebarConnectionChip drawer focus (review L1)', () => {
+  it('drawer: clicking the chip leaves focus on the Model & connection heading, not <main>', () => {
+    mediaRestore?.();
+    stubMatchMedia(true);
+    render(<ShellWithDestination />);
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByTestId('sidebar-model-chip'));
+    });
+    const heading = screen.getByRole('heading', { name: 'Model & connection' });
+    expect(document.activeElement).toBe(heading);
+    expect(document.activeElement?.tagName).not.toBe('MAIN');
+  });
+
+  it('drawer: falls back to <main> when the destination section is not rendered (phase 3 behaviour)', () => {
+    mediaRestore?.();
+    stubMatchMedia(true);
+    render(<ShellWithDestination failToFocus />);
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByTestId('sidebar-model-chip'));
+    });
+    expect(document.activeElement?.tagName).toBe('MAIN');
+  });
+});
+
+describe('SidebarConnectionChip readiness (review L4)', () => {
+  it('browser local, model not ready: says so in the text and the accessible name (label-in-name)', () => {
+    setModelReady(false);
+    render(<Shell />);
+    const chip = screen.getByTestId('sidebar-model-chip');
+    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it — not ready');
+    expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it — not ready. Open model settings');
+  });
+
+  it('browser local, model ready: unchanged text', () => {
+    setModelReady(true);
+    render(<Shell />);
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent(/^Local · Google Gemma 4 E2B-it$/);
+  });
+
+  it('desktop, no staged model for a real engine: not ready; external engine: never', () => {
+    setMode('api');
+    setDesktop({ engine: 'llama.cpp', profile: 'fast', models: { quality: { present: false }, fast: { present: false } } });
+    const { unmount } = render(<Shell />);
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Desktop · Fast profile — not ready');
+    unmount();
+    setDesktop({ engine: 'external', profile: 'fast', models: { quality: { present: false }, fast: { present: false } } });
+    render(<Shell />);
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent(/^External model$/);
+  });
+
+  it('rail: the not-ready state reaches the button name and tooltip', () => {
+    setModelReady(false);
+    render(<Shell collapsed />);
+    const btn = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it — not ready. Open model settings' });
+    fireEvent.focus(btn);
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Model: Local · Google Gemma 4 E2B-it — not ready');
+  });
+});
+

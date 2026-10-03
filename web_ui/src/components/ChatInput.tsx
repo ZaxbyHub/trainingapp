@@ -228,7 +228,6 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               onClick={() => fileInputRef.current?.click()}
               disabled={attachDisabled}
               aria-disabled={attachDisabled || undefined}
-              title="Attach image"
               aria-label="Attach image"
             />
           )}

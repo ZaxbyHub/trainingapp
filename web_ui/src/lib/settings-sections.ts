@@ -28,3 +28,17 @@ export const SETTINGS_SECTIONS = [
 ] as const;
 
 export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];
+
+/**
+ * Scroll a Settings section into view and focus its heading (tabIndex -1) so
+ * keyboard and screen-reader users land on the destination. Returns false when
+ * the section is not in the DOM (nothing was focused).
+ */
+export function focusSettingsSection(sectionId: string): boolean {
+  const target = document.getElementById(sectionId);
+  if (target === null) return false;
+  if (typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'start' });
+  const heading = target.querySelector<HTMLElement>('h2');
+  (heading ?? target).focus();
+  return true;
+}

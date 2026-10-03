@@ -1027,6 +1027,8 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     browserEngine,
     wllamaModelId: LLM_MODEL_DIR,
     webllmModelId: WEBLLM_DEFAULT_MODEL_ID,
+    // The model gate's own flag (isModelBlocked above), not a new probe.
+    modelReady: isModelReady,
   });
 
   return (
