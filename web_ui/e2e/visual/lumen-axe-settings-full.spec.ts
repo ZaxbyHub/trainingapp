@@ -116,3 +116,26 @@ for (const state of STATES) {
     }
   }
 }
+
+/**
+ * WCAG 3.2.2 (review M1): on Windows (and Linux) Chromium, arrow keys on a closed
+ * <select> change its value and fire `change` on every key. The "Jump to section"
+ * select must then only SCROLL; focus stays on the select until Enter (or "Go").
+ */
+test.describe('settings jump select keyboard (WCAG 3.2.2)', () => {
+  test.use({ viewport: { width: 500, height: 900 }, colorScheme: 'light' });
+
+  test('ArrowDown twice keeps focus on the select and scrolls; Enter moves focus to the section heading', async ({ page }) => {
+    await openSettings(page, 'light');
+    const select = page.getByLabel('Jump to section');
+    await select.focus();
+    await expect(select).toHaveValue('model-connection');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect(select).toHaveValue('appearance');
+    await expect(select).toBeFocused();
+    expect(await page.evaluate(() => document.querySelector('main')?.scrollTop ?? 0)).toBeGreaterThan(0);
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('heading', { level: 2, name: 'Appearance' })).toBeFocused();
+  });
+});
