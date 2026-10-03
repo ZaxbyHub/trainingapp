@@ -188,6 +188,32 @@ describe('PacksPanel training slot and auto-switch signal (Lumen phase 6)', () =
     );
   });
 
+  it('does not announce a switch on a later manual round-trip after a pack appeared while Training packs was already showing (N1)', async () => {
+    const outside = document.createElement('button');
+    outside.setAttribute('data-slot', '');
+    document.body.appendChild(outside);
+    const { client, notify } = makeClient([[KNOWLEDGE], [KNOWLEDGE, COURSE]]);
+    const onAdded = vi.fn();
+    const knowledge = slot();
+    const ui = (training: HTMLElement | null) => (
+      <ToastProvider>
+        <PacksPanel client={client} slots={{ knowledge, training }} onTrainingPackAdded={onAdded} />
+      </ToastProvider>
+    );
+    const { rerender } = render(ui(slot())); // Training packs tab is already showing
+    await screen.findByTestId('pack-row-handbook-1.0.0');
+    await act(async () => notify()); // a training pack appears on that tab
+    await screen.findByTestId('pack-row-course-a-1.0.0');
+    expect(onAdded).toHaveBeenCalledTimes(1);
+
+    rerender(ui(null)); // user goes to Documents...
+    outside.focus();
+    rerender(ui(slot())); // ...and back to Training packs
+    await screen.findByTestId('pack-row-course-a-1.0.0');
+    const texts = screen.getAllByRole('status').map((el) => el.textContent ?? '');
+    expect(texts.some((t) => /Showing the Training packs tab/.test(t))).toBe(false);
+  });
+
   it('applies only the newest listPacks response when refreshes resolve out of order (review L5)', async () => {
     const onTrainingPackAdded = vi.fn();
     const resolvers: Array<(list: PackInfo[]) => void> = [];

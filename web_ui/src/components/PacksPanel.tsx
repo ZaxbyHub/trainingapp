@@ -196,6 +196,10 @@ export function PacksPanel({
   // Set when a training pack appeared while the Training packs tab was not
   // showing; consumed when that tab mounts (the page may defer the switch).
   const switchSignaledRef = useRef(false);
+  // Latest slots, read inside `refresh` (stable callback) to tell whether the
+  // Training packs tab is already showing when a training pack appears.
+  const slotsRef = useRef(slots);
+  slotsRef.current = slots;
   // Polite announcement for the switch, in an always-mounted live region.
   const [announcement, setAnnouncement] = useState('');
   // Out-of-order guard: concurrent refreshes (install, store notification,
@@ -214,7 +218,10 @@ export function PacksPanel({
     const known = knownRowsRef.current;
     knownRowsRef.current = new Set(list.map(rowId));
     if (known !== null && list.some((pack) => isTrainingPack(pack) && !known.has(rowId(pack)))) {
-      switchSignaledRef.current = true;
+      // Only flag a pending switch when the Training packs tab is NOT showing;
+      // otherwise the flag would survive until a later manual round-trip and
+      // announce a switch that never happened.
+      if (slotsRef.current?.training == null) switchSignaledRef.current = true;
       onTrainingPackAddedRef.current?.();
     }
     void refreshStorage();
@@ -227,7 +234,12 @@ export function PacksPanel({
   // elsewhere, leave focus alone and announce the switch politely instead.
   const trainingSlotElement = slots?.training ?? null;
   useEffect(() => {
-    if (trainingSlotElement === null || !switchSignaledRef.current) return;
+    if (trainingSlotElement === null || !switchSignaledRef.current) {
+      // Any tab change without a pending signal drops a stale announcement so
+      // the next real one is a fresh live-region change.
+      setAnnouncement('');
+      return;
+    }
     switchSignaledRef.current = false;
     const active = document.activeElement;
     if (active === null || active === document.body) {
