@@ -287,6 +287,9 @@ Courses run on a dedicated player origin instead:
   keeps the course on its own origin, never the app's.
 - **First load.** If a course page loaded before the worker controlled it, the
   Training page reloads the frame once.
+- **Worker updates.** A new version of the course worker waits (no notice is
+  shown) until no course is open, so an update never replaces the worker under
+  a playing course; it takes over once the open course is closed.
 - **Support.** Chrome and Edge; Safari is not supported; Firefox is untested.
 
 Threat model: nothing on the player origin is trusted. A malicious course can

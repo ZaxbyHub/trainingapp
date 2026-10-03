@@ -316,10 +316,24 @@ exactly as on desktop.
   pack are serialized with Web Locks. An install is refused before any write unless the free
   browser quota is at least twice the pack's unpacked size (room to keep the previous version for
   rollback), and the app asks for persistent storage.
+  - **Eviction and recovery (PR 144 review F1).** The persistence request is fire-and-forget and
+    the browser may deny it. If the browser evicts the origin's storage, the pack bytes (and
+    possibly the registry) are gone and the relay answers 404 for that pack; nothing is restored
+    automatically. Recovery is to reinstall the pack from its `.zip` (or re-apply the update from
+    the feed). Packs shows "(not persistent: the browser may evict installed packs under storage
+    pressure)" when persistence was not granted.
+  - **No Web Locks (PR 144 review F6).** Without Web Locks the install lock falls back to a
+    per-tab promise chain, so two tabs installing different versions of one pack concurrently
+    could leave two active rows. Every supported engine has Web Locks; the state is recoverable
+    with a rollback to the intended version.
 - **Retrieval:** the browser does not mount the prebuilt `index.sqlite` (ADR-0009's finding
   stands). It ingests the pack's slide documents into the browser keyword index at install and
   embeds them with the browser model when it is ready; every chunk carries its `packId`, so Learn
-  rows carry `pack_id` and linked rows are computed at ask time.
+  rows carry `pack_id` and linked rows are computed at ask time. The post-install keyword-index
+  ingest is best-effort and does not resume: a failure is logged, the pack stays installed and
+  active, and its slides are not searchable until the pack is reinstalled (or rolled back and
+  re-activated, which re-runs the ingest); only the embedding half resumes, on
+  `embedding-service-ready`.
 
 ### Updates
 
@@ -406,6 +420,9 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
   `prompt`), call `window.print()` (no `allow-modals`), or start downloads from the frame. Course
   links that open a new window (`target="_blank"` or `window.open`) do nothing (no
   `allow-popups`).
+- The relay-port injection fix (final-critic round 3, NC1) is covered by worker unit tests
+  (`player-origin-hosting.test.ts`, mutation-proven) but not yet by a real-browser regression
+  row; that row is tracked in follow-up #145.
 - A future packtool bridge injection, a per-pack player origin, or signing player assets would
   each need their own decision record.
 - Manual measurements the plan called for (the real 292 MB publish in Chrome and Edge, the

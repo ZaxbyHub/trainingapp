@@ -162,6 +162,34 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   `node:crypto` DER SPKI keys; `packtool verify` accepts the same
   `--require-signature` / `--trusted-keys-file` semantics.
 
+### Key rotation and revocation (`trustedKeys`)
+- **Additive key sets.** `trustedKeys` is a set, not a single anchor. A
+  pack's signature names a `key_id`; the verifier looks that id up in the set
+  and verifies against that one key (an id that is absent fails closed, and
+  so does a non-ed25519 key). Any number of keys can be trusted at once, so
+  adding a key never invalidates packs signed by the keys already present.
+- **Rotate.** (1) Generate the new ed25519 keypair offline and keep the
+  private half out of every repository. (2) Add `{key_id, public_key}` to the
+  set (desktop: `TRAININGAPP_PACKS_TRUSTED_KEYS`; Python:
+  `RAG_PACKS_SECURITY_TRUSTED_KEYS`; browser: ship a build with a new
+  `VITE_TRAININGAPP_PACKS_TRUSTED_KEYS`, since that value is baked in at
+  build time). (3) Sign new packs with the new `key_id`. (4) Once packs
+  signed by the old key are no longer being installed, remove the old key
+  from the set.
+- **Revoke / retire.** There is no revocation list and no key expiry:
+  retiring a key means removing it from the set (and, for the browser,
+  shipping a new build). Afterwards a pack signed only by that key is
+  refused at install with a "not in the trusted keyset" error. The gate runs
+  at install time only: packs already installed are not re-verified, and a
+  rollback or re-activation of a retained version does not re-check the
+  signature. To purge content signed by a compromised key, also remove its
+  installed packs (and their retained versions) explicitly.
+- **Separate anchors.** The update feed has its own trust anchor
+  (`VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS` in the browser, the baked key in
+  `desktop/main/update-checker.ts` on desktop); its rotation is described in
+  ADR-0010 and `docs/updates.md`. Rotating the pack-signing set does not
+  change it.
+
 ## Browser app: install path and course isolation (ADR-0012)
 
 - **Install.** The browser extractor reads the central directory first
@@ -267,7 +295,24 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   own relay can therefore serve only bytes that run under the course CSP on
   pack paths. Residual: it can deny playback (and spoof course content under
   the other pack's CSP) in other app tabs until they re-handshake. Pinned by
-  the worker unit tests in `player-origin-hosting.test.ts`.
+  the worker unit tests in `player-origin-hosting.test.ts`; a real-browser
+  regression row is not yet written and is tracked in follow-up #145.
+- **Storage eviction.** Persistent storage is requested fire-and-forget and
+  may be denied. If the browser evicts the origin's storage, installed pack
+  bytes (and possibly the registry) are gone and course requests for the pack
+  answer 404; nothing is restored automatically. Recovery is to reinstall the
+  pack from its `.zip` (or re-apply the update from the feed). Packs shows
+  "(not persistent: the browser may evict installed packs under storage
+  pressure)" when persistence was not granted.
+- **Install concurrency.** Installs of one pack are serialized with Web Locks.
+  Without Web Locks (no supported engine lacks them) the lock falls back to a
+  per-tab chain, so concurrent installs of different versions from two tabs
+  could leave two active rows; roll back to the intended version to recover.
+- **Search indexing.** The post-install keyword-index ingest is best-effort and
+  does not resume: a failure is logged, the pack stays installed and active,
+  and its slides are not searchable until the pack is reinstalled or rolled
+  back and re-activated. Only the embedding half resumes (on
+  `embedding-service-ready`).
 - **Messaging.** The slide bridge uses exact target origins and one-shot
   `MessagePort` replies; no first-party `postMessage` uses `'*'` (source
   guardrail `web_ui/src/lib/packs/__tests__/browser-isolation-guards.test.ts`).

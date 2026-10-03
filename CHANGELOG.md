@@ -48,8 +48,8 @@
   failed at startup; `vite preview` no longer inherits the dev server's `/api` and `/auth`
   proxy.
 - Supported browsers: current Chrome and Edge. Safari is not supported; Firefox is untested.
-  Manual checks on the real 292 MB publish and under enterprise cookie policies are still open
-  (ADR-0012).
+  Manual checks on the real 292 MB publish, under enterprise cookie policies and strict-tracking
+  settings, and a Firefox smoke check are still open (ADR-0012).
 
 ### Added — connect to any OpenAI- or Anthropic-compatible endpoint, grounded, opt-in (trace universal-provider-settings-overhaul)
 
