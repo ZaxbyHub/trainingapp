@@ -178,12 +178,16 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   from the set.
 - **Revoke / retire.** There is no revocation list and no key expiry:
   retiring a key means removing it from the set (and, for the browser,
-  shipping a new build). Afterwards a pack signed only by that key is
-  refused at install with a "not in the trusted keyset" error. The gate runs
-  at install time only: packs already installed are not re-verified, and a
-  rollback or re-activation of a retained version does not re-check the
-  signature. To purge content signed by a compromised key, also remove its
-  installed packs (and their retained versions) explicitly.
+  shipping a new build). Retirement only has an effect when
+  `requireSignature` is enabled (it defaults to false on every runtime); with
+  it off the trusted set is never consulted and unsigned or tampered packs
+  install. With it on, a pack signed only by the retired key is refused at
+  install with a "not in the trusted keyset" error. The gate runs at install
+  time only: packs already installed are not re-verified, and a rollback or
+  re-activation of a retained version does not re-check the signature (a
+  registry flip on the browser, desktop and Python managers). To purge content
+  signed by a compromised key, also remove its installed packs (and their
+  retained versions) explicitly.
 - **Separate anchors.** The update feed has its own trust anchor
   (`VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS` in the browser, the baked key in
   `desktop/main/update-checker.ts` on desktop); its rotation is described in

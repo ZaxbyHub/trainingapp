@@ -215,7 +215,9 @@ could be served were not isolated from app storage.
    through the boot frame's own controller. What bounds this is that the worker OWNS the
    security headers of every relay-served response. It computes the course CSP itself, with the
    pack id from the request path and its own origin (`courseCsp` in `sw.js`, kept in lockstep with
-   `buildBrowserTrainingCsp` by `player-origin-hosting.test.ts`). It forces COEP, COOP, CORP,
+   `buildBrowserTrainingCsp` by `player-origin-hosting.test.ts`, which also pins the header
+   ownership with unit tests; a real-browser regression row for the injection is tracked in
+   follow-up #145). It forces COEP, COOP, CORP,
    nosniff and cache-control. From the relay it takes only an allowlisted status
    (200/206/403/404/405/416/429; anything else becomes a deny-all 502), the body, and
    `content-type`, `content-range` and `accept-ranges`. A relay-supplied CSP, `Set-Cookie`,
@@ -420,9 +422,6 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
   `prompt`), call `window.print()` (no `allow-modals`), or start downloads from the frame. Course
   links that open a new window (`target="_blank"` or `window.open`) do nothing (no
   `allow-popups`).
-- The relay-port injection fix (final-critic round 3, NC1) is covered by worker unit tests
-  (`player-origin-hosting.test.ts`, mutation-proven) but not yet by a real-browser regression
-  row; that row is tracked in follow-up #145.
 - A future packtool bridge injection, a per-pack player origin, or signing player assets would
   each need their own decision record.
 - Manual measurements the plan called for (the real 292 MB publish in Chrome and Edge, the

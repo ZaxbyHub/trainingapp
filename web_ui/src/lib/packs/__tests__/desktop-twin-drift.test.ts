@@ -82,7 +82,7 @@ describe('desktop twin drift (required web-ui job)', () => {
     expect({ ...TRAINING_MIME_TYPES }).toEqual(desktop);
   });
 
-  it('TD3 (parses security/csp.ts) the course CSP is the desktop training CSP without app: plus the frame-ancestors pin; worker-src pinned to the pack path', () => {
+  it('TD3 the course CSP is the desktop training CSP without app: plus the frame-ancestors pin; worker-src pinned to the pack path', () => {
     const app = 'http://localhost:4183';
     const player = 'http://127.0.0.1:4183';
     const desktop = desktopTrainingCspDirectives().map((d) => d.replace(/ app:/g, ''));

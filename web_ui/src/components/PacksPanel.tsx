@@ -345,7 +345,7 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
         </p>
       )}
       {sorted.length === 0 ? (
-        <p style={{ color: 'var(--color-text)' }}>
+        <p style={{ color: 'var(--color-text-primary)' }}>
           No knowledge packs installed. Drop a .zip pack here or use the install button.
         </p>
       ) : (
@@ -374,19 +374,19 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
                   <strong>{pack.name ?? pack.packId}</strong>{' '}
                   <span>v{pack.version}</span>
                   {pack.sourceClass && (
-                    <span style={{ color: 'var(--color-text)' }}>
+                    <span style={{ color: 'var(--color-text-primary)' }}>
                       {' '}
                       · {pack.sourceClass}
                     </span>
                   )}
                   {published && (
-                    <span style={{ color: 'var(--color-text)' }}> · {published}</span>
+                    <span style={{ color: 'var(--color-text-primary)' }}> · {published}</span>
                   )}
                 </span>
                 <span
                   data-testid={`pack-status-${rowId(pack)}`}
                   style={{
-                    color: 'var(--color-text)',
+                    color: 'var(--color-text-primary)',
                     fontWeight: pack.active ? 700 : 400,
                   }}
                 >
