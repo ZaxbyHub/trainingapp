@@ -304,7 +304,17 @@ export function SideNav({ label, items, activeId, onNavigate }: SideNavProps) {
               <span className={collapsed ? 'ui-visually-hidden' : 'ui-shell__nav-label'}>{item.label}</span>
             </button>
           );
-          return <li key={item.id}>{collapsed ? <Tooltip content={item.label}>{button}</Tooltip> : button}</li>;
+          return (
+            <li key={item.id}>
+              {collapsed ? (
+                <Tooltip content={item.label} placement="end">
+                  {button}
+                </Tooltip>
+              ) : (
+                button
+              )}
+            </li>
+          );
         })}
       </ul>
     </nav>

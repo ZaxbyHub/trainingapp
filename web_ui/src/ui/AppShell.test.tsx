@@ -180,6 +180,8 @@ describe('AppShell (desktop, > 768px)', () => {
     await user.tab();
     expect(screen.getByRole('button', { name: 'Chat' })).toHaveFocus();
     expect(screen.getByRole('tooltip')).toHaveTextContent('Chat');
+    // Beside the rail, not below it (a tooltip below would cover the next item).
+    expect(screen.getByRole('tooltip')).toHaveClass('ui-tooltip--end');
   });
 });
 

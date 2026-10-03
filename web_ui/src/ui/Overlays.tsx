@@ -112,6 +112,12 @@ export function Dialog({ open, onClose, title, children, footer, alert, classNam
 
 export interface TooltipProps {
   content: ReactNode;
+  /**
+   * 'bottom' (default): centred below the trigger, shifted to stay in the viewport.
+   * 'end': beside the trigger on its inline-end side (e.g. the shell's icon rail,
+   * where a tooltip below would cover the next item).
+   */
+  placement?: 'bottom' | 'end';
   /** A single focusable element; it receives aria-describedby. */
   children: ReactElement<{ 'aria-describedby'?: string; 'aria-label'?: string; 'aria-labelledby'?: string }>;
 }
@@ -123,7 +129,7 @@ export interface TooltipProps {
  * disabled control is hover-only (it cannot take focus), so the reason it is disabled
  * must also be stated elsewhere; prefer Button's aria-disabled, which stays focusable.
  */
-export function Tooltip({ content, children }: TooltipProps) {
+export function Tooltip({ content, children, placement = 'bottom' }: TooltipProps) {
   const id = useId();
   const [shown, setShown] = useState(false);
   const [labelledDuplicate, setLabelledDuplicate] = useState(false);
@@ -179,11 +185,11 @@ export function Tooltip({ content, children }: TooltipProps) {
   // Keep the tooltip inside the viewport: measure unshifted, then apply the correction.
   useLayoutEffect(() => {
     const tip = tipRef.current;
-    if (!shown || !tip) return;
+    if (!shown || !tip || placement !== 'bottom') return;
     tip.style.setProperty('--ui-tooltip-shift', '0px');
     const shift = computeTooltipShift(tip.getBoundingClientRect(), document.documentElement.clientWidth);
     tip.style.setProperty('--ui-tooltip-shift', `${shift}px`);
-  }, [shown, content]);
+  }, [shown, content, placement]);
   // When the tooltip text just repeats the trigger's accessible name, do not also
   // expose it as the description (screen readers would announce it twice).
   const duplicatesName = labelledBy
@@ -207,7 +213,7 @@ export function Tooltip({ content, children }: TooltipProps) {
     >
       {cloneElement(children, { 'aria-describedby': mergeIds(shown && !duplicatesName ? id : undefined, children.props['aria-describedby']) })}
       {shown ? (
-        <span ref={tipRef} role="tooltip" id={id} className="ui-tooltip">
+        <span ref={tipRef} role="tooltip" id={id} className={cx('ui-tooltip', placement === 'end' && 'ui-tooltip--end')}>
           {content}
         </span>
       ) : null}

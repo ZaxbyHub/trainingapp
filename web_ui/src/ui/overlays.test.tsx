@@ -95,6 +95,18 @@ describe('Dialog', () => {
 });
 
 describe('Tooltip', () => {
+  it("placement 'end' renders beside the trigger and skips the below-trigger viewport shift", async () => {
+    render(
+      <Tooltip content="Documents" placement="end">
+        <button type="button" aria-label="Documents">D</button>
+      </Tooltip>
+    );
+    await userEvent.tab();
+    const tip = screen.getByRole('tooltip');
+    expect(tip).toHaveClass('ui-tooltip', 'ui-tooltip--end');
+    expect(tip.style.getPropertyValue('--ui-tooltip-shift')).toBe('');
+  });
+
   it('appears on keyboard focus, describes the trigger, and Escape dismisses', async () => {
     render(
       <Tooltip content="Copy to clipboard">
