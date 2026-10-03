@@ -358,6 +358,42 @@ describe('DocumentList', () => {
     });
   });
 
+  // Lumen phase 6 review B1: stacked rows below 760px are taller, and the
+  // virtualization offsets must follow (pages/documents.css, STACKED_ITEM_HEIGHT).
+  describe('Stacked row height (review B1)', () => {
+    const rowTops = (stacked: boolean): string[] => {
+      const spy = vi.spyOn(window, 'matchMedia').mockImplementation(
+        (query: string) =>
+          ({
+            matches: stacked,
+            media: query,
+            addEventListener: () => {},
+            removeEventListener: () => {},
+          }) as unknown as MediaQueryList
+      );
+      const { container, unmount } = render(
+        <div style={{ height: '300px', overflow: 'auto' }}>
+          <DocumentList
+            documents={[createDocument({ id: 'a' }), createDocument({ id: 'b' })]}
+            onDelete={vi.fn()}
+            deletingId={null}
+          />
+        </div>
+      );
+      const tops = Array.from(container.querySelectorAll<HTMLElement>('[role="listitem"]')).map(
+        (el) => el.style.top + '/' + el.style.height
+      );
+      unmount();
+      spy.mockRestore();
+      return tops;
+    };
+
+    it('uses 60px rows on wide layouts and 112px stacked rows at narrow widths', () => {
+      expect(rowTops(false)).toEqual(['0px/60px', '60px/60px']);
+      expect(rowTops(true)).toEqual(['0px/112px', '112px/112px']);
+    });
+  });
+
   // Lumen phase 6 review L6/L7: per-type icons and labelled table cells.
   describe('Type icons and cell labels (review L6/L7)', () => {
     it('maps the file extension to a document kind (case-insensitive, unknown = other)', () => {

@@ -109,6 +109,24 @@ export function documentKind(fileName: string): DocKind {
 
 /** Must match the `.app-doc` row height in pages/documents.css. */
 const ITEM_HEIGHT = 60;
+/** Stacked (wrapped) row height; must match the `.app-doc` height in the
+ *  `max-width: 760px` block of pages/documents.css. */
+const STACKED_ITEM_HEIGHT = 112;
+const STACKED_QUERY = '(max-width: 760px)';
+
+function useItemHeight(): number {
+  const [stacked, setStacked] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(STACKED_QUERY).matches
+  );
+  useLayoutEffect(() => {
+    const mql = window.matchMedia(STACKED_QUERY);
+    const sync = () => setStacked(mql.matches);
+    sync();
+    mql.addEventListener('change', sync);
+    return () => mql.removeEventListener('change', sync);
+  }, []);
+  return stacked ? STACKED_ITEM_HEIGHT : ITEM_HEIGHT;
+}
 const BUFFER = 5;
 
 const DocumentItem = React.memo<{
@@ -149,18 +167,20 @@ const DocumentItem = React.memo<{
       <p className="app-doc__name" title={doc.fileName}>
         {doc.fileName}
       </p>
-      <span className="app-doc__date">{formatDate(doc.uploadedAt)}</span>
-      <span className="app-doc__size">
-        <span className="ui-visually-hidden">Size: </span>
-        {formatFileSize(doc.fileSize)}
-      </span>
-      <span className="app-doc__chunks">
-        {doc.chunkCount !== undefined && doc.chunkCount > 0 ? (
-          <>
-            <span className="ui-visually-hidden">Chunks: </span>
-            {`${doc.chunkCount} chunks`}
-          </>
-        ) : null}
+      <span className="app-doc__meta">
+        <span className="app-doc__date">{formatDate(doc.uploadedAt)}</span>
+        <span className="app-doc__size">
+          <span className="ui-visually-hidden">Size: </span>
+          {formatFileSize(doc.fileSize)}
+        </span>
+        <span className="app-doc__chunks">
+          {doc.chunkCount !== undefined && doc.chunkCount > 0 ? (
+            <>
+              <span className="ui-visually-hidden">Chunks: </span>
+              {`${doc.chunkCount} chunks`}
+            </>
+          ) : null}
+        </span>
       </span>
 
       {/* Status (collapsed during delete-confirmation to make room). */}
@@ -257,6 +277,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     const [containerHeight, setContainerHeight] = useState(300);
     const listRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLElement | null>(null);
+    const itemHeight = useItemHeight();
 
     useLayoutEffect(() => {
       if (documents.length === 0) {
@@ -327,13 +348,13 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     }
 
     const totalItems = documents.length;
-    const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER);
+    const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - BUFFER);
     const endIndex = Math.min(
       totalItems,
-      Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + BUFFER
+      Math.ceil((scrollTop + containerHeight) / itemHeight) + BUFFER
     );
     const visibleDocuments = documents.slice(startIndex, endIndex);
-    const totalHeight = totalItems * ITEM_HEIGHT;
+    const totalHeight = totalItems * itemHeight;
 
     return (
       <div className="app-doc-table">
@@ -361,10 +382,10 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
                 className="app-doc-list__item"
                 style={{
                   position: 'absolute',
-                  top: `${index * ITEM_HEIGHT}px`,
+                  top: `${index * itemHeight}px`,
                   left: 0,
                   right: 0,
-                  height: `${ITEM_HEIGHT}px`,
+                  height: `${itemHeight}px`,
                 }}
               >
                 <DocumentItem

@@ -73,6 +73,8 @@
 .app-doc__icon--other { background: var(--bg-sunken); color: var(--text-secondary); }
 .app-doc__name { grid-area: name; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
 .app-doc__date, .app-doc__size, .app-doc__chunks { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
+/* Wide layouts: the meta wrapper vanishes so date / size / chunks keep their own grid cells. */
+.app-doc__meta { display: contents; }
 .app-doc__date { grid-area: date; }
 .app-doc__size { grid-area: size; color: var(--text-secondary); }
 .app-doc__chunks { grid-area: chunks; color: var(--text-secondary); }
@@ -105,6 +107,22 @@
   .app-doc { grid-template-columns: 36px max-content max-content minmax(0, 1fr) max-content 32px; grid-template-areas: "icon name name name status actions" "icon date size chunks status actions"; column-gap: var(--space-2); padding: 0 var(--space-3); }
   .app-doc__size::before, .app-doc__chunks:not(:empty)::before { content: "•"; margin-right: var(--space-2); }
   .app-doc__error { max-width: 96px; }
+}
+
+/* Stacked rows (section 3.5 "must reflow at 320 CSS px", WCAG 1.4.10). Wrap instead
+   of clip: the name takes its own line (shrinks, ellipsizes), meta wraps, and the
+   status + actions take a last line, so Delete / Cancel are never clipped. 760px, not
+   500px: the processing row (pill + progress + Cancel) needs ~600px of table.
+   Row height is fixed for virtualization: keep in sync with STACKED_ITEM_HEIGHT in
+   DocumentList.tsx. */
+@media (max-width: 760px) {
+  .app-doc { grid-template-columns: 36px minmax(0, 1fr) max-content; grid-template-rows: auto auto auto; grid-template-areas: "icon name name" "icon meta meta" "status status actions"; row-gap: var(--space-1); column-gap: var(--space-2); height: 112px; padding: var(--space-2) var(--space-3); }
+  .app-doc__icon { align-self: start; }
+  .app-doc__meta { grid-area: meta; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-2); min-width: 0; }
+  .app-doc__status { min-width: 0; }
+  .app-doc__progress { flex: 1 1 40px; min-width: 32px; max-width: 80px; }
+  .app-doc__error { flex: 1 1 0; max-width: none; }
+  .app-doc__confirm { grid-column: 1 / -1; grid-row: 3; }
 }
 
 @media (max-width: 500px) {
