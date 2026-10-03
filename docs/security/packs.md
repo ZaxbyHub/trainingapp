@@ -310,8 +310,9 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
 - **Storage eviction.** Persistent storage is requested fire-and-forget and
   may be denied. If the browser evicts the origin's storage, installed pack
   bytes and the registry go together (eviction is origin-wide), so the evicted
-  packs disappear from the list; nothing is restored automatically. The only recovery is to reinstall the pack from its `.zip`
-  (a feed update does not help: it skips packs that are not installed). Packs shows
+  packs disappear from the list; nothing is restored automatically. The only
+  recovery is to reinstall the pack from its `.zip` (a feed update does not
+  help: it skips packs that are not installed). Packs shows
   "(not persistent: the browser may evict installed packs under storage
   pressure)" when persistence was not granted.
 - **Install concurrency.** Installs of one pack are serialized with Web Locks.

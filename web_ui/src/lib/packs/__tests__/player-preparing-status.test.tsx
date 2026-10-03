@@ -19,7 +19,7 @@ vi.mock('../../../components/training-player-bridge', () => ({
 }));
 
 import { TrainingPlayer } from '../../../components/TrainingPlayer';
-import { resetPlayerOriginForTests } from '../player-origin';
+import { isPlayerOriginPending, resetPlayerOriginForTests } from '../player-origin';
 
 afterEach(() => {
   cleanup();
@@ -50,6 +50,16 @@ describe('player preparing status (F19)', () => {
     resetPlayerOriginForTests('http://127.0.0.1:4183');
     render(<TrainingPlayer packId="pack-a" />);
     expect(screen.queryByTestId('training-player-preparing')).toBeNull();
+  });
+
+  it('PS4 isPlayerOriginPending is false under Electron with resolution unsettled, true in the browser', () => {
+    resetPlayerOriginForTests();
+    env.electron = true;
+    expect(isPlayerOriginPending()).toBe(false);
+    env.electron = false;
+    expect(isPlayerOriginPending()).toBe(true);
+    resetPlayerOriginForTests('http://127.0.0.1:4183');
+    expect(isPlayerOriginPending()).toBe(false);
   });
 
   it('PS3 never appears under Electron (no flash)', () => {

@@ -326,8 +326,9 @@ exactly as on desktop.
     the browser may deny it. If the browser evicts the origin's storage, the pack bytes and the
     registry go together (eviction is origin-wide), so the evicted packs disappear from the
     list; nothing is restored automatically. The only recovery is to reinstall the pack from
-    its `.zip` (a feed update does not help: it skips packs that are not installed). Packs shows "(not persistent: the browser may evict installed packs under storage
-    pressure)" when persistence was not granted.
+    its `.zip` (a feed update does not help: it skips packs that are not installed). Packs shows
+    "(not persistent: the browser may evict installed packs under storage pressure)" when
+    persistence was not granted.
   - **No Web Locks (PR 144 review F6).** Without Web Locks the install lock falls back to a
     per-tab promise chain, so two tabs installing different versions of one pack concurrently
     could leave two active rows. Every supported engine has Web Locks; the state is recoverable
@@ -337,9 +338,9 @@ exactly as on desktop.
   embeds them with the browser model when it is ready; every chunk carries its `packId`, so Learn
   rows carry `pack_id` and linked rows are computed at ask time. The post-install keyword-index
   ingest is best-effort and does not resume: a failure is logged, the pack stays installed and
-  active, and its slides are not searchable until the pack is removed and reinstalled (reinstalling the same
-  active version is refused) or rolled back and re-activated (which re-runs the ingest); only the embedding half resumes, on
-  `embedding-service-ready`.
+  active, and its slides are not searchable until the pack is removed and reinstalled
+  (reinstalling the same active version is refused) or rolled back and re-activated (which
+  re-runs the ingest); only the embedding half resumes, on `embedding-service-ready`.
 
 ### Updates
 

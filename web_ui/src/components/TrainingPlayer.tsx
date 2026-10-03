@@ -116,6 +116,9 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
     const resolvedOrigin = isElectron() ? null : getResolvedPlayerOrigin();
     const originStatus = isElectron() ? 'ok' : getPlayerOriginStatus();
     const framed = originStatus === 'framed';
+    // While resolution is unsettled the prediction may say 'no-origin'; announce
+    // progress politely instead of a failure alert that would also take focus.
+    const originPending = isPlayerOriginPending();
     const courseId = courseIdOf(packId);
     const [playerError, setPlayerError] = useState<string | null>(null);
     const reloadedRef = useRef(false);
@@ -262,7 +265,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             </span>
           </span>
         </div>
-        {location === null && originStatus === 'ok' && isPlayerOriginPending() && (
+        {location === null && (originStatus === 'ok' || originStatus === 'no-origin') && originPending && (
           <p role="status" aria-live="polite" data-testid="training-player-preparing" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
             Preparing the course player…
           </p>
@@ -285,7 +288,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             persists, play courses in the desktop app.
           </p>
         )}
-        {location === null && originStatus === 'no-origin' && (
+        {location === null && originStatus === 'no-origin' && !originPending && (
           <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-unavailable" style={alertStyle}>
             Course playback needs a player origin: open the app at http://localhost or http://127.0.0.1 (its loopback
             alias serves the player), or configure player-origin.json / VITE_TRAININGAPP_PLAYER_ORIGIN for this host.
