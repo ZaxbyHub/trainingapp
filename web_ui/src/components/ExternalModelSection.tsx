@@ -42,10 +42,6 @@ import { ApiError } from '../lib/api/types';
 import { IS_AIRGAP } from '../lib/llm/airgap';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
 import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE, type ProviderFailureKind } from '../lib/llm/provider-error';
-
-// Bounded re-read of /status/models while the backend's engine is unconfirmed.
-const MODELS_RETRY_MAX = 3;
-const MODELS_RETRY_BASE_MS = 1500;
 import {
   keyForBaseUrl,
   keyOriginOf,
@@ -56,6 +52,10 @@ import {
   type ExternalKeyState,
   type ExternalProtocol,
 } from '../lib/llm/external-provider';
+
+// Bounded re-read of /status/models while the backend's engine is unconfirmed.
+const MODELS_RETRY_MAX = 3;
+const MODELS_RETRY_BASE_MS = 1500;
 
 interface Draft {
   enabled: boolean;
