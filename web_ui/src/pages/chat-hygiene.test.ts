@@ -28,6 +28,7 @@ const CHAT_FILES = [
   'components/ModelChip.tsx',
   'components/PinnedSlideContext.tsx',
   'components/IsolationBanner.tsx',
+  'components/SidebarConnectionChip.tsx',
   'lib/chat/model-chip.ts',
 ];
 

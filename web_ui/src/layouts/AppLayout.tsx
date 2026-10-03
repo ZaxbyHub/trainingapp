@@ -24,6 +24,8 @@ interface AppLayoutProps {
   searchResults?: Array<{ id: string; title: string; updatedAt: string }> | null;
   searchTruncated?: boolean;
   isSearching?: boolean;
+  /** Sidebar footer connection chip target (Settings > model connection). */
+  onOpenModelSettings?: () => void;
 }
 
 /**
@@ -48,6 +50,7 @@ export function AppLayout({
   searchResults,
   searchTruncated,
   isSearching,
+  onOpenModelSettings,
 }: AppLayoutProps) {
   const { isOpen, toggle } = useSidebarState();
   return (
@@ -72,6 +75,7 @@ export function AppLayout({
           searchResults={searchResults}
           searchTruncated={searchTruncated}
           isSearching={isSearching}
+          onOpenModelSettings={onOpenModelSettings}
         />
       }
     >

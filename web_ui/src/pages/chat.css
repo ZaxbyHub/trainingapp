@@ -13,6 +13,12 @@
 .chat-model-chip__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-model-chip__source { color: var(--text-primary); font-weight: 600; }
 
+/* Sidebar footer connection chip (SidebarConnectionChip): pinned to the bottom of
+   the shell sidebar; the full chip in the sidebar/drawer, an icon button in the rail. */
+.app-sidebar__connection { flex: none; margin-top: auto; padding: var(--space-3); border-top: 1px solid var(--border-subtle); }
+.app-sidebar__connection .chat-model-chip { width: 100%; max-width: 100%; }
+.app-sidebar__connection--rail { display: flex; justify-content: center; padding: var(--space-2) 0; }
+
 /* Desktop-only mode toggle (InferenceModeToggle). The dot is decorative; the
    status word next to it carries the state (never color alone). */
 .chat-mode { display: inline-flex; align-items: center; gap: var(--space-2); }
@@ -145,7 +151,10 @@
 .chat-composer__previews { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-2) var(--space-2) 0; }
 .chat-composer__preview { position: relative; }
 .chat-composer__thumb { display: block; width: 64px; height: 64px; object-fit: cover; border-radius: var(--r-control); border: 1px solid var(--border-subtle); }
-.chat-composer__remove { position: absolute; top: -8px; right: -8px; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: var(--r-pill); background: var(--danger); color: var(--danger-fg-on-fill); cursor: pointer; }
+/* Remove-image: an IconButton (danger), so the absolute corner placement goes on its
+   tooltip wrapper; the button itself is shrunk to a 24px round target (2.5.8 minimum). */
+.chat-composer__preview > .ui-tooltip-wrap { position: absolute; top: -8px; right: -8px; }
+.chat-composer__preview .chat-composer__remove { width: 24px; min-width: 24px; height: 24px; min-height: 24px; border-radius: var(--r-pill); }
 .chat-composer__error { margin: 0; padding: 0 var(--space-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--danger); }
 .chat-composer__status { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-2) var(--space-1); }
 .chat-composer__status:empty { display: none; }
