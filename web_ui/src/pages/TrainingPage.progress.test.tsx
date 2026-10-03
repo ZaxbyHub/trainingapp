@@ -156,7 +156,7 @@ describe('course-card progress (B2)', () => {
     expect(within(a).queryByRole('progressbar', { hidden: true })).toBeNull();
   });
 
-  it('announces the progress accessibly (card name and a labelled progressbar)', async () => {
+  it('announces the progress accessibly (the card name carries it; the bar is decorative)', async () => {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3 }));
     render(<TrainingPage />);
     const a = await card('course-a');

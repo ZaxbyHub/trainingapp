@@ -10,11 +10,12 @@ default `npm run test:e2e` config ignores this folder). Design context:
 | `lumen-axe-settings-full.spec.ts` | axe-core on the WHOLE Settings page (viewport grown to the content; no baseline), default and External-model-configured states, light/dark at 1440 / 1024 / 500 | yes |
 | `lumen-tooltip-overflow.spec.ts` | tooltip stays inside a 500px viewport | yes |
 | `lumen-doc-row-reflow.spec.ts` | document rows reflow (container query on the table), never clip Delete/Cancel/Confirm, at 320-1440px with the 64px rail or 260px sidebar | yes |
+| `lumen-doc-list-scroll.spec.ts` | the real DocumentList keeps the same row at the top and focus on its control across the 800px stack/wide switch (80 docs); inline row height equals rendered height on both sides of the boundary | yes |
 | `lumen-baseline.spec.ts` | `toHaveScreenshot` pixel baselines | no (Windows only) |
 
 CI runs only the a11y subset (`npm run test:visual:a11y:ci`, reusing the
 `web-ui-e2e` job's `dist/`). Locally, `npm run test:visual:a11y` builds first and
-runs the same two specs; `npm run test:visual` runs everything including pixels.
+runs the same specs; `npm run test:visual` runs everything including pixels.
 
 ## Who re-baselines, and when
 

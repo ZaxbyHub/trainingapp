@@ -18,8 +18,8 @@
     "test:watch": "vitest",
     "test:e2e": "npm run build && playwright test --config playwright.config.ts",
     "test:visual": "npm run build && playwright test --config playwright.visual.config.ts",
-    "test:visual:a11y": "npm run build && playwright test --config playwright.visual.config.ts lumen-axe lumen-tooltip-overflow lumen-doc-row-reflow",
-    "test:visual:a11y:ci": "playwright test --config playwright.visual.config.ts lumen-axe lumen-tooltip-overflow lumen-doc-row-reflow",
+    "test:visual:a11y": "npm run build && playwright test --config playwright.visual.config.ts lumen-axe lumen-tooltip-overflow lumen-doc-row-reflow lumen-doc-list-scroll",
+    "test:visual:a11y:ci": "playwright test --config playwright.visual.config.ts lumen-axe lumen-tooltip-overflow lumen-doc-row-reflow lumen-doc-list-scroll",
     "validate-build:no-llm": "node scripts/validate-build.mjs --no-llm"
   },
   "dependencies": {
