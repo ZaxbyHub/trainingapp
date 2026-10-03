@@ -16,7 +16,7 @@ interface AppLayoutProps {
   onNewChat?: () => void;
   onSelectConversation?: (id: string) => void;
   onRenameConversation?: (id: string, newTitle: string) => void;
-  onDeleteConversation?: (id: string) => void;
+  onDeleteConversation?: (id: string) => void | Promise<unknown>;
   hasMore?: boolean;
   onLoadMore?: () => void;
   searchQuery?: string;

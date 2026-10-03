@@ -132,9 +132,10 @@ const COMBINING_DOT_ABOVE = '\u0307';
  * Case-fold text for matching. Lower-casing the Turkish capital dotted I
  * ("I" + dot, U+0130) yields "i" + U+0307 (combining dot above), which would
  * never match a plain "i" (PR #147 review PRR-016), so that mark is dropped
- * after lower-casing. It only ever survives NFC after an "i"/"j"-like base
- * (letters such as U+017C are precomposed), so removing it loses nothing a
- * search would distinguish.
+ * after lower-casing. U+0307 survives NFC after any base letter that has no
+ * precomposed dotted form (not just "i"/"j"). The mark is stripped from the
+ * needle and the haystack alike, so this only broadens matching (text that
+ * differs solely by a dot above now matches) and can never cause a miss.
  */
 function foldCase(text: string): string {
   const lower = text.toLowerCase();

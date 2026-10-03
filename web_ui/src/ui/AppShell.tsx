@@ -200,7 +200,12 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
     if (atBody && (sidebarFocusRef.current || topbarFocusRef.current)) {
       const target = panel?.querySelector<HTMLElement>('nav [aria-current="page"]');
       if (target) target.focus();
-      else focusMain();
+      else {
+        // <main> is still inert here when the drawer was open (the drawerOpen
+        // effect clears it later), and an inert element cannot take focus.
+        mainRef.current?.removeAttribute('inert');
+        focusMain();
+      }
     }
     topbarFocusRef.current = false;
     // Only the drawer-mode transitions matter here.

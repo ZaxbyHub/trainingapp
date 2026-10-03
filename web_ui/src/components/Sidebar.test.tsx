@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
@@ -252,6 +252,73 @@ describe('Sidebar', () => {
       await deleteRow(user, 'Alpha');
       expect(screen.getByRole('button', { name: /new chat/i })).toHaveFocus();
       expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it('rescues focus within the search results when deleting during an active search', async () => {
+      const user = userEvent.setup();
+      function Searching() {
+        const [items, setItems] = useState(three);
+        return (
+          <Sidebar
+            {...defaultProps}
+            conversations={[{ id: 'z', title: 'Zulu', updatedAt: '2026-06-27T07:00:00Z' }]}
+            searchResults={items}
+            searchQuery="a"
+            onSearchChange={() => {}}
+            onDeleteConversation={(id) => setItems((prev) => prev.filter((c) => c.id !== id))}
+          />
+        );
+      }
+      render(<Searching />);
+      await deleteRow(user, 'Bravo');
+      expect(screen.getByText('Charlie').closest('button')).toHaveFocus();
+      expect(screen.queryByText('Zulu')).not.toBeInTheDocument();
+    });
+
+    it('defers the rescue while the list is inert and lands focus once busy clears', async () => {
+      const user = userEvent.setup();
+      let setBusy: (b: boolean) => void = () => {};
+      function Racing() {
+        const [items, setItems] = useState(three);
+        const [busy, setBusyState] = useState(false);
+        setBusy = setBusyState;
+        return (
+          <Sidebar
+            {...defaultProps}
+            conversations={items}
+            searchQuery="a"
+            isSearching={busy}
+            onSearchChange={() => {}}
+            onDeleteConversation={(id) => {
+              // A save-triggered search re-run lands together with the removal.
+              setItems((prev) => prev.filter((c) => c.id !== id));
+              setBusyState(true);
+            }}
+          />
+        );
+      }
+      render(<Racing />);
+      await deleteRow(user, 'Alpha');
+      expect(screen.getByText('Bravo').closest('.app-sidebar__list')).toHaveAttribute('inert');
+      expect(document.activeElement).toBe(document.body);
+      act(() => setBusy(false));
+      expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
+    });
+
+    it('drops the pending rescue when the delete fails, so a later list change does not steal focus', async () => {
+      const user = userEvent.setup();
+      const onDelete = vi.fn().mockRejectedValue(new Error('nope'));
+      const { rerender } = render(<Sidebar {...defaultProps} conversations={three} onDeleteConversation={onDelete} />);
+      await deleteRow(user, 'Alpha');
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(onDelete).toHaveBeenCalledWith('a');
+      expect(screen.getByText('Alpha')).toBeInTheDocument();
+      (document.activeElement as HTMLElement | null)?.blur();
+      // The row disappears later for an unrelated reason (e.g. another tab).
+      rerender(<Sidebar {...defaultProps} conversations={three.slice(1)} onDeleteConversation={onDelete} />);
+      expect(document.activeElement).toBe(document.body);
     });
   });
 

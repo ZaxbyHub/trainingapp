@@ -50,9 +50,11 @@ export function SidebarConversationItem({
     }
   }, [isRenaming]);
 
-  // Menu-button pattern (PR #147 review PRR-026): opening the menu moves focus to
-  // its first item; ArrowUp/ArrowDown/Home/End move between items (see
-  // handleMenuKeyDown); Escape, Cancel and the Delete -> confirm swap hand focus
+  // Partial menu-button keyboard support (PR #147 review PRR-026): opening the
+  // menu moves focus to its first item; ArrowUp/ArrowDown/Home/End move between
+  // items (see handleMenuKeyDown). The items remain Tab stops (no roving
+  // tabindex), and Tab closes the menu; Escape, Cancel and the Delete -> confirm
+  // swap hand focus
   // back to the options button instead of letting it fall to <body> when the
   // focused item unmounts (PRR-002).
   useEffect(() => {
