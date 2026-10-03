@@ -27,6 +27,15 @@
 .chat-notice { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--info-subtle); border: 1px solid var(--info-border); border-radius: var(--r-card); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
 .chat-notice__title { font-weight: 600; }
 
+/* Page-level banners above the log: COOP/COEP misconfiguration (IsolationBanner)
+   and the pinned training slide (PinnedSlideContext, D7). Same width as the column. */
+.chat-isolation, .chat-pin { box-sizing: border-box; width: calc(100% - 2 * var(--space-6)); max-width: calc(var(--w-reading) - 2 * var(--space-6)); margin: var(--space-3) auto 0; }
+.chat-pin { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4); background: var(--bg-surface); border: 1px solid var(--border-control); border-radius: var(--r-card); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
+.chat-pin__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-pin__actions { flex: none; display: flex; align-items: center; gap: var(--space-1); }
+/* Stale pin: dashed edge + secondary text; the visible "stale" wording is the non-color cue. */
+.chat-pin--stale { border-style: dashed; background: var(--bg-sunken); color: var(--text-secondary); }
+
 /* --------------------------------------------------------------- Log */
 /* The log is the scroller (ChatMessageList scroll logic reads its scrollTop);
    the column inside it holds the centered reading width. */
@@ -148,6 +157,7 @@
 
 /* ---------------------------------------------------------- Reflow */
 @media (max-width: 768px) {
+  .chat-isolation, .chat-pin { width: calc(100% - 2 * var(--space-4)); }
   .chat-log__column { padding: var(--space-4) var(--space-4) var(--space-3); }
   .chat-composer { padding: 0 var(--space-4) var(--space-3); }
 }
@@ -160,6 +170,8 @@
   .chat-cites .chat-cites__toggle { display: inline-flex; }
   .chat-cites__list[data-collapsed="true"] { display: none; }
   .chat-learn__row { flex-wrap: wrap; }
+  .chat-pin { flex-wrap: wrap; }
+  .chat-pin__label { white-space: normal; }
 }
 
 @media (prefers-reduced-motion: reduce) {

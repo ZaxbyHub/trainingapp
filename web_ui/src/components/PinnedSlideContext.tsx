@@ -11,10 +11,13 @@
  * for it (pack switched, see App's staleness producer) is marked `stale` —
  * the banner then carries data-stale="true" AND a visible stale marker, and
  * ChatPage never attaches a stale pin to a question. A stale pin may never
- * present as a live one.
+ * present as a live one (Lumen phase 5: dashed border + secondary text, styled
+ * in pages/chat.css; the text marker stays the non-color cue).
  */
 import React from 'react';
-import type { CSSProperties } from 'react';
+import { Button, IconButton } from '../ui';
+import { cx } from '../ui/cx';
+import '../pages/chat.css';
 
 export interface PinnedSlide {
   slideId: string;
@@ -34,61 +37,6 @@ export interface PinnedSlideContextProps {
   onDismiss: () => void;
   onExplainThisStep?: () => void;
 }
-
-const bannerStyle: CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 'var(--spacing-sm)',
-  margin: 'var(--spacing-xs) var(--spacing-lg)',
-  padding: 'var(--spacing-xs) var(--spacing-sm)',
-  border: '1px solid var(--color-border, var(--color-text-muted))',
-  borderRadius: 'var(--radius-sm, 6px)',
-  backgroundColor: 'var(--color-surface)',
-  fontFamily: 'var(--font-family)',
-  fontSize: 'var(--font-size-caption)',
-};
-
-const staleBannerStyle: CSSProperties = {
-  ...bannerStyle,
-  borderStyle: 'dashed',
-  opacity: 0.75,
-};
-
-const labelStyle: CSSProperties = {
-  minWidth: 0,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  color: 'var(--color-text)',
-};
-
-const staleLabelStyle: CSSProperties = {
-  ...labelStyle,
-  color: 'var(--color-text-muted)',
-};
-
-const buttonStyle: CSSProperties = {
-  flexShrink: 0,
-  backgroundColor: 'transparent',
-  color: 'var(--color-accent, var(--color-text))',
-  border: '1px solid var(--color-accent, var(--color-text-muted))',
-  borderRadius: 'var(--radius-sm, 6px)',
-  padding: '2px var(--spacing-sm)',
-  fontSize: 'var(--font-size-caption)',
-  fontFamily: 'var(--font-family)',
-  cursor: 'pointer',
-  transition: 'all 0.15s ease',
-};
-
-const dismissButtonStyle: CSSProperties = {
-  ...buttonStyle,
-  border: 'none',
-  color: 'var(--color-text-muted)',
-  fontSize: 'var(--font-size-body)',
-  lineHeight: 1,
-  padding: '2px var(--spacing-xs)',
-};
 
 /** Section > Title — section only when a non-blank string; never a bare " > ".
  *  A blank slideTitle falls back to the slideId so the banner/injection can
@@ -110,34 +58,31 @@ export const PinnedSlideContext: React.FC<PinnedSlideContextProps> = React.memo(
         data-testid="pinned-slide-context"
         data-stale={stale ? 'true' : undefined}
         role="status"
-        style={stale ? staleBannerStyle : bannerStyle}
+        className={cx('chat-pin', stale && 'chat-pin--stale')}
         aria-label={`Currently viewing: ${pinnedSlideLabel(pinnedSlide)}${stale ? ' (stale)' : ''}`}
       >
-        <span style={stale ? staleLabelStyle : labelStyle}>
+        <span className="chat-pin__label">
           Currently viewing:{' '}
           <strong>{pinnedSlideLabel(pinnedSlide)}</strong>
           {stale && ' — stale (player session moved on; not attached to questions)'}
         </span>
-        <span style={{ display: 'flex', gap: 'var(--spacing-xs)', flexShrink: 0 }}>
+        <span className="chat-pin__actions">
           {!stale && (
-            <button
-              type="button"
-              style={buttonStyle}
+            <Button
+              size="sm"
               onClick={onExplainThisStep}
               data-testid="pinned-slide-explain"
             >
               Explain this step
-            </button>
+            </Button>
           )}
-          <button
-            type="button"
-            style={dismissButtonStyle}
+          <IconButton
+            icon="x"
+            size="sm"
             onClick={onDismiss}
             data-testid="pinned-slide-dismiss"
             aria-label="Dismiss pinned slide"
-          >
-            ×
-          </button>
+          />
         </span>
       </section>
     );
