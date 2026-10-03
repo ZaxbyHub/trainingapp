@@ -38,6 +38,25 @@ function getStoredPreference(): ThemeMode | null {
   return null;
 }
 
+/**
+ * index.html declares one <meta name="theme-color"> per OS color scheme. When
+ * the in-app theme overrides the OS preference, the OS-matched meta would tint
+ * the browser chrome with the wrong theme, so every theme-color meta is set to
+ * the applied theme's --bg-surface (read from CSS, so the value stays a Lumen
+ * token rather than a literal here). When the token does not resolve to a
+ * color (no stylesheet, or jsdom), the metas are left alone.
+ */
+export function syncThemeColorMeta(): void {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return;
+  const surface = getComputedStyle(document.documentElement).getPropertyValue('--bg-surface').trim();
+  // Browsers substitute var() in a custom property's computed value; an
+  // unresolved reference (jsdom) is not a usable color.
+  if (surface === '' || surface.includes('var(')) return;
+  document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((meta) => {
+    meta.setAttribute('content', surface);
+  });
+}
+
 interface ThemeProviderProps {
   children: React.ReactNode;
 }
@@ -52,6 +71,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    syncThemeColorMeta();
   }, [theme]);
 
   useEffect(() => {
