@@ -112,6 +112,17 @@ function capitalize(s: string): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
+/**
+ * Same predicate as desktop-session.modelsAbsentForRealEngine (the desktop gate:
+ * real engine and no staged GGUF for either profile), inlined because this module
+ * stays free of the React session module. A drift test pins the two together.
+ */
+function desktopGateBlocks(models: DescribeChatModelInput['desktopModels']): boolean {
+  if (models === null || models.engine === 'stub' || models.engine === 'external') return false;
+  const staged = models.models;
+  return staged !== undefined && !staged.quality.present && !staged.fast.present;
+}
+
 export function describeChatModel(input: DescribeChatModelInput): ChatModelDescription {
   const engine = input.desktopModels?.engine ?? null;
   if (routesToDesktopBackend(input.mode, input.hasDesktopSession, engine)) {
@@ -146,11 +157,8 @@ export function describeChatModel(input: DescribeChatModelInput): ChatModelDescr
       };
     }
     const profile = input.residentProfile ?? input.desktopModels.profile;
-    // Same predicate as desktop-session.modelsAbsentForRealEngine (the desktop gate),
-    // inlined because this module stays free of the React session module. The stub
-    // and external engines were handled above, so only a real engine reaches here.
-    const staged = input.desktopModels.models;
-    const notReady = staged !== undefined && !staged.quality.present && !staged.fast.present;
+    // The stub and external engines were handled above, so only a real engine reaches here.
+    const notReady = desktopGateBlocks(input.desktopModels);
     return {
       kind: 'desktop',
       source: 'Desktop',
@@ -184,7 +192,11 @@ export function describeChatModel(input: DescribeChatModelInput): ChatModelDescr
   const model =
     input.browserEngine === 'wllama' ? packagedModelLabel(input.wllamaModelId) : input.webllmModelId;
   const engineName = input.browserEngine === 'wllama' ? 'wllama' : 'WebLLM';
-  const notReady = input.modelReady === false;
+  // Two gates can block here: the browser model gate (isModelReady) and, with a desktop
+  // session, DesktopModelBlockedOverlay, which opens on the staged-absent real engine
+  // whatever the inference mode is. Report not-ready when either one blocks.
+  const notReady =
+    input.modelReady === false || (input.hasDesktopSession && desktopGateBlocks(input.desktopModels));
   return {
     kind: 'local',
     source: 'Local',

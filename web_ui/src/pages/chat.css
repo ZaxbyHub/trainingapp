@@ -10,7 +10,10 @@
 /* Model chip: which generator answers the next turn; opens Settings > model. */
 .chat-model-chip { box-sizing: border-box; display: inline-flex; align-items: center; gap: var(--space-2); max-width: 340px; min-height: 32px; padding: 0 var(--space-3); border: 1px solid var(--border-control); border-radius: var(--r-pill); background: var(--bg-surface); color: var(--text-secondary); font-family: inherit; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); cursor: pointer; }
 .chat-model-chip:hover { background: var(--bg-hover); color: var(--text-primary); }
-.chat-model-chip__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Only the name truncates; the readiness suffix is a separate non-shrinking item so it always shows in full. */
+.chat-model-chip__text { display: flex; align-items: baseline; min-width: 0; }
+.chat-model-chip__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-model-chip__suffix { flex-shrink: 0; margin-inline-start: var(--space-1); white-space: nowrap; }
 .chat-model-chip__source { color: var(--text-primary); font-weight: 600; }
 
 /* Sidebar footer connection chip (SidebarConnectionChip): pinned to the bottom of

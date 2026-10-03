@@ -13,6 +13,8 @@ import {
 } from './model-chip';
 import { DEFAULT_EXTERNAL_CONFIG, type ExternalConfig } from '../llm/external-provider';
 import * as endpointPolicy from '../llm/endpoint-policy';
+import { modelsAbsentForRealEngine } from '../desktop-session';
+import type { ModelStatus } from '../api/types';
 
 const base: DescribeChatModelInput = {
   mode: 'browser-local',
@@ -215,4 +217,49 @@ describe('port display and readiness (review L4 / nit)', () => {
     expect(describeChatModel({ ...input, desktopModels: { ...absent, engine: 'stub' } as never }).notReady).toBe(false);
     expect(describeChatModel({ ...input, desktopModels: { ...absent, engine: 'external' } as never }).notReady).toBe(false);
   });
+});
+
+describe('desktop gate vs model chip readiness', () => {
+  const status = (engine: ModelStatus['engine'], quality: boolean, fast: boolean): ModelStatus => ({
+    engine,
+    profile: 'quality',
+    models: { quality: { present: quality }, fast: { present: fast } },
+  });
+
+  it('browser-local with a desktop session: llama.cpp with no GGUF is not ready even when wllama is ready', () => {
+    const d = describeChatModel({
+      ...base,
+      hasDesktopSession: true,
+      desktopModels: status('llama.cpp', false, false),
+      modelReady: true,
+    });
+    expect(d.kind).toBe('local');
+    expect(d.notReady).toBe(true);
+    expect(chatModelText(d)).toMatch(/ — not ready$/);
+  });
+
+  it('browser-local with a desktop session: a staged GGUF or a stub engine leaves wllama readiness alone', () => {
+    expect(
+      describeChatModel({ ...base, hasDesktopSession: true, desktopModels: status('llama.cpp', true, false), modelReady: true })
+        .notReady
+    ).toBe(false);
+    expect(
+      describeChatModel({ ...base, hasDesktopSession: true, desktopModels: status('stub', false, false), modelReady: true })
+        .notReady
+    ).toBe(false);
+  });
+
+  const engines: ModelStatus['engine'][] = ['llama.cpp', 'stub', 'external'];
+  const flags = [true, false];
+  for (const engine of engines) {
+    for (const quality of flags) {
+      for (const fast of flags) {
+        it(`drift: engine ${engine}, quality ${quality}, fast ${fast} matches modelsAbsentForRealEngine`, () => {
+          const s = status(engine, quality, fast);
+          const d = describeChatModel({ ...base, mode: 'api', hasDesktopSession: true, desktopModels: s });
+          expect(d.notReady).toBe(modelsAbsentForRealEngine(s));
+        });
+      }
+    }
+  }
 });

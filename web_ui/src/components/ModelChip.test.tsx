@@ -44,6 +44,23 @@ describe('ModelChip', () => {
     expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it — not ready. Open model settings');
   });
 
+  it('not ready: the suffix is its own non-truncating element, outside the truncating name node', () => {
+    render(<ModelChip description={{ ...local, notReady: true }} onOpenSettings={() => {}} />);
+    const name = screen.getByTestId('chat-model-chip-name');
+    const suffix = screen.getByTestId('chat-model-chip-suffix');
+    expect(suffix).toHaveTextContent('— not ready');
+    expect(name).not.toContainElement(suffix);
+    expect(suffix).not.toContainElement(name);
+    expect(name).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    expect(name).not.toHaveTextContent('not ready');
+    expect(suffix.className).toBe('chat-model-chip__suffix');
+  });
+
+  it('ready: no suffix element', () => {
+    render(<ModelChip description={local} onOpenSettings={() => {}} />);
+    expect(screen.queryByTestId('chat-model-chip-suffix')).toBeNull();
+  });
+
   it('renders static text (not a button) without an open handler', () => {
     render(<ModelChip description={local} />);
     expect(screen.queryByRole('button')).toBeNull();

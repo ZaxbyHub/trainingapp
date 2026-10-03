@@ -175,12 +175,14 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
 
   const closeDrawer = useCallback(
     (reason: DrawerCloseReason, afterNavigate?: () => boolean) => {
-      if (!drawer) return;
+      // Not open (already closed or a double call): leave the pending refs alone so a
+      // stale reason/callback cannot be consumed by a later open.
+      if (!drawer || !drawerOpen) return;
       pendingFocus.current = reason;
       pendingAfterNavigate.current = reason === 'navigate' ? (afterNavigate ?? null) : null;
       setDrawerOpen(false);
     },
-    [drawer]
+    [drawer, drawerOpen]
   );
 
   // Narrowing into drawer mode hides the sidebar. If it held focus, the focus

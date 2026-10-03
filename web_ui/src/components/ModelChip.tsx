@@ -29,9 +29,18 @@ export function ModelChip({ description, onOpenSettings, testId = 'chat-model-ch
     <>
       <Icon name={MODEL_CHIP_ICON[description.kind]} size={16} />
       <span className="chat-model-chip__text">
-        <span className="chat-model-chip__source">{description.source}</span>
-        {description.model ? ` · ${description.model}` : null}
-        {description.notReady ? NOT_READY_SUFFIX : null}
+        <span className="chat-model-chip__name" data-testid={`${testId}-name`}>
+          <span className="chat-model-chip__source">{description.source}</span>
+          {description.model ? ` · ${description.model}` : null}
+        </span>
+        {description.notReady ? (
+          <>
+            {' '}
+            <span className="chat-model-chip__suffix" data-testid={`${testId}-suffix`}>
+              {NOT_READY_SUFFIX.trim()}
+            </span>
+          </>
+        ) : null}
       </span>
     </>
   );
