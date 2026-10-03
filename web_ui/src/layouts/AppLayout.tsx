@@ -23,6 +23,7 @@ interface AppLayoutProps {
   onSearchChange?: (query: string) => void;
   searchResults?: Array<{ id: string; title: string; updatedAt: string }> | null;
   searchTruncated?: boolean;
+  isSearching?: boolean;
 }
 
 /**
@@ -46,6 +47,7 @@ export function AppLayout({
   onSearchChange,
   searchResults,
   searchTruncated,
+  isSearching,
 }: AppLayoutProps) {
   const { isOpen, toggle } = useSidebarState();
   return (
@@ -69,6 +71,7 @@ export function AppLayout({
           onSearchChange={onSearchChange}
           searchResults={searchResults}
           searchTruncated={searchTruncated}
+          isSearching={isSearching}
         />
       }
     >

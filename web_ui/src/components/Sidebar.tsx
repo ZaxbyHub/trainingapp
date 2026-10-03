@@ -29,6 +29,8 @@ interface SidebarProps {
   searchResults?: SidebarConversation[] | null;
   /** More matches exist than were returned. */
   searchTruncated?: boolean;
+  /** A search is pending or running: the shown results are not yet current. */
+  isSearching?: boolean;
 }
 
 /** Primary destinations, at the TOP of the sidebar (design-language.md section 5). */
@@ -62,11 +64,14 @@ export function Sidebar({
   onSearchChange,
   searchResults = null,
   searchTruncated = false,
+  isSearching = false,
 }: SidebarProps) {
   const { collapsed, drawer, closeDrawer } = useAppShell();
   const headingId = useId();
   const searchId = useId();
   const searching = searchResults !== null;
+  // Busy only while a query is set (clearing is immediate, never "busy").
+  const busy = isSearching && searchQuery.trim() !== '';
   const shown = searchResults ?? conversations;
   const clearSearch = () => {
     onSearchChange?.('');
@@ -113,7 +118,11 @@ export function Sidebar({
                 Search conversations
               </label>
               <div className="app-sidebar__search-box">
-                <Icon name="search" size={16} className="app-sidebar__search-icon" />
+                {busy ? (
+                  <span className="ui-spinner app-sidebar__search-icon" aria-hidden="true" data-testid="search-spinner" />
+                ) : (
+                  <Icon name="search" size={16} className="app-sidebar__search-icon" />
+                )}
                 <input
                   id={searchId}
                   type="search"
@@ -144,7 +153,8 @@ export function Sidebar({
                 ) : null}
               </div>
               <p className="ui-visually-hidden" role="status">
-                {searching
+                {/* Never announce a count for results that are about to be replaced. */}
+                {busy ? 'Searching…' : searching
                   ? shown.length === 0
                     ? 'No conversations found'
                     : `${shown.length}${searchTruncated ? ' or more' : ''} conversation${shown.length === 1 && !searchTruncated ? '' : 's'} found`
@@ -152,7 +162,7 @@ export function Sidebar({
               </p>
             </div>
           ) : null}
-          <div className="app-sidebar__list">
+          <div className="app-sidebar__list" aria-busy={busy || undefined}>
             {shown.length === 0 ? (
               <p className="app-sidebar__empty">{searching ? 'No conversations match' : 'No conversations yet'}</p>
             ) : (

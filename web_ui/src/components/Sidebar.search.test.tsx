@@ -117,6 +117,27 @@ describe('Sidebar search field', () => {
     expect(outer).toHaveBeenCalledWith('Escape');
   });
 
+  it('busy: aria-busy on the results, a spinner in the field, and no stale count announced', () => {
+    const results = [{ id: 'c110', title: 'Quarterly budget', updatedAt: '2026-01-01T00:00:00Z' }];
+    const { rerender, container } = render(<Controlled initial="budg" searchResults={results} isSearching />);
+    const list = container.querySelector('.app-sidebar__list') as HTMLElement;
+    expect(list).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('search-spinner')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('status')).toHaveTextContent('Searching…');
+    expect(screen.getByRole('status')).not.toHaveTextContent(/found/);
+
+    rerender(<Controlled initial="budg" searchResults={results} isSearching={false} />);
+    expect(list).not.toHaveAttribute('aria-busy');
+    expect(screen.queryByTestId('search-spinner')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('1 conversation found');
+  });
+
+  it('busy is ignored once the query is cleared (clearing is immediate)', () => {
+    const { container } = render(<Controlled initial="" isSearching />);
+    expect(container.querySelector('.app-sidebar__list')).not.toHaveAttribute('aria-busy');
+    expect(screen.queryByTestId('search-spinner')).not.toBeInTheDocument();
+  });
+
   it('is hidden in the 64px rail (the expand button brings it back)', () => {
     render(
       <AppShell productName="TrainingApp" collapsed onToggleCollapsed={() => {}} sidebar={<Controlled />}>
@@ -195,6 +216,7 @@ describe('Sidebar search through the real useConversations hook', () => {
         onSearchChange={c.setSearchQuery}
         searchResults={c.searchResults}
         searchTruncated={c.searchTruncated}
+        isSearching={c.isSearching}
       />
     );
   }
@@ -207,9 +229,14 @@ describe('Sidebar search through the real useConversations hook', () => {
     expect(screen.getByRole('button', { name: /load more/i })).toBeInTheDocument();
 
     await user.type(screen.getByRole('searchbox', { name: 'Search conversations' }), 'budget');
+    // Pending (debounce) then running: the busy cue is up and no stale count is announced.
+    expect(screen.getByTestId('search-spinner')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Searching…');
     expect(await screen.findByText('Quarterly budget review')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('search-spinner')).not.toBeInTheDocument());
+    expect(screen.getByRole('status')).toHaveTextContent('1 conversation found');
     expect(screen.queryByText('Recent 0')).not.toBeInTheDocument();
-    expect(db.searchConversations).toHaveBeenLastCalledWith('budget');
+    expect(db.searchConversations).toHaveBeenLastCalledWith('budget', expect.objectContaining({ isCancelled: expect.any(Function) }));
 
     await user.click(screen.getByRole('button', { name: 'Clear search' }));
     await waitFor(() => expect(screen.getByText('Recent 0')).toBeInTheDocument());

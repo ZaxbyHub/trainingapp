@@ -216,6 +216,7 @@ function AppContent() {
     setSearchQuery,
     searchResults,
     searchTruncated,
+    isSearching,
   } = useConversations();
 
   const { isInitialized, initError, currentStep } = useServiceInitialization({
@@ -395,6 +396,7 @@ function AppContent() {
       onSearchChange={setSearchQuery}
       searchResults={searchResults}
       searchTruncated={searchTruncated}
+      isSearching={isSearching}
     >
       {/* E2 (issue #85): first-run validation wizard gate — renders the
           overlay only when a first run (or drift re-run) is needed. */}
