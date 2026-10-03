@@ -782,6 +782,34 @@ describe('generator source (Lumen phase 4, design-language.md section 5)', () =>
     expect(JSON.parse(localStorage.getItem('external-provider-config') ?? '{}').baseUrl).toBe('https://api.openai.com');
   });
 
+  test('the section notice (e.g. the desktop settings error) shows for EVERY generator source', () => {
+    render(<ExternalModelSection builtIn={<p>BUILT-IN</p>} notice={<p role="alert">Settings error: boom</p>} />);
+    const q = within(region());
+    expect(q.getByRole('alert')).toHaveTextContent('Settings error: boom');
+    fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
+    expect(q.queryByText('BUILT-IN')).toBeNull();
+    expect(q.getByRole('alert')).toHaveTextContent('Settings error: boom');
+  });
+
+  test('typing in Base URL while egress is on never flips the source; the saved URL does', async () => {
+    localStorage.setItem(
+      'external-provider-config',
+      JSON.stringify({ enabled: true, protocol: 'openai', baseUrl: 'https://api.openai.com', model: 'gpt-x', grounded: true }),
+    );
+    render(<ExternalModelSection />);
+    const q = within(region());
+    const base = q.getByLabelText(/^base url$/i);
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+    // Mid-edit values (empty, then a loopback URL) do not move the radio.
+    fireEvent.change(base, { target: { value: '' } });
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+    fireEvent.change(base, { target: { value: 'http://localhost:1234' } });
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+    // Saving it (blur) reclassifies: a loopback server is a local server.
+    fireEvent.blur(base);
+    await waitFor(() => expect(q.getByRole('radio', { name: /^local or network server$/i })).toBeChecked());
+  });
+
   test('a failed connection test names its cause in the Banner title', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 401 })));
     render(<ExternalModelSection />);

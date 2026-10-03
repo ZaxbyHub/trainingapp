@@ -8,7 +8,7 @@
  * grows the viewport until nothing scrolls, so EVERY Settings node is on screen, and
  * requires zero serious/critical violations with no baseline, in the default state and
  * with Model & connection on a server source, configured and switched on (the section
- * nav included: side list at 1440, "Jump to section" select at 500).
+ * nav included: side list at 1440, wrapped row at 1024, "Jump to section" select at 500).
  *
  * Runs in CI with the a11y subset (`lumen-axe` matches this file; see README.md).
  */
@@ -16,7 +16,8 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
-const WIDTHS = [1440, 500] as const;
+// 1440: side nav; 1024: wrapped-row nav; 500: "Jump to section" select.
+const WIDTHS = [1440, 1024, 500] as const;
 const THEMES = ['light', 'dark'] as const;
 const STATES = ['default', 'external'] as const;
 const MAX_HEIGHT = 12_000;

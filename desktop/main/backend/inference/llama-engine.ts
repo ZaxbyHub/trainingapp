@@ -757,7 +757,7 @@ export class LlamaEngine implements EngineSurface {
       return {
         ok: false,
         kind: 'model',
-        message: `Unknown model "${model}": ${originOf(baseUrl)} does not list it. Pick a model from the endpoint's list in Settings → External model.`,
+        message: `Unknown model "${model}": ${originOf(baseUrl)} does not list it. Pick a model from the endpoint's list in Settings → Model & connection.`,
         models,
       };
     }

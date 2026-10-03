@@ -7,7 +7,7 @@ default `npm run test:e2e` config ignores this folder). Design context:
 | Spec | What it checks | Runs in CI |
 | --- | --- | --- |
 | `lumen-axe.spec.ts` | axe-core serious/critical nodes per surface, theme, width | yes |
-| `lumen-axe-settings-full.spec.ts` | axe-core on the WHOLE Settings page (viewport grown to the content; no baseline), default and External-model-configured states | yes |
+| `lumen-axe-settings-full.spec.ts` | axe-core on the WHOLE Settings page (viewport grown to the content; no baseline), default and External-model-configured states, light/dark at 1440 / 1024 / 500 | yes |
 | `lumen-tooltip-overflow.spec.ts` | tooltip stays inside a 500px viewport | yes |
 | `lumen-baseline.spec.ts` | `toHaveScreenshot` pixel baselines | no (Windows only) |
 

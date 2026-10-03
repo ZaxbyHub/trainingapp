@@ -188,7 +188,7 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
       setState((prev) => ({
         ...prev,
         isModelReady: false,
-        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Switch engines, or use the desktop app or an external model (Settings → External model).',
+        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Switch engines, or use the desktop app or an external model (Settings → Model & connection).',
       }));
     };
     if (typeof window !== 'undefined') {

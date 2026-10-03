@@ -214,10 +214,10 @@ function anthropicFrameError(
     UPSTREAM_TEXT_CHARS,
   );
   if (type === 'authentication_error' || type === 'permission_error') {
-    return new ExternalProviderError('auth', `Authentication failed: ${ctx.origin} rejected the API key (${message}). Check the API key in Settings → External model.`);
+    return new ExternalProviderError('auth', `Authentication failed: ${ctx.origin} rejected the API key (${message}). Check the API key in Settings → Model & connection.`);
   }
   if (type === 'not_found_error') {
-    return new ExternalProviderError('model', `Unknown model "${ctx.model ?? ''}" (${message}). Pick a model from the endpoint's list in Settings → External model.`);
+    return new ExternalProviderError('model', `Unknown model "${ctx.model ?? ''}" (${message}). Pick a model from the endpoint's list in Settings → Model & connection.`);
   }
   return new ExternalProviderError('server', `The endpoint ${ctx.origin} reported an error: ${message}`);
 }

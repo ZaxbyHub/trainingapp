@@ -396,7 +396,7 @@ function send(
         code === 'ERR_INVALID_CHAR' || code === 'ERR_INVALID_HTTP_TOKEN'
           ? new ExternalProviderError(
               'auth',
-              `The request to ${ctx.origin} was not sent: the API key (or another header value) contains a character that cannot be sent in an HTTP header. Paste the key again in Settings → External model.`,
+              `The request to ${ctx.origin} was not sent: the API key (or another header value) contains a character that cannot be sent in an HTTP header. Paste the key again in Settings → Model & connection.`,
             )
           : networkError(ctx, 'the request could not be created'),
       );

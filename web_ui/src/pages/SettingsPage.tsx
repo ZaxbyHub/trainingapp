@@ -971,7 +971,6 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
             {desktopSession ? ` at ${desktopSession.baseUrl}` : ''}. Its settings are stored by the
             backend and survive restarts.
           </p>
-          {desktopSettingsError && <Banner tone="danger">Settings error: {desktopSettingsError}</Banner>}
           {/* settings-wiring-honesty (AC7): the profile picks the desktop
               backend's local model, so it is shown only while that backend
               generates (api mode). */}
@@ -1180,7 +1179,13 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
           {/* external endpoint (universal-provider-settings-overhaul). The id */}
           {/* is the model-blocked overlay's and the connection chip's target. */}
           {/* ================================================================ */}
-          <ExternalModelSection id={MODEL_CONNECTION_SECTION_ID} builtIn={builtInPanel} />
+          <ExternalModelSection
+            id={MODEL_CONNECTION_SECTION_ID}
+            builtIn={builtInPanel}
+            // Shown for every generator source: a failed backend settings read must
+            // stay visible even while an external model is selected.
+            notice={desktopSettingsError ? <Banner tone="danger">Settings error: {desktopSettingsError}</Banner> : null}
+          />
 
           {/* ================================================================ */}
           {/* 2. Answers (Response Quality / RAG preset) */}

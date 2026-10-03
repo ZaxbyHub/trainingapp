@@ -169,7 +169,7 @@ export function getCompatMessage(info: BrowserInfo): CompatGuidance {
         'For best results, use Chrome 113+ or Edge 113+',
         'Firefox WebGPU can be enabled via about:config (webgpu.enabled)',
         'Expect potential issues with WASM threading (SharedArrayBuffer)',
-        'Consider the desktop app or an external model server (Settings → External model) as an alternative',
+        'Consider the desktop app or an external model server (Settings → Model & connection) as an alternative',
       ],
     };
   }
@@ -182,7 +182,7 @@ export function getCompatMessage(info: BrowserInfo): CompatGuidance {
       recommendations: [
         'For full WebGPU support, use Chrome 113+ or Edge 113+',
         'Safari WebGPU implementation may have limited adapter availability',
-        'Consider the desktop app or an external model server (Settings → External model) for reliable inference',
+        'Consider the desktop app or an external model server (Settings → Model & connection) for reliable inference',
         'Alternatively, use Chrome on iOS for better compatibility',
       ],
     };
