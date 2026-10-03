@@ -9,7 +9,7 @@ import {
   validateImageFile,
   type AttachedImage,
 } from '../lib/processing/image-input';
-import { Button, Icon } from '../ui';
+import { IconButton } from '../ui';
 import '../pages/chat.css';
 
 interface ChatInputProps {
@@ -189,14 +189,16 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             {images.map((img) => (
               <div key={img.id} className="chat-composer__preview">
                 <img src={img.dataUrl} alt={img.fileName} className="chat-composer__thumb" />
-                <button
-                  type="button"
-                  className="chat-composer__remove ui-focusable"
+                <IconButton
+                  icon="x"
+                  iconSize={14}
+                  variant="danger"
+                  size="sm"
+                  tooltipPlacement="top"
+                  className="chat-composer__remove"
                   onClick={() => removeImage(img.id)}
                   aria-label={`Remove ${img.fileName}`}
-                >
-                  <Icon name="x" size={14} />
-                </button>
+                />
               </div>
             ))}
           </div>
@@ -218,17 +220,17 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
         />
         <div className="chat-composer__row">
           {imageUploadEnabled && (
-            <Button
+            <IconButton
+              icon="paperclip"
               variant="ghost"
-              className="ui-icon-button chat-composer__attach"
+              tooltipPlacement="top"
+              className="chat-composer__attach"
               onClick={() => fileInputRef.current?.click()}
               disabled={attachDisabled}
               aria-disabled={attachDisabled || undefined}
               title="Attach image"
               aria-label="Attach image"
-            >
-              <Icon name="paperclip" />
-            </Button>
+            />
           )}
           <textarea
             ref={textareaRef}
@@ -247,35 +249,37 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
             aria-describedby={disabledReasonId}
           />
           {value && !isLoading && (
-            <Button
+            <IconButton
+              icon="x"
+              iconSize={18}
               variant="ghost"
-              className="ui-icon-button chat-composer__clear"
+              tooltipPlacement="top"
+              className="chat-composer__clear"
               onClick={handleClear}
               aria-label="Clear input"
-            >
-              <Icon name="x" size={18} />
-            </Button>
+            />
           )}
           {isLoading ? (
-            <Button
+            <IconButton
+              icon="square"
+              iconSize={16}
               variant="secondary"
-              className="ui-icon-button chat-composer__stop"
+              tooltipPlacement="top"
+              className="chat-composer__stop"
               onClick={handleCancel}
               aria-label="Stop generation"
-            >
-              <Icon name="square" size={16} />
-            </Button>
+            />
           ) : (
-            <Button
+            <IconButton
+              icon="arrow-up"
               variant="primary"
-              className="ui-icon-button chat-composer__send"
+              tooltipPlacement="top"
+              className="chat-composer__send"
               onClick={handleSubmit}
               disabled={sendDisabled}
               aria-disabled={sendDisabled || undefined}
               aria-label="Send message"
-            >
-              <Icon name="arrow-up" />
-            </Button>
+            />
           )}
         </div>
         {/* Status row inside the card (streaming / model-load progress). Hidden by

@@ -483,4 +483,30 @@ describe('ChatInput', () => {
       expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument();
     });
   });
+
+  // Lumen phase 5 review (F2): the composer's icon-only controls are IconButtons
+  // (accessible name + tooltip, design-language.md section 4). The composer sits at the
+  // bottom of the page, so the tooltips open upward (placement 'top').
+  describe('Icon button tooltips', () => {
+    it('Send, Clear and Stop show an upward tooltip on focus', () => {
+      const { rerender } = render(<ChatInput onSend={vi.fn()} isLoading={false} onCancel={vi.fn()} />);
+      fireEvent.change(screen.getByRole('textbox', { name: 'Message input' }), { target: { value: 'hi' } });
+
+      for (const name of ['Send message', 'Clear input']) {
+        const btn = screen.getByRole('button', { name });
+        fireEvent.focus(btn);
+        const tip = screen.getByRole('tooltip');
+        expect(tip).toHaveTextContent(name);
+        expect(tip).toHaveClass('ui-tooltip--top');
+        fireEvent.blur(btn);
+        expect(screen.queryByRole('tooltip')).toBeNull();
+      }
+
+      rerender(<ChatInput onSend={vi.fn()} isLoading={true} onCancel={vi.fn()} />);
+      const stop = screen.getByRole('button', { name: 'Stop generation' });
+      fireEvent.focus(stop);
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Stop generation');
+      expect(screen.getByRole('tooltip')).toHaveClass('ui-tooltip--top');
+    });
+  });
 });

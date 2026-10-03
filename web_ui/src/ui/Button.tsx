@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, MouseEvent } from 'react';
 import { Icon, type IconName } from './icons';
 import { cx } from './cx';
-import { Tooltip } from './Overlays';
+import { Tooltip, type TooltipProps } from './Overlays';
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 export type ButtonSize = 'md' | 'sm';
@@ -56,13 +56,25 @@ export interface IconButtonProps
   /** Required accessible name; also shown as a Tooltip on hover and keyboard focus. */
   'aria-label': string;
   icon: IconName;
+  /** Tooltip placement; defaults to 'bottom' (use 'top' for bottom-anchored controls). */
+  tooltipPlacement?: TooltipProps['placement'];
+  /** Icon size in px (defaults to the Icon default, 20). */
+  iconSize?: number;
 }
 
-export function IconButton({ icon, className, size = 'md', variant = 'ghost', ...rest }: IconButtonProps) {
+export function IconButton({
+  icon,
+  className,
+  size = 'md',
+  variant = 'ghost',
+  tooltipPlacement,
+  iconSize,
+  ...rest
+}: IconButtonProps) {
   return (
-    <Tooltip content={rest.title ?? rest['aria-label']}>
+    <Tooltip content={rest.title ?? rest['aria-label']} placement={tooltipPlacement}>
       <Button {...rest} size={size} variant={variant} className={cx('ui-icon-button', className)}>
-        <Icon name={icon} />
+        <Icon name={icon} size={iconSize} />
       </Button>
     </Tooltip>
   );
