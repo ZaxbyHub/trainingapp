@@ -6,7 +6,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { DocumentList } from './DocumentList';
+import { DocumentList, documentKind } from './DocumentList';
 import type { DocumentEntry } from '../types/document';
 
 describe('DocumentList', () => {
@@ -355,6 +355,61 @@ describe('DocumentList', () => {
       // Only the visible documents' filenames should be present in the DOM
       const renderedDocNames = screen.queryAllByText(/doc\d+\.pdf/);
       expect(renderedDocNames.length).toBeLessThan(50);
+    });
+  });
+
+  // Lumen phase 6 review L6/L7: per-type icons and labelled table cells.
+  describe('Type icons and cell labels (review L6/L7)', () => {
+    it('maps the file extension to a document kind (case-insensitive, unknown = other)', () => {
+      expect(documentKind('Handbook.PDF')).toBe('pdf');
+      expect(documentKind('memo.docx')).toBe('doc');
+      expect(documentKind('budget.xlsx')).toBe('sheet');
+      expect(documentKind('deck.pptx')).toBe('slides');
+      expect(documentKind('notes.md')).toBe('text');
+      expect(documentKind('readme.txt')).toBe('text');
+      expect(documentKind('archive.tar.gz')).toBe('other');
+      expect(documentKind('no-extension')).toBe('other');
+    });
+
+    it('renders a different type icon per kind in each row', () => {
+      const documents = [
+        createDocument({ id: 'a', fileName: 'a.pdf' }),
+        createDocument({ id: 'b', fileName: 'b.docx' }),
+        createDocument({ id: 'c', fileName: 'c.xlsx' }),
+        createDocument({ id: 'd', fileName: 'd.txt' }),
+        createDocument({ id: 'e', fileName: 'e.bin' }),
+      ];
+      const { container } = render(<DocumentList documents={documents} onDelete={vi.fn()} deletingId={null} />);
+      const kinds = Array.from(container.querySelectorAll('.app-doc__icon')).map((el) => el.getAttribute('data-kind'));
+      expect(kinds).toEqual(['pdf', 'doc', 'sheet', 'text', 'other']);
+      const shapes = new Set(Array.from(container.querySelectorAll('.app-doc__icon svg')).map((svg) => svg.innerHTML));
+      expect(shapes.size).toBe(5);
+    });
+
+    it('labels the size, chunks and status cells for screen readers, keeping role=list', () => {
+      render(
+        <DocumentList
+          documents={[createDocument({ id: 'a', fileName: 'a.pdf', status: 'ready', chunkCount: 42 })]}
+          onDelete={vi.fn()}
+          deletingId={null}
+        />
+      );
+      expect(screen.getByRole('list')).toBeInTheDocument();
+      const item = screen.getByRole('listitem');
+      expect(item).toHaveTextContent(/Size:\s*\S+/);
+      expect(item).toHaveTextContent('Chunks: 42 chunks');
+      expect(item).toHaveTextContent('Status: Ready');
+    });
+
+    it('adds no "Chunks:" label when there is no chunk count', () => {
+      render(
+        <DocumentList
+          documents={[createDocument({ id: 'a', fileName: 'a.pdf', status: 'error', chunkCount: 0 })]}
+          onDelete={vi.fn()}
+          deletingId={null}
+        />
+      );
+      expect(screen.queryByText(/chunks/i)).not.toBeInTheDocument();
     });
   });
 });
