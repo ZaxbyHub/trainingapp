@@ -45,6 +45,7 @@
 import type { LLMService } from '../../types/llm';
 import { isElectron } from '../desktop-session';
 import { EXTERNAL_API_KEY_KEY, EXTERNAL_API_KEY_ORIGIN_KEY, EXTERNAL_CONFIG_KEY } from '../storage/persisted-keys';
+import { notifyExternalConfigChanged } from './external-config-events';
 import { AnthropicCompatChatService, listAnthropicModels } from './anthropic-provider';
 import { validateEndpointUrl } from './endpoint-policy';
 import { migrateUnboundExternalKey } from './external-migration';
@@ -264,6 +265,7 @@ export function saveExternalConfig(patch: Partial<ExternalConfig>): void {
   if (isElectron()) {
     // Desktop custody: the renderer never holds the key (nor its binding).
     removeKeyEverywhere();
+    notifyExternalConfigChanged();
     return;
   }
   let rec: KeyRecord = prevRec;
@@ -276,6 +278,8 @@ export function saveExternalConfig(patch: Partial<ExternalConfig>): void {
     if (first !== '') rec = { key: rec.key, origin: first };
   }
   writeKeyRecord(rec, next.rememberKey);
+  // Mounted views that describe the generator (header + sidebar chips) re-read.
+  notifyExternalConfigChanged();
 }
 
 /** True when the browser app would answer through an external endpoint. */

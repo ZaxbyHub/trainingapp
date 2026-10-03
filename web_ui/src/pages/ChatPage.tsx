@@ -42,6 +42,7 @@ import { Button, Icon, PageHeader, StatusPill } from '../ui';
 import { ModelChip } from '../components/ModelChip';
 import { describeChatModel, routesToDesktopBackend } from '../lib/chat/model-chip';
 import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
+import { useExternalConfig } from '../lib/llm/use-external-config';
 import './chat.css';
 
 function generateId(): string {
@@ -154,7 +155,10 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // the endpoint (renderer CSP unchanged). Browser app: the renderer's own
   // generators (never inside Electron).
   const desktopExternal = desktopSession !== null && desktopModels?.engine === 'external';
-  const browserExternal = !isElectron() && mode === 'browser-local' && isExternalActive(loadExternalConfig());
+  // Live view of the stored config (re-renders on save / other-tab change). Send-time
+  // routing in runGeneration still reads loadExternalConfig() at the moment of sending.
+  const externalConfigLive = useExternalConfig();
+  const browserExternal = !isElectron() && mode === 'browser-local' && isExternalActive(externalConfigLive);
   // AC8: engine 'external' never gates on absent local GGUFs.
   const desktopModelBlocked = modelsAbsentForRealEngine(desktopModels);
   const messages = messagesProp;
@@ -1019,7 +1023,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     residentProfile: residentLoad?.profile ?? null,
     // Inside Electron the renderer's stored external config is not authoritative
     // (runGeneration ignores it there too).
-    externalConfig: isElectron() ? null : loadExternalConfig(),
+    externalConfig: isElectron() ? null : externalConfigLive,
     browserEngine,
     wllamaModelId: LLM_MODEL_DIR,
     webllmModelId: WEBLLM_DEFAULT_MODEL_ID,

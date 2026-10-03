@@ -8,14 +8,16 @@
  * query, userinfo or key), the local model id/label for the built-in engine, and
  * only the mode when no reliable model name exists (desktop external engine, no
  * backend status). The sidebar has no resident-load poll, so the desktop profile
- * comes from the /status/models snapshot App keeps fresh on models-changed events.
+ * comes from the /status/models snapshot App keeps fresh on models-changed events,
+ * and the browser external config is read live (useExternalConfig) so a save in
+ * Settings updates the chip without a remount.
  *
  * Expanded sidebar and drawer: the full chip. 64px rail: an icon-only button whose
  * tooltip (beside the rail, placement 'end') carries the chip text.
  */
 import { useInferenceMode } from '../lib/inference';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
-import { loadExternalConfig } from '../lib/llm/external-provider';
+import { useExternalConfig } from '../lib/llm/use-external-config';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { chatModelText, describeChatModel } from '../lib/chat/model-chip';
@@ -32,13 +34,17 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
   const { collapsed, drawer, closeDrawer } = useAppShell();
   const { mode, browserEngine } = useInferenceMode();
   const { session, models } = useDesktopSession();
+  // Live: the sidebar stays mounted while Settings saves a new endpoint.
+  const externalConfig = useExternalConfig();
   const description = describeChatModel({
     mode,
     hasDesktopSession: session !== null,
     desktopModels: models,
-    residentProfile: null,
+    // The resident profile from the same /status/models snapshot, so the footer and
+    // the Chat header (which polls it) name the same profile during a desktop load.
+    residentProfile: models?.resident?.profile ?? null,
     // Inside Electron the renderer's stored external config is not authoritative.
-    externalConfig: isElectron() ? null : loadExternalConfig(),
+    externalConfig: isElectron() ? null : externalConfig,
     browserEngine,
     wllamaModelId: LLM_MODEL_DIR,
     webllmModelId: WEBLLM_DEFAULT_MODEL_ID,
