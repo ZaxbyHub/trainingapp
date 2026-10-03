@@ -7,7 +7,8 @@
  * per-surface gate is blind to most of the page (PR #144 review, PRR-105). This spec
  * grows the viewport until nothing scrolls, so EVERY Settings node is on screen, and
  * requires zero serious/critical violations with no baseline, in the default state and
- * with the External model section configured and switched on.
+ * with Model & connection on a server source, configured and switched on (the section
+ * nav included: side list at 1440, "Jump to section" select at 500).
  *
  * Runs in CI with the a11y subset (`lumen-axe` matches this file; see README.md).
  */
@@ -57,6 +58,7 @@ async function openSettings(page: Page, theme: string): Promise<void> {
 }
 
 async function configureExternal(page: Page): Promise<void> {
+  await page.getByRole('radio', { name: 'Local or network server' }).check({ force: true });
   await page.getByLabel('Base URL', { exact: true }).fill('http://localhost:1234');
   await page.getByLabel('Model', { exact: true }).focus();
   await page.getByLabel('Model', { exact: true }).fill('local-model');

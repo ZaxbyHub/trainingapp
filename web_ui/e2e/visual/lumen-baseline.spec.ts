@@ -22,10 +22,11 @@
  *                         app (window.desktopApi + packs backend); the browser app
  *                         shows a single "available in the desktop app" notice and
  *                         has no reachable populated state without faking the bridge.
- *   settings              Settings, every section (inference, engine, quality, appearance,
+ *   settings              Settings, every section (Model & connection, Answers, Appearance,
  *                         storage, hardware, about)
- *   settings-external     Settings with the External model section configured and switched on
- *                         (Base URL + Model filled, "Use external model" on). Replaces the old
+ *   settings-external     Settings with Model & connection on a server source, configured and
+ *                         switched on ("Local or network server", Base URL + Model filled, "Use
+ *                         external model" on). Replaces the old
  *                         settings-provider state: #142 retired the "Provider server" inference
  *                         mode (and its radio), moving those connection fields into this section.
  *                         No connection test runs (cross-origin traffic is aborted anyway).
@@ -77,6 +78,7 @@ const STATES: StateDef[] = [
     id: 'settings-external',
     nav: 'Settings',
     act: async (page) => {
+      await page.getByRole('radio', { name: 'Local or network server' }).check({ force: true });
       await page.getByLabel('Base URL', { exact: true }).fill('http://localhost:1234');
       // Moving focus blurs the field, which saves it (the switch requires a saved URL + model).
       await page.getByLabel('Model', { exact: true }).focus();
@@ -257,7 +259,8 @@ async function fitViewportToContent(page: Page, width: number): Promise<void> {
  * are a KeyValueList (dt label / dd value).
  */
 function hardwareValueMasks(page: Page): Locator[] {
-  const section = page.locator('section[aria-labelledby="hardware-heading"]');
+  // Lumen phase 4: Hardware capability is a sub-block (role=group) of Model & connection.
+  const section = page.locator('[aria-labelledby="hardware-heading"]');
   return [
     section.getByRole('progressbar'),
     section.locator('span[role="status"]'),
