@@ -64,4 +64,5 @@
 
 /* Course-card progress: bar + "k of n slides" (only when the slide count is known). */
 .app-course__progress { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); }
+.app-course__bar { display: block; }
 .app-course__progress-text { font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
