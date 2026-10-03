@@ -79,7 +79,7 @@ export function resolveEndpoint(
 ): { base: string; ctx: FailureContext } {
   const verdict = validateEndpointUrl(rawBase);
   if (!verdict.ok) {
-    throw new ProviderError('other', `${verdict.message}. Fix the base URL in Settings → External model.`);
+    throw new ProviderError('other', `${verdict.message}. Fix the base URL in Settings → Model & connection.`);
   }
   const base = normalize(rawBase);
   let origin = base;
@@ -255,7 +255,7 @@ export class OpenAICompatChatService implements LLMService {
     // surface as a readiness problem instead of a mid-send network error.
     this.endpoint();
     if (!this.config.model.trim()) {
-      return Promise.reject(new ProviderError('model', 'No model is selected. Choose one in Settings → External model.'));
+      return Promise.reject(new ProviderError('model', 'No model is selected. Choose one in Settings → Model & connection.'));
     }
     onProgress?.({ progress: 1, timeElapsed: 0, text: 'External model configured' });
     this.ready = true;

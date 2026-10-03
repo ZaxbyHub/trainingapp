@@ -49,7 +49,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
   (Markdown/JSON), and Fast/Balanced/Quality RAG presets.
 - **Self-contained archive** — `npm run build:offline` produces a validated `web_ui/dist/` the
   Electron desktop app (or any root static host) serves with the COOP/COEP headers wllama needs.
-- **Optional external model (both apps, off by default)** — Settings → External model connects to
+- **Optional external model (both apps, off by default)** — Settings → Model & connection connects to
   any OpenAI- or Anthropic-compatible server on this computer, on your network, or in the cloud
   (with an API key). Retrieval stays local; see the "External model" section of
   [CONFIGURATION.md](CONFIGURATION.md) and
@@ -220,7 +220,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
   (see PACKAGING.md)
 - **Model Download Manager**: Progress tracking with speed/ETA calculation, cancellation support, and storage quota error handling
 - **ModelDownloadProgress UI**: Accessible progress bar with ARIA attributes, download speed, ETA countdown, and cancel button
-- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to the wllama engine or an external model server (Settings → External model) when requirements aren't met
+- **Model Readiness Gate**: Pre-flight checks for WebGPU availability, memory sufficiency (2GB minimum), and OPFS cache status; guides users to the wllama engine or an external model server (Settings → Model & connection) when requirements aren't met
 - **RAG Orchestrator**: Full retrieval pipeline connecting embedding→vector search→keyword search→RRF fusion→reranking→LLM generation; emits typed `RAGEvent` stream for UI progress
 - **WebGPU Watchdog**: Context loss detection via `GPUDevice.lost` promise/event monitoring; `createRecoveryHandler` automatically re-initializes the service after loss
 

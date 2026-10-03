@@ -132,7 +132,7 @@ export class AnthropicCompatChatService implements LLMService {
   initialize(_modelId?: string, onProgress?: (progress: LLMProgress) => void): Promise<void> {
     this.endpoint();
     if (!this.model.trim()) {
-      return Promise.reject(new ProviderError('model', 'No model is selected. Choose one in Settings → External model.'));
+      return Promise.reject(new ProviderError('model', 'No model is selected. Choose one in Settings → Model & connection.'));
     }
     onProgress?.({ progress: 1, timeElapsed: 0, text: 'External model configured' });
     this.ready = true;

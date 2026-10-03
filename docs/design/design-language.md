@@ -92,7 +92,7 @@ Inter (already bundled via `@fontsource/inter` 400–700, airgap-safe). Monospac
 | Width | Shell | Settings | Chat | Documents / Training |
 |---|---|---|---|---|
 | > 1024 | sidebar 260px, collapsible to 64 | section nav + form | reading column | table / grid (3–4 cols) |
-| 769–1024 | sidebar collapsed to 64 by default (matches `useSidebarState.ts:14`) | section nav collapses into a top `Tabs` row | reading column fills | grid 2–3 cols |
+| 769–1024 | sidebar collapsed to 64 by default (matches `useSidebarState.ts:14`) | section nav collapses into a top row of in-page links (`aria-current`, not `Tabs`: it navigates within the page, it does not switch panels) | reading column fills | grid 2–3 cols |
 | 501–768 | sidebar becomes an overlay drawer | single column, section select | full width, 16px gutter | table → list rows; grid 2 cols |
 | ≤ 500 ("EHR side-panel / split-screen", `theme.css:68-74`) | drawer; header actions wrap | single column | composer controls wrap; citations collapse into a count chip | list rows; grid 1 col |
 Must reflow without horizontal scroll at 320 CSS px (200%/400% zoom).

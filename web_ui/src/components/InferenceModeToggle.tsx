@@ -61,8 +61,8 @@ export function InferenceModeToggle() {
 
   const getTooltipText = (): string => {
     if (mode === 'browser-local') {
-      if (isModelReady) return 'Browser-local mode (model ready)';
-      return 'Browser-local mode (model loading...)';
+      if (isModelReady) return 'In this window (model ready)';
+      return 'In this window (model loading...)';
     }
     if (isChecking) return 'Desktop backend (checking connectivity...)';
     if (isServerConnected) return 'Desktop backend (connected)';

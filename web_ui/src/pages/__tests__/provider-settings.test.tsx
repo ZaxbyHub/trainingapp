@@ -147,7 +147,7 @@ describe('RAG preset mirror (Electron api mode)', () => {
       </DesktopSessionProvider>
     );
     const utils = render(ui());
-    expect(await screen.findByText('Response Quality')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Response quality' })).toBeInTheDocument();
 
     const clickPreset = async (preset: string, wantCalls: number) => {
       const radio = utils.container.querySelector(`input[name="rag-preset"][value="${preset}"]`);

@@ -1,9 +1,12 @@
 /**
- * Settings → External model (universal-provider-settings-overhaul, AC10/
- * AC11/AC12/AC13). ONE region, rendered identically in the browser app and
- * the desktop app, with the same seven controls (located by role and
- * accessible name): Protocol, Base URL, API key (password), Model, Test
- * connection, Use external model, Direct chat (default off).
+ * Settings → Model & connection (universal-provider-settings-overhaul, AC10/
+ * AC11/AC12/AC13; Lumen phase 4, design-language.md section 5). ONE region,
+ * rendered identically in the browser app and the desktop app: the generator
+ * source (Built-in model / Local or network server / Cloud provider) and, for a
+ * server source, the same controls (located by role and accessible name):
+ * Protocol, Base URL, API key (write-only password field), Model (combobox),
+ * Test connection, Use external model (the egress opt-in, default off), and
+ * Use my documents (grounded, default on; off = Direct chat).
  *
  *   Browser app: the configuration lives in this browser
  *     (lib/llm/external-provider.ts) and "Test connection" calls the endpoint
@@ -26,14 +29,19 @@
  *
  * Egress stays off until "Use external model" is switched on. Both apps check
  * the base URL with the shared endpoint policy first; airgap builds refuse
- * public hosts with a role="alert" message that names the restriction.
+ * public hosts with a message that names the restriction. Problems appear in an
+ * always-mounted aria-live="assertive" region (no role="alert": that plus aria-live
+ * would announce twice).
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Banner, Button, Checkbox, Combobox, Field, PasswordInput, Select, Switch, TextInput } from '../ui';
+import { SettingsRadioCards, SettingsSection, SettingsSubsection } from './SettingsControls';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
+import { ApiError } from '../lib/api/types';
 import { IS_AIRGAP } from '../lib/llm/airgap';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
-import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE } from '../lib/llm/provider-error';
+import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE, type ProviderFailureKind } from '../lib/llm/provider-error';
 import {
   keyForBaseUrl,
   keyOriginOf,
@@ -44,6 +52,10 @@ import {
   type ExternalKeyState,
   type ExternalProtocol,
 } from '../lib/llm/external-provider';
+
+// Bounded re-read of /status/models while the backend's engine is unconfirmed.
+const MODELS_RETRY_MAX = 3;
+const MODELS_RETRY_BASE_MS = 1500;
 
 interface Draft {
   enabled: boolean;
@@ -62,60 +74,55 @@ interface DesktopKeyState {
   airgap: boolean;
 }
 
-const sectionStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-md)',
-  padding: 'var(--spacing-lg)',
-  border: '1px solid var(--color-border)',
-  borderRadius: 'var(--radius-md, 8px)',
-  backgroundColor: 'var(--color-surface)',
+/**
+ * Generator source (design-language.md section 5, "Model & connection"). A UI choice
+ * over the unchanged stored settings: Built-in model == the external endpoint is OFF;
+ * Local or network server / Cloud provider show the connection form, and egress still
+ * starts only when "Use external model" is switched on. The radio always matches the
+ * generator that actually answers, so on load (and on the first desktop snapshot) the
+ * source is `enabled ? sourceOfUrl(saved URL) : 'builtin'`: an enabled endpoint opens on
+ * its source (a public host is a cloud provider, in an air-gapped build too); a disabled one
+ * opens on Built-in model, with one line saying which saved server is not in use. The saved URL, model and
+ * grounded setting are kept (Built-in persists only {enabled:false}), so choosing that
+ * source again restores them. Within a session, picking a server source only shows the
+ * form: nothing is enabled, saved or contacted. In an air-gapped build the Cloud option is
+ * never selectable, but a public URL keeps its own source: a disabled one shows Built-in
+ * model (with a note), and the unexpected case of an ENABLED one shows Cloud provider checked
+ * and disabled, with the connection form and the switch still visible and a line saying the
+ * endpoint policy refuses it and the built-in model answers, so the switch can turn it off.
+ */
+type GeneratorSource = 'builtin' | 'local' | 'cloud';
+
+function sourceOfUrl(baseUrl: string): Exclude<GeneratorSource, 'builtin'> {
+  const verdict = validateEndpointUrl(baseUrl, { airgap: false });
+  return verdict.ok && verdict.kind === 'public' ? 'cloud' : 'local';
+}
+
+/** The generator source a saved config belongs to (see GeneratorSource). */
+function derivedSource(enabled: boolean, baseUrl: string): GeneratorSource {
+  return !enabled || baseUrl.trim() === '' ? 'builtin' : sourceOfUrl(baseUrl);
+}
+
+/**
+ * What a problem is about: a setting the user entered, a connection-test cause, or one of
+ * the causes that never reach the endpoint: the desktop backend is not ready
+ * ('unavailable'), answered the test request with a refusal ('refused', 4xx) or failed
+ * while running it ('failed', 5xx).
+ */
+type ProblemCause = 'setting' | 'unavailable' | 'refused' | 'failed' | ProviderFailureKind;
+
+const PROBLEM_TITLE: Record<ProblemCause, string> = {
+  setting: 'Check this setting',
+  unavailable: 'The desktop backend is not available',
+  refused: 'The desktop backend refused the test',
+  failed: 'The desktop backend failed to run the test',
+  network: 'Server not reachable',
+  auth: 'The server refused the API key',
+  model: 'Model not available',
+  timeout: 'The server did not answer in time',
+  server: 'The server reported an error',
+  other: 'Connection test failed',
 };
-const titleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--font-size-h3, 1.125rem)',
-  fontWeight: 600,
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text)',
-};
-const descStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--font-size-caption)',
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-primary)',
-};
-const labelStyle: React.CSSProperties = {
-  display: 'block',
-  fontSize: 'var(--font-size-body)',
-  fontWeight: 500,
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text)',
-  marginBottom: 'var(--spacing-xs)',
-};
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  maxWidth: '32rem',
-  padding: 'var(--spacing-sm)',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  border: '1px solid var(--color-border)',
-  borderRadius: '4px',
-  backgroundColor: 'var(--color-background)',
-  color: 'var(--color-text)',
-};
-const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', flexWrap: 'wrap' };
-const buttonStyle: React.CSSProperties = {
-  padding: 'var(--spacing-sm) var(--spacing-md)',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  border: '1px solid var(--color-border)',
-  borderRadius: '4px',
-  backgroundColor: 'transparent',
-  color: 'var(--color-text)',
-  cursor: 'pointer',
-};
-const errorStyle: React.CSSProperties = { ...descStyle, color: 'var(--color-danger)' };
-const okStyle: React.CSSProperties = { ...descStyle, color: 'var(--color-success, var(--color-text))' };
 
 /** Same copy in both apps when the saved key belongs to another origin. */
 function keyElsewhereText(boundOrigin: string): string {
@@ -126,8 +133,44 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function ExternalModelSection({ id }: { id?: string }): React.ReactElement {
-  const { session } = useDesktopSession();
+/** Thrown inside handleTest when the desktop session is not ready (never reached the endpoint). */
+class BackendUnavailableError extends Error {}
+
+/**
+ * The cause of an error thrown while testing the connection. Only a transport failure
+ * (the request never got an answer) is 'network'; a backend that answered with a 4xx
+ * refused the request ('refused'); one that answered with a 5xx (including the 501 of an
+ * engine without external-model support) failed to run it ('failed').
+ */
+function causeOfTestError(err: unknown, desktop: boolean): ProblemCause {
+  if (err instanceof BackendUnavailableError) return 'unavailable';
+  if (err instanceof ApiError) {
+    if (err.status >= 500) return 'failed';
+    return err.status > 0 ? 'refused' : 'network';
+  }
+  // fetch() rejects with TypeError on transport failure. On desktop the only request made is to
+  // the loopback backend (the endpoint's own failures come back as result.ok === false), so a
+  // transport failure there means the backend is not available.
+  if (err instanceof TypeError) return desktop ? 'unavailable' : 'network';
+  return 'other';
+}
+
+export interface ExternalModelSectionProps {
+  id?: string;
+  /**
+   * Built-in model settings, shown while "Built-in model" is the generator source
+   * (SettingsPage passes the engine / desktop-backend controls).
+   */
+  builtIn?: ReactNode;
+  /**
+   * Shown at the top of the section for EVERY generator source (e.g. the desktop
+   * backend's settings error, which must not hide behind the Built-in model slot).
+   */
+  notice?: ReactNode;
+}
+
+export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSectionProps): React.ReactElement {
+  const { session, models: backendModels } = useDesktopSession();
   const desktop = isElectron();
   const [draft, setDraft] = useState<Draft>(() => {
     if (desktop) {
@@ -137,6 +180,15 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
   });
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // The base URL as last SAVED (browser save / desktop snapshot). An enabled endpoint's
+  // generator source is classified from it, so typing in the field never flips the
+  // radio while egress is on; only a saved URL (blur, enable, backend answer) does.
+  const [savedBaseUrl, setSavedBaseUrl] = useState(draft.baseUrl);
+  const [source, setSource] = useState<GeneratorSource>(() => derivedSource(draft.enabled, draft.baseUrl));
+  // N1: the source the user chose themselves, if any (the first desktop snapshot must not undo that).
+  const sourcePickedRef = useRef<GeneratorSource | null>(null);
+  // The latest handleEnabledChange (applyDesktopSettings is created once, before it exists).
+  const enabledChangeRef = useRef<(enabled: boolean) => Promise<void>>(async () => undefined);
   // Browser key-origin binding: the origin the key in the field belongs to
   // (loaded key: its bound origin, which equals the shown URL's; typed key:
   // the URL shown while typing), and whether it was typed since the last save.
@@ -155,7 +207,12 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     airgap: false,
   });
   const [models, setModels] = useState<string[]>([]);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problemState, setProblemState] = useState<{ message: string; cause: ProblemCause } | null>(null);
+  const problem = problemState?.message ?? null;
+  const setProblem = useCallback((message: string | null, cause: ProblemCause = 'setting') => {
+    setProblemState(message === null ? null : { message, cause });
+  }, []);
+  const problemTitle = (): string => PROBLEM_TITLE[problemState?.cause ?? 'setting'];
   const [status, setStatus] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const mountedRef = useRef(true);
@@ -166,14 +223,31 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     };
   }, []);
 
-  const airgap = IS_AIRGAP || keyState.airgap;
+  // Desktop: the backend is the source of truth for whether it is air-gapped, so a web bundle
+  // built air-gapped but run against a non-air-gapped backend never claims the built-in model
+  // answers when the backend would use the public URL. Browser: the build flag, which
+  // isExternalActive applies.
+  const airgap = desktop ? keyState.airgap : IS_AIRGAP;
+  // Enforcement (what refuses a URL) is never weaker than either signal: the bundle flag or the
+  // backend's state, so a failed settings read on desktop still applies the bundle flag.
+  const enforceAirgap = IS_AIRGAP || keyState.airgap;
 
   // Desktop: whether any backend snapshot (GET or PUT answer) has been applied.
   const snapshotAppliedRef = useRef(false);
   const applyDesktopSettings = useCallback((s: Record<string, unknown>) => {
+    const firstSnapshot = !snapshotAppliedRef.current;
     snapshotAppliedRef.current = true;
     const current = draftRef.current;
     const nextBaseUrl = typeof s['external.baseUrl'] === 'string' ? (s['external.baseUrl'] as string) : current.baseUrl;
+    // The first backend snapshot is the saved config: the source that actually answers
+    // (an enabled endpoint's own source, else Built-in model), unless the user already chose.
+    if (firstSnapshot && !sourcePickedRef.current) {
+      setSource(derivedSource(s['external.enabled'] === true, nextBaseUrl));
+    }
+    // The user picked Built-in model before this first snapshot, and the backend says egress is
+    // on: honour the pick by switching it off (otherwise the radio would show Built-in model
+    // while the saved endpoint still answers).
+    const honourBuiltinPick = firstSnapshot && sourcePickedRef.current === 'builtin' && s['external.enabled'] === true;
     // A typed key belongs to the URL that was SHOWN when it was typed. When the
     // backend's answer replaces the shown URL (e.g. after a save of another
     // field, or the first settings load), the typed key is dropped (fail
@@ -185,6 +259,7 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       setKeyDropped(true);
     }
     draftRef.current = { ...current, baseUrl: nextBaseUrl, apiKey: dropKey ? '' : current.apiKey };
+    setSavedBaseUrl(nextBaseUrl);
     setDraft((prev) => ({
       ...prev,
       enabled: s['external.enabled'] === true,
@@ -202,6 +277,10 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       apiKeyBoundOrigin: typeof s['external.apiKeyBoundOrigin'] === 'string' ? (s['external.apiKeyBoundOrigin'] as string) : '',
       airgap: s['external.airgap'] === true,
     });
+    if (honourBuiltinPick) {
+      draftRef.current = { ...draftRef.current, enabled: true }; // so a refused PUT restores the backend's state
+      void enabledChangeRef.current(false);
+    }
   }, []);
 
   // Desktop write sequence (review round 3 R3-N1): incremented when a PUT is
@@ -233,10 +312,10 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
   /** Policy check with the airgap rule this app enforces. */
   const checkUrl = useCallback(
     (url: string): string | null => {
-      const verdict = validateEndpointUrl(url, { airgap });
+      const verdict = validateEndpointUrl(url, { airgap: enforceAirgap });
       return verdict.ok ? null : verdict.message;
     },
-    [airgap],
+    [enforceAirgap],
   );
 
   /** Persist a patch (browser storage or desktop PUT). Resolves false on refusal. */
@@ -244,6 +323,7 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     async (patch: Partial<Draft>): Promise<boolean> => {
       if (!desktop) {
         saveExternalConfig(patch);
+        if (patch.baseUrl !== undefined) setSavedBaseUrl(patch.baseUrl);
         setKeyVersion((v) => v + 1);
         return true;
       }
@@ -363,6 +443,12 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     await persist({ model: draftRef.current.model });
   };
 
+  /** A model picked from the endpoint's list (Enter / click) is saved at once. */
+  const handleModelPick = async (model: string) => {
+    setProblem(null);
+    await persist({ model });
+  };
+
   const handleKeyBlur = async () => {
     const key = draftRef.current.apiKey;
     // Inline validation (both apps): a key that cannot travel in an HTTP
@@ -384,12 +470,14 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     if (!keyDirtyRef.current) return;
     const url = draftRef.current.baseUrl;
     if (key === '') {
+      // Write-only field (review L1): an emptied field is "no new key", never an
+      // accidental delete. The saved key bound to this URL (if any) stays in use;
+      // "Clear saved key" is the explicit way to forget it.
       keyDirtyRef.current = false;
       setKeyHeld(false);
-      // The user emptied the field: forget the key that was shown here (a key
-      // bound to another origin was never shown, so it is kept).
-      if (loadExternalKeyState(url).status === 'bound') await persist({ apiKey: '' });
-      fieldKeyOriginRef.current = '';
+      const bound = keyForBaseUrl(url);
+      fieldKeyOriginRef.current = bound !== '' ? keyOriginOf(url) : '';
+      if (mountedRef.current) setDraft((prev) => ({ ...prev, apiKey: bound }));
       return;
     }
     await saveTypedKey();
@@ -422,8 +510,13 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     const patch: Partial<Draft> = enabled
       ? { enabled, protocol: current.protocol, baseUrl: current.baseUrl, model: current.model }
       : { enabled };
-    if (!(await persist(patch)) && mountedRef.current) setDraft((prev) => ({ ...prev, enabled: previous }));
+    if (!(await persist(patch))) {
+      if (mountedRef.current) setDraft((prev) => ({ ...prev, enabled: previous }));
+      return;
+    }
   };
+
+  enabledChangeRef.current = handleEnabledChange;
 
   const handleTest = async () => {
     const current = draftRef.current;
@@ -442,9 +535,9 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     setTesting(true);
     const requested = current.baseUrl;
     try {
-      let result: { ok: boolean; message: string; models?: string[] };
+      let result: { ok: boolean; kind?: ProviderFailureKind; message: string; models?: string[] };
       if (desktop) {
-        if (session === null) throw new Error('The desktop backend is not available yet.');
+        if (session === null) throw new BackendUnavailableError('The desktop backend is not available yet.');
         result = await session.apiClient.testExternalEndpoint({
           protocol: current.protocol,
           baseUrl: current.baseUrl.trim(),
@@ -473,12 +566,25 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       if (!mountedRef.current || draftRef.current.baseUrl !== requested) return;
       if (result.models && result.models.length > 0) setModels(result.models);
       if (result.ok) setStatus(result.message);
-      else setProblem(result.message);
+      else setProblem(result.message, result.kind ?? 'other');
     } catch (err) {
-      if (mountedRef.current) setProblem(`Connection test failed: ${errorText(err)}`);
+      if (mountedRef.current) setProblem(`Connection test failed: ${errorText(err)}`, causeOfTestError(err, desktop));
     } finally {
       if (mountedRef.current) setTesting(false);
     }
+  };
+
+  // An enabled endpoint (e.g. the desktop backend's snapshot arriving) shows the source
+  // its saved base URL belongs to.
+  useEffect(() => {
+    if (draft.enabled) setSource(derivedSource(true, savedBaseUrl));
+  }, [draft.enabled, savedBaseUrl]);
+
+  const handleSourceChange = async (next: GeneratorSource) => {
+    sourcePickedRef.current = next;
+    setSource(next);
+    // Built-in model: egress off (the safe direction; persisted like the switch).
+    if (next === 'builtin' && draftRef.current.enabled) await handleEnabledChange(false);
   };
 
   const draftOrigin = keyOriginOf(draft.baseUrl);
@@ -495,221 +601,372 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     draft.baseUrl.trim().toLowerCase().startsWith('http://') &&
     validateEndpointUrl(draft.baseUrl, { airgap: false }).kind === 'private';
   const headingId = 'external-model-heading';
+  // Enforcement, not the copy flag: whenever a public URL would be refused, Cloud is not offered.
+  const cloudBlocked = enforceAirgap;
+  // A saved server that is not what answers (egress off): named under Built-in model,
+  // origin only (never a key or path). In an air-gapped build a public one cannot be used.
+  const savedSource = savedBaseUrl.trim() !== '' ? sourceOfUrl(savedBaseUrl) : null;
+  const savedOrigin = keyOriginOf(savedBaseUrl);
+  const savedNote =
+    source === 'builtin' && savedSource !== null && !draft.enabled
+      ? savedSource === 'cloud' && enforceAirgap
+        ? `A Cloud provider is saved${savedOrigin !== '' ? ` (${savedOrigin})` : ''} but cannot be used in this air-gapped build. Choose Local or network server to change it.`
+        : `A ${savedSource === 'cloud' ? 'Cloud provider' : 'Local or network server'} is saved but not in use${savedOrigin !== '' ? ` (${savedOrigin})` : ''}. Choose it to edit or switch it on.`
+      : null;
+  const isServer = source !== 'builtin';
+  // Air-gapped build with an ENABLED public endpoint: the policy refuses it, so the built-in
+  // model answers; the form and the switch stay so the user can switch it off.
+  const refusedPublic = airgap && draft.enabled && savedSource === 'cloud';
+  // Desktop: chat goes to the backend whenever it reports engine 'external' (whatever the run
+  // location), so what answers follows that report, not the switch. The report arrives after the
+  // models reload that follows a save; until then (or when the backend is not active, e.g. no
+  // address or model yet) the copy stays neutral. Browser: the switch decides.
+  const backendExternal = desktop && backendModels?.engine === 'external';
+  const externalAnswers = draft.enabled && !refusedPublic && (!desktop || backendExternal);
+  const backendUnconfirmed = desktop && !refusedPublic && draft.enabled !== backendExternal;
+  // Bounded retry: the models reload is fire-and-forget (App swallows a failed fetch), so while
+  // the backend's engine disagrees with the switch, re-signal the existing loopback
+  // /status/models re-read a few times with backoff. Stops when confirmed, on a switch change,
+  // when the budget is spent, or on unmount.
+  const modelsRetryRef = useRef(0);
+  const [modelsRetryTick, setModelsRetryTick] = useState(0);
+  useEffect(() => {
+    modelsRetryRef.current = 0;
+  }, [draft.enabled]);
+  useEffect(() => {
+    if (!backendUnconfirmed) {
+      modelsRetryRef.current = 0;
+      return undefined;
+    }
+    if (modelsRetryRef.current >= MODELS_RETRY_MAX) return undefined;
+    const timer = setTimeout(() => {
+      modelsRetryRef.current += 1;
+      notifyDesktopModelsChanged();
+      setModelsRetryTick((n) => n + 1);
+    }, MODELS_RETRY_BASE_MS * 2 ** modelsRetryRef.current);
+    return () => clearTimeout(timer);
+  }, [backendUnconfirmed, draft.enabled, modelsRetryTick]);
+  // The same endpoint after it was switched off: it cannot be switched back on here.
+  // Also when Cloud was picked before the backend snapshot reported the air-gap, so the
+  // radio never shows Cloud checked under "Not in use yet".
+  const blockedPublic = airgap && !draft.enabled && source === 'cloud';
+  // Browser: the saved key bound to the URL shown is in memory (draft) but is never
+  // written into the field's DOM value (review L1): the field is write-only, as on
+  // the desktop, and a line says a key is saved.
+  const browserKeySaved = !desktop && !keyDirtyRef.current && draft.apiKey !== '';
+  const keySavedHere = desktop ? keyState.apiKeySet : browserKeySaved;
+  // While egress is on, the server type follows the live endpoint (review L2).
+  const serverLocked = draft.enabled;
+  const keyHelp = desktop
+    ? keyState.apiKeySet
+      ? keyState.apiKeyPersisted
+        ? "A key is saved using your operating system's secure storage. Type a new key to replace it."
+        : 'A key is set for this session only and is not saved. Type a new key to replace it.'
+      : keyState.apiKeyPersisted
+        ? "Optional. Saved using your operating system's secure storage when it is available (otherwise kept for this session only), and sent only to this endpoint."
+        : 'Optional. A key you enter will be kept only for this session and not saved, and is sent only to this endpoint.'
+    : draft.rememberKey
+      ? 'Optional. With Remember on, the key is saved in this browser unencrypted: any script running on this site can read it. It is sent only to the server it was entered for.'
+      : 'Optional. Kept for this browser session only, unencrypted: any script running on this site can read it. It is sent only to the server it was entered for.';
 
   return (
-    <section id={id} style={sectionStyle} aria-labelledby={headingId} data-testid="external-model-section">
-      <h2 id={headingId} style={titleStyle} tabIndex={-1}>
-        External model
-      </h2>
-      <p style={descStyle}>
-        Generate answers with a model server on this computer, on your network, or a cloud provider
-        (OpenAI- or Anthropic-compatible). Your documents stay here: retrieval runs locally and only the
-        question, the retrieved passages and recent conversation are sent to the endpoint. Off by default.
-      </p>
-      {airgap && (
-        <p style={descStyle} data-testid="external-airgap-notice">
+    <SettingsSection
+      id={id}
+      headingId={`${id ?? 'model-connection'}-heading`}
+      focusableHeading
+      title="Model & connection"
+      description="Choose what generates answers. Your documents stay here: retrieval runs locally, and with an external model only the question, the retrieved passages and recent conversation are sent to the endpoint. External models are off by default."
+      data-testid="external-model-section"
+    >
+      {notice}
+      <SettingsRadioCards<GeneratorSource>
+        legend="Generator source"
+        name="generator-source"
+        isChecked={(value) => source === value}
+        onChange={(value) => void handleSourceChange(value)}
+        options={[
+          {
+            value: 'builtin',
+            label: 'Built-in model',
+            description: (
+              <>
+                {desktop
+                  ? 'Answers are generated by this app on this computer. No external model server is contacted.'
+                  : 'Answers are generated in this browser. No model server is contacted.'}
+                {savedNote !== null && (
+                  <span className="settings-text settings-text--block" data-testid="external-saved-not-in-use">
+                    {savedNote}
+                  </span>
+                )}
+              </>
+            ),
+          },
+          {
+            value: 'local',
+            label: 'Local or network server',
+            description:
+              'A model server on this computer or your network (for example LM Studio, Ollama or a llama.cpp server), OpenAI- or Anthropic-compatible.' +
+              (serverLocked && source !== 'local' ? ' Switch off Use external model to change the server type.' : ''),
+            disabled: serverLocked && source !== 'local',
+          },
+          {
+            value: 'cloud',
+            label: 'Cloud provider',
+            description: cloudBlocked
+              ? 'Not available in this air-gapped build: only loopback and private-network endpoints can be used.'
+              : 'A hosted provider such as OpenAI or Anthropic. Needs https and usually an API key.' +
+                (serverLocked && source !== 'cloud' ? ' Switch off Use external model to change the server type.' : ''),
+            disabled: cloudBlocked || (serverLocked && source !== 'cloud'),
+          },
+        ]}
+      />
+      {enforceAirgap && (
+        <p className="settings-text" data-testid="external-airgap-notice">
           Air-gapped build: only loopback and private-network endpoints can be used.
         </p>
       )}
 
-      <div style={rowStyle}>
-        <input
-          id="external-enabled"
-          type="checkbox"
-          role="switch"
-          checked={draft.enabled}
-          aria-checked={draft.enabled}
-          onChange={(e) => void handleEnabledChange(e.target.checked)}
-        />
-        <label htmlFor="external-enabled" style={{ ...labelStyle, marginBottom: 0 }}>
-          Use external model
-        </label>
-      </div>
-
-      <div>
-        <label htmlFor="external-protocol" style={labelStyle}>
-          Protocol
-        </label>
-        <select
-          id="external-protocol"
-          value={draft.protocol}
-          onChange={(e) => {
-            const protocol = e.target.value === 'anthropic' ? 'anthropic' : 'openai';
-            update({ protocol });
-            setModels([]);
-            void persist({ protocol });
-          }}
-          style={inputStyle}
-        >
-          <option value="openai">OpenAI-compatible</option>
-          <option value="anthropic">Anthropic-compatible</option>
-        </select>
-      </div>
-
-      <div>
-        <label htmlFor="external-base-url" style={labelStyle}>
-          Base URL
-        </label>
-        <p id="external-base-url-desc" style={descStyle}>
-          For example http://localhost:1234 (LM Studio), http://192.168.1.20:11434 (Ollama on your
-          network), https://api.openai.com or https://api.anthropic.com. Public hosts need https.
-          {!desktop &&
-            ' If this page is served over https, the browser blocks plain-http model servers (mixed content) and may ask to allow local-network access: use https on the server, or the desktop app.'}
-        </p>
-        <input
-          id="external-base-url"
-          type="url"
-          autoComplete="off"
-          spellCheck={false}
-          value={draft.baseUrl}
-          onChange={(e) => update({ baseUrl: e.target.value })}
-          onBlur={() => void handleBaseUrlBlur()}
-          placeholder="http://localhost:1234"
-          style={inputStyle}
-          aria-describedby="external-base-url-desc"
-        />
-      </div>
-
-      <div>
-        <label htmlFor="external-api-key" style={labelStyle}>
-          API key
-        </label>
-        <p id="external-api-key-desc" style={descStyle}>
-          {desktop
-            ? keyState.apiKeySet
-              ? 'A key is saved (encrypted by the operating system). Type a new key to replace it.'
-              : 'Optional. Saved encrypted by the desktop app and sent only to this endpoint.'
-            : 'Optional. Stored in this browser and sent only to the server it was entered for.'}
-        </p>
-        <div style={rowStyle}>
-          <input
-            id="external-api-key"
-            type="password"
-            autoComplete="new-password"
-            spellCheck={false}
-            value={draft.apiKey}
-            onChange={(e) => {
-              setKeyDropped(false);
-              keyDirtyRef.current = true;
-              fieldKeyOriginRef.current = keyOriginOf(draftRef.current.baseUrl);
-              update({ apiKey: e.target.value });
-            }}
-            onBlur={() => void handleKeyBlur()}
-            placeholder={desktop && keyState.apiKeySet ? 'Saved' : 'Leave empty for servers without a key'}
-            style={inputStyle}
-            aria-describedby="external-api-key-desc"
-          />
-          {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '' || browserKey.status !== 'none') && (
-            <button type="button" style={buttonStyle} onClick={() => void handleClearKey()}>
-              Clear saved key
-            </button>
+      {!isServer ? (
+        <>
+          {builtIn}
+          <p className="settings-text" data-testid="external-not-applicable">
+            No external model server is used. Choose Local or network server or Cloud provider to connect one.
+          </p>
+        </>
+      ) : (
+        <SettingsSubsection title="Server connection" headingId={headingId}>
+          {refusedPublic ? (
+            <p className="settings-text settings-tone--warning" data-testid="external-airgap-refused">
+              {desktop
+                ? 'This public endpoint is refused in this air-gapped build; requests to it will fail. Switch off Use external model.'
+                : 'This public endpoint is refused in this air-gapped build; answers come from the built-in model. Switch off Use external model.'}
+            </p>
+          ) : blockedPublic ? (
+            <p className="settings-text settings-tone--warning" data-testid="external-airgap-blocked">
+              This public endpoint can't be used in this air-gapped build. Choose Local or network server to change it.
+            </p>
+          ) : (
+            <p className="settings-text" data-testid="external-usage-state">
+              {backendUnconfirmed
+                ? 'Waiting for the desktop backend to confirm which model answers.'
+                : draft.enabled
+                  ? 'Answers come from this server. The built-in model settings apply when Built-in model is selected.'
+                  : 'Not in use yet: answers still come from the built-in model until you switch on Use external model.'}
+            </p>
           )}
-        </div>
-        {!desktop && (
-          <div style={{ ...rowStyle, marginTop: 'var(--spacing-xs)' }}>
-            <input
-              id="external-remember-key"
-              type="checkbox"
-              checked={draft.rememberKey}
-              onChange={(e) => {
-                update({ rememberKey: e.target.checked });
-                // Moves the saved key and its binding between storages; never rebinds.
-                void persist({ rememberKey: e.target.checked });
-              }}
-            />
-            <label htmlFor="external-remember-key" style={descStyle}>
-              Remember API key in this browser (otherwise it is kept for this browser session only)
-            </label>
+
+          <Switch
+            id="external-enabled"
+            checked={draft.enabled}
+            aria-checked={draft.enabled}
+            onChange={(e) => void handleEnabledChange(e.target.checked)}
+            label="Use external model"
+          />
+
+          <Field label="Protocol" className="settings-field">
+            {(control) => (
+              <Select
+                {...control}
+                value={draft.protocol}
+                onChange={(e) => {
+                  const protocol = e.target.value === 'anthropic' ? 'anthropic' : 'openai';
+                  update({ protocol });
+                  setModels([]);
+                  void persist({ protocol });
+                }}
+              >
+                <option value="openai">OpenAI-compatible</option>
+                <option value="anthropic">Anthropic-compatible</option>
+              </Select>
+            )}
+          </Field>
+
+          <Field
+            label="Base URL"
+            className="settings-field"
+            help={
+              <>
+                {source === 'cloud'
+                  ? 'For example https://api.openai.com or https://api.anthropic.com. Public hosts need https.'
+                  : 'For example http://localhost:1234 (LM Studio) or http://192.168.1.20:11434 (Ollama on your network).'}
+                {!desktop &&
+                  ' If this page is served over https, the browser blocks plain-http model servers (mixed content) and may ask to allow local-network access: use https on the server, or the desktop app.'}
+              </>
+            }
+          >
+            {(control) => (
+              <TextInput
+                {...control}
+                type="url"
+                autoComplete="off"
+                spellCheck={false}
+                value={draft.baseUrl}
+                onChange={(e) => update({ baseUrl: e.target.value })}
+                onBlur={() => void handleBaseUrlBlur()}
+                placeholder={source === 'cloud' ? 'https://api.openai.com' : 'http://localhost:1234'}
+              />
+            )}
+          </Field>
+
+          <div className="settings-group">
+            <Field
+              label="API key"
+              className="settings-field"
+              help={keyHelp}
+            >
+              {(control) => (
+                <PasswordInput
+                  {...control}
+                  revealLabel="Show API key"
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  value={browserKeySaved ? '' : draft.apiKey}
+                  onChange={(e) => {
+                    setKeyDropped(false);
+                    keyDirtyRef.current = true;
+                    fieldKeyOriginRef.current = keyOriginOf(draftRef.current.baseUrl);
+                    update({ apiKey: e.target.value });
+                  }}
+                  onBlur={() => void handleKeyBlur()}
+                  placeholder={keySavedHere ? 'Saved' : 'Leave empty for servers without a key'}
+                />
+              )}
+            </Field>
+            {browserKeySaved && (
+              <p className="settings-text" data-testid="external-key-saved">
+                A key is saved for this server. Type a new key to replace it, or clear it.
+              </p>
+            )}
+            {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '' || browserKey.status !== 'none') && (
+              <div className="settings-row">
+                <Button variant="secondary" onClick={() => void handleClearKey()}>
+                  Clear saved key
+                </Button>
+              </div>
+            )}
+            {!desktop && (
+              <Checkbox
+                id="external-remember-key"
+                checked={draft.rememberKey}
+                onChange={(e) => {
+                  update({ rememberKey: e.target.checked });
+                  // Moves the saved key and its binding between storages; never rebinds.
+                  void persist({ rememberKey: e.target.checked });
+                }}
+                label="Remember API key in this browser (otherwise it is kept for this browser session only)"
+              />
+            )}
+            {keyDropped && draft.apiKey === '' && (
+              <p className="settings-text" data-testid="external-key-dropped">
+                The base URL changed before the API key was saved, so the key was not saved. Enter it again for
+                this server.
+              </p>
+            )}
+            {keyHeld && draft.apiKey !== '' && (
+              <p className="settings-text" data-testid="external-key-held">
+                The API key is not saved yet: it will be saved together with the next valid base URL you
+                enter, and sent only to that server.
+              </p>
+            )}
+            {keyElsewhereOrigin !== '' && (
+              <p className="settings-text" data-testid="external-key-elsewhere">
+                {keyElsewhereText(keyElsewhereOrigin)}
+              </p>
+            )}
+            {plainHttpKey && (
+              <p className="settings-text settings-tone--warning">
+                This key would be sent over plain http to a network host. Prefer https for servers that need a key.
+              </p>
+            )}
           </div>
-        )}
-        {desktop && !keyState.apiKeyPersisted && keyState.apiKeySet && (
-          <p style={descStyle}>Key kept for this session only: secure storage is unavailable on this computer.</p>
-        )}
-        {keyDropped && draft.apiKey === '' && (
-          <p style={descStyle} data-testid="external-key-dropped">
-            The base URL changed before the API key was saved, so the key was not saved. Enter it again for
-            this server.
+
+          <Field
+            label="Model"
+            className="settings-field"
+            help={models.length > 0 ? `${models.length} model${models.length === 1 ? '' : 's'} listed by the server; you can also type a name.` : undefined}
+          >
+            {(control) => (
+              <Combobox
+                {...control}
+                autoComplete="off"
+                spellCheck={false}
+                value={draft.model}
+                options={models}
+                onValueChange={(model) => update({ model })}
+                onPick={(model) => void handleModelPick(model)}
+                onBlur={() => void handleModelBlur()}
+                placeholder="Test the connection to list models"
+              />
+            )}
+          </Field>
+
+          <div className="settings-row">
+            <Button variant="secondary" onClick={() => void handleTest()} loading={testing} disabled={testing}>
+              Test connection
+            </Button>
+            {testing && <span className="settings-text">Testing…</span>}
+          </div>
+          <p className="settings-text" data-testid="external-test-note">
+            Test connection contacts this server once{desktop ? ' (from the desktop app)' : ' (from this browser)'}, with your
+            API key if one is set.
           </p>
+
+          <Switch
+            id="external-grounded"
+            checked={draft.grounded}
+            onChange={(e) => {
+              const grounded = e.target.checked;
+              update({ grounded });
+              void persist({ grounded });
+            }}
+            label="Use my documents (grounded)"
+            description="On: answers use your documents, with citations. Off (Direct chat): questions go straight to the model without retrieval, and answers are labeled General knowledge."
+          />
+
+        </SettingsSubsection>
+      )}
+
+      {/* L7 + review N2/L-b: the feedback regions are ALWAYS mounted with a constant
+          aria-live/aria-atomic and NO role (a role toggled on with the message made
+          NVDA/JAWS announce twice); only their content changes. They sit right after
+          the connection form, next to the field or button that triggered them. */}
+      <div className="settings-live" aria-live="polite" aria-atomic="true" data-testid="external-status">
+        {status !== null && (
+          <Banner live={false} tone="success" title="Connection works">
+            {status}
+          </Banner>
         )}
-        {keyHeld && draft.apiKey !== '' && (
-          <p style={descStyle} data-testid="external-key-held">
-            The API key is not saved yet: it will be saved together with the next valid base URL you
-            enter, and sent only to that server.
-          </p>
-        )}
-        {keyElsewhereOrigin !== '' && (
-          <p style={descStyle} data-testid="external-key-elsewhere">
-            {keyElsewhereText(keyElsewhereOrigin)}
-          </p>
-        )}
-        {plainHttpKey && (
-          <p style={descStyle}>
-            This key would be sent over plain http to a network host. Prefer https for servers that need a key.
-          </p>
+      </div>
+      <div className="settings-live" aria-live="assertive" aria-atomic="true" data-testid="external-problem">
+        {problem !== null && (
+          <Banner live={false} tone="danger" title={problemTitle()}>
+            {problem}
+          </Banner>
         )}
       </div>
 
-      <div>
-        <label htmlFor="external-model" style={labelStyle}>
-          Model
-        </label>
-        <input
-          id="external-model"
-          type="text"
-          list="external-model-options"
-          autoComplete="off"
-          spellCheck={false}
-          value={draft.model}
-          onChange={(e) => update({ model: e.target.value })}
-          onBlur={() => void handleModelBlur()}
-          placeholder="Test the connection to list models"
-          style={inputStyle}
-        />
-        <datalist id="external-model-options">
-          {models.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-      </div>
-
-      <div style={rowStyle}>
-        <button type="button" style={buttonStyle} onClick={() => void handleTest()} disabled={testing} aria-busy={testing}>
-          Test connection
-        </button>
-        {testing && <span style={descStyle}>Testing…</span>}
-      </div>
-
-      <div style={rowStyle}>
-        <input
-          id="external-direct-chat"
-          type="checkbox"
-          checked={!draft.grounded}
-          onChange={(e) => {
-            const grounded = !e.target.checked;
-            update({ grounded });
-            void persist({ grounded });
-          }}
-          aria-describedby="external-direct-chat-desc"
-        />
-        <label htmlFor="external-direct-chat" style={{ ...labelStyle, marginBottom: 0 }}>
-          Direct chat (no document grounding)
-        </label>
-      </div>
-      <p id="external-direct-chat-desc" style={descStyle}>
-        Off: answers use your documents with citations. On: questions go straight to the model without
-        retrieval and answers are labeled General knowledge.
-      </p>
-
-      {status !== null && (
-        <p role="status" style={okStyle}>
-          {status}
+      {/* M2: whenever egress is off, the built-in model is what answers, so its
+          controls stay rendered (engine, download, cache status, run location,
+          profile, backend status) under every source. */}
+      {isServer && !externalAnswers && (
+        <>
+          <p className="settings-text" data-testid="builtin-still-answering">
+            {backendUnconfirmed || (refusedPublic && desktop)
+              ? "The built-in model's settings:"
+              : refusedPublic
+                ? 'Answers come from the built-in model. Its settings:'
+                : 'Until you switch on Use external model, answers come from the built-in model. Its settings:'}
+          </p>
+          {builtIn}
+        </>
+      )}
+      {isServer && externalAnswers && (
+        <p className="settings-text" data-testid="builtin-not-used">
+          The built-in model is not used while the external model answers. Its settings return when you switch
+          off Use external model or choose Built-in model.
         </p>
       )}
-      {problem !== null && (
-        <p role="alert" style={errorStyle}>
-          {problem}
-        </p>
-      )}
-    </section>
+
+    </SettingsSection>
   );
 }

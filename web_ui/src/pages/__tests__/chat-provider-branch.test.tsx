@@ -21,7 +21,7 @@
  * trace check C4; this file keeps the direct path's regression coverage.)
  */
 import React from 'react';
-import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, test, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import http from 'node:http';
@@ -72,6 +72,7 @@ import { ChatPage } from '../ChatPage';
 import * as inferenceModule from '../../lib/inference';
 import * as themeModule from '../../lib/theme';
 import * as desktopSessionModule from '../../lib/desktop-session';
+import * as llmFactoryModule from '../../lib/llm/llm-factory';
 import type { ChatMessage } from '../../types/chat';
 import {
   EXTERNAL_GROUNDED_INSTRUCTION,
@@ -562,5 +563,75 @@ describe('F-012 (Stage B): desktop Direct chat never threads retrieval-grounded 
 
     expect(TokenStreamManager.prototype.startSSEStream).not.toHaveBeenCalled();
     expect(bodies).toHaveLength(0);
+  });
+});
+
+describe('desktop routing follows the backend engine, not the local inference mode', () => {
+  type DesktopSessionLike = NonNullable<ReturnType<typeof desktopSessionModule.useDesktopSession>['session']>;
+  let startSse: MockInstance<TokenStreamManager['startSSEStream']>;
+
+  function useBackend(engine: 'external' | 'llama.cpp'): void {
+    const session = {
+      baseUrl: 'http://127.0.0.1:4567',
+      token: 'trace-token',
+      mode: 'node',
+      apiClient: { getSettings: vi.fn().mockResolvedValue({}) },
+      sseUrl: () => 'http://127.0.0.1:4567/ask/stream',
+    } as unknown as DesktopSessionLike;
+    vi.mocked(desktopSessionModule.isElectron).mockReturnValue(true);
+    vi.mocked(desktopSessionModule.useDesktopSession).mockReturnValue({
+      session,
+      models: {
+        engine,
+        profile: 'auto',
+        models: { quality: { present: true }, fast: { present: true } },
+        resident: { state: 'ready', profile: 'quality', loadStartedAt: null },
+      },
+      loading: false,
+      error: null,
+    } as ReturnType<typeof desktopSessionModule.useDesktopSession>);
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    mockContext('browser-local', true);
+    startSse = vi.spyOn(TokenStreamManager.prototype, 'startSSEStream').mockImplementation(
+      () => undefined as unknown as ReturnType<TokenStreamManager['startSSEStream']>,
+    );
+    vi.mocked(llmFactoryModule.getLLMService).mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+    startSse.mockRestore();
+    vi.mocked(desktopSessionModule.isElectron).mockReturnValue(false);
+    vi.mocked(desktopSessionModule.useDesktopSession).mockReturnValue({
+      session: null,
+      models: null,
+      loading: false,
+      error: null,
+    } as ReturnType<typeof desktopSessionModule.useDesktopSession>);
+  });
+
+  function send(): void {
+    renderChat({});
+    fireEvent.change(screen.getByLabelText('Message input'), { target: { value: 'where does this answer come from?' } });
+    fireEvent.click(screen.getByRole('button', { name: /send/i }));
+  }
+
+  test("mode 'browser-local' + backend engine 'external': the turn goes to /ask/stream and the in-window model is never used", async () => {
+    useBackend('external');
+    send();
+    await waitFor(() => expect(startSse).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+    expect((startSse.mock.calls[0][1] as { question?: string }).question).toBe('where does this answer come from?');
+    expect(llmFactoryModule.getLLMService).not.toHaveBeenCalled();
+  });
+
+  test("control: mode 'browser-local' + backend engine 'llama.cpp' stays in this window", async () => {
+    useBackend('llama.cpp');
+    send();
+    await waitFor(() => expect(llmFactoryModule.getLLMService).toHaveBeenCalled(), { timeout: 10_000 });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(startSse).not.toHaveBeenCalled();
   });
 });

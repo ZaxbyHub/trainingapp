@@ -44,11 +44,16 @@ export interface BannerProps {
   children?: ReactNode;
   action?: ReactNode;
   className?: string;
+  /**
+   * false: no live-region role on the banner itself, for a banner placed inside an
+   * always-mounted live region that announces it (default true).
+   */
+  live?: boolean;
 }
 
 /** role="alert" for danger/warning (interrupting), role="status" otherwise. */
-export function Banner({ tone = 'info', title, children, action, className }: BannerProps) {
-  const role = tone === 'danger' || tone === 'warning' ? 'alert' : 'status';
+export function Banner({ tone = 'info', title, children, action, className, live = true }: BannerProps) {
+  const role = live ? (tone === 'danger' || tone === 'warning' ? 'alert' : 'status') : undefined;
   return (
     <div role={role} className={cx('ui-banner', `ui-banner--${tone}`, className)}>
       <Icon name={STATUS_ICON[tone]} className="ui-banner__icon" />

@@ -2,9 +2,9 @@
  * universal-provider-settings-overhaul (parity with the browser overlay,
  * settings-wiring-honesty AC10): the Electron missing-model overlay offers
  * "Use a local server or cloud model", which opens Settings at the section
- * hosting the External model region (MODEL_CONNECTION_SECTION_ID) through
+ * Model & connection (MODEL_CONNECTION_SECTION_ID) through
  * the same section-aware onOpenSettings seam; "Open Settings" without a
- * section keeps working. The focused destination itself (External model
+ * section keeps working. The focused destination itself (Model & connection
  * heading in the Electron app) is pinned in
  * pages/__tests__/settings-wiring-honesty.test.tsx ("overlay destination").
  */
@@ -63,7 +63,7 @@ describe('DesktopModelBlockedOverlay actions', () => {
     expect(heading).toHaveFocus();
   });
 
-  it('"Use a local server or cloud model" opens Settings at the External model section', () => {
+  it('"Use a local server or cloud model" opens Settings at the Model & connection section', () => {
     const onOpenSettings = vi.fn();
     render(<DesktopModelBlockedOverlay open onOpenSettings={onOpenSettings} />);
     fireEvent.click(screen.getByRole('button', EXTERNAL_ACTION));

@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 // Stateful inference-mode store so setters re-render (same pattern as the
@@ -237,7 +237,7 @@ describe('desktop Response Quality preset (AC1-AC3)', () => {
     const { container } = renderElectron(session);
     await settle();
     expect(checkedPreset(container)).toBeNull();
-    expect(screen.getByText(/custom server settings/i)).toHaveTextContent(/browser-local chat uses the fast preset/i);
+    expect(screen.getByText(/custom server settings/i)).toHaveTextContent(/chat in this window uses the fast preset/i);
   });
 
   test('a preset matched on n_results alone does not claim its other settings and re-applies on re-select (final-critic F2)', async () => {
@@ -424,8 +424,10 @@ describe('Clear Cache (AC5)', () => {
     expect(document.getElementById('clear-cache-status')?.textContent).toMatch(/saved settings were removed; reloading/i);
     // Visible, not screen-reader-only: sighted users see why the page reloads.
     const note = screen.getByText(/your saved settings were removed; reloading the page/i);
-    expect(note.style.position).not.toBe('absolute');
-    expect(note.style.clip).toBe('');
+    // Lumen phase 4: screen-reader-only text is the ui-visually-hidden class, so
+    // assert the class (an inline-style check would now pass vacuously).
+    expect(note).not.toHaveClass('ui-visually-hidden');
+    expect(note.closest('.ui-visually-hidden')).toBeNull();
     await waitFor(() => expect(reloadPage).toHaveBeenCalledTimes(1), { timeout: RELOAD_AFTER_CLEAR_MS + 1000 });
   });
 
@@ -475,12 +477,12 @@ describe('overlay destination (AC10)', () => {
   test('initialSection="model-connection" scrolls to the external-model section and focuses its heading', async () => {
     H.reset({ mode: 'browser-local' });
     render(<SettingsPage initialSection="model-connection" />);
-    // universal-provider-settings-overhaul: the id moved from the Inference
-    // Mode section to the section hosting the External model region.
-    const heading = await screen.findByRole('heading', { name: /^external model$/i });
+    // Lumen phase 4: the id is the "Model & connection" section (spec section 5),
+    // which hosts the generator source and the external-model controls.
+    const heading = await screen.findByRole('heading', { level: 2, name: /^model & connection$/i });
     await waitFor(() => expect(heading).toHaveFocus());
     expect(document.getElementById('model-connection')).toContainElement(
-      screen.getByRole('switch', { name: /^use external model$/i }),
+      screen.getByRole('radio', { name: /^local or network server$/i }),
     );
   });
 
@@ -491,19 +493,143 @@ describe('overlay destination (AC10)', () => {
     H.reset({ mode: 'api' });
     const { session } = makeSession(backend([], {}));
     renderElectron(session, { initialSection: 'model-connection' });
-    const heading = await screen.findByRole('heading', { name: /^external model$/i });
+    const heading = await screen.findByRole('heading', { level: 2, name: /^model & connection$/i });
     await waitFor(() => expect(heading).toHaveFocus());
     expect(document.getElementById('model-connection')).toContainElement(
-      screen.getByRole('switch', { name: /^use external model$/i }),
+      screen.getByRole('radio', { name: /^cloud provider$/i }),
     );
   });
 
   test('without initialSection nothing in the page takes focus', async () => {
     H.reset({ mode: 'browser-local' });
     render(<SettingsPage />);
-    await screen.findByRole('heading', { name: /inference mode/i });
+    await screen.findByRole('heading', { level: 2, name: /^model & connection$/i });
     await settle();
     expect(document.activeElement).toBe(document.body);
+  });
+});
+
+describe('Lumen phase 4: six sections + section nav (design-language.md section 5)', () => {
+  const SECTIONS: Array<[string, RegExp]> = [
+    ['model-connection', /^model & connection$/i],
+    ['answers', /^answers$/i],
+    ['appearance', /^appearance$/i],
+    ['storage-privacy', /^storage & privacy$/i],
+    ['updates', /^updates$/i],
+    ['about', /^about$/i],
+  ];
+
+  test('the nav lists exactly the six sections in page order, each a region with a stable id', async () => {
+    H.reset({ mode: 'browser-local' });
+    render(<SettingsPage />);
+    await settle();
+    const nav = screen.getByRole('navigation', { name: /^settings sections$/i });
+    const links = within(nav).getAllByRole('link');
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(SECTIONS.map(([id]) => `#${id}`));
+    const h2s = screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent);
+    expect(h2s).toEqual(['Model & connection', 'Answers', 'Appearance', 'Storage & privacy', 'Updates', 'About']);
+    for (const [id, name] of SECTIONS) {
+      const region = screen.getByRole('region', { name });
+      expect(region.id).toBe(id);
+    }
+    // The compact "Jump to section" select offers the same targets.
+    const select = within(nav).getByLabelText(/^jump to section$/i);
+    expect([...(select as HTMLSelectElement).options].map((o) => o.value)).toEqual(SECTIONS.map(([id]) => id));
+  });
+
+  test('a nav link moves focus to that section heading and marks it current; the select does the same', async () => {
+    H.reset({ mode: 'browser-local' });
+    render(<SettingsPage />);
+    await settle();
+    const nav = screen.getByRole('navigation', { name: /^settings sections$/i });
+    const link = within(nav).getByRole('link', { name: 'Storage & privacy' });
+    fireEvent.click(link);
+    expect(screen.getByRole('heading', { level: 2, name: /^storage & privacy$/i })).toHaveFocus();
+    expect(link).toHaveAttribute('aria-current', 'true');
+    expect(within(nav).getByRole('link', { name: 'Answers' })).not.toHaveAttribute('aria-current');
+    // M1 (WCAG 3.2.2): changing the select only scrolls; focus stays on the select.
+    const select = within(nav).getByLabelText(/^jump to section$/i) as HTMLSelectElement;
+    select.focus();
+    fireEvent.change(select, { target: { value: 'updates' } });
+    fireEvent.change(select, { target: { value: 'about' } });
+    expect(select).toHaveFocus();
+    expect(select.value).toBe('about');
+    // Explicit activation moves focus: Enter on the select (read one frame later, after
+    // a Firefox open-dropdown commit has fired change; review L-d) ...
+    fireEvent.keyDown(select, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: /^about$/i })).toHaveFocus());
+    // ... or the adjacent Go button ("Go to section"), which reads the select's actual value.
+    select.focus();
+    fireEvent.change(select, { target: { value: 'updates' } });
+    expect(select).toHaveFocus();
+    fireEvent.click(within(nav).getByRole('button', { name: /^go to section$/i, hidden: true }));
+    expect(screen.getByRole('heading', { level: 2, name: /^updates$/i })).toHaveFocus();
+  });
+
+  // M1 with REAL arrow keys (which change a select's value only in a real browser) is
+  // pinned in e2e/visual/lumen-axe-settings-full.spec.ts; jsdom/user-event does not
+  // move a <select> on ArrowDown, so a unit test here would pass vacuously.
+
+  test('M2: a server source with egress OFF keeps every built-in control (browser app)', async () => {
+    H.reset({ mode: 'browser-local' });
+    render(<SettingsPage />);
+    await settle();
+    const model = within(screen.getByRole('region', { name: /^model & connection$/i }));
+    fireEvent.click(model.getByRole('radio', { name: /^local or network server$/i }));
+    expect(model.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+    expect(model.getByTestId('builtin-still-answering')).toBeInTheDocument();
+    expect(model.getByRole('radio', { name: /wllama \(cpu/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^browser engine$/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^hardware capability$/i })).toBeInTheDocument();
+    expect(model.getByText(/^Status:/)).toBeInTheDocument();
+  });
+
+  test('M2: a server source with egress OFF keeps the desktop run location, profile and backend status', async () => {
+    H.reset({ mode: 'api' });
+    const { session } = makeSession(backend([], {}));
+    renderElectron(session);
+    await settle();
+    const model = within(screen.getByRole('region', { name: /^model & connection$/i }));
+    fireEvent.click(model.getByRole('radio', { name: /^cloud provider$/i }));
+    expect(model.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+    expect(model.getByRole('radio', { name: /^desktop backend$/i })).toBeChecked();
+    expect(model.getByRole('radio', { name: /^in this window$/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^desktop backend$/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^inference profile$/i })).toBeInTheDocument();
+  });
+
+  test('every control lives in its section (nothing lost in the regroup)', async () => {
+    H.reset({ mode: 'browser-local' });
+    render(<SettingsPage />);
+    await settle();
+    const region = (name: RegExp) => within(screen.getByRole('region', { name }));
+    const model = region(/^model & connection$/i);
+    expect(model.getByRole('radio', { name: /^built-in model$/i })).toBeInTheDocument();
+    expect(model.getByRole('radio', { name: /wllama \(cpu/i })).toBeInTheDocument();
+    expect(model.getByRole('group', { name: /^hardware capability$/i })).toBeInTheDocument();
+    expect(region(/^answers$/i).getByRole('radio', { name: /^balanced$/i })).toBeInTheDocument();
+    expect(region(/^appearance$/i).getByRole('radio', { name: /^dark$/i })).toBeInTheDocument();
+    const storage = region(/^storage & privacy$/i);
+    expect(storage.getByRole('button', { name: /clear cache/i })).toBeInTheDocument();
+    expect(storage.getByRole('progressbar', { name: /memory used/i })).toBeInTheDocument();
+    expect(storage.getByTestId('privacy-note')).toHaveTextContent(/leave this device only when an external model is switched on/i);
+    expect(region(/^updates$/i).getByTestId('updates-opt-in')).toBeInTheDocument();
+    expect(region(/^about$/i).getByText(/^Version:/)).toBeInTheDocument();
+  });
+
+  test('desktop app: the built-in model runs "In this window" or in the "Desktop backend" (renamed from Browser-local / API Server)', async () => {
+    H.reset({ mode: 'api' });
+    const { session } = makeSession(backend([], {}));
+    const { container } = renderElectron(session);
+    await settle();
+    const model = within(screen.getByRole('region', { name: /^model & connection$/i }));
+    expect(model.getByRole('radio', { name: /^desktop backend$/i })).toBeChecked();
+    expect(model.getByRole('radio', { name: /^in this window$/i })).not.toBeChecked();
+    expect(container.querySelectorAll('input[name="inference-mode"]')).toHaveLength(2);
+    expect(screen.queryByText(/api server/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /browser-local/i })).not.toBeInTheDocument();
+    // First-run setup lives in About (desktop only).
+    expect(within(screen.getByRole('region', { name: /^about$/i })).getByTestId('first-run-rerun')).toBeInTheDocument();
   });
 });
 
