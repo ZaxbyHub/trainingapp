@@ -16,7 +16,7 @@ environment-specific decision funnels through two modules so pages stay small:
 | **Electron-hosted** | `window.desktopApi` present (packaged `app://` renderer OR the Electron dev window) | `ApiClient` against the Electron-hosted loopback backend (`GET/DELETE /documents`, `POST /ingest/file`), settings via `GET/PUT /settings` | `mode === 'api'` branch posting to `{backend}/ask/stream` |
 | **Pure-browser (local)** | plain browser, browser-local mode | IndexedDB + WASM pipeline (wllama/ONNX/EdgeVec/FlexSearch) | `RAGOrchestrator` in-page |
 
-Both apps can also generate with an **External model** (Settings → External model): an
+Both apps can also generate with an **External model** (Settings → Model & connection): an
 OpenAI- or Anthropic-compatible endpoint, local, LAN or cloud, off by default. Retrieval
 stays local; inside Electron the desktop backend makes the request (`/status/models`
 reports engine `external`), in the plain browser the page does. See CONFIGURATION.md and
