@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sidebar } from './Sidebar';
 import { AppShell, DRAWER_MEDIA_QUERY } from '../ui';
 import { useConversations } from '../hooks/useConversations';
+import { CONVERSATION_QUERY_MAX_LENGTH } from '../db/conversation-query';
 
 vi.mock('../db/conversations', () => ({
   listConversations: vi.fn(),
@@ -62,6 +63,8 @@ describe('Sidebar search field', () => {
     const firstRow = within(section).getByText('Recent 0');
     expect(box.compareDocumentPosition(firstRow) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Clear search' })).not.toBeInTheDocument();
+    // The field enforces the same cap the store query applies (PRR-003).
+    expect(box).toHaveAttribute('maxLength', String(CONVERSATION_QUERY_MAX_LENGTH));
   });
 
   it('shows the search results instead of the loaded page, and hides "Load more"', () => {

@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef } from 'react';
 import { Button, Icon, IconButton, SideNav, useAppShell, type SideNavItem } from '../ui';
 import { SidebarConversationItem } from './SidebarConversationItem';
+import { CONVERSATION_QUERY_MAX_LENGTH } from '../db/conversation-query';
 import '../layouts/shell.css';
 
 interface SidebarConversation {
@@ -141,6 +142,7 @@ export function Sidebar({
                   className="ui-input ui-focusable app-sidebar__search-input"
                   placeholder="Search conversations"
                   autoComplete="off"
+                  maxLength={CONVERSATION_QUERY_MAX_LENGTH}
                   spellCheck={false}
                   value={searchQuery}
                   onChange={(e) => onSearchChange(e.target.value)}

@@ -64,8 +64,10 @@ vi.mock('./index', () => {
 });
 
 import {
+  CONVERSATION_QUERY_MAX_LENGTH,
   CONVERSATION_SEARCH_LIMIT,
   conversationMatches,
+  normalizeConversationQuery,
   listConversations,
   searchConversations,
 } from './conversations';
@@ -178,6 +180,43 @@ describe('searchConversations (all conversations, not the loaded page)', () => {
     expect((await searchConversations('caf\u00e9')).matches.map((c) => c.id)).toEqual(['pre', 'dec']);
     expect((await searchConversations('cafe\u0301')).matches.map((c) => c.id)).toEqual(['pre', 'dec']);
     expect(conversationMatches({ title: decomposed, messages: [] } as unknown as Conversation, 'caf\u00e9')).toBe(true);
+  });
+
+  it('Turkish dotted capital I: "ISTANBUL-dotted" and "istanbul" match each other (PRR-016)', async () => {
+    const dottedCapital = '\u0130stanbul office';
+    store.rows.push(
+      { id: 'tr', title: dottedCapital, messages: [], createdAt: 0, updatedAt: 6_000, mode: 'wllama', modelUsed: 'm' },
+      { id: 'plain', title: 'Istanbul plain', messages: [], createdAt: 0, updatedAt: 5_500, mode: 'wllama', modelUsed: 'm' }
+    );
+    // Sanity: the platform really does produce i + U+0307 here.
+    expect('\u0130'.toLowerCase()).toBe('i\u0307');
+    expect((await searchConversations('istanbul')).matches.map((c) => c.id)).toEqual(['tr', 'plain']);
+    expect((await searchConversations('\u0130stanbul')).matches.map((c) => c.id)).toEqual(['tr', 'plain']);
+    expect(normalizeConversationQuery('\u0130STANBUL')).toBe('istanbul');
+  });
+
+  it('caps the query at CONVERSATION_QUERY_MAX_LENGTH code points (PRR-003)', async () => {
+    expect(CONVERSATION_QUERY_MAX_LENGTH).toBe(200);
+    const long = 'a'.repeat(250);
+    expect(normalizeConversationQuery(`  ${long}  `)).toHaveLength(200);
+    // Code points, not UTF-16 units: an astral character is never split.
+    const astral = '\u{1F600}'.repeat(250);
+    expect(Array.from(normalizeConversationQuery(astral))).toHaveLength(200);
+    // A conversation containing the first 200 characters of an over-long query matches.
+    store.rows.push({ id: 'long', title: 'a'.repeat(200), messages: [], createdAt: 0, updatedAt: 7_000, mode: 'wllama', modelUsed: 'm' });
+    expect((await searchConversations(long)).matches.map((c) => c.id)).toEqual(['long']);
+  });
+
+  it('a long conversation stops scanning messages at its first match', () => {
+    let reads = 0;
+    const messages = Array.from({ length: 50 }, (_, i) => ({
+      get content() {
+        reads += 1;
+        return i === 2 ? 'the needle is here' : 'nothing';
+      },
+    }));
+    expect(conversationMatches({ title: 'x', messages } as unknown as Conversation, 'needle')).toBe(true);
+    expect(reads).toBe(3);
   });
 
   it('conversationMatches ignores an empty needle and tolerates missing fields', () => {

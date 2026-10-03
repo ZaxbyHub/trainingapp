@@ -1,4 +1,7 @@
 import { db } from './index';
+import { CONVERSATION_QUERY_MAX_LENGTH } from './conversation-query';
+
+export { CONVERSATION_QUERY_MAX_LENGTH };
 import type { ChatMessage } from '../types/chat';
 
 /**
@@ -123,19 +126,37 @@ export const CONVERSATION_SEARCH_LIMIT = 50;
 
 const NON_ASCII = /[^\u0000-\u007f]/;
 
+const COMBINING_DOT_ABOVE = '\u0307';
+
 /**
- * Normalise a search query: trimmed, Unicode NFC, lower-cased. Empty means
- * "no search". NFC makes a precomposed "é" (U+00E9) and a decomposed one
+ * Case-fold text for matching. Lower-casing the Turkish capital dotted I
+ * ("I" + dot, U+0130) yields "i" + U+0307 (combining dot above), which would
+ * never match a plain "i" (PR #147 review PRR-016), so that mark is dropped
+ * after lower-casing. It only ever survives NFC after an "i"/"j"-like base
+ * (letters such as U+017C are precomposed), so removing it loses nothing a
+ * search would distinguish.
+ */
+function foldCase(text: string): string {
+  const lower = text.toLowerCase();
+  return lower.indexOf(COMBINING_DOT_ABOVE) === -1 ? lower : lower.split(COMBINING_DOT_ABOVE).join('');
+}
+
+/**
+ * Normalise a search query: trimmed, capped at CONVERSATION_QUERY_MAX_LENGTH
+ * code points, Unicode NFC, case-folded (foldCase). Empty means "no search".
+ * NFC makes a precomposed "e-acute" (U+00E9) and a decomposed one
  * ("e" + U+0301) the same needle.
  */
 export function normalizeConversationQuery(query: string): string {
-  return query.trim().normalize('NFC').toLowerCase();
+  const capped = Array.from(query.trim()).slice(0, CONVERSATION_QUERY_MAX_LENGTH).join('');
+  return foldCase(capped.normalize('NFC'));
 }
 
 /**
  * Whether a conversation matches an already-normalised needle: a substring of
  * its title or of any message's text. Cheap path first: the title, then the
- * messages, returning on the first hit. The haystack is NFC-normalised only
+ * messages, returning on the first hit (a long conversation stops at its first
+ * matching message). The haystack is NFC-normalised only
  * when the needle contains non-ASCII characters; for an ASCII needle that step
  * cannot create a match (it only composes letters with combining marks) and it
  * is the most expensive part of a full-store walk.
@@ -143,8 +164,8 @@ export function normalizeConversationQuery(query: string): string {
 export function conversationMatches(conversation: Conversation, needle: string): boolean {
   if (needle === '') return false;
   const fold = NON_ASCII.test(needle)
-    ? (text: string) => text.normalize('NFC').toLowerCase()
-    : (text: string) => text.toLowerCase();
+    ? (text: string) => foldCase(text.normalize('NFC'))
+    : foldCase;
   if (typeof conversation.title === 'string' && fold(conversation.title).includes(needle)) return true;
   const messages = conversation.messages;
   if (!Array.isArray(messages)) return false;
