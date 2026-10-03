@@ -14,6 +14,7 @@ export function InferenceModeToggle() {
   const {
     mode,
     isModelReady,
+    modelLoadingProgress,
     isServerConnected,
     modeError,
     serverUrl,
@@ -44,16 +45,26 @@ export function InferenceModeToggle() {
     }
   }, [mode, setMode, checkServerConnectivity]);
 
+  // Honest state (review F3): "Loading…" only while a load is actually running.
+  // modelLoadingProgress is strictly between 0 and 100 exactly while a load reports
+  // progress (the same signal ChatPage's composer indicator uses); otherwise a model
+  // that is not ready is simply not loaded (weights absent, not cached, or never
+  // requested), and saying "Loading…" would be a lie.
+  const loadInProgress = modelLoadingProgress > 0 && modelLoadingProgress < 100;
+
   type StatusTone = 'ok' | 'pending' | 'error';
-  const getStatus = (): { tone: StatusTone; word: string } => {
+  /** word === null: no visible word (the page already shows the state). */
+  const getStatus = (): { tone: StatusTone; word: string | null } => {
     if (mode === 'browser-local') {
-      return isModelReady ? { tone: 'ok', word: 'Ready' } : { tone: 'pending', word: 'Loading…' };
+      if (isModelReady) return { tone: 'ok', word: 'Ready' };
+      return loadInProgress ? { tone: 'pending', word: 'Loading…' } : { tone: 'pending', word: 'Not ready' };
     }
     // API mode
     if (isChecking) return { tone: 'pending', word: 'Checking…' };
     if (isServerConnected) return { tone: 'ok', word: 'Connected' };
-    if (modeError) return { tone: 'error', word: 'Error' };
-    return { tone: 'pending', word: 'Not connected' };
+    // Review F8: ChatPage already shows a "Server not connected" pill in this state,
+    // so the toggle does not repeat it visibly (the hidden sentence still reads it).
+    return { tone: modeError ? 'error' : 'pending', word: null };
   };
 
   const getModeLabel = (): string => {
@@ -65,7 +76,8 @@ export function InferenceModeToggle() {
   const getTooltipText = (): string => {
     if (mode === 'browser-local') {
       if (isModelReady) return 'Browser-local mode (model ready)';
-      return 'Browser-local mode (model loading...)';
+      if (loadInProgress) return `Browser-local mode (model loading, ${Math.round(modelLoadingProgress)}%)`;
+      return 'Browser-local mode (model not loaded)';
     }
     if (isChecking) return 'Desktop backend (checking connectivity...)';
     if (isServerConnected) return 'Desktop backend (connected)';
@@ -97,9 +109,9 @@ export function InferenceModeToggle() {
       {/* U7b: the current state is legible without hovering for the tooltip.
           The full tooltip sentence is exposed as visually hidden text (aria-label
           is not allowed on a role-less span). */}
-      <span className="chat-mode__status" title={getTooltipText()}>
+      <span className="chat-mode__status" title={getTooltipText()} data-testid="inference-mode-status">
         {status.word}
-        <span className="ui-visually-hidden"> ({getTooltipText()})</span>
+        <span className="ui-visually-hidden">{status.word ? ' ' : ''}({getTooltipText()})</span>
       </span>
 
       {/* Mode toggle button: its visible label is the current mode. */}
@@ -111,7 +123,8 @@ export function InferenceModeToggle() {
         aria-disabled={isChecking || undefined}
         title={getTooltipText()}
         aria-pressed={mode === 'api'}
-        aria-label={`Inference mode: ${mode}. Click to toggle.`}
+        // WCAG 2.5.3 (review F8): the accessible name contains the visible label.
+        aria-label={`Inference mode: ${getModeLabel()}. Click to toggle.`}
       >
         {getModeLabel()}
       </Button>
