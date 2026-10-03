@@ -145,10 +145,13 @@ describe('Sidebar search field', () => {
     expect(list).not.toHaveAttribute('aria-busy');
 
     const css = readFileSync(resolve(__dirname, '../layouts/shell.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-    const rule = /\.app-sidebar__list\[aria-busy="true"\]\[inert\]\s*\{([^}]*)\}/.exec(css);
-    expect(rule, 'dim rule keyed on aria-busy + inert').not.toBeNull();
+    const rule = /\.app-sidebar__list\[aria-busy="true"\]\[inert\] \.app-conv\s*\{([^}]*)\}/.exec(css);
+    expect(rule, 'dim rule keyed on aria-busy + inert, scoped to rows').not.toBeNull();
     expect(rule?.[1]).toMatch(/opacity:\s*0\.5/);
     expect(css).not.toMatch(/\.app-sidebar__list[^{]*\{[^}]*transition/);
+    // Only rows dim: no busy rule targets the list itself, the empty state or the note.
+    expect(css).not.toMatch(/\.app-sidebar__list\[aria-busy="true"\]\[inert\]\s*\{/);
+    expect(css).not.toMatch(/\[inert\][^{]*\.app-sidebar__(empty|note)/);
   });
 
   it('busy never makes the list inert while focus is inside it (no dropped focus; rows stay full contrast)', () => {
@@ -177,6 +180,44 @@ describe('Sidebar search field', () => {
     );
     expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument();
+  });
+
+  it('drawer Tab trap skips the inert stale results: Tab and Shift+Tab stay in the drawer while a search is busy', async () => {
+    const user = userEvent.setup();
+    window.matchMedia = ((query: string) => ({
+      matches: query === DRAWER_MEDIA_QUERY,
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+    render(
+      <AppShell
+        productName="TrainingApp"
+        collapsed={false}
+        onToggleCollapsed={() => {}}
+        sidebar={<Controlled initial="budg" searchResults={list(3)} isSearching />}
+      >
+        <p>page</p>
+      </AppShell>
+    );
+    await user.click(screen.getByRole('button', { name: 'Open navigation' }));
+    const drawer = screen.getByRole('dialog', { name: 'Navigation' });
+    expect(drawer.querySelector('.app-sidebar__list')).toHaveAttribute('inert');
+    const close = within(drawer).getByRole('button', { name: 'Close navigation' });
+    const clear = within(drawer).getByRole('button', { name: 'Clear search' });
+    const inDrawerAndLive = () =>
+      drawer.contains(document.activeElement) && !(document.activeElement as Element).closest('[inert]');
+
+    act(() => clear.focus()); // the last live control in the drawer
+    await user.tab();
+    expect(close).toHaveFocus(); // wrapped, did not walk into the inert rows
+    await user.tab({ shift: true });
+    expect(clear).toHaveFocus(); // wrapped back to the last LIVE control
+    expect(inDrawerAndLive()).toBe(true);
   });
 
   it('works inside the open drawer', async () => {

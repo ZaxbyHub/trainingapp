@@ -26,6 +26,16 @@ export const DRAWER_MEDIA_QUERY = '(max-width: 768px)';
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/**
+ * Focusable controls inside `root`, excluding anything in an inert subtree
+ * (e.g. the sidebar's stale search results while a search is pending): the
+ * browser skips those, so a Tab trap that counted them would compute the wrong
+ * first/last control and let Tab escape.
+ */
+function focusablesIn(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => !el.closest('[inert]'));
+}
+
 function queryMatches(query: string): boolean {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
   return window.matchMedia(query)?.matches === true;
@@ -183,7 +193,7 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
     if (drawerOpen) {
       const panel = sidebarRef.current;
       const target =
-        panel?.querySelector<HTMLElement>('nav [aria-current="page"]') ?? panel?.querySelector<HTMLElement>(FOCUSABLE);
+        panel?.querySelector<HTMLElement>('nav [aria-current="page"]') ?? (panel ? focusablesIn(panel)[0] : undefined);
       target?.focus();
       return;
     }
@@ -212,7 +222,7 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
     if (e.key !== 'Tab') return;
     const panel = sidebarRef.current;
     if (!panel) return;
-    const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+    const items = focusablesIn(panel);
     if (items.length === 0) return;
     const first = items[0];
     const last = items[items.length - 1];
