@@ -70,6 +70,7 @@
 /* Text roles inside a section. */
 .settings-text { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
 .settings-text--body { font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-primary); }
+.settings-text--block { display: block; margin-top: 0.25rem; }
 .settings-label { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
 .settings-strong { font-weight: 600; }
 .settings-inline-icon { display: inline-flex; align-items: center; gap: var(--space-1); }

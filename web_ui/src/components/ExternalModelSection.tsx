@@ -74,10 +74,18 @@ interface DesktopKeyState {
  * Generator source (design-language.md section 5, "Model & connection"). A UI choice
  * over the unchanged stored settings: Built-in model == the external endpoint is OFF;
  * Local or network server / Cloud provider show the connection form, and egress still
- * starts only when "Use external model" is switched on. The source is derived from the
- * SAVED config, so it survives a reload: a saved base URL shows the source it belongs to
- * (a public host is a cloud provider), enabled or not. Only an empty saved URL opens on
- * Built-in model.
+ * starts only when "Use external model" is switched on. The radio always matches the
+ * generator that actually answers, so on load (and on the first desktop snapshot) the
+ * source is `enabled ? sourceOfUrl(saved URL) : 'builtin'`: an enabled endpoint opens on
+ * its source (a public host is a cloud provider); a disabled one opens on Built-in model,
+ * with one line saying which saved server is not in use. The saved URL, model and
+ * grounded setting are kept (Built-in persists only {enabled:false}), so choosing that
+ * source again restores them. Within a session, picking a server source only shows the
+ * form: nothing is enabled, saved or contacted. In an air-gapped build the Cloud option is
+ * always disabled and never the derived source: a disabled public URL shows Built-in model
+ * (with a note), and the unexpected case of an ENABLED public URL shows the connection form
+ * under Local or network server, so the switch stays visible and can turn it off (the
+ * endpoint policy still refuses the URL).
  */
 type GeneratorSource = 'builtin' | 'local' | 'cloud';
 
@@ -86,17 +94,26 @@ function sourceOfUrl(baseUrl: string): Exclude<GeneratorSource, 'builtin'> {
   return verdict.ok && verdict.kind === 'public' ? 'cloud' : 'local';
 }
 
+/** The generator source that actually answers for a saved config (see GeneratorSource). */
+function derivedSource(enabled: boolean, baseUrl: string, airgap: boolean): GeneratorSource {
+  if (!enabled || baseUrl.trim() === '') return 'builtin';
+  const source = sourceOfUrl(baseUrl);
+  return source === 'cloud' && airgap ? 'local' : source;
+}
+
 /**
  * What a problem is about: a setting the user entered, a connection-test cause, or one of
- * two causes that never reach the endpoint: the desktop backend is not ready
- * ('unavailable') or answered the test request with a refusal ('refused').
+ * the causes that never reach the endpoint: the desktop backend is not ready
+ * ('unavailable'), answered the test request with a refusal ('refused', 4xx) or failed
+ * while running it ('failed', 5xx).
  */
-type ProblemCause = 'setting' | 'unavailable' | 'refused' | ProviderFailureKind;
+type ProblemCause = 'setting' | 'unavailable' | 'refused' | 'failed' | ProviderFailureKind;
 
 const PROBLEM_TITLE: Record<ProblemCause, string> = {
   setting: 'Check this setting',
   unavailable: 'The desktop backend is not available',
   refused: 'The desktop backend refused the test',
+  failed: 'The desktop backend failed to run the test',
   network: 'Server not reachable',
   auth: 'The server refused the API key',
   model: 'Model not available',
@@ -119,12 +136,16 @@ class BackendUnavailableError extends Error {}
 
 /**
  * The cause of an error thrown while testing the connection. Only a transport failure
- * (the request never got an answer) is 'network'; a backend that answered with an error
- * status is 'refused' (e.g. the 501 of an engine without external-model support).
+ * (the request never got an answer) is 'network'; a backend that answered with a 4xx
+ * refused the request ('refused'); one that answered with a 5xx (including the 501 of an
+ * engine without external-model support) failed to run it ('failed').
  */
 function causeOfTestError(err: unknown): ProblemCause {
   if (err instanceof BackendUnavailableError) return 'unavailable';
-  if (err instanceof ApiError) return err.status > 0 ? 'refused' : 'network';
+  if (err instanceof ApiError) {
+    if (err.status >= 500) return 'failed';
+    return err.status > 0 ? 'refused' : 'network';
+  }
   if (err instanceof TypeError) return 'network'; // fetch() rejects with TypeError on transport failure
   return 'other';
 }
@@ -158,7 +179,9 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // generator source is classified from it, so typing in the field never flips the
   // radio while egress is on; only a saved URL (blur, enable, backend answer) does.
   const [savedBaseUrl, setSavedBaseUrl] = useState(draft.baseUrl);
-  const [source, setSource] = useState<GeneratorSource>(() => (draft.baseUrl.trim() !== '' ? sourceOfUrl(draft.baseUrl) : 'builtin'));
+  const [source, setSource] = useState<GeneratorSource>(() => derivedSource(draft.enabled, draft.baseUrl, IS_AIRGAP));
+  // N1: whether the user chose a source themselves (the first desktop snapshot must not undo that).
+  const sourcePickedRef = useRef(false);
   // Browser key-origin binding: the origin the key in the field belongs to
   // (loaded key: its bound origin, which equals the shown URL's; typed key:
   // the URL shown while typing), and whether it was typed since the last save.
@@ -202,8 +225,11 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     snapshotAppliedRef.current = true;
     const current = draftRef.current;
     const nextBaseUrl = typeof s['external.baseUrl'] === 'string' ? (s['external.baseUrl'] as string) : current.baseUrl;
-    // The first backend snapshot is the saved config: a saved base URL opens on its source.
-    if (firstSnapshot && nextBaseUrl.trim() !== '') setSource(sourceOfUrl(nextBaseUrl));
+    // The first backend snapshot is the saved config: the source that actually answers
+    // (an enabled endpoint's own source, else Built-in model), unless the user already chose.
+    if (firstSnapshot && !sourcePickedRef.current) {
+      setSource(derivedSource(s['external.enabled'] === true, nextBaseUrl, IS_AIRGAP || s['external.airgap'] === true));
+    }
     // A typed key belongs to the URL that was SHOWN when it was typed. When the
     // backend's answer replaces the shown URL (e.g. after a save of another
     // field, or the first settings load), the typed key is dropped (fail
@@ -524,10 +550,11 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // An enabled endpoint (e.g. the desktop backend's snapshot arriving) shows the source
   // its saved base URL belongs to.
   useEffect(() => {
-    if (draft.enabled) setSource(sourceOfUrl(savedBaseUrl));
-  }, [draft.enabled, savedBaseUrl]);
+    if (draft.enabled) setSource(derivedSource(true, savedBaseUrl, airgap));
+  }, [draft.enabled, savedBaseUrl, airgap]);
 
   const handleSourceChange = async (next: GeneratorSource) => {
+    sourcePickedRef.current = true;
     setSource(next);
     // Built-in model: egress off (the safe direction; persisted like the switch).
     if (next === 'builtin' && draftRef.current.enabled) await handleEnabledChange(false);
@@ -548,6 +575,16 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     validateEndpointUrl(draft.baseUrl, { airgap: false }).kind === 'private';
   const headingId = 'external-model-heading';
   const cloudBlocked = airgap;
+  // A saved server that is not what answers (egress off): named under Built-in model,
+  // origin only (never a key or path). In an air-gapped build a public one cannot be used.
+  const savedSource = savedBaseUrl.trim() !== '' ? sourceOfUrl(savedBaseUrl) : null;
+  const savedOrigin = keyOriginOf(savedBaseUrl);
+  const savedNote =
+    source === 'builtin' && savedSource !== null && !draft.enabled
+      ? savedSource === 'cloud' && airgap
+        ? `A Cloud provider is saved${savedOrigin !== '' ? ` (${savedOrigin})` : ''} but cannot be used in this air-gapped build.`
+        : `A ${savedSource === 'cloud' ? 'Cloud provider' : 'Local or network server'} is saved but not in use${savedOrigin !== '' ? ` (${savedOrigin})` : ''}. Choose it to edit or switch it on.`
+      : null;
   const isServer = source !== 'builtin';
   // Browser: the saved key bound to the URL shown is in memory (draft) but is never
   // written into the field's DOM value (review L1): the field is write-only, as on
@@ -587,9 +624,18 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
           {
             value: 'builtin',
             label: 'Built-in model',
-            description: desktop
-              ? 'Answers are generated by this app on this computer. No external model server is contacted.'
-              : 'Answers are generated in this browser. No model server is contacted.',
+            description: (
+              <>
+                {desktop
+                  ? 'Answers are generated by this app on this computer. No external model server is contacted.'
+                  : 'Answers are generated in this browser. No model server is contacted.'}
+                {savedNote !== null && (
+                  <span className="settings-text settings-text--block" data-testid="external-saved-not-in-use">
+                    {savedNote}
+                  </span>
+                )}
+              </>
+            ),
           },
           {
             value: 'local',
@@ -606,7 +652,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
               ? 'Not available in this air-gapped build: only loopback and private-network endpoints can be used.'
               : 'A hosted provider such as OpenAI or Anthropic. Needs https and usually an API key.' +
                 (serverLocked && source !== 'cloud' ? ' Switch off Use external model to change the server type.' : ''),
-            disabled: (cloudBlocked || serverLocked) && source !== 'cloud',
+            disabled: cloudBlocked || (serverLocked && source !== 'cloud'),
           },
         ]}
       />

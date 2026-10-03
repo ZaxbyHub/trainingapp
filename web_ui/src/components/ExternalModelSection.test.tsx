@@ -1027,9 +1027,9 @@ describe('review L1/L6 (final critic)', () => {
     expect(problem).not.toHaveTextContent(/server not reachable/i);
   });
 
-  test('L1: a backend refusal (501 / 4xx) is titled as a refusal, not as an unreachable server', async () => {
+  test('L1: a backend refusal (4xx) is titled as a refusal, not as an unreachable server', async () => {
     installDesktopBridgeStub();
-    renderWith(desktopSession({}, () => Promise.reject(new ApiError(501, 'External model endpoints are not supported by this backend engine'))));
+    renderWith(desktopSession({}, () => Promise.reject(new ApiError(403, 'Not supported by this backend engine'))));
     const problem = await runTest();
     expect(problem).toHaveTextContent(/the desktop backend refused the test/i);
     expect(problem).toHaveTextContent(/not supported by this backend engine/i);
@@ -1053,53 +1053,250 @@ describe('review L1/L6 (final critic)', () => {
     expect(problem).not.toHaveTextContent(/server not reachable/i);
   });
 
-  test('L6: a Cloud provider entered but never enabled comes back as Cloud provider after a reload', async () => {
+  test('N2: a backend 5xx is titled as a failure to run the test; a 4xx stays a refusal', async () => {
+    installDesktopBridgeStub();
+    renderWith(desktopSession({}, () => Promise.reject(new ApiError(500, 'internal error'))));
+    const failed = await runTest();
+    expect(failed).toHaveTextContent(/the desktop backend failed to run the test/i);
+    expect(failed).not.toHaveTextContent(/refused the test/i);
+    cleanup();
+    renderWith(desktopSession({}, () => Promise.reject(new ApiError(400, 'bad request'))));
+    expect(await runTest()).toHaveTextContent(/the desktop backend refused the test/i);
+  });
+
+  // L6 (rework): the radio always matches the generator that actually answers.
+  const saveBrowser = (cfg: Record<string, unknown>) =>
+    localStorage.setItem(
+      'external-provider-config',
+      JSON.stringify({ enabled: false, protocol: 'openai', baseUrl: '', model: '', grounded: true, ...cfg }),
+    );
+  /** Stubs fetch; callers assert it was never called. */
+  const noFetch = () => {
+    const spy = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', spy);
+    return spy;
+  };
+  const storedConfig = (): Record<string, unknown> => JSON.parse(localStorage.getItem('external-provider-config') ?? '{}');
+
+  test('L6: a Cloud provider entered but never enabled reloads on Built-in model and names the saved server', async () => {
     const first = render(<ExternalModelSection />);
     let q = within(region());
     fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
     const base = q.getByLabelText(/^base url$/i);
-    fireEvent.change(base, { target: { value: 'https://api.openai.com' } });
+    fireEvent.change(base, { target: { value: 'https://api.openai.com/v1/secret-path' } });
     fireEvent.blur(base);
-    await waitFor(() => expect(JSON.parse(localStorage.getItem('external-provider-config') ?? '{}').baseUrl).toBe('https://api.openai.com'));
+    await waitFor(() => expect(storedConfig().baseUrl).toBe('https://api.openai.com/v1/secret-path'));
     first.unmount();
-    // Reload: nothing was enabled and nothing was contacted, yet the entered source returns.
-    const fetchSpy = vi.fn(async () => new Response('{}'));
-    vi.stubGlobal('fetch', fetchSpy);
+    const fetchSpy = noFetch();
     render(<ExternalModelSection />);
     q = within(region());
-    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
-    expect(q.getByLabelText(/^base url$/i)).toHaveValue('https://api.openai.com');
-    expect(q.getByRole('switch', { name: /^use my documents/i })).toBeInTheDocument();
-    expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
-    expect(JSON.parse(localStorage.getItem('external-provider-config') ?? '{}').enabled).not.toBe(true);
+    expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+    const note = q.getByTestId('external-saved-not-in-use');
+    expect(note).toHaveTextContent('A Cloud provider is saved but not in use (https://api.openai.com). Choose it to edit or switch it on.');
+    expect(note).not.toHaveTextContent(/secret-path/);
+    expect(q.queryByLabelText(/^base url$/i)).toBeNull();
+    expect(storedConfig().enabled).not.toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(probeSpy.calls).toBe(0);
   });
 
-  test('L6: a saved private-network URL that is not enabled comes back as Local or network server', () => {
-    localStorage.setItem(
-      'external-provider-config',
-      JSON.stringify({ enabled: false, protocol: 'openai', baseUrl: 'http://192.168.1.20:11434', model: '', grounded: true }),
+  test('L6: a saved private-network URL that is not enabled reloads on Built-in model and says Local or network server', () => {
+    saveBrowser({ baseUrl: 'http://192.168.1.20:11434' });
+    const fetchSpy = noFetch();
+    render(<ExternalModelSection />);
+    const q = within(region());
+    expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+    expect(q.getByTestId('external-saved-not-in-use')).toHaveTextContent(
+      'A Local or network server is saved but not in use (http://192.168.1.20:11434). Choose it to edit or switch it on.',
     );
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(probeSpy.calls).toBe(0);
+  });
+
+  test('L6: explicitly choosing Built-in after configuring an enabled server reloads on Built-in model', async () => {
+    saveBrowser({ enabled: true, baseUrl: 'https://api.openai.com', model: 'gpt-x' });
+    const first = render(<ExternalModelSection />);
+    fireEvent.click(within(region()).getByRole('radio', { name: /^built-in model$/i }));
+    await waitFor(() => expect(storedConfig().enabled).toBe(false));
+    first.unmount();
+    const fetchSpy = noFetch();
+    render(<ExternalModelSection />);
+    const q = within(region());
+    expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+    expect(q.getByTestId('external-saved-not-in-use')).toHaveTextContent(/cloud provider is saved but not in use \(https:\/\/api\.openai\.com\)/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(probeSpy.calls).toBe(0);
+  });
+
+  test('L6: an enabled external model reloads on its own source and shows no saved-not-in-use line', () => {
+    saveBrowser({ enabled: true, baseUrl: 'https://api.openai.com', model: 'gpt-x' });
+    const fetchSpy = noFetch();
+    render(<ExternalModelSection />);
+    expect(within(region()).getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+    expect(within(region()).queryByTestId('external-saved-not-in-use')).toBeNull();
+    cleanup();
+    saveBrowser({ enabled: true, baseUrl: 'http://localhost:1234', model: 'm' });
     render(<ExternalModelSection />);
     expect(within(region()).getByRole('radio', { name: /^local or network server$/i })).toBeChecked();
+    expect(within(region()).queryByTestId('external-saved-not-in-use')).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(probeSpy.calls).toBe(0);
   });
 
-  test('L6: with nothing saved the section still opens on Built-in model', () => {
+  test('L6: with nothing saved the section opens on Built-in model without a saved-not-in-use line', () => {
     render(<ExternalModelSection />);
     expect(within(region()).getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+    expect(within(region()).queryByTestId('external-saved-not-in-use')).toBeNull();
   });
 
-  test('L6 (desktop): a saved base URL in the first backend snapshot opens on its source, egress still off', async () => {
-    installDesktopBridgeStub();
-    const s = desktopSession(
-      { 'external.enabled': false, 'external.baseUrl': 'https://api.anthropic.com', 'external.protocol': 'anthropic' },
-      () => Promise.reject(new Error('unused')),
-    );
-    renderWith(s);
+  test('L6: choosing the saved source from the saved-not-in-use state restores URL, model and grounded, enabling nothing', () => {
+    saveBrowser({ baseUrl: 'https://api.openai.com', model: 'gpt-x', grounded: false });
+    const fetchSpy = noFetch();
+    render(<ExternalModelSection />);
     const q = within(region());
-    await waitFor(() => expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked());
+    fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
+    expect(q.getByLabelText(/^base url$/i)).toHaveValue('https://api.openai.com');
+    expect(q.getByLabelText(/^model$/i)).toHaveValue('gpt-x');
+    expect(q.getByRole('switch', { name: /^use my documents/i })).not.toBeChecked();
     expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
-    expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
+    expect(storedConfig().enabled).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(probeSpy.calls).toBe(0);
+  });
+
+  describe('desktop first snapshot', () => {
+    const snap = (settings: Record<string, unknown>) => desktopSession(settings, () => Promise.reject(new Error('unused')));
+    /** Waits until the first snapshot has been applied (the saved base URL is in the draft or the note shows). */
+    const snapshotApplied = async (s: DesktopSession) => {
+      await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+      await waitFor(() => expect(within(region()).queryByTestId('external-saved-not-in-use')).not.toBeNull());
+    };
+
+    test('a saved but never enabled Cloud provider opens on Built-in model with the saved-not-in-use line', async () => {
+      installDesktopBridgeStub();
+      const fetchSpy = noFetch();
+      const s = snap({ 'external.enabled': false, 'external.baseUrl': 'https://api.anthropic.com', 'external.protocol': 'anthropic' });
+      renderWith(s);
+      await snapshotApplied(s);
+      const q = within(region());
+      expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+      expect(q.getByTestId('external-saved-not-in-use')).toHaveTextContent(
+        'A Cloud provider is saved but not in use (https://api.anthropic.com). Choose it to edit or switch it on.',
+      );
+      expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
+    });
+
+    test('explicit Built-in after configuring an enabled server reopens on Built-in model', async () => {
+      installDesktopBridgeStub();
+      const fetchSpy = noFetch();
+      const saved = { 'external.enabled': true, 'external.baseUrl': 'https://api.openai.com', 'external.model': 'gpt-x' };
+      const first = snap(saved);
+      const view = renderWith(first);
+      await waitFor(() => expect(within(region()).getByRole('radio', { name: /^cloud provider$/i })).toBeChecked());
+      fireEvent.click(within(region()).getByRole('radio', { name: /^built-in model$/i }));
+      await waitFor(() => expect(first.apiClient.updateSettings).toHaveBeenCalledWith({ 'external.enabled': false }));
+      view.unmount();
+      // Reload: the backend now answers with egress off and the URL kept.
+      const second = snap({ ...saved, 'external.enabled': false });
+      renderWith(second);
+      await snapshotApplied(second);
+      expect(within(region()).getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+      expect(second.apiClient.updateSettings).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
+    });
+
+    test('an enabled external model opens on its own source', async () => {
+      installDesktopBridgeStub();
+      const fetchSpy = noFetch();
+      const s = snap({ 'external.enabled': true, 'external.baseUrl': 'http://192.168.1.20:8000', 'external.model': 'm1' });
+      renderWith(s);
+      await waitFor(() => expect(within(region()).getByRole('radio', { name: /^local or network server$/i })).toBeChecked());
+      expect(within(region()).queryByTestId('external-saved-not-in-use')).toBeNull();
+      expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
+    });
+
+    test('choosing the saved source restores the saved URL, model and grounded settings', async () => {
+      installDesktopBridgeStub();
+      const fetchSpy = noFetch();
+      const s = snap({
+        'external.enabled': false,
+        'external.baseUrl': 'http://192.168.1.20:8000',
+        'external.model': 'm1',
+        'external.grounded': false,
+      });
+      renderWith(s);
+      await snapshotApplied(s);
+      const q = within(region());
+      fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+      expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000');
+      expect(q.getByLabelText(/^model$/i)).toHaveValue('m1');
+      expect(q.getByRole('switch', { name: /^use my documents/i })).not.toBeChecked();
+      expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+      expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
+    });
+
+    test('N1: a source picked before the first snapshot arrives is not overridden by it', async () => {
+      installDesktopBridgeStub();
+      let release: (v: never) => void = () => undefined;
+      const pending = new Promise<never>((resolve) => {
+        release = resolve;
+      });
+      const s = snap({});
+      (s.apiClient.getSettings as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => pending);
+      renderWith(s);
+      const q = within(region());
+      fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
+      expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+      release({ 'external.enabled': false, 'external.baseUrl': 'http://192.168.1.20:8000' } as never);
+      await waitFor(() => expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000'));
+      expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+      expect(q.getByRole('radio', { name: /^built-in model$/i })).not.toBeChecked();
+      expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('N3: air-gapped build', () => {
+    test('a saved public URL (not enabled) shows Built-in model; Cloud stays disabled and never selected', async () => {
+      installDesktopBridgeStub();
+      const fetchSpy = noFetch();
+      const s = desktopSession(
+        { 'external.enabled': false, 'external.baseUrl': 'https://api.openai.com', 'external.airgap': true },
+        () => Promise.reject(new Error('unused')),
+      );
+      renderWith(s);
+      const q = within(region());
+      await waitFor(() => expect(q.getByTestId('external-airgap-notice')).toBeInTheDocument());
+      const cloud = q.getByRole('radio', { name: /^cloud provider$/i });
+      expect(cloud).toBeDisabled();
+      expect(cloud).not.toBeChecked();
+      expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+      expect(q.getByTestId('external-saved-not-in-use')).toHaveTextContent(/cannot be used in this air-gapped build/i);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
+    });
+
+    test('an enabled public URL shows the form under Local or network server; Cloud stays disabled and unselected', async () => {
+      installDesktopBridgeStub();
+      const s = desktopSession(
+        { 'external.enabled': true, 'external.baseUrl': 'https://api.openai.com', 'external.model': 'gpt-x', 'external.airgap': true },
+        () => Promise.reject(new Error('unused')),
+      );
+      renderWith(s);
+      const q = within(region());
+      await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+      expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeDisabled();
+      expect(q.getByRole('radio', { name: /^cloud provider$/i })).not.toBeChecked();
+      expect(q.getByRole('radio', { name: /^local or network server$/i })).toBeChecked();
+      // The switch is reachable, so the user can turn the refused endpoint off.
+      fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
+      await waitFor(() => expect(s.apiClient.updateSettings).toHaveBeenCalledWith({ 'external.enabled': false }));
+    });
   });
 });
