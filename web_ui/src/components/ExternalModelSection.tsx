@@ -40,6 +40,7 @@ import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { ApiError } from '../lib/api/types';
 import { IS_AIRGAP } from '../lib/llm/airgap';
+import type { InferenceMode } from '../lib/inference';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
 import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE, type ProviderFailureKind } from '../lib/llm/provider-error';
 import {
@@ -138,13 +139,16 @@ class BackendUnavailableError extends Error {}
  * refused the request ('refused'); one that answered with a 5xx (including the 501 of an
  * engine without external-model support) failed to run it ('failed').
  */
-function causeOfTestError(err: unknown): ProblemCause {
+function causeOfTestError(err: unknown, desktop: boolean): ProblemCause {
   if (err instanceof BackendUnavailableError) return 'unavailable';
   if (err instanceof ApiError) {
     if (err.status >= 500) return 'failed';
     return err.status > 0 ? 'refused' : 'network';
   }
-  if (err instanceof TypeError) return 'network'; // fetch() rejects with TypeError on transport failure
+  // fetch() rejects with TypeError on transport failure. On desktop the only request made is to
+  // the loopback backend (the endpoint's own failures come back as result.ok === false), so a
+  // transport failure there means the backend is not available.
+  if (err instanceof TypeError) return desktop ? 'unavailable' : 'network';
   return 'other';
 }
 
@@ -160,9 +164,18 @@ export interface ExternalModelSectionProps {
    * backend's settings error, which must not hide behind the Built-in model slot).
    */
   notice?: ReactNode;
+  /**
+   * Desktop app: where the built-in model runs ('browser-local' = in this window, 'api' = the
+   * desktop backend). Chat uses the external endpoint only through the desktop backend, so with
+   * 'browser-local' this section says so, and switching the external model on moves the run
+   * location to the backend. Omitted: no run-location gating.
+   */
+  inferenceMode?: InferenceMode;
+  /** Sets the run location (SettingsPage passes the inference-mode context setter). */
+  onInferenceModeChange?: (mode: InferenceMode) => void;
 }
 
-export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSectionProps): React.ReactElement {
+export function ExternalModelSection({ id, builtIn, notice, inferenceMode, onInferenceModeChange }: ExternalModelSectionProps): React.ReactElement {
   const { session } = useDesktopSession();
   const desktop = isElectron();
   const [draft, setDraft] = useState<Draft>(() => {
@@ -221,6 +234,9 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // answers when the backend would use the public URL. Browser: the build flag, which
   // isExternalActive applies.
   const airgap = desktop ? keyState.airgap : IS_AIRGAP;
+  // Enforcement (what refuses a URL) is never weaker than either signal: the bundle flag or the
+  // backend's state, so a failed settings read on desktop still applies the bundle flag.
+  const enforceAirgap = IS_AIRGAP || keyState.airgap;
 
   // Desktop: whether any backend snapshot (GET or PUT answer) has been applied.
   const snapshotAppliedRef = useRef(false);
@@ -302,10 +318,10 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   /** Policy check with the airgap rule this app enforces. */
   const checkUrl = useCallback(
     (url: string): string | null => {
-      const verdict = validateEndpointUrl(url, { airgap });
+      const verdict = validateEndpointUrl(url, { airgap: enforceAirgap });
       return verdict.ok ? null : verdict.message;
     },
-    [airgap],
+    [enforceAirgap],
   );
 
   /** Persist a patch (browser storage or desktop PUT). Resolves false on refusal. */
@@ -500,7 +516,13 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     const patch: Partial<Draft> = enabled
       ? { enabled, protocol: current.protocol, baseUrl: current.baseUrl, model: current.model }
       : { enabled };
-    if (!(await persist(patch)) && mountedRef.current) setDraft((prev) => ({ ...prev, enabled: previous }));
+    if (!(await persist(patch))) {
+      if (mountedRef.current) setDraft((prev) => ({ ...prev, enabled: previous }));
+      return;
+    }
+    // Chat uses the external endpoint only through the desktop backend, so "In this window"
+    // would keep answering from the built-in model: move the run location to the backend.
+    if (enabled && desktop && inferenceMode === 'browser-local') onInferenceModeChange?.('api');
   };
 
   enabledChangeRef.current = handleEnabledChange;
@@ -555,7 +577,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       if (result.ok) setStatus(result.message);
       else setProblem(result.message, result.kind ?? 'other');
     } catch (err) {
-      if (mountedRef.current) setProblem(`Connection test failed: ${errorText(err)}`, causeOfTestError(err));
+      if (mountedRef.current) setProblem(`Connection test failed: ${errorText(err)}`, causeOfTestError(err, desktop));
     } finally {
       if (mountedRef.current) setTesting(false);
     }
@@ -603,8 +625,14 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // Air-gapped build with an ENABLED public endpoint: the policy refuses it, so the built-in
   // model answers; the form and the switch stay so the user can switch it off.
   const refusedPublic = airgap && draft.enabled && savedSource === 'cloud';
+  // Desktop only: the run location is "In this window", so chat never reaches the endpoint
+  // (the built-in model runs in the window) even though the backend has it switched on.
+  const windowRuns = desktop && inferenceMode === 'browser-local';
+  const externalAnswers = draft.enabled && !refusedPublic && !windowRuns;
   // The same endpoint after it was switched off: it cannot be switched back on here.
-  const blockedPublic = airgap && !draft.enabled && source === 'cloud' && savedSource === 'cloud';
+  // Also when Cloud was picked before the backend snapshot reported the air-gap, so the
+  // radio never shows Cloud checked under "Not in use yet".
+  const blockedPublic = airgap && !draft.enabled && source === 'cloud';
   // Browser: the saved key bound to the URL shown is in memory (draft) but is never
   // written into the field's DOM value (review L1): the field is write-only, as on
   // the desktop, and a line says a key is saved.
@@ -692,7 +720,9 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
         <SettingsSubsection title="Server connection" headingId={headingId}>
           {refusedPublic ? (
             <p className="settings-text settings-tone--warning" data-testid="external-airgap-refused">
-              This public endpoint is refused in this air-gapped build; answers come from the built-in model. Switch off Use external model.
+              {desktop
+                ? 'This public endpoint is refused in this air-gapped build; requests to it will fail. Switch off Use external model.'
+                : 'This public endpoint is refused in this air-gapped build; answers come from the built-in model. Switch off Use external model.'}
             </p>
           ) : blockedPublic ? (
             <p className="settings-text settings-tone--warning" data-testid="external-airgap-blocked">
@@ -700,9 +730,11 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
             </p>
           ) : (
             <p className="settings-text" data-testid="external-usage-state">
-              {draft.enabled
-                ? 'Answers come from this server. The built-in model settings apply when Built-in model is selected.'
-                : 'Not in use yet: answers still come from the built-in model until you switch on Use external model.'}
+              {windowRuns && draft.enabled
+                ? 'External model answers only when the model runs in the desktop backend. Choose Desktop backend under the built-in model settings.'
+                : draft.enabled
+                  ? 'Answers come from this server. The built-in model settings apply when Built-in model is selected.'
+                  : 'Not in use yet: answers still come from the built-in model until you switch on Use external model.'}
             </p>
           )}
 
@@ -899,17 +931,21 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       {/* M2: whenever egress is off, the built-in model is what answers, so its
           controls stay rendered (engine, download, cache status, run location,
           profile, backend status) under every source. */}
-      {isServer && (!draft.enabled || refusedPublic) && (
+      {isServer && !externalAnswers && (
         <>
           <p className="settings-text" data-testid="builtin-still-answering">
-            {refusedPublic
-              ? 'Answers come from the built-in model. Its settings:'
-              : 'Until you switch on Use external model, answers come from the built-in model. Its settings:'}
+            {windowRuns && draft.enabled
+              ? 'The model runs in this window, so the built-in model answers. Its settings:'
+              : refusedPublic
+                ? desktop
+                  ? "The built-in model's settings:"
+                  : 'Answers come from the built-in model. Its settings:'
+                : 'Until you switch on Use external model, answers come from the built-in model. Its settings:'}
           </p>
           {builtIn}
         </>
       )}
-      {isServer && draft.enabled && !refusedPublic && (
+      {isServer && externalAnswers && (
         <p className="settings-text" data-testid="builtin-not-used">
           The built-in model is not used while the external model answers. Its settings return when you switch
           off Use external model or choose Built-in model.

@@ -1044,11 +1044,16 @@ describe('review L1/L6 (final critic)', () => {
     expect(problem).not.toHaveTextContent(/server not reachable/i);
   });
 
-  test('L1: only a transport failure (fetch TypeError, ApiError status 0) is titled Server not reachable', async () => {
+  test('L1: on desktop a fetch TypeError (loopback backend unreachable) is titled as the backend being unavailable', async () => {
     installDesktopBridgeStub();
     renderWith(desktopSession({}, () => Promise.reject(new TypeError('Failed to fetch'))));
-    expect(await runTest()).toHaveTextContent(/server not reachable/i);
-    cleanup();
+    const problem = await runTest();
+    expect(problem).toHaveTextContent(/the desktop backend is not available/i);
+    expect(problem).not.toHaveTextContent(/server not reachable/i);
+  });
+
+  test('L1: an ApiError with status 0 is still titled Server not reachable', async () => {
+    installDesktopBridgeStub();
     renderWith(desktopSession({}, () => Promise.reject(new ApiError(0, 'Network unavailable'))));
     expect(await runTest()).toHaveTextContent(/server not reachable/i);
   });
@@ -1351,8 +1356,10 @@ describe('review L1/L6 (final critic)', () => {
       expect(q.getByRole('radio', { name: /^local or network server$/i })).not.toBeChecked();
       expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeEnabled();
       expect(q.getByTestId('external-airgap-refused')).toHaveTextContent(
-        'This public endpoint is refused in this air-gapped build; answers come from the built-in model. Switch off Use external model.',
+        'This public endpoint is refused in this air-gapped build; requests to it will fail. Switch off Use external model.',
       );
+      expect(q.getByTestId('external-airgap-refused')).not.toHaveTextContent(/built-in model/i);
+      expect(q.getByTestId('builtin-still-answering')).not.toHaveTextContent(/answers come from the built-in model/i);
       expect(q.queryByTestId('external-usage-state')).toBeNull();
       expect(q.getByLabelText(/^base url$/i)).toHaveValue('https://api.openai.com');
       // The switch is reachable, so the user can turn the refused endpoint off.
@@ -1454,5 +1461,137 @@ describe('LOW-A browser: the build flag decides', () => {
     expect(q.queryByTestId('external-airgap-notice')).toBeNull();
     expect(q.queryByTestId('external-airgap-refused')).toBeNull();
     expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i);
+  });
+});
+
+describe('final critic LOW-1, LOW-3, NIT-2 (desktop)', () => {
+  const region = () => screen.getByRole('region', { name: /^model & connection$/i });
+  const LOCAL = { 'external.enabled': false, 'external.baseUrl': 'http://192.168.1.20:8000', 'external.model': 'm1' };
+
+  function makeSession(settings: () => Promise<unknown>) {
+    const apiClient = {
+      getSettings: vi.fn(settings as never),
+      updateSettings: vi.fn(async (patch: Record<string, unknown>) => ({ ...LOCAL, ...patch }) as never),
+      testExternalEndpoint: vi.fn(),
+    } as unknown as ApiClient;
+    const s: DesktopSession = { baseUrl: 'http://127.0.0.1:4567', token: 't', mode: 'node', apiClient, sseUrl: () => 'x' };
+    return s;
+  }
+  const renderDesktopWith = (
+    s: DesktopSession,
+    props: { inferenceMode?: 'browser-local' | 'api'; onInferenceModeChange?: (m: 'browser-local' | 'api') => void } = {},
+  ) =>
+    render(
+      <DesktopSessionProvider value={{ session: s, models: null, loading: false, error: null }}>
+        <ExternalModelSection builtIn={<p data-testid="builtin-marker">BUILT-IN</p>} {...props} />
+      </DesktopSessionProvider>,
+    );
+
+  test('LOW-1: switching on the external model while the model runs in this window moves it to the desktop backend', async () => {
+    installDesktopBridgeStub();
+    const onMode = vi.fn();
+    const s = makeSession(async () => LOCAL);
+    renderDesktopWith(s, { inferenceMode: 'browser-local', onInferenceModeChange: onMode });
+    const q = within(region());
+    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+    await waitFor(() => expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000'));
+    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
+    await waitFor(() => expect(onMode).toHaveBeenCalledWith('api'));
+    expect(onMode).toHaveBeenCalledTimes(1);
+  });
+
+  test('LOW-1: switching on with the desktop backend already selected leaves the run location alone and says the server answers', async () => {
+    installDesktopBridgeStub();
+    const onMode = vi.fn();
+    const s = makeSession(async () => LOCAL);
+    renderDesktopWith(s, { inferenceMode: 'api', onInferenceModeChange: onMode });
+    const q = within(region());
+    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+    await waitFor(() => expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000'));
+    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
+    await waitFor(() => expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i));
+    expect(onMode).not.toHaveBeenCalled();
+    expect(q.getByTestId('builtin-not-used')).toBeInTheDocument();
+  });
+
+  test('LOW-1: a failed switch-on does not change the run location', async () => {
+    installDesktopBridgeStub();
+    const onMode = vi.fn();
+    const s = makeSession(async () => LOCAL);
+    (s.apiClient.updateSettings as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('refused'));
+    renderDesktopWith(s, { inferenceMode: 'browser-local', onInferenceModeChange: onMode });
+    const q = within(region());
+    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+    await waitFor(() => expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000'));
+    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
+    await waitFor(() => expect(q.getByTestId('external-problem')).not.toBeEmptyDOMElement());
+    expect(onMode).not.toHaveBeenCalled();
+  });
+
+  test('LOW-1: an enabled endpoint while the model runs in this window never claims it answers, and keeps the run-location controls', async () => {
+    installDesktopBridgeStub();
+    renderDesktopWith(makeSession(async () => ({ ...LOCAL, 'external.enabled': true })), { inferenceMode: 'browser-local' });
+    const q = within(region());
+    await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers only when the model runs in the desktop backend/i);
+    expect(q.getByTestId('external-usage-state')).not.toHaveTextContent(/answers come from this server/i);
+    expect(q.queryByTestId('builtin-not-used')).toBeNull();
+    expect(q.getByTestId('builtin-still-answering')).toHaveTextContent(/runs in this window, so the built-in model answers/i);
+    expect(q.getByTestId('builtin-marker')).toBeInTheDocument();
+  });
+
+  test('LOW-3: a renderer built air-gapped still refuses a public URL when the backend is not air-gapped (copy follows the backend)', async () => {
+    installDesktopBridgeStub();
+    airgapFlag.on = true;
+    const s = makeSession(async () => ({ ...LOCAL, 'external.airgap': false }));
+    renderDesktopWith(s);
+    const q = within(region());
+    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+    // The copy follows the backend: no air-gap notice, Cloud selectable.
+    expect(q.queryByTestId('external-airgap-notice')).toBeNull();
+    fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).not.toHaveAttribute('aria-disabled');
+    const base = q.getByLabelText(/^base url$/i);
+    fireEvent.change(base, { target: { value: 'https://api.openai.com' } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(q.getByTestId('external-problem')).not.toBeEmptyDOMElement());
+    expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
+  });
+
+  test('LOW-3: the same refusal applies when the backend settings read fails', async () => {
+    installDesktopBridgeStub();
+    airgapFlag.on = true;
+    const s = makeSession(() => Promise.reject(new Error('GET failed')));
+    renderDesktopWith(s);
+    const q = within(region());
+    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+    const base = q.getByLabelText(/^base url$/i);
+    fireEvent.change(base, { target: { value: 'https://api.openai.com' } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(q.getByTestId('external-problem')).not.toBeEmptyDOMElement());
+    expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
+  });
+
+  test('NIT-2: Cloud picked before the snapshot reports an air-gap shows the blocked line, not "Not in use yet"', async () => {
+    installDesktopBridgeStub();
+    let release!: (v: unknown) => void;
+    const s = makeSession(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    renderDesktopWith(s);
+    const q = within(region());
+    fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
+    expect(q.getByTestId('external-usage-state')).toBeInTheDocument();
+    release({ ...LOCAL, 'external.airgap': true });
+    await waitFor(() => expect(q.getByTestId('external-airgap-blocked')).toHaveTextContent(/can't be used in this air-gapped build/i));
+    expect(q.queryByTestId('external-usage-state')).toBeNull();
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toHaveAttribute('aria-disabled', 'true');
   });
 });
