@@ -20,13 +20,14 @@
  * (install path: a Storyline pack zip on the Documents page, or staged with
  * the installer), auto-selects the sole course, and remembers the last one.
  */
-import { useEffect, useMemo, useState } from 'react';
-import { TrainingPlayer } from '../components/TrainingPlayer';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { TrainingPlayer, courseIdOf } from '../components/TrainingPlayer';
 import type { TrainingPlayerSlideState } from '../components/training-player-bridge';
 import { usePackClient } from '../lib/packs/pack-client';
 import { LAST_PACK_KEY } from '../lib/storage/persisted-keys';
 import type { PackInfo } from '../lib/api/types';
-import { Icon, PageHeader, Select } from '../ui';
+import { courseSlideCount, slidePosition } from '../lib/training/slide-position';
+import { Badge, Button, Icon, PageHeader, Select } from '../ui';
 import './training.css';
 
 const TRAINING_DESCRIPTION = 'Play the training courses installed on this device.';
@@ -42,6 +43,12 @@ export interface TrainingPageProps {
    * the pinned-slide state) unchanged. Do not decorate the event here.
    */
   onSlideChange?: (event: TrainingPlayerSlideState) => void;
+  /**
+   * Lumen phase 6: the player page's Back releases a lifted chat deep link
+   * (App owns `initialPackId`), so the library and any course picked from it
+   * take over. Optional: without it Back still shows the library.
+   */
+  onLeaveDeepLink?: () => void;
 }
 
 
@@ -52,13 +59,31 @@ const packDirKey = (pack: { packId: string; version: string }): string =>
 
 const isTrainingPack = (pack: PackInfo): boolean => pack.sourceClass === 'training';
 
-export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: TrainingPageProps) {
+export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onLeaveDeepLink }: TrainingPageProps) {
   const packClient = usePackClient();
   const [packs, setPacks] = useState<PackInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // ?pack= is read from the location ONCE plus on explicit picker changes —
   // a plain memo would not see pushState, so an override state mirrors it.
   const [packOverride, setPackOverride] = useState<string | null>(null);
+  // Lumen phase 6: the player page's Back shows the course library even when a
+  // course is selected (with a sole course the picker auto-selects it, so the
+  // library needs an explicit flag). Cleared by any course choice.
+  const [libraryRequested, setLibraryRequested] = useState(false);
+  // The slide the player last reported (for the header and pin-slide). The event
+  // is forwarded to onSlideChange UNCHANGED and exactly once (D7 contract).
+  const [currentSlide, setCurrentSlide] = useState<TrainingPlayerSlideState | null>(null);
+  const handleSlideChange = useCallback(
+    (event: TrainingPlayerSlideState) => {
+      setCurrentSlide(event);
+      onSlideChange?.(event);
+    },
+    [onSlideChange]
+  );
+  // A new lifted deep link (chat "Open in training") always opens its player.
+  useEffect(() => {
+    setLibraryRequested(false);
+  }, [initialPackId]);
 
   const urlPack = useMemo(() => {
     if (initialPackId !== undefined && initialPackId !== '') return initialPackId;
@@ -232,6 +257,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
       // storage may be unavailable (privacy mode); selection still works
     }
     setPackOverride(dir);
+    setLibraryRequested(false);
   };
   // History navigation (back/forward) mutates location.search without going
   // through selectPack — sync the override mirror so the URL and the picker
@@ -239,69 +265,143 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   useEffect(() => {
     const onPopState = (): void => {
       setPackOverride(new URLSearchParams(window.location.search).get('pack'));
+      setLibraryRequested(false);
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  if (deepLinkedPackDir !== '') {
-    // D6/D7 wire contract: a lifted target renders the player directly — no
-    // session or pack-list consultation (chat Learn links only ever target
-    // installed training packs).
-    return (
-      <div className="app-page">
-        <PageHeader title="Training" description={TRAINING_DESCRIPTION} />
-        <div className="app-page__fill app-training app-training--player">
-          <TrainingPlayer packId={deepLinkedPackDir} initialSlideId={pendingSlideId} onSlideChange={onSlideChange} />
-        </div>
-      </div>
-    );
-  }
+  // ---- Lumen phase 6: library grid + player page (slim header) ----
+  const playerDir = deepLinkedPackDir !== '' ? deepLinkedPackDir : selectedDir;
+  const showPlayer = playerDir !== '' && !libraryRequested;
+  const playerCourseId = courseIdOf(playerDir);
+  const playerCourse = courses.find((pack) => packDirKey(pack) === playerDir || pack.packId === playerDir);
 
+  // A different course starts with no observed slide.
+  useEffect(() => {
+    setCurrentSlide(null);
+  }, [playerDir]);
+
+  // "Slide x of n" from the course's ingested slide docs; the title alone when
+  // they are not available (desktop renderer, index not ready). Never guessed.
+  const position = currentSlide === null ? null : slidePosition(playerCourseId, currentSlide.slideId);
+  const slideLabel =
+    currentSlide === null
+      ? 'Start the course to see your slide'
+      : position !== null
+        ? `Slide ${position.index} of ${position.total} · ${currentSlide.slideTitle}`
+        : `Slide: ${currentSlide.slideTitle}`;
+
+  // Course cards: no cover, progress or slide-count fields exist on an installed
+  // pack, so the card shows a monogram tile, the slide count when the ingested
+  // slide docs give it, and "Last opened" (LAST_PACK_KEY) in place of progress.
+  const lastOpenedId = (() => {
+    if (typeof window === 'undefined') return '';
+    try {
+      return (window.localStorage.getItem(LAST_PACK_KEY) ?? '').split('/')[0] ?? '';
+    } catch {
+      return '';
+    }
+  })();
+  const slideCounts = useMemo(
+    () => new Map(courses.map((pack) => [pack.packId, courseSlideCount(pack.packId)] as const)),
+    [courses]
+  );
+
+  const backToLibrary = (): void => {
+    // A lifted chat deep link lives in App: release it so the library (and a
+    // course picked from it) is what this page shows next.
+    if (initialPackId !== undefined && initialPackId !== '') onLeaveDeepLink?.();
+    setLibraryRequested(true);
+  };
+
+  // ONE tree for both views: the course picker keeps its position (and so its
+  // DOM node) when the library turns into the player page and back.
+  const deepLinked = deepLinkedPackDir !== '';
   return (
     <div className="app-page">
-      {/* Header (Lumen phase 3): the shared PageHeader. Body restyled in phase 6. */}
+      {/* Header (Lumen phase 3): the shared PageHeader, on both views. */}
       <PageHeader title="Training" description={TRAINING_DESCRIPTION} />
-      <div className="app-training" data-testid="training-page">
-        <div className="app-training__toolbar">
-          <label htmlFor="training-pack-select" className="app-training__label">
-            Course:
-          </label>
-          <Select
-            id="training-pack-select"
-            data-testid="training-pack-select"
-            className="app-training__select"
-            value={selectedDir}
-            onChange={(event) => selectPack(event.target.value)}
-          >
-            <option value="">Select a course…</option>
-            {courses.map((pack) => {
-              const dir = packDirKey(pack);
-              return (
-                <option key={dir} value={dir}>
-                  {pack.name ?? pack.packId} ({dir})
-                </option>
-              );
-            })}
-          </Select>
-          {courses.length > 0 && (
+      <div
+        className={showPlayer ? 'app-page__fill app-training app-training--player' : 'app-training'}
+        data-testid={showPlayer && deepLinked ? undefined : 'training-page'}
+      >
+        {/* Library: picker toolbar. Player page: the slim header (back, course
+            title = the picker itself, version, slide x of n, pin-slide). */}
+        <div className={showPlayer ? 'app-training__playerbar' : 'app-training__toolbar'}>
+          {showPlayer ? (
+            <Button size="sm" variant="ghost" onClick={backToLibrary}>
+              <Icon name="chevron-left" size={16} />
+              All courses
+            </Button>
+          ) : null}
+          {showPlayer && deepLinked ? (
+            <h2 className="app-training__title">{playerCourse?.name ?? playerCourseId}</h2>
+          ) : (
+            <>
+              <label
+                htmlFor="training-pack-select"
+                className={showPlayer ? 'ui-visually-hidden' : 'app-training__label'}
+              >
+                {showPlayer ? 'Course' : 'Course:'}
+              </label>
+              <Select
+                id="training-pack-select"
+                data-testid="training-pack-select"
+                className={showPlayer ? 'app-training__title-select' : 'app-training__select'}
+                value={selectedDir}
+                onChange={(event) => selectPack(event.target.value)}
+              >
+                <option value="">Select a course…</option>
+                {courses.map((pack) => {
+                  const dir = packDirKey(pack);
+                  return (
+                    <option key={dir} value={dir}>
+                      {pack.name ?? pack.packId} ({dir})
+                    </option>
+                  );
+                })}
+              </Select>
+            </>
+          )}
+          {showPlayer && playerCourse !== undefined ? <Badge>v{playerCourse.version}</Badge> : null}
+          {showPlayer ? <span className="app-training__slidepos">{slideLabel}</span> : null}
+          {showPlayer ? (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="app-training__pin"
+              aria-disabled={currentSlide === null || undefined}
+              onClick={() => {
+                // Re-forwards the SAME event object the player emitted (App pins
+                // every slide change already; this restores a dismissed pin).
+                if (currentSlide !== null) onSlideChange?.(currentSlide);
+              }}
+            >
+              <Icon name="message-square" size={16} />
+              Pin slide to Chat
+            </Button>
+          ) : null}
+          {!showPlayer && courses.length > 0 ? (
             <p className="app-training__hint">
               To update the course, install a newer training pack zip on the Documents page, then select it here.
             </p>
-          )}
+          ) : null}
         </div>
 
-        {loadError !== null && (
+        {!(showPlayer && deepLinked) && loadError !== null && (
           <p role="alert" data-testid="training-pack-error" className="ui-banner ui-banner--danger app-training__error">
             Failed to load installed training packs: {loadError}
           </p>
         )}
 
-        {selectedDir === '' ? (
+        {showPlayer ? (
+          <TrainingPlayer packId={playerDir} initialSlideId={pendingSlideId} onSlideChange={handleSlideChange} />
+        ) : packs === null || courses.length === 0 ? (
           <div className="ui-empty app-training__empty" data-testid="training-empty-state">
             {packs === null ? (
               <p className="ui-empty__desc">Loading installed training packs…</p>
-            ) : activePacks.length === 0 ? (
+            ) : (
               <>
                 <Icon name="layers" size={32} className="ui-empty__icon" />
                 <h2 className="ui-empty__title">No training course is installed yet.</h2>
@@ -311,17 +411,50 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
                   page, or ship one with the installer, and it will appear here ready to play.
                 </p>
               </>
-            ) : (
-              <>
-                <Icon name="layers" size={32} className="ui-empty__icon" />
-                <p className="ui-empty__desc">No course selected. Pick one above.</p>
-              </>
             )}
           </div>
         ) : (
-          <TrainingPlayer packId={selectedDir} initialSlideId={pendingSlideId} onSlideChange={onSlideChange} />
+          <ul className="app-training__grid" aria-label="Installed courses">
+            {courses.map((pack) => {
+              const dir = packDirKey(pack);
+              const title = pack.name ?? pack.packId;
+              const slides = slideCounts.get(pack.packId) ?? null;
+              return (
+                <li key={dir} className="app-training__grid-item">
+                  <button
+                    type="button"
+                    className="app-course ui-focusable"
+                    data-testid={`training-course-${pack.packId}`}
+                    onClick={() => selectPack(dir)}
+                  >
+                    <span className="app-course__cover" aria-hidden="true">
+                      <Icon name="layers" size={28} />
+                      <span className="app-course__monogram">{monogram(title)}</span>
+                    </span>
+                    <span className="app-course__body">
+                      <span className="app-course__title">{title}</span>
+                      <span className="app-course__meta">
+                        {slides !== null ? `${slides} slide${slides === 1 ? '' : 's'}` : 'Storyline course'}
+                      </span>
+                      <span className="app-course__badges">
+                        <Badge>v{pack.version}</Badge>
+                        {lastOpenedId === pack.packId && <Badge tone="accent">Last opened</Badge>}
+                      </span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
     </div>
   );
+}
+
+/** Two-letter monogram for the generated course cover (no cover art exists). */
+function monogram(title: string): string {
+  const words = title.trim().split(/\s+/).filter(Boolean);
+  const letters = words.length > 1 ? `${words[0][0]}${words[1][0]}` : (words[0] ?? '?').slice(0, 2);
+  return letters.toUpperCase();
 }

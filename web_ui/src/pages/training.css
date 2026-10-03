@@ -1,42 +1,63 @@
-/* Lumen phase 6: the Training surface (TrainingPage and the chrome around the
-   TrainingPlayer frame). Lumen tokens only; enforced by
+/* Lumen phase 6: the Training surface (course library, player page, and the
+   chrome around the TrainingPlayer frame). Lumen tokens only; enforced by
    pages/documents-training-hygiene.test.ts. The player <iframe> itself is NOT
    styled here: its element (sandbox, src, inline style) is left byte-identical
    on purpose (security-critical isolation surface). */
 
 /* ---- Page body ---- */
-.app-training { box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-6) var(--space-6); }
-/* Deep-linked player (no picker): same gutter around the player. */
-.app-training--player { padding-top: var(--space-4); }
+.app-training { box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-6) var(--space-6); overflow: auto; }
+/* Player page: the player fills the remaining height (no page scroll). */
+.app-training--player { gap: var(--space-3); overflow: hidden; }
 
-/* Course picker toolbar */
+/* ---- Library: picker toolbar + course grid ---- */
 .app-training__toolbar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
 .app-training__label { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
 .app-training__select { width: auto; min-width: 240px; max-width: 100%; }
 .app-training__hint { flex: 1 1 280px; margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
 .app-training__error { flex: none; margin: 0; }
-
-/* Empty / loading / not-selected state (ui-empty layout, centered in the body) */
 .app-training__empty { flex: 1; justify-content: center; }
 
+/* Grid: 3-4 columns wide, 2-3 at tablet, 2 at 768, 1 at 500 (section 3.5). */
+.app-training__grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-4); }
+.app-training__grid-item { display: flex; }
+.app-course { box-sizing: border-box; display: flex; flex-direction: column; width: 100%; padding: 0; overflow: hidden; text-align: left; font-family: inherit; color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-card); box-shadow: var(--shadow-1); cursor: pointer; transition: border-color var(--dur-fast) var(--ease-standard), background-color var(--dur-fast) var(--ease-standard); }
+.app-course:hover { border-color: var(--accent); background: var(--bg-hover); }
+/* Generated cover: packs carry no cover art. */
+.app-course__cover { position: relative; display: flex; align-items: center; justify-content: center; gap: var(--space-2); aspect-ratio: 16 / 9; background: var(--bg-selected); color: var(--accent); border-bottom: 1px solid var(--border-subtle); }
+.app-course__monogram { font-size: var(--type-display-size); line-height: var(--type-display-line); font-weight: var(--type-display-weight); letter-spacing: 0.02em; }
+.app-course__body { display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-3) var(--space-4) var(--space-4); }
+.app-course__title { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: 600; overflow-wrap: anywhere; }
+.app-course__meta { font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.app-course__badges { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-1); }
+
+/* ---- Player page: slim header ---- */
+.app-training__playerbar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); padding: var(--space-2) var(--space-3); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-card); }
+.app-training__title { flex: 0 1 auto; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: 600; color: var(--text-primary); }
+.app-training__title-select { flex: 0 1 320px; width: auto; min-width: 0; min-height: 32px; font-weight: 600; }
+.app-training__slidepos { flex: 1 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.app-training__pin { flex: none; }
+
 /* ---- Player chrome (around the frame; never the frame itself) ---- */
-.app-player { display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-height: 0; }
-.app-player__bar { flex: none; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-control); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
-.app-player__bar-label { flex: none; font-weight: var(--type-label-weight); }
-.app-player__slide { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.app-player { flex: 1; display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-height: 0; }
 .app-player__status { flex: none; margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-secondary); }
 /* Failure notices: banner look on the original <p role="alert"> (it keeps its ref,
    tabIndex=-1 and testid). Programmatic focus target only, like before. */
 .app-player__alert { flex: none; display: block; margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); }
 .app-player__alert:focus { outline: none; }
 .app-player__alert .ui-button { margin-left: var(--space-2); vertical-align: middle; }
-.app-player__log { flex: none; max-height: 96px; overflow-y: auto; padding: 0 var(--space-3); font-family: var(--font-mono); font-size: var(--type-micro-size); line-height: var(--type-micro-line); color: var(--text-tertiary); }
 
 @media (forced-colors: active) {
-  .app-player__bar { border-color: CanvasText; }
+  .app-course, .app-training__playerbar { border-color: CanvasText; }
+}
+
+@media (max-width: 768px) {
+  .app-training__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 500px) {
   .app-training { padding: var(--space-3) var(--space-4) var(--space-4); }
   .app-training__select { min-width: 0; flex: 1 1 100%; }
+  .app-training__grid { grid-template-columns: minmax(0, 1fr); }
+  .app-training__title-select { flex: 1 1 100%; order: 1; }
+  .app-training__slidepos { order: 2; flex-basis: 100%; }
 }

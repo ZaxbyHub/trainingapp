@@ -107,27 +107,19 @@ const DocumentItem = React.memo<{
 
   return (
     <div className={cx('app-doc', isDeleting && 'app-doc--deleting')}>
+      {/* Table cells (Lumen phase 6): one cell per value, placed by CSS grid areas
+          (pages/documents.css), so narrow widths reflow them instead of duplicating. */}
       <div className="app-doc__icon">
         <Icon name="file-text" />
       </div>
-
-      {/* Document info */}
-      <div className="app-doc__info">
-        <p className="app-doc__name" title={doc.fileName}>
-          {doc.fileName}
-        </p>
-        <div className="app-doc__meta">
-          <span>{formatFileSize(doc.fileSize)}</span>
-          <span aria-hidden="true">•</span>
-          <span>{formatDate(doc.uploadedAt)}</span>
-          {doc.chunkCount !== undefined && doc.chunkCount > 0 && (
-            <>
-              <span aria-hidden="true">•</span>
-              <span>{doc.chunkCount} chunks</span>
-            </>
-          )}
-        </div>
-      </div>
+      <p className="app-doc__name" title={doc.fileName}>
+        {doc.fileName}
+      </p>
+      <span className="app-doc__date">{formatDate(doc.uploadedAt)}</span>
+      <span className="app-doc__size">{formatFileSize(doc.fileSize)}</span>
+      <span className="app-doc__chunks">
+        {doc.chunkCount !== undefined && doc.chunkCount > 0 ? `${doc.chunkCount} chunks` : null}
+      </span>
 
       {/* Status (collapsed during delete-confirmation to make room). */}
       {!isConfirming && (
@@ -193,19 +185,23 @@ const DocumentItem = React.memo<{
             Cancel
           </Button>
         </div>
-      ) : onDelete ? (
-        /* Delete trigger button (arms the inline confirm). Not rendered in
-           B9 Electron mode (no per-document delete in the frozen contract). */
-        <IconButton
-          icon="trash"
-          size="sm"
-          className="app-doc__delete"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          aria-disabled={isDeleting || undefined}
-          aria-label={`Delete ${doc.fileName}`}
-        />
-      ) : null}
+      ) : (
+        <div className="app-doc__actions">
+          {onDelete ? (
+            /* Delete trigger button (arms the inline confirm). Not rendered in
+               B9 Electron mode (no per-document delete in the frozen contract). */
+            <IconButton
+              icon="trash"
+              size="sm"
+              className="app-doc__delete"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              aria-disabled={isDeleting || undefined}
+              aria-label={`Delete ${doc.fileName}`}
+            />
+          ) : null}
+        </div>
+      )}
     </div>
   );
 });
@@ -297,6 +293,18 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     const totalHeight = totalItems * ITEM_HEIGHT;
 
     return (
+      <div className="app-doc-table">
+        {/* Column headings: decorative only (aria-hidden; labels drawn from
+            data-label by CSS, so they add no text). Each row's cells carry their
+            own self-describing text ("117.2 KB", "12 chunks", the status pill). */}
+        <div className="app-doc-table__head" aria-hidden="true">
+          <span />
+          <span data-label="Name" />
+          <span data-label="Size" />
+          <span data-label="Chunks" />
+          <span data-label="Status" />
+          <span />
+        </div>
       <div ref={listRef} role="list" aria-label="Uploaded documents" className="app-doc-list">
         {/* Placeholder div maintains the full scroll height for the scrollbar.
             Positional inline styles only: virtualization computes them per render. */}
@@ -326,6 +334,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
             );
           })}
         </div>
+      </div>
       </div>
     );
   }

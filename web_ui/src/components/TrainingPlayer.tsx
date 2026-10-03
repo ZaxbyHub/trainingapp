@@ -246,7 +246,9 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
 
     return (
       <div className="app-player">
-        <div className="app-player__bar">
+        {/* Visually hidden (Lumen phase 6): the Training page's slim header shows the
+            slide for people; this raw id|title readout stays as the automation seam. */}
+        <div className="ui-visually-hidden">
           <span className="app-player__slide">
             <span className="app-player__bar-label">Current slide:</span>{' '}
             <span data-testid="training-player-slide">
@@ -312,7 +314,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             backgroundColor: 'var(--color-surface)',
           }}
         />
-        <div data-testid="training-player-slidechange" className="app-player__log">
+        <div data-testid="training-player-slidechange" className="ui-visually-hidden">
           {changeLog.map((entry, index) => (
             <div key={`${entry.slideId}-${index}`} data-trainingapp-entry="">
               {entry.slideId}|{entry.slideTitle}
