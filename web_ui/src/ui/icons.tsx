@@ -66,6 +66,12 @@ const ICONS = {
     { d: 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z' },
     { d: 'M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z' },
   ],
+  // Documents (phase 6): the per-row delete action; the same Feather trash shape the
+  // old hand-inlined DocumentList SVG drew (its polyline expressed as a path).
+  trash: [
+    { d: 'M3 6h18' },
+    { d: 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2' },
+  ],
 } as const satisfies Record<string, readonly Shape[]>;
 
 export type IconName = keyof typeof ICONS;

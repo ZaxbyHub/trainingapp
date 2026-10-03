@@ -26,7 +26,8 @@ import type { TrainingPlayerSlideState } from '../components/training-player-bri
 import { usePackClient } from '../lib/packs/pack-client';
 import { LAST_PACK_KEY } from '../lib/storage/persisted-keys';
 import type { PackInfo } from '../lib/api/types';
-import { PageHeader } from '../ui';
+import { Icon, PageHeader, Select } from '../ui';
+import './training.css';
 
 const TRAINING_DESCRIPTION = 'Play the training courses installed on this device.';
 
@@ -250,7 +251,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     return (
       <div className="app-page">
         <PageHeader title="Training" description={TRAINING_DESCRIPTION} />
-        <div className="app-page__fill">
+        <div className="app-page__fill app-training app-training--player">
           <TrainingPlayer packId={deepLinkedPackDir} initialSlideId={pendingSlideId} onSlideChange={onSlideChange} />
         </div>
       </div>
@@ -259,33 +260,19 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
 
   return (
     <div className="app-page">
-      {/* Header (Lumen phase 3): the shared PageHeader; the page body below is
-          unchanged here and restyled in phase 6. */}
+      {/* Header (Lumen phase 3): the shared PageHeader. Body restyled in phase 6. */}
       <PageHeader title="Training" description={TRAINING_DESCRIPTION} />
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          flex: 1,
-          minHeight: 0,
-          padding: 'var(--spacing-md)',
-          gap: 'var(--spacing-sm)',
-        }}
-        data-testid="training-page"
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-          <label
-            htmlFor="training-pack-select"
-            style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-primary)' }}
-          >
+      <div className="app-training" data-testid="training-page">
+        <div className="app-training__toolbar">
+          <label htmlFor="training-pack-select" className="app-training__label">
             Course:
           </label>
-          <select
+          <Select
             id="training-pack-select"
             data-testid="training-pack-select"
+            className="app-training__select"
             value={selectedDir}
             onChange={(event) => selectPack(event.target.value)}
-            style={{ fontFamily: 'var(--font-family)', padding: 'var(--spacing-xs)' }}
           >
             <option value="">Select a course…</option>
             {courses.map((pack) => {
@@ -296,50 +283,39 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
                 </option>
               );
             })}
-          </select>
+          </Select>
           {courses.length > 0 && (
-            <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-primary)' }}>
+            <p className="app-training__hint">
               To update the course, install a newer training pack zip on the Documents page, then select it here.
-            </span>
+            </p>
           )}
         </div>
 
         {loadError !== null && (
-          <p role="alert" data-testid="training-pack-error" style={{ margin: 0, color: 'var(--color-danger, #d32f2f)' }}>
+          <p role="alert" data-testid="training-pack-error" className="ui-banner ui-banner--danger app-training__error">
             Failed to load installed training packs: {loadError}
           </p>
         )}
 
         {selectedDir === '' ? (
-          <div
-            style={{
-              display: 'flex',
-              flex: 1,
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--color-text-primary)',
-              fontFamily: 'var(--font-family)',
-              fontSize: 'var(--font-size-body)',
-              flexDirection: 'column',
-              gap: 'var(--spacing-sm)',
-              textAlign: 'center',
-              padding: '0 var(--spacing-xl)',
-            }}
-            data-testid="training-empty-state"
-          >
+          <div className="ui-empty app-training__empty" data-testid="training-empty-state">
             {packs === null ? (
-              'Loading installed training packs…'
+              <p className="ui-empty__desc">Loading installed training packs…</p>
             ) : activePacks.length === 0 ? (
               <>
-                <span>No training course is installed yet.</span>
-                <span style={{ fontSize: 'var(--font-size-caption)' }}>
+                <Icon name="layers" size={32} className="ui-empty__icon" />
+                <h2 className="ui-empty__title">No training course is installed yet.</h2>
+                <p className="ui-empty__desc">
                   Training courses are Articulate Storyline packs — a separate product from the reference
                   documents (those live in Chat and Documents). Install a course pack zip from the Documents
                   page, or ship one with the installer, and it will appear here ready to play.
-                </span>
+                </p>
               </>
             ) : (
-              'No course selected. Pick one above.'
+              <>
+                <Icon name="layers" size={32} className="ui-empty__icon" />
+                <p className="ui-empty__desc">No course selected. Pick one above.</p>
+              </>
             )}
           </div>
         ) : (

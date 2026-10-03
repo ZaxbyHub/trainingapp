@@ -43,6 +43,9 @@ import type { StorageReport } from '../lib/packs/browser-pack-manager';
 import { desktopPackClient, type PackClient } from '../lib/packs/pack-client';
 import type { UpdateStatus } from '../types/desktop';
 import { useToast } from './ToastProvider';
+import { Badge, Button, Icon } from '../ui';
+import { cx } from '../ui/cx';
+import '../pages/documents.css';
 
 interface PacksPanelProps {
   /** The pack seam (desktop or browser). */
@@ -286,11 +289,16 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
   // intermediate state.
   if (loading) return null;
 
+  const capabilityIssue = client.capabilityIssue?.() ?? null;
+
+  // Lumen phase 6: a Card with an h2 (h1 is the page title). Every control keeps
+  // its native `disabled` (tests and keyboard order rely on it) and also carries
+  // aria-disabled so the Lumen Button renders its disabled look.
   return (
     <section
       data-testid="packs-panel"
       aria-labelledby="packs-panel-heading"
-      style={{ marginBottom: 'var(--spacing-lg, 16px)' }}
+      className="ui-card app-packs"
       onDragOver={(e) => {
         e.preventDefault();
       }}
@@ -305,23 +313,26 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
         })();
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm, 8px)' }}>
-        <h3 id="packs-panel-heading" style={{ margin: 0, flex: 1 }}>
+      <div className="app-packs__head">
+        <h2 id="packs-panel-heading" className="app-packs__title">
           Knowledge Packs
-        </h3>
-        <button
-          type="button"
+        </h2>
+        <Button
+          size="sm"
+          variant="secondary"
           onClick={() => inputRef.current?.click()}
           disabled={working}
+          aria-disabled={working || undefined}
         >
+          <Icon name="upload" size={16} />
           {installing ? 'Installing…' : 'Install pack .zip'}
-        </button>
+        </Button>
         <input
           ref={inputRef}
           type="file"
           accept=".zip"
           data-testid="pack-install-input"
-          style={{ display: 'none' }}
+          hidden
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
@@ -329,27 +340,34 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
           }}
         />
       </div>
-      {client.capabilityIssue?.() != null && (
-        <p role="status" data-testid="packs-capability" style={{ color: 'var(--color-text-primary)', margin: 'var(--spacing-xs, 4px) 0' }}>
-          {client.capabilityIssue?.()}
+      {capabilityIssue != null && (
+        <p role="status" data-testid="packs-capability" className="app-packs__note app-packs__note--warning">
+          <Icon name="triangle-alert" size={16} />
+          <span>{capabilityIssue}</span>
         </p>
       )}
       {storage !== null && (
-        <p data-testid="packs-storage" style={{ color: 'var(--color-text-primary)', margin: 'var(--spacing-xs, 4px) 0' }}>
-          Browser storage: {formatBytes(storage.usage)} used, {formatBytes(storage.available)} available
-          {storage.persisted === true
-            ? ' (persistent: the browser will not evict installed packs)'
-            : storage.persisted === false
-              ? ' (not persistent: the browser may evict installed packs under storage pressure)'
-              : ''}
+        <p
+          data-testid="packs-storage"
+          className={cx('app-packs__note', storage.persisted === false && 'app-packs__note--warning')}
+        >
+          <Icon name={storage.persisted === false ? 'triangle-alert' : 'info'} size={16} />
+          <span>
+            Browser storage: {formatBytes(storage.usage)} used, {formatBytes(storage.available)} available
+            {storage.persisted === true
+              ? ' (persistent: the browser will not evict installed packs)'
+              : storage.persisted === false
+                ? ' (not persistent: the browser may evict installed packs under storage pressure)'
+                : ''}
+          </span>
         </p>
       )}
       {sorted.length === 0 ? (
-        <p style={{ color: 'var(--color-text-primary)' }}>
+        <p className="app-packs__empty">
           No knowledge packs installed. Drop a .zip pack here or use the install button.
         </p>
       ) : (
-        <ul role="list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
+        <ul role="list" className="app-packs__list">
           {sorted.map((pack) => {
             const key = { packId: pack.packId, version: pack.version };
             const confirming =
@@ -362,78 +380,68 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
                 key={rowId(pack)}
                 role="listitem"
                 data-testid={`pack-row-${rowId(pack)}`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--spacing-sm, 8px)',
-                  padding: 'var(--spacing-xs, 4px) 0',
-                  borderBottom: '1px solid var(--color-border, #ddd)',
-                }}
+                className="app-packs__row"
               >
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <strong>{pack.name ?? pack.packId}</strong>{' '}
+                <span className="app-packs__ident">
+                  <strong className="app-packs__name">{pack.name ?? pack.packId}</strong>{' '}
                   <span>v{pack.version}</span>
                   {pack.sourceClass && (
-                    <span style={{ color: 'var(--color-text-primary)' }}>
+                    <span className="app-packs__meta">
                       {' '}
                       · {pack.sourceClass}
                     </span>
                   )}
-                  {published && (
-                    <span style={{ color: 'var(--color-text-primary)' }}> · {published}</span>
-                  )}
+                  {published && <span className="app-packs__meta"> · {published}</span>}
                 </span>
-                <span
-                  data-testid={`pack-status-${rowId(pack)}`}
-                  style={{
-                    color: 'var(--color-text-primary)',
-                    fontWeight: pack.active ? 700 : 400,
-                  }}
-                >
+                <Badge data-testid={`pack-status-${rowId(pack)}`} tone={pack.active ? 'success' : 'neutral'}>
                   {pack.active ? 'active' : 'superseded'}
-                </span>
+                </Badge>
                 {pack.active && updateByPack[pack.packId] !== undefined && (
                   <>
-                    <span
-                      data-testid={`pack-update-${rowId(pack)}`}
-                      style={{ color: 'var(--color-accent, #06c)', fontWeight: 600 }}
-                    >
+                    <Badge data-testid={`pack-update-${rowId(pack)}`} tone="accent">
                       Update available: v{updateByPack[pack.packId]}
-                    </span>
-                    <button
-                      type="button"
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="primary"
                       data-testid={`pack-apply-${rowId(pack)}`}
                       aria-label={`Update ${pack.packId} to ${updateByPack[pack.packId]}`}
                       disabled={working || applying !== null}
+                      aria-disabled={working || applying !== null || undefined}
                       onClick={() => void handleApplyUpdate(pack.packId)}
                     >
                       {applying === pack.packId ? 'Updating…' : 'Update'}
-                    </button>
+                    </Button>
                   </>
                 )}
                 {!pack.active && (
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    variant="secondary"
                     data-testid={`pack-rollback-${rowId(pack)}`}
                     aria-label={`Rollback ${pack.packId} to ${pack.version}`}
                     disabled={working}
+                    aria-disabled={working || undefined}
                     onClick={() => void handleRollback(key)}
                   >
                     Rollback
-                  </button>
+                  </Button>
                 )}
                 {confirming ? (
                   <>
-                    <button
-                      type="button"
+                    <Button
+                      size="sm"
+                      variant="danger"
                       data-testid="pack-remove-confirm"
                       disabled={working}
+                      aria-disabled={working || undefined}
                       onClick={() => void handleRemove(key)}
                     >
                       Confirm
-                    </button>
-                    <button
-                      type="button"
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
                       data-testid="pack-remove-cancel"
                       onClick={() => {
                         setConfirmingRemove(null);
@@ -441,18 +449,20 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
                       }}
                     >
                       Cancel
-                    </button>
+                    </Button>
                   </>
                 ) : (
-                  <button
-                    type="button"
+                  <Button
+                    size="sm"
+                    variant="ghost"
                     data-testid={`pack-remove-${rowId(pack)}`}
                     aria-label={`Remove ${pack.packId} ${pack.version}`}
                     disabled={working}
+                    aria-disabled={working || undefined}
                     onClick={() => setConfirmingRemove(key)}
                   >
                     Remove
-                  </button>
+                  </Button>
                 )}
               </li>
             );

@@ -1,0 +1,42 @@
+/* Lumen phase 6: the Training surface (TrainingPage and the chrome around the
+   TrainingPlayer frame). Lumen tokens only; enforced by
+   pages/documents-training-hygiene.test.ts. The player <iframe> itself is NOT
+   styled here: its element (sandbox, src, inline style) is left byte-identical
+   on purpose (security-critical isolation surface). */
+
+/* ---- Page body ---- */
+.app-training { box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-4) var(--space-6) var(--space-6); }
+/* Deep-linked player (no picker): same gutter around the player. */
+.app-training--player { padding-top: var(--space-4); }
+
+/* Course picker toolbar */
+.app-training__toolbar { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.app-training__label { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+.app-training__select { width: auto; min-width: 240px; max-width: 100%; }
+.app-training__hint { flex: 1 1 280px; margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.app-training__error { flex: none; margin: 0; }
+
+/* Empty / loading / not-selected state (ui-empty layout, centered in the body) */
+.app-training__empty { flex: 1; justify-content: center; }
+
+/* ---- Player chrome (around the frame; never the frame itself) ---- */
+.app-player { display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-height: 0; }
+.app-player__bar { flex: none; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-control); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.app-player__bar-label { flex: none; font-weight: var(--type-label-weight); }
+.app-player__slide { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-primary); }
+.app-player__status { flex: none; margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-secondary); }
+/* Failure notices: banner look on the original <p role="alert"> (it keeps its ref,
+   tabIndex=-1 and testid). Programmatic focus target only, like before. */
+.app-player__alert { flex: none; display: block; margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); }
+.app-player__alert:focus { outline: none; }
+.app-player__alert .ui-button { margin-left: var(--space-2); vertical-align: middle; }
+.app-player__log { flex: none; max-height: 96px; overflow-y: auto; padding: 0 var(--space-3); font-family: var(--font-mono); font-size: var(--type-micro-size); line-height: var(--type-micro-line); color: var(--text-tertiary); }
+
+@media (forced-colors: active) {
+  .app-player__bar { border-color: CanvasText; }
+}
+
+@media (max-width: 500px) {
+  .app-training { padding: var(--space-3) var(--space-4) var(--space-4); }
+  .app-training__select { min-width: 0; flex: 1 1 100%; }
+}
