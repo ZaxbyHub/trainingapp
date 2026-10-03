@@ -2,11 +2,12 @@
  * PacksPanel.slot.test.tsx — Lumen phase 6 ("Documents | Training packs" tabs).
  *
  * Pins:
- *   1. With a trainingSlot element, training-class rows render INSIDE the slot
- *      (portal) and knowledge rows stay in the panel; testids are unchanged and
- *      unique, and there is still exactly one pack-install-input.
- *   2. trainingSlot null (slot not mounted yet) renders no training rows; the
- *      prop omitted keeps every row inline (standalone behaviour).
+ *   1. With slots, the knowledge section (testid packs-panel) portals into the
+ *      knowledge slot and training-class rows into the training slot; testids
+ *      are unchanged and unique, and the single pack-install-input stays where
+ *      the (always-mounted) instance is, outside both slots.
+ *   2. A null slot (that tab not mounted) renders nothing there; the prop
+ *      omitted keeps one inline panel with every row (standalone behaviour).
  *   3. onTrainingPackAdded fires when a training row APPEARS after the first
  *      load (here via the client's change subscription), never on the first
  *      load, and not for a new knowledge-class row.
@@ -64,32 +65,37 @@ function slot(): HTMLDivElement {
 }
 
 describe('PacksPanel training slot and auto-switch signal (Lumen phase 6)', () => {
-  it('portals training rows into the slot and keeps knowledge rows in the panel', async () => {
-    const target = slot();
+  it('portals each section into its slot; the single install input stays outside both', async () => {
+    const knowledge = slot();
+    const training = slot();
     const { client } = makeClient([[KNOWLEDGE, COURSE]]);
     render(
       <ToastProvider>
-        <PacksPanel client={client} trainingSlot={target} />
+        <PacksPanel client={client} slots={{ knowledge, training }} />
       </ToastProvider>
     );
     const panel = await screen.findByTestId('packs-panel');
+    expect(knowledge.contains(panel)).toBe(true);
     expect(panel.contains(screen.getByTestId('pack-row-handbook-1.0.0'))).toBe(true);
     const courseRow = screen.getByTestId('pack-row-course-a-1.0.0');
-    expect(target.contains(courseRow)).toBe(true);
+    expect(training.contains(courseRow)).toBe(true);
     expect(panel.contains(courseRow)).toBe(false);
-    expect(screen.getAllByTestId('pack-install-input')).toHaveLength(1);
+    const inputs = screen.getAllByTestId('pack-install-input');
+    expect(inputs).toHaveLength(1);
+    expect(knowledge.contains(inputs[0]) || training.contains(inputs[0])).toBe(false);
     expect(screen.getByRole('heading', { name: 'Training packs' })).toBeTruthy();
   });
 
-  it('renders no training rows while the slot is null, and every row inline without the prop', async () => {
+  it('renders nothing into a null slot, and one inline panel without the prop', async () => {
     const { client } = makeClient([[KNOWLEDGE, COURSE]]);
     const { rerender } = render(
       <ToastProvider>
-        <PacksPanel client={client} trainingSlot={null} />
+        <PacksPanel client={client} slots={{ knowledge: slot(), training: null }} />
       </ToastProvider>
     );
     await screen.findByTestId('pack-row-handbook-1.0.0');
     expect(screen.queryByTestId('pack-row-course-a-1.0.0')).toBeNull();
+    expect(screen.getAllByTestId('pack-install-input')).toHaveLength(1);
 
     rerender(
       <ToastProvider>
@@ -109,7 +115,7 @@ describe('PacksPanel training slot and auto-switch signal (Lumen phase 6)', () =
     ]);
     render(
       <ToastProvider>
-        <PacksPanel client={client} trainingSlot={slot()} onTrainingPackAdded={onTrainingPackAdded} />
+        <PacksPanel client={client} slots={{ knowledge: slot(), training: slot() }} onTrainingPackAdded={onTrainingPackAdded} />
       </ToastProvider>
     );
     await screen.findByTestId('pack-row-course-a-1.0.0');
@@ -127,16 +133,17 @@ describe('PacksPanel training slot and auto-switch signal (Lumen phase 6)', () =
   it('re-lists when refreshToken changes', async () => {
     const { client } = makeClient([[KNOWLEDGE], [KNOWLEDGE, COURSE]]);
     const target = slot();
+    const trainingTarget = slot();
     const { rerender } = render(
       <ToastProvider>
-        <PacksPanel client={client} trainingSlot={target} refreshToken={0} />
+        <PacksPanel client={client} slots={{ knowledge: target, training: trainingTarget }} refreshToken={0} />
       </ToastProvider>
     );
     await screen.findByTestId('pack-row-handbook-1.0.0');
     expect(client.listPacks).toHaveBeenCalledTimes(1);
     rerender(
       <ToastProvider>
-        <PacksPanel client={client} trainingSlot={target} refreshToken={1} />
+        <PacksPanel client={client} slots={{ knowledge: target, training: trainingTarget }} refreshToken={1} />
       </ToastProvider>
     );
     await waitFor(() => expect(screen.getByTestId('pack-row-course-a-1.0.0')).toBeTruthy());

@@ -38,6 +38,7 @@
  *   data-testid="packs-storage"                     browser storage report
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { DragEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { ApiClient, PackInfo } from '../lib/api';
 import type { StorageReport } from '../lib/packs/browser-pack-manager';
@@ -54,13 +55,14 @@ interface PacksPanelProps {
   /** Desktop shorthand: wraps the loopback ApiClient in a desktop PackClient. */
   apiClient?: ApiClient;
   /**
-   * Lumen phase 6 ("Documents | Training packs" tabs). `undefined` (standalone):
-   * every row renders inline, as before. `null`: the slot is not mounted yet, so
-   * training-class rows wait. An element: training-class rows, with their own
-   * heading and install button, render there through a portal. Either way this ONE
-   * instance keeps all state, toasts and the single `pack-install-input`.
+   * Lumen phase 6 ("Documents | Training packs" tabs). Omitted (standalone): one
+   * panel with every row inline, as before. Given: this ALWAYS-MOUNTED instance
+   * keeps all state, toasts and the single `pack-install-input`, and portals the
+   * knowledge section (testid packs-panel) into `knowledge` and the training-class
+   * rows into `training`, whichever of the two slots is currently mounted (null =
+   * that tab is not showing).
    */
-  trainingSlot?: HTMLElement | null;
+  slots?: { knowledge: HTMLElement | null; training: HTMLElement | null };
   /** Called when a training-class row APPEARS after the first load (never on it). */
   onTrainingPackAdded?: () => void;
   /** Bump to re-list (installs the page made itself; the desktop client has no subscribe). */
@@ -102,7 +104,7 @@ const isTrainingPack = (pack: PackInfo): boolean => pack.sourceClass === 'traini
 export function PacksPanel({
   client: clientProp,
   apiClient,
-  trainingSlot,
+  slots,
   onTrainingPackAdded,
   refreshToken,
 }: PacksPanelProps) {
@@ -328,7 +330,7 @@ export function PacksPanel({
   if (loading) return null;
 
   const capabilityIssue = client.capabilityIssue?.() ?? null;
-  const split = trainingSlot !== undefined;
+  const split = slots !== undefined;
   const mainRows = split ? sorted.filter((pack) => !isTrainingPack(pack)) : sorted;
   const trainingRows = split ? sorted.filter(isTrainingPack) : [];
 
@@ -432,10 +434,67 @@ export function PacksPanel({
     );
   };
 
+  const onDropInstall = (e: DragEvent<HTMLElement>): void => {
+    e.preventDefault();
+    // Sequential on purpose: parallel installs interleave refresh() and
+    // race the shared installing/working flags.
+    void (async () => {
+      for (const file of Array.from(e.dataTransfer.files)) {
+        await installFile(file);
+      }
+    })();
+  };
+
+  const installInput = (
+    <input
+      ref={inputRef}
+      type="file"
+      accept=".zip"
+      data-testid="pack-install-input"
+      hidden
+      onChange={(e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file) void installFile(file);
+      }}
+    />
+  );
+
+  const installButton = (label: string) => (
+    <Button
+      size="sm"
+      variant="secondary"
+      onClick={() => inputRef.current?.click()}
+      disabled={working}
+      aria-disabled={working || undefined}
+    >
+      <Icon name="upload" size={16} />
+      {installing ? 'Installing…' : label}
+    </Button>
+  );
+
+  const storageNote = (withTestId: boolean) =>
+    storage !== null ? (
+      <p
+        data-testid={withTestId ? 'packs-storage' : undefined}
+        className={cx('app-packs__note', storage.persisted === false && 'app-packs__note--warning')}
+      >
+        <Icon name={storage.persisted === false ? 'triangle-alert' : 'info'} size={16} />
+        <span>
+          Browser storage: {formatBytes(storage.usage)} used, {formatBytes(storage.available)} available
+          {storage.persisted === true
+            ? ' (persistent: the browser will not evict installed packs)'
+            : storage.persisted === false
+              ? ' (not persistent: the browser may evict installed packs under storage pressure)'
+              : ''}
+        </span>
+      </p>
+    ) : null;
+
   // Lumen phase 6: a Card with an h2 (h1 is the page title). Every control keeps
   // its native `disabled` (tests and keyboard order rely on it) and also carries
   // aria-disabled so the Lumen Button renders its disabled look.
-  return (
+  const knowledgeSection = (input: ReactNode) => (
     <section
       data-testid="packs-panel"
       aria-labelledby="packs-panel-heading"
@@ -443,44 +502,14 @@ export function PacksPanel({
       onDragOver={(e) => {
         e.preventDefault();
       }}
-      onDrop={(e) => {
-        e.preventDefault();
-        // Sequential on purpose: parallel installs interleave refresh() and
-        // race the shared installing/working flags. (A drop on the portaled
-        // training section bubbles here too: portals bubble through React.)
-        void (async () => {
-          for (const file of Array.from(e.dataTransfer.files)) {
-            await installFile(file);
-          }
-        })();
-      }}
+      onDrop={onDropInstall}
     >
       <div className="app-packs__head">
         <h2 id="packs-panel-heading" className="app-packs__title">
           Knowledge Packs
         </h2>
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => inputRef.current?.click()}
-          disabled={working}
-          aria-disabled={working || undefined}
-        >
-          <Icon name="upload" size={16} />
-          {installing ? 'Installing…' : 'Install pack .zip'}
-        </Button>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".zip"
-          data-testid="pack-install-input"
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = '';
-            if (file) void installFile(file);
-          }}
-        />
+        {installButton('Install pack .zip')}
+        {input}
       </div>
       {capabilityIssue != null && (
         <p role="status" data-testid="packs-capability" className="app-packs__note app-packs__note--warning">
@@ -488,22 +517,7 @@ export function PacksPanel({
           <span>{capabilityIssue}</span>
         </p>
       )}
-      {storage !== null && (
-        <p
-          data-testid="packs-storage"
-          className={cx('app-packs__note', storage.persisted === false && 'app-packs__note--warning')}
-        >
-          <Icon name={storage.persisted === false ? 'triangle-alert' : 'info'} size={16} />
-          <span>
-            Browser storage: {formatBytes(storage.usage)} used, {formatBytes(storage.available)} available
-            {storage.persisted === true
-              ? ' (persistent: the browser will not evict installed packs)'
-              : storage.persisted === false
-                ? ' (not persistent: the browser may evict installed packs under storage pressure)'
-                : ''}
-          </span>
-        </p>
-      )}
+      {storageNote(true)}
       {mainRows.length === 0 ? (
         <p className="app-packs__empty">
           No knowledge packs installed. Drop a .zip pack here or use the install button.
@@ -513,32 +527,41 @@ export function PacksPanel({
           {mainRows.map(renderRow)}
         </ul>
       )}
-      {trainingSlot
+    </section>
+  );
+
+  // Standalone: one panel, every row inline (unchanged behaviour).
+  if (slots === undefined) return knowledgeSection(installInput);
+
+  // Tabbed page: this always-mounted instance renders only the hidden install
+  // input in place; each section portals into its tab's slot while that tab is
+  // mounted (the Tabs primitive mounts only the active panel's content).
+  return (
+    <>
+      {installInput}
+      {slots.knowledge ? createPortal(knowledgeSection(null), slots.knowledge) : null}
+      {slots.training
         ? createPortal(
             <section
               data-testid="training-packs"
               aria-labelledby="training-packs-heading"
               className="ui-card app-packs"
+              onDragOver={(e) => {
+                e.preventDefault();
+              }}
+              onDrop={onDropInstall}
             >
               <div className="app-packs__head">
                 <h2 id="training-packs-heading" className="app-packs__title">
                   Training packs
                 </h2>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => inputRef.current?.click()}
-                  disabled={working}
-                  aria-disabled={working || undefined}
-                >
-                  <Icon name="upload" size={16} />
-                  {installing ? 'Installing…' : 'Install course pack .zip'}
-                </Button>
+                {installButton('Install course pack .zip')}
               </div>
+              {storageNote(false)}
               {trainingRows.length === 0 ? (
                 <p className="app-packs__empty">
-                  No training packs installed. Install a Storyline course pack (.zip) here; its course then
-                  plays on the Training page.
+                  No training packs installed. Install a Storyline course pack (.zip) here; its course then plays
+                  on the Training page.
                 </p>
               ) : (
                 <ul role="list" className="app-packs__list">
@@ -546,9 +569,9 @@ export function PacksPanel({
                 </ul>
               )}
             </section>,
-            trainingSlot,
+            slots.training
           )
         : null}
-    </section>
+    </>
   );
 }
