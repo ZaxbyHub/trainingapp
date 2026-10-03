@@ -73,6 +73,8 @@ export interface TrainingPlayerHandle {
 }
 
 const POLL_INTERVAL_MS = 1000;
+/** Slide-change log entries kept in the DOM (automation seam only; bounds growth). */
+const CHANGE_LOG_MAX = 50;
 
 /**
  * Lumen phase 6: presentation of the failure notices only (banner look; they are
@@ -186,7 +188,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
           setCurrent(state);
           if (state.slideId !== lastEmittedSlideRef.current) {
             lastEmittedSlideRef.current = state.slideId;
-            setChangeLog((log) => [...log, state]);
+            setChangeLog((log) => [...log, state].slice(-CHANGE_LOG_MAX));
             onSlideChangeRef.current?.(state);
           }
         });
@@ -248,7 +250,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
       <div className="app-player">
         {/* Visually hidden (Lumen phase 6): the Training page's slim header shows the
             slide for people; this raw id|title readout stays as the automation seam. */}
-        <div className="ui-visually-hidden">
+        <div className="ui-visually-hidden" aria-hidden="true">
           <span className="app-player__slide">
             <span className="app-player__bar-label">Current slide:</span>{' '}
             <span data-testid="training-player-slide">
@@ -314,7 +316,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             backgroundColor: 'var(--color-surface)',
           }}
         />
-        <div data-testid="training-player-slidechange" className="ui-visually-hidden">
+        <div data-testid="training-player-slidechange" className="ui-visually-hidden" aria-hidden="true">
           {changeLog.map((entry, index) => (
             <div key={`${entry.slideId}-${index}`} data-trainingapp-entry="">
               {entry.slideId}|{entry.slideTitle}

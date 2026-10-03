@@ -649,7 +649,20 @@ export function DocumentsPage() {
   // in-flight drop has finished.
   const dropsInFlightRef = useRef(0);
   const deferredTrainingSwitchRef = useRef(false);
+  // Latest tab, read by the (stable) pack callbacks: a pack that appears while the
+  // Training packs tab is already showing needs no switch and no deferral.
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  // A MANUAL tab change (tab click or the header Upload action) supersedes a
+  // pending deferred switch: the user already chose where to be, and a stale
+  // deferral would later yank the tab with no announcement or focus handling
+  // (the PacksPanel signal is consumed by the first Training-tab mount).
+  const selectTab = useCallback((tab: 'documents' | 'training') => {
+    deferredTrainingSwitchRef.current = false;
+    setActiveTab(tab);
+  }, []);
   const handleTrainingPackAdded = useCallback(() => {
+    if (activeTabRef.current === 'training') return;
     if (dropsInFlightRef.current > 0) {
       deferredTrainingSwitchRef.current = true;
       return;
@@ -884,7 +897,7 @@ export function DocumentsPage() {
                   return;
                 }
                 pendingUploadRef.current = true;
-                setActiveTab('documents');
+                selectTab('documents');
               }}
             >
               <Icon name="upload" size={16} />
@@ -917,7 +930,7 @@ export function DocumentsPage() {
             label="Library sections"
             className="app-docs__tabs"
             value={activeTab}
-            onChange={(id) => setActiveTab(id === 'training' ? 'training' : 'documents')}
+            onChange={(id) => selectTab(id === 'training' ? 'training' : 'documents')}
             items={[
               { id: 'documents', label: 'Documents', panel: documentsBody },
               {
