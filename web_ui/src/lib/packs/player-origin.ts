@@ -20,7 +20,9 @@
 // unsafe same-origin fallback.
 //
 // Navigation egress (ADR-0012 threat model item 6): CSP on a course document
-// does not govern navigation, so course JS could navigate its own frame, or
+// does not govern navigation of the course's own frame or the boot frame (a
+// frame the course creates is governed by the course CSP's frame-src), so
+// course JS could navigate its own frame, or
 // the boot frame through its DOM, to any URL and carry data in the address.
 // What decides where a frame may navigate is the EMBEDDING page's frame-src.
 // When the player origin resolves, the browser app therefore installs ONCE a

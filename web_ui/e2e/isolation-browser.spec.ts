@@ -492,7 +492,9 @@ test('course content cannot escape its CSP through a same-origin player-origin d
 
 /**
  * The navigation-egress course (ADR-0012 threat model item 6): CSP on a
- * course document does not govern navigation, so the course tries to carry
+ * course document does not govern navigation of the course's own frame or the
+ * boot frame (a course-created frame is governed by the course CSP's
+ * frame-src, see the child-nav row), so the course tries to carry
  * data out in a URL by (ii) inserting and clicking a link in the app's boot
  * frame and then (i) navigating its own frame. The app shell's runtime
  * `frame-src <player origin>` must refuse both before any request is sent.

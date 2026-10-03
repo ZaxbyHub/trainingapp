@@ -252,7 +252,9 @@ could be served were not isolated from app storage.
    worker but its own two files. The course's own `worker-src` admits only `blob:` and the open
    pack's relay path, so it cannot start an app asset as an unconfined worker or service worker
    (review round 4 F1; the worker-escape row of `web_ui/e2e/isolation-browser.spec.ts`).
-6. **Navigation egress (closed).** CSP on a course document does not govern navigation: a course
+6. **Navigation egress (closed).** CSP on a course document does not govern navigation of the
+   course's own frame or of the boot frame (a frame the course creates is governed by the course
+   CSP's `frame-src`): a course
    could navigate its own frame, or the boot frame through the boot frame's DOM (a link it inserts
    and clicks), to any URL and carry data in the address. Both were measured on Chromium before
    this fix. What decides where a frame may navigate is the EMBEDDING page's `frame-src` (for a
@@ -322,9 +324,9 @@ exactly as on desktop.
   rollback), and the app asks for persistent storage.
   - **Eviction and recovery (PR 144 review F1).** The persistence request is fire-and-forget and
     the browser may deny it. If the browser evicts the origin's storage, the pack bytes (and
-    possibly the registry) are gone and the relay answers 404 for that pack; nothing is restored
-    automatically. Recovery is to reinstall the pack from its `.zip` (or re-apply the update from
-    the feed). Packs shows "(not persistent: the browser may evict installed packs under storage
+    possibly the registry, since eviction is origin-wide) are gone and the relay answers 404 for
+    that pack; nothing is restored automatically. The only recovery is to reinstall the pack from
+    its `.zip` (a feed update does not help: it skips packs that are not installed). Packs shows "(not persistent: the browser may evict installed packs under storage
     pressure)" when persistence was not granted.
   - **No Web Locks (PR 144 review F6).** Without Web Locks the install lock falls back to a
     per-tab promise chain, so two tabs installing different versions of one pack concurrently

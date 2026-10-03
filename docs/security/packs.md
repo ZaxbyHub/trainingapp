@@ -165,9 +165,11 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
 ### Key rotation and revocation (`trustedKeys`)
 - **Additive key sets.** `trustedKeys` is a set, not a single anchor. A
   pack's signature names a `key_id`; the verifier looks that id up in the set
-  and verifies against that one key (an id that is absent fails closed, and
+  and verifies against the matching key (an id that is absent fails closed, and
   so does a non-ed25519 key). Any number of keys can be trusted at once, so
   adding a key never invalidates packs signed by the keys already present.
+  `key_id`s must be unique within a keyset: with duplicates, browser and
+  desktop use the first match, while Python tries every matching key.
 - **Rotate.** (1) Generate the new ed25519 keypair offline and keep the
   private half out of every repository. (2) Add `{key_id, public_key}` to the
   set (desktop: `TRAININGAPP_PACKS_TRUSTED_KEYS`; Python:
@@ -182,7 +184,9 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   `requireSignature` is enabled (it defaults to false on every runtime); with
   it off the trusted set is never consulted and unsigned or tampered packs
   install. With it on, a pack signed only by the retired key is refused at
-  install with a "not in the trusted keyset" error. The gate runs at install
+  install with a not-in-the-trusted-keyset error (browser and desktop:
+  `signature key_id '<id>' is not in the trusted keyset`; Python:
+  `... is not in packs.security.trustedKeys`). The gate runs at install
   time only: packs already installed are not re-verified, and a rollback or
   re-activation of a retained version does not re-check the signature (a
   registry flip on the browser, desktop and Python managers). To purge content
@@ -251,7 +255,9 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   origin, no boot frame, no relay port), and the boot frame runs only directly
   under the top-level page.
 - **Navigation egress (closed).** CSP on a course document does not govern
-  navigation; the embedding page's `frame-src` does. Desktop's renderer CSP
+  navigation of the course's own frame or the boot frame, where the embedding
+  page's `frame-src` decides; a frame the course creates is governed by the
+  course CSP's `frame-src`. Desktop's renderer CSP
   carries `frame-src 'self' app:`. Once the player origin resolves, the
   browser app installs a runtime `frame-src <player origin>` meta CSP, once,
   never under Electron or in a framed app. Neither player frame loads a
@@ -303,9 +309,10 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   regression row is not yet written and is tracked in follow-up #145.
 - **Storage eviction.** Persistent storage is requested fire-and-forget and
   may be denied. If the browser evicts the origin's storage, installed pack
-  bytes (and possibly the registry) are gone and course requests for the pack
-  answer 404; nothing is restored automatically. Recovery is to reinstall the
-  pack from its `.zip` (or re-apply the update from the feed). Packs shows
+  bytes (and possibly the registry, since eviction is origin-wide) are gone
+  and course requests for the pack answer 404; nothing is restored
+  automatically. The only recovery is to reinstall the pack from its `.zip`
+  (a feed update does not help: it skips packs that are not installed). Packs shows
   "(not persistent: the browser may evict installed packs under storage
   pressure)" when persistence was not granted.
 - **Install concurrency.** Installs of one pack are serialized with Web Locks.
