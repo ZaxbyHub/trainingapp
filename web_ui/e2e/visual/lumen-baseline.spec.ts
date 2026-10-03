@@ -287,6 +287,16 @@ function hardwareValueMasks(page: Page): Locator[] {
   ];
 }
 
+/**
+ * The re-index notice banner's rounded bottom-left corner rasterizes in one of two
+ * ways at dark @ 1024 (a 6px anti-aliasing wobble at x 89-92, y 158-160): measured 2
+ * passes in 6 runs against a freshly regenerated baseline, so the committed PNG failed
+ * most runs. Masked in that one image only; the same banner stays in the baseline at
+ * every other theme and width, where it is stable.
+ */
+const flakyBannerMask = (page: Page, state: string, theme: string, width: number): Locator[] =>
+  state === 'documents-populated' && theme === 'dark' && width === 1024 ? [page.locator('.ui-banner--info')] : [];
+
 /** Dynamic, machine-derived regions that must not enter a baseline. */
 function dynamicMasks(page: Page): Locator[] {
   return [
@@ -334,7 +344,7 @@ for (const theme of THEMES) {
           if (state.act) await state.act(page);
           await fitViewportToContent(page, width);
           await expect(page).toHaveScreenshot(`${state.id}-${theme}-${width}.png`, {
-            mask: dynamicMasks(page),
+            mask: [...dynamicMasks(page), ...flakyBannerMask(page, state.id, theme, width)],
             ...railGearTolerance(state.id, theme, width),
           });
         });
