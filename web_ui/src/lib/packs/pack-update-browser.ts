@@ -379,7 +379,7 @@ export async function runUpdateCheck(
 // production network glue (the ONLY outbound call of the update channel)
 // --------------------------------------------------------------------- //
 
-function isHttpsUrl(url: string): boolean {
+export function isHttpsUrl(url: string): boolean {
   try {
     return new URL(url).protocol === 'https:';
   } catch {

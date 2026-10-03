@@ -18,6 +18,7 @@ import {
   applyPackUpdate as applyVerifiedUpdate,
   downloadArtifactBytes,
   fetchFeedText,
+  isHttpsUrl,
   runUpdateCheck,
   type FeedVersionEntry,
   type TrustedKey,
@@ -62,7 +63,11 @@ function readState(storage: Pick<Storage, 'getItem'> | null): UpdatesState {
       return { optIn: false };
     }
     const record = parsed as { optIn: boolean; feedUrl?: unknown };
-    return typeof record.feedUrl === 'string' && record.feedUrl !== ''
+    // Defense in depth (PR 144 review F13): nothing in the UI writes feedUrl,
+    // but the record is plain localStorage, so a non-https value is dropped
+    // here (falling back to the default feed) rather than trusted until the
+    // network layer refuses it.
+    return typeof record.feedUrl === 'string' && record.feedUrl !== '' && isHttpsUrl(record.feedUrl)
       ? { optIn: record.optIn, feedUrl: record.feedUrl }
       : { optIn: record.optIn };
   } catch {
