@@ -29,13 +29,16 @@
  *
  * Egress stays off until "Use external model" is switched on. Both apps check
  * the base URL with the shared endpoint policy first; airgap builds refuse
- * public hosts with a role="alert" message that names the restriction.
+ * public hosts with a message that names the restriction. Problems appear in an
+ * always-mounted aria-live="assertive" region (no role="alert": that plus aria-live
+ * would announce twice).
  */
 import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Banner, Button, Checkbox, Combobox, Field, PasswordInput, Select, Switch, TextInput } from '../ui';
 import { SettingsRadioCards, SettingsSection, SettingsSubsection } from './SettingsControls';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
+import { ApiError } from '../lib/api/types';
 import { IS_AIRGAP } from '../lib/llm/airgap';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
 import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE, type ProviderFailureKind } from '../lib/llm/provider-error';
@@ -71,8 +74,10 @@ interface DesktopKeyState {
  * Generator source (design-language.md section 5, "Model & connection"). A UI choice
  * over the unchanged stored settings: Built-in model == the external endpoint is OFF;
  * Local or network server / Cloud provider show the connection form, and egress still
- * starts only when "Use external model" is switched on. An enabled endpoint shows the
- * source its base URL belongs to (a public host is a cloud provider).
+ * starts only when "Use external model" is switched on. The source is derived from the
+ * SAVED config, so it survives a reload: a saved base URL shows the source it belongs to
+ * (a public host is a cloud provider), enabled or not. Only an empty saved URL opens on
+ * Built-in model.
  */
 type GeneratorSource = 'builtin' | 'local' | 'cloud';
 
@@ -81,11 +86,17 @@ function sourceOfUrl(baseUrl: string): Exclude<GeneratorSource, 'builtin'> {
   return verdict.ok && verdict.kind === 'public' ? 'cloud' : 'local';
 }
 
-/** What a problem is about: a setting the user entered, or a connection-test cause. */
-type ProblemCause = 'setting' | ProviderFailureKind;
+/**
+ * What a problem is about: a setting the user entered, a connection-test cause, or one of
+ * two causes that never reach the endpoint: the desktop backend is not ready
+ * ('unavailable') or answered the test request with a refusal ('refused').
+ */
+type ProblemCause = 'setting' | 'unavailable' | 'refused' | ProviderFailureKind;
 
 const PROBLEM_TITLE: Record<ProblemCause, string> = {
   setting: 'Check this setting',
+  unavailable: 'The desktop backend is not available',
+  refused: 'The desktop backend refused the test',
   network: 'Server not reachable',
   auth: 'The server refused the API key',
   model: 'Model not available',
@@ -101,6 +112,21 @@ function keyElsewhereText(boundOrigin: string): string {
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** Thrown inside handleTest when the desktop session is not ready (never reached the endpoint). */
+class BackendUnavailableError extends Error {}
+
+/**
+ * The cause of an error thrown while testing the connection. Only a transport failure
+ * (the request never got an answer) is 'network'; a backend that answered with an error
+ * status is 'refused' (e.g. the 501 of an engine without external-model support).
+ */
+function causeOfTestError(err: unknown): ProblemCause {
+  if (err instanceof BackendUnavailableError) return 'unavailable';
+  if (err instanceof ApiError) return err.status > 0 ? 'refused' : 'network';
+  if (err instanceof TypeError) return 'network'; // fetch() rejects with TypeError on transport failure
+  return 'other';
 }
 
 export interface ExternalModelSectionProps {
@@ -132,7 +158,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // generator source is classified from it, so typing in the field never flips the
   // radio while egress is on; only a saved URL (blur, enable, backend answer) does.
   const [savedBaseUrl, setSavedBaseUrl] = useState(draft.baseUrl);
-  const [source, setSource] = useState<GeneratorSource>(() => (draft.enabled ? sourceOfUrl(draft.baseUrl) : 'builtin'));
+  const [source, setSource] = useState<GeneratorSource>(() => (draft.baseUrl.trim() !== '' ? sourceOfUrl(draft.baseUrl) : 'builtin'));
   // Browser key-origin binding: the origin the key in the field belongs to
   // (loaded key: its bound origin, which equals the shown URL's; typed key:
   // the URL shown while typing), and whether it was typed since the last save.
@@ -172,9 +198,12 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // Desktop: whether any backend snapshot (GET or PUT answer) has been applied.
   const snapshotAppliedRef = useRef(false);
   const applyDesktopSettings = useCallback((s: Record<string, unknown>) => {
+    const firstSnapshot = !snapshotAppliedRef.current;
     snapshotAppliedRef.current = true;
     const current = draftRef.current;
     const nextBaseUrl = typeof s['external.baseUrl'] === 'string' ? (s['external.baseUrl'] as string) : current.baseUrl;
+    // The first backend snapshot is the saved config: a saved base URL opens on its source.
+    if (firstSnapshot && nextBaseUrl.trim() !== '') setSource(sourceOfUrl(nextBaseUrl));
     // A typed key belongs to the URL that was SHOWN when it was typed. When the
     // backend's answer replaces the shown URL (e.g. after a save of another
     // field, or the first settings load), the typed key is dropped (fail
@@ -455,7 +484,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     try {
       let result: { ok: boolean; kind?: ProviderFailureKind; message: string; models?: string[] };
       if (desktop) {
-        if (session === null) throw new Error('The desktop backend is not available yet.');
+        if (session === null) throw new BackendUnavailableError('The desktop backend is not available yet.');
         result = await session.apiClient.testExternalEndpoint({
           protocol: current.protocol,
           baseUrl: current.baseUrl.trim(),
@@ -486,7 +515,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       if (result.ok) setStatus(result.message);
       else setProblem(result.message, result.kind ?? 'other');
     } catch (err) {
-      if (mountedRef.current) setProblem(`Connection test failed: ${errorText(err)}`, 'network');
+      if (mountedRef.current) setProblem(`Connection test failed: ${errorText(err)}`, causeOfTestError(err));
     } finally {
       if (mountedRef.current) setTesting(false);
     }
@@ -530,11 +559,11 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   const keyHelp = desktop
     ? keyState.apiKeySet
       ? keyState.apiKeyPersisted
-        ? 'A key is saved, encrypted by the operating system. Type a new key to replace it.'
-        : 'A key is set for this session only: secure storage is unavailable on this computer, so it is not saved to disk. Type a new key to replace it.'
+        ? "A key is saved using your operating system's secure storage. Type a new key to replace it."
+        : 'A key is set for this session only and is not saved. Type a new key to replace it.'
       : keyState.apiKeyPersisted
-        ? 'Optional. Saved encrypted by the operating system when secure storage is available (otherwise kept for this session only), and sent only to this endpoint.'
-        : 'Optional. Secure storage is unavailable on this computer: a key you enter is kept for this session only, and sent only to this endpoint.'
+        ? "Optional. Saved using your operating system's secure storage when it is available (otherwise kept for this session only), and sent only to this endpoint."
+        : 'Optional. A key you enter will be kept only for this session and not saved, and is sent only to this endpoint.'
     : draft.rememberKey
       ? 'Optional. With Remember on, the key is saved in this browser unencrypted: any script running on this site can read it. It is sent only to the server it was entered for.'
       : 'Optional. Kept for this browser session only, unencrypted: any script running on this site can read it. It is sent only to the server it was entered for.';

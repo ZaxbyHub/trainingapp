@@ -8,7 +8,8 @@
  *   - desktop app: every change is a PUT /settings external.* patch, the key
  *     is write-only (never kept in the renderer), and Test connection uses
  *     POST /settings/external/test — NEVER probeExternalEndpoint;
- *   - an airgap build refuses a public URL with role=alert and no request;
+ *   - an airgap build refuses a public URL with a message in the assertive live
+ *     region (aria-live, no role=alert: that would announce twice) and no request;
  *   - the model-connection id lives on this region (overlay destination).
  */
 import React from 'react';
@@ -33,6 +34,7 @@ import { DesktopSessionProvider, type DesktopSession } from '../lib/desktop-sess
 import { DESKTOP_MODELS_CHANGED_EVENT } from '../lib/desktop-models-events';
 import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../test/desktop-bridge-stub';
 import type { ApiClient } from '../lib/api';
+import { ApiError } from '../lib/api/types';
 
 const KEY = 'sk-panel-SENTINEL-2468';
 
@@ -187,32 +189,34 @@ describe('desktop app', () => {
     );
 
   // Review M3: the desktop key note follows apiKeyPersisted and never contradicts itself.
-  test('M3: a saved, OS-encrypted key is described as encrypted (and never as session-only)', async () => {
+  test('M3: a saved key in OS secure storage is described as such (and never as session-only)', async () => {
     installDesktopBridgeStub();
     const { s } = session({ 'external.baseUrl': 'http://192.168.1.20:8000', 'external.apiKeySet': true, 'external.apiKeyPersisted': true });
     renderDesktop(s);
     const q = within(panel());
-    await waitFor(() => expect(q.getByText(/a key is saved, encrypted by the operating system/i)).toBeInTheDocument());
+    await waitFor(() => expect(q.getByText(/a key is saved using your operating system's secure storage/i)).toBeInTheDocument());
     expect(q.queryByText(/session only/i)).toBeNull();
   });
 
-  test('M3: a key kept in memory (secure storage unavailable) is described as session-only (and never as encrypted)', async () => {
+  test('M3: a key kept in memory is described as session-only without inventing a cause (and never as stored securely)', async () => {
     installDesktopBridgeStub();
     const { s } = session({ 'external.baseUrl': 'http://192.168.1.20:8000', 'external.apiKeySet': true, 'external.apiKeyPersisted': false });
     renderDesktop(s);
     const q = within(panel());
-    await waitFor(() => expect(q.getByText(/set for this session only: secure storage is unavailable/i)).toBeInTheDocument());
-    expect(q.queryByText(/encrypted by the operating system/i)).toBeNull();
+    await waitFor(() => expect(q.getByText(/set for this session only and is not saved/i)).toBeInTheDocument());
+    expect(q.queryByText(/secure storage/i)).toBeNull();
+    expect(q.queryByText(/encrypted/i)).toBeNull();
   });
 
-  test('M3: with secure storage known to be unavailable and no key here, a new key is announced as session-only', async () => {
+  test('M3: with a memory-only store and no key here, a new key is announced as session-only and not saved', async () => {
     installDesktopBridgeStub();
     const { s } = session({ 'external.baseUrl': 'http://192.168.1.20:8000', 'external.apiKeySet': false, 'external.apiKeyPersisted': false });
     renderDesktop(s);
     const q = within(panel());
     await waitFor(() =>
-      expect(q.getByText(/secure storage is unavailable on this computer: a key you enter is kept for this session only/i)).toBeInTheDocument(),
+      expect(q.getByText(/a key you enter will be kept only for this session and not saved/i)).toBeInTheDocument(),
     );
+    expect(q.queryByText(/unavailable/i)).toBeNull();
   });
 
   test('Test connection uses the backend probe route, never the browser probe', async () => {
@@ -984,5 +988,118 @@ describe('review round 3 (M4, L1, L2, L3, L5, L7)', () => {
     const form = q.getByRole('group', { name: /^server connection$/i });
     expect(form.nextElementSibling).toBe(status);
     expect(status.nextElementSibling).toBe(problem);
+  });
+});
+
+describe('review L1/L6 (final critic)', () => {
+  const region = () => screen.getByRole('region', { name: /^model & connection$/i });
+
+  function desktopSession(settings: Record<string, unknown>, testExternalEndpoint: (req: Record<string, unknown>) => Promise<never>) {
+    const apiClient = {
+      getSettings: vi.fn(async () => settings as never),
+      updateSettings: vi.fn(async (patch: Record<string, unknown>) => ({ ...settings, ...patch }) as never),
+      testExternalEndpoint,
+    } as unknown as ApiClient;
+    const s: DesktopSession = { baseUrl: 'http://127.0.0.1:4567', token: 't', mode: 'node', apiClient, sseUrl: () => 'x' };
+    return s;
+  }
+  const renderWith = (s: DesktopSession | null) =>
+    render(
+      <DesktopSessionProvider value={{ session: s, models: null, loading: false, error: null }}>
+        <ExternalModelSection />
+      </DesktopSessionProvider>,
+    );
+  async function runTest(): Promise<HTMLElement> {
+    const q = within(panel());
+    fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://192.168.1.20:8000' } });
+    fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm1' } });
+    fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+    const problem = q.getByTestId('external-problem');
+    await waitFor(() => expect(problem).not.toBeEmptyDOMElement());
+    return problem;
+  }
+
+  test('L1: a desktop backend that is not ready is titled as unavailable, not as an unreachable server', async () => {
+    installDesktopBridgeStub();
+    renderWith(null);
+    const problem = await runTest();
+    expect(problem).toHaveTextContent(/the desktop backend is not available/i);
+    expect(problem).not.toHaveTextContent(/server not reachable/i);
+  });
+
+  test('L1: a backend refusal (501 / 4xx) is titled as a refusal, not as an unreachable server', async () => {
+    installDesktopBridgeStub();
+    renderWith(desktopSession({}, () => Promise.reject(new ApiError(501, 'External model endpoints are not supported by this backend engine'))));
+    const problem = await runTest();
+    expect(problem).toHaveTextContent(/the desktop backend refused the test/i);
+    expect(problem).toHaveTextContent(/not supported by this backend engine/i);
+    expect(problem).not.toHaveTextContent(/server not reachable/i);
+  });
+
+  test('L1: only a transport failure (fetch TypeError, ApiError status 0) is titled Server not reachable', async () => {
+    installDesktopBridgeStub();
+    renderWith(desktopSession({}, () => Promise.reject(new TypeError('Failed to fetch'))));
+    expect(await runTest()).toHaveTextContent(/server not reachable/i);
+    cleanup();
+    renderWith(desktopSession({}, () => Promise.reject(new ApiError(0, 'Network unavailable'))));
+    expect(await runTest()).toHaveTextContent(/server not reachable/i);
+  });
+
+  test('L1: an unclassified thrown error is titled as a failed test, not as a network problem', async () => {
+    installDesktopBridgeStub();
+    renderWith(desktopSession({}, () => Promise.reject(new Error('boom'))));
+    const problem = await runTest();
+    expect(problem).toHaveTextContent(/connection test failed/i);
+    expect(problem).not.toHaveTextContent(/server not reachable/i);
+  });
+
+  test('L6: a Cloud provider entered but never enabled comes back as Cloud provider after a reload', async () => {
+    const first = render(<ExternalModelSection />);
+    let q = within(region());
+    fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
+    const base = q.getByLabelText(/^base url$/i);
+    fireEvent.change(base, { target: { value: 'https://api.openai.com' } });
+    fireEvent.blur(base);
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('external-provider-config') ?? '{}').baseUrl).toBe('https://api.openai.com'));
+    first.unmount();
+    // Reload: nothing was enabled and nothing was contacted, yet the entered source returns.
+    const fetchSpy = vi.fn(async () => new Response('{}'));
+    vi.stubGlobal('fetch', fetchSpy);
+    render(<ExternalModelSection />);
+    q = within(region());
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+    expect(q.getByLabelText(/^base url$/i)).toHaveValue('https://api.openai.com');
+    expect(q.getByRole('switch', { name: /^use my documents/i })).toBeInTheDocument();
+    expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+    expect(JSON.parse(localStorage.getItem('external-provider-config') ?? '{}').enabled).not.toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(probeSpy.calls).toBe(0);
+  });
+
+  test('L6: a saved private-network URL that is not enabled comes back as Local or network server', () => {
+    localStorage.setItem(
+      'external-provider-config',
+      JSON.stringify({ enabled: false, protocol: 'openai', baseUrl: 'http://192.168.1.20:11434', model: '', grounded: true }),
+    );
+    render(<ExternalModelSection />);
+    expect(within(region()).getByRole('radio', { name: /^local or network server$/i })).toBeChecked();
+  });
+
+  test('L6: with nothing saved the section still opens on Built-in model', () => {
+    render(<ExternalModelSection />);
+    expect(within(region()).getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+  });
+
+  test('L6 (desktop): a saved base URL in the first backend snapshot opens on its source, egress still off', async () => {
+    installDesktopBridgeStub();
+    const s = desktopSession(
+      { 'external.enabled': false, 'external.baseUrl': 'https://api.anthropic.com', 'external.protocol': 'anthropic' },
+      () => Promise.reject(new Error('unused')),
+    );
+    renderWith(s);
+    const q = within(region());
+    await waitFor(() => expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked());
+    expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+    expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
   });
 });
