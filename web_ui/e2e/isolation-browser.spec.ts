@@ -568,6 +568,12 @@ test('a course cannot navigate its own frame or the boot frame off the player or
  * load, then assigns `child.contentWindow.location.href` to the local sink.
  * Each step is announced on the console so the row is not vacuous. Loopback
  * sink only; nothing leaves the machine.
+ *
+ * Mutation note: the row pins the EFFECTIVE frame policy, not the spelling of
+ * the directive. Deleting `frame-src 'self'` from the course CSP alone leaves
+ * the row green because frame-src falls back to `default-src 'self'`; setting
+ * it to `frame-src *` (in training-relay.ts and sw.js courseCsp) turns the row
+ * red with one sink hit.
  */
 function childNavStoryHtml(): string {
   const script = `
