@@ -65,6 +65,13 @@ interface PacksPanelProps {
   slots?: { knowledge: HTMLElement | null; training: HTMLElement | null };
   /** Called when a training-class row APPEARS after the first load (never on it). */
   onTrainingPackAdded?: () => void;
+  /**
+   * Change to drop a pending "a training pack was added, announce the switch"
+   * signal. The page bumps it whenever it supersedes its own deferred tab switch
+   * (a manual tab change), so a later manual visit to Training packs does not
+   * announce a switch that never happened. Changing it has no other effect.
+   */
+  switchSignalResetKey?: number;
   /** Bump to re-list (installs the page made itself; the desktop client has no subscribe). */
   refreshToken?: number;
 }
@@ -106,6 +113,7 @@ export function PacksPanel({
   apiClient,
   slots,
   onTrainingPackAdded,
+  switchSignalResetKey,
   refreshToken,
 }: PacksPanelProps) {
   const { showToast } = useToast();
@@ -227,6 +235,13 @@ export function PacksPanel({
     void refreshStorage();
     return list;
   }, [client, refreshStorage]);
+
+  // Declared BEFORE the tab-mount effect below so a reset and a tab mount in the
+  // same commit resolve reset-first. Skips the mount value.
+  const initialResetKey = useRef(switchSignalResetKey);
+  useEffect(() => {
+    if (switchSignalResetKey !== initialResetKey.current) switchSignaledRef.current = false;
+  }, [switchSignalResetKey]);
 
   // WCAG 2.4.3 / 4.1.3: when the Training packs tab mounts after a signal, the
   // Documents panel (and anything focused in it) is gone. If focus was lost with
