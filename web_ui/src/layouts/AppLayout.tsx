@@ -19,6 +19,10 @@ interface AppLayoutProps {
   onDeleteConversation?: (id: string) => void;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  searchResults?: Array<{ id: string; title: string; updatedAt: string }> | null;
+  searchTruncated?: boolean;
 }
 
 /**
@@ -38,6 +42,10 @@ export function AppLayout({
   onDeleteConversation,
   hasMore,
   onLoadMore,
+  searchQuery,
+  onSearchChange,
+  searchResults,
+  searchTruncated,
 }: AppLayoutProps) {
   const { isOpen, toggle } = useSidebarState();
   return (
@@ -57,6 +65,10 @@ export function AppLayout({
           onDeleteConversation={onDeleteConversation}
           hasMore={hasMore}
           onLoadMore={onLoadMore}
+          searchQuery={searchQuery}
+          onSearchChange={onSearchChange}
+          searchResults={searchResults}
+          searchTruncated={searchTruncated}
         />
       }
     >

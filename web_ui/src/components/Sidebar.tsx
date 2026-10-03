@@ -22,6 +22,13 @@ interface SidebarProps {
   onDeleteConversation?: (id: string) => void;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  /** Conversation search (whole store, see useConversations). Omit to hide the field. */
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  /** null while no search is active; otherwise the matches (newest first). */
+  searchResults?: SidebarConversation[] | null;
+  /** More matches exist than were returned. */
+  searchTruncated?: boolean;
 }
 
 /** Primary destinations, at the TOP of the sidebar (design-language.md section 5). */
@@ -51,9 +58,20 @@ export function Sidebar({
   onDeleteConversation,
   hasMore,
   onLoadMore,
+  searchQuery = '',
+  onSearchChange,
+  searchResults = null,
+  searchTruncated = false,
 }: SidebarProps) {
   const { collapsed, drawer, closeDrawer } = useAppShell();
   const headingId = useId();
+  const searchId = useId();
+  const searching = searchResults !== null;
+  const shown = searchResults ?? conversations;
+  const clearSearch = () => {
+    onSearchChange?.('');
+    document.getElementById(searchId)?.focus();
+  };
 
   const startNewChat = () => {
     onNewChat();
@@ -89,11 +107,56 @@ export function Sidebar({
               New chat
             </Button>
           </div>
+          {onSearchChange ? (
+            <div className="app-sidebar__search" role="search">
+              <label htmlFor={searchId} className="ui-visually-hidden">
+                Search conversations
+              </label>
+              <div className="app-sidebar__search-box">
+                <Icon name="search" size={16} className="app-sidebar__search-icon" />
+                <input
+                  id={searchId}
+                  type="search"
+                  className="ui-input ui-focusable app-sidebar__search-input"
+                  placeholder="Search conversations"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={searchQuery}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Escape clears a non-empty search (and stops there); on an empty
+                    // field it falls through, e.g. to close the drawer.
+                    if (e.key === 'Escape' && searchQuery !== '') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSearchChange('');
+                    }
+                  }}
+                />
+                {searchQuery !== '' ? (
+                  <IconButton
+                    icon="x"
+                    size="sm"
+                    aria-label="Clear search"
+                    className="app-sidebar__search-clear"
+                    onClick={clearSearch}
+                  />
+                ) : null}
+              </div>
+              <p className="ui-visually-hidden" role="status">
+                {searching
+                  ? shown.length === 0
+                    ? 'No conversations found'
+                    : `${shown.length}${searchTruncated ? ' or more' : ''} conversation${shown.length === 1 && !searchTruncated ? '' : 's'} found`
+                  : ''}
+              </p>
+            </div>
+          ) : null}
           <div className="app-sidebar__list">
-            {conversations.length === 0 ? (
-              <p className="app-sidebar__empty">No conversations yet</p>
+            {shown.length === 0 ? (
+              <p className="app-sidebar__empty">{searching ? 'No conversations match' : 'No conversations yet'}</p>
             ) : (
-              conversations.map((conversation) => (
+              shown.map((conversation) => (
                 <SidebarConversationItem
                   key={conversation.id}
                   id={conversation.id}
@@ -106,7 +169,10 @@ export function Sidebar({
                 />
               ))
             )}
-            {conversations.length > 0 && hasMore ? (
+            {searching && searchTruncated ? (
+              <p className="app-sidebar__note">Showing the most recent matches. Refine your search to see others.</p>
+            ) : null}
+            {!searching && conversations.length > 0 && hasMore ? (
               <Button size="sm" variant="ghost" className="app-sidebar__more" onClick={onLoadMore || (() => {})}>
                 Load more
               </Button>
