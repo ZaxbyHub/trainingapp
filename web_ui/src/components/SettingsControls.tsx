@@ -115,7 +115,11 @@ export function SettingsRadioCards<V extends string>({
               // on another option of the group instead of the checked one.
               disabled={o.disabled && !checked}
               aria-disabled={o.disabled && checked ? true : undefined}
-              onChange={() => onChange(o.value)}
+              onChange={() => {
+                // aria-disabled keeps the checked option focusable but not selectable.
+                if (o.disabled) return;
+                onChange(o.value);
+              }}
               onClick={onOptionClick ? () => onOptionClick(o.value) : undefined}
               aria-labelledby={labelId}
               aria-describedby={o.description !== undefined ? descId : undefined}

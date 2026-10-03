@@ -107,7 +107,7 @@ describe('SettingsRadioCards', () => {
     expect(onOptionClick).toHaveBeenCalledWith('quality');
   });
 
-  it('a checked but disabled option stays focusable (aria-disabled, not native disabled) and is not changed by a click', () => {
+  it('a checked but disabled option stays focusable (aria-disabled, not native disabled)', () => {
     const onChange = vi.fn();
     render(
       <SettingsRadioCards<string>
@@ -134,6 +134,32 @@ describe('SettingsRadioCards', () => {
     expect(b).toHaveFocus();
     fireEvent.click(b);
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('ignores a change on an aria-disabled option even when the browser would report one', () => {
+    const onChange = vi.fn();
+    render(
+      <SettingsRadioCards<string>
+        legend="Source"
+        name="src"
+        options={[
+          { value: 'a', label: 'A' },
+          { value: 'b', label: 'B', disabled: true },
+        ]}
+        isChecked={(v) => v === 'b'}
+        onChange={onChange}
+      />,
+    );
+    const b = screen.getByRole('radio', { name: 'B' }) as HTMLInputElement;
+    expect(b).toHaveAttribute('aria-disabled', 'true');
+    // Un-check it natively so the next click is a real checked-false -> true transition, which
+    // does reach React's onChange (a plain click on a checked radio never does).
+    b.checked = false;
+    fireEvent.click(b);
+    expect(onChange).not.toHaveBeenCalled();
+    // The guard is specific to disabled options: an enabled one still reports.
+    fireEvent.click(screen.getByRole('radio', { name: 'A' }));
+    expect(onChange).toHaveBeenCalledWith('a');
   });
 
   it('allows no option to be checked (desktop preset state not read yet)', () => {

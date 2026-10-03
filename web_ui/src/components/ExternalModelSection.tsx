@@ -216,7 +216,11 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     };
   }, []);
 
-  const airgap = IS_AIRGAP || keyState.airgap;
+  // Desktop: the backend is the source of truth for whether it is air-gapped, so a web bundle
+  // built air-gapped but run against a non-air-gapped backend never claims the built-in model
+  // answers when the backend would use the public URL. Browser: the build flag, which
+  // isExternalActive applies.
+  const airgap = desktop ? keyState.airgap : IS_AIRGAP;
 
   // Desktop: whether any backend snapshot (GET or PUT answer) has been applied.
   const snapshotAppliedRef = useRef(false);
@@ -599,6 +603,8 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // Air-gapped build with an ENABLED public endpoint: the policy refuses it, so the built-in
   // model answers; the form and the switch stay so the user can switch it off.
   const refusedPublic = airgap && draft.enabled && savedSource === 'cloud';
+  // The same endpoint after it was switched off: it cannot be switched back on here.
+  const blockedPublic = airgap && !draft.enabled && source === 'cloud' && savedSource === 'cloud';
   // Browser: the saved key bound to the URL shown is in memory (draft) but is never
   // written into the field's DOM value (review L1): the field is write-only, as on
   // the desktop, and a line says a key is saved.
@@ -687,6 +693,10 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
           {refusedPublic ? (
             <p className="settings-text settings-tone--warning" data-testid="external-airgap-refused">
               This public endpoint is refused in this air-gapped build; answers come from the built-in model. Switch off Use external model.
+            </p>
+          ) : blockedPublic ? (
+            <p className="settings-text settings-tone--warning" data-testid="external-airgap-blocked">
+              This public endpoint can't be used in this air-gapped build. Choose Local or network server to change it.
             </p>
           ) : (
             <p className="settings-text" data-testid="external-usage-state">

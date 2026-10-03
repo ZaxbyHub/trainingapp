@@ -17,6 +17,13 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
+const airgapFlag = vi.hoisted(() => ({ on: false }));
+vi.mock('../lib/llm/airgap', () => ({
+  get IS_AIRGAP() {
+    return airgapFlag.on;
+  },
+}));
+
 const probeSpy = vi.hoisted(() => ({ calls: 0 }));
 vi.mock('../lib/llm/external-provider', async (importOriginal) => {
   const real = await importOriginal<typeof import('../lib/llm/external-provider')>();
@@ -56,6 +63,7 @@ beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
   probeSpy.calls = 0;
+  airgapFlag.on = false;
 });
 afterEach(() => {
   cleanup();
@@ -1372,5 +1380,79 @@ describe('review L1/L6 (final critic)', () => {
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(probeSpy.calls).toBe(0);
     });
+
+    test('LOW-A desktop: the backend air-gap state decides, not the bundle flag (bundle air-gapped, backend not)', async () => {
+      installDesktopBridgeStub();
+      airgapFlag.on = true;
+      const fetchSpy = noFetch();
+      const s = desktopSession(
+        { 'external.enabled': true, 'external.baseUrl': 'https://api.openai.com', 'external.model': 'gpt-x', 'external.airgap': false },
+        () => Promise.reject(new Error('unused')),
+      );
+      renderWith(s);
+      const q = within(region());
+      await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+      // The backend would answer from the public URL, so the UI never says it is refused.
+      expect(q.queryByTestId('external-airgap-refused')).toBeNull();
+      expect(q.queryByTestId('external-airgap-notice')).toBeNull();
+      expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i);
+      expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+      expect(q.getByRole('radio', { name: /^cloud provider$/i })).not.toHaveAttribute('aria-disabled');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    test('LOW-B: after switching off a refused public endpoint the line is truthful and Local is selectable', async () => {
+      installDesktopBridgeStub();
+      const fetchSpy = noFetch();
+      const s = desktopSession(
+        { 'external.enabled': true, 'external.baseUrl': 'https://api.openai.com', 'external.model': 'gpt-x', 'external.airgap': true },
+        () => Promise.reject(new Error('unused')),
+      );
+      renderWith(s);
+      const q = within(region());
+      await waitFor(() => expect(q.getByTestId('external-airgap-refused')).toBeInTheDocument());
+      fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
+      await waitFor(() => expect(q.queryByTestId('external-airgap-refused')).toBeNull());
+      const blocked = q.getByTestId('external-airgap-blocked');
+      expect(blocked).toHaveTextContent(
+        "This public endpoint can't be used in this air-gapped build. Choose Local or network server to change it.",
+      );
+      expect(q.queryByTestId('external-usage-state')).toBeNull();
+      expect(blocked).not.toHaveTextContent(/until you switch on/i);
+      const local = q.getByRole('radio', { name: /^local or network server$/i });
+      expect(local).toBeEnabled();
+      fireEvent.click(local);
+      expect(q.queryByTestId('external-airgap-blocked')).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
+    });
+  });
+});
+
+describe('LOW-A browser: the build flag decides', () => {
+  const region = () => screen.getByRole('region', { name: /^model & connection$/i });
+  const seed = () =>
+    localStorage.setItem(
+      'external-provider-config',
+      JSON.stringify({ enabled: true, protocol: 'openai', baseUrl: 'https://api.openai.com', model: 'gpt-x', grounded: true }),
+    );
+
+  test('an air-gapped bundle refuses the public endpoint and says the built-in model answers', () => {
+    airgapFlag.on = true;
+    seed();
+    render(<ExternalModelSection />);
+    const q = within(region());
+    expect(q.getByTestId('external-airgap-notice')).toBeInTheDocument();
+    expect(q.getByTestId('external-airgap-refused')).toBeInTheDocument();
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  test('a non-air-gapped bundle uses the public endpoint (no refusal)', () => {
+    seed();
+    render(<ExternalModelSection />);
+    const q = within(region());
+    expect(q.queryByTestId('external-airgap-notice')).toBeNull();
+    expect(q.queryByTestId('external-airgap-refused')).toBeNull();
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i);
   });
 });

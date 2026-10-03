@@ -280,6 +280,7 @@
   .ui-radio-card.ui-selected { border: 2px solid Highlight; box-shadow: none; }
   .ui-switch .ui-toggle__input:checked + .ui-switch__track { border-color: Highlight; }
   .ui-button[aria-disabled="true"] { color: GrayText; border-color: GrayText; }
+  .ui-radio-card__input[aria-disabled="true"] { accent-color: GrayText; }
   .ui-banner, .ui-badge, .ui-progress { border: 1px solid CanvasText; }
   .ui-combobox__option--active { outline: 2px solid Highlight; outline-offset: -2px; }
   .ui-progress__fill { background: Highlight; }
