@@ -225,6 +225,22 @@ describe('D5 C5: TrainingPlayer component (issue #81 AC5)', () => {
     expect(entries[entries.length - 1].textContent).toBe('6RdggQhakWc|Roles Menu');
   });
 
+  it('hides the automation readout and slide-change log from assistive tech, and bounds the log (review L3)', async () => {
+    vi.useFakeTimers();
+    bridge.stateQueue = Array.from({ length: 60 }, (_, i) => ({ slideId: 's' + i, slideTitle: 'Slide ' + i }));
+    render(<TrainingPlayer packId={OPMED} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(65_000); });
+
+    const log = screen.getByTestId('training-player-slidechange');
+    expect(log.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.getByTestId('training-player-slide').closest('[aria-hidden="true"]')).not.toBeNull();
+    const entries = log.querySelectorAll('[data-trainingapp-entry]');
+    expect(entries).toHaveLength(50);
+    // The newest entries are the ones kept.
+    expect(entries[entries.length - 1].textContent).toBe('s59|Slide 59');
+    expect(entries[0].textContent).toBe('s10|Slide 10');
+  });
+
   it('drives initialSlideId through the bridge once state is readable', async () => {
     vi.useFakeTimers();
     bridge.stateQueue = [null, { slideId: '5rN4PvXJM5d', slideTitle: 'Welcome' }];

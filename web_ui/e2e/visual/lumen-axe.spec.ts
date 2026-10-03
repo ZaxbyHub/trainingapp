@@ -31,7 +31,8 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  *
  * Phase 3 (shell) removed the old sidebar's "No conversations yet" node
  * (legacy --color-text-muted on --color-surface, 4.18:1) from every light 1440 key,
- * which also emptied 'training:light:1440'. Every remaining entry is page-body debt.
+ * which also emptied 'training:light:1440'. Phase 6 (Documents & Training) fixed and
+ * removed both 'documents:light:*' entries. Every remaining entry is page-body debt.
  */
 const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'overlay:light:1440': [
@@ -41,9 +42,6 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'chat:light:1440': [
     "color-contrast | div[role=\"region\"] > div:nth-child(1) > p",
     "color-contrast | div[role=\"region\"] > div:nth-child(3)",
-  ],
-  'documents:light:1440': [
-    "color-contrast | p:nth-child(4)",
   ],
   'settings:light:1440': [
     "color-contrast | #browser-local-desc",
@@ -56,9 +54,6 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'chat:light:500': [
     "color-contrast | div[role=\"region\"] > div:nth-child(1) > p",
     "color-contrast | div[role=\"region\"] > div:nth-child(3)",
-  ],
-  'documents:light:500': [
-    "color-contrast | p:nth-child(4)",
   ],
   'settings:light:500': [
     "color-contrast | #browser-local-desc",

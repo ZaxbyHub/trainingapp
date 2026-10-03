@@ -1,9 +1,18 @@
 /**
  * DocumentList component displays uploaded documents with status and actions.
+ *
+ * Lumen phase 6: rows are built from the Lumen primitives (StatusPill,
+ * ProgressBar, Button, IconButton) and styled by pages/documents.css. The only
+ * inline styles left are the virtualization's positional ones (row offsets and
+ * the full scroll height), which are computed per render.
  */
 
 import React, { useCallback, useState, useRef, useLayoutEffect } from 'react';
 import type { DocumentEntry } from '../types/document';
+import { Button, Icon, IconButton, ProgressBar, StatusPill, type IconName } from '../ui';
+import { cx } from '../ui/cx';
+import { ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from './documentRowLayout';
+import '../pages/documents.css';
 
 interface DocumentListProps {
   documents: DocumentEntry[];
@@ -39,21 +48,15 @@ function formatDate(timestamp: number): string {
   });
 }
 
-// U6a: status labels render at --font-size-small (11px) on the light bubble
-// surface and must meet WCAG AA. The base info/warning/success tokens are
-// borderline AA at small sizes, so use the *-strong variants here.
-function getStatusColor(status: DocumentEntry['status']): string {
+/** Lumen phase 6: status is a StatusPill (icon + text, never color alone). */
+function getStatusTone(status: DocumentEntry['status']): 'info' | 'success' | 'danger' {
   switch (status) {
-    case 'uploading':
-      return 'var(--color-info-strong)';
-    case 'processing':
-      return 'var(--color-warning-strong)';
     case 'ready':
-      return 'var(--color-success-strong)';
+      return 'success';
     case 'error':
-      return 'var(--color-danger)';
+      return 'danger';
     default:
-      return 'var(--color-text-muted)';
+      return 'info';
   }
 }
 
@@ -72,7 +75,72 @@ function getStatusLabel(status: DocumentEntry['status']): string {
   }
 }
 
-const ITEM_HEIGHT = 60;
+/**
+ * Lumen phase 6 (design-language section 5 "type icon"): the document type,
+ * from the file name's extension (the stored fileType differs between the
+ * browser pipeline and desktop rows, the name does not). Decorative: the name
+ * next to it already carries the extension.
+ */
+type DocKind = 'pdf' | 'doc' | 'sheet' | 'slides' | 'text' | 'other';
+const KIND_BY_EXTENSION: Record<string, DocKind> = {
+  pdf: 'pdf',
+  doc: 'doc',
+  docx: 'doc',
+  xls: 'sheet',
+  xlsx: 'sheet',
+  csv: 'sheet',
+  ppt: 'slides',
+  pptx: 'slides',
+  txt: 'text',
+  md: 'text',
+};
+const KIND_ICON: Record<DocKind, IconName> = {
+  pdf: 'file-pdf',
+  doc: 'file-type',
+  sheet: 'file-spreadsheet',
+  slides: 'presentation',
+  text: 'file-text',
+  other: 'file',
+};
+export function documentKind(fileName: string): DocKind {
+  const dot = fileName.lastIndexOf('.');
+  const extension = dot < 0 ? '' : fileName.slice(dot + 1).toLowerCase();
+  return KIND_BY_EXTENSION[extension] ?? 'other';
+}
+
+/** Content-box width of `el` in CSS px, fractional like the `@container` query
+ *  measures it (clientWidth rounds, so it is derived from the border box). */
+function contentWidth(el: HTMLElement): number {
+  const style = window.getComputedStyle(el);
+  const sides = ['borderLeftWidth', 'borderRightWidth', 'paddingLeft', 'paddingRight'] as const;
+  const inset = sides.reduce((sum, side) => sum + (parseFloat(style[side]) || 0), 0);
+  return el.getBoundingClientRect().width - inset;
+}
+
+/**
+ * Row height for the layout the CSS has active. The table is a size container
+ * (`@container (max-width: STACKED_MAX_WIDTH px)` in pages/documents.css), so the
+ * hook measures that SAME element's content width with a ResizeObserver and
+ * applies the same threshold: the 60px / 112px virtualization heights cannot
+ * disagree with the layout. An unmeasured (0px) container keeps the wide height.
+ */
+function useItemHeight(tableRef: React.RefObject<HTMLElement | null>, active: boolean): number {
+  const [stacked, setStacked] = useState(false);
+  useLayoutEffect(() => {
+    const el = tableRef.current;
+    if (!active || el === null) return undefined;
+    const apply = (width: number) => setStacked(width > 0 && width <= STACKED_MAX_WIDTH);
+    apply(contentWidth(el));
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (entry !== undefined) apply(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tableRef, active]);
+  return stacked ? STACKED_ITEM_HEIGHT : ITEM_HEIGHT;
+}
 const BUFFER = 5;
 
 const DocumentItem = React.memo<{
@@ -102,180 +170,64 @@ const DocumentItem = React.memo<{
     setIsConfirming(false);
   }, []);
 
+  const kind = documentKind(doc.fileName);
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 'var(--spacing-md)',
-        padding: 'var(--spacing-md)',
-        borderBottom: '1px solid var(--color-bubble-system)',
-        backgroundColor: 'var(--color-bubble-assistant)',
-        opacity: isDeleting ? 0.5 : 1,
-        transition: 'opacity 0.2s ease',
-        height: `${ITEM_HEIGHT}px`,
-        boxSizing: 'border-box',
-      }}
-    >
-      {/* File icon */}
-      <div
-        style={{
-          width: '40px',
-          height: '40px',
-          borderRadius: '8px',
-          backgroundColor: 'var(--color-primary)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-        }}
-      >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="var(--color-text-on-primary)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
+    <div className={cx('app-doc', isDeleting && 'app-doc--deleting')}>
+      {/* Table cells (Lumen phase 6): one cell per value, placed by CSS grid areas
+          (pages/documents.css), so narrow widths reflow them instead of duplicating. */}
+      <div className={`app-doc__icon app-doc__icon--${kind}`} data-kind={kind}>
+        <Icon name={KIND_ICON[kind]} />
       </div>
-
-      {/* Document info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p
-          style={{
-            fontSize: 'var(--font-size-body)',
-            fontFamily: 'var(--font-family)',
-            color: 'var(--color-text-on-bubble-assistant)',
-            fontWeight: 500,
-            marginBottom: '2px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-          title={doc.fileName}
-        >
-          {doc.fileName}
-        </p>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--spacing-sm)',
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-          }}
-        >
-          <span style={{ color: 'var(--color-text-muted)' }}>
-            {formatFileSize(doc.fileSize)}
-          </span>
-          <span style={{ color: 'var(--color-text-muted)' }}>•</span>
-          <span style={{ color: 'var(--color-text-muted)' }}>
-            {formatDate(doc.uploadedAt)}
-          </span>
-          {doc.chunkCount !== undefined && doc.chunkCount > 0 && (
+      <p className="app-doc__name" title={doc.fileName}>
+        {doc.fileName}
+      </p>
+      <span className="app-doc__meta">
+        <span className="app-doc__date">{formatDate(doc.uploadedAt)}</span>
+        <span className="app-doc__size">
+          <span className="ui-visually-hidden">Size: </span>
+          {formatFileSize(doc.fileSize)}
+        </span>
+        <span className="app-doc__chunks">
+          {doc.chunkCount !== undefined && doc.chunkCount > 0 ? (
             <>
-              <span style={{ color: 'var(--color-text-muted)' }}>•</span>
-              <span style={{ color: 'var(--color-text-muted)' }}>
-                {doc.chunkCount} chunks
-              </span>
+              <span className="ui-visually-hidden">Chunks: </span>
+              {`${doc.chunkCount} chunks`}
             </>
-          )}
-        </div>
-      </div>
+          ) : null}
+        </span>
+      </span>
 
-      {/* Status badge (collapsed during delete-confirmation to make room). */}
+      {/* Status (collapsed during delete-confirmation to make room). */}
       {!isConfirming && (
-        <div
-          aria-live="polite"
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            gap: 'var(--spacing-xs)',
-          }}
-        >
-          <span
-            style={{
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              color: getStatusColor(doc.status),
-              fontWeight: 500,
-            }}
-          >
-            {getStatusLabel(doc.status)}
-          </span>
+        <div aria-live="polite" className="app-doc__status">
+          <span className="ui-visually-hidden">Status: </span>
+          <StatusPill status={getStatusTone(doc.status)}>{getStatusLabel(doc.status)}</StatusPill>
 
           {/* Progress bar for uploading/processing */}
           {(doc.status === 'uploading' || doc.status === 'processing') && (
-            <div
-              role="progressbar"
-              aria-valuenow={Math.round(doc.progress)}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label={`${getStatusLabel(doc.status)}: ${Math.round(doc.progress)}%`}
-              style={{
-                width: '80px',
-                height: '4px',
-                backgroundColor: 'var(--color-bubble-system)',
-                borderRadius: '2px',
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  width: `${doc.progress}%`,
-                  height: '100%',
-                  backgroundColor: getStatusColor(doc.status),
-                  transition: 'width 0.3s ease',
-                }}
-              />
-            </div>
+            <ProgressBar
+              className="app-doc__progress"
+              label={`${getStatusLabel(doc.status)}: ${Math.round(doc.progress)}%`}
+              value={Math.round(doc.progress)}
+            />
           )}
 
           {/* U2: per-document indexing Cancel button. Only rendered during the
               processing stage and only when the host wires the cancel handler. */}
           {doc.status === 'processing' && onCancelIndexing && (
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="secondary"
               onClick={() => onCancelIndexing(doc.id)}
               aria-label={`Cancel indexing ${doc.fileName}`}
-              style={{
-                border: '1px solid var(--color-text-muted)',
-                borderRadius: '6px',
-                backgroundColor: 'transparent',
-                color: 'var(--color-text-muted)',
-                fontSize: 'var(--font-size-small)',
-                fontFamily: 'var(--font-family)',
-                padding: '0 var(--spacing-xs)',
-                cursor: 'pointer',
-                lineHeight: 1.4,
-                whiteSpace: 'nowrap',
-              }}
             >
               Cancel
-            </button>
+            </Button>
           )}
 
           {/* Error message */}
           {doc.status === 'error' && doc.errorMessage && (
-            <span
-              style={{
-                fontSize: 'var(--font-size-small)',
-                fontFamily: 'var(--font-family)',
-                color: 'var(--color-danger)',
-                maxWidth: '200px',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-              title={doc.errorMessage}
-            >
+            <span className="app-doc__error" title={doc.errorMessage}>
               {doc.errorMessage}
             </span>
           )}
@@ -283,117 +235,50 @@ const DocumentItem = React.memo<{
       )}
 
       {/* U5: two-step delete confirmation (inline alert, SidebarConversationItem idiom).
-          Confirm/Cancel buttons replace the status badge + trash icon when armed. */}
+          Confirm/Cancel buttons replace the status badge + trash icon when armed.
+          Disabled controls stay NATIVELY disabled (and also carry aria-disabled for
+          the Lumen disabled look). */}
       {isConfirming ? (
-        <div
-          role="alert"
-          aria-label={`Delete ${doc.fileName}?`}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--spacing-xs)',
-            flexShrink: 0,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              color: 'var(--color-text-on-bubble-assistant)',
-              marginRight: 'var(--spacing-xs)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Delete {doc.fileName}?
-          </span>
-          <button
-            type="button"
+        <div role="alert" aria-label={`Delete ${doc.fileName}?`} className="app-doc__confirm">
+          <span className="app-doc__confirm-text" title={`Delete ${doc.fileName}?`}>Delete {doc.fileName}?</span>
+          <Button
+            size="sm"
+            variant="danger"
             onClick={handleConfirmDelete}
             disabled={isDeleting}
+            aria-disabled={isDeleting || undefined}
             aria-label={`Confirm delete ${doc.fileName}`}
-            style={{
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              backgroundColor: 'var(--color-danger)',
-              color: 'var(--color-text-on-primary)',
-              border: 'none',
-              borderRadius: '6px',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              fontWeight: 500,
-              cursor: isDeleting ? 'not-allowed' : 'pointer',
-              whiteSpace: 'nowrap',
-            }}
           >
             Confirm
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
             onClick={handleCancelDelete}
             disabled={isDeleting}
+            aria-disabled={isDeleting || undefined}
             aria-label={`Cancel delete ${doc.fileName}`}
-            style={{
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              backgroundColor: 'transparent',
-              color: 'var(--color-text-muted)',
-              border: '1px solid var(--color-text-muted)',
-              borderRadius: '6px',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
           >
             Cancel
-          </button>
+          </Button>
         </div>
-      ) : onDelete ? (
-        /* Delete trigger button (arms the inline confirm). Not rendered in
-           B9 Electron mode (no per-document delete in the frozen contract). */
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          aria-label={`Delete ${doc.fileName}`}
-          style={{
-            width: '32px',
-            height: '32px',
-            border: 'none',
-            borderRadius: '6px',
-            backgroundColor: 'transparent',
-            cursor: isDeleting ? 'not-allowed' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            color: 'var(--color-text-muted)',
-            transition: 'all 0.2s ease',
-          }}
-          onMouseEnter={(e) => {
-            if (!isDeleting) {
-              e.currentTarget.style.backgroundColor = 'var(--color-danger)';
-              e.currentTarget.style.color = 'var(--color-text-on-primary)';
-            }
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.color = 'var(--color-text-muted)';
-          }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          </svg>
-        </button>
-      ) : null}
+      ) : (
+        <div className="app-doc__actions">
+          {onDelete ? (
+            /* Delete trigger button (arms the inline confirm). Not rendered in
+               B9 Electron mode (no per-document delete in the frozen contract). */
+            <IconButton
+              icon="trash"
+              size="sm"
+              className="app-doc__delete"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              aria-disabled={isDeleting || undefined}
+              aria-label={`Delete ${doc.fileName}`}
+            />
+          ) : null}
+        </div>
+      )}
     </div>
   );
 });
@@ -406,6 +291,20 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     const [containerHeight, setContainerHeight] = useState(300);
     const listRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLElement | null>(null);
+    const tableRef = useRef<HTMLDivElement>(null);
+    const itemHeight = useItemHeight(tableRef, documents.length > 0);
+    // A layout switch changes the row height: keep the same ROW at the top of the
+    // list (scroll position by item index, not by pixels).
+    const previousHeightRef = useRef(itemHeight);
+    useLayoutEffect(() => {
+      const previous = previousHeightRef.current;
+      previousHeightRef.current = itemHeight;
+      const scroller = scrollContainerRef.current;
+      if (previous === itemHeight || scroller === null) return;
+      const next = (scroller.scrollTop / previous) * itemHeight;
+      scroller.scrollTop = next;
+      setScrollTop(scroller.scrollTop);
+    }, [itemHeight]);
 
     useLayoutEffect(() => {
       if (documents.length === 0) {
@@ -465,68 +364,41 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     }, [documents.length]);
 
     if (documents.length === 0) {
+      // ui-empty layout with a <p> title: a heading here would collide with the
+      // page's "Documents" heading.
       return (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 'var(--spacing-xxl)',
-            color: 'var(--color-text-muted)',
-          }}
-        >
-          <svg
-            width="48"
-            height="48"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{ marginBottom: 'var(--spacing-md)', opacity: 0.5 }}
-          >
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-          </svg>
-          <p
-            style={{
-              fontSize: 'var(--font-size-body)',
-              fontFamily: 'var(--font-family)',
-              textAlign: 'center',
-              // Lumen axe: the inherited muted grey is 4.18:1 on the page
-              // background; the primary text token passes AA.
-              color: 'var(--color-text-primary)',
-            }}
-          >
-            No documents uploaded yet
-          </p>
+        <div className="ui-empty app-doc-list__empty">
+          <Icon name="file-text" size={32} className="ui-empty__icon" />
+          <p className="app-doc-list__empty-title">No documents uploaded yet</p>
         </div>
       );
     }
 
     const totalItems = documents.length;
-    const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER);
+    const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - BUFFER);
     const endIndex = Math.min(
       totalItems,
-      Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + BUFFER
+      Math.ceil((scrollTop + containerHeight) / itemHeight) + BUFFER
     );
     const visibleDocuments = documents.slice(startIndex, endIndex);
-    const totalHeight = totalItems * ITEM_HEIGHT;
+    const totalHeight = totalItems * itemHeight;
 
     return (
-      <div
-        ref={listRef}
-        role="list"
-        aria-label="Uploaded documents"
-        style={{
-          border: '1px solid var(--color-bubble-system)',
-          borderRadius: '12px',
-          overflow: 'hidden',
-        }}
-      >
-        {/* Placeholder div maintains the full scroll height for the scrollbar */}
+      <div ref={tableRef} className="app-doc-table">
+        {/* Column headings: decorative only (aria-hidden; labels drawn from
+            data-label by CSS, so they add no text). Each row's cells carry their
+            own self-describing text ("117.2 KB", "12 chunks", the status pill). */}
+        <div className="app-doc-table__head" aria-hidden="true">
+          <span />
+          <span data-label="Name" />
+          <span data-label="Size" />
+          <span data-label="Chunks" />
+          <span data-label="Status" />
+          <span />
+        </div>
+      <div ref={listRef} role="list" aria-label="Uploaded documents" className="app-doc-list">
+        {/* Placeholder div maintains the full scroll height for the scrollbar.
+            Positional inline styles only: virtualization computes them per render. */}
         <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
           {visibleDocuments.map((doc, i) => {
             const index = startIndex + i;
@@ -534,12 +406,13 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
               <div
                 key={doc.id}
                 role="listitem"
+                className="app-doc-list__item"
                 style={{
                   position: 'absolute',
-                  top: `${index * ITEM_HEIGHT}px`,
+                  top: `${index * itemHeight}px`,
                   left: 0,
                   right: 0,
-                  height: `${ITEM_HEIGHT}px`,
+                  height: `${itemHeight}px`,
                 }}
               >
                 <DocumentItem
@@ -552,6 +425,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
             );
           })}
         </div>
+      </div>
       </div>
     );
   }

@@ -5,7 +5,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { DropZone } from '../components/DropZone';
 import { DocumentList } from '../components/DocumentList';
-import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { useToast } from '../components/ToastProvider';
 import type { DocumentEntry } from '../types/document';
 import { extractDocument, SUPPORTED_EXTENSIONS } from '../lib/processing/extractor-factory';
@@ -21,7 +20,8 @@ import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { PacksPanel } from '../components/PacksPanel';
 import { usePackClient } from '../lib/packs/pack-client';
 import type { DocumentInfo } from '../lib/api';
-import { PageHeader } from '../ui';
+import { Badge, Banner, Button, Icon, IconButton, PageHeader, Skeleton, Tabs } from '../ui';
+import './documents.css';
 
 const DOCUMENTS_DESCRIPTION = 'Add files and knowledge packs that Chat can search and cite.';
 
@@ -77,6 +77,29 @@ export function DocumentsPage() {
   // the desktop loopback pack API in Electron, the origin-private browser
   // pack store otherwise.
   const packClient = usePackClient();
+  // Lumen phase 6 ("Documents | Training packs" tabs, identical in both apps).
+  const [activeTab, setActiveTab] = useState<'documents' | 'training'>('documents');
+  // Tab slots the single, always-mounted PacksPanel portals into: its knowledge
+  // section in the Documents tab, its training-class rows in the Training packs
+  // tab (one instance: one install input, one set of toasts). The Tabs primitive
+  // mounts only the active panel, so the inactive slot is null.
+  const [knowledgePacksSlot, setKnowledgePacksSlot] = useState<HTMLDivElement | null>(null);
+  const [trainingPacksSlot, setTrainingPacksSlot] = useState<HTMLDivElement | null>(null);
+  // Bumped after installs this page makes itself (DropZone .zip), so the panel
+  // re-lists in the desktop app too (its pack client has no change subscription).
+  const [packsRefreshToken, setPacksRefreshToken] = useState(0);
+  // The header Upload action opens the DropZone's own file input. From the
+  // Training packs tab the DropZone is not mounted yet: switch tabs, then open
+  // it once the zone registered (still inside the click's user activation).
+  const openDocumentPickerRef = useRef<(() => void) | null>(null);
+  const pendingUploadRef = useRef(false);
+  useEffect(() => {
+    if (activeTab !== 'documents' || !pendingUploadRef.current) return;
+    const open = openDocumentPickerRef.current;
+    if (open === null) return;
+    pendingUploadRef.current = false;
+    open();
+  });
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // F4/F13: latest documents mirror so the debounced save reads CURRENT state
   // at fire-time (not the schedule-time snapshot) and the unmount flush can
@@ -452,7 +475,7 @@ export function DocumentsPage() {
   // F5: skip files that duplicate an existing document by fileName + fileSize
   // (re-uploading previously created a second independent set of chunks in both
   // indexes). Skipped files surface a transient notice.
-  const handleFilesSelected = useCallback(
+  const processSelectedFiles = useCallback(
     async (files: File[]) => {
       // B9 (issue #67): Electron mode uploads through the desktop backend
       // (/ingest/file) — extraction, chunking, embedding and indexing all
@@ -467,6 +490,7 @@ export function DocumentsPage() {
           try {
             const result = await desktopSession.apiClient.installPack(zip);
             showToast(`Installed ${result.packId} v${result.version}`, 'success');
+            setPacksRefreshToken((n) => n + 1);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             showToast(`Failed to install pack "${zip.name}": ${message}`, 'error');
@@ -555,6 +579,7 @@ export function DocumentsPage() {
           try {
             const result = await packClient.installPack(zip);
             showToast(`Installed ${result.packId} v${result.version}`, 'success');
+            setPacksRefreshToken((n) => n + 1);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             showToast(`Failed to install pack "${zip.name}": ${message}`, 'error');
@@ -616,6 +641,51 @@ export function DocumentsPage() {
       }
     },
     [processFile, electronMode, desktopSession, packClient, showToast]
+  );
+
+  // Phase-6 review L5: a training pack that appears DURING a drop (a mixed
+  // bulk drop installs its .zip packs first, then uploads the documents) must
+  // not swap the Documents tab away mid-upload. The switch waits until every
+  // in-flight drop has finished.
+  const dropsInFlightRef = useRef(0);
+  const deferredTrainingSwitchRef = useRef(false);
+  // Latest tab, read by the (stable) pack callbacks: a pack that appears while the
+  // Training packs tab is already showing needs no switch and no deferral.
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  // A MANUAL tab change (tab click or the header Upload action) supersedes a
+  // pending deferred switch: the user already chose where to be, and a stale
+  // deferral would later yank the tab with no announcement or focus handling
+  // (the PacksPanel signal is consumed by the first Training-tab mount).
+  // The PacksPanel's own pending signal is dropped in step (switchSignalResetKey).
+  const [switchSignalResetKey, setSwitchSignalResetKey] = useState(0);
+  const selectTab = useCallback((tab: 'documents' | 'training') => {
+    deferredTrainingSwitchRef.current = false;
+    setSwitchSignalResetKey((key) => key + 1);
+    setActiveTab(tab);
+  }, []);
+  const handleTrainingPackAdded = useCallback(() => {
+    if (activeTabRef.current === 'training') return;
+    if (dropsInFlightRef.current > 0) {
+      deferredTrainingSwitchRef.current = true;
+      return;
+    }
+    setActiveTab('training');
+  }, []);
+  const handleFilesSelected = useCallback(
+    async (files: File[]) => {
+      dropsInFlightRef.current += 1;
+      try {
+        await processSelectedFiles(files);
+      } finally {
+        dropsInFlightRef.current -= 1;
+        if (dropsInFlightRef.current === 0 && deferredTrainingSwitchRef.current) {
+          deferredTrainingSwitchRef.current = false;
+          setActiveTab('training');
+        }
+      }
+    },
+    [processSelectedFiles]
   );
 
   // Auto-dismiss the duplicate notice after a few seconds.
@@ -744,178 +814,155 @@ export function DocumentsPage() {
     return (
       <div className="app-page">
         <PageHeader title="Documents" description={DOCUMENTS_DESCRIPTION} />
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--spacing-sm)',
-            flex: 1,
-            minHeight: 0,
-            padding: 'var(--spacing-lg)',
-          }}
-          aria-label="Loading documents"
-        >
-          <LoadingSkeleton variant="card" count={3} ariaLabel="Loading documents" />
+        <div className="app-docs__loading" role="status" aria-busy="true" aria-label="Loading documents">
+          <Skeleton height={60} />
+          <Skeleton height={60} />
+          <Skeleton height={60} />
         </div>
       </div>
     );
   }
 
+  // "Documents" tab body: the knowledge-packs panel (it also owns the training
+  // rows, portaled into the other tab), the dropzone and the document table.
+  const documentsBody = (
+    <>
+      {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
+          ADR-0012): the same panel over the PackClient seam. Mounted above
+          the document drop zone. */}
+      {packClient !== null && <div className="app-docs__panel-fixed" ref={setKnowledgePacksSlot} />}
+
+      {/* Drop zone */}
+      <div className="app-docs__panel-fixed">
+        <DropZone
+          onFilesSelected={handleFilesSelected}
+          accept={[...SUPPORTED_EXTENSIONS, '.zip'].join(',')}
+          openPickerRef={openDocumentPickerRef}
+          onFilesRejected={async (rejectedFiles) => {
+            // U7a: surface skipped filenames so the user knows files were
+            // discarded (previously DropZone filtered silently). Pack zips
+            // are accepted (and installed) in both apps, so they never land
+            // here.
+            const unsupportedNames = rejectedFiles.map((file) => file.name);
+            if (unsupportedNames.length > 0) {
+              const preview = unsupportedNames.slice(0, 3).join(', ');
+              const extra = unsupportedNames.length > 3 ? ` and ${unsupportedNames.length - 3} more` : '';
+              showToast(`Unsupported file type: ${preview}${extra}`, 'error');
+            }
+          }}
+        />
+      </div>
+
+      {/* Document table: its own scroll region (the list virtualizes against it). */}
+      <div className="app-docs__list-region">
+        <DocumentList
+          documents={documents}
+          onDelete={electronMode ? undefined : handleDelete}
+          deletingId={deletingId}
+          onCancelIndexing={electronMode ? undefined : handleCancelIndexing}
+        />
+      </div>
+    </>
+  );
+
   return (
     <div className="app-page">
-      {/* Header (Lumen phase 3): the shared PageHeader. The action controls are
-          unchanged here; phase 6 restyles the Documents page. */}
+      {/* Header (Lumen phases 3 and 6): title, the supported-file count, the
+          Electron-only two-step Clear all, and Upload (opens the dropzone's own
+          file input, so there is still exactly one document file input). */}
       <PageHeader
         title="Documents"
         description={DOCUMENTS_DESCRIPTION}
         actions={
           <>
+            {supportedCount > 0 && (
+              <Badge>
+                {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
+              </Badge>
+            )}
             {electronMode && documents.length > 0 && (
-              <button
-                type="button"
+              <Button
+                size="sm"
+                variant={clearAllConfirming ? 'danger' : 'secondary'}
                 onClick={handleClearAll}
                 aria-label={clearAllConfirming ? 'Confirm clear all documents' : 'Clear all documents'}
-                style={{
-                  fontSize: 'var(--font-size-small)',
-                  fontFamily: 'var(--font-family)',
-                  cursor: 'pointer',
-                  padding: 'var(--spacing-xs) var(--spacing-sm)',
-                  borderRadius: '12px',
-                  border: '1px solid ' + (clearAllConfirming ? 'var(--color-danger)' : 'transparent'),
-                  color: clearAllConfirming ? 'var(--color-danger)' : 'var(--color-text-muted)',
-                  backgroundColor: 'var(--color-bubble-system)',
-                }}
               >
                 {clearAllConfirming ? 'Click again to clear ALL documents' : 'Clear all'}
-              </button>
+              </Button>
             )}
-            {supportedCount > 0 && (
-              <span
-                style={{
-                  fontSize: 'var(--font-size-small)',
-                  fontFamily: 'var(--font-family)',
-                  color: 'var(--color-text-muted)',
-                  backgroundColor: 'var(--color-bubble-system)',
-                  padding: 'var(--spacing-xs) var(--spacing-sm)',
-                  borderRadius: '12px',
-                }}
-              >
-                {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
-              </span>
-            )}
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                const open = openDocumentPickerRef.current;
+                if (activeTab === 'documents' && open !== null) {
+                  open();
+                  return;
+                }
+                pendingUploadRef.current = true;
+                selectTab('documents');
+              }}
+            >
+              <Icon name="upload" size={16} />
+              Upload
+            </Button>
           </>
         }
       />
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          flex: 1,
-          minHeight: 0,
-          padding: 'var(--spacing-lg)',
-          gap: 'var(--spacing-lg)',
-          overflow: 'hidden',
-        }}
-      >
-
+      <div className="app-docs">
         {/* F9: one-time re-index notice after an embedding-model upgrade. */}
         {showReindexNotice && (
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 'var(--spacing-sm)',
-              padding: 'var(--spacing-sm) var(--spacing-md)',
-              borderRadius: '8px',
-              backgroundColor: 'var(--color-bubble-system)',
-              color: 'var(--color-text-muted)',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              flexShrink: 0,
-            }}
+          <Banner
+            tone="info"
+            className="app-docs__fixed"
+            action={<IconButton icon="x" size="sm" aria-label="Dismiss notice" onClick={dismissReindexNotice} />}
           >
-            <span>
-              The search index was upgraded. Re-add your documents to rebuild the index and restore full retrieval quality.
-            </span>
-            <button
-              type="button"
-              onClick={dismissReindexNotice}
-              aria-label="Dismiss notice"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                color: 'var(--color-text-muted)',
-                fontSize: 'var(--font-size-body)',
-                padding: '0 var(--spacing-xs)',
-                flexShrink: 0,
-              }}
-            >
-              ×
-            </button>
-          </div>
+            The search index was upgraded. Re-add your documents to rebuild the index and restore full retrieval quality.
+          </Banner>
         )}
 
         {/* F5: transient duplicate-upload notice. */}
         {duplicateNotice && (
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              borderRadius: '8px',
-              backgroundColor: 'var(--color-bubble-system)',
-              color: 'var(--color-text-muted)',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              flexShrink: 0,
-            }}
-          >
+          <Banner tone="info" className="app-docs__fixed">
             {duplicateNotice}
-          </div>
+          </Banner>
         )}
 
-        {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
-            ADR-0012): the same panel over the PackClient seam. Mounted above
-            the document drop zone. */}
+        {packClient !== null ? (
+          <Tabs
+            label="Library sections"
+            className="app-docs__tabs"
+            value={activeTab}
+            onChange={(id) => selectTab(id === 'training' ? 'training' : 'documents')}
+            items={[
+              { id: 'documents', label: 'Documents', panel: documentsBody },
+              {
+                id: 'training',
+                label: 'Training packs',
+                // PacksPanel portals the training-class rows in here.
+                panel: <div className="app-docs__training" ref={setTrainingPacksSlot} />,
+              },
+            ]}
+          />
+        ) : (
+          <div className="app-docs__single">{documentsBody}</div>
+        )}
+
+        {/* The pack owner: always mounted (after the tabs, so the DropZone's
+            input stays the first file input in DOM order). In place it renders
+            only the hidden pack-install-input; its sections portal into the
+            mounted tab slot. */}
         {packClient !== null && (
-          <div style={{ flexShrink: 0 }}>
-            <PacksPanel client={packClient} />
-          </div>
+          <PacksPanel
+            client={packClient}
+            slots={{ knowledge: knowledgePacksSlot, training: trainingPacksSlot }}
+            // A training pack that appears (installed here, by the dropzone, or
+            // elsewhere in this tab) is shown where it lives.
+            onTrainingPackAdded={handleTrainingPackAdded}
+            switchSignalResetKey={switchSignalResetKey}
+            refreshToken={packsRefreshToken}
+          />
         )}
-
-        {/* Drop zone */}
-        <div style={{ flexShrink: 0 }}>
-          <DropZone
-            onFilesSelected={handleFilesSelected}
-            accept={[...SUPPORTED_EXTENSIONS, '.zip'].join(',')}
-            onFilesRejected={async (rejectedFiles) => {
-              // U7a: surface skipped filenames so the user knows files were
-              // discarded (previously DropZone filtered silently). Pack zips
-              // are accepted (and installed) in both apps, so they never land
-              // here.
-              const unsupportedNames = rejectedFiles.map((file) => file.name);
-              if (unsupportedNames.length > 0) {
-                const preview = unsupportedNames.slice(0, 3).join(', ');
-                const extra = unsupportedNames.length > 3 ? ` and ${unsupportedNames.length - 3} more` : '';
-                showToast(`Unsupported file type: ${preview}${extra}`, 'error');
-              }
-            }}
-          />
-        </div>
-
-        {/* Document list */}
-        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-          <DocumentList
-            documents={documents}
-            onDelete={electronMode ? undefined : handleDelete}
-            deletingId={deletingId}
-            onCancelIndexing={electronMode ? undefined : handleCancelIndexing}
-          />
-        </div>
       </div>
     </div>
   );
