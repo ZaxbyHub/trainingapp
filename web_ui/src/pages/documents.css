@@ -1,15 +1,22 @@
 /* Lumen phase 6: the Documents surface (DocumentsPage, PacksPanel, DropZone,
    DocumentList). Lumen tokens only (no legacy --color-* / --spacing-*, no color
    literals); enforced by pages/documents-training-hygiene.test.ts. Primitive
-   styles (Button, Badge, Banner, ProgressBar, Skeleton) live in ui/ui.css. */
+   styles (Button, Badge, Banner, ProgressBar, Skeleton, Tabs) live in ui/ui.css. */
 
 /* ---- Page body ---- */
-/* The body keeps the pre-Lumen frame on purpose: the packs panel and dropzone do
-   not shrink and the document list owns its own scroll region, because the list's
-   virtualization assumes it starts at the top of its scroller. */
-.app-docs { box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); width: 100%; max-width: var(--w-wide); margin: 0 auto; padding: var(--space-6); overflow: hidden; }
+/* Height chain: page body -> Tabs -> active panel -> list region. The document
+   list owns its own scroll region because its virtualization assumes it starts
+   near the top of its scroller (a scroller further up would blank rows). */
+.app-docs { box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); width: 100%; max-width: var(--w-wide); margin: 0 auto; padding: var(--space-4) var(--space-6) var(--space-6); overflow: hidden; }
 .app-docs__fixed { flex: none; }
+.app-docs__tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.app-docs__tabs > .ui-tabs__list { flex: none; }
+.app-docs__tabs > .ui-tabs__panel:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); padding-bottom: 0; }
+/* No pack client (packs unavailable): the documents body without tabs. */
+.app-docs__single { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+.app-docs__panel-fixed { flex: none; }
 .app-docs__list-region { flex: 1; min-height: 0; overflow: auto; }
+.app-docs__training { flex: 1; min-height: 0; overflow: auto; }
 .app-docs__loading { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-2); width: 100%; max-width: var(--w-wide); margin: 0 auto; padding: var(--space-6); }
 .app-docs__loading .ui-skeleton { display: block; width: 100%; }
 
@@ -18,7 +25,7 @@
    from the tab order, so they carry both attributes and get the same look here. */
 .app-docs .ui-button:disabled { background: var(--bg-sunken); color: var(--text-disabled); border-color: var(--border-subtle); cursor: not-allowed; filter: none; }
 
-/* ---- Knowledge packs panel ---- */
+/* ---- Knowledge / training packs panels ---- */
 .app-packs__head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
 .app-packs__title { flex: 1; min-width: 0; margin: 0; font-size: var(--type-heading-size); line-height: var(--type-heading-line); font-weight: var(--type-heading-weight); color: var(--text-primary); }
 .app-packs__note { display: flex; align-items: flex-start; gap: var(--space-2); margin: var(--space-2) 0 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
@@ -43,22 +50,29 @@
 .app-dropzone__hint { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
 .app-dropzone--disabled .app-dropzone__hint { color: var(--text-disabled); }
 
-/* ---- Document list ---- */
-.app-doc-list { overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-card); box-shadow: var(--shadow-1); }
+/* ---- Document table: role=list rows laid out as a CSS-grid table ---- */
+.app-doc-table { overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-card); box-shadow: var(--shadow-1); }
+.app-doc-table__head,
+.app-doc { display: grid; grid-template-columns: 36px minmax(0, 1fr) 88px 96px minmax(120px, max-content) 32px; column-gap: var(--space-3); padding: 0 var(--space-4); }
+.app-doc-table__head { grid-template-areas: "icon name size chunks status actions"; align-items: center; min-height: 36px; background: var(--bg-sunken); border-bottom: 1px solid var(--border-subtle); font-size: var(--type-micro-size); line-height: var(--type-micro-line); font-weight: 600; color: var(--text-secondary); }
+/* Decorative column labels: generated content, so they add no text to the DOM. */
+.app-doc-table__head [data-label]::before { content: attr(data-label); }
 .app-doc-list__item:last-child .app-doc { border-bottom-color: transparent; }
 /* Row height is fixed (DocumentList ITEM_HEIGHT = 60): the list is virtualized. */
-.app-doc { box-sizing: border-box; display: flex; align-items: center; gap: var(--space-3); height: 60px; padding: 0 var(--space-4); background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); transition: opacity var(--dur-base) var(--ease-standard); }
+.app-doc { box-sizing: border-box; grid-template-areas: "icon name size chunks status actions" "icon date size chunks status actions"; grid-template-rows: auto auto; align-content: center; align-items: center; height: 60px; background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); transition: opacity var(--dur-base) var(--ease-standard); }
 .app-doc--deleting { opacity: 0.5; }
-.app-doc__icon { flex: none; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--r-control); background: var(--bg-selected); color: var(--accent); }
-.app-doc__info { flex: 1; min-width: 0; }
-.app-doc__name { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
-/* Block (not flex) so a narrow row ends in an ellipsis instead of a clipped word. */
-.app-doc__meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
-.app-doc__meta > span + span { margin-left: var(--space-2); }
-.app-doc__status { flex: none; display: flex; align-items: center; gap: var(--space-2); max-width: 50%; }
+.app-doc__icon { grid-area: icon; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--r-control); background: var(--bg-selected); color: var(--accent); }
+.app-doc__name { grid-area: name; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+.app-doc__date, .app-doc__size, .app-doc__chunks { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
+.app-doc__date { grid-area: date; }
+.app-doc__size { grid-area: size; color: var(--text-secondary); }
+.app-doc__chunks { grid-area: chunks; color: var(--text-secondary); }
+.app-doc__status { grid-area: status; display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .app-doc__progress { flex: none; width: 80px; }
 .app-doc__error { min-width: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--danger); }
-.app-doc__confirm { flex: none; display: flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 60%; }
+.app-doc__actions { grid-area: actions; display: flex; justify-content: flex-end; }
+/* The inline delete confirmation takes the status + actions cells. */
+.app-doc__confirm { grid-column: status-start / actions-end; grid-row: 1 / -1; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; }
 .app-doc__confirm-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
 .app-doc__delete { color: var(--text-secondary); }
 .app-doc__delete:hover:not(:disabled) { background: var(--danger-subtle); color: var(--danger); }
@@ -69,12 +83,19 @@
 .app-doc-list__empty-title { margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
 
 @media (forced-colors: active) {
-  .app-dropzone, .app-doc-list { border-color: CanvasText; }
+  .app-dropzone, .app-doc-table { border-color: CanvasText; }
   .app-dropzone--active { border-color: Highlight; }
 }
 
-@media (max-width: 500px) {
-  .app-docs, .app-docs__loading { padding: var(--space-4); }
-  .app-doc { padding: 0 var(--space-3); gap: var(--space-2); }
+/* Table -> list rows (design-language.md section 3.5): the same cells reflow, the
+   name takes the first line and date / size / chunks share the second. */
+@media (max-width: 768px) {
+  .app-doc-table__head { display: none; }
+  .app-doc { grid-template-columns: 36px max-content max-content minmax(0, 1fr) max-content 32px; grid-template-areas: "icon name name name status actions" "icon date size chunks status actions"; column-gap: var(--space-2); padding: 0 var(--space-3); }
+  .app-doc__size::before, .app-doc__chunks:not(:empty)::before { content: "•"; margin-right: var(--space-2); }
   .app-doc__error { max-width: 96px; }
+}
+
+@media (max-width: 500px) {
+  .app-docs, .app-docs__loading { padding: var(--space-3) var(--space-4) var(--space-4); }
 }

@@ -20,7 +20,7 @@ import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { PacksPanel } from '../components/PacksPanel';
 import { usePackClient } from '../lib/packs/pack-client';
 import type { DocumentInfo } from '../lib/api';
-import { Badge, Banner, Button, IconButton, PageHeader, Skeleton } from '../ui';
+import { Badge, Banner, Button, Icon, IconButton, PageHeader, Skeleton, Tabs } from '../ui';
 import './documents.css';
 
 const DOCUMENTS_DESCRIPTION = 'Add files and knowledge packs that Chat can search and cite.';
@@ -77,6 +77,16 @@ export function DocumentsPage() {
   // the desktop loopback pack API in Electron, the origin-private browser
   // pack store otherwise.
   const packClient = usePackClient();
+  // Lumen phase 6 ("Documents | Training packs" tabs, identical in both apps).
+  const [activeTab, setActiveTab] = useState<'documents' | 'training'>('documents');
+  // The Training packs panel is a slot the single PacksPanel portals its
+  // training-class rows into (one instance: one install input, one set of toasts).
+  const [trainingPacksSlot, setTrainingPacksSlot] = useState<HTMLDivElement | null>(null);
+  // Bumped after installs this page makes itself (DropZone .zip), so the panel
+  // re-lists in the desktop app too (its pack client has no change subscription).
+  const [packsRefreshToken, setPacksRefreshToken] = useState(0);
+  // The header Upload action opens the DropZone's own file input.
+  const openDocumentPickerRef = useRef<(() => void) | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // F4/F13: latest documents mirror so the debounced save reads CURRENT state
   // at fire-time (not the schedule-time snapshot) and the unmount flush can
@@ -467,6 +477,7 @@ export function DocumentsPage() {
           try {
             const result = await desktopSession.apiClient.installPack(zip);
             showToast(`Installed ${result.packId} v${result.version}`, 'success');
+            setPacksRefreshToken((n) => n + 1);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             showToast(`Failed to install pack "${zip.name}": ${message}`, 'error');
@@ -555,6 +566,7 @@ export function DocumentsPage() {
           try {
             const result = await packClient.installPack(zip);
             showToast(`Installed ${result.packId} v${result.version}`, 'success');
+            setPacksRefreshToken((n) => n + 1);
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             showToast(`Failed to install pack "${zip.name}": ${message}`, 'error');
@@ -753,15 +765,74 @@ export function DocumentsPage() {
     );
   }
 
+  // "Documents" tab body: the knowledge-packs panel (it also owns the training
+  // rows, portaled into the other tab), the dropzone and the document table.
+  const documentsBody = (
+    <>
+      {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
+          ADR-0012): the same panel over the PackClient seam. Mounted above
+          the document drop zone. */}
+      {packClient !== null && (
+        <div className="app-docs__panel-fixed">
+          <PacksPanel
+            client={packClient}
+            trainingSlot={trainingPacksSlot}
+            // A training pack that appears (installed here, by the dropzone, or
+            // elsewhere in this tab) is shown where it lives.
+            onTrainingPackAdded={() => setActiveTab('training')}
+            refreshToken={packsRefreshToken}
+          />
+        </div>
+      )}
+
+      {/* Drop zone */}
+      <div className="app-docs__panel-fixed">
+        <DropZone
+          onFilesSelected={handleFilesSelected}
+          accept={[...SUPPORTED_EXTENSIONS, '.zip'].join(',')}
+          openPickerRef={openDocumentPickerRef}
+          onFilesRejected={async (rejectedFiles) => {
+            // U7a: surface skipped filenames so the user knows files were
+            // discarded (previously DropZone filtered silently). Pack zips
+            // are accepted (and installed) in both apps, so they never land
+            // here.
+            const unsupportedNames = rejectedFiles.map((file) => file.name);
+            if (unsupportedNames.length > 0) {
+              const preview = unsupportedNames.slice(0, 3).join(', ');
+              const extra = unsupportedNames.length > 3 ? ` and ${unsupportedNames.length - 3} more` : '';
+              showToast(`Unsupported file type: ${preview}${extra}`, 'error');
+            }
+          }}
+        />
+      </div>
+
+      {/* Document table: its own scroll region (the list virtualizes against it). */}
+      <div className="app-docs__list-region">
+        <DocumentList
+          documents={documents}
+          onDelete={electronMode ? undefined : handleDelete}
+          deletingId={deletingId}
+          onCancelIndexing={electronMode ? undefined : handleCancelIndexing}
+        />
+      </div>
+    </>
+  );
+
   return (
     <div className="app-page">
-      {/* Header (Lumen phases 3 and 6): the shared PageHeader; its actions are the
-          supported-file count chip and the Electron-only Clear all (two-step). */}
+      {/* Header (Lumen phases 3 and 6): title, the supported-file count, the
+          Electron-only two-step Clear all, and Upload (opens the dropzone's own
+          file input, so there is still exactly one document file input). */}
       <PageHeader
         title="Documents"
         description={DOCUMENTS_DESCRIPTION}
         actions={
           <>
+            {supportedCount > 0 && (
+              <Badge>
+                {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
+              </Badge>
+            )}
             {electronMode && documents.length > 0 && (
               <Button
                 size="sm"
@@ -772,11 +843,17 @@ export function DocumentsPage() {
                 {clearAllConfirming ? 'Click again to clear ALL documents' : 'Clear all'}
               </Button>
             )}
-            {supportedCount > 0 && (
-              <Badge>
-                {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
-              </Badge>
-            )}
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                setActiveTab('documents');
+                openDocumentPickerRef.current?.();
+              }}
+            >
+              <Icon name="upload" size={16} />
+              Upload
+            </Button>
           </>
         }
       />
@@ -799,44 +876,25 @@ export function DocumentsPage() {
           </Banner>
         )}
 
-        {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
-            ADR-0012): the same panel over the PackClient seam. Mounted above
-            the document drop zone. */}
-        {packClient !== null && (
-          <div className="app-docs__fixed">
-            <PacksPanel client={packClient} />
-          </div>
+        {packClient !== null ? (
+          <Tabs
+            label="Library sections"
+            className="app-docs__tabs"
+            value={activeTab}
+            onChange={(id) => setActiveTab(id === 'training' ? 'training' : 'documents')}
+            items={[
+              { id: 'documents', label: 'Documents', panel: documentsBody },
+              {
+                id: 'training',
+                label: 'Training packs',
+                // PacksPanel portals the training-class rows in here.
+                panel: <div className="app-docs__training" ref={setTrainingPacksSlot} />,
+              },
+            ]}
+          />
+        ) : (
+          <div className="app-docs__single">{documentsBody}</div>
         )}
-
-        {/* Drop zone */}
-        <div className="app-docs__fixed">
-          <DropZone
-            onFilesSelected={handleFilesSelected}
-            accept={[...SUPPORTED_EXTENSIONS, '.zip'].join(',')}
-            onFilesRejected={async (rejectedFiles) => {
-              // U7a: surface skipped filenames so the user knows files were
-              // discarded (previously DropZone filtered silently). Pack zips
-              // are accepted (and installed) in both apps, so they never land
-              // here.
-              const unsupportedNames = rejectedFiles.map((file) => file.name);
-              if (unsupportedNames.length > 0) {
-                const preview = unsupportedNames.slice(0, 3).join(', ');
-                const extra = unsupportedNames.length > 3 ? ` and ${unsupportedNames.length - 3} more` : '';
-                showToast(`Unsupported file type: ${preview}${extra}`, 'error');
-              }
-            }}
-          />
-        </div>
-
-        {/* Document list: its own scroll region (the list virtualizes against it). */}
-        <div className="app-docs__list-region">
-          <DocumentList
-            documents={documents}
-            onDelete={electronMode ? undefined : handleDelete}
-            deletingId={deletingId}
-            onCancelIndexing={electronMode ? undefined : handleCancelIndexing}
-          />
-        </div>
       </div>
     </div>
   );

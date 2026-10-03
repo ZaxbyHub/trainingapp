@@ -25,6 +25,7 @@ const FILES = [
   'components/DropZone.tsx',
   'components/PacksPanel.tsx',
   'components/TrainingPlayer.tsx',
+  'lib/training/slide-position.ts',
 ];
 
 function stripComments(text: string): string {

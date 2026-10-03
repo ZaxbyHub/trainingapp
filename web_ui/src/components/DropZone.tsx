@@ -3,7 +3,7 @@
  * Supports clicking to open file picker as well.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '../ui';
 import { cx } from '../ui/cx';
 import '../pages/documents.css';
@@ -22,6 +22,12 @@ interface DropZoneProps {
    * derive display names via `file.name`.
    */
   onFilesRejected?: (files: File[]) => void;
+  /**
+   * Lumen phase 6: receives this zone's "open the file picker" action, so another
+   * control (the Documents page header's Upload button) opens THIS zone's input
+   * instead of adding a second document file input.
+   */
+  openPickerRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 /**
@@ -58,7 +64,7 @@ export function matchesAccept(file: File, accept?: string): boolean {
 }
 
 export const DropZone: React.FC<DropZoneProps> = React.memo(
-  ({ onFilesSelected, accept, disabled = false, onFilesRejected }) => {
+  ({ onFilesSelected, accept, disabled = false, onFilesRejected, openPickerRef }) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const [isDragOver, setIsDragOver] = useState(false);
 
@@ -114,6 +120,14 @@ export const DropZone: React.FC<DropZoneProps> = React.memo(
         inputRef.current.click();
       }
     }, [disabled]);
+
+    useEffect(() => {
+      if (openPickerRef === undefined) return undefined;
+      openPickerRef.current = handleClick;
+      return () => {
+        if (openPickerRef.current === handleClick) openPickerRef.current = null;
+      };
+    }, [openPickerRef, handleClick]);
 
     const handleInputChange = useCallback(
       (e: React.ChangeEvent<HTMLInputElement>) => {

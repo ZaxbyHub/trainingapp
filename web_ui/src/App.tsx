@@ -377,6 +377,9 @@ function AppContent() {
               initialPackId={trainingTarget?.packId}
               pendingSlideId={trainingTarget?.slideId}
               onSlideChange={handlePlayerSlideChange}
+              // Lumen phase 6: the player page's Back releases the lifted deep
+              // link, so the course library (and the course picked there) shows.
+              onLeaveDeepLink={() => setTrainingTarget(null)}
             />
           </ErrorBoundary>
         );
