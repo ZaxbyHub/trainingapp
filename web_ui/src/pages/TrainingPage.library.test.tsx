@@ -129,9 +129,13 @@ describe('Training library and player page (Lumen phase 6)', () => {
     // Index not ready in this renderer: the title, never a guessed position.
     expect(screen.getByText('Slide: Welcome')).toBeTruthy();
 
+    const status = screen.getAllByRole('status').find((el) => el.classList.contains('ui-visually-hidden'));
+    expect(status?.textContent).toBe('');
     fireEvent.click(screen.getByRole('button', { name: 'Pin slide to Chat' }));
     expect(onSlideChange).toHaveBeenCalledTimes(2);
     expect(onSlideChange.mock.calls[1][0]).toBe(emitted);
+    // Polite confirmation for screen-reader users (review L3).
+    expect(status?.textContent).toBe('Slide pinned to Chat');
   });
 
   it('Back from a lifted deep link releases it (onLeaveDeepLink) and shows the library', async () => {

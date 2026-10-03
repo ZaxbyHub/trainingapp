@@ -19,7 +19,9 @@ const mockKeywordIndex = {
 
 vi.mock('../search/keyword-index', () => ({ getKeywordIndex: vi.fn(() => mockKeywordIndex) }));
 
-import { courseSlideCount, slidePosition } from './slide-position';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { SLIDE_DOC_PATH_RE, courseSlideCount, slidePosition } from './slide-position';
 
 function slideDoc(packId: string, n: number, slideId: string, chunkIndex = 0): Meta {
   return { docId: `${packId}:${n}`, chunkIndex, text: 't', source: `docs/slide-${String(n).padStart(3, '0')}-${slideId}.json`, packId };
@@ -56,5 +58,25 @@ describe('slide-position', () => {
     mockKeywordIndex.isReady.mockReturnValue(false); // e.g. the desktop renderer
     expect(slidePosition('course-a', 'A3')).toBeNull();
     expect(courseSlideCount('course-a')).toBeNull();
+  });
+
+  test('counts only ingest-shaped slide docs (anchored docs/slide-<n>-<id>.json)', () => {
+    // Same course, but paths ingest would NOT treat as slide docs.
+    metas.push({ docId: 'x1', chunkIndex: 0, text: 't', source: 'assets/player/docs/slide-013-X1.json', packId: 'course-a' });
+    metas.push({ docId: 'x2', chunkIndex: 0, text: 't', source: 'notes/slide-014-X2.json', packId: 'course-a' });
+    metas.push({ docId: 'x3', chunkIndex: 0, text: 't', source: 'docs/slide-015-X3.json.bak', packId: 'course-a' });
+    expect(courseSlideCount('course-a')).toBe(12);
+    expect(slidePosition('course-a', 'X1')).toBeNull();
+  });
+
+  test('stays in sync with pack ingest\'s own slide-doc predicate', () => {
+    // isSlideDocPath is module-private in lib/packs/pack-ingest.ts (left
+    // untouched); pin its literal so a change there fails here.
+    const ingest = readFileSync(resolve(__dirname, '../packs/pack-ingest.ts'), 'utf8');
+    const match = /const isSlideDocPath = \(path: string\): boolean => (\/.+\/)\.test\(path\);/.exec(ingest);
+    expect(match, 'isSlideDocPath definition not found in pack-ingest.ts').not.toBeNull();
+    expect(match![1]).toBe(String.raw`/^docs\/slide-\d+-.+\.json$/`);
+    // Ours is the same pattern with capture groups around the two variable parts.
+    expect(SLIDE_DOC_PATH_RE.source.replace(/[()]/g, '')).toBe(String.raw`^docs\/slide-\d+-.+\.json$`);
   });
 });
