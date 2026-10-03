@@ -3,6 +3,8 @@
  * drop (a training .zip plus documents) installs the pack first and then uploads
  * the documents. The automatic switch to the "Training packs" tab must wait for
  * the whole drop to finish instead of swapping the Documents tab away mid-upload.
+ * A manual tab change supersedes a pending deferral (review L1), and the header
+ * Upload action opens the document picker from either tab (review L2).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -54,11 +56,16 @@ vi.mock('../hooks/useServiceInitialization', () => ({
 }));
 
 const store = vi.hoisted(() => ({ packs: [] as PackInfo[], listeners: new Set<() => void>() }));
-const install = vi.hoisted(() => ({ mode: 'ok' as 'ok' | 'reject' | 'install-then-reject' }));
+const install = vi.hoisted(() => ({
+  mode: 'ok' as 'ok' | 'reject' | 'install-then-reject',
+  // When set, installPack waits on it (lets a test move the user before the pack lands).
+  hold: null as null | Promise<void>,
+}));
 const packClient = vi.hoisted(() => ({
   kind: 'browser',
   listPacks: async () => [...store.packs],
   installPack: async () => {
+    if (install.hold !== null) await install.hold;
     if (install.mode === 'reject') throw new Error('boom');
     store.packs.push({
       packId: 'course-a',
@@ -90,6 +97,8 @@ afterEach(() => {
   store.listeners.clear();
   extraction.release = null;
   install.mode = 'ok';
+  install.hold = null;
+  vi.restoreAllMocks();
 });
 
 describe('Documents tabs: no switch mid-drop (review L5)', () => {
@@ -175,5 +184,93 @@ describe('Documents tabs: no switch mid-drop (review L5)', () => {
 
     await act(async () => extraction.release?.());
     await waitFor(() => expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true'));
+  });
+});
+
+const renderPage = async () => {
+  render(
+    <ToastProvider>
+      <DocumentsPage />
+    </ToastProvider>
+  );
+  await screen.findByTestId('packs-panel');
+};
+const dropZipAndDoc = () => {
+  const zip = new File([new Uint8Array([1, 2, 3])], 'course-a.zip', { type: 'application/zip' });
+  const doc = new File(['hello'], 'notes.txt', { type: 'text/plain' });
+  fireEvent.drop(screen.getByRole('button', { name: /drop files here or click to select/i }), {
+    dataTransfer: { files: [zip, doc] },
+  });
+};
+const settle = () =>
+  act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+
+describe('Documents tabs: a manual tab change supersedes the deferred switch (review L1)', () => {
+  it('leaving and returning mid-drop: the finished drop does not yank the tab back', async () => {
+    await renderPage();
+    dropZipAndDoc();
+    await waitFor(() => expect(extraction.release).not.toBeNull());
+    await settle();
+    expect(store.packs).toHaveLength(1); // pack appeared mid-drop: the switch is deferred
+
+    // The user visits Training packs and comes back while the upload is still open.
+    fireEvent.click(screen.getByRole('tab', { name: 'Training packs' }));
+    await screen.findByTestId('pack-row-course-a-1.0.0');
+    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+
+    await act(async () => extraction.release?.());
+    await settle();
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('a pack that lands while Training packs is already showing is not deferred: no later switch', async () => {
+    let land: () => void = () => undefined;
+    install.hold = new Promise<void>((resolve) => {
+      land = resolve;
+    });
+    await renderPage();
+    dropZipAndDoc();
+    // The user is on Training packs before the pack lands...
+    fireEvent.click(screen.getByRole('tab', { name: 'Training packs' }));
+    await act(async () => land());
+    await screen.findByTestId('pack-row-course-a-1.0.0');
+    await waitFor(() => expect(extraction.release).not.toBeNull());
+    // ...then returns to Documents mid-drop and the drop finishes.
+    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
+    await act(async () => extraction.release?.());
+    await settle();
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+  });
+});
+
+describe('Documents header Upload action (review L2)', () => {
+  it('opens the document picker directly from the Documents tab', async () => {
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined);
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(click.mock.contexts[0]).toMatchObject({ type: 'file' });
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('from the Training packs tab it switches to Documents, then opens the picker once', async () => {
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined);
+    await renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: 'Training packs' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true'));
+    click.mockClear();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true'));
+    expect(click).toHaveBeenCalledTimes(1);
+    expect(click.mock.contexts[0]).toMatchObject({ type: 'file' });
+
+    // The pending open was consumed: later renders do not reopen the picker.
+    await settle();
+    expect(click).toHaveBeenCalledTimes(1);
   });
 });
