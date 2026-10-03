@@ -78,6 +78,17 @@ export const REINDEX_FLAG_KEY = 'rag-reindex-required';
 export const INTERNAL_KEYS: readonly string[] = [PROFILE_KEY, MIGRATION_KEY, REINDEX_FLAG_KEY];
 
 /**
+ * Fired after Clear Cache removes user settings (this module stays import-free, so
+ * it defines its own signal; lib/llm/use-external-config.ts subscribes to it).
+ */
+export const USER_SETTINGS_CLEARED_EVENT = 'trainingapp:user-settings-cleared';
+
+function notifyUserSettingsCleared(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(USER_SETTINGS_CLEARED_EVENT));
+}
+
+/**
  * Remove every registered user setting from `storage`. Returns the keys that
  * were present (and are now gone). Storage failures (private mode, disabled
  * storage) are swallowed per key — there is nothing left to clear then.
@@ -92,6 +103,9 @@ export function clearUserSettings(storage: Pick<Storage, 'getItem' | 'removeItem
       /* storage unavailable — nothing persisted to clear */
     }
   }
+  // The external-model config is among these keys: views that describe the active
+  // generator (the model chips) re-read now instead of until the post-clear reload.
+  notifyUserSettingsCleared();
   return removed;
 }
 
@@ -104,4 +118,5 @@ export function clearSessionSettings(storage: Pick<Storage, 'removeItem'> = sess
       /* storage unavailable */
     }
   }
+  notifyUserSettingsCleared();
 }

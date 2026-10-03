@@ -17,6 +17,7 @@ import * as inference from '../lib/inference';
 import * as desktop from '../lib/desktop-session';
 import * as endpointPolicy from '../lib/llm/endpoint-policy';
 import { saveExternalConfig } from '../lib/llm/external-provider';
+import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
 import type { ModelStatus } from '../lib/api/types';
 
 function setMode(mode: 'browser-local' | 'api', browserEngine: 'wllama' | 'webllm' = 'wllama') {
@@ -200,5 +201,18 @@ describe('SidebarConnectionChip', () => {
       window.dispatchEvent(new StorageEvent('storage', { key: 'external-provider-config' }));
     });
     expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1 · other-tab');
+  });
+
+  // Final-critic note: Settings > Clear Cache removes the external config; the chip
+  // must reflect that immediately, not only after the post-clear reload.
+  it('reverts to the local model as soon as Clear Cache removes the external config', () => {
+    saveExternalConfig({ enabled: true, protocol: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', model: 'cached-model' });
+    render(<Shell />);
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1 · cached-model');
+    act(() => {
+      clearUserSettings();
+      clearSessionSettings();
+    });
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
   });
 });
