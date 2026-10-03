@@ -330,12 +330,12 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
         />
       </div>
       {client.capabilityIssue?.() != null && (
-        <p role="status" data-testid="packs-capability" style={{ color: 'var(--color-text)', margin: 'var(--spacing-xs, 4px) 0' }}>
+        <p role="status" data-testid="packs-capability" style={{ color: 'var(--color-text-primary)', margin: 'var(--spacing-xs, 4px) 0' }}>
           {client.capabilityIssue?.()}
         </p>
       )}
       {storage !== null && (
-        <p data-testid="packs-storage" style={{ color: 'var(--color-text)', margin: 'var(--spacing-xs, 4px) 0' }}>
+        <p data-testid="packs-storage" style={{ color: 'var(--color-text-primary)', margin: 'var(--spacing-xs, 4px) 0' }}>
           Browser storage: {formatBytes(storage.usage)} used, {formatBytes(storage.available)} available
           {storage.persisted === true
             ? ' (persistent: the browser will not evict installed packs)'

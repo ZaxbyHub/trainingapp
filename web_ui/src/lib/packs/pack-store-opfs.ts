@@ -57,6 +57,11 @@ function openRegistryDb(name: string): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(name, 1);
     request.onupgradeneeded = () => {
+      // v1 is the only schema, so this is a fresh-create only. Bumping the
+      // version to 2 MUST add a migration ladder here keyed on
+      // event.oldVersion (as the keyword-index and vector-index stores do):
+      // installed pack registries in the field are at v1 and must be carried
+      // forward, not recreated empty (PR 144 review F11).
       if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
     };
     request.onsuccess = () => resolve(request.result);

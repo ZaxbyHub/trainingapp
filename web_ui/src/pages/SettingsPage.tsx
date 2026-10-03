@@ -275,7 +275,7 @@ function UpdatesSection(): React.ReactElement {
         </p>
       )}
       {!isElectron() && !IS_AIRGAP && (
-        <p style={descriptionStyle} data-testid="updates-browser-note">
+        <p style={{ ...descriptionStyle, color: 'var(--color-text-primary)' }} data-testid="updates-browser-note">
           In the browser app the feed and the pack downloads are fetched by this page, so their host must allow
           cross-origin requests (a CORS-enabled mirror); if it does not, the check reports the refusal and the
           desktop app remains the way to apply updates.

@@ -13,7 +13,8 @@
  *   - the course MIME table: TRAINING_MIME_TYPES === desktop protocol.ts
  *     MIME_TYPES;
  *   - the course CSP: buildBrowserTrainingCsp(app) === desktop
- *     buildTrainingCspPolicy() directives without the private `app:` sources,
+ *     buildTrainingCspPolicy() (parsed from desktop/main/security/csp.ts, NOT
+ *     protocol.ts, which TD2 parses for the MIME table) directives without the private `app:` sources,
  *     plus `frame-ancestors 'self' <app>`.
  */
 import fs from 'node:fs';
@@ -81,7 +82,7 @@ describe('desktop twin drift (required web-ui job)', () => {
     expect({ ...TRAINING_MIME_TYPES }).toEqual(desktop);
   });
 
-  it('TD3 the course CSP is the desktop training CSP without app: plus the frame-ancestors pin; worker-src pinned to the pack path', () => {
+  it('TD3 (parses security/csp.ts) the course CSP is the desktop training CSP without app: plus the frame-ancestors pin; worker-src pinned to the pack path', () => {
     const app = 'http://localhost:4183';
     const player = 'http://127.0.0.1:4183';
     const desktop = desktopTrainingCspDirectives().map((d) => d.replace(/ app:/g, ''));
