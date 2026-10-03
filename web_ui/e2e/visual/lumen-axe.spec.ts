@@ -42,19 +42,14 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  * (4.18:1 on the #f0f0f5 card) to --text-secondary (6.48:1 light, 9.27:1 dark), and its
  * failures list from --color-danger to --danger (5.70:1 / 5.48:1), verified with the
  * page behind the card hidden so axe could not report them as merely `incomplete`.
+ * Phase 6 (Documents & Training) fixed and removed both 'documents:light:*' entries.
  */
 const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'overlay:light:1440': [
     "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
   ],
-  'documents:light:1440': [
-    "color-contrast | p:nth-child(4)",
-  ],
   'overlay:light:500': [
     "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-  ],
-  'documents:light:500': [
-    "color-contrast | p:nth-child(4)",
   ],
 };
 
