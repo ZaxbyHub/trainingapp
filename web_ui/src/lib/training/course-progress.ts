@@ -46,6 +46,22 @@ export function advanceCourseProgress(progress: CourseProgress, courseId: string
   return { ...progress, [courseId]: position };
 }
 
+/**
+ * Per-course max of two progress maps (progress only moves forward, so the larger
+ * value is always the truer one). Returns `current` itself when `incoming` adds
+ * nothing, so a state update with it is a no-op. Used to fold in what another tab
+ * wrote to storage before this tab records its own position.
+ */
+export function mergeCourseProgress(current: CourseProgress, incoming: CourseProgress): CourseProgress {
+  let merged: Record<string, number> | null = null;
+  for (const [courseId, position] of Object.entries(incoming)) {
+    if ((current[courseId] ?? 0) >= position) continue;
+    merged ??= { ...current };
+    merged[courseId] = position;
+  }
+  return merged ?? current;
+}
+
 export interface CourseProgressView {
   /** Slides reached, clamped to [0, total] (a course can shrink in an update). */
   reached: number;

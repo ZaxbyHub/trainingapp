@@ -30,6 +30,7 @@ import {
   advanceCourseProgress,
   courseProgressView,
   loadCourseProgress,
+  mergeCourseProgress,
   saveCourseProgress,
   type CourseProgress,
 } from '../lib/training/course-progress';
@@ -323,16 +324,19 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
       if (slideDocsReady) {
         const reached = slidePosition(playerCourseId, event.slideId);
         if (reached !== null) {
-          const next = advanceCourseProgress(progress, playerCourseId, reached.index);
-          if (next !== progress) {
-            saveCourseProgress(next);
-            setProgress(next);
-          }
+          // Storage is the shared truth across tabs: re-read it so another tab's
+          // progress (for any course) is kept, raise only this course, and write
+          // back. The state update is functional (and pure) so a burst of events
+          // never works from a stale closure.
+          const stored = loadCourseProgress();
+          const next = advanceCourseProgress(stored, playerCourseId, reached.index);
+          if (next !== stored) saveCourseProgress(next);
+          setProgress((current) => mergeCourseProgress(current, next));
         }
       }
       onSlideChange?.(event);
     },
-    [onSlideChange, slideDocsReady, playerCourseId, progress]
+    [onSlideChange, slideDocsReady, playerCourseId]
   );
 
   // "Slide x of n" from the course's ingested slide docs; the title alone when
@@ -350,7 +354,9 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
 
   // Course cards: no cover art exists on an installed pack, so the card shows a
   // monogram tile, the slide count and the learner's progress (furthest slide
-  // reached, course-progress.ts) when the ingested slide docs give the count, and
+  // reached, course-progress.ts: "Reached slide k of n", NOT a completion count, since a
+  // deep link can land on slide 30 without slides 1-29 being seen) when the ingested slide
+  // docs give the count, and
   // "Last opened" (LAST_PACK_KEY) as secondary text. Progress needs a known count:
   // without one (desktop, index not ready) the card shows neither number.
   const lastOpenedId = (() => {
@@ -508,12 +514,16 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
                       {view !== null ? (
                         <span className="app-course__progress">
                           <ProgressBar
-                            label={`${title} progress: ${view.reached} of ${view.total} slides`}
+                            label={
+                              view.reached === 0
+                                ? `${title} progress: not started`
+                                : `${title} progress: reached slide ${view.reached} of ${view.total}`
+                            }
                             value={view.reached}
                             max={view.total}
                           />
                           <span className="app-course__progress-text">
-                            {view.reached === 0 ? 'Not started' : `${view.reached} of ${view.total} slides`}
+                            {view.reached === 0 ? 'Not started' : `Reached slide ${view.reached} of ${view.total}`}
                           </span>
                         </span>
                       ) : null}

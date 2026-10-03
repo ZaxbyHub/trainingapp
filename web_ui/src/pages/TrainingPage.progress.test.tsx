@@ -97,7 +97,7 @@ describe('course-card progress (B2)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
     const a = await card('course-a');
-    expect(a).toHaveTextContent('3 of 4 slides');
+    expect(a).toHaveTextContent('Reached slide 3 of 4');
     expect(within(a).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '3');
     // The other course is untouched.
     expect(await card('course-b')).toHaveTextContent('Not started');
@@ -106,7 +106,7 @@ describe('course-card progress (B2)', () => {
   it('reads saved progress on a fresh mount', async () => {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 2 }));
     render(<TrainingPage />);
-    expect(await card('course-a')).toHaveTextContent('2 of 4 slides');
+    expect(await card('course-a')).toHaveTextContent('Reached slide 2 of 4');
   });
 
   it('only moves forward: going back to an earlier slide keeps the furthest one', async () => {
@@ -119,13 +119,13 @@ describe('course-card progress (B2)', () => {
     expect(stored()).toEqual({ 'course-a': 3 });
 
     fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
-    expect(await card('course-a')).toHaveTextContent('3 of 4 slides');
+    expect(await card('course-a')).toHaveTextContent('Reached slide 3 of 4');
   });
 
   it('clamps stale progress to the current slide count and ignores malformed storage', async () => {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 9, 'course-b': -1 }));
     render(<TrainingPage />);
-    expect(await card('course-a')).toHaveTextContent('4 of 4 slides');
+    expect(await card('course-a')).toHaveTextContent('Reached slide 4 of 4');
     expect(await card('course-b')).toHaveTextContent('Not started');
     cleanup();
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, 'not json');
@@ -139,7 +139,7 @@ describe('course-card progress (B2)', () => {
     render(<TrainingPage />);
     const a = await card('course-a');
     expect(a).toHaveTextContent('Storyline course');
-    expect(a.textContent).not.toMatch(/[0-9]+ of [0-9]+|Not started/);
+    expect(a.textContent).not.toMatch(/[0-9]+ of [0-9]+|Not started|Reached/);
     expect(within(a).queryByRole('progressbar')).toBeNull();
 
     fireEvent.click(a);
@@ -160,10 +160,51 @@ describe('course-card progress (B2)', () => {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3 }));
     render(<TrainingPage />);
     const a = await card('course-a');
-    expect(screen.getByRole('button', { name: /Safety Onboarding.*3 of 4 slides/ })).toBe(a);
-    const bar = within(a).getByRole('progressbar', { name: 'Safety Onboarding progress: 3 of 4 slides' });
+    // A progressbar inside a button is presentational for assistive tech, so the
+    // button's own name must carry the progress text.
+    expect(screen.getByRole('button', { name: /Safety Onboarding.*Reached slide 3 of 4/ })).toBe(a);
+    const bar = within(a).getByRole('progressbar', { name: 'Safety Onboarding progress: reached slide 3 of 4' });
     expect(bar).toHaveAttribute('aria-valuemin', '0');
     expect(bar).toHaveAttribute('aria-valuemax', '4');
     expect(bar).toHaveAttribute('aria-valuenow', '3');
+  });
+});
+
+describe('progress semantics and storage merge (critic L3, N4)', () => {
+  it('a deep link to a late slide reads as reached, never as completed', async () => {
+    render(<TrainingPage />);
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    await slide('s4'); // jumped straight to the last slide: slides 1-3 were never seen
+    fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+    const a = await card('course-a');
+    expect(a).toHaveTextContent('Reached slide 4 of 4');
+    expect(a.textContent).not.toMatch(/\b4 of 4 slides\b/);
+    expect(within(a).getByRole('progressbar')).toHaveAccessibleName('Safety Onboarding progress: reached slide 4 of 4');
+  });
+
+  it('keeps another tab\'s progress for a different course when recording', async () => {
+    render(<TrainingPage />);
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    // Another tab recorded course-b AND a further course-a position after this tab mounted.
+    window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-b': 5, 'course-a': 1 }));
+    await slide('s2');
+    expect(stored()).toEqual({ 'course-b': 5, 'course-a': 2 });
+    fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+    expect(await card('course-b')).toHaveTextContent('Reached slide 5 of 6'); // this tab adopts it too
+  });
+
+  it('two events in one batch both land (functional state update, no stale closure)', async () => {
+    render(<TrainingPage />);
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    await act(async () => {
+      player.emit?.({ slideId: 's2', slideTitle: 'T2' });
+      player.emit?.({ slideId: 's3', slideTitle: 'T3' });
+    });
+    expect(stored()).toEqual({ 'course-a': 3 });
+    fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+    expect(await card('course-a')).toHaveTextContent('Reached slide 3 of 4');
   });
 });
