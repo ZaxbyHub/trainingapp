@@ -249,6 +249,28 @@ describe('SidebarConversationItem', () => {
       expect(del).toHaveFocus();
     });
 
+    it('Tab out of the menu (past its last item) closes it; moving between the button and the items does not (round 4 LOW-1)', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <SidebarConversationItem {...defaultProps} />
+          <button type="button">After</button>
+        </>
+      );
+      const kebab = await openWithKeyboard(user);
+      expect(screen.getByRole('menuitem', { name: 'Rename' })).toHaveFocus();
+      await user.tab({ shift: true }); // back to the options button: still open
+      expect(kebab).toHaveFocus();
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+      await user.tab(); // Rename
+      await user.tab(); // Delete
+      expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveFocus();
+      await user.tab(); // leaves the menu
+      expect(screen.getByRole('button', { name: 'After' })).toHaveFocus();
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(kebab).toHaveAttribute('aria-expanded', 'false');
+    });
+
     it('Escape from a menu item closes the menu and returns focus to the options button', async () => {
       const user = userEvent.setup();
       render(<SidebarConversationItem {...defaultProps} />);

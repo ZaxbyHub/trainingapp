@@ -234,12 +234,15 @@ export function useConversations() {
       if (more.length > 0) {
         const total = await countConversations();
         if (generation !== listGeneration.current) return;
-        // Defensive de-duplication by id on top of the generation check.
+        // Defensive de-duplication by id on top of the generation check; hasMore
+        // counts only the rows actually added (review round 4, LOW-3).
+        const loadedIds = new Set(conversations.map(c => c.id));
+        const fresh = more.filter(c => !loadedIds.has(c.id));
         setConversations(prev => {
           const seen = new Set(prev.map(c => c.id));
-          return [...prev, ...more.filter(c => !seen.has(c.id)).map(toSummary)];
+          return [...prev, ...fresh.filter(c => !seen.has(c.id)).map(toSummary)];
         });
-        setHasMore(conversations.length + more.length < total);
+        setHasMore(conversations.length + fresh.length < total);
       } else {
         setHasMore(false);
       }

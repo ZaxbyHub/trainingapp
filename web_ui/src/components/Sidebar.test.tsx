@@ -5,6 +5,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import { useState } from 'react';
+import userEvent from '@testing-library/user-event';
 import { Sidebar } from './Sidebar';
 
 describe('Sidebar', () => {
@@ -200,6 +202,58 @@ describe('Sidebar', () => {
 
   // Collapse/expand moved to the AppShell (ui/AppShell.test.tsx covers the toggle,
   // the rail and the drawer); the sidebar body only reads the shell state.
+
+  describe('Focus after a confirmed delete (round 4 LOW-2)', () => {
+    function Live({ initial, withSearch = false }: { initial: typeof conversations; withSearch?: boolean }) {
+      const [items, setItems] = useState(initial);
+      return (
+        <Sidebar
+          {...defaultProps}
+          conversations={items}
+          onDeleteConversation={(id) => setItems((prev) => prev.filter((c) => c.id !== id))}
+          {...(withSearch ? { searchQuery: '', onSearchChange: () => {} } : {})}
+        />
+      );
+    }
+    const three = [
+      { id: 'a', title: 'Alpha', updatedAt: '2026-06-27T10:00:00Z' },
+      { id: 'b', title: 'Bravo', updatedAt: '2026-06-27T09:00:00Z' },
+      { id: 'c', title: 'Charlie', updatedAt: '2026-06-27T08:00:00Z' },
+    ];
+    const deleteRow = async (user: ReturnType<typeof userEvent.setup>, title: string) => {
+      const row = screen.getByText(title).closest('.app-conv') as HTMLElement;
+      await user.click(row.querySelector('button[aria-label="Conversation options"]') as HTMLElement);
+      await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+      await user.click(screen.getByRole('menuitem', { name: 'Confirm' }));
+    };
+
+    it('moves focus to the next row', async () => {
+      const user = userEvent.setup();
+      render(<Live initial={three} />);
+      await deleteRow(user, 'Alpha');
+      expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+      expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
+    });
+
+    it('falls back to the previous row when the last row was deleted', async () => {
+      const user = userEvent.setup();
+      render(<Live initial={three} />);
+      await deleteRow(user, 'Charlie');
+      expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
+    });
+
+    it('with no rows left, focuses the search field (or New chat when there is no search field)', async () => {
+      const user = userEvent.setup();
+      const { unmount } = render(<Live initial={[three[0]]} withSearch />);
+      await deleteRow(user, 'Alpha');
+      expect(screen.getByRole('searchbox', { name: 'Search conversations' })).toHaveFocus();
+      unmount();
+      render(<Live initial={[three[0]]} />);
+      await deleteRow(user, 'Alpha');
+      expect(screen.getByRole('button', { name: /new chat/i })).toHaveFocus();
+      expect(document.activeElement).not.toBe(document.body);
+    });
+  });
 
   describe('Edge Cases', () => {
     it('handles undefined conversations prop', () => {

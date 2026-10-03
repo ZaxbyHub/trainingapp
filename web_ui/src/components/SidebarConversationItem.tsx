@@ -166,9 +166,22 @@ export function SidebarConversationItem({
 
   // Structure: the row is a plain container holding two SIBLING buttons (select,
   // options), not a role="button" with a button nested inside it.
+  // Focus leaving the menu (and its options button) by keyboard, e.g. Tab past the
+  // last item, closes it (review round 4, LOW-1). A null relatedTarget (a click on
+  // something unfocusable) is left to the click-outside handler above.
+  const handleRootBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (!isMenuOpen && !isDeleteConfirmOpen) return;
+    const to = e.relatedTarget as Node | null;
+    if (!to) return;
+    if (menuRef.current?.contains(to) || kebabRef.current?.contains(to)) return;
+    setIsMenuOpen(false);
+    setIsDeleteConfirmOpen(false);
+  };
+
   return (
     <div
       onKeyDown={handleRootKeyDown}
+      onBlur={handleRootBlur}
       className={cx('app-conv', isSelected && 'ui-selected')}
     >
       {isRenaming ? (

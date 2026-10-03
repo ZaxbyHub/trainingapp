@@ -963,6 +963,23 @@ describe('useConversations', () => {
     });
   });
 
+  describe('hasMore after a de-duplicated "Load more" (round 4 LOW-3)', () => {
+    it('counts only the rows actually added', async () => {
+      const first = Array.from({ length: 50 }, (_, i) => createMockConversation({ id: `conv-${i}`, updatedAt: 10_000 - i }));
+      // Page 2 overlaps the loaded page by 10 ids: only 40 rows are new, so 90 of 100 are loaded.
+      const second = Array.from({ length: 50 }, (_, i) => createMockConversation({ id: `conv-${40 + i}`, updatedAt: 9_000 - i }));
+      mockCountConversations.mockResolvedValue(100);
+      mockListConversations.mockImplementation(async (offset: number) => (offset === 0 ? first : second));
+      const { result } = renderHook(() => useConversations());
+      await waitFor(() => expect(result.current.conversations).toHaveLength(50));
+      await act(async () => {
+        await result.current.loadMore();
+      });
+      expect(result.current.conversations).toHaveLength(90);
+      expect(result.current.hasMore).toBe(true); // 90 < 100 (the raw count, 100, would say false)
+    });
+  });
+
   describe('Load more vs refresh race (PRR-005)', () => {
     it('a refresh during a pending "Load more" discards the stale page (no duplicates, no stale tail)', async () => {
       const first = Array.from({ length: 50 }, (_, i) =>

@@ -79,6 +79,7 @@ export function Sidebar({
   // re-run triggered by a save while the user is keyboarding through results),
   // so focus is never dropped; those rows simply stay at full contrast.
   const listRef = useRef<HTMLDivElement>(null);
+  const newChatRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const list = listRef.current;
     if (!list) return;
@@ -86,6 +87,30 @@ export function Sidebar({
     else list.removeAttribute('inert');
   }, [busy]);
   const shown = searchResults ?? conversations;
+
+  // Review round 4, LOW-2: confirming a delete unmounts the focused row, so focus
+  // would fall to <body>. Remember where the row was; once the list no longer
+  // contains it, focus the next row's select button, else the previous one, else
+  // the search field (or New chat when there is no search field).
+  const pendingDeleteFocus = useRef<{ id: string; index: number } | null>(null);
+  const deleteConversation = (id: string) => {
+    pendingDeleteFocus.current = { id, index: shown.findIndex((c) => c.id === id) };
+    onDeleteConversation?.(id);
+  };
+  useEffect(() => {
+    const pending = pendingDeleteFocus.current;
+    if (!pending || shown.some((c) => c.id === pending.id)) return;
+    pendingDeleteFocus.current = null;
+    const active = document.activeElement;
+    if (active && active !== document.body) return; // the user already moved on
+    const rows = Array.from(listRef.current?.querySelectorAll<HTMLElement>('.app-conv__select') ?? []);
+    const target =
+      rows[Math.min(Math.max(pending.index, 0), rows.length - 1)] ??
+      document.getElementById(searchId) ??
+      newChatRef.current?.querySelector<HTMLElement>('button') ??
+      null;
+    target?.focus();
+  }, [shown, searchId]);
   const clearSearch = () => {
     onSearchChange?.('');
     document.getElementById(searchId)?.focus();
@@ -116,7 +141,7 @@ export function Sidebar({
         </div>
       ) : (
         <section className="app-sidebar__conversations" aria-labelledby={headingId}>
-          <div className="app-sidebar__section-head">
+          <div ref={newChatRef} className="app-sidebar__section-head">
             <h2 id={headingId} className="app-sidebar__section-title">
               Conversations
             </h2>
@@ -189,7 +214,7 @@ export function Sidebar({
                   isSelected={currentConversationId === conversation.id}
                   onSelect={selectConversation}
                   onRename={onRenameConversation || (() => {})}
-                  onDelete={onDeleteConversation || (() => {})}
+                  onDelete={deleteConversation}
                 />
               ))
             )}
