@@ -62,6 +62,9 @@ export interface TrainingPageProps {
 const packDirKey = (pack: { packId: string; version: string }): string =>
   `${pack.packId}/${pack.version}`;
 
+/** Browser-only slide-docs readiness poll cap (1s interval, ~1 minute). */
+const SLIDE_DOCS_POLL_MAX = 60;
+
 const isTrainingPack = (pack: PackInfo): boolean => pack.sourceClass === 'training';
 
 export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onLeaveDeepLink }: TrainingPageProps) {
@@ -75,8 +78,9 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   // course is selected (with a sole course the picker auto-selects it, so the
   // library needs an explicit flag). Cleared by any course choice.
   const [libraryRequested, setLibraryRequested] = useState(false);
-  // The slide the player last reported (for the header and pin-slide). The event
-  // is forwarded to onSlideChange UNCHANGED and exactly once (D7 contract).
+  // The slide the player last reported (for the header and pin-slide). Each
+  // player event is forwarded to onSlideChange UNCHANGED, one call per event
+  // (D7 contract); pinning a slide re-forwards the current slide on request.
   const [currentSlide, setCurrentSlide] = useState<TrainingPlayerSlideState | null>(null);
   // Polite confirmation for the Pin button (the pin itself shows up in Chat).
   const [pinAnnouncement, setPinAnnouncement] = useState('');
@@ -91,11 +95,16 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   // Slide docs live in the browser keyword index, which initializes after boot
   // and exposes no ready event: poll until ready so slide counts and "x of n"
   // appear without a remount. Never in the desktop renderer (no browser index).
+  // Bounded: gives up after SLIDE_DOCS_POLL_MAX attempts (~1 minute) so an index
+  // that never becomes ready does not poll for the life of the page.
   const [slideDocsReady, setSlideDocsReady] = useState(() => !isElectron() && slideDocsAvailable());
   useEffect(() => {
     if (slideDocsReady || isElectron()) return undefined;
+    let attempts = 0;
     const timer = window.setInterval(() => {
+      attempts += 1;
       if (slideDocsAvailable()) setSlideDocsReady(true);
+      else if (attempts >= SLIDE_DOCS_POLL_MAX) window.clearInterval(timer);
     }, 1000);
     return () => window.clearInterval(timer);
   }, [slideDocsReady]);

@@ -74,4 +74,17 @@ describe('course-card slide counts follow the keyword index readiness (L2)', () 
     expect(slideDocsAvailable).not.toHaveBeenCalled();
     expect(courseSlideCount).not.toHaveBeenCalled();
   });
+
+  it('stops polling after the attempt cap when the index never becomes ready', async () => {
+    vi.useFakeTimers();
+    render(<TrainingPage />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    vi.mocked(slideDocsAvailable).mockClear();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(slideDocsAvailable).toHaveBeenCalledTimes(60);
+  });
 });

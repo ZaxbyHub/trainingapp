@@ -54,10 +54,12 @@ vi.mock('../hooks/useServiceInitialization', () => ({
 }));
 
 const store = vi.hoisted(() => ({ packs: [] as PackInfo[], listeners: new Set<() => void>() }));
+const install = vi.hoisted(() => ({ mode: 'ok' as 'ok' | 'reject' | 'install-then-reject' }));
 const packClient = vi.hoisted(() => ({
   kind: 'browser',
   listPacks: async () => [...store.packs],
   installPack: async () => {
+    if (install.mode === 'reject') throw new Error('boom');
     store.packs.push({
       packId: 'course-a',
       version: '1.0.0',
@@ -68,6 +70,7 @@ const packClient = vi.hoisted(() => ({
       supersedes: [],
     });
     store.listeners.forEach((fn) => fn());
+    if (install.mode === 'install-then-reject') throw new Error('post-install failure');
     return { packId: 'course-a', version: '1.0.0' };
   },
   removePack: async () => undefined,
@@ -86,6 +89,7 @@ afterEach(() => {
   store.packs = [];
   store.listeners.clear();
   extraction.release = null;
+  install.mode = 'ok';
 });
 
 describe('Documents tabs: no switch mid-drop (review L5)', () => {
@@ -119,5 +123,57 @@ describe('Documents tabs: no switch mid-drop (review L5)', () => {
     await act(async () => extraction.release?.());
     await waitFor(() => expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true'));
     expect(await screen.findByTestId('pack-row-course-a-1.0.0')).toBeTruthy();
+  });
+
+  it('a failing install does not stick the deferral: the counter returns to 0 and a later pack switches at once (N2)', async () => {
+    install.mode = 'reject';
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+    await screen.findByTestId('packs-panel');
+    const zip = new File([new Uint8Array([1, 2, 3])], 'course-a.zip', { type: 'application/zip' });
+    // Zip-only drop whose install rejects: nothing installed, nothing to switch to.
+    fireEvent.drop(screen.getByRole('button', { name: /drop files here or click to select/i }), {
+      dataTransfer: { files: [zip] },
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(store.packs).toHaveLength(0);
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+
+    // The drop finished (counter back to 0): a pack that appears now switches
+    // immediately rather than waiting on a stuck in-flight drop.
+    install.mode = 'ok';
+    await act(async () => {
+      await packClient.installPack();
+    });
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true'));
+  });
+
+  it('an install that rejects after the pack landed still switches once the drop finished (N2)', async () => {
+    install.mode = 'install-then-reject';
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+    await screen.findByTestId('packs-panel');
+    const zip = new File([new Uint8Array([1, 2, 3])], 'course-a.zip', { type: 'application/zip' });
+    const doc = new File(['hello'], 'notes.txt', { type: 'text/plain' });
+    fireEvent.drop(screen.getByRole('button', { name: /drop files here or click to select/i }), {
+      dataTransfer: { files: [zip, doc] },
+    });
+    await waitFor(() => expect(extraction.release).not.toBeNull());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(store.packs).toHaveLength(1);
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+
+    await act(async () => extraction.release?.());
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true'));
   });
 });
