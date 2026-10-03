@@ -324,6 +324,33 @@ describe('Sidebar', () => {
       expect(document.activeElement).toBe(document.body);
     });
 
+    it('expires the pending rescue when onDeleteConversation throws synchronously, with no unhandled error', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        const user = userEvent.setup();
+        const onDelete = vi.fn(() => {
+          throw new Error('sync boom');
+        });
+        const { rerender } = render(<Sidebar {...defaultProps} conversations={three} onDeleteConversation={onDelete} />);
+        await deleteRow(user, 'Alpha');
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        expect(onDelete).toHaveBeenCalledWith('a');
+        expect(screen.getByText('Alpha')).toBeInTheDocument();
+        (document.activeElement as HTMLElement | null)?.blur();
+        // The row leaves later for an unrelated reason: the expired entry must not steal focus.
+        rerender(<Sidebar {...defaultProps} conversations={three.slice(1)} onDeleteConversation={onDelete} />);
+        expect(document.activeElement).toBe(document.body);
+        await new Promise((r) => setTimeout(r, 0));
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
     it('B-1: keeps the rescue after a successful async delete while a search drops the row later', async () => {
       const user = userEvent.setup();
       let startSearch: () => void = () => {};

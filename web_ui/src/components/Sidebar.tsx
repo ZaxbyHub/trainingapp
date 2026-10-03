@@ -105,6 +105,11 @@ export function Sidebar({
   // asynchronously after the delete settles). While the list is inert (a search
   // re-run is in flight) the rescue is deferred and retried on the next
   // shown/busy change, because focus() on an inert row is a silent no-op.
+  //
+  // Not every success is observable: when the delete succeeds but the follow-up
+  // refresh fails, or the callback returns void, there is no signal either way.
+  // The entry then waits until the row actually leaves `shown`, and rescues focus
+  // only if it is still on <body> at that point.
   const pendingDeleteFocus = useRef<{ id: string; index: number } | null>(null);
   const deleteConversation = (id: string) => {
     const entry = { id, index: shown.findIndex((c) => c.id === id) };
@@ -113,7 +118,14 @@ export function Sidebar({
       if (pendingDeleteFocus.current === entry) pendingDeleteFocus.current = null;
     };
     // Void return: no failure signal, so the entry waits for the row to leave.
-    Promise.resolve(onDeleteConversation?.(id)).then((deleted) => {
+    // Still invoked synchronously, but a synchronous throw counts as a rejection.
+    let outcome: Promise<boolean | void>;
+    try {
+      outcome = Promise.resolve(onDeleteConversation?.(id));
+    } catch (error) {
+      outcome = Promise.reject(error);
+    }
+    outcome.then((deleted) => {
       if (deleted === false) expire();
     }, expire);
   };

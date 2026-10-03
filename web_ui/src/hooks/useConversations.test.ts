@@ -815,6 +815,59 @@ describe('useConversations', () => {
       expect(result.current.conversations).toHaveLength(50);
     });
 
+    it('removeConversation resolves true while an active search still lists the id; the re-run then drops it', async () => {
+      const { result } = await mountWithPage();
+      mockSearchConversations.mockResolvedValueOnce({ matches: [page[3], page[4]], truncated: false });
+      act(() => result.current.setSearchQuery('recent'));
+      await waitFor(() => expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-3', 'conv-4']));
+
+      // The delete's refresh starts a search re-run that we hold open.
+      let landRerun: (v: unknown) => void = () => {};
+      mockSearchConversations.mockImplementationOnce(() => new Promise((r) => { landRerun = r; }));
+      mockListConversations.mockImplementation(async (offset: number, size: number) =>
+        page.filter((c) => c.id !== 'conv-3').slice(offset, offset + size)
+      );
+      let ok: boolean | undefined;
+      await act(async () => {
+        ok = await result.current.removeConversation('conv-3');
+      });
+      expect(ok).toBe(true);
+      expect(mockSearchConversations).toHaveBeenCalledTimes(2);
+      expect(result.current.searchResults?.map((c) => c.id)).toContain('conv-3');
+
+      await act(async () => landRerun({ matches: [page[4]], truncated: false }));
+      expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-4']);
+    });
+
+    it('removeConversation resolves true when a newer refresh supersedes its own; the row leaves via the newer refresh', async () => {
+      const { result } = await mountWithPage();
+      const without = page.filter((c) => c.id !== 'conv-3');
+      // The delete's own refresh reads a stale list and is held open.
+      let landStale: (v: unknown) => void = () => {};
+      mockListConversations.mockImplementationOnce(() => new Promise((r) => { landStale = r; }));
+      mockListConversations.mockImplementation(async (offset: number, size: number) =>
+        without.slice(offset, offset + size)
+      );
+      let removal: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        removal = result.current.removeConversation('conv-3');
+        await waitFor(() => expect(mockListConversations).toHaveBeenCalledTimes(2));
+      });
+      // A newer refresh bumps the generation while the delete's refresh is pending.
+      await act(async () => {
+        await result.current.refreshConversations();
+      });
+      expect(result.current.conversations.some((c) => c.id === 'conv-3')).toBe(false);
+      // The stale read lands afterwards and is discarded; the delete still reports success.
+      let ok: boolean | undefined;
+      await act(async () => {
+        landStale(page.slice(0, 50));
+        ok = await removal;
+      });
+      expect(ok).toBe(true);
+      expect(result.current.conversations.some((c) => c.id === 'conv-3')).toBe(false);
+    });
+
     it('is debounced: rapid typing issues one query, for the final text', async () => {
       const { result } = await mountWithPage();
       act(() => result.current.setSearchQuery('b'));
