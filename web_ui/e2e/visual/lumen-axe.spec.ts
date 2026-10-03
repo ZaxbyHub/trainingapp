@@ -28,29 +28,26 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
 /**
  * Pre-existing violations on unchanged master, keyed `${surface}:${theme}:${width}`,
  * each `ruleId | node selector`. Regenerate with LUMEN_AXE_INVENTORY=1.
+ *
+ * Phase 3 (shell) removed the old sidebar's "No conversations yet" node
+ * (legacy --color-text-muted on --color-surface, 4.18:1) from every light 1440 key,
+ * which also emptied 'training:light:1440'. Every remaining entry is page-body debt.
  */
 const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'overlay:light:1440': [
     "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-    "color-contrast | nav > div:nth-child(3) > div",
     "color-contrast | ul:nth-child(3) > li",
   ],
   'chat:light:1440': [
     "color-contrast | div[role=\"region\"] > div:nth-child(1) > p",
     "color-contrast | div[role=\"region\"] > div:nth-child(3)",
-    "color-contrast | nav > div:nth-child(3) > div",
   ],
   'documents:light:1440': [
-    "color-contrast | nav > div:nth-child(3) > div",
     "color-contrast | p:nth-child(4)",
-  ],
-  'training:light:1440': [
-    "color-contrast | div:nth-child(3) > div",
   ],
   'settings:light:1440': [
     "color-contrast | #browser-local-desc",
     "color-contrast | div[role=\"status\"][aria-live=\"polite\"] > p",
-    "color-contrast | nav > div:nth-child(3) > div",
     "color-contrast | span > span[role=\"status\"][aria-live=\"polite\"]",
   ],
   'overlay:light:500': [
@@ -78,6 +75,17 @@ const MAY_APPEAR: readonly string[] = [
   'color-contrast | div[role="status"][aria-live="polite"] > p',
   'color-contrast | span > span[role="status"][aria-live="polite"]',
 ];
+
+/**
+ * Lumen phase 3: at <= 768px the primary nav lives in the AppShell drawer, opened
+ * from the top bar's menu button; choosing a destination closes it again. At wider
+ * widths the menu button does not exist and the nav buttons are clicked directly.
+ */
+async function clickNav(page: Page, name: string): Promise<void> {
+  const menu = page.getByRole('button', { name: 'Open navigation' });
+  if (await menu.isVisible()) await menu.click();
+  await page.getByRole('button', { name, exact: true }).click({ force: true });
+}
 
 async function blockExternalNetwork(page: Page): Promise<void> {
   await page.route('**/*', (route) => {
@@ -114,7 +122,7 @@ for (const theme of THEMES) {
             expect(shown, 'model-gate overlay must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for builds with staged weights').toBe(true);
           } else {
             if (surface !== 'chat') {
-              await page.getByRole('button', { name: NAV[surface], exact: true }).click({ force: true });
+              await clickNav(page, NAV[surface]);
             }
             // Scan the surface itself, not the model-gate overlay stacked on it. Hide the
             // alertdialog's PARENT (the full-screen scrim), as lumen-baseline.spec.ts does;

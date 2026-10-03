@@ -79,6 +79,17 @@ const STATES: StateDef[] = [
   },
 ];
 
+/**
+ * Lumen phase 3: at <= 768px the primary nav lives in the AppShell drawer, opened
+ * from the top bar's menu button; choosing a destination closes it again. At wider
+ * widths the menu button does not exist and the nav buttons are clicked directly.
+ */
+async function clickNav(page: Page, name: string): Promise<void> {
+  const menu = page.getByRole('button', { name: 'Open navigation' });
+  if (await menu.isVisible()) await menu.click();
+  await page.getByRole('button', { name, exact: true }).click({ force: true });
+}
+
 async function blockExternalNetwork(page: Page): Promise<void> {
   await page.route('**/*', (route) => {
     const hostname = new URL(route.request().url()).hostname;
@@ -277,7 +288,7 @@ for (const theme of THEMES) {
           if (state.seed) await seedPopulated(page);
           if ((await page.getByRole('alertdialog').count()) > 0) await hideModelGate(page);
           if (state.nav) {
-            await page.getByRole('button', { name: state.nav, exact: true }).click({ force: true });
+            await clickNav(page, state.nav);
           }
           await page.evaluate(() => document.fonts.ready);
           await page.waitForTimeout(500);
