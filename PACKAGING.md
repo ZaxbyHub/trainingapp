@@ -102,7 +102,8 @@ npm run build:offline      # = prepare-models && tsc/vite build && validate-buil
    **absolute, deploy-aware** prefix (derived from `import.meta.env.BASE_URL`
    against `document.baseURI` in `model-manifest.ts`) so model fetches work
    whether the archive is served at the origin root OR a subpath
-   (e.g. `https://host/training/`). Production builds drop sourcemaps
+   (e.g. `https://host/docqa/`). Course playback is the exception: it needs the
+   origin root (see the course player hosting note in §3). Production builds drop sourcemaps
    (`sourcemap: command === 'serve'`); pass a dev override if you need them.
 3. `validate-build` (`scripts/validate-build.mjs`) — **fails the build** if
    `dist/index.html`/`dist/models/` are missing or if any file required by
@@ -127,15 +128,49 @@ Cross-Origin-Embedder-Policy: require-corp
 `vite preview` sets these for local validation, and the bundled FastAPI server
 sets them for every response (see §6). Model assets are loaded from a
 same-origin path under the deploy root (`/models/...` at the origin root,
-`/training/models/...` under a subpath), so the archive works served from any
-path; `file://` cannot provide the cross-origin isolation that threaded WASM
-requires.
+`/docqa/models/...` under a subpath), so the app works served from any path;
+`file://` cannot provide the cross-origin isolation that threaded WASM
+requires. Course playback needs the archive at the **origin root**:
+`/training-boot.html` is origin-absolute on the player origin, and every
+`/training/*` path is reserved for the course worker (a host answers it 404).
+A `/training/` subpath deploy therefore cannot work at all. An app served under
+another subpath installs packs, but it plays courses only when
+`player-origin.json` names a player host that serves the player files at its
+root.
 
 > **Host requirement:** threaded WASM inference needs `SharedArrayBuffer`, which
 > requires the **cross-origin isolation** headers above. A static host that does
 > not send them will fall back to single-threaded WASM (slower) or fail to load
 > the threaded ORT build. When the desktop app's FastAPI server hosts the archive
 > (Phase 6) it must send these headers; document the same for any third-party host.
+
+> **Course player hosting (Knowledge Packs):** courses play on a separate player
+> origin (ADR-0012, CONFIGURATION.md "Browser app: Knowledge Packs and course
+> player"). A host that should play courses must also:
+>
+> - serve `/training-boot.html` and `/training-boot.js` with
+>   `Cross-Origin-Resource-Policy: cross-origin` and `nosniff`, and serve
+>   `/training/sw.js`;
+> - answer every other `/training/*` path with 404 (no SPA fallback);
+> - serve `/training-boot.html` with the restrictive header CSP
+>   `default-src 'none'; script-src <player origin>/training-boot.js; worker-src
+>   <player origin>/training/sw.js; connect-src 'none'; base-uri 'none';
+>   form-action 'none'; object-src 'none'; frame-ancestors <app origin>` and no
+>   `X-Frame-Options`;
+> - send `Content-Security-Policy: frame-ancestors 'none'` and
+>   `X-Frame-Options: DENY` on **every other** response, errors included, so
+>   course content can never frame a same-origin page that runs under a
+>   weaker policy than its own (final-critic FC6);
+> - send no `frame-src` / `child-src` / restrictive `default-src` on the app
+>   pages: the app installs its own runtime `frame-src <player origin>`
+>   (ADR-0012 threat model item 6), and a host policy would intersect with it;
+> - answer the player origin from a **static-only** host: course JS can
+>   navigate its own frame or the app's boot frame to any same-origin path (a
+>   GET request the course worker never sees), so no API routes, proxies or
+>   authenticated endpoints there.
+>
+> `serve-offline.mjs` and `start.ps1` meet these. The FastAPI server does not
+> host the player (see §6).
 
 ## 4. Validate (no network)
 
@@ -219,9 +254,20 @@ The desktop app can serve the self-contained archive locally:
    `_resolve_web_archive_dir()` (env `WEB_UI_DIST` → `sys._MEIPASS/web_ui_dist`
    → repo `web_ui/dist`) and mounts it at `/` **after** the API routes, so
    `/ask`, `/auth`, etc. still take precedence.
-4. A COOP/COEP middleware sets `Cross-Origin-Opener-Policy: same-origin` and
+4. A middleware sets `Cross-Origin-Opener-Policy: same-origin` and
    `Cross-Origin-Embedder-Policy: require-corp` on every response, enabling
-   wllama's threaded WASM (`SharedArrayBuffer`).
+   wllama's threaded WASM (`SharedArrayBuffer`), plus
+   `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`
+   (the app is never frameable). It is not a course-player host: it answers
+   `/training-boot.html`, `/training-boot.js`, `/training/sw.js` and every
+   `/training/*` path with 404, because course JS on a player origin can send
+   GET requests to any path of the server answering it (by navigation) and
+   this server carries the unauthenticated API. The browser app served from here installs packs but
+   reports course playback as unavailable on this host, unless
+   `player-origin.json` names a separate static player host that sends the §3
+   headers for this app origin. The bundled `serve-offline.mjs` / `start.ps1`
+   cannot be that host: they only admit their own loopback alias as the app
+   origin.
 
 To run the server serving the archive: `python api_server.py` (or
 `WEB_UI_DIST=/path/to/dist python api_server.py`), then open the server root.

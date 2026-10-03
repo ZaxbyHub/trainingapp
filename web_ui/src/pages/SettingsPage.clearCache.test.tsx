@@ -29,6 +29,25 @@ vi.mock('../lib/theme', () => ({
   useTheme: vi.fn(),
 }));
 
+// browser-training-parity: the browser app's Clear Cache also removes the
+// installed packs and releases the player-origin worker, each its own step.
+// Pass-through stubs by default; one test makes the packs step fail.
+const packsClearAllMock = vi.fn((): Promise<void> => Promise.resolve());
+const releaseBrowserTrainingMock = vi.fn((): Promise<void> => Promise.resolve());
+
+vi.mock('../lib/packs/browser-pack-manager', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/packs/browser-pack-manager')>();
+  return {
+    ...actual,
+    getBrowserPackManager: () => ({ clearAll: () => packsClearAllMock() }),
+  };
+});
+
+vi.mock('../lib/packs/browser-training', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/packs/browser-training')>();
+  return { ...actual, releaseBrowserTrainingIfEmpty: () => releaseBrowserTrainingMock() };
+});
+
 vi.mock('../lib/storage/profile', () => ({
   getProfilePrefix: () => getProfilePrefixMock(),
   deleteNamespace: (prefix: string) => deleteNamespaceMock(prefix),
@@ -172,6 +191,10 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     mockObjectStore.put.mockClear();
     mockObjectStore.delete.mockClear();
     deleteNamespaceMock.mockClear();
+    packsClearAllMock.mockReset();
+    packsClearAllMock.mockResolvedValue(undefined);
+    releaseBrowserTrainingMock.mockReset();
+    releaseBrowserTrainingMock.mockResolvedValue(undefined);
     listStalePrefixesMock.mockClear();
     getProfilePrefixMock.mockClear();
     getProfilePrefixMock.mockReturnValue('testprfx');
@@ -615,6 +638,47 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
       } finally {
         mockDB.transaction = originalTransaction;
       }
+    });
+  });
+
+  // browser-training-parity composed onto FB140-011's per-step clear: the
+  // browser app's installed-packs step is its own step — a failure there is
+  // reported, the worker release still runs, the saved settings are still
+  // removed and the page still reloads.
+  describe('installed packs step (browser app, browser-training-parity)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      localStorage.clear();
+    });
+
+    test('a successful clear removes the installed packs and releases the course player worker', async () => {
+      const reloadPage = vi.fn();
+      const button = await renderReadyWithFakeTimers(reloadPage);
+      fireEvent.click(button);
+      fireEvent.click(button);
+      await stepUntilSettled();
+      expect(packsClearAllMock).toHaveBeenCalledTimes(1);
+      expect(releaseBrowserTrainingMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Cache cleared')).toBe(clearStatusRegion());
+    });
+
+    test('a packs clear failure is reported, the worker release and settings removal still run, and the page reloads', async () => {
+      for (const key of USER_SETTING_KEYS) localStorage.setItem(key, 'x');
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      packsClearAllMock.mockRejectedValue(new Error('OPFS remove failed'));
+      const reloadPage = vi.fn();
+      const button = await renderReadyWithFakeTimers(reloadPage);
+      fireEvent.click(button);
+      fireEvent.click(button);
+      await stepUntilSettled();
+
+      expect(screen.getByText('Could not clear all data')).toBe(clearStatusRegion());
+      expect(releaseBrowserTrainingMock).toHaveBeenCalledTimes(1);
+      for (const key of USER_SETTING_KEYS) expect(localStorage.getItem(key)).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RELOAD_AFTER_CLEAR_MS);
+      });
+      expect(reloadPage).toHaveBeenCalledTimes(1);
     });
   });
 

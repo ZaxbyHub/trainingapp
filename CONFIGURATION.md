@@ -11,6 +11,7 @@ Comprehensive guide to configuring the Document Q&A Assistant, including environ
 3. [GUI Settings](#gui-settings)
 4. [External model (OpenAI- and Anthropic-compatible endpoints)](#external-model-openai--and-anthropic-compatible-endpoints)
 5. [App Settings (desktop and browser app)](#app-settings-desktop-and-browser-app)
+   - [Browser app: Knowledge Packs and course player](#browser-app-knowledge-packs-and-course-player)
 6. [LLM Backend Configuration](#llm-backend-configuration)
 7. [RAG Pipeline Configuration](#rag-pipeline-configuration)
 8. [Performance Tuning](#performance-tuning)
@@ -553,12 +554,88 @@ Clear Cache removes, in this browser profile: the document library and its keywo
 indexes, downloaded WebLLM weights, orphaned data from earlier sessions, and every saved
 setting registered in `web_ui/src/lib/storage/persisted-keys.ts` (inference mode, browser
 engine and response-quality choices, theme, external model connection and API key, sidebar state,
-last-opened course). It keeps your chat history (conversations, stored separately from the
+last-opened course, pack update setting), and the browser app's installed Knowledge Packs and
+courses. It keeps your chat history (conversations, stored separately from the
 document library) and the internal profile id, migration marker and re-index notice flag, then
 reloads the page. The desktop app removes the same browser-side data from its app window (the
 browser-side document and index databases, downloaded browser-model files and saved settings);
 it also keeps chat history and does **not** touch documents or settings stored by the desktop
 backend — remove those documents from the Documents page.
+
+### Browser app: Knowledge Packs and course player
+
+The browser app installs Knowledge Packs and plays training courses like the desktop app
+(ADR-0012). Pack files are kept in this browser profile's private storage (OPFS); the Packs panel
+shows how much browser storage is used and available, and an install is refused when the free
+browser quota is less than twice the pack's unpacked size. Supported browsers: current Chrome and
+Edge. Safari is not supported; Firefox is untested.
+
+Course content runs on a separate **player origin** so it can never read the app's data. The
+app (not the host) answers course files with the training CSP, whose `worker-src` admits only
+`blob:` and the open course's own files, so a course cannot start one of the app's own scripts on
+that origin as an unconfined worker (ADR-0012). The player origin is resolved once at app start,
+in this order:
+
+| Source | Example | Notes |
+| --- | --- | --- |
+| `player-origin.json` next to `index.html` (runtime) | `{"playerOrigin": "https://player.example.com"}` | For a prebuilt archive hosted behind a server. Fetched same-origin with a 2 s bound; an HTML answer is ignored |
+| `VITE_TRAININGAPP_PLAYER_ORIGIN` (build time) | `https://player.example.com` | Baked into the build |
+| loopback alias (default) | app `http://localhost:4173` -> player `http://127.0.0.1:4173` | Works with the bundled static servers (`vite preview`, `vite dev`, `serve-offline.mjs`, `start.ps1`), which bind 127.0.0.1. Not with `api_server.py`, which is not a player host (below) |
+
+A configured value must be a bare origin (no path, query, fragment or credentials), must differ
+from the app origin, and must be `https:` unless its host is `localhost`, `127.0.0.1` or `[::1]`;
+otherwise it is ignored. If nothing resolves (for example the app is opened on a LAN hostname
+with no configured player origin) course playback is disabled with an explanation; pack install
+still works. Hosting the app on a non-loopback name therefore needs a second hostname for the
+player, answered by a static-only host that serves the same files (not `api_server.py`).
+
+The server that answers the player origin must serve **only static files**: no API routes,
+proxies or authenticated endpoints. Course JS can still send GET requests to any path of that
+server by navigating its own frame or the app's boot frame (`/training-boot.html`, same origin;
+the request leaves even though the answer is never shown). It must:
+
+- serve `/training-boot.html` and `/training-boot.js` with
+  `Cross-Origin-Resource-Policy: cross-origin` (and the app's `Cross-Origin-Embedder-Policy:
+  require-corp`), and serve `/training/sw.js`;
+- answer every other `/training/*` path with 404, not the app shell;
+- serve `/training-boot.html` with the restrictive header CSP `default-src 'none'; script-src
+  <player origin>/training-boot.js; worker-src <player origin>/training/sw.js; connect-src
+  'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors <app
+  origin>`, so only the app can frame it, nothing in it can fetch or submit anywhere, and it can
+  run no script or worker but its own two files;
+- send `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on every
+  other response, errors included. Course content cannot frame another player-origin page that
+  would run under a weaker policy than its own, the app is never shown inside a frame, and a
+  framed app also refuses to play courses.
+
+`vite preview`, `web_ui/scripts/serve-offline.mjs` (run by `start.command`) and
+`web_ui/scripts/start.ps1` (run by `start.bat`) already do. `vite dev` does too, but it also
+serves `/@fs/` and proxies `/api` and `/auth`, so play only trusted courses under `npm run dev`.
+The app also sandboxes the boot frame (`allow-scripts allow-same-origin`), so course JS that
+scripts it gets no popups or top-level navigation from it either. The bundled hosts compute
+`<player origin>` from the Host the boot page was requested on and `<app origin>` as its loopback
+alias. Any other Host gets `'none'` for all three, which turns course playback off rather than
+weakening it. A separately configured player host must send the same headers, with `frame-ancestors` naming its app origin and the script and worker sources naming its own origin. The bundled servers cannot be that host: they derive these origins only for the loopback alias of their own port, so their boot page refuses any other app origin, and the Training page then reports that the player service did not start. Navigation is covered by the app itself, not by the host: once
+the player origin resolves, the browser app adds a `frame-src <player origin>` policy to its own
+page. A course therefore cannot navigate its own frame, or the boot frame, to another web
+address (ADR-0012, threat model item 6). Nothing needs to be configured on the host for this;
+a host must not send its own `frame-src` for the app pages either, because it would combine
+with the app's. Chromium's CSP does not cover WebRTC or DNS prefetch, on either app.
+
+`api_server.py` is not a player host: when it serves the web archive it answers the boot files,
+`/training/sw.js` and every `/training/*` path with 404, and the Training page says course
+playback is not available on this host. Packs still install there. To play courses from an app
+served by `api_server.py`, name a separate static player host in `player-origin.json`; that host
+must send the headers above for the `api_server.py` app origin (see the previous paragraph).
+
+Build-time pack trust policy (same meaning as the desktop `TRAININGAPP_PACKS_*` variables):
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `VITE_TRAININGAPP_PACKS_REQUIRE_SIGNATURE` | off | `1`/`true` refuses unsigned packs |
+| `VITE_TRAININGAPP_PACKS_TRUSTED_KEYS` | `[]` | JSON `[{"key_id","public_key"}]` (base64 DER SPKI); malformed input trusts nothing |
+| `VITE_TRAININGAPP_PACKS_EMBEDDING_MODEL_ID` | `bge-small-en-v1.5` | Embedding-model gate target |
+| `VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS` | the desktop feed key | Update-feed trust anchor |
 
 ## LLM Backend Configuration
 
@@ -1028,7 +1105,8 @@ instead. Set `packs.security.requireSignature=true` only together with a
 ## Update Channel (updates.*, E5)
 
 Signed update channel for the app binary and knowledge packs (issue #88, ADR-0010).
-Desktop-only (Electron main process); there is no Python-side update surface. Checks are
+The desktop app runs it in the Electron main process; the browser app runs the same pack checks
+in the page (ADR-0012); there is no Python-side update surface. Checks are
 **disabled by default** — a fresh install makes zero update-related network calls until the
 user opts in (Settings → Updates).
 
@@ -1044,3 +1122,10 @@ Notes: checks run at app start (opted in) and via "Check for updates now" — no
 `%APPDATA%/trainingapp-desktop/profiles/default/` - the runtime folder follows the package
 name `trainingapp-desktop`, not the installer's display name). Publishing/signing a feed: `docs/updates.md`;
 decision record: `docs/adr/0010-update-channels.md`.
+
+Browser app: the opt-in (and an optional `feedUrl`) is stored in this browser profile's
+localStorage (`pack-updates`), removed by Clear Cache. The feed and artifact hosts must allow
+cross-origin requests from the app's origin (a GitHub Releases redirect does not, so browser
+updates need a CORS-enabled mirror or the desktop app). Requests are https-only, without
+credentials or referrer; the browser cannot check intermediate redirect hops, only the final URL.
+The air-gapped build (`npm run build:airgap`) refuses the opt-in.

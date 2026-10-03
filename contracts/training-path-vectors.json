@@ -1,0 +1,26 @@
+{
+  "description": "Shared training-route containment vectors (trace browser-training-parity AC3). Each `path` is a raw, still percent-encoded request path below the training route. desktop/src/__tests__/training-path-vectors.test.ts requests app://training<path> from the real createAppFileHandler; web_ui/src/lib/packs/__tests__/training-relay.test.ts resolves /training<path> with resolveTrainingPath and the relay. Both must answer `status` (200 = served from the pack's assets/player tree). The fixture pack is `pack-a` with assets/player/story.html and assets/player/story_content/a.js.",
+  "pack_id": "pack-a",
+  "files": ["story.html", "story_content/a.js"],
+  "vectors": [
+    { "id": "plain-document", "path": "/pack-a/story.html", "status": 200 },
+    { "id": "nested-asset", "path": "/pack-a/story_content/a.js", "status": 200 },
+    { "id": "query-ignored", "path": "/pack-a/story.html?x=1", "status": 200 },
+    { "id": "doubled-slash-collapses", "path": "/pack-a//story.html", "status": 200 },
+    { "id": "missing-file", "path": "/pack-a/nope.js", "status": 404 },
+    { "id": "missing-pack", "path": "/pack-b/story.html", "status": 404 },
+    { "id": "pack-only", "path": "/pack-a", "status": 404 },
+    { "id": "route-only", "path": "/", "status": 404 },
+    { "id": "encoded-dotdot-segment", "path": "/pack-a/%2e%2e%2f%2e%2e%2findex.html", "status": 403 },
+    { "id": "encoded-slash-traversal", "path": "/pack-a/story_content%2f..%2f..%2findex.html", "status": 403 },
+    { "id": "single-dot-segment", "path": "/pack-a/./story.html", "status": 403 },
+    { "id": "encoded-single-dot", "path": "/pack-a/%2e/story.html", "status": 403 },
+    { "id": "percent-encoded-backslash", "path": "/pack-a/story_content%5c..%5cstory.html", "status": 403 },
+    { "id": "literal-encoded-backslash", "path": "/pack-a/story_content%5Cx", "status": 403 },
+    { "id": "nul-byte", "path": "/pack-a/story.html%00.png", "status": 403 },
+    { "id": "uppercase-pack-id", "path": "/Pack_A/story.html", "status": 403 },
+    { "id": "pack-id-too-short", "path": "/ab/story.html", "status": 403 },
+    { "id": "pack-id-dotdot", "path": "/%2e%2e/story.html", "status": 403 },
+    { "id": "malformed-percent", "path": "/pack-a/%zz.js", "status": 404 }
+  ]
+}

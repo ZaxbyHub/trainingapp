@@ -24,8 +24,12 @@ const stableSession = vi.hoisted(() => ({
   apiClient: { listPacks: null as unknown as ReturnType<typeof listPacks.call> },
 }));
 
+// A desktop session exists only inside Electron, so these cases model the
+// desktop app (the browser app's own store is covered by
+// src/lib/packs/__tests__/browser-pack-manager.test.ts and the T3 e2e).
 vi.mock('../lib/desktop-session', () => ({
   useDesktopSession: () => ({ session: stableSession }),
+  isElectron: () => true,
 }));
 
 import { TrainingPage } from './TrainingPage';

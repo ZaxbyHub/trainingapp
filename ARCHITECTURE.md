@@ -40,7 +40,8 @@ with packtool), and [docs/training-pack-refresh-runbook.md](docs/training-pack-r
 +---------------------------------------------------------------------------------------+
 
   Plain browser (web_ui/, no Electron): wllama WASM LLM + ONNX embeddings +
-  IndexedDB/EdgeVec/FlexSearch in-page; knowledge packs gated (ADR-0009).
+  IndexedDB/EdgeVec/FlexSearch in-page; knowledge packs in OPFS, courses on an
+  isolated player origin (ADR-0012).
 ```
 
 One web_ui build runs Electron-hosted (this document's main subject) or as a
@@ -394,7 +395,7 @@ Rationale and rejected alternatives: [docs/adr/0011-external-model-endpoints.md]
 - **Unchanged.** The Python `api_server.py` has no external backend, and the
   renderer's content-security policy is not widened.
 
-## Browser surface & capability gate
+## Browser surface & browser packs
 
 In plain-browser mode the web_ui runs its own stack: the wllama (llama.cpp
 WASM) LLM engine ([web_ui/src/lib/llm/wllama-service.ts](web_ui/src/lib/llm/wllama-service.ts),
@@ -405,13 +406,36 @@ over IndexedDB/EdgeVec/FlexSearch storage. Session/mode discovery and the
 `window.desktopApi` typing live in
 [web_ui/src/lib/desktop-session.tsx](web_ui/src/lib/desktop-session.tsx).
 
-Knowledge packs are desktop-only by decision (ADR-0009): the Documents page
-([web_ui/src/pages/DocumentsPage.tsx](web_ui/src/pages/DocumentsPage.tsx))
-recognizes a dropped pack zip by its manifest signature and shows a
-persistent "Knowledge Packs require the desktop app" notice — the file is
-never imported. The browser storage stack cannot mount the prebuilt
-`index.sqlite`, and re-embedding through the browser's model would produce a
-different vector space (768-dim browser vs 384-dim pack indexes).
+Knowledge packs and training courses work in the browser app with the same
+Packs panel and Training page as desktop (ADR-0012, superseding the ADR-0009
+capability gate). Both apps go through one client interface,
+[web_ui/src/lib/packs/pack-client.ts](web_ui/src/lib/packs/pack-client.ts):
+desktop calls the loopback pack API; the browser uses
+[web_ui/src/lib/packs/browser-pack-manager.ts](web_ui/src/lib/packs/browser-pack-manager.ts),
+which runs the archive guards, manifest gates and signature policy as twins of
+the desktop code ([web_ui/src/lib/packs/pack-archive-rules.ts](web_ui/src/lib/packs/pack-archive-rules.ts)
+is byte-identical to
+[desktop/main/backend/packs/pack-archive-rules.ts](desktop/main/backend/packs/pack-archive-rules.ts);
+shared vectors in [contracts/pack-signature-vectors.json](contracts/pack-signature-vectors.json)
+and [contracts/training-path-vectors.json](contracts/training-path-vectors.json)),
+stores pack files in the app origin's OPFS with an IndexedDB version registry,
+and ingests slide documents into the browser keyword/vector indexes with
+`packId` on every chunk. The prebuilt `index.sqlite` is not mounted in the
+browser (no SQLite; different embedding space).
+
+Course content is untrusted JavaScript, so it never runs on the app origin. It
+runs on a dedicated player origin (by default the loopback alias:
+`localhost` <-> `127.0.0.1`, one listener bound to 127.0.0.1), resolved by
+[web_ui/src/lib/packs/player-origin.ts](web_ui/src/lib/packs/player-origin.ts).
+A player-origin service worker
+([web_ui/public/training/sw.js](web_ui/public/training/sw.js)) serves
+`/training/<packId>/<rest>` from bytes the app page relays over an
+app-created `MessageChannel`
+([web_ui/src/lib/packs/training-relay.ts](web_ui/src/lib/packs/training-relay.ts)),
+scoped to the open pack's active version with desktop path containment. The
+pack update channel (ADR-0010) is available in the browser app through
+[web_ui/src/lib/packs/pack-update-controller.ts](web_ui/src/lib/packs/pack-update-controller.ts)
+(opt-in, the feed host must allow CORS, refused in air-gapped builds).
 
 ## Memory & concurrency budget (B8)
 
@@ -477,9 +501,10 @@ contract; measured performance numbers are recorded machine-tagged in
 | [0006](docs/adr/0006-profile-model.md) | Profile model, ingest configuration, store backup/recovery. |
 | [0007](docs/adr/0007-relevance-floor-calibration.md) | Calibrated reranker relevance floor 0.569387 for desktop hybrid retrieval. |
 | [0008](docs/adr/0008-memory-budget.md) | Runtime memory budget, concurrency governance, idle-session unloading. |
-| [0009](docs/adr/0009-browser-packs.md) | Browser surface gets an explicit pack capability gate, not a browser adapter. |
+| [0009](docs/adr/0009-browser-packs.md) | Superseded by ADR-0012. Browser surface got an explicit pack capability gate, not a browser adapter. |
 | [0010](docs/adr/0010-update-channels.md) | Opt-in Ed25519-signed update channels for packs (installable) and the app binary (notify-only). |
 | [0011](docs/adr/0011-external-model-endpoints.md) | Opt-in, grounded external model endpoints (OpenAI- and Anthropic-compatible); reverses the 2.0.0 no-network posture for this feature only; desktop backend owns the outbound call with pinned-address `node:https`. |
+| [0012](docs/adr/0012-browser-training-packs.md) | Browser app installs Knowledge Packs (OPFS, desktop-twin guards and signature checks) and plays courses on an isolated player origin fed by an app-side byte relay; supersedes ADR-0009. |
 
 ## Known limits & pending work
 

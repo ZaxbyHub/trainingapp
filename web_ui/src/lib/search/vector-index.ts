@@ -62,7 +62,7 @@ export class VectorIndex {
   private config: VectorIndexConfig;
   private ready: boolean = false;
   private initPromise: Promise<void> | null = null;
-  private idMapping: Map<number, { docId: string; chunkIndex: number; text?: string; source?: string; page?: number }> = new Map();
+  private idMapping: Map<number, { docId: string; chunkIndex: number; text?: string; source?: string; page?: number; packId?: string }> = new Map();
   private disposed: boolean = false;
 
   /**
@@ -165,7 +165,7 @@ export class VectorIndex {
     vector: EmbeddingVector,
     docId: string,
     chunkIndex: number,
-    meta?: { text?: string; source?: string; page?: number }
+    meta?: { text?: string; source?: string; page?: number; packId?: string }
   ): Promise<void> {
     if (!this.isReady()) {
       throw new Error('VectorIndex not initialized. Call initialize() first.');
@@ -194,6 +194,7 @@ export class VectorIndex {
         text: meta?.text,
         source: meta?.source,
         page: meta?.page,
+        ...(meta?.packId !== undefined ? { packId: meta.packId } : {}),
       });
     } catch (error) {
       throw new Error(
@@ -260,6 +261,7 @@ export class VectorIndex {
           text: entry.text,      // F1: real chunk text so search() returns it
           source: entry.source,  // F7: filename for citations
           page: entry.page,      // F7: page number for citations
+          ...(entry.packId !== undefined ? { packId: entry.packId } : {}),
         });
       }
       console.info(`[VectorIndex] Batch indexed ${result.inserted} vectors`);
@@ -315,6 +317,7 @@ export class VectorIndex {
           text: metadata.text,     // F1: real chunk text
           source: metadata.source, // F7: filename
           page: metadata.page,     // F7: page number
+          ...(metadata.packId !== undefined ? { packId: metadata.packId } : {}),
         });
       }
       return mapped;
@@ -416,6 +419,7 @@ export class VectorIndex {
           text: meta.text,
           source: meta.source,
           page: meta.page,
+          ...(meta.packId !== undefined ? { packId: meta.packId } : {}),
         }));
 
         store.put({ key: 'idMapping', data: mappingArray });
@@ -476,6 +480,7 @@ export class VectorIndex {
                 text: item.text,
                 source: item.source,
                 page: item.page,
+                ...(item.packId !== undefined ? { packId: item.packId } : {}),
               });
             }
           } else {

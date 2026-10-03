@@ -5,6 +5,10 @@ programmatically. This doc extends the A8 spike evidence (issue #58): the
 recipes below were proven against the live OpMed publish (Storyline 360
 3.114.36620.0, published 2026-07-10) before any production code was written.
 
+The desktop app serves courses from `app://training` (below). The browser app
+plays the same courses on a dedicated player origin (see "Browser app: player
+origin and relay"; decision record ADR-0012).
+
 ## Serving route
 
 `app://training/<packId>/<rest>` maps to
@@ -153,6 +157,15 @@ never reaches into the frame directly. Each pack ships
   reqId, ... }`) that the renderer-side
   `web_ui/src/components/training-player-bridge.ts` drives.
 
+Origin discipline (browser-training-parity AC5): the renderer posts each
+request to the frame's exact origin (never `'*'`) with a one-shot
+`MessagePort` and accepts the reply only on that port. The pack-side bridge
+accepts requests only from `window.parent` at the exact parent origin
+(`location.ancestorOrigins[0]`, else the referrer's origin) and replies on the
+transferred port. Real packs built by packtool carry no bridge (there is no
+packtool injection); they play in both apps but report no slide state and
+accept no deep-link jumps.
+
 The committed e2e fixture `desktop/e2e/fixtures/storyline-nav/` is a trimmed
 runnable copy of the real publish (12 slides across 3 sections) with this
 bridge; its layout contract is `FIXTURE_CONTRACT.md` in that directory.
@@ -174,12 +187,13 @@ navigates to the training page through a lifted `trainingTarget` in
 `App.tsx`. `TrainingPage` accepts `initialPackId` + `pendingSlideId`; the
 pending slide is passed to `TrainingPlayer` as `initialSlideId` only once a
 pack resolves, so the mount-time auto-jump fires exactly once (readiness-
-deferred per the pack bridge). The Node backend's `learn[]` rows carry
-`pack_id`, so Electron-mode deep links open the right pack directly; on
-surfaces without a pack id the page shows its no-pack prompt (open a pack
-via `?pack=<packId>`) and the pending slide jumps once a pack is opened —
-there is deliberately no in-app pack picker yet (pack support on non-Node
-surfaces is #76).
+deferred per the pack bridge). `learn[]` rows carry `pack_id` in both apps
+(the Node backend's rows on desktop; in the browser app the Learn kernel
+stamps it from the pack's ingested chunks, `web_ui/src/lib/rag/learn-kernel.ts`),
+so deep links open the right pack directly. On a row without a pack id the
+page shows its no-pack prompt and the pending slide jumps once a course is
+chosen in the Training page's course picker (`training-pack-select` in
+`web_ui/src/pages/TrainingPage.tsx`) or opened via `?pack=<packId>`.
 
 ### Ask-about-this-slide: pinned slide context (D7, #83)
 
@@ -210,6 +224,86 @@ sends nothing pinned: the frozen `QuestionRequest` contract has no such field,
 and server-side prefill parity is the follow-up #83 names explicitly. The
 player bridge payload stays byte-identical to #81's frozen protocol — the
 section/on-screen text never rides through it.
+
+## Browser app: player origin and relay (ADR-0012)
+
+The browser app has no `app://` scheme, and course JavaScript must never run
+on the app origin (it could read the app's IndexedDB, localStorage and OPFS).
+Courses run on a dedicated player origin instead:
+
+- **Player origin.** By default the loopback alias of the app's own server:
+  app at `http://localhost:<port>`, player at `http://127.0.0.1:<port>` (or
+  the reverse). Every local server binds `127.0.0.1` so both names reach one
+  listener. A runtime `player-origin.json` next to `index.html` or the
+  build-time `VITE_TRAININGAPP_PLAYER_ORIGIN` can name another origin (a bare
+  origin, https unless loopback, never the app origin); see CONFIGURATION.md.
+  Resolution: `web_ui/src/lib/packs/player-origin.ts`.
+- **Course URL.** `<player origin>/training/<packId>/<rest>`, version-less
+  like desktop; the app serves the pack's active version.
+- **Boot frame and worker.** The app embeds a hidden
+  `<player origin>/training-boot.html`, which registers the course service
+  worker `/training/sw.js` (scope `/training/`). The worker answers only
+  `/training/<packId>/<rest>`; every other request from a course page is
+  refused with 404. It stores nothing: pack bytes live only in the app
+  origin's OPFS.
+- **Relay.** On every course open the app page recreates the boot frame and
+  transfers a fresh `MessageChannel` port to it. The worker sends each request
+  over that port; the app-side relay (`web_ui/src/lib/packs/training-relay.ts`)
+  answers only for the course currently open, from that pack's active version,
+  with desktop path containment (shared vectors in
+  `contracts/training-path-vectors.json`), the desktop MIME table, Range
+  206/416, and bounded reads.
+- **Headers.** Course responses carry CORP `cross-origin`, `nosniff`,
+  `no-cache` and the training CSP without the private `app:` sources plus
+  `frame-ancestors 'self' <app origin>`, with `worker-src` pinned to `blob:`
+  and the open pack's relay path (on the player origin `'self'` would admit
+  app assets served without the course CSP); course documents also carry COEP
+  `require-corp` (without it the app's COEP blocks the frame). The server
+  that answers the player origin serves only static files (course JS can
+  send same-origin GET requests to it by navigating its own frame or the
+  app's boot frame), serves the boot files with CORP `cross-origin` and
+  answers other `/training/*` paths with 404: `vite preview`, `web_ui/scripts/serve-offline.mjs`,
+  `web_ui/scripts/start.ps1`, and `vite dev` (dev only: it also serves
+  `/@fs/` and proxies `/api`). `api_server.py` is not a player host: it
+  answers the player paths 404 and the Training page reports playback as
+  unavailable there.
+- **Framing.** Every player-origin response except the boot page carries
+  `frame-ancestors 'none'` and `X-Frame-Options: DENY` (the app shell, its
+  assets, the boot script, the worker script, 404s and errors). The boot page
+  carries a restrictive header CSP (no `fetch`, no forms, scripts and workers
+  pinned to its own two files, `frame-ancestors` limited to the app origin),
+  and the app sandboxes the boot frame (`allow-scripts allow-same-origin`). A
+  course therefore cannot frame a same-origin page that runs under a weaker
+  policy than its own (final-critic FC6). A framed app never starts the course
+  player, and the boot page runs only directly under the top-level page. A
+  frame's navigations are governed by its embedder's `frame-src`: for a frame
+  the course creates, that is the course CSP's `frame-src 'self'`; for the
+  course frame and the boot frame, it is the app page's `frame-src`.
+  The browser app installs `frame-src <player origin>` (a runtime meta CSP)
+  once the player origin resolves, and loads neither player frame before
+  that. A course therefore cannot navigate its own frame, or the boot frame,
+  to another origin (ADR-0012 threat model item 6). Chromium's CSP does not
+  cover WebRTC or DNS prefetch (residual on both apps).
+- **Sandbox.** The course iframe is `sandbox="allow-scripts allow-same-origin
+  allow-forms"` in both apps: no popups, no top navigation. `allow-same-origin`
+  keeps the course on its own origin, never the app's.
+- **First load.** If a course page loaded before the worker controlled it, the
+  Training page reloads the frame once.
+- **Worker updates.** A new version of the course worker waits (no notice is
+  shown) until no course is open, so an update never replaces the worker under
+  a playing course; it takes over once the open course is closed.
+- **Support.** Chrome and Edge; Safari is not supported; Firefox is untested.
+
+Threat model: nothing on the player origin is trusted. A malicious course can
+take the relay port, but the app's relay serves only the open pack's files. It
+can also hand the worker a relay port of its own; the worker then still forces
+the course CSP and transport headers on every response and takes only status,
+body and content type from the relay, so the course gains nothing beyond
+serving its own bytes under the course CSP (ADR-0012 item 1). All
+packs share one player origin (as all packs share `app://training` on
+desktop), so a live malicious pack can interfere with the player origin within
+a session, for example spoof what another pack's frame displays; it cannot
+reach app data. Details: ADR-0012 and `docs/security/packs.md`.
 
 ## Native menu dependency: confirmed disabled
 

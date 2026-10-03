@@ -203,20 +203,60 @@
   window.__trainingappState = state;
 
   /*
+   * The ONLY window allowed to drive this bridge: the embedding app page, at
+   * its exact origin (browser-training-parity AC5). location.ancestorOrigins
+   * names it in Chromium; Firefox and jsdom lack ancestorOrigins, so the
+   * referrer's origin is the fallback. If neither yields an origin the bridge
+   * stays silent — it never answers an unknown sender and never posts with
+   * the '*' wildcard.
+   */
+  function expectedParentOrigin() {
+    try {
+      if (window.location.ancestorOrigins && window.location.ancestorOrigins.length > 0) {
+        var first = window.location.ancestorOrigins[0];
+        if (first && first !== 'null') return first;
+      }
+    } catch (err) {
+      /* fall through to the referrer */
+    }
+    try {
+      if (document.referrer) {
+        var origin = new URL(document.referrer).origin;
+        if (origin && origin !== 'null') return origin;
+      }
+    } catch (err) {
+      /* no usable referrer */
+    }
+    return null;
+  }
+  var PARENT_ORIGIN = expectedParentOrigin();
+
+  /*
    * postMessage RPC (protocol: FIXTURE_CONTRACT.md §5). The renderer-side
    * bridge (web_ui/src/components/training-player-bridge.ts) sends
-   * { __trainingapp: true, kind: 'jump'|'state', reqId, slideId? } and this
-   * listener answers on event.source. Unknown/malformed messages are ignored.
+   * { __trainingapp: true, kind: 'jump'|'state', reqId, slideId? } with a
+   * one-shot MessagePort; this listener answers on that port (or, for a
+   * sender without a port, on event.source at the exact parent origin).
+   * Messages from any other origin or window, and malformed messages, are
+   * ignored.
    */
   window.addEventListener('message', function (event) {
     var data = event && event.data;
     if (!data || data.__trainingapp !== true) return;
+    if (PARENT_ORIGIN === null || event.origin !== PARENT_ORIGIN) return;
+    if (event.source !== window.parent) return;
+    var replyPort = event.ports && event.ports[0];
     function reply(payload) {
       payload.__trainingapp = true;
       try {
-        event.source.postMessage(payload, '*');
+        if (replyPort) {
+          replyPort.postMessage(payload);
+          replyPort.close();
+        } else {
+          event.source.postMessage(payload, PARENT_ORIGIN);
+        }
       } catch (err) {
-        /* source window gone — nothing to answer */
+        /* sender gone — nothing to answer */
       }
     }
     if (data.kind === 'jump') {

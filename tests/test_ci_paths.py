@@ -175,6 +175,16 @@ def test_python_empty_diff_fails_open():
         ("webui", ["contracts/api.openapi.yaml"], True),
         ("webui", [".github/workflows/web-ui.yml"], True),
         ("webui", ["api_server.py", "tests/test_a.py"], False),
+        # FC9: the desktop twins desktop-twin-drift.test.ts pins (run by the
+        # required web-ui job) must trigger it on a desktop-only diff
+        ("webui", ["desktop/main/security/csp.ts"], True),
+        ("webui", ["desktop/main/protocol.ts"], True),
+        ("webui", ["desktop/main/backend/packs/pack-archive-rules.ts"], True),
+        ("webui", ["desktop/main/index.ts", "desktop/main/backend/server.ts"], False),
+        # PR 144 F9: the corpus-vs-generator test runs in the required web-ui
+        # job, so a generator or corpus edit must trigger it
+        ("webui", ["contracts/tests/gen-pack-signature-vectors.mjs"], True),
+        ("webui", ["contracts/pack-signature-vectors.json"], True),
         ("conformance", ["contracts/api.openapi.yaml", "api_server.py"], True),
         ("conformance", ["contracts/tests/run_conformance.py"], True),
         ("conformance", ["web_ui/src/lib/x.ts"], False),
@@ -323,6 +333,22 @@ def test_changes_job_exists_and_invokes_classifier():
         assert (
             'verdict="$(printf' in run_steps and "rc=$?" in run_steps
         ), f"{name}: changes job does not capture the classifier's exit status"
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_WIRING))
+def test_changes_job_diffs_report_both_sides_of_a_rename(name):
+    """PR #144 review F8: a renamed path-classified file must surface its OLD
+    path too, or the classifier (exact-path lists) sees only the new name and
+    can skip a required job. Every `git diff --name-only` in the changes job
+    must therefore carry --no-renames."""
+    wf = _load_workflow(name)
+    run_steps = chr(10).join(
+        str(step.get("run", "")) for step in wf["jobs"]["changes"].get("steps", [])
+    )
+    diffs = re.findall(r"git diff --name-only.*", run_steps)
+    assert len(diffs) == 2, f"{name}: expected the PR and push diffs, got {diffs}"
+    for line in diffs:
+        assert "--no-renames" in line, f"{name}: rename-collapsing diff: {line}"
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED_WIRING))

@@ -5,6 +5,12 @@
  * #133 feedback round 3): this tab lists and plays `training` source-class
  * packs only.
  *
+ * Both apps (browser-training-parity, ADR-0012 superseding ADR-0009's
+ * desktop-only notice): the installed packs come from the PackClient seam —
+ * the desktop loopback pack API inside Electron, the origin-private browser
+ * pack store otherwise — and the player loads from app://training (desktop)
+ * or the dedicated player origin (browser).
+ *
  * The pack to open comes from the `pack` query parameter of the current
  * location (e.g. app://index.html?pack=opmed-cdp-mlc), with the Learn panel
  * (D6, issue #82) able to deep-link here: an `initialPackId` prop (lifted
@@ -17,7 +23,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { TrainingPlayer } from '../components/TrainingPlayer';
 import type { TrainingPlayerSlideState } from '../components/training-player-bridge';
-import { useDesktopSession } from '../lib/desktop-session';
+import { usePackClient } from '../lib/packs/pack-client';
 import { LAST_PACK_KEY } from '../lib/storage/persisted-keys';
 import type { PackInfo } from '../lib/api/types';
 
@@ -43,7 +49,7 @@ const packDirKey = (pack: { packId: string; version: string }): string =>
 const isTrainingPack = (pack: PackInfo): boolean => pack.sourceClass === 'training';
 
 export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: TrainingPageProps) {
-  const { session: desktopSession } = useDesktopSession();
+  const packClient = usePackClient();
   const [packs, setPacks] = useState<PackInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // ?pack= is read from the location ONCE plus on explicit picker changes —
@@ -58,14 +64,13 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   }, [initialPackId, packOverride]);
 
   useEffect(() => {
-    if (desktopSession === null) return;
-    // Load-once: context providers may pass a fresh session object per
-    // render, so an identity dependency would loop. The pack set only
-    // changes through installs/removals on the Documents page — refreshed by
-    // re-entering the tab.
+    if (packClient === null) return;
+    // Load-once: the pack set only changes through installs/removals on the
+    // Documents page — refreshed by re-entering the tab (and, in the browser
+    // app, by the store's change notifications below).
     if (packs !== null || loadError !== null) return;
     let cancelled = false;
-    void desktopSession.apiClient
+    void packClient
       .listPacks()
       .then((listing: PackInfo[]) => {
         if (!cancelled) setPacks(listing.filter(isTrainingPack));
@@ -76,7 +81,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     return () => {
       cancelled = true;
     };
-  }, [desktopSession, packs, loadError]);
+  }, [packClient, packs, loadError]);
 
   const activePacks = packs ?? [];
   // PRR-202: a MOUNTED Training tab must learn about packs installed after
@@ -84,9 +89,9 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
   // packs-changed push), so refetch when the window regains focus. A refetch
   // failure keeps the current snapshot (never degrades to the empty state).
   useEffect(() => {
-    if (desktopSession === null) return;
+    if (packClient === null) return;
     const refetch = (): void => {
-      void desktopSession.apiClient
+      void packClient
         .listPacks()
         .then((listing: PackInfo[]) => {
           setPacks(listing.filter(isTrainingPack));
@@ -97,8 +102,12 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
         });
     };
     window.addEventListener('focus', refetch);
-    return () => window.removeEventListener('focus', refetch);
-  }, [desktopSession]);
+    const unsubscribe = packClient.subscribe?.(refetch);
+    return () => {
+      window.removeEventListener('focus', refetch);
+      unsubscribe?.();
+    };
+  }, [packClient]);
   // One row per COURSE (packId): installing a newer bundled version
   // deactivates the old one but keeps it on disk (#133 round 6 upgrade), and
   // listing both reads as a duplicate course. Prefer the active row, then the
@@ -168,7 +177,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     initialPackId !== undefined && initialPackId !== ''
       ? resolveDeepLink(initialPackId)
       : urlPack !== '' &&
-          (desktopSession === null || packs !== null) &&
+          (packClient === null || packs !== null || loadError !== null) &&
           !urlPackIsKnownCourse
         ? resolveDeepLink(urlPack)
         : '';
@@ -240,14 +249,6 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
     );
   }
 
-  if (desktopSession === null) {
-    return (
-      <div style={{ padding: 'var(--spacing-md)', color: 'var(--color-text-muted)' }}>
-        Training courses are available in the desktop app.
-      </div>
-    );
-  }
-
   return (
     <div
       style={{
@@ -263,7 +264,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
         <label
           htmlFor="training-pack-select"
-          style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}
+          style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-primary)' }}
         >
           Course:
         </label>
@@ -285,7 +286,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
           })}
         </select>
         {courses.length > 0 && (
-          <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}>
+          <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-primary)' }}>
             To update the course, install a newer training pack zip on the Documents page, then select it here.
           </span>
         )}
@@ -304,7 +305,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange }: T
             flex: 1,
             alignItems: 'center',
             justifyContent: 'center',
-            color: 'var(--color-text-muted)',
+            color: 'var(--color-text-primary)',
             fontFamily: 'var(--font-family)',
             fontSize: 'var(--font-size-body)',
             flexDirection: 'column',

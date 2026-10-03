@@ -5,7 +5,9 @@ pack bytes into an installed pack: the Python `PackManager`
 (`pack_manager.py`, whose zip-upload extractor lives behind the
 `POST /packs/install` route in `api_server.py` and shares `pack_extract.py`),
 the Node `PackManager` (`desktop/main/backend/store/pack-manager.ts` with
-its zip extractor `pack-extract.ts`), and `packtool verify` (the offline
+its zip extractor `pack-extract.ts`), the browser app's pack manager
+(`web_ui/src/lib/packs/browser-pack-manager.ts` with its extractor
+`pack-extract-browser.ts`, ADR-0012), and `packtool verify` (the offline
 gate over the same dispositions). This document cross-references
 `docs/security/desktop.md` (the desktop transport threat model, issue #60)
 and is cross-referenced from it. Pack format semantics are frozen by C1
@@ -23,8 +25,14 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
    `packtool/build/zip-safety.ts` and the manifest-level rules via
    `packtool/build/pack-json.ts`. (packtool and desktop are separate npm
    packages with no workspace root; cross-package parity is pinned by the
-   frozen C8/C11 checks.) A new check goes into a shared core, never into a
-   caller only.
+   frozen C8/C11 checks.) The browser app shares the desktop rules through
+   `pack-archive-rules.ts`, kept byte-identical in
+   `desktop/main/backend/packs/` and `web_ui/src/lib/packs/` (drift test
+   `desktop/src/__tests__/pack-archive-rules-drift.test.ts`), and runs the
+   desktop manifest gates and Ed25519 check (`pack-manifest.ts`,
+   `pack-verify.ts`) against the shared vectors in
+   `contracts/pack-signature-vectors.json`. A new check goes into a shared
+   core, never into a caller only.
 2. **Containment is proven on the RESOLVED path, never on token shape
    alone.** An entry name is first rejected by `safeEntryName` /
    `safe_entry_name` (empty, backslash, leading `/`, drive-relative or
@@ -154,6 +162,183 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   `node:crypto` DER SPKI keys; `packtool verify` accepts the same
   `--require-signature` / `--trusted-keys-file` semantics.
 
+### Key rotation and revocation (`trustedKeys`)
+- **Additive key sets.** `trustedKeys` is a set, not a single anchor. A
+  pack's signature names a `key_id`; the verifier looks that id up in the set
+  and verifies against the matching key (an id that is absent fails closed, and
+  so does a non-ed25519 key). Any number of keys can be trusted at once, so
+  adding a key never invalidates packs signed by the keys already present.
+  `key_id`s must be unique within a keyset: with duplicates, browser and
+  desktop use the first match, while Python tries every matching key.
+- **Rotate.** (1) Generate the new ed25519 keypair offline and keep the
+  private half out of every repository. (2) Add `{key_id, public_key}` to the
+  set (desktop: `TRAININGAPP_PACKS_TRUSTED_KEYS`; Python:
+  `RAG_PACKS_SECURITY_TRUSTED_KEYS`; browser: ship a build with a new
+  `VITE_TRAININGAPP_PACKS_TRUSTED_KEYS`, since that value is baked in at
+  build time). (3) Sign new packs with the new `key_id`. (4) Once packs
+  signed by the old key are no longer being installed, remove the old key
+  from the set.
+- **Revoke / retire.** There is no revocation list and no key expiry:
+  retiring a key means removing it from the set (and, for the browser,
+  shipping a new build). Retirement only has an effect when
+  `requireSignature` is enabled (it defaults to false on every runtime); with
+  it off the trusted set is never consulted and unsigned or tampered packs
+  install. With it on, a pack signed only by the retired key is refused at
+  install with a not-in-the-trusted-keyset error (browser and desktop:
+  `signature key_id '<id>' is not in the trusted keyset`; Python:
+  `... is not in packs.security.trustedKeys`). The gate runs at install
+  time only: packs already installed are not re-verified, and a rollback or
+  re-activation of a retained version does not re-check the signature (a
+  registry flip on the browser, desktop and Python managers). To purge content
+  signed by a compromised key, also remove its installed packs (and their
+  retained versions) explicitly.
+- **Separate anchors.** The update feed has its own trust anchor
+  (`VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS` in the browser, the baked key in
+  `desktop/main/update-checker.ts` on desktop); its rotation is described in
+  ADR-0010 and `docs/updates.md`. Rotating the pack-signing set does not
+  change it.
+
+## Browser app: install path and course isolation (ADR-0012)
+
+- **Install.** The browser extractor reads the central directory first
+  (through `Blob.slice`, bounded to 64 MiB), applies the shared limits,
+  entry-name rules, symlink/encrypted/compression-method/ZIP64 refusals and
+  the desktop messages, then inflates entries with
+  `DecompressionStream('deflate-raw')` straight into OPFS, counting written
+  bytes against each entry's declared size and the total cap. Entries read
+  into memory (`pack.json`, docs being hashed) are capped at 256 MiB. Manifest
+  gates and the signature policy run before any file is written.
+- **Trust policy** is baked at build time (`VITE_TRAININGAPP_PACKS_REQUIRE_SIGNATURE`,
+  `VITE_TRAININGAPP_PACKS_TRUSTED_KEYS`, `VITE_TRAININGAPP_PACKS_EMBEDDING_MODEL_ID`),
+  as desktop bakes its environment; nothing reads a runtime-editable trust
+  anchor.
+- **Signature scope.** The signed manifest hashes `docs[]` only. Player
+  JavaScript and media are not covered on either runtime; origin isolation is
+  the control for executable course content.
+- **Course isolation.** Course JS runs on a dedicated player origin, never the
+  app origin, so it cannot read app IndexedDB, localStorage, OPFS, Cache
+  Storage or DOM (documents, settings, the external-model API key). Nothing on
+  the player origin is trusted: the app-side relay serves only the open pack's
+  active version, with the desktop `resolveTrainingRequest` containment rules
+  (shared vectors `contracts/training-path-vectors.json`), bounded reads and a
+  request-rate window. The player-origin worker and boot page store nothing.
+  The worker refuses other requests only from worker-controlled course pages
+  (documents under `/training/`). Course JS can still script the app's boot
+  frame (a same-origin sibling). The boot frame's header CSP blocks `fetch`,
+  forms, beacons, images, frames and every script or worker but its own two
+  files, and its sandbox blocks popups and top navigation. Course JS can still
+  send GET requests to any path of the server that answers the player origin by
+  navigating its own frame or the boot frame (the app-shell frame policy admits
+  the player origin itself). That server must therefore serve
+  only static files. `api_server.py` (unauthenticated API) is not a player
+  host: it answers the boot files, the worker and every `/training/*` path
+  with 404. `vite dev` also serves `/@fs/` and proxies `/api`/`/auth` on the
+  player origin (dev-only residual: GET requests by navigation).
+- **Framing (final-critic FC6).** Framing is denied by default on every player
+  host: every response except `/training-boot.html` carries
+  `frame-ancestors 'none'` and `X-Frame-Options: DENY`. That covers the app
+  shell and assets, `/training-boot.js`, `/training/sw.js`, the
+  `/training/*` 404, error responses, and the worker's own refusals, which
+  also carry `default-src 'none'`. A course therefore cannot frame a
+  same-origin player document that would run under a weaker policy than its
+  own CSP. The boot page carries a restrictive header CSP: `default-src
+  'none'`, `connect-src 'none'`, `form-action 'none'`, and `script-src` /
+  `worker-src` pinned to the exact URLs of `/training-boot.js` and
+  `/training/sw.js` (a worker started from the boot window would otherwise run
+  any same-origin script under that script's own, unrestricted policy). Its
+  `frame-ancestors` names only the app origin (the loopback alias of the
+  request Host; any other Host gets `'none'` for all three). The app embeds
+  the boot page in a frame sandboxed with `allow-scripts allow-same-origin`. Pinned by `player-origin-hosting.test.ts` (vite middleware and
+  `serve-offline.mjs` behaviorally, `start.ps1` by source scan) and by the
+  FC6 row of `web_ui/e2e/isolation-browser.spec.ts`, which counts zero
+  requests to a cross-origin sink. A framed app never runs training (no player
+  origin, no boot frame, no relay port), and the boot frame runs only directly
+  under the top-level page.
+- **Navigation egress (closed).** CSP on a course document does not govern
+  navigation of the course's own frame or the boot frame, where the embedding
+  page's `frame-src` decides; a frame the course creates is governed by the
+  course CSP's `frame-src`. Desktop's renderer CSP
+  carries `frame-src 'self' app:`. Once the player origin resolves, the
+  browser app installs a runtime `frame-src <player origin>` meta CSP, once,
+  never under Electron or in a framed app. Neither player frame loads a
+  player-origin URL before it is in place. So a course can no longer navigate
+  its own frame, or the boot frame through its DOM, to another origin with
+  data in the URL; Chromium refuses it before a request is sent. Pinned by
+  `player-frame-policy.test.tsx` and the navigation-egress row of
+  `web_ui/e2e/isolation-browser.spec.ts` (ADR-0012, threat model item 6).
+  Navigation within the player origin stays allowed, hence the static-only
+  host rule.
+- **Course workers (review round 4 F1).** The course CSP's `worker-src` is
+  `blob:` plus the open pack's relay path
+  (`<player origin>/training/<pack>/`), not `'self'`. On the player origin
+  `'self'` admits every app asset, which the host serves without the course
+  CSP, and a worker takes its policy from its own script response; before the
+  pin, a course could run the pdf.js worker unconfined and register an app
+  asset as a service worker. Pack scripts carry the course CSP and `blob:`
+  workers inherit it, so both stay confined. Pinned by
+  `training-relay.test.ts`, the two drift tests and the worker-escape row of
+  `web_ui/e2e/isolation-browser.spec.ts`. Desktop keeps `'self' blob:`
+  because every successful `app://training` response carries the training
+  CSP; its 403/404 responses carry the renderer CSP with
+  `frame-ancestors 'none'`, and a 4xx can never be loaded as a worker
+  script.
+- **Residual egress (both platforms).** Chromium's CSP does not govern WebRTC
+  (STUN/TURN) or DNS prefetch. Course JS can still signal out through them.
+  Navigation egress is closed; egress is not sealed.
+- **Course frame sandbox.** `allow-scripts allow-same-origin allow-forms`: no popups, no top
+  navigation, no storage-access prompts. `allow-same-origin` keeps the course on its own origin
+  (player origin / `app://training`), never the app's.
+- **Relay memory bound.** At most 32 reads / 64 MiB in flight across every relay port; excess
+  reads are answered `busy` and retried by the worker.
+- **Shared player origin (accepted, desktop parity).** All packs share one
+  player origin, as all packs share `app://training` on desktop. A live
+  malicious pack can interfere with the player origin within a session (for
+  example spoof what another pack's frame displays) but cannot reach app data.
+- **Relay-port injection (final-critic round 3, NC1).** Course JS can hand
+  the player-origin worker a relay port of its own, directly or through the
+  boot frame's controller, and answer the worker's requests itself. The
+  worker accepts ports only from the boot page client (defense in depth), and
+  it OWNS the security headers of every relay-served response: it computes the
+  course CSP from the request path, forces COEP/COOP/CORP/nosniff, and takes
+  from the relay only an allowlisted status, the body, and
+  `content-type`/`content-range`/`accept-ranges`. A course that becomes its
+  own relay can therefore serve only bytes that run under the course CSP on
+  pack paths. Residual: it can deny playback (and spoof course content under
+  the other pack's CSP) in other app tabs until they re-handshake. Pinned by
+  the worker unit tests in `player-origin-hosting.test.ts`; a real-browser
+  regression row is not yet written and is tracked in follow-up #145.
+- **Storage eviction.** Persistent storage is requested fire-and-forget and
+  may be denied. If the browser evicts the origin's storage, installed pack
+  bytes and the registry go together (eviction is origin-wide), so the evicted
+  packs disappear from the list; nothing is restored automatically. The only
+  recovery is to reinstall the pack from its `.zip` (a feed update does not
+  help: it skips packs that are not installed). Packs shows
+  "(not persistent: the browser may evict installed packs under storage
+  pressure)" when persistence was not granted.
+- **Install concurrency.** Installs of one pack are serialized with Web Locks.
+  Without Web Locks (no supported engine lacks them) the lock falls back to a
+  per-tab chain, so concurrent installs of different versions from two tabs
+  could leave two active rows; roll back to the intended version to recover.
+- **Search indexing.** The post-install keyword-index ingest is best-effort and
+  does not resume: a failure is logged, the pack stays installed and active,
+  and its slides are not searchable until the pack is removed and reinstalled
+  (reinstalling the same active version is refused) or rolled back and
+  re-activated. Only the embedding half resumes (on
+  `embedding-service-ready`).
+- **Messaging.** The slide bridge uses exact target origins and one-shot
+  `MessagePort` replies; no first-party `postMessage` uses `'*'` (source
+  guardrail `web_ui/src/lib/packs/__tests__/browser-isolation-guards.test.ts`).
+- **Updates.** The browser update channel is opt-in (zero network before
+  opt-in), https-only on the request and final URL, credential-free, size
+  capped, verifies the Ed25519 feed signature and the artifact sha256, and
+  installs through the guarded path. It cannot validate intermediate redirect
+  hops (`fetch` hides them; desktop checks each hop): an accepted residual, since
+  hops carry no credentials or referrer and integrity rests on the signed sha256
+  plus Ed25519. It needs a CORS-enabled feed host. Air-gapped builds refuse it.
+- **Parity difference (accepted).** Slide documents without a `text` field are
+  accepted in the browser (slide fields are re-indexed there) but refused on
+  desktop unless the pack ships a prebuilt index.
+
 ## Configuration surface
 
 Canonical keys are `packs.security.*`; each backend spells them as
@@ -189,7 +374,17 @@ Node (`BackendHostConfig.packsSecurity` fields, env override):
 
 `TRAININGAPP_PACKS_TRUSTED_KEYS` uses the same JSON shape;
 `TRAININGAPP_PACKS_EMBEDDING_MODEL_ID` defaults to
-`bge-small-en-v1.5` (ADR-0006). The route-level upload cap
+`bge-small-en-v1.5` (ADR-0006).
+
+Browser app (build-time Vite variables, inlined into the bundle; the byte,
+entry and ratio limits are the shared defaults):
+
+| Canonical key | Variable |
+|---|---|
+| requireSignature | `VITE_TRAININGAPP_PACKS_REQUIRE_SIGNATURE` |
+| trustedKeys | `VITE_TRAININGAPP_PACKS_TRUSTED_KEYS` |
+| embeddingModelId | `VITE_TRAININGAPP_PACKS_EMBEDDING_MODEL_ID` |
+| update-feed trust anchor | `VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS` (default: the desktop feed key) | The route-level upload cap
 (`PACK_ZIP_MAX_UPLOAD_BYTES`, 50 MiB compressed) is unchanged and sits in
 front of these decompression-side limits.
 

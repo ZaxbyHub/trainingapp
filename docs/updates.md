@@ -25,6 +25,19 @@ format), and the Ed25519 trust anchor baked into the build.
    sha256. The app never installs its own binary: download, verify the digest if you want to be
    thorough, run the installer.
 
+### Browser app (ADR-0012)
+
+The browser app runs the same pack-update flow in the page
+(`web_ui/src/lib/packs/pack-update-browser.ts`, `pack-update-controller.ts`): opt-in in
+Settings → Updates (stored in this browser profile, removed by Clear Cache), the same feed
+schema and Ed25519 trust anchor (build-time `VITE_TRAININGAPP_UPDATE_TRUSTED_KEYS`, default the
+desktop key), the same digest + signature re-verification, and install through the browser
+pack manager's guarded path. Differences: the feed and artifact hosts must allow CORS from the
+app's origin (the default GitHub Releases URL redirects to a host that does not, so publish a
+CORS-enabled mirror for browser users), only the final URL is checked for https (`fetch` hides
+intermediate hops), and app-binary updates are not offered. The air-gapped build refuses the
+opt-in.
+
 ## Publishing a feed (release owner)
 
 The feed is a Release asset named exactly `pack-feed.json` on the release the feed should

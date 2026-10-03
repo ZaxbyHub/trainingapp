@@ -19,8 +19,8 @@
 
 import { createServer } from 'node:http';
 import { createReadStream, existsSync, statSync } from 'node:fs';
-import { extname, join, normalize } from 'node:path';
-import { fileURLToPath, dirname } from 'node:url';
+import { dirname, extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -59,10 +59,74 @@ const COI_HEADERS = {
   'Cross-Origin-Resource-Policy': 'same-origin',
 };
 
+// Player-origin routes (browser-training-parity, ADR-0012): this server also
+// answers as the course PLAYER origin (the app's loopback alias). The boot
+// frame files carry CORP cross-origin + COEP require-corp; the course service
+// worker is served at /training/sw.js; every other /training/* path is 404,
+// never the SPA shell (course paths are served by that worker only).
+// Mirrors web_ui/vite.config.ts trainingRouteMiddleware.
+const TRAINING_BOOT_PAGE_PATH = '/training-boot.html';
+const TRAINING_BOOT_PATHS = new Set([TRAINING_BOOT_PAGE_PATH, '/training-boot.js']);
+const TRAINING_SW_PATH = '/training/sw.js';
+const BOOT_HEADERS = {
+  'Cross-Origin-Resource-Policy': 'cross-origin',
+  'X-Content-Type-Options': 'nosniff',
+};
+// Framing is denied by default (final-critic FC6): untrusted course JS on the
+// player origin can script any same-origin document it frames, so EVERY
+// response (app shell, assets, /training-boot.js, /training/sw.js, the
+// /training/* 404, and every 403/404/416/500 below) carries these headers,
+// set on the response before any branch runs. The boot page is the single
+// exception: it carries bootPageCsp instead.
+const FRAME_DENY_HEADERS = {
+  'Content-Security-Policy': "frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
+};
+// The boot page's HEADER CSP (a meta tag would race same-origin scripting):
+// no fetch, no form, no subresource; scripts and workers pinned to the exact
+// URLs of its own script and the course worker (a worker course JS starts
+// from the boot window would otherwise run any same-origin script under that
+// script's own, unrestricted policy). Only the app origin, the loopback alias
+// of the Host the request was sent to, may frame it. Any other Host gets
+// 'none' for all three (fail closed; a Host is never reflected).
+function bootPageCsp(host) {
+  const match = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/i.exec(typeof host === 'string' ? host : '');
+  const name = match === null ? null : match[1].toLowerCase();
+  const port = match === null ? '' : match[2] || '';
+  const player = name === null ? null : `http://${name}${port}`;
+  const app = name === null ? "'none'" : `http://${name === 'localhost' ? '127.0.0.1' : 'localhost'}${port}`;
+  return [
+    "default-src 'none'",
+    `script-src ${player === null ? "'none'" : `${player}/training-boot.js`}`,
+    `worker-src ${player === null ? "'none'" : `${player}${TRAINING_SW_PATH}`}`,
+    "connect-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "object-src 'none'",
+    `frame-ancestors ${app}`,
+  ].join('; ');
+}
+
 const server = createServer((req, res) => {
+  for (const [name, value] of Object.entries(FRAME_DENY_HEADERS)) res.setHeader(name, value);
   try {
     // Parse the URL and prevent path traversal.
     const url = new URL(req.url || '/', `http://localhost:${PORT}`);
+    const rawPath = url.pathname;
+    if (rawPath === TRAINING_BOOT_PAGE_PATH) {
+      res.removeHeader('X-Frame-Options');
+      res.setHeader('Content-Security-Policy', bootPageCsp(req.headers.host));
+    }
+    if ((rawPath === '/training' || rawPath.startsWith('/training/')) && rawPath !== TRAINING_SW_PATH) {
+      res.writeHead(404, { ...COI_HEADERS, 'Content-Type': 'text/plain; charset=utf-8', 'X-Content-Type-Options': 'nosniff' });
+      res.end('Not Found');
+      return;
+    }
+    const extraHeaders = TRAINING_BOOT_PATHS.has(rawPath)
+      ? BOOT_HEADERS
+      : rawPath === TRAINING_SW_PATH
+        ? { 'X-Content-Type-Options': 'nosniff' }
+        : {};
     let pathname = decodeURIComponent(url.pathname);
     if (pathname === '/') pathname = '/index.html';
 
@@ -98,7 +162,7 @@ const server = createServer((req, res) => {
 
     // HEAD request: headers only, no body (used by readiness probes).
     if (req.method === 'HEAD') {
-      res.writeHead(200, { ...COI_HEADERS, 'Content-Type': contentType, 'Content-Length': fileLen, 'Cache-Control': 'no-cache' });
+      res.writeHead(200, { ...COI_HEADERS, ...extraHeaders, 'Content-Type': contentType, 'Content-Length': fileLen, 'Cache-Control': 'no-cache' });
       res.end();
       return;
     }
@@ -113,6 +177,7 @@ const server = createServer((req, res) => {
         if (start < fileLen && end < fileLen && start <= end) {
           res.writeHead(206, {
             ...COI_HEADERS,
+            ...extraHeaders,
             'Content-Type': contentType,
             'Content-Length': end - start + 1,
             'Content-Range': `bytes ${start}-${end}/${fileLen}`,
@@ -133,6 +198,7 @@ const server = createServer((req, res) => {
     // Full GET: stream the file (avoid loading large GGUF into memory).
     res.writeHead(200, {
       ...COI_HEADERS,
+      ...extraHeaders,
       'Content-Type': contentType,
       'Content-Length': fileLen,
       'Cache-Control': 'no-cache',

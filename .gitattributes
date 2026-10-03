@@ -22,3 +22,10 @@ contracts/fixtures/source-docs/** -text
 # though plain node accepts it, and a fresh Windows CI checkout materializes
 # CRLF without an eol rule. LF everywhere, no exceptions.
 desktop/scripts/*.mjs text eol=lf
+
+# Twinned pack archive rules (trace browser-training-parity, ADR-0012): the
+# desktop and browser copies are compared byte-for-byte by
+# desktop/src/__tests__/pack-archive-rules-drift.test.ts, so both must check
+# out with the same line endings on every machine. LF everywhere.
+desktop/main/backend/packs/pack-archive-rules.ts text eol=lf
+web_ui/src/lib/packs/pack-archive-rules.ts text eol=lf

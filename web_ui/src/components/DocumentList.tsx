@@ -495,6 +495,9 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
               fontSize: 'var(--font-size-body)',
               fontFamily: 'var(--font-family)',
               textAlign: 'center',
+              // Lumen axe: the inherited muted grey is 4.18:1 on the page
+              // background; the primary text token passes AA.
+              color: 'var(--color-text-primary)',
             }}
           >
             No documents uploaded yet

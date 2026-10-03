@@ -62,6 +62,31 @@ $MimeTypes = @{
     '.txt'  = 'text/plain; charset=utf-8'
 }
 
+# ---- Player-origin framing policy (final-critic FC6) -------------------------
+# Untrusted course JS on the player origin can script any same-origin document
+# it frames, so framing is denied by default: EVERY response gets
+# frame-ancestors 'none' + X-Frame-Options: DENY (set right after the request
+# is taken, before any branch, so the 403/404/416/500 answers carry them too).
+# /training-boot.html is the single exception: it gets this restrictive HEADER
+# CSP (no fetch, no form, no subresource; scripts and workers pinned to the
+# exact URLs of its own script and the course worker), and only the app
+# origin, the loopback alias of the Host the request was sent to, may frame
+# it. Any other Host gets 'none' for all three (fail closed). Mirrors
+# web_ui/vite.config.ts bootPageCsp.
+function Get-BootPageCsp([string]$HostHeader) {
+    $Script = "'none'"
+    $Worker = "'none'"
+    $Ancestor = "'none'"
+    if ($HostHeader -match '^(localhost|127\.0\.0\.1)(:\d{1,5})?$') {
+        $Name = $Matches[1].ToLowerInvariant()
+        $Alias = if ($Name -eq 'localhost') { '127.0.0.1' } else { 'localhost' }
+        $Script = "http://$Name$($Matches[2])/training-boot.js"
+        $Worker = "http://$Name$($Matches[2])/training/sw.js"
+        $Ancestor = "http://$Alias$($Matches[2])"
+    }
+    return "default-src 'none'; script-src $Script; worker-src $Worker; connect-src 'none'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors $Ancestor"
+}
+
 # ---- Create the listener -----------------------------------------------------
 $Listener = New-Object System.Net.HttpListener
 $Listener.Prefixes.Add("http://127.0.0.1:${Port}/")
@@ -108,6 +133,9 @@ while ($Listener.IsListening) {
 
     $Request  = $Context.Request
     $Response = $Context.Response
+    # Framing denied by default (FC6); only the boot page overrides it below.
+    $Response.Headers.Set('Content-Security-Policy', "frame-ancestors 'none'")
+    $Response.Headers.Set('X-Frame-Options', 'DENY')
 
     try {
         $Path = [System.Uri]::UnescapeDataString($Request.Url.AbsolutePath)
@@ -116,6 +144,38 @@ while ($Listener.IsListening) {
         # (which is a scalar equality check and would miss embedded '..').
         if ($Path -match '\.\.') {
             $Response.StatusCode = 403
+            $Response.Close()
+            continue
+        }
+
+        # Player-origin routes (browser-training-parity, ADR-0012): this server
+        # also answers as the course PLAYER origin (http://localhost:PORT is the
+        # app, its loopback alias http://127.0.0.1:PORT the player, or the
+        # reverse). The boot frame files get CORP cross-origin (below); the
+        # course service worker is served at /training/sw.js; every other
+        # /training/* path is 404, never the SPA shell (course paths are served
+        # by that worker only). Mirrors web_ui/vite.config.ts.
+        $RawPath = $Request.Url.AbsolutePath
+        $IsTrainingBoot = ($RawPath -ceq '/training-boot.html' -or $RawPath -ceq '/training-boot.js')
+        $IsTrainingWorker = ($RawPath -ceq '/training/sw.js')
+        if ($RawPath -ceq '/training-boot.html') {
+            $Response.Headers.Remove('X-Frame-Options')
+            $Response.Headers.Set('Content-Security-Policy', (Get-BootPageCsp $Request.Headers['Host']))
+        }
+        if (($RawPath -ceq '/training' -or $RawPath.StartsWith('/training/', [StringComparison]::Ordinal)) -and -not $IsTrainingWorker) {
+            $Response.StatusCode = 404
+            $Response.Headers.Set('Cross-Origin-Opener-Policy', 'same-origin')
+            $Response.Headers.Set('Cross-Origin-Embedder-Policy', 'require-corp')
+            $Response.Headers.Set('Cross-Origin-Resource-Policy', 'same-origin')
+            $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
+            $Response.ContentType = 'text/plain; charset=utf-8'
+            $Bytes = [System.Text.Encoding]::UTF8.GetBytes('404 Not Found')
+            $Response.ContentLength64 = $Bytes.Length
+            # HEAD gets the headers only: writing a body throws and the catch
+            # below turns the answer into a 500.
+            if ($Request.HttpMethod -ne 'HEAD') {
+                $Response.OutputStream.Write($Bytes, 0, $Bytes.Length)
+            }
             $Response.Close()
             continue
         }
@@ -169,6 +229,15 @@ while ($Listener.IsListening) {
         # which breaks cross-origin isolation and SharedArrayBuffer.
         $Response.Headers.Set('Cross-Origin-Resource-Policy', 'same-origin')
         $Response.Headers.Set('Cache-Control', 'no-cache')
+        if ($IsTrainingBoot) {
+            # The boot frame is embedded cross-origin by the COEP require-corp app page.
+            $Response.Headers.Set('Cross-Origin-Resource-Policy', 'cross-origin')
+            $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
+        } elseif ($IsTrainingWorker) {
+            $Response.Headers.Set('X-Content-Type-Options', 'nosniff')
+        }
+        # Every other response keeps the deny-by-default framing headers set
+        # when the request was taken (the app shell is never frameable).
         $Response.ContentType = $ContentType
 
         $FileLen = (Get-Item $ResolvedPath).Length

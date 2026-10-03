@@ -39,10 +39,10 @@ Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (f
 - `perf-thresholds` — informational (issue #87): runs the evidence-conditional perf suites (`test_rag_performance.py`, `test_low_end_hardware.py`) plus their guardrails; asserts against `bench/RESULTS.md` machine-tagged floors where the machine has a floors row, else skips with a named per-artifact reason (issue #52 conversion). `continue-on-error`.
 - `eval-report` — informational (issue #54): tier-0 eval harness against the deterministic no-weights backend; posts `eval-report/REPORT.md` + `report.json` artifacts; gated on the `eval` bucket (retrieval surface). `continue-on-error`.
 
-### 2. Web UI (`web-ui.yml`) — path-scoped (`webui` bucket: `web_ui/**`, `contracts/**`, the workflow file)
+### 2. Web UI (`web-ui.yml`) — path-scoped (`webui` bucket: `web_ui/**`, `contracts/**`, the workflow file, and the three desktop twins `desktop-twin-drift.test.ts` pins: `desktop/main/security/csp.ts`, `desktop/main/protocol.ts`, `desktop/main/backend/packs/pack-archive-rules.ts`)
 
 **Triggers:** push to main/master, all PRs (unfiltered; scoping at job level).
-**Jobs:** `web-ui` (typecheck app+tests, build, vitest, prepare-models/validate-build packaging checks) and `web-ui e2e` (browser-mode pack-gate Playwright spec, C9/ADR-0009, then the Lumen a11y visual subset `npm run test:visual:a11y:ci` — axe + tooltip-overflow only; the screenshot spec is a manual Windows gate, see `web_ui/e2e/visual/README.md`). Both required.
+**Jobs:** `web-ui` (typecheck app+tests, build, vitest, prepare-models/validate-build packaging checks) and `web-ui e2e` (browser-mode Knowledge Pack install + course-playback Playwright spec, ADR-0012, then the Lumen a11y visual subset `npm run test:visual:a11y:ci` — axe + tooltip-overflow only; the screenshot spec is a manual Windows gate, see `web_ui/e2e/visual/README.md`; the job keeps its original `browser-mode pack gate` display name because that name is the required status context). Both required.
 
 ### 3. Conformance (`conformance.yml`) — path-scoped (`conformance`, `pack` buckets) — required
 
@@ -98,7 +98,7 @@ pre-commit run --all-files
 pytest tests/ -v
 
 # Inspect CI path scoping for a diff
-git diff --name-only origin/master...HEAD | python scripts/ci_paths.py --bucket python --stdin
+git diff --name-only --no-renames origin/master...HEAD | python scripts/ci_paths.py --bucket python --stdin
 ```
 
 ### Manual Build

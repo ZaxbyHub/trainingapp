@@ -6,10 +6,11 @@
 // cited chunks, deduped by slide_id keeping the highest score (direct
 // preferred on ties), ranked descending, capped at MAX_LEARN_RESULTS.
 //
-// The browser path has no links store (packs on this surface are #76, an
-// open ADR) and no grounding field yet (#72, contract-reserved): the kernel
-// takes both as optional inputs so the browser behavior is exactly the
-// documented divergence of the shared algorithm.
+// browser-training-parity (AC6): pack-sourced chunks carry `packId` (the
+// browser pack ingestion stamps it, mirror of desktop docs.pack_id), which
+// direct rows emit as `pack_id`; linked rows (the #80 doc-chunk -> slide
+// links) are computed at ask time from the vector index (learn-links.ts) and
+// passed in, since the browser has no SQLite links table.
 import type { LearnResult } from '../api/types';
 import type { SearchResult } from '../../types/search';
 
@@ -60,10 +61,22 @@ function snippetAfterMarker(text: string | null | undefined): string | undefined
   return trimmed.slice(0, SNIPPET_MAX_CHARS);
 }
 
+/** One linked slide of a cited (non-slide) chunk (desktop links-table row equivalent). */
+export interface LinkedSlide {
+  slide_id: string;
+  score: number;
+  title?: string;
+  section?: string;
+  snippet?: string;
+  pack_id?: string;
+}
+
 export interface BuildLearnOptions {
   /** #72 provenance value when present; "general" suppresses all results. */
   grounding?: string | null;
   maxResults?: number;
+  /** Linked slides of the cited chunks (top-3 per chunk above the link floor). */
+  links?: LinkedSlide[];
 }
 
 export function buildLearnResults(chunks: SearchResult[], options: BuildLearnOptions = {}): LearnResult[] {
@@ -97,9 +110,21 @@ export function buildLearnResults(chunks: SearchResult[], options: BuildLearnOpt
       score: chunk.score,
       reason: 'direct',
       ...(snippet !== undefined ? { snippet } : {}),
+      // Mirror of desktop learn.ts `...(doc.pack_id !== null ? { pack_id } : {})`.
+      ...(chunk.packId !== undefined ? { pack_id: chunk.packId } : {}),
     });
-    // Linked results need the #80 links store, which the browser surface
-    // does not have (documented divergence; #76 owns browser pack support).
+  }
+
+  for (const link of options.links ?? []) {
+    offer({
+      slide_id: link.slide_id,
+      title: link.title ?? link.slide_id,
+      section: link.section ?? '',
+      score: link.score,
+      reason: 'linked',
+      ...(link.snippet !== undefined ? { snippet: link.snippet } : {}),
+      ...(link.pack_id !== undefined ? { pack_id: link.pack_id } : {}),
+    });
   }
 
   return [...best.values()].sort((a, b) => b.score - a.score).slice(0, maxResults);

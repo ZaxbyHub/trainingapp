@@ -79,13 +79,151 @@ export default IndexedDbBackend;
   };
 }
 
+/**
+ * Player-origin routes (browser-training-parity, ADR-0012). The course player
+ * runs on the app server's loopback alias (app http://localhost:PORT, player
+ * http://127.0.0.1:PORT, or the reverse); this server therefore also answers
+ * as the PLAYER origin. Untrusted course JS runs on that origin under the
+ * relay-built training CSP (connect-src 'self', form-action 'none'), and it
+ * can script ANY same-origin document it can reach (a child frame it creates,
+ * or the app's own boot frame through window.parent.frames). So every
+ * player-origin document must be at least as confined as a course
+ * (final-critic FC6):
+ *   - framing is denied by default: EVERY response except the boot page
+ *     carries `Content-Security-Policy: frame-ancestors 'none'` and
+ *     `X-Frame-Options: DENY` (the app shell, its assets, /training-boot.js,
+ *     /training/sw.js, the /training/* 404 and any error the server returns),
+ *     so course content can never load one of them in a frame (desktop
+ *     parity: desktop/main/security/csp.ts frame-ancestors 'none');
+ *   - /training-boot.html (the boot frame embedded by the COEP require-corp
+ *     app page) is the one embeddable document: it carries a restrictive
+ *     HEADER CSP (bootPageCsp: no fetch, no form, no subresource; scripts and
+ *     workers pinned to the exact URLs of its own script and the course
+ *     worker, because a worker that course JS starts from the boot window
+ *     would otherwise run any same-origin script under that script's own,
+ *     unrestricted policy) whose frame-ancestors names ONLY the app origin,
+ *     i.e. the loopback alias of the Host this request was sent to, so course
+ *     content cannot frame it either; a header (not a meta tag) so no
+ *     same-origin script can act in the document before the policy applies.
+ *     Any Host other than localhost / 127.0.0.1 gets 'none' for all three
+ *     (fail closed; a Host is never reflected);
+ *   - /training-boot.html and /training-boot.js carry CORP cross-origin +
+ *     COEP require-corp, nosniff and no-cache;
+ *   - /training/sw.js (the course service worker, scope /training/) carries
+ *     nosniff and no-cache;
+ *   - every other /training/* request is 404 — never the SPA shell — because
+ *     course paths are answered by the player-origin service worker only.
+ * Mirrored by scripts/serve-offline.mjs and scripts/start.ps1 (api_server.py
+ * is not a player host); pinned by
+ * src/lib/packs/__tests__/player-origin-hosting.test.ts and
+ * e2e/isolation-browser.spec.ts (FC6).
+ */
+export const TRAINING_BOOT_PAGE_PATH = '/training-boot.html';
+export const TRAINING_BOOT_SCRIPT_PATH = '/training-boot.js';
+export const TRAINING_BOOT_PATHS = new Set([TRAINING_BOOT_PAGE_PATH, TRAINING_BOOT_SCRIPT_PATH]);
+export const TRAINING_SW_PATH = '/training/sw.js';
+/** Anti-framing headers for every response except the boot page. */
+export const FRAME_DENY_HEADERS: Readonly<Record<string, string>> = {
+  'Content-Security-Policy': "frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
+};
+
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1)(:\d{1,5})?$/i;
+
+/**
+ * The player origin the boot page was requested on, when the Host is a
+ * loopback name the bundled hosts serve (every bundled host speaks http);
+ * null for anything else.
+ */
+export function bootPagePlayerOrigin(host: string | undefined): string | null {
+  const match = LOOPBACK_HOST.exec(host ?? '');
+  return match === null ? null : `http://${(match[1] ?? '').toLowerCase()}${match[2] ?? ''}`;
+}
+
+/**
+ * The only origin allowed to frame the boot page: the app origin, which is
+ * the loopback alias of the player Host this request was sent to
+ * (localhost <-> 127.0.0.1, same port). Anything else fails closed to 'none'.
+ */
+export function bootPageFrameAncestor(host: string | undefined): string {
+  const match = LOOPBACK_HOST.exec(host ?? '');
+  if (match === null) return "'none'";
+  const alias = match[1]?.toLowerCase() === 'localhost' ? '127.0.0.1' : 'localhost';
+  return `http://${alias}${match[2] ?? ''}`;
+}
+
+/** The boot page's header CSP (final-critic FC6). */
+export function bootPageCsp(host: string | undefined): string {
+  const player = bootPagePlayerOrigin(host);
+  return [
+    "default-src 'none'",
+    `script-src ${player === null ? "'none'" : `${player}${TRAINING_BOOT_SCRIPT_PATH}`}`,
+    `worker-src ${player === null ? "'none'" : `${player}${TRAINING_SW_PATH}`}`,
+    "connect-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "object-src 'none'",
+    `frame-ancestors ${bootPageFrameAncestor(host)}`,
+  ].join('; ');
+}
+
+export function trainingRouteMiddleware(
+  req: { url?: string; headers?: { host?: string } },
+  res: { statusCode: number; setHeader(name: string, value: string): void; end(body?: string): void },
+  next: () => void,
+): void {
+  const path = (req.url ?? '').split(/[?#]/)[0] ?? '';
+  // Deny framing first, for every response this server sends (errors
+  // included); the boot page is the single exception.
+  if (path === TRAINING_BOOT_PAGE_PATH) {
+    res.setHeader('Content-Security-Policy', bootPageCsp(req.headers?.host));
+  } else {
+    for (const [name, value] of Object.entries(FRAME_DENY_HEADERS)) res.setHeader(name, value);
+  }
+  if (TRAINING_BOOT_PATHS.has(path)) {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-cache');
+    next();
+    return;
+  }
+  if (path === TRAINING_SW_PATH) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-cache');
+    next();
+    return;
+  }
+  if (path === '/training' || path.startsWith('/training/')) {
+    res.statusCode = 404;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.end('Not Found');
+    return;
+  }
+  next();
+}
+
+function trainingPlayerOriginPlugin(): Plugin {
+  return {
+    name: 'trainingapp-player-origin-routes',
+    configureServer(server) {
+      server.middlewares.use(trainingRouteMiddleware);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(trainingRouteMiddleware);
+    },
+  };
+}
+
 export default defineConfig(({ command }) => ({
   // Relative base so the built bundle's own asset URLs (JS/CSS) work when the
   // self-contained archive is served from any path. Model assets under /models
   // are loaded same-origin and the archive is served at the origin root (the
   // bundled FastAPI server, or a static host) — see PACKAGING.md.
   base: './',
-  plugins: [react(), edgevecSnippetPlugin()],
+  plugins: [react(), edgevecSnippetPlugin(), trainingPlayerOriginPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
@@ -95,6 +233,10 @@ export default defineConfig(({ command }) => ({
     exclude: ['@huggingface/transformers', '@mlc-ai/web-llm', 'edgevec'],
   },
   server: {
+    // Bind the IPv4 loopback explicitly (never 0.0.0.0, which would expose
+    // the LAN): both loopback names must reach this one listener, because the
+    // course player runs on the app origin's alias (localhost <-> 127.0.0.1).
+    host: '127.0.0.1',
     proxy: {
       '/api': {
         target: 'http://localhost:8000',
@@ -113,6 +255,12 @@ export default defineConfig(({ command }) => ({
   // Same cross-origin isolation for `vite preview`, so the packaged build can be
   // validated with the SharedArrayBuffer/threads it needs for WASM inference.
   preview: {
+    host: '127.0.0.1',
+    // No proxy (final-critic FC1): preview.proxy otherwise inherits
+    // server.proxy, and this server also answers the course player origin,
+    // whose uncontrolled same-origin documents (the boot page) course JS can
+    // open. A player host must serve only static files.
+    proxy: {},
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',

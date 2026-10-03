@@ -41,6 +41,11 @@ export const EXTERNAL_API_KEY_ORIGIN_KEY = 'external-provider-apikey-origin';
 export const SIDEBAR_OPEN_KEY = 'sidebarOpen';
 /** Last course opened on the Training page. */
 export const LAST_PACK_KEY = 'training.lastPackDir';
+/**
+ * Browser app pack update channel opt-in {optIn, feedUrl?}
+ * (browser-training-parity AC8; desktop keeps it in the profile's updates.json).
+ */
+export const PACK_UPDATES_STATE_KEY = 'pack-updates';
 
 /** User settings: Clear Cache removes every one of these. */
 export const USER_SETTING_KEYS: readonly string[] = [
@@ -52,6 +57,7 @@ export const USER_SETTING_KEYS: readonly string[] = [
   EXTERNAL_API_KEY_ORIGIN_KEY,
   SIDEBAR_OPEN_KEY,
   LAST_PACK_KEY,
+  PACK_UPDATES_STATE_KEY,
 ];
 
 /** Session-scoped user settings (sessionStorage): Clear Cache removes these too. */

@@ -19,7 +19,7 @@ import { getVectorIndex } from '../lib/search/vector-index';
 import { getKeywordIndex } from '../lib/search/keyword-index';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { PacksPanel } from '../components/PacksPanel';
-import { isKnowledgePackZip } from '../lib/packs/pack-detect';
+import { usePackClient } from '../lib/packs/pack-client';
 import type { DocumentInfo } from '../lib/api';
 
 function generateId(): string {
@@ -69,17 +69,11 @@ export function DocumentsPage() {
   const [showReindexNotice, setShowReindexNotice] = useState(false);
   // F5: transient notice shown when a duplicate file upload is skipped.
   const [duplicateNotice, setDuplicateNotice] = useState<string | null>(null);
-  // C9 (ADR-0009): browser-mode capability gate — names of dropped files that
-  // carry the Knowledge Pack manifest signature. Packs require the desktop
-  // app; the browser surface shows a persistent notice instead of attempting
-  // any import (and never writes storage for them).
-  const [packGateFiles, setPackGateFiles] = useState<string[]>([]);
-  // Dismiss race guard (PRR-003): an isKnowledgePackZip classification that
-  // was already in flight when the user clicked Dismiss must not resurrect
-  // the notice. Handlers capture the generation before classifying; results
-  // are only applied while the generation is still current. New drops after
-  // a dismissal capture the newer generation and show normally.
-  const packGateGenerationRef = useRef(0);
+  // browser-training-parity (ADR-0012, superseding ADR-0009's gate): both
+  // apps install knowledge/training packs through the same PackClient seam —
+  // the desktop loopback pack API in Electron, the origin-private browser
+  // pack store otherwise.
+  const packClient = usePackClient();
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // F4/F13: latest documents mirror so the debounced save reads CURRENT state
   // at fire-time (not the schedule-time snapshot) and the unmount flush can
@@ -546,30 +540,27 @@ export function DocumentsPage() {
         return;
       }
 
-      // C9 (ADR-0009): browser mode — a pack zip can also arrive through the
-      // PICKER path (the HTML accept attribute is a chooser hint, not an
-      // enforcement boundary; a programmatic or overridden selection bypasses
-      // it). Classify selected files with the same content-based signature
-      // check as the drop-rejection path and gate packs here, before any
-      // document processing or storage write can happen.
+      // Browser app (ADR-0012): a dropped or picked .zip is a knowledge pack,
+      // exactly as in the desktop branch above — it installs through the
+      // browser pack store (every archive guard, manifest gate and signature
+      // policy applies) and never reaches the document pipeline.
       if (!electronMode) {
-        const generation = packGateGenerationRef.current;
-        const packNames: string[] = [];
-        const documentables: File[] = [];
-        for (const file of files) {
-          if (await isKnowledgePackZip(file)) {
-            packNames.push(file.name);
-          } else {
-            documentables.push(file);
+        const zipFiles = files.filter((f) => f.name.toLowerCase().endsWith('.zip'));
+        const docFiles = files.filter((f) => !f.name.toLowerCase().endsWith('.zip'));
+        for (const zip of zipFiles) {
+          if (packClient === null) break;
+          try {
+            const result = await packClient.installPack(zip);
+            showToast(`Installed ${result.packId} v${result.version}`, 'success');
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            showToast(`Failed to install pack "${zip.name}": ${message}`, 'error');
           }
         }
-        if (packNames.length > 0 && generation === packGateGenerationRef.current) {
-          setPackGateFiles((prev) => Array.from(new Set([...prev, ...packNames])));
-        }
-        if (documentables.length === 0) {
+        if (docFiles.length === 0) {
           return;
         }
-        files = documentables;
+        files = docFiles;
       }
 
       const existing = latestDocumentsRef.current;
@@ -621,7 +612,7 @@ export function DocumentsPage() {
         await processFile(file, entry.id);
       }
     },
-    [processFile, electronMode, desktopSession, showToast]
+    [processFile, electronMode, desktopSession, packClient, showToast]
   );
 
   // Auto-dismiss the duplicate notice after a few seconds.
@@ -890,59 +881,12 @@ export function DocumentsPage() {
         </div>
       )}
 
-      {/* Knowledge Packs panel (Electron mode only — C7, issue #74). The
-          browser surface keeps its IndexedDB pipeline untouched (C9 owns the
-          browser adapter). Mounted above the document drop zone. */}
-      {electronMode && desktopSession && (
+      {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
+          ADR-0012): the same panel over the PackClient seam. Mounted above
+          the document drop zone. */}
+      {packClient !== null && (
         <div style={{ flexShrink: 0 }}>
-          <PacksPanel apiClient={desktopSession.apiClient} />
-        </div>
-      )}
-
-      {/* C9 (ADR-0009): browser-mode Knowledge Pack capability gate. Shown
-          when a dropped file carries the C1 manifest signature — the browser
-          surface does not import packs (no client-side pack pipeline; the
-          desktop app owns pack install). Persistent until dismissed; never
-          fires in Electron mode, where PacksPanel owns pack files. */}
-      {packGateFiles.length > 0 && (
-        <div
-          data-testid="pack-gate-notice"
-          role="status"
-          style={{
-            flexShrink: 0,
-            marginBottom: 'var(--spacing-md)',
-            padding: 'var(--spacing-md)',
-            border: '1px solid var(--color-bubble-system)',
-            borderRadius: '8px',
-            backgroundColor: 'rgba(var(--color-primary-rgb), 0.06)',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--spacing-md)' }}>
-            <div>
-              <div style={{ fontWeight: 600 }}>
-                Knowledge Packs require the desktop app — install the Electron
-                build to use bundled/training packs; plain documents can still
-                be uploaded here.
-              </div>
-              <div style={{ marginTop: 'var(--spacing-xs)' }}>
-                Detected pack file{packGateFiles.length > 1 ? 's' : ''}:{' '}
-                {packGateFiles.length > 3
-                  ? `${packGateFiles.slice(0, 3).join(', ')} and ${packGateFiles.length - 3} more`
-                  : packGateFiles.join(', ')}{' '}
-                — not imported.
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                packGateGenerationRef.current += 1;
-                setPackGateFiles([]);
-              }}
-              style={{ flexShrink: 0, cursor: 'pointer' }}
-            >
-              Dismiss
-            </button>
-          </div>
+          <PacksPanel client={packClient} />
         </div>
       )}
 
@@ -950,28 +894,13 @@ export function DocumentsPage() {
       <div style={{ flexShrink: 0 }}>
         <DropZone
           onFilesSelected={handleFilesSelected}
-          accept={[...SUPPORTED_EXTENSIONS, ...(electronMode ? ['.zip'] : [])].join(',')}
+          accept={[...SUPPORTED_EXTENSIONS, '.zip'].join(',')}
           onFilesRejected={async (rejectedFiles) => {
-            const generation = packGateGenerationRef.current;
             // U7a: surface skipped filenames so the user knows files were
-            // discarded (previously DropZone filtered silently).
-            // C9 (ADR-0009): among the rejected files, recognize Knowledge
-            // Packs by their manifest signature and show the capability gate
-            // instead of the generic unsupported-type toast. Pack files are
-            // NEVER imported here — nothing reaches the document pipeline and
-            // no storage is written for them.
-            const packNames: string[] = [];
-            const unsupportedNames: string[] = [];
-            for (const file of rejectedFiles) {
-              if (await isKnowledgePackZip(file)) {
-                packNames.push(file.name);
-              } else {
-                unsupportedNames.push(file.name);
-              }
-            }
-            if (packNames.length > 0 && generation === packGateGenerationRef.current) {
-              setPackGateFiles((prev) => Array.from(new Set([...prev, ...packNames])));
-            }
+            // discarded (previously DropZone filtered silently). Pack zips
+            // are accepted (and installed) in both apps, so they never land
+            // here.
+            const unsupportedNames = rejectedFiles.map((file) => file.name);
             if (unsupportedNames.length > 0) {
               const preview = unsupportedNames.slice(0, 3).join(', ');
               const extra = unsupportedNames.length > 3 ? ` and ${unsupportedNames.length - 3} more` : '';

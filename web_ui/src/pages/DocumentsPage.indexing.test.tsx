@@ -117,6 +117,11 @@ vi.mock('../lib/processing/extractor-factory', () => ({
 import { TextChunker } from '../lib/processing/text-chunker';
 import { extractDocument } from '../lib/processing/extractor-factory';
 
+// The document drop zone's file input. The browser app also renders the
+// Knowledge Packs panel above it (browser-training-parity), whose own .zip
+// input (data-testid="pack-install-input") comes first in document order.
+const DOCUMENT_FILE_INPUT = 'input[type="file"]:not([data-testid="pack-install-input"])';
+
 describe('DocumentsPage search index integration', () => {
   beforeEach(() => {
     // Reset all mocks
@@ -299,7 +304,7 @@ describe('DocumentsPage search index integration', () => {
 
       const file = new File(['hello world'], 'test.txt', { type: 'text/plain' });
       // Trigger the drop via the DropZone input change handler.
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const input = document.querySelector(DOCUMENT_FILE_INPUT) as HTMLInputElement;
       expect(input).toBeTruthy();
       await act(async () => {
         Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
@@ -362,7 +367,7 @@ describe('DocumentsPage search index integration', () => {
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['in-flight content'], 'inflight.txt', { type: 'text/plain' });
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const input = document.querySelector(DOCUMENT_FILE_INPUT) as HTMLInputElement;
       await act(async () => {
         Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
         input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -463,7 +468,7 @@ describe('DocumentsPage search index integration', () => {
       // Drop a file with the same name+size as the existing document.
       const file = new File(['x'.repeat(100)], 'dup.txt', { type: 'text/plain' });
       expect(file.size).toBe(100);
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const input = document.querySelector(DOCUMENT_FILE_INPUT) as HTMLInputElement;
       await act(async () => {
         Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
         input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -535,7 +540,7 @@ describe('DocumentsPage search index integration', () => {
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['flush-test'], 'flush.txt', { type: 'text/plain' });
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const input = document.querySelector(DOCUMENT_FILE_INPUT) as HTMLInputElement;
       await act(async () => {
         Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
         input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -599,7 +604,7 @@ describe('DocumentsPage search index integration', () => {
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['cancel me'], 'cancel.txt', { type: 'text/plain' });
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const input = document.querySelector(DOCUMENT_FILE_INPUT) as HTMLInputElement;
       await act(async () => {
         Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
         input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -684,7 +689,7 @@ describe('DocumentsPage search index integration', () => {
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['progress mapping'], 'progress.txt', { type: 'text/plain' });
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const input = document.querySelector(DOCUMENT_FILE_INPUT) as HTMLInputElement;
       await act(async () => {
         Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
         input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -785,7 +790,7 @@ describe('DocumentsPage search index integration', () => {
       await waitFor(() => expect(mockLoadDocuments).toHaveBeenCalled());
 
       const file = new File(['toast fail'], 'toastfail.txt', { type: 'text/plain' });
-      const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+      const input = document.querySelector(DOCUMENT_FILE_INPUT) as HTMLInputElement;
       await act(async () => {
         Object.defineProperty(input, 'files', { value: [file], writable: false, configurable: true });
         input.dispatchEvent(new Event('change', { bubbles: true }));
