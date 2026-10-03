@@ -8,6 +8,7 @@ default `npm run test:e2e` config ignores this folder). Design context:
 | --- | --- | --- |
 | `lumen-axe.spec.ts` | axe-core serious/critical nodes per surface, theme, width | yes |
 | `lumen-tooltip-overflow.spec.ts` | tooltip stays inside a 500px viewport | yes |
+| `lumen-doc-row-reflow.spec.ts` | document rows wrap, never clip Delete/Cancel, at 320-640px | yes |
 | `lumen-baseline.spec.ts` | `toHaveScreenshot` pixel baselines | no (Windows only) |
 
 CI runs only the a11y subset (`npm run test:visual:a11y:ci`, reusing the
