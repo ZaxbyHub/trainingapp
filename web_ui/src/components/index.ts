@@ -1,4 +1,3 @@
-export { NavigationRail } from './NavigationRail';
 export { ToastProvider, useToast } from './ToastProvider';
 export type { Toast } from './ToastProvider';
 export { MarkdownRenderer } from './MarkdownRenderer';
