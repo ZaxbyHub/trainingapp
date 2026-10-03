@@ -61,7 +61,7 @@ describe('SidebarConversationItem', () => {
       render(<SidebarConversationItem {...defaultProps} isSelected={true} />);
 
       const container = screen.getByRole('button', { name: /test conversation/i });
-      expect(container).toHaveAttribute('aria-current', 'page');
+      expect(container).toHaveAttribute('aria-current', 'true');
     });
 
     it('renders "Untitled conversation" when title is empty', () => {
@@ -90,7 +90,7 @@ describe('SidebarConversationItem', () => {
       expect(row).not.toHaveAttribute('style');
 
       rerender(<SidebarConversationItem {...defaultProps} isSelected={true} />);
-      expect(row).toHaveAttribute('aria-current', 'page');
+      expect(row).toHaveAttribute('aria-current', 'true');
       expect(row).toHaveClass('ui-selected');
       expect(row).toHaveClass('ui-focusable');
     });

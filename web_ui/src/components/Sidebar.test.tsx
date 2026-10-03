@@ -152,7 +152,19 @@ describe('Sidebar', () => {
       );
 
       const firstConv = screen.getByText('First Chat');
-      expect(firstConv.closest('[role="button"]')).toHaveAttribute('aria-current', 'page');
+      expect(firstConv.closest('[role="button"]')).toHaveAttribute('aria-current', 'true');
+    });
+
+    it('with a selected conversation on the Chat page, exactly one element is aria-current="page" (the Chat nav item)', () => {
+      const { container } = render(
+        <Sidebar {...defaultProps} currentPage="chat" conversations={conversations} currentConversationId="conv-2" />
+      );
+      const pageCurrent = container.querySelectorAll('[aria-current="page"]');
+      expect(pageCurrent).toHaveLength(1);
+      expect(pageCurrent[0]).toBe(screen.getByRole('button', { name: /^chat$/i }));
+      const selectedRow = screen.getByText('Second Chat').closest('[role="button"]');
+      expect(selectedRow).toHaveAttribute('aria-current', 'true');
+      expect(screen.getByText('First Chat').closest('[role="button"]')).not.toHaveAttribute('aria-current');
     });
   });
 

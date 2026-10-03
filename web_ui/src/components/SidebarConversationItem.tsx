@@ -148,7 +148,9 @@ export function SidebarConversationItem({
         }
       }}
       onKeyDown={handleRootKeyDown}
-      aria-current={isSelected ? 'page' : undefined}
+      // 'true', not 'page' (phase-3 review F4): the current PAGE is the Chat nav
+      // item; the selected conversation is the current item within this list.
+      aria-current={isSelected ? 'true' : undefined}
       className={cx('app-conv', 'ui-focusable', isSelected && 'ui-selected', isRenaming && 'app-conv--renaming')}
     >
       <div className="app-conv__row">
