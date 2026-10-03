@@ -26,6 +26,8 @@ const CHAT_FILES = [
   'components/StreamingIndicator.tsx',
   'components/MarkdownRenderer.tsx',
   'components/ModelChip.tsx',
+  'components/PinnedSlideContext.tsx',
+  'components/IsolationBanner.tsx',
   'lib/chat/model-chip.ts',
 ];
 
