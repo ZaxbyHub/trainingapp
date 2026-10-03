@@ -139,3 +139,38 @@ test.describe('settings jump select keyboard (WCAG 3.2.2)', () => {
     await expect(page.getByRole('heading', { level: 2, name: 'Appearance' })).toBeFocused();
   });
 });
+
+/**
+ * Review N1: after a jump the nav keeps the section the user chose, even near the end
+ * of the page where a short section can never reach the top (the settle re-sync used
+ * to flip the select / aria-current to the last section ~650 ms later).
+ */
+test.describe('settings nav keeps the jumped-to section (N1) @ 500', () => {
+  test.use({ viewport: { width: 500, height: 900 }, colorScheme: 'light' });
+
+  test('select Updates: the value stays "updates" after the jump settles, and Go focuses the Updates heading', async ({ page }) => {
+    await openSettings(page, 'light');
+    const select = page.getByLabel('Jump to section');
+    await select.selectOption('updates');
+    await page.waitForTimeout(1000);
+    await expect(select).toHaveValue('updates');
+    await page.getByRole('button', { name: 'Go to section' }).click();
+    await expect(page.getByRole('heading', { level: 2, name: 'Updates' })).toBeFocused();
+    await page.waitForTimeout(1000);
+    await expect(select).toHaveValue('updates');
+  });
+});
+
+test.describe('settings nav keeps the jumped-to section (N1) @ 1440', () => {
+  test.use({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+
+  test('click Updates: aria-current stays on Updates after the jump settles', async ({ page }) => {
+    await openSettings(page, 'light');
+    const nav = page.getByRole('navigation', { name: 'Settings sections' });
+    await nav.getByRole('link', { name: 'Updates' }).click();
+    await expect(page.getByRole('heading', { level: 2, name: 'Updates' })).toBeFocused();
+    await page.waitForTimeout(1000);
+    await expect(nav.getByRole('link', { name: 'Updates' })).toHaveAttribute('aria-current', 'true');
+    await expect(nav.getByRole('link', { name: 'About' })).not.toHaveAttribute('aria-current', 'true');
+  });
+});
