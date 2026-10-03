@@ -657,8 +657,11 @@ export function DocumentsPage() {
   // pending deferred switch: the user already chose where to be, and a stale
   // deferral would later yank the tab with no announcement or focus handling
   // (the PacksPanel signal is consumed by the first Training-tab mount).
+  // The PacksPanel's own pending signal is dropped in step (switchSignalResetKey).
+  const [switchSignalResetKey, setSwitchSignalResetKey] = useState(0);
   const selectTab = useCallback((tab: 'documents' | 'training') => {
     deferredTrainingSwitchRef.current = false;
+    setSwitchSignalResetKey((key) => key + 1);
     setActiveTab(tab);
   }, []);
   const handleTrainingPackAdded = useCallback(() => {
@@ -956,6 +959,7 @@ export function DocumentsPage() {
             // A training pack that appears (installed here, by the dropzone, or
             // elsewhere in this tab) is shown where it lives.
             onTrainingPackAdded={handleTrainingPackAdded}
+            switchSignalResetKey={switchSignalResetKey}
             refreshToken={packsRefreshToken}
           />
         )}

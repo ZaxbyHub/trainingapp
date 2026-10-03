@@ -247,6 +247,44 @@ describe('Documents tabs: a manual tab change supersedes the deferred switch (re
   });
 });
 
+describe('Documents tabs: a manual tab change also drops the pack panel signal (critic N5)', () => {
+  it('after the deferral is superseded, a later manual Training click does not announce a new pack', async () => {
+    await renderPage();
+    dropZipAndDoc();
+    await waitFor(() => expect(extraction.release).not.toBeNull());
+    await settle();
+    expect(store.packs).toHaveLength(1); // pack appeared mid-drop: switch deferred, panel signal pending
+
+    // The user re-chooses Documents (a manual tab change): the page drops its deferral.
+    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
+    await act(async () => extraction.release?.());
+    await settle();
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+
+    // Later they open Training packs themselves, with focus on the tab (not lost): the
+    // stale signal must not announce "A new training pack was added..." for a switch
+    // that never happened.
+    const trainingTab = screen.getByRole('tab', { name: 'Training packs' });
+    trainingTab.focus();
+    fireEvent.click(trainingTab);
+    await screen.findByTestId('pack-row-course-a-1.0.0');
+    await settle();
+    expect(screen.queryByText(/A new training pack was added/)).toBeNull();
+  });
+
+  it('control: an automatic (deferred) switch with focus elsewhere still announces', async () => {
+    await renderPage();
+    const documentsTab = screen.getByRole('tab', { name: 'Documents' });
+    documentsTab.focus();
+    dropZipAndDoc();
+    await waitFor(() => expect(extraction.release).not.toBeNull());
+    await settle();
+    await act(async () => extraction.release?.());
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true'));
+    expect(await screen.findByText(/A new training pack was added/)).toBeTruthy();
+  });
+});
+
 describe('Documents header Upload action (review L2)', () => {
   it('opens the document picker directly from the Documents tab', async () => {
     const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined);
