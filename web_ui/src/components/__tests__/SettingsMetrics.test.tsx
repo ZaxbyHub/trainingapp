@@ -1,11 +1,12 @@
 /**
- * Tests for SettingsMetrics components (ProgressBar, StatusBadge, SectionCard)
+ * Tests for SettingsMetrics components (ProgressBar, StatusBadge). SectionCard was
+ * retired in Lumen phase 4 (Settings uses SettingsControls.SettingsSection).
  */
 
 import React from 'react';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { ProgressBar, StatusBadge, SectionCard } from '../SettingsMetrics';
+import { ProgressBar, StatusBadge } from '../SettingsMetrics';
 
 describe('ProgressBar', () => {
   beforeEach(() => {
@@ -58,11 +59,23 @@ describe('ProgressBar', () => {
     expect(screen.getByText('Storage Used')).toBeTruthy();
   });
 
-  it('applies custom color via backgroundColor style', () => {
-    const { container } = render(<ProgressBar value={60} max={100} label="Color Test" color="success" />);
-    // The colored bar is the innermost div (self-closing in JSX, appears as <div ... />)
-    const coloredBar = container.querySelector('[role="progressbar"] > div:last-child > div');
-    expect(coloredBar?.getAttribute('style')).toContain('background-color');
+  // Lumen phase 4 (test budget, design-language.md section 6): the tone is a state
+  // class on the meter, not an inline background color.
+  it('exposes its tone as a state class and its value through ARIA', () => {
+    render(<ProgressBar value={60} max={120} label="Color Test" color="success" />);
+    const bar = screen.getByRole('progressbar', { name: 'Color Test' });
+    expect(bar).toHaveClass('settings-meter', 'settings-meter--success');
+    expect(bar).toHaveAttribute('data-tone', 'success');
+    expect(bar).toHaveAttribute('aria-valuenow', '60');
+    expect(bar).toHaveAttribute('aria-valuemax', '120');
+    expect(bar).toHaveTextContent('50%');
+  });
+
+  it('the default (primary) tone uses the accent fill: no tone modifier class', () => {
+    render(<ProgressBar value={10} label="Accent" />);
+    const bar = screen.getByRole('progressbar', { name: 'Accent' });
+    expect(bar).toHaveAttribute('data-tone', 'primary');
+    expect(bar.className).not.toMatch(/settings-meter--/);
   });
 
   it('handles custom max value', () => {
@@ -136,62 +149,5 @@ describe('StatusBadge', () => {
       const { container } = render(<StatusBadge status="ready" />);
       expect(container.querySelector('[aria-live="polite"]')).toBeTruthy();
     });
-  });
-});
-
-describe('SectionCard', () => {
-  beforeEach(() => {
-    cleanup();
-  });
-
-  afterEach(() => {
-    cleanup();
-  });
-
-  it('renders title in h2', () => {
-    render(<SectionCard title="Test Section"><p>Content</p></SectionCard>);
-    const heading = screen.getByRole('heading', { level: 2 });
-    expect(heading.textContent).toBe('Test Section');
-  });
-
-  it('renders description when provided', () => {
-    render(<SectionCard title="Section" description="This is a description"><p>Content</p></SectionCard>);
-    expect(screen.getByText('This is a description')).toBeTruthy();
-  });
-
-  it('does not render description paragraph when description is undefined', () => {
-    render(<SectionCard title="Section"><p>Content</p></SectionCard>);
-    const descriptions = screen.queryAllByText((content, element) => {
-      return element?.tagName === 'P' && element.textContent === '';
-    });
-    expect(screen.queryByText(/This is a description/)).toBeNull();
-  });
-
-  it('renders children content', () => {
-    render(<SectionCard title="Section"><p>Child Paragraph</p></SectionCard>);
-    expect(screen.getByText('Child Paragraph')).toBeTruthy();
-  });
-
-  it('renders multiple children', () => {
-    render(
-      <SectionCard title="Multi">
-        <div>First</div>
-        <div>Second</div>
-      </SectionCard>
-    );
-    expect(screen.getByText('First')).toBeTruthy();
-    expect(screen.getByText('Second')).toBeTruthy();
-  });
-
-  it('uses id for aria-labelledby when provided', () => {
-    const { container } = render(<SectionCard title="Accessible Section" id="my-section"><p>Content</p></SectionCard>);
-    const section = container.querySelector('section');
-    expect(section?.getAttribute('aria-labelledby')).toBe('my-section');
-  });
-
-  it('does not have aria-labelledby when id is not provided', () => {
-    const { container } = render(<SectionCard title="No ID Section"><p>Content</p></SectionCard>);
-    const section = container.querySelector('section');
-    expect(section?.hasAttribute('aria-labelledby')).toBe(false);
   });
 });

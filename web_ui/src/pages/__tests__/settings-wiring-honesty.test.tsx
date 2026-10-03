@@ -424,8 +424,10 @@ describe('Clear Cache (AC5)', () => {
     expect(document.getElementById('clear-cache-status')?.textContent).toMatch(/saved settings were removed; reloading/i);
     // Visible, not screen-reader-only: sighted users see why the page reloads.
     const note = screen.getByText(/your saved settings were removed; reloading the page/i);
-    expect(note.style.position).not.toBe('absolute');
-    expect(note.style.clip).toBe('');
+    // Lumen phase 4: screen-reader-only text is the ui-visually-hidden class, so
+    // assert the class (an inline-style check would now pass vacuously).
+    expect(note).not.toHaveClass('ui-visually-hidden');
+    expect(note.closest('.ui-visually-hidden')).toBeNull();
     await waitFor(() => expect(reloadPage).toHaveBeenCalledTimes(1), { timeout: RELOAD_AFTER_CLEAR_MS + 1000 });
   });
 

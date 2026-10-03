@@ -29,6 +29,8 @@
  * public hosts with a role="alert" message that names the restriction.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Banner, Button, Checkbox, Field, Select, Switch, TextInput } from '../ui';
+import { SettingsSection } from './SettingsControls';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { IS_AIRGAP } from '../lib/llm/airgap';
@@ -61,61 +63,6 @@ interface DesktopKeyState {
   apiKeyBoundOrigin: string;
   airgap: boolean;
 }
-
-const sectionStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-md)',
-  padding: 'var(--spacing-lg)',
-  border: '1px solid var(--color-border)',
-  borderRadius: 'var(--radius-md, 8px)',
-  backgroundColor: 'var(--color-surface)',
-};
-const titleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--font-size-h3, 1.125rem)',
-  fontWeight: 600,
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text)',
-};
-const descStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: 'var(--font-size-caption)',
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-primary)',
-};
-const labelStyle: React.CSSProperties = {
-  display: 'block',
-  fontSize: 'var(--font-size-body)',
-  fontWeight: 500,
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text)',
-  marginBottom: 'var(--spacing-xs)',
-};
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  maxWidth: '32rem',
-  padding: 'var(--spacing-sm)',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  border: '1px solid var(--color-border)',
-  borderRadius: '4px',
-  backgroundColor: 'var(--color-background)',
-  color: 'var(--color-text)',
-};
-const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', flexWrap: 'wrap' };
-const buttonStyle: React.CSSProperties = {
-  padding: 'var(--spacing-sm) var(--spacing-md)',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  border: '1px solid var(--color-border)',
-  borderRadius: '4px',
-  backgroundColor: 'transparent',
-  color: 'var(--color-text)',
-  cursor: 'pointer',
-};
-const errorStyle: React.CSSProperties = { ...descStyle, color: 'var(--color-danger)' };
-const okStyle: React.CSSProperties = { ...descStyle, color: 'var(--color-success, var(--color-text))' };
 
 /** Same copy in both apps when the saved key belongs to another origin. */
 function keyElsewhereText(boundOrigin: string): string {
@@ -497,219 +444,188 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
   const headingId = 'external-model-heading';
 
   return (
-    <section id={id} style={sectionStyle} aria-labelledby={headingId} data-testid="external-model-section">
-      <h2 id={headingId} style={titleStyle} tabIndex={-1}>
-        External model
-      </h2>
-      <p style={descStyle}>
-        Generate answers with a model server on this computer, on your network, or a cloud provider
-        (OpenAI- or Anthropic-compatible). Your documents stay here: retrieval runs locally and only the
-        question, the retrieved passages and recent conversation are sent to the endpoint. Off by default.
-      </p>
+    <SettingsSection
+      id={id}
+      headingId={headingId}
+      focusableHeading
+      title="External model"
+      description="Generate answers with a model server on this computer, on your network, or a cloud provider (OpenAI- or Anthropic-compatible). Your documents stay here: retrieval runs locally and only the question, the retrieved passages and recent conversation are sent to the endpoint. Off by default."
+      data-testid="external-model-section"
+    >
       {airgap && (
-        <p style={descStyle} data-testid="external-airgap-notice">
+        <p className="settings-text" data-testid="external-airgap-notice">
           Air-gapped build: only loopback and private-network endpoints can be used.
         </p>
       )}
 
-      <div style={rowStyle}>
-        <input
-          id="external-enabled"
-          type="checkbox"
-          role="switch"
-          checked={draft.enabled}
-          aria-checked={draft.enabled}
-          onChange={(e) => void handleEnabledChange(e.target.checked)}
-        />
-        <label htmlFor="external-enabled" style={{ ...labelStyle, marginBottom: 0 }}>
-          Use external model
-        </label>
-      </div>
+      <Switch
+        id="external-enabled"
+        checked={draft.enabled}
+        aria-checked={draft.enabled}
+        onChange={(e) => void handleEnabledChange(e.target.checked)}
+        label="Use external model"
+      />
 
-      <div>
-        <label htmlFor="external-protocol" style={labelStyle}>
-          Protocol
-        </label>
-        <select
-          id="external-protocol"
-          value={draft.protocol}
-          onChange={(e) => {
-            const protocol = e.target.value === 'anthropic' ? 'anthropic' : 'openai';
-            update({ protocol });
-            setModels([]);
-            void persist({ protocol });
-          }}
-          style={inputStyle}
-        >
-          <option value="openai">OpenAI-compatible</option>
-          <option value="anthropic">Anthropic-compatible</option>
-        </select>
-      </div>
-
-      <div>
-        <label htmlFor="external-base-url" style={labelStyle}>
-          Base URL
-        </label>
-        <p id="external-base-url-desc" style={descStyle}>
-          For example http://localhost:1234 (LM Studio), http://192.168.1.20:11434 (Ollama on your
-          network), https://api.openai.com or https://api.anthropic.com. Public hosts need https.
-          {!desktop &&
-            ' If this page is served over https, the browser blocks plain-http model servers (mixed content) and may ask to allow local-network access: use https on the server, or the desktop app.'}
-        </p>
-        <input
-          id="external-base-url"
-          type="url"
-          autoComplete="off"
-          spellCheck={false}
-          value={draft.baseUrl}
-          onChange={(e) => update({ baseUrl: e.target.value })}
-          onBlur={() => void handleBaseUrlBlur()}
-          placeholder="http://localhost:1234"
-          style={inputStyle}
-          aria-describedby="external-base-url-desc"
-        />
-      </div>
-
-      <div>
-        <label htmlFor="external-api-key" style={labelStyle}>
-          API key
-        </label>
-        <p id="external-api-key-desc" style={descStyle}>
-          {desktop
-            ? keyState.apiKeySet
-              ? 'A key is saved (encrypted by the operating system). Type a new key to replace it.'
-              : 'Optional. Saved encrypted by the desktop app and sent only to this endpoint.'
-            : 'Optional. Stored in this browser and sent only to the server it was entered for.'}
-        </p>
-        <div style={rowStyle}>
-          <input
-            id="external-api-key"
-            type="password"
-            autoComplete="new-password"
-            spellCheck={false}
-            value={draft.apiKey}
+      <Field label="Protocol" className="settings-field">
+        {(control) => (
+          <Select
+            {...control}
+            value={draft.protocol}
             onChange={(e) => {
-              setKeyDropped(false);
-              keyDirtyRef.current = true;
-              fieldKeyOriginRef.current = keyOriginOf(draftRef.current.baseUrl);
-              update({ apiKey: e.target.value });
+              const protocol = e.target.value === 'anthropic' ? 'anthropic' : 'openai';
+              update({ protocol });
+              setModels([]);
+              void persist({ protocol });
             }}
-            onBlur={() => void handleKeyBlur()}
-            placeholder={desktop && keyState.apiKeySet ? 'Saved' : 'Leave empty for servers without a key'}
-            style={inputStyle}
-            aria-describedby="external-api-key-desc"
+          >
+            <option value="openai">OpenAI-compatible</option>
+            <option value="anthropic">Anthropic-compatible</option>
+          </Select>
+        )}
+      </Field>
+
+      <Field
+        label="Base URL"
+        className="settings-field"
+        help={
+          <>
+            For example http://localhost:1234 (LM Studio), http://192.168.1.20:11434 (Ollama on your
+            network), https://api.openai.com or https://api.anthropic.com. Public hosts need https.
+            {!desktop &&
+              ' If this page is served over https, the browser blocks plain-http model servers (mixed content) and may ask to allow local-network access: use https on the server, or the desktop app.'}
+          </>
+        }
+      >
+        {(control) => (
+          <TextInput
+            {...control}
+            type="url"
+            autoComplete="off"
+            spellCheck={false}
+            value={draft.baseUrl}
+            onChange={(e) => update({ baseUrl: e.target.value })}
+            onBlur={() => void handleBaseUrlBlur()}
+            placeholder="http://localhost:1234"
           />
-          {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '' || browserKey.status !== 'none') && (
-            <button type="button" style={buttonStyle} onClick={() => void handleClearKey()}>
-              Clear saved key
-            </button>
+        )}
+      </Field>
+
+      <div className="settings-group">
+        <Field
+          label="API key"
+          help={
+            desktop
+              ? keyState.apiKeySet
+                ? 'A key is saved (encrypted by the operating system). Type a new key to replace it.'
+                : 'Optional. Saved encrypted by the desktop app and sent only to this endpoint.'
+              : 'Optional. Stored in this browser and sent only to the server it was entered for.'
+          }
+        >
+          {(control) => (
+            <div className="settings-row">
+              <TextInput
+                {...control}
+                type="password"
+                autoComplete="new-password"
+                spellCheck={false}
+                value={draft.apiKey}
+                onChange={(e) => {
+                  setKeyDropped(false);
+                  keyDirtyRef.current = true;
+                  fieldKeyOriginRef.current = keyOriginOf(draftRef.current.baseUrl);
+                  update({ apiKey: e.target.value });
+                }}
+                onBlur={() => void handleKeyBlur()}
+                placeholder={desktop && keyState.apiKeySet ? 'Saved' : 'Leave empty for servers without a key'}
+              />
+              {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '' || browserKey.status !== 'none') && (
+                <Button variant="secondary" onClick={() => void handleClearKey()}>
+                  Clear saved key
+                </Button>
+              )}
+            </div>
           )}
-        </div>
+        </Field>
         {!desktop && (
-          <div style={{ ...rowStyle, marginTop: 'var(--spacing-xs)' }}>
-            <input
-              id="external-remember-key"
-              type="checkbox"
-              checked={draft.rememberKey}
-              onChange={(e) => {
-                update({ rememberKey: e.target.checked });
-                // Moves the saved key and its binding between storages; never rebinds.
-                void persist({ rememberKey: e.target.checked });
-              }}
-            />
-            <label htmlFor="external-remember-key" style={descStyle}>
-              Remember API key in this browser (otherwise it is kept for this browser session only)
-            </label>
-          </div>
+          <Checkbox
+            id="external-remember-key"
+            checked={draft.rememberKey}
+            onChange={(e) => {
+              update({ rememberKey: e.target.checked });
+              // Moves the saved key and its binding between storages; never rebinds.
+              void persist({ rememberKey: e.target.checked });
+            }}
+            label="Remember API key in this browser (otherwise it is kept for this browser session only)"
+          />
         )}
         {desktop && !keyState.apiKeyPersisted && keyState.apiKeySet && (
-          <p style={descStyle}>Key kept for this session only: secure storage is unavailable on this computer.</p>
+          <p className="settings-text">Key kept for this session only: secure storage is unavailable on this computer.</p>
         )}
         {keyDropped && draft.apiKey === '' && (
-          <p style={descStyle} data-testid="external-key-dropped">
+          <p className="settings-text" data-testid="external-key-dropped">
             The base URL changed before the API key was saved, so the key was not saved. Enter it again for
             this server.
           </p>
         )}
         {keyHeld && draft.apiKey !== '' && (
-          <p style={descStyle} data-testid="external-key-held">
+          <p className="settings-text" data-testid="external-key-held">
             The API key is not saved yet: it will be saved together with the next valid base URL you
             enter, and sent only to that server.
           </p>
         )}
         {keyElsewhereOrigin !== '' && (
-          <p style={descStyle} data-testid="external-key-elsewhere">
+          <p className="settings-text" data-testid="external-key-elsewhere">
             {keyElsewhereText(keyElsewhereOrigin)}
           </p>
         )}
         {plainHttpKey && (
-          <p style={descStyle}>
+          <p className="settings-text settings-tone--warning">
             This key would be sent over plain http to a network host. Prefer https for servers that need a key.
           </p>
         )}
       </div>
 
-      <div>
-        <label htmlFor="external-model" style={labelStyle}>
-          Model
-        </label>
-        <input
-          id="external-model"
-          type="text"
-          list="external-model-options"
-          autoComplete="off"
-          spellCheck={false}
-          value={draft.model}
-          onChange={(e) => update({ model: e.target.value })}
-          onBlur={() => void handleModelBlur()}
-          placeholder="Test the connection to list models"
-          style={inputStyle}
-        />
-        <datalist id="external-model-options">
-          {models.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-      </div>
+      <Field label="Model" className="settings-field">
+        {(control) => (
+          <TextInput
+            {...control}
+            list="external-model-options"
+            autoComplete="off"
+            spellCheck={false}
+            value={draft.model}
+            onChange={(e) => update({ model: e.target.value })}
+            onBlur={() => void handleModelBlur()}
+            placeholder="Test the connection to list models"
+          />
+        )}
+      </Field>
+      <datalist id="external-model-options">
+        {models.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
 
-      <div style={rowStyle}>
-        <button type="button" style={buttonStyle} onClick={() => void handleTest()} disabled={testing} aria-busy={testing}>
+      <div className="settings-row">
+        <Button variant="secondary" onClick={() => void handleTest()} loading={testing} disabled={testing}>
           Test connection
-        </button>
-        {testing && <span style={descStyle}>Testing…</span>}
+        </Button>
+        {testing && <span className="settings-text">Testing…</span>}
       </div>
 
-      <div style={rowStyle}>
-        <input
-          id="external-direct-chat"
-          type="checkbox"
-          checked={!draft.grounded}
-          onChange={(e) => {
-            const grounded = !e.target.checked;
-            update({ grounded });
-            void persist({ grounded });
-          }}
-          aria-describedby="external-direct-chat-desc"
-        />
-        <label htmlFor="external-direct-chat" style={{ ...labelStyle, marginBottom: 0 }}>
-          Direct chat (no document grounding)
-        </label>
-      </div>
-      <p id="external-direct-chat-desc" style={descStyle}>
-        Off: answers use your documents with citations. On: questions go straight to the model without
-        retrieval and answers are labeled General knowledge.
-      </p>
+      <Checkbox
+        id="external-direct-chat"
+        checked={!draft.grounded}
+        onChange={(e) => {
+          const grounded = !e.target.checked;
+          update({ grounded });
+          void persist({ grounded });
+        }}
+        label="Direct chat (no document grounding)"
+        description="Off: answers use your documents with citations. On: questions go straight to the model without retrieval and answers are labeled General knowledge."
+      />
 
-      {status !== null && (
-        <p role="status" style={okStyle}>
-          {status}
-        </p>
-      )}
-      {problem !== null && (
-        <p role="alert" style={errorStyle}>
-          {problem}
-        </p>
-      )}
-    </section>
+      {status !== null && <Banner tone="success">{status}</Banner>}
+      {problem !== null && <Banner tone="danger">{problem}</Banner>}
+    </SettingsSection>
   );
 }
