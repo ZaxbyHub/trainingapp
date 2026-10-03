@@ -193,40 +193,48 @@ export function PacksPanel({
   const knownRowsRef = useRef<Set<string> | null>(null);
   const onTrainingPackAddedRef = useRef(onTrainingPackAdded);
   onTrainingPackAddedRef.current = onTrainingPackAdded;
-  const slotsRef = useRef(slots);
-  slotsRef.current = slots;
-  // WCAG 2.4.3: the page switches tabs when a training pack appears, which
-  // unmounts the Documents panel. If focus was in that panel (or already lost),
-  // move it to the Training packs heading once that tab has mounted.
-  const pendingTrainingFocusRef = useRef(false);
+  // Set when a training pack appeared while the Training packs tab was not
+  // showing; consumed when that tab mounts (the page may defer the switch).
+  const switchSignaledRef = useRef(false);
+  // Polite announcement for the switch, in an always-mounted live region.
+  const [announcement, setAnnouncement] = useState('');
+  // Out-of-order guard: concurrent refreshes (install, store notification,
+  // refreshToken) may resolve out of order; only the newest response applies,
+  // so a stale list can neither roll the rows back nor re-fire the signal.
+  const requestSeqRef = useRef(0);
+  const appliedSeqRef = useRef(0);
 
   const refresh = useCallback(async (): Promise<PackInfo[]> => {
+    const seq = ++requestSeqRef.current;
     const list = await client.listPacks();
+    if (seq < appliedSeqRef.current) return list; // a newer response already applied
+    appliedSeqRef.current = seq;
     setPacks(list);
     setLoading(false);
     const known = knownRowsRef.current;
     knownRowsRef.current = new Set(list.map(rowId));
     if (known !== null && list.some((pack) => isTrainingPack(pack) && !known.has(rowId(pack)))) {
-      const current = slotsRef.current;
-      if (current !== undefined && current.training === null) {
-        const active = document.activeElement;
-        const documentsPanel = current.knowledge?.closest('[role="tabpanel"]') ?? null;
-        pendingTrainingFocusRef.current =
-          active === null || active === document.body || (documentsPanel !== null && documentsPanel.contains(active));
-      }
+      switchSignaledRef.current = true;
       onTrainingPackAddedRef.current?.();
     }
     void refreshStorage();
     return list;
   }, [client, refreshStorage]);
 
+  // WCAG 2.4.3 / 4.1.3: when the Training packs tab mounts after a signal, the
+  // Documents panel (and anything focused in it) is gone. If focus was lost with
+  // it, move focus to the Training packs heading; if the user is focused
+  // elsewhere, leave focus alone and announce the switch politely instead.
   const trainingSlotElement = slots?.training ?? null;
   useEffect(() => {
-    if (trainingSlotElement === null || !pendingTrainingFocusRef.current) return;
-    pendingTrainingFocusRef.current = false;
+    if (trainingSlotElement === null || !switchSignaledRef.current) return;
+    switchSignaledRef.current = false;
     const active = document.activeElement;
-    if (active !== null && active !== document.body) return; // the user moved focus: keep it
-    document.getElementById('training-packs-heading')?.focus();
+    if (active === null || active === document.body) {
+      document.getElementById('training-packs-heading')?.focus();
+      return;
+    }
+    setAnnouncement('A new training pack was added. Showing the Training packs tab.');
   }, [trainingSlotElement]);
 
   const initialRefreshToken = useRef(refreshToken);
@@ -561,6 +569,9 @@ export function PacksPanel({
   return (
     <>
       {installInput}
+      <p role="status" className="ui-visually-hidden">
+        {announcement}
+      </p>
       {slots.knowledge ? createPortal(knowledgeSection(null), slots.knowledge) : null}
       {slots.training
         ? createPortal(
@@ -579,6 +590,12 @@ export function PacksPanel({
                 </h2>
                 {installButton('Install course pack .zip')}
               </div>
+              {capabilityIssue != null && (
+                <p role="status" className="app-packs__note app-packs__note--warning">
+                  <Icon name="triangle-alert" size={16} />
+                  <span>{capabilityIssue}</span>
+                </p>
+              )}
               {storageNote(false)}
               {trainingRows.length === 0 ? (
                 <p className="app-packs__empty">

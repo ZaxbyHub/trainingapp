@@ -475,7 +475,7 @@ export function DocumentsPage() {
   // F5: skip files that duplicate an existing document by fileName + fileSize
   // (re-uploading previously created a second independent set of chunks in both
   // indexes). Skipped files surface a transient notice.
-  const handleFilesSelected = useCallback(
+  const processSelectedFiles = useCallback(
     async (files: File[]) => {
       // B9 (issue #67): Electron mode uploads through the desktop backend
       // (/ingest/file) — extraction, chunking, embedding and indexing all
@@ -641,6 +641,35 @@ export function DocumentsPage() {
       }
     },
     [processFile, electronMode, desktopSession, packClient, showToast]
+  );
+
+  // Phase-6 review L5: a training pack that appears DURING a drop (a mixed
+  // bulk drop installs its .zip packs first, then uploads the documents) must
+  // not swap the Documents tab away mid-upload. The switch waits until every
+  // in-flight drop has finished.
+  const dropsInFlightRef = useRef(0);
+  const deferredTrainingSwitchRef = useRef(false);
+  const handleTrainingPackAdded = useCallback(() => {
+    if (dropsInFlightRef.current > 0) {
+      deferredTrainingSwitchRef.current = true;
+      return;
+    }
+    setActiveTab('training');
+  }, []);
+  const handleFilesSelected = useCallback(
+    async (files: File[]) => {
+      dropsInFlightRef.current += 1;
+      try {
+        await processSelectedFiles(files);
+      } finally {
+        dropsInFlightRef.current -= 1;
+        if (dropsInFlightRef.current === 0 && deferredTrainingSwitchRef.current) {
+          deferredTrainingSwitchRef.current = false;
+          setActiveTab('training');
+        }
+      }
+    },
+    [processSelectedFiles]
   );
 
   // Auto-dismiss the duplicate notice after a few seconds.
@@ -913,7 +942,7 @@ export function DocumentsPage() {
             slots={{ knowledge: knowledgePacksSlot, training: trainingPacksSlot }}
             // A training pack that appears (installed here, by the dropzone, or
             // elsewhere in this tab) is shown where it lives.
-            onTrainingPackAdded={() => setActiveTab('training')}
+            onTrainingPackAdded={handleTrainingPackAdded}
             refreshToken={packsRefreshToken}
           />
         )}
