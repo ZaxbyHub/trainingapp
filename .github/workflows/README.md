@@ -98,7 +98,7 @@ pre-commit run --all-files
 pytest tests/ -v
 
 # Inspect CI path scoping for a diff
-git diff --name-only origin/master...HEAD | python scripts/ci_paths.py --bucket python --stdin
+git diff --name-only --no-renames origin/master...HEAD | python scripts/ci_paths.py --bucket python --stdin
 ```
 
 ### Manual Build

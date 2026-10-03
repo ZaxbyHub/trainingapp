@@ -332,6 +332,22 @@ def test_changes_job_exists_and_invokes_classifier():
 
 
 @pytest.mark.parametrize("name", sorted(EXPECTED_WIRING))
+def test_changes_job_diffs_report_both_sides_of_a_rename(name):
+    """PR #144 review F8: a renamed path-classified file must surface its OLD
+    path too, or the classifier (exact-path lists) sees only the new name and
+    can skip a required job. Every `git diff --name-only` in the changes job
+    must therefore carry --no-renames."""
+    wf = _load_workflow(name)
+    run_steps = chr(10).join(
+        str(step.get("run", "")) for step in wf["jobs"]["changes"].get("steps", [])
+    )
+    diffs = re.findall(r"git diff --name-only.*", run_steps)
+    assert len(diffs) == 2, f"{name}: expected the PR and push diffs, got {diffs}"
+    for line in diffs:
+        assert "--no-renames" in line, f"{name}: rename-collapsing diff: {line}"
+
+
+@pytest.mark.parametrize("name", sorted(EXPECTED_WIRING))
 def test_workflow_triggers_are_unfiltered(name):
     """Required checks must live behind unfiltered triggers (localization
     Step 5: a workflow-level paths filter leaves required checks Pending)."""

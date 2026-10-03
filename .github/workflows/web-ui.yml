@@ -43,11 +43,11 @@ jobs:
           files=""
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             git fetch --no-tags origin "$GITHUB_BASE_REF"
-            files="$(git diff --name-only "origin/$GITHUB_BASE_REF...HEAD")"
+            files="$(git diff --name-only --no-renames "origin/$GITHUB_BASE_REF...HEAD")"
           else
             before="$BEFORE"
             if [ -n "$before" ] && [ "$before" != "0000000000000000000000000000000000000000" ]; then
-              files="$(git diff --name-only "$before" "$GITHUB_SHA")"
+              files="$(git diff --name-only --no-renames "$before" "$GITHUB_SHA")"
             fi
           fi
           status=$?
