@@ -42,37 +42,35 @@ export function ModelBlockedOverlay({
     previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
     // Move focus into the dialog on open.
     retryRef.current?.focus();
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return;
-      const dialog = dialogRef.current;
-      if (!dialog) return;
-      const focusables = Array.from(
-        dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)
-      );
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (e.shiftKey) {
-        if (document.activeElement === first || !dialog.contains(document.activeElement)) {
-          e.preventDefault();
-          last.focus();
-        }
-      } else {
-        if (document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
       // Restore focus to the trigger on close.
       previouslyFocusedRef.current?.focus?.();
     };
   }, []);
+
+  // Focus trap, scoped to the dialog (Lumen phase-3 review F1): it acts only on
+  // Tab presses that start INSIDE the overlay. It used to be a document-level
+  // listener, which also caught Shift+Tab inside the AppShell's nav drawer (a
+  // separate aria-modal dialog above this one at <= 768px) and pulled focus
+  // under the drawer's scrim. Same pattern as DesktopModelBlockedOverlay.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+    if (focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   const failures = readinessResult?.failures ?? [];
   const recommendations = readinessResult?.recommendations ?? [];
@@ -96,14 +94,16 @@ export function ModelBlockedOverlay({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        // Above the header (zIndex 101) so the scrim covers header controls,
-        // reinforcing the blocking intent alongside aria-modal.
+        // Stacks above the Chat page's own content (including its PageHeader
+        // controls, which carry no z-index) inside ChatPage's position:relative
+        // root; it covers <main> only, never the app shell's navigation.
         zIndex: 200,
       }}
     >
       <div
         ref={dialogRef}
         role="alertdialog"
+        onKeyDown={handleKeyDown}
         aria-modal="true"
         aria-label="Model not ready"
         style={{

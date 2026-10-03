@@ -237,6 +237,16 @@ describe('SettingsPage', () => {
     vi.unstubAllGlobals();
   });
 
+  test('renders the shared PageHeader: one h1 "Settings" with its description (Lumen phase 3)', async () => {
+    render(<SettingsPage />);
+    const heading = await screen.findByRole('heading', { level: 1, name: 'Settings' });
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(heading.closest('header')).toHaveClass('ui-page-header');
+    expect(
+      screen.getByText('Choose how answers are generated, and manage appearance and storage.')
+    ).toBeInTheDocument();
+  });
+
   test('renders the browser-engine selector and hardware-capability panel', async () => {
     render(<SettingsPage />);
 

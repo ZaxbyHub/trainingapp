@@ -7,7 +7,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import { ModelBlockedOverlay } from './ModelBlockedOverlay';
 import type { ReadinessResult } from '../lib/llm/model-readiness';
 
@@ -112,12 +112,24 @@ describe('ModelBlockedOverlay (issue #25 F14)', () => {
 
     // Focus starts on Retry (first focusable).
     expect(retry).toHaveFocus();
-    fireEvent.keyDown(document.body, { key: 'Tab' });
+    // Shift+Tab from the first focusable wraps to the last. The trap is scoped
+    // to the dialog (phase-3 review F1), so key events start on the focused control.
+    fireEvent.keyDown(retry, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(last);
     // After Tab from the last focusable, wrap to first (Retry).
-    last.focus();
-    fireEvent.keyDown(document.body, { key: 'Tab' });
+    fireEvent.keyDown(last, { key: 'Tab' });
     // The wrap should land focus back on the first element.
     expect(document.activeElement).toBe(retry);
+  });
+
+  it('does not hijack Tab/Shift+Tab that start outside the dialog (phase-3 review F1)', () => {
+    const { container } = render(<button type="button">Outside</button>);
+    renderOverlay();
+    const outside = within(container).getByRole('button', { name: 'Outside' });
+    outside.focus();
+    const shiftTab = fireEvent.keyDown(outside, { key: 'Tab', shiftKey: true });
+    expect(shiftTab).toBe(true); // not default-prevented
+    expect(outside).toHaveFocus();
   });
 
   it('settings-wiring-honesty (AC10): the external-model action opens Settings at the model-connection section', () => {

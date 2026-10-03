@@ -14,7 +14,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
-import { ThemeProvider, useTheme } from './ThemeContext';
+import { ThemeProvider, syncThemeColorMeta, useTheme } from './ThemeContext';
 
 // A consumer that exposes the context value via a test handle.
 let contextValue: ReturnType<typeof useTheme> | null = null;
@@ -187,5 +187,54 @@ describe('ThemeContext — setTheme + system mode (issue #24 F5)', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     expect(() => render(<ContextProbe />)).toThrow('useTheme must be used within a ThemeProvider');
     spy.mockRestore();
+  });
+});
+
+/**
+ * Lumen phase 3: index.html ships one theme-color meta per OS scheme; the
+ * applied in-app theme wins by rewriting both to its --bg-surface. jsdom does
+ * not cascade [data-theme] rules, so each test supplies the token value the
+ * stylesheet would resolve to for the theme being applied.
+ */
+describe('syncThemeColorMeta (theme-color follows the in-app theme)', () => {
+  const metas: HTMLMetaElement[] = [];
+  beforeEach(() => {
+    for (const media of ['(prefers-color-scheme: light)', '(prefers-color-scheme: dark)']) {
+      const meta = document.createElement('meta');
+      meta.name = 'theme-color';
+      meta.content = 'unchanged';
+      meta.media = media;
+      document.head.appendChild(meta);
+      metas.push(meta);
+    }
+  });
+  afterEach(() => {
+    metas.splice(0).forEach((m) => m.remove());
+    document.documentElement.style.removeProperty('--bg-surface');
+  });
+
+  test('sets every theme-color meta to the resolved --bg-surface', () => {
+    document.documentElement.style.setProperty('--bg-surface', '#171a25');
+    syncThemeColorMeta();
+    expect(metas.map((m) => m.content)).toEqual(['#171a25', '#171a25']);
+  });
+
+  test('leaves the metas alone when the token is unresolved or absent', () => {
+    syncThemeColorMeta();
+    expect(metas.map((m) => m.content)).toEqual(['unchanged', 'unchanged']);
+    document.documentElement.style.setProperty('--bg-surface', 'var(--slate-900)');
+    syncThemeColorMeta();
+    expect(metas.map((m) => m.content)).toEqual(['unchanged', 'unchanged']);
+  });
+
+  test('ThemeProvider syncs on mount and again when the theme changes', () => {
+    localStorage.setItem('theme-preference', 'dark');
+    document.documentElement.style.setProperty('--bg-surface', '#171a25');
+    renderProvider();
+    expect(metas.map((m) => m.content)).toEqual(['#171a25', '#171a25']);
+    document.documentElement.style.setProperty('--bg-surface', '#ffffff');
+    act(() => contextValue?.setTheme('light'));
+    expect(metas.map((m) => m.content)).toEqual(['#ffffff', '#ffffff']);
+    localStorage.removeItem('theme-preference');
   });
 });

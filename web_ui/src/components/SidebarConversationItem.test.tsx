@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import userEvent from '@testing-library/user-event';
 import { SidebarConversationItem } from './SidebarConversationItem';
 
 // Mock formatRelativeTime to control timestamp display
@@ -36,7 +37,7 @@ describe('SidebarConversationItem', () => {
 
   const renderComponent = (props = defaultProps) => {
     const utils = render(<SidebarConversationItem {...props} />);
-    // Get the main container (div with role="button")
+    // The row's select button (a native <button>; the options button is its sibling)
     const container = utils.getByRole('button', { name: /test conversation/i });
     return { ...utils, container };
   };
@@ -61,7 +62,7 @@ describe('SidebarConversationItem', () => {
       render(<SidebarConversationItem {...defaultProps} isSelected={true} />);
 
       const container = screen.getByRole('button', { name: /test conversation/i });
-      expect(container).toHaveAttribute('aria-current', 'page');
+      expect(container).toHaveAttribute('aria-current', 'true');
     });
 
     it('renders "Untitled conversation" when title is empty', () => {
@@ -70,14 +71,56 @@ describe('SidebarConversationItem', () => {
       expect(screen.getByText('Untitled conversation')).toBeInTheDocument();
     });
 
-    it('truncates long title with ellipsis', () => {
+    it('a long title is truncated visually but its full text stays available', () => {
       const longTitle = 'A'.repeat(200);
       render(<SidebarConversationItem {...defaultProps} title={longTitle} />);
 
+      // Truncation is CSS (layouts/shell.css .app-conv__title: ellipsis); the
+      // full title stays in the accessible name and in the hover title.
       const titleSpan = screen.getByText(longTitle);
-      const overflow = titleSpan.style.overflow;
-      const textOverflow = titleSpan.style.textOverflow;
-      expect(overflow === 'hidden' || textOverflow === 'ellipsis').toBeTruthy();
+      expect(titleSpan).toHaveClass('app-conv__title');
+      expect(titleSpan).toHaveAttribute('title', longTitle);
+      expect(screen.getByRole('button', { name: new RegExp(longTitle) })).toBeInTheDocument();
+    });
+
+    it('selection is conveyed by aria-current plus the shared selected state, not inline styles', () => {
+      const { rerender } = render(<SidebarConversationItem {...defaultProps} />);
+      const select = screen.getByRole('button', { name: /test conversation/i });
+      const row = select.closest('.app-conv') as HTMLElement;
+      expect(select).not.toHaveAttribute('aria-current');
+      expect(row).not.toHaveClass('ui-selected');
+      expect(row).not.toHaveAttribute('style');
+      expect(select).not.toHaveAttribute('style');
+
+      rerender(<SidebarConversationItem {...defaultProps} isSelected={true} />);
+      expect(select).toHaveAttribute('aria-current', 'true');
+      expect(row).toHaveClass('ui-selected');
+      expect(select).toHaveClass('ui-focusable');
+    });
+
+    it('the select and options controls are sibling native buttons (no nested interactive)', () => {
+      render(<SidebarConversationItem {...defaultProps} />);
+      const select = screen.getByRole('button', { name: /test conversation/i });
+      const kebab = screen.getByRole('button', { name: /conversation options/i });
+      expect(select.tagName).toBe('BUTTON');
+      expect(select.contains(kebab)).toBe(false);
+      expect(kebab.contains(select)).toBe(false);
+      expect(select.closest('[role="button"]')).toBeNull();
+      expect(select.parentElement).toBe(kebab.parentElement);
+    });
+
+    it('Escape that closes the options menu does not bubble to an enclosing drawer', () => {
+      const outer = vi.fn();
+      render(
+        <div onKeyDown={(e) => outer(e.key)}>
+          <SidebarConversationItem {...defaultProps} />
+        </div>
+      );
+      const row = screen.getByRole('button', { name: /test conversation/i });
+      fireEvent.click(screen.getByRole('button', { name: /conversation options/i }));
+      fireEvent.keyDown(row, { key: 'Escape' });
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(outer).not.toHaveBeenCalled();
     });
 
     it('renders kebab menu button', () => {
@@ -116,26 +159,42 @@ describe('SidebarConversationItem', () => {
       expect(defaultProps.onSelect).not.toHaveBeenCalled();
     });
 
-    it('calls onSelect with Enter key when not renaming', () => {
+    it('calls onSelect with Enter key when not renaming', async () => {
+      const user = userEvent.setup();
       render(<SidebarConversationItem {...defaultProps} />);
 
-      const container = screen.getByRole('button', { name: /test conversation/i });
-      fireEvent.keyDown(container, { key: 'Enter' });
+      screen.getByRole('button', { name: /test conversation/i }).focus();
+      await user.keyboard('{Enter}');
 
       expect(defaultProps.onSelect).toHaveBeenCalledWith('conv-1');
     });
 
-    it('calls onSelect with Space key when not renaming', () => {
+    it('calls onSelect with Space key when not renaming', async () => {
+      const user = userEvent.setup();
       render(<SidebarConversationItem {...defaultProps} />);
 
-      const container = screen.getByRole('button', { name: /test conversation/i });
-      fireEvent.keyDown(container, { key: ' ' });
+      screen.getByRole('button', { name: /test conversation/i }).focus();
+      await user.keyboard(' ');
 
       expect(defaultProps.onSelect).toHaveBeenCalledWith('conv-1');
     });
   });
 
   describe('Context Menu', () => {
+    it.each([
+      ['Enter', '{Enter}'],
+      ['Space', ' '],
+    ])('%s on the options button opens the menu and does not select the row (WCAG 2.1.1)', async (_name, key) => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      const kebab = screen.getByRole('button', { name: /conversation options/i });
+      kebab.focus();
+      await user.keyboard(key);
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+      expect(kebab).toHaveAttribute('aria-expanded', 'true');
+      expect(defaultProps.onSelect).not.toHaveBeenCalled();
+    });
+
     it('opens menu when kebab button is clicked', () => {
       render(<SidebarConversationItem {...defaultProps} />);
 
@@ -160,6 +219,96 @@ describe('SidebarConversationItem', () => {
       fireEvent.keyDown(container, { key: 'Escape' });
 
       expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Options menu keyboard pattern and focus return (PR #147 review PRR-002, PRR-026)', () => {
+    const openWithKeyboard = async (user: ReturnType<typeof userEvent.setup>) => {
+      const kebab = screen.getByRole('button', { name: /conversation options/i });
+      kebab.focus();
+      await user.keyboard('{Enter}');
+      return kebab;
+    };
+
+    it('opening the menu moves focus to its first item; arrows, Home and End move between items', async () => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      await openWithKeyboard(user);
+      const rename = screen.getByRole('menuitem', { name: 'Rename' });
+      const del = screen.getByRole('menuitem', { name: 'Delete' });
+      expect(rename).toHaveFocus();
+      await user.keyboard('{ArrowDown}');
+      expect(del).toHaveFocus();
+      await user.keyboard('{ArrowDown}');
+      expect(rename).toHaveFocus(); // wraps
+      await user.keyboard('{ArrowUp}');
+      expect(del).toHaveFocus(); // wraps back
+      await user.keyboard('{Home}');
+      expect(rename).toHaveFocus();
+      await user.keyboard('{End}');
+      expect(del).toHaveFocus();
+    });
+
+    it('Tab out of the menu (past its last item) closes it; moving between the button and the items does not (round 4 LOW-1)', async () => {
+      const user = userEvent.setup();
+      render(
+        <>
+          <SidebarConversationItem {...defaultProps} />
+          <button type="button">After</button>
+        </>
+      );
+      const kebab = await openWithKeyboard(user);
+      expect(screen.getByRole('menuitem', { name: 'Rename' })).toHaveFocus();
+      await user.tab({ shift: true }); // back to the options button: still open
+      expect(kebab).toHaveFocus();
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+      await user.tab(); // Rename
+      await user.tab(); // Delete
+      expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveFocus();
+      await user.tab(); // leaves the menu
+      expect(screen.getByRole('button', { name: 'After' })).toHaveFocus();
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(kebab).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('Escape from a menu item closes the menu and returns focus to the options button', async () => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      const kebab = await openWithKeyboard(user);
+      expect(screen.getByRole('menuitem', { name: 'Rename' })).toHaveFocus();
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(kebab).toHaveFocus();
+      expect(kebab).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('Delete swaps to the confirmation without dropping focus (focus goes to the options button)', async () => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      const kebab = await openWithKeyboard(user);
+      await user.keyboard('{ArrowDown}');
+      expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveFocus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByRole('alert')).toHaveTextContent(/Delete this conversation/i);
+      expect(kebab).toHaveFocus();
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it('Escape and Cancel in the delete confirmation return focus to the options button', async () => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      const kebab = await openWithKeyboard(user);
+      await user.keyboard('{ArrowDown}{Enter}');
+      screen.getByRole('menuitem', { name: 'Cancel' }).focus();
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(kebab).toHaveFocus();
+
+      await user.keyboard('{Enter}{ArrowDown}{Enter}');
+      await user.click(screen.getByRole('menuitem', { name: 'Cancel' }));
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(kebab).toHaveFocus();
+      expect(defaultProps.onDelete).not.toHaveBeenCalled();
     });
   });
 

@@ -21,6 +21,9 @@ import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { PacksPanel } from '../components/PacksPanel';
 import { usePackClient } from '../lib/packs/pack-client';
 import type { DocumentInfo } from '../lib/api';
+import { PageHeader } from '../ui';
+
+const DOCUMENTS_DESCRIPTION = 'Add files and knowledge packs that Chat can search and cite.';
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
@@ -739,185 +742,180 @@ export function DocumentsPage() {
 
   if (isLoading) {
     return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--spacing-sm)',
-          height: '100%',
-          padding: 'var(--spacing-lg)',
-        }}
-        aria-label="Loading documents"
-      >
-        <LoadingSkeleton variant="card" count={3} ariaLabel="Loading documents" />
+      <div className="app-page">
+        <PageHeader title="Documents" description={DOCUMENTS_DESCRIPTION} />
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--spacing-sm)',
+            flex: 1,
+            minHeight: 0,
+            padding: 'var(--spacing-lg)',
+          }}
+          aria-label="Loading documents"
+        >
+          <LoadingSkeleton variant="card" count={3} ariaLabel="Loading documents" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        padding: 'var(--spacing-lg)',
-        gap: 'var(--spacing-lg)',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Header */}
+    <div className="app-page">
+      {/* Header (Lumen phase 3): the shared PageHeader. The action controls are
+          unchanged here; phase 6 restyles the Documents page. */}
+      <PageHeader
+        title="Documents"
+        description={DOCUMENTS_DESCRIPTION}
+        actions={
+          <>
+            {electronMode && documents.length > 0 && (
+              <button
+                type="button"
+                onClick={handleClearAll}
+                aria-label={clearAllConfirming ? 'Confirm clear all documents' : 'Clear all documents'}
+                style={{
+                  fontSize: 'var(--font-size-small)',
+                  fontFamily: 'var(--font-family)',
+                  cursor: 'pointer',
+                  padding: 'var(--spacing-xs) var(--spacing-sm)',
+                  borderRadius: '12px',
+                  border: '1px solid ' + (clearAllConfirming ? 'var(--color-danger)' : 'transparent'),
+                  color: clearAllConfirming ? 'var(--color-danger)' : 'var(--color-text-muted)',
+                  backgroundColor: 'var(--color-bubble-system)',
+                }}
+              >
+                {clearAllConfirming ? 'Click again to clear ALL documents' : 'Clear all'}
+              </button>
+            )}
+            {supportedCount > 0 && (
+              <span
+                style={{
+                  fontSize: 'var(--font-size-small)',
+                  fontFamily: 'var(--font-family)',
+                  color: 'var(--color-text-muted)',
+                  backgroundColor: 'var(--color-bubble-system)',
+                  padding: 'var(--spacing-xs) var(--spacing-sm)',
+                  borderRadius: '12px',
+                }}
+              >
+                {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </>
+        }
+      />
       <div
         style={{
           display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexShrink: 0,
+          flexDirection: 'column',
+          flex: 1,
+          minHeight: 0,
+          padding: 'var(--spacing-lg)',
+          gap: 'var(--spacing-lg)',
+          overflow: 'hidden',
         }}
       >
-        <h1
-          style={{
-            fontSize: 'var(--font-size-h1)',
-            fontFamily: 'var(--font-family)',
-            color: 'var(--color-text-on-bubble-assistant)',
-            margin: 0,
-          }}
-        >
-          Documents
-        </h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
-          {electronMode && documents.length > 0 && (
-            <button
-              type="button"
-              onClick={handleClearAll}
-              aria-label={clearAllConfirming ? 'Confirm clear all documents' : 'Clear all documents'}
-              style={{
-                fontSize: 'var(--font-size-small)',
-                fontFamily: 'var(--font-family)',
-                cursor: 'pointer',
-                padding: 'var(--spacing-xs) var(--spacing-sm)',
-                borderRadius: '12px',
-                border: '1px solid ' + (clearAllConfirming ? 'var(--color-danger)' : 'transparent'),
-                color: clearAllConfirming ? 'var(--color-danger)' : 'var(--color-text-muted)',
-                backgroundColor: 'var(--color-bubble-system)',
-              }}
-            >
-              {clearAllConfirming ? 'Click again to clear ALL documents' : 'Clear all'}
-            </button>
-          )}
-          {supportedCount > 0 && (
-            <span
-              style={{
-                fontSize: 'var(--font-size-small)',
-                fontFamily: 'var(--font-family)',
-                color: 'var(--color-text-muted)',
-                backgroundColor: 'var(--color-bubble-system)',
-                padding: 'var(--spacing-xs) var(--spacing-sm)',
-                borderRadius: '12px',
-              }}
-            >
-              {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
-            </span>
-          )}
-        </div>
-      </div>
 
-      {/* F9: one-time re-index notice after an embedding-model upgrade. */}
-      {showReindexNotice && (
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 'var(--spacing-sm)',
-            padding: 'var(--spacing-sm) var(--spacing-md)',
-            borderRadius: '8px',
-            backgroundColor: 'var(--color-bubble-system)',
-            color: 'var(--color-text-muted)',
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-            flexShrink: 0,
-          }}
-        >
-          <span>
-            The search index was upgraded. Re-add your documents to rebuild the index and restore full retrieval quality.
-          </span>
-          <button
-            type="button"
-            onClick={dismissReindexNotice}
-            aria-label="Dismiss notice"
+        {/* F9: one-time re-index notice after an embedding-model upgrade. */}
+        {showReindexNotice && (
+          <div
+            role="status"
+            aria-live="polite"
             style={{
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 'var(--spacing-sm)',
+              padding: 'var(--spacing-sm) var(--spacing-md)',
+              borderRadius: '8px',
+              backgroundColor: 'var(--color-bubble-system)',
               color: 'var(--color-text-muted)',
-              fontSize: 'var(--font-size-body)',
-              padding: '0 var(--spacing-xs)',
+              fontSize: 'var(--font-size-small)',
+              fontFamily: 'var(--font-family)',
               flexShrink: 0,
             }}
           >
-            ×
-          </button>
-        </div>
-      )}
+            <span>
+              The search index was upgraded. Re-add your documents to rebuild the index and restore full retrieval quality.
+            </span>
+            <button
+              type="button"
+              onClick={dismissReindexNotice}
+              aria-label="Dismiss notice"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--color-text-muted)',
+                fontSize: 'var(--font-size-body)',
+                padding: '0 var(--spacing-xs)',
+                flexShrink: 0,
+              }}
+            >
+              ×
+            </button>
+          </div>
+        )}
 
-      {/* F5: transient duplicate-upload notice. */}
-      {duplicateNotice && (
-        <div
-          role="status"
-          aria-live="polite"
-          style={{
-            padding: 'var(--spacing-xs) var(--spacing-sm)',
-            borderRadius: '8px',
-            backgroundColor: 'var(--color-bubble-system)',
-            color: 'var(--color-text-muted)',
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-            flexShrink: 0,
-          }}
-        >
-          {duplicateNotice}
-        </div>
-      )}
+        {/* F5: transient duplicate-upload notice. */}
+        {duplicateNotice && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              padding: 'var(--spacing-xs) var(--spacing-sm)',
+              borderRadius: '8px',
+              backgroundColor: 'var(--color-bubble-system)',
+              color: 'var(--color-text-muted)',
+              fontSize: 'var(--font-size-small)',
+              fontFamily: 'var(--font-family)',
+              flexShrink: 0,
+            }}
+          >
+            {duplicateNotice}
+          </div>
+        )}
 
-      {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
-          ADR-0012): the same panel over the PackClient seam. Mounted above
-          the document drop zone. */}
-      {packClient !== null && (
+        {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
+            ADR-0012): the same panel over the PackClient seam. Mounted above
+            the document drop zone. */}
+        {packClient !== null && (
+          <div style={{ flexShrink: 0 }}>
+            <PacksPanel client={packClient} />
+          </div>
+        )}
+
+        {/* Drop zone */}
         <div style={{ flexShrink: 0 }}>
-          <PacksPanel client={packClient} />
+          <DropZone
+            onFilesSelected={handleFilesSelected}
+            accept={[...SUPPORTED_EXTENSIONS, '.zip'].join(',')}
+            onFilesRejected={async (rejectedFiles) => {
+              // U7a: surface skipped filenames so the user knows files were
+              // discarded (previously DropZone filtered silently). Pack zips
+              // are accepted (and installed) in both apps, so they never land
+              // here.
+              const unsupportedNames = rejectedFiles.map((file) => file.name);
+              if (unsupportedNames.length > 0) {
+                const preview = unsupportedNames.slice(0, 3).join(', ');
+                const extra = unsupportedNames.length > 3 ? ` and ${unsupportedNames.length - 3} more` : '';
+                showToast(`Unsupported file type: ${preview}${extra}`, 'error');
+              }
+            }}
+          />
         </div>
-      )}
 
-      {/* Drop zone */}
-      <div style={{ flexShrink: 0 }}>
-        <DropZone
-          onFilesSelected={handleFilesSelected}
-          accept={[...SUPPORTED_EXTENSIONS, '.zip'].join(',')}
-          onFilesRejected={async (rejectedFiles) => {
-            // U7a: surface skipped filenames so the user knows files were
-            // discarded (previously DropZone filtered silently). Pack zips
-            // are accepted (and installed) in both apps, so they never land
-            // here.
-            const unsupportedNames = rejectedFiles.map((file) => file.name);
-            if (unsupportedNames.length > 0) {
-              const preview = unsupportedNames.slice(0, 3).join(', ');
-              const extra = unsupportedNames.length > 3 ? ` and ${unsupportedNames.length - 3} more` : '';
-              showToast(`Unsupported file type: ${preview}${extra}`, 'error');
-            }
-          }}
-        />
-      </div>
-
-      {/* Document list */}
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
-        <DocumentList
-          documents={documents}
-          onDelete={electronMode ? undefined : handleDelete}
-          deletingId={deletingId}
-          onCancelIndexing={electronMode ? undefined : handleCancelIndexing}
-        />
+        {/* Document list */}
+        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+          <DocumentList
+            documents={documents}
+            onDelete={electronMode ? undefined : handleDelete}
+            deletingId={deletingId}
+            onCancelIndexing={electronMode ? undefined : handleCancelIndexing}
+          />
+        </div>
       </div>
     </div>
   );

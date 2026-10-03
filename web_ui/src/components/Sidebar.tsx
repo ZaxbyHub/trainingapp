@@ -1,5 +1,8 @@
-import { useSidebarState } from '../hooks/useSidebarState';
+import { useEffect, useId, useRef } from 'react';
+import { Button, Icon, IconButton, SideNav, useAppShell, type SideNavItem } from '../ui';
 import { SidebarConversationItem } from './SidebarConversationItem';
+import { CONVERSATION_QUERY_MAX_LENGTH } from '../db/conversation-query';
+import '../layouts/shell.css';
 
 interface SidebarConversation {
   id: string;
@@ -7,129 +10,51 @@ interface SidebarConversation {
   updatedAt: string;
 }
 
+export type SidebarPage = 'chat' | 'documents' | 'training' | 'settings';
+
 interface SidebarProps {
   currentConversationId?: string;
   conversations?: SidebarConversation[];
   currentPage?: string;
   onNewChat: () => void;
   onSelectConversation: (id: string) => void;
-  onNavigate: (page: 'chat' | 'documents' | 'training' | 'settings') => void;
-  onToggle?: () => void;
+  onNavigate: (page: SidebarPage) => void;
   onRenameConversation?: (id: string, newTitle: string) => void;
-  onDeleteConversation?: (id: string) => void;
+  /**
+   * May return a promise. Resolving `false` or rejecting is the explicit failure
+   * signal that expires the delete's pending focus rescue; any other resolution
+   * keeps it until the row actually leaves the list.
+   */
+  onDeleteConversation?: (id: string) => void | Promise<boolean | void>;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  /** Conversation search (whole store, see useConversations). Omit to hide the field. */
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  /** null while no search is active; otherwise the matches (newest first). */
+  searchResults?: SidebarConversation[] | null;
+  /** More matches exist than were returned. */
+  searchTruncated?: boolean;
+  /** A search is pending or running: the shown results are not yet current. */
+  isSearching?: boolean;
 }
 
-const ChatIcon = () => (
-  <svg
-    aria-hidden="true"
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-  </svg>
-);
-
-const DocumentsIcon = () => (
-  <svg
-    aria-hidden="true"
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-    <polyline points="14 2 14 8 20 8" />
-    <line x1="16" y1="13" x2="8" y2="13" />
-    <line x1="16" y1="17" x2="8" y2="17" />
-  </svg>
-);
-
-const TrainingIcon = () => (
-  <svg
-    aria-hidden="true"
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <polygon points="12 2 2 7 12 12 22 7 12 2" />
-    <polyline points="2 17 12 22 22 17" />
-    <polyline points="2 12 12 17 22 12" />
-  </svg>
-);
-
-const SettingsIcon = () => (
-  <svg
-    aria-hidden="true"
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <circle cx="12" cy="12" r="3" />
-    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-  </svg>
-);
-
-const ChevronLeftIcon = () => (
-  <svg
-    aria-hidden="true"
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <polyline points="15 18 9 12 15 6" />
-  </svg>
-);
-
-const ChevronRightIcon = () => (
-  <svg
-    aria-hidden="true"
-    width="20"
-    height="20"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <polyline points="9 18 15 12 9 6" />
-  </svg>
-);
-
-const navItems = [
-  { id: 'chat' as const, label: 'Chat', icon: <ChatIcon /> },
-  { id: 'documents' as const, label: 'Documents', icon: <DocumentsIcon /> },
-  { id: 'training' as const, label: 'Training', icon: <TrainingIcon /> },
-  { id: 'settings' as const, label: 'Settings', icon: <SettingsIcon /> },
+/** Primary destinations, at the TOP of the sidebar (design-language.md section 5). */
+export const PRIMARY_NAV: readonly (SideNavItem & { id: SidebarPage })[] = [
+  { id: 'chat', label: 'Chat', icon: 'message-square' },
+  { id: 'documents', label: 'Documents', icon: 'file-text' },
+  { id: 'training', label: 'Training', icon: 'layers' },
+  { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
+const isSidebarPage = (id: string): id is SidebarPage => PRIMARY_NAV.some((item) => item.id === id);
+
+/**
+ * Sidebar body rendered inside the AppShell: primary navigation first, then the
+ * "Conversations" section (New chat + list). In the 64px rail only the nav icons
+ * and a New chat icon button remain. In the drawer, starting a new chat or
+ * choosing a conversation closes the drawer.
+ */
 export function Sidebar({
   currentConversationId,
   conversations = [],
@@ -137,222 +62,213 @@ export function Sidebar({
   onNewChat,
   onSelectConversation,
   onNavigate,
-  onToggle,
   onRenameConversation,
   onDeleteConversation,
   hasMore,
   onLoadMore,
+  searchQuery = '',
+  onSearchChange,
+  searchResults = null,
+  searchTruncated = false,
+  isSearching = false,
 }: SidebarProps) {
-  const { isOpen, toggle } = useSidebarState();
+  const { collapsed, drawer, closeDrawer } = useAppShell();
+  const headingId = useId();
+  const searchId = useId();
+  const searching = searchResults !== null;
+  // Busy only while a query is set (clearing is immediate, never "busy").
+  const busy = isSearching && searchQuery.trim() !== '';
+  // Stale results while a search is pending are made INACTIVE (inert): not
+  // clickable or focusable, which is what lets shell.css dim them (inactive UI is
+  // exempt from WCAG 1.4.3). Never applied while focus is inside the list (a
+  // re-run triggered by a save while the user is keyboarding through results),
+  // so focus is never dropped; those rows simply stay at full contrast.
+  const listRef = useRef<HTMLDivElement>(null);
+  const newChatRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    if (busy && !list.contains(document.activeElement)) list.setAttribute('inert', '');
+    else list.removeAttribute('inert');
+  }, [busy]);
+  const shown = searchResults ?? conversations;
 
-  const handleToggle = () => {
-    toggle();
-    onToggle?.();
+  // Review round 4, LOW-2: confirming a delete unmounts the focused row, so focus
+  // would fall to <body>. Remember where the row was; once the list no longer
+  // contains it, focus the next row's select button, else the previous one, else
+  // the search field (or New chat when there is no search field).
+  //
+  // The entry is dropped once one non-deferred attempt has been made (whether or
+  // not focus landed), when the user moved on, or when the delete explicitly
+  // failed (resolved false or rejected). A delete that resolves successfully does
+  // NOT drop it: the row may leave `shown` later (an active search refreshes
+  // asynchronously after the delete settles). While the list is inert (a search
+  // re-run is in flight) the rescue is deferred and retried on the next
+  // shown/busy change, because focus() on an inert row is a silent no-op.
+  //
+  // Not every success is observable: when the delete succeeds but the follow-up
+  // refresh fails, or the callback returns void, there is no signal either way.
+  // The entry then waits until the row actually leaves `shown`, and rescues focus
+  // only if it is still on <body> at that point.
+  const pendingDeleteFocus = useRef<{ id: string; index: number } | null>(null);
+  const deleteConversation = (id: string) => {
+    const entry = { id, index: shown.findIndex((c) => c.id === id) };
+    pendingDeleteFocus.current = entry;
+    const expire = () => {
+      if (pendingDeleteFocus.current === entry) pendingDeleteFocus.current = null;
+    };
+    // Void return: no failure signal, so the entry waits for the row to leave.
+    // Still invoked synchronously, but a synchronous throw counts as a rejection.
+    let outcome: Promise<boolean | void>;
+    try {
+      outcome = Promise.resolve(onDeleteConversation?.(id));
+    } catch (error) {
+      outcome = Promise.reject(error);
+    }
+    outcome.then((deleted) => {
+      if (deleted === false) expire();
+    }, expire);
+  };
+  useEffect(() => {
+    const pending = pendingDeleteFocus.current;
+    if (!pending) return;
+    if (shown.some((c) => c.id === pending.id)) return; // row not gone yet
+    const active = document.activeElement;
+    if (active && active !== document.body) {
+      pendingDeleteFocus.current = null; // the user already moved on
+      return;
+    }
+    const list = listRef.current;
+    if (list?.closest('[inert]')) return; // deferred: retried when busy clears
+    const rows = Array.from(list?.querySelectorAll<HTMLElement>('.app-conv__select') ?? []).filter(
+      (el) => !el.closest('[inert]')
+    );
+    const target =
+      rows[Math.min(Math.max(pending.index, 0), rows.length - 1)] ??
+      document.getElementById(searchId) ??
+      newChatRef.current?.querySelector<HTMLElement>('button') ??
+      null;
+    target?.focus();
+    pendingDeleteFocus.current = null; // one attempt only, even if focus did not land
+  }, [shown, busy, searchId]);
+  const clearSearch = () => {
+    onSearchChange?.('');
+    document.getElementById(searchId)?.focus();
+  };
+
+  const startNewChat = () => {
+    onNewChat();
+    if (drawer) closeDrawer('navigate');
+  };
+  const selectConversation = (id: string) => {
+    onSelectConversation(id);
+    if (drawer) closeDrawer('navigate');
   };
 
   return (
-    <nav
-      role="navigation"
-      aria-label="Main navigation"
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: isOpen ? '260px' : '64px',
-        height: '100%',
-        backgroundColor: 'var(--color-surface)',
-        boxShadow: 'var(--shadow-sm)',
-        borderRight: '1px solid var(--color-secondary)',
-        transition: 'width 200ms ease',
-        overflow: 'hidden',
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: isOpen ? 'space-between' : 'center',
-          padding: 'var(--spacing-md)',
-          borderBottom: '1px solid var(--color-secondary)',
+    <>
+      <SideNav
+        label="Main navigation"
+        items={PRIMARY_NAV}
+        activeId={currentPage}
+        onNavigate={(id) => {
+          if (isSidebarPage(id)) onNavigate(id);
         }}
-      >
-        {isOpen && (
-          <span
-            style={{
-              fontSize: 'var(--font-size-body)',
-              fontFamily: 'var(--font-family)',
-              fontWeight: 600,
-              color: 'var(--color-text-on-bubble-assistant)',
-            }}
-          >
-            Menu
-          </span>
-        )}
-        <button
-          type="button"
-          onClick={handleToggle}
-          aria-label={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            width: '32px',
-            height: '32px',
-            padding: 0,
-            border: 'none',
-            borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'transparent',
-            color: 'var(--color-text-on-bubble-assistant)',
-            cursor: 'pointer',
-            transition: 'background-color 150ms ease',
-          }}
-        >
-          {isOpen ? <ChevronLeftIcon /> : <ChevronRightIcon />}
-        </button>
-      </div>
-
-      {/* New Chat Button */}
-      <div style={{ padding: 'var(--spacing-sm)' }}>
-        <button
-          type="button"
-          onClick={onNewChat}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: isOpen ? 'flex-start' : 'center',
-            width: '100%',
-            padding: isOpen ? 'var(--spacing-sm) var(--spacing-md)' : 'var(--spacing-sm)',
-            border: 'none',
-            borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'var(--color-primary)',
-            color: 'var(--color-text-on-primary)',
-            cursor: 'pointer',
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-            fontWeight: 500,
-            gap: 'var(--spacing-sm)',
-            transition: 'background-color 150ms ease',
-          }}
-        >
-          <span style={{ fontSize: '18px', lineHeight: 1 }}>+</span>
-          {isOpen && <span>New Chat</span>}
-        </button>
-      </div>
-
-      {/* Conversation List */}
-      <div
-        style={{
-          flex: 1,
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          padding: 'var(--spacing-sm)',
-        }}
-      >
-        {conversations.length === 0 ? (
-          isOpen && (
-            <div
-              style={{
-                padding: 'var(--spacing-md)',
-                textAlign: 'center',
-                color: 'var(--color-text-muted)',
-                fontSize: 'var(--font-size-small)',
-                fontFamily: 'var(--font-family)',
-              }}
-            >
-              No conversations yet
-            </div>
-          )
-        ) : (
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--spacing-xs)',
-            }}
-          >
-            {conversations.map((conversation) => (
-              <SidebarConversationItem
-                key={conversation.id}
-                id={conversation.id}
-                title={conversation.title}
-                timestamp={conversation.updatedAt}
-                isSelected={currentConversationId === conversation.id}
-                onSelect={onSelectConversation}
-                onRename={onRenameConversation || (() => {})}
-                onDelete={onDeleteConversation || (() => {})}
-              />
-            ))}
-            {isOpen && hasMore && (
-              <button
-                type="button"
-                onClick={onLoadMore || (() => {})}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  padding: 'var(--spacing-sm)',
-                  border: 'none',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'transparent',
-                  color: 'var(--color-text-muted)',
-                  fontSize: 'var(--font-size-small)',
-                  fontFamily: 'var(--font-family)',
-                  cursor: 'pointer',
-                  textAlign: 'center',
-                  marginTop: 'var(--spacing-xs)',
-                }}
-              >
-                Load more...
-              </button>
-            )}
+      />
+      {collapsed ? (
+        <div className="app-sidebar__rail-actions">
+          <IconButton icon="plus" aria-label="New chat" onClick={startNewChat} />
+        </div>
+      ) : (
+        <section className="app-sidebar__conversations" aria-labelledby={headingId}>
+          <div ref={newChatRef} className="app-sidebar__section-head">
+            <h2 id={headingId} className="app-sidebar__section-title">
+              Conversations
+            </h2>
+            <Button size="sm" variant="secondary" onClick={startNewChat}>
+              <Icon name="plus" size={16} />
+              New chat
+            </Button>
           </div>
-        )}
-      </div>
-
-      {/* Bottom Navigation */}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          padding: 'var(--spacing-sm)',
-          gap: 'var(--spacing-xs)',
-          borderTop: '1px solid var(--color-secondary)',
-        }}
-      >
-        {navItems.map((item) => {
-          const isActive = currentPage === item.id;
-          return (
-            <button
-              type="button"
-              key={item.id}
-              onClick={() => onNavigate(item.id)}
-              aria-current={isActive ? 'page' : undefined}
-              aria-label={item.label}
-              title={item.label}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: isOpen ? 'flex-start' : 'center',
-                padding: isOpen ? 'var(--spacing-sm) var(--spacing-md)' : 'var(--spacing-sm)',
-                border: 'none',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: isActive ? 'var(--color-primary)' : 'transparent',
-                color: isActive
-                  ? 'var(--color-text-on-primary)'
-                  : 'var(--color-text-on-bubble-assistant)',
-                cursor: 'pointer',
-                fontSize: 'var(--font-size-small)',
-                fontFamily: 'var(--font-family)',
-                gap: 'var(--spacing-sm)',
-                transition: 'background-color 150ms ease',
-                width: '100%',
-              }}
-            >
-              <span style={{ flexShrink: 0 }}>{item.icon}</span>
-              {isOpen && <span>{item.label}</span>}
-            </button>
-          );
-        })}
-      </div>
-    </nav>
+          {onSearchChange ? (
+            <div className="app-sidebar__search" role="search">
+              <label htmlFor={searchId} className="ui-visually-hidden">
+                Search conversations
+              </label>
+              <div className="app-sidebar__search-box">
+                {busy ? (
+                  <span className="ui-spinner app-sidebar__search-icon" aria-hidden="true" data-testid="search-spinner" />
+                ) : (
+                  <Icon name="search" size={16} className="app-sidebar__search-icon" />
+                )}
+                <input
+                  id={searchId}
+                  type="search"
+                  className="ui-input ui-focusable app-sidebar__search-input"
+                  placeholder="Search conversations"
+                  autoComplete="off"
+                  maxLength={CONVERSATION_QUERY_MAX_LENGTH}
+                  spellCheck={false}
+                  value={searchQuery}
+                  onChange={(e) => onSearchChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Escape clears a non-empty search (and stops there); on an empty
+                    // field it falls through, e.g. to close the drawer.
+                    if (e.key === 'Escape' && searchQuery !== '') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onSearchChange('');
+                    }
+                  }}
+                />
+                {searchQuery !== '' ? (
+                  <IconButton
+                    icon="x"
+                    size="sm"
+                    aria-label="Clear search"
+                    className="app-sidebar__search-clear"
+                    onClick={clearSearch}
+                  />
+                ) : null}
+              </div>
+              <p className="ui-visually-hidden" role="status">
+                {/* Never announce a count for results that are about to be replaced. */}
+                {busy ? 'Searching…' : searching
+                  ? shown.length === 0
+                    ? 'No conversations found'
+                    : `${shown.length}${searchTruncated ? ' or more' : ''} conversation${shown.length === 1 && !searchTruncated ? '' : 's'} found`
+                  : ''}
+              </p>
+            </div>
+          ) : null}
+          <div ref={listRef} className="app-sidebar__list" aria-busy={busy || undefined}>
+            {shown.length === 0 ? (
+              <p className="app-sidebar__empty">{searching ? 'No conversations match' : 'No conversations yet'}</p>
+            ) : (
+              shown.map((conversation) => (
+                <SidebarConversationItem
+                  key={conversation.id}
+                  id={conversation.id}
+                  title={conversation.title}
+                  timestamp={conversation.updatedAt}
+                  isSelected={currentConversationId === conversation.id}
+                  onSelect={selectConversation}
+                  onRename={onRenameConversation || (() => {})}
+                  onDelete={deleteConversation}
+                />
+              ))
+            )}
+            {searching && searchTruncated ? (
+              <p className="app-sidebar__note">Showing the most recent matches. Refine your search to see others.</p>
+            ) : null}
+            {!searching && conversations.length > 0 && hasMore ? (
+              <Button size="sm" variant="ghost" className="app-sidebar__more" onClick={onLoadMore || (() => {})}>
+                Load more
+              </Button>
+            ) : null}
+          </div>
+        </section>
+      )}
+    </>
   );
 }

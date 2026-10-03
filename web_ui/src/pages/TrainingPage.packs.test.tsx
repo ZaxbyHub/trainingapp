@@ -118,6 +118,24 @@ describe('TrainingPage is the articulate course surface only (#133 feedback roun
     expect((frame as HTMLIFrameElement).src.startsWith('app://training/opmed-course/1.0.0/story.html')).toBe(true);
   });
 
+  it('renders the shared PageHeader: one h1 "Training" with its description (Lumen phase 3)', async () => {
+    listPacks.mockResolvedValue([DOC_PACK]);
+    render(<TrainingPage />);
+    await screen.findByTestId('training-empty-state');
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent('Training');
+    expect(headings[0].closest('header')).toHaveClass('ui-page-header');
+    expect(screen.getByText('Play the training courses installed on this device.')).toBeTruthy();
+  });
+
+  it('keeps the PageHeader on the deep-linked player view too', async () => {
+    listPacks.mockResolvedValue([DOC_PACK, TRAINING_PACK]);
+    render(<TrainingPage initialPackId="opmed-course" />);
+    await screen.findByTestId('training-player-frame');
+    expect(screen.getByRole('heading', { level: 1, name: 'Training' })).toBeTruthy();
+  });
+
   it('renders the LOADING state (not a player flash) while the pack list resolves', () => {
     listPacks.mockReturnValue(new Promise(() => undefined)); // never resolves
     window.history.pushState({}, '', '/?pack=stale-pack');

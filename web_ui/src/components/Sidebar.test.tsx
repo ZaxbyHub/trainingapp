@@ -3,26 +3,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import { useState } from 'react';
+import userEvent from '@testing-library/user-event';
 import { Sidebar } from './Sidebar';
-
-// Use vi.hoisted to create a mock that works with hoisting
-const mockToggle = vi.fn();
-const mockSetOpen = vi.fn();
-
-const mockState = {
-  isOpen: true,
-  toggle: mockToggle,
-  setOpen: mockSetOpen,
-};
-
-const mockUseSidebarStateFn = vi.hoisted(() => vi.fn(() => mockState));
-
-// Mock useSidebarState hook
-vi.mock('../hooks/useSidebarState', () => ({
-  useSidebarState: mockUseSidebarStateFn,
-}));
 
 describe('Sidebar', () => {
   const defaultProps = {
@@ -38,9 +23,6 @@ describe('Sidebar', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset the mock to return the default state
-    mockState.isOpen = true;
-    mockUseSidebarStateFn.mockReturnValue(mockState);
   });
 
   afterEach(() => {
@@ -70,10 +52,27 @@ describe('Sidebar', () => {
       expect(screen.getByText('Second Chat')).toBeInTheDocument();
     });
 
-    it('renders "Menu" header when open', () => {
+    it('puts the primary nav first, then a labelled Conversations section', () => {
+      render(<Sidebar {...defaultProps} conversations={conversations} />);
+
+      const nav = screen.getByRole('navigation', { name: 'Main navigation' });
+      const section = screen.getByRole('region', { name: 'Conversations' });
+      // Primary nav at the TOP (design-language.md section 5): nav precedes the list.
+      expect(nav.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(within(nav).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+        'Chat',
+        'Documents',
+        'Training',
+        'Settings',
+      ]);
+      expect(within(section).getByRole('button', { name: /new chat/i })).toBeInTheDocument();
+      expect(within(section).getByText('First Chat')).toBeInTheDocument();
+    });
+
+    it('does not show the old "Menu" header', () => {
       render(<Sidebar {...defaultProps} />);
 
-      expect(screen.getByText('Menu')).toBeInTheDocument();
+      expect(screen.queryByText('Menu')).not.toBeInTheDocument();
     });
   });
 
@@ -155,7 +154,19 @@ describe('Sidebar', () => {
       );
 
       const firstConv = screen.getByText('First Chat');
-      expect(firstConv.closest('[role="button"]')).toHaveAttribute('aria-current', 'page');
+      expect(firstConv.closest('button')).toHaveAttribute('aria-current', 'true');
+    });
+
+    it('with a selected conversation on the Chat page, exactly one element is aria-current="page" (the Chat nav item)', () => {
+      const { container } = render(
+        <Sidebar {...defaultProps} currentPage="chat" conversations={conversations} currentConversationId="conv-2" />
+      );
+      const pageCurrent = container.querySelectorAll('[aria-current="page"]');
+      expect(pageCurrent).toHaveLength(1);
+      expect(pageCurrent[0]).toBe(screen.getByRole('button', { name: /^chat$/i }));
+      const selectedRow = screen.getByText('Second Chat').closest('button');
+      expect(selectedRow).toHaveAttribute('aria-current', 'true');
+      expect(screen.getByText('First Chat').closest('button')).not.toHaveAttribute('aria-current');
     });
   });
 
@@ -189,20 +200,230 @@ describe('Sidebar', () => {
     });
   });
 
-  describe('Toggle', () => {
-    it('calls onToggle when collapse button is clicked', () => {
-      const onToggle = vi.fn();
-      render(<Sidebar {...defaultProps} onToggle={onToggle} />);
+  // Collapse/expand moved to the AppShell (ui/AppShell.test.tsx covers the toggle,
+  // the rail and the drawer); the sidebar body only reads the shell state.
 
-      fireEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }));
+  describe('Focus after a confirmed delete (round 4 LOW-2)', () => {
+    function Live({ initial, withSearch = false }: { initial: typeof conversations; withSearch?: boolean }) {
+      const [items, setItems] = useState(initial);
+      return (
+        <Sidebar
+          {...defaultProps}
+          conversations={items}
+          onDeleteConversation={(id) => setItems((prev) => prev.filter((c) => c.id !== id))}
+          {...(withSearch ? { searchQuery: '', onSearchChange: () => {} } : {})}
+        />
+      );
+    }
+    const three = [
+      { id: 'a', title: 'Alpha', updatedAt: '2026-06-27T10:00:00Z' },
+      { id: 'b', title: 'Bravo', updatedAt: '2026-06-27T09:00:00Z' },
+      { id: 'c', title: 'Charlie', updatedAt: '2026-06-27T08:00:00Z' },
+    ];
+    const deleteRow = async (user: ReturnType<typeof userEvent.setup>, title: string) => {
+      const row = screen.getByText(title).closest('.app-conv') as HTMLElement;
+      await user.click(row.querySelector('button[aria-label="Conversation options"]') as HTMLElement);
+      await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+      await user.click(screen.getByRole('menuitem', { name: 'Confirm' }));
+    };
 
-      expect(onToggle).toHaveBeenCalled();
+    it('moves focus to the next row', async () => {
+      const user = userEvent.setup();
+      render(<Live initial={three} />);
+      await deleteRow(user, 'Alpha');
+      expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+      expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
     });
 
-    it('shows collapse icon when open', () => {
-      render(<Sidebar {...defaultProps} />);
+    it('falls back to the previous row when the last row was deleted', async () => {
+      const user = userEvent.setup();
+      render(<Live initial={three} />);
+      await deleteRow(user, 'Charlie');
+      expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
+    });
 
-      expect(screen.getByRole('button', { name: /collapse sidebar/i })).toBeInTheDocument();
+    it('with no rows left, focuses the search field (or New chat when there is no search field)', async () => {
+      const user = userEvent.setup();
+      const { unmount } = render(<Live initial={[three[0]]} withSearch />);
+      await deleteRow(user, 'Alpha');
+      expect(screen.getByRole('searchbox', { name: 'Search conversations' })).toHaveFocus();
+      unmount();
+      render(<Live initial={[three[0]]} />);
+      await deleteRow(user, 'Alpha');
+      expect(screen.getByRole('button', { name: /new chat/i })).toHaveFocus();
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it('rescues focus within the search results when deleting during an active search', async () => {
+      const user = userEvent.setup();
+      function Searching() {
+        const [items, setItems] = useState(three);
+        return (
+          <Sidebar
+            {...defaultProps}
+            conversations={[{ id: 'z', title: 'Zulu', updatedAt: '2026-06-27T07:00:00Z' }]}
+            searchResults={items}
+            searchQuery="a"
+            onSearchChange={() => {}}
+            onDeleteConversation={(id) => setItems((prev) => prev.filter((c) => c.id !== id))}
+          />
+        );
+      }
+      render(<Searching />);
+      await deleteRow(user, 'Bravo');
+      expect(screen.getByText('Charlie').closest('button')).toHaveFocus();
+      expect(screen.queryByText('Zulu')).not.toBeInTheDocument();
+    });
+
+    it('defers the rescue while the list is inert and lands focus once busy clears', async () => {
+      const user = userEvent.setup();
+      let setBusy: (b: boolean) => void = () => {};
+      function Racing() {
+        const [items, setItems] = useState(three);
+        const [busy, setBusyState] = useState(false);
+        setBusy = setBusyState;
+        return (
+          <Sidebar
+            {...defaultProps}
+            conversations={items}
+            searchQuery="a"
+            isSearching={busy}
+            onSearchChange={() => {}}
+            onDeleteConversation={(id) => {
+              // A save-triggered search re-run lands together with the removal.
+              setItems((prev) => prev.filter((c) => c.id !== id));
+              setBusyState(true);
+            }}
+          />
+        );
+      }
+      render(<Racing />);
+      await deleteRow(user, 'Alpha');
+      expect(screen.getByText('Bravo').closest('.app-sidebar__list')).toHaveAttribute('inert');
+      expect(document.activeElement).toBe(document.body);
+      act(() => setBusy(false));
+      expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
+    });
+
+    it.each([
+      ['rejects', () => vi.fn().mockRejectedValue(new Error('nope'))],
+      ['resolves false', () => vi.fn().mockResolvedValue(false)],
+    ])('drops the pending rescue when the delete %s, so a later list change does not steal focus', async (_n, make) => {
+      const user = userEvent.setup();
+      const onDelete = make();
+      const { rerender } = render(<Sidebar {...defaultProps} conversations={three} onDeleteConversation={onDelete} />);
+      await deleteRow(user, 'Alpha');
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(onDelete).toHaveBeenCalledWith('a');
+      expect(screen.getByText('Alpha')).toBeInTheDocument();
+      (document.activeElement as HTMLElement | null)?.blur();
+      // The row disappears later for an unrelated reason (e.g. another tab).
+      rerender(<Sidebar {...defaultProps} conversations={three.slice(1)} onDeleteConversation={onDelete} />);
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it('expires the pending rescue when onDeleteConversation throws synchronously, with no unhandled error', async () => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on('unhandledRejection', onUnhandled);
+      try {
+        const user = userEvent.setup();
+        const onDelete = vi.fn(() => {
+          throw new Error('sync boom');
+        });
+        const { rerender } = render(<Sidebar {...defaultProps} conversations={three} onDeleteConversation={onDelete} />);
+        await deleteRow(user, 'Alpha');
+        await act(async () => {
+          await new Promise((r) => setTimeout(r, 0));
+        });
+        expect(onDelete).toHaveBeenCalledWith('a');
+        expect(screen.getByText('Alpha')).toBeInTheDocument();
+        (document.activeElement as HTMLElement | null)?.blur();
+        // The row leaves later for an unrelated reason: the expired entry must not steal focus.
+        rerender(<Sidebar {...defaultProps} conversations={three.slice(1)} onDeleteConversation={onDelete} />);
+        expect(document.activeElement).toBe(document.body);
+        await new Promise((r) => setTimeout(r, 0));
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', onUnhandled);
+      }
+    });
+
+    it('B-1: keeps the rescue after a successful async delete while a search drops the row later', async () => {
+      const user = userEvent.setup();
+      let startSearch: () => void = () => {};
+      let landResults: (ids: string[]) => void = () => {};
+      function Searching() {
+        const [items, setItems] = useState(three);
+        const [busy, setBusy] = useState(false);
+        startSearch = () => setBusy(true);
+        landResults = (ids) => {
+          setItems(three.filter((c) => ids.includes(c.id)));
+          setBusy(false);
+        };
+        return (
+          <Sidebar
+            {...defaultProps}
+            conversations={three}
+            searchResults={items}
+            searchQuery="a"
+            isSearching={busy}
+            onSearchChange={() => {}}
+            // Resolves true after a microtask; the search results land later.
+            onDeleteConversation={async () => {
+              await Promise.resolve();
+              return true;
+            }}
+          />
+        );
+      }
+      render(<Searching />);
+      await deleteRow(user, 'Alpha');
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText('Alpha')).toBeInTheDocument(); // promise settled, row still shown
+      // The post-delete refresh starts a search (focus is still in the list, so it
+      // is not made inert) and the results, minus Alpha, land afterwards.
+      act(() => startSearch());
+      act(() => landResults(['b', 'c']));
+      expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+      expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
+    });
+
+    it('L-1: drops the entry after one attempt even when the target cannot take focus', async () => {
+      const user = userEvent.setup();
+      let setItemsExt: (items: typeof three) => void = () => {};
+      function Harness() {
+        const [items, setItems] = useState([three[0]]);
+        setItemsExt = setItems;
+        return (
+          <Sidebar
+            {...defaultProps}
+            conversations={items}
+            onDeleteConversation={(id) => setItems((prev) => prev.filter((c) => c.id !== id))}
+          />
+        );
+      }
+      render(<Harness />);
+      const row = screen.getByText('Alpha').closest('.app-conv') as HTMLElement;
+      await user.click(row.querySelector('button[aria-label="Conversation options"]') as HTMLElement);
+      await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+      const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
+      try {
+        await user.click(screen.getByRole('menuitem', { name: 'Confirm' }));
+        expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+        expect(focusSpy).toHaveBeenCalled(); // the one attempt (New chat), which silently failed
+        expect(document.activeElement).toBe(document.body);
+      } finally {
+        focusSpy.mockRestore();
+      }
+      // A much later list change must not pull focus: the entry is gone.
+      act(() => setItemsExt([three[1]]));
+      expect(screen.getByText('Bravo')).toBeInTheDocument();
+      expect(document.activeElement).toBe(document.body);
     });
   });
 
@@ -228,7 +449,7 @@ describe('Sidebar', () => {
       fireEvent.mouseEnter(firstConv);
 
       // Get the kebab button for the first conversation
-      const firstConvContainer = firstConv.closest('[role="button"]');
+      const firstConvContainer = firstConv.closest('.app-conv');
       const kebabButton = firstConvContainer?.querySelector('button[aria-label="Conversation options"]') as HTMLButtonElement;
       fireEvent.click(kebabButton);
 
@@ -258,7 +479,7 @@ describe('Sidebar', () => {
       fireEvent.mouseEnter(firstConv);
 
       // Get the kebab button for the first conversation
-      const firstConvContainer = firstConv.closest('[role="button"]');
+      const firstConvContainer = firstConv.closest('.app-conv');
       const kebabButton = firstConvContainer?.querySelector('button[aria-label="Conversation options"]') as HTMLButtonElement;
       fireEvent.click(kebabButton);
 

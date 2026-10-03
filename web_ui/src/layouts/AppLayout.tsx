@@ -1,5 +1,11 @@
 import React from 'react';
-import { Sidebar } from '../components/Sidebar';
+import { Sidebar, type SidebarPage } from '../components/Sidebar';
+import { useSidebarState } from '../hooks/useSidebarState';
+import { AppShell } from '../ui';
+import './shell.css';
+
+/** The one product name (docs/design/design-language.md section 5); also index.html <title>. */
+export const PRODUCT_NAME = 'TrainingApp';
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -10,11 +16,21 @@ interface AppLayoutProps {
   onNewChat?: () => void;
   onSelectConversation?: (id: string) => void;
   onRenameConversation?: (id: string, newTitle: string) => void;
-  onDeleteConversation?: (id: string) => void;
+  onDeleteConversation?: (id: string) => void | Promise<boolean | void>;
   hasMore?: boolean;
   onLoadMore?: () => void;
+  searchQuery?: string;
+  onSearchChange?: (query: string) => void;
+  searchResults?: Array<{ id: string; title: string; updatedAt: string }> | null;
+  searchTruncated?: boolean;
+  isSearching?: boolean;
 }
 
+/**
+ * App frame: the Lumen AppShell (sidebar / rail / drawer + <main>) around the
+ * current page. The desktop collapse state persists (useSidebarState: collapsed
+ * by default at <= 1024px, section 3.5); the drawer state does not.
+ */
 export function AppLayout({
   children,
   currentPage,
@@ -27,37 +43,39 @@ export function AppLayout({
   onDeleteConversation,
   hasMore,
   onLoadMore,
+  searchQuery,
+  onSearchChange,
+  searchResults,
+  searchTruncated,
+  isSearching,
 }: AppLayoutProps) {
+  const { isOpen, toggle } = useSidebarState();
   return (
-    <div
-      style={{
-        display: 'flex',
-        height: '100dvh',
-        width: '100%',
-        overflow: 'hidden',
-      }}
+    <AppShell
+      productName={PRODUCT_NAME}
+      collapsed={!isOpen}
+      onToggleCollapsed={toggle}
+      sidebar={
+        <Sidebar
+          currentPage={currentPage}
+          onNavigate={(page: SidebarPage) => onNavigate(page)}
+          currentConversationId={currentConversationId}
+          conversations={conversations}
+          onNewChat={onNewChat || (() => {})}
+          onSelectConversation={onSelectConversation || (() => {})}
+          onRenameConversation={onRenameConversation}
+          onDeleteConversation={onDeleteConversation}
+          hasMore={hasMore}
+          onLoadMore={onLoadMore}
+          searchQuery={searchQuery}
+          onSearchChange={onSearchChange}
+          searchResults={searchResults}
+          searchTruncated={searchTruncated}
+          isSearching={isSearching}
+        />
+      }
     >
-      <Sidebar
-        currentPage={currentPage}
-        onNavigate={onNavigate}
-        currentConversationId={currentConversationId}
-        conversations={conversations}
-        onNewChat={onNewChat || (() => {})}
-        onSelectConversation={onSelectConversation || (() => {})}
-        onRenameConversation={onRenameConversation}
-        onDeleteConversation={onDeleteConversation}
-        hasMore={hasMore}
-        onLoadMore={onLoadMore}
-      />
-      <main
-        style={{
-          flex: 1,
-          overflow: 'auto',
-          backgroundColor: 'var(--color-bubble-assistant)',
-        }}
-      >
-        {children}
-      </main>
-    </div>
+      {children}
+    </AppShell>
   );
 }

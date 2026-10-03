@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
-import { useConversations } from './useConversations';
+import { CONVERSATION_SEARCH_DEBOUNCE_MS, useConversations } from './useConversations';
 import type { ChatMessage } from '../types/chat';
 
 // Mock the conversations database module
@@ -15,6 +15,7 @@ vi.mock('../db/conversations', () => ({
   updateConversation: vi.fn(),
   deleteConversation: vi.fn(),
   countConversations: vi.fn(),
+  searchConversations: vi.fn(),
 }));
 
 import * as conversationsDb from '../db/conversations';
@@ -25,6 +26,7 @@ const mockCreateConversation = conversationsDb.createConversation as ReturnType<
 const mockUpdateConversation = conversationsDb.updateConversation as ReturnType<typeof vi.fn>;
 const mockDeleteConversation = conversationsDb.deleteConversation as ReturnType<typeof vi.fn>;
 const mockCountConversations = conversationsDb.countConversations as ReturnType<typeof vi.fn>;
+const mockSearchConversations = conversationsDb.searchConversations as ReturnType<typeof vi.fn>;
 
 // Helper to create mock conversation
 const createMockConversation = (overrides: Partial<{
@@ -54,6 +56,7 @@ describe('useConversations', () => {
     mockUpdateConversation.mockResolvedValue(undefined);
     mockDeleteConversation.mockResolvedValue(undefined);
     mockCountConversations.mockResolvedValue(0);
+    mockSearchConversations.mockResolvedValue({ matches: [], truncated: false });
   });
 
   afterEach(() => {
@@ -394,6 +397,31 @@ describe('useConversations', () => {
         await result.current.removeConversation('conv-1');
       });
 
+      expect(result.current.persistenceError).toBe('Failed to delete conversation');
+    });
+
+    it('removeConversation resolves true on success and false when the delete throws', async () => {
+      const mockConvs = [createMockConversation({ id: 'conv-1' }), createMockConversation({ id: 'conv-2' })];
+      mockListConversations.mockResolvedValue(mockConvs);
+      mockCountConversations.mockResolvedValue(2);
+
+      const { result } = renderHook(() => useConversations());
+
+      await waitFor(() => {
+        expect(result.current.conversations.length).toBe(2);
+      });
+
+      let ok: boolean | undefined;
+      await act(async () => {
+        ok = await result.current.removeConversation('conv-1');
+      });
+      expect(ok).toBe(true);
+
+      mockDeleteConversation.mockRejectedValueOnce(new Error('Delete failed'));
+      await act(async () => {
+        ok = await result.current.removeConversation('conv-2');
+      });
+      expect(ok).toBe(false);
       expect(result.current.persistenceError).toBe('Failed to delete conversation');
     });
 
@@ -754,6 +782,314 @@ describe('useConversations', () => {
         result.current.setCurrentConversationId(undefined);
       });
       expect(result.current.currentConversationId).toBeUndefined();
+    });
+  });
+
+  describe('Search (Lumen phase 3: all conversations, debounced)', () => {
+    const page = Array.from({ length: 50 }, (_, i) =>
+      createMockConversation({ id: `conv-${i}`, title: `Recent ${i}`, updatedAt: 10_000 - i })
+    );
+    const old = createMockConversation({ id: 'conv-110', title: 'Quarterly budget review', updatedAt: 1 });
+
+    async function mountWithPage() {
+      mockListConversations.mockImplementation(async (offset: number, size: number) =>
+        page.slice(offset, offset + size)
+      );
+      mockCountConversations.mockResolvedValue(120);
+      const hook = renderHook(() => useConversations());
+      await waitFor(() => expect(hook.result.current.conversations).toHaveLength(50));
+      return hook;
+    }
+
+    it('queries the whole store, so a match beyond the loaded page is found', async () => {
+      mockSearchConversations.mockResolvedValue({ matches: [old], truncated: false });
+      const { result } = await mountWithPage();
+      expect(result.current.conversations.some((c) => c.id === 'conv-110')).toBe(false);
+      expect(result.current.searchResults).toBeNull();
+
+      act(() => result.current.setSearchQuery('budget'));
+      await waitFor(() => expect(result.current.searchResults).not.toBeNull());
+      expect(mockSearchConversations).toHaveBeenCalledWith('budget', expect.objectContaining({ isCancelled: expect.any(Function) }));
+      expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-110']);
+      // The paginated list is untouched: no client-side filtering of the loaded page.
+      expect(result.current.conversations).toHaveLength(50);
+    });
+
+    it('removeConversation resolves true while an active search still lists the id; the re-run then drops it', async () => {
+      const { result } = await mountWithPage();
+      mockSearchConversations.mockResolvedValueOnce({ matches: [page[3], page[4]], truncated: false });
+      act(() => result.current.setSearchQuery('recent'));
+      await waitFor(() => expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-3', 'conv-4']));
+
+      // The delete's refresh starts a search re-run that we hold open.
+      let landRerun: (v: unknown) => void = () => {};
+      mockSearchConversations.mockImplementationOnce(() => new Promise((r) => { landRerun = r; }));
+      mockListConversations.mockImplementation(async (offset: number, size: number) =>
+        page.filter((c) => c.id !== 'conv-3').slice(offset, offset + size)
+      );
+      let ok: boolean | undefined;
+      await act(async () => {
+        ok = await result.current.removeConversation('conv-3');
+      });
+      expect(ok).toBe(true);
+      expect(mockSearchConversations).toHaveBeenCalledTimes(2);
+      expect(result.current.searchResults?.map((c) => c.id)).toContain('conv-3');
+
+      await act(async () => landRerun({ matches: [page[4]], truncated: false }));
+      expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-4']);
+    });
+
+    it('removeConversation resolves true when a newer refresh supersedes its own; the row leaves via the newer refresh', async () => {
+      const { result } = await mountWithPage();
+      const without = page.filter((c) => c.id !== 'conv-3');
+      // The delete's own refresh reads a stale list and is held open.
+      let landStale: (v: unknown) => void = () => {};
+      mockListConversations.mockImplementationOnce(() => new Promise((r) => { landStale = r; }));
+      mockListConversations.mockImplementation(async (offset: number, size: number) =>
+        without.slice(offset, offset + size)
+      );
+      let removal: Promise<boolean> = Promise.resolve(false);
+      await act(async () => {
+        removal = result.current.removeConversation('conv-3');
+        await waitFor(() => expect(mockListConversations).toHaveBeenCalledTimes(2));
+      });
+      // A newer refresh bumps the generation while the delete's refresh is pending.
+      await act(async () => {
+        await result.current.refreshConversations();
+      });
+      expect(result.current.conversations.some((c) => c.id === 'conv-3')).toBe(false);
+      // The stale read lands afterwards and is discarded; the delete still reports success.
+      let ok: boolean | undefined;
+      await act(async () => {
+        landStale(page.slice(0, 50));
+        ok = await removal;
+      });
+      expect(ok).toBe(true);
+      expect(result.current.conversations.some((c) => c.id === 'conv-3')).toBe(false);
+    });
+
+    it('is debounced: rapid typing issues one query, for the final text', async () => {
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('b'));
+      act(() => result.current.setSearchQuery('bu'));
+      act(() => result.current.setSearchQuery('bud'));
+      expect(mockSearchConversations).not.toHaveBeenCalled();
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      await new Promise((r) => setTimeout(r, CONVERSATION_SEARCH_DEBOUNCE_MS + 50));
+      expect(mockSearchConversations).toHaveBeenCalledTimes(1);
+      expect(mockSearchConversations).toHaveBeenCalledWith('bud', expect.objectContaining({ isCancelled: expect.any(Function) }));
+    });
+
+    it('no match yields an empty result list (the "No conversations match" state)', async () => {
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('zzz'));
+      await waitFor(() => expect(result.current.searchResults).toEqual([]));
+      expect(result.current.isSearching).toBe(false);
+    });
+
+    it('clearing the query drops the results immediately and stops searching', async () => {
+      mockSearchConversations.mockResolvedValue({ matches: [old], truncated: true });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('budget'));
+      await waitFor(() => expect(result.current.searchResults).toHaveLength(1));
+      expect(result.current.searchTruncated).toBe(true);
+      act(() => result.current.setSearchQuery(''));
+      expect(result.current.searchResults).toBeNull();
+      expect(result.current.searchTruncated).toBe(false);
+      await new Promise((r) => setTimeout(r, CONVERSATION_SEARCH_DEBOUNCE_MS + 50));
+      expect(mockSearchConversations).toHaveBeenCalledTimes(1);
+    });
+
+    it('a slower, older query never overwrites a newer one', async () => {
+      let resolveOld: (v: unknown) => void = () => {};
+      mockSearchConversations
+        .mockImplementationOnce(() => new Promise((r) => { resolveOld = r; }))
+        .mockResolvedValueOnce({ matches: [page[3]], truncated: false });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('first'));
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      act(() => result.current.setSearchQuery('second'));
+      await waitFor(() => expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-3']));
+      await act(async () => resolveOld({ matches: [old], truncated: false }));
+      expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-3']);
+    });
+
+    it('a superseded search is told to stop: its isCancelled() flips once a newer query starts', async () => {
+      const tokens: Array<() => boolean> = [];
+      mockSearchConversations.mockImplementation(
+        (_q: string, opts?: { isCancelled?: () => boolean }) => {
+          if (opts?.isCancelled) tokens.push(opts.isCancelled);
+          return new Promise(() => {}); // never settles: the walk is "still running"
+        }
+      );
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('first'));
+      await waitFor(() => expect(tokens).toHaveLength(1));
+      expect(tokens[0]()).toBe(false);
+      act(() => result.current.setSearchQuery('second'));
+      await waitFor(() => expect(tokens).toHaveLength(2));
+      expect(tokens[0]()).toBe(true); // the stale walk stops
+      expect(tokens[1]()).toBe(false);
+      act(() => result.current.setSearchQuery(''));
+      expect(tokens[1]()).toBe(true); // clearing cancels the in-flight walk too
+    });
+
+    it('isSearching is true from the first keystroke (results are stale) until the query settles', async () => {
+      let settle: (v: unknown) => void = () => {};
+      mockSearchConversations.mockImplementation(() => new Promise((r) => { settle = r; }));
+      const { result } = await mountWithPage();
+      expect(result.current.isSearching).toBe(false);
+      act(() => result.current.setSearchQuery('bud'));
+      expect(result.current.isSearching).toBe(true); // before the debounce fires
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      expect(result.current.isSearching).toBe(true);
+      await act(async () => settle({ matches: [], truncated: false }));
+      expect(result.current.isSearching).toBe(false);
+    });
+
+    it('desktop (Electron) path: same renderer store query, no backend call', async () => {
+      // Chat history lives in the renderer's IndexedDB in the desktop app too;
+      // the desktop backend has no conversation API. Search must not reach for one.
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      (window as unknown as { desktopApi?: unknown }).desktopApi = {};
+      try {
+        mockSearchConversations.mockResolvedValue({ matches: [old], truncated: false });
+        const { result } = await mountWithPage();
+        act(() => result.current.setSearchQuery('budget'));
+        await waitFor(() => expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-110']));
+        expect(mockSearchConversations).toHaveBeenCalledWith('budget', expect.objectContaining({ isCancelled: expect.any(Function) }));
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        delete (window as unknown as { desktopApi?: unknown }).desktopApi;
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it('a rename re-runs an active search and the NEW title appears in the results (PRR-017)', async () => {
+      // A tiny live "store" the search mock reads, so the rename really changes what it finds.
+      const live = new Map([[old.id, { ...old }]]);
+      mockSearchConversations.mockImplementation(async (q: string) => ({
+        matches: [...live.values()].filter((c) => c.title.toLowerCase().includes(q.toLowerCase())),
+        truncated: false,
+      }));
+      mockUpdateConversation.mockImplementation(async (id: string, changes: { title?: string }) => {
+        const row = live.get(id);
+        if (row && changes.title) live.set(id, { ...row, title: changes.title });
+      });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('budget'));
+      await waitFor(() => expect(result.current.searchResults?.map((c) => c.title)).toEqual(['Quarterly budget review']));
+      await act(async () => {
+        await result.current.renameConversation('conv-110', 'Budget v2 (final)');
+      });
+      await waitFor(() => expect(result.current.searchResults?.map((c) => c.title)).toEqual(['Budget v2 (final)']));
+      expect(result.current.isSearching).toBe(false);
+    });
+
+    it('a mutation during an in-flight walk does not restart it; the walk is re-run once when it finishes (PRR-011)', async () => {
+      const pending: Array<(v: unknown) => void> = [];
+      mockSearchConversations.mockImplementation(() => new Promise((r) => { pending.push(r); }));
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('budget'));
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await result.current.renameConversation('conv-1', 'Renamed');
+      });
+      // The identical in-flight walk was neither cancelled nor restarted.
+      expect(mockSearchConversations).toHaveBeenCalledTimes(1);
+      const token = mockSearchConversations.mock.calls[0][1] as { isCancelled: () => boolean };
+      expect(token.isCancelled()).toBe(false);
+      await act(async () => pending[0]({ matches: [old], truncated: false }));
+      // ...and re-run exactly once afterwards, so results reflect the rename.
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(2));
+      expect(result.current.isSearching).toBe(true);
+      await act(async () => pending[1]({ matches: [], truncated: false }));
+      expect(result.current.searchResults).toEqual([]);
+      expect(result.current.isSearching).toBe(false);
+    });
+
+    it('a mutation while the debounce is pending runs the search now and clears the timer (no second run) (PRR-011)', async () => {
+      mockSearchConversations.mockResolvedValue({ matches: [old], truncated: false });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('budget'));
+      expect(mockSearchConversations).not.toHaveBeenCalled(); // still debouncing
+      await act(async () => {
+        await result.current.renameConversation('conv-1', 'Renamed');
+      });
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      await new Promise((r) => setTimeout(r, CONVERSATION_SEARCH_DEBOUNCE_MS + 80));
+      expect(mockSearchConversations).toHaveBeenCalledTimes(1);
+      expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-110']);
+    });
+  });
+
+  describe('Busy cue does not flicker off between queries (review appendix, rejected-candidate 7 side note)', () => {
+    it('a walk finishing while a newer query is still debouncing leaves isSearching on', async () => {
+      const pending: Array<(v: unknown) => void> = [];
+      mockSearchConversations.mockImplementation(() => new Promise((r) => { pending.push(r); }));
+      mockListConversations.mockResolvedValue([]);
+      const { result } = renderHook(() => useConversations());
+      await waitFor(() => expect(mockListConversations).toHaveBeenCalled());
+      act(() => result.current.setSearchQuery('bud'));
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      act(() => result.current.setSearchQuery('budget')); // debounce pending, walk 1 still reading
+      await act(async () => pending[0]({ matches: [], truncated: false }));
+      expect(result.current.isSearching).toBe(true);
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(2));
+      await act(async () => pending[1]({ matches: [], truncated: false }));
+      expect(result.current.isSearching).toBe(false);
+    });
+  });
+
+  describe('hasMore after a de-duplicated "Load more" (round 4 LOW-3)', () => {
+    it('counts only the rows actually added', async () => {
+      const first = Array.from({ length: 50 }, (_, i) => createMockConversation({ id: `conv-${i}`, updatedAt: 10_000 - i }));
+      // Page 2 overlaps the loaded page by 10 ids: only 40 rows are new, so 90 of 100 are loaded.
+      const second = Array.from({ length: 50 }, (_, i) => createMockConversation({ id: `conv-${40 + i}`, updatedAt: 9_000 - i }));
+      mockCountConversations.mockResolvedValue(100);
+      mockListConversations.mockImplementation(async (offset: number) => (offset === 0 ? first : second));
+      const { result } = renderHook(() => useConversations());
+      await waitFor(() => expect(result.current.conversations).toHaveLength(50));
+      await act(async () => {
+        await result.current.loadMore();
+      });
+      expect(result.current.conversations).toHaveLength(90);
+      expect(result.current.hasMore).toBe(true); // 90 < 100 (the raw count, 100, would say false)
+    });
+  });
+
+  describe('Load more vs refresh race (PRR-005)', () => {
+    it('a refresh during a pending "Load more" discards the stale page (no duplicates, no stale tail)', async () => {
+      const first = Array.from({ length: 50 }, (_, i) =>
+        createMockConversation({ id: `conv-${i}`, title: `Recent ${i}`, updatedAt: 10_000 - i })
+      );
+      const second = Array.from({ length: 50 }, (_, i) =>
+        createMockConversation({ id: `conv-${50 + i}`, title: `Older ${i}`, updatedAt: 5_000 - i })
+      );
+      let resolveMore: (v: unknown) => void = () => {};
+      let refreshedFirst = first;
+      mockCountConversations.mockResolvedValue(120);
+      mockListConversations.mockImplementation((offset: number) => {
+        if (offset === 0) return Promise.resolve(refreshedFirst);
+        return new Promise((r) => { resolveMore = r; });
+      });
+      const { result } = renderHook(() => useConversations());
+      await waitFor(() => expect(result.current.conversations).toHaveLength(50));
+
+      let loading: Promise<void> = Promise.resolve();
+      act(() => { loading = result.current.loadMore(); });
+      // While page 2 loads, a rename moves conv-60 (a page-2 row) to the top.
+      refreshedFirst = [createMockConversation({ id: 'conv-60', title: 'Renamed', updatedAt: 20_000 }), ...first.slice(0, 49)];
+      await act(async () => {
+        await result.current.renameConversation('conv-60', 'Renamed');
+      });
+      await act(async () => {
+        resolveMore(second);
+        await loading;
+      });
+      const ids = result.current.conversations.map((c) => c.id);
+      expect(new Set(ids).size).toBe(ids.length); // no duplicate conv-60
+      expect(ids).toEqual(refreshedFirst.map((c) => c.id)); // stale tail dropped
     });
   });
 });

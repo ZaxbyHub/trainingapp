@@ -1,4 +1,7 @@
 import { db } from './index';
+import { CONVERSATION_QUERY_MAX_LENGTH } from './conversation-query';
+
+export { CONVERSATION_QUERY_MAX_LENGTH };
 import type { ChatMessage } from '../types/chat';
 
 /**
@@ -78,19 +81,24 @@ export async function deleteConversation(id: string): Promise<void> {
 /**
  * List conversations in descending order by updatedAt with pagination.
  *
- * @param page - Zero-based page index (default 0)
- * @param pageSize - Number of items per page (default 50)
- * @returns Array of conversations for the requested page
+ * The first argument is an ITEM offset, which is what the only caller
+ * (useConversations: initial page at 0, "Load more" at the number already
+ * loaded) passes. It used to be a page index multiplied by pageSize, so the
+ * second "Load more" page asked for offset 50 * 50 = 2500 and came back empty.
+ *
+ * @param offset - Number of newest conversations to skip (default 0)
+ * @param pageSize - Number of items to return (default 50)
+ * @returns Array of conversations for the requested window
  */
 export async function listConversations(
-  page: number = 0,
+  offset: number = 0,
   pageSize: number = 50
 ): Promise<Conversation[]> {
   try {
     return await db.conversations
       .orderBy('updatedAt')
       .reverse()
-      .offset(page * pageSize)
+      .offset(offset)
       .limit(pageSize)
       .toArray();
   } catch (error) {
@@ -109,6 +117,105 @@ export async function countConversations(): Promise<number> {
     return await db.conversations.count();
   } catch (error) {
     console.error('[conversations] Failed to count conversations:', error);
+    throw error;
+  }
+}
+
+/** Most matches a search returns (newest first); the caller is told when more exist. */
+export const CONVERSATION_SEARCH_LIMIT = 50;
+
+const NON_ASCII = /[^\u0000-\u007f]/;
+
+const COMBINING_DOT_ABOVE = '\u0307';
+
+/**
+ * Case-fold text for matching. Lower-casing the Turkish capital dotted I
+ * ("I" + dot, U+0130) yields "i" + U+0307 (combining dot above), which would
+ * never match a plain "i" (PR #147 review PRR-016), so that mark is dropped
+ * after lower-casing. U+0307 survives NFC after any base letter that has no
+ * precomposed dotted form (not just "i"/"j"). The mark is stripped from the
+ * needle and the haystack alike, so this only broadens matching (text that
+ * differs solely by a dot above now matches) and can never cause a miss.
+ */
+function foldCase(text: string): string {
+  const lower = text.toLowerCase();
+  return lower.indexOf(COMBINING_DOT_ABOVE) === -1 ? lower : lower.split(COMBINING_DOT_ABOVE).join('');
+}
+
+/**
+ * Normalise a search query: trimmed, capped at CONVERSATION_QUERY_MAX_LENGTH
+ * code points, Unicode NFC, case-folded (foldCase). Empty means "no search".
+ * NFC makes a precomposed "e-acute" (U+00E9) and a decomposed one
+ * ("e" + U+0301) the same needle.
+ */
+export function normalizeConversationQuery(query: string): string {
+  const capped = Array.from(query.trim()).slice(0, CONVERSATION_QUERY_MAX_LENGTH).join('');
+  return foldCase(capped.normalize('NFC'));
+}
+
+/**
+ * Whether a conversation matches an already-normalised needle: a substring of
+ * its title or of any message's text. Cheap path first: the title, then the
+ * messages, returning on the first hit (a long conversation stops at its first
+ * matching message). The haystack is NFC-normalised only
+ * when the needle contains non-ASCII characters; for an ASCII needle that step
+ * cannot create a match (it only composes letters with combining marks) and it
+ * is the most expensive part of a full-store walk.
+ */
+export function conversationMatches(conversation: Conversation, needle: string): boolean {
+  if (needle === '') return false;
+  const fold = NON_ASCII.test(needle)
+    ? (text: string) => foldCase(text.normalize('NFC'))
+    : foldCase;
+  if (typeof conversation.title === 'string' && fold(conversation.title).includes(needle)) return true;
+  const messages = conversation.messages;
+  if (!Array.isArray(messages)) return false;
+  for (let i = 0; i < messages.length; i += 1) {
+    const text = messages[i]?.content;
+    if (typeof text === 'string' && fold(text).includes(needle)) return true;
+  }
+  return false;
+}
+
+export interface ConversationSearchOptions {
+  /** Maximum matches to return (default CONVERSATION_SEARCH_LIMIT). */
+  limit?: number;
+  /**
+   * Checked once per stored conversation as the cursor walks (Dexie `until`,
+   * which sees each record after it has been read and deserialised): once it
+   * returns true the cursor stops, so a search superseded by a newer keystroke
+   * reads at most one more conversation instead of the rest of the store.
+   */
+  isCancelled?: () => boolean;
+}
+
+/**
+ * Search ALL stored conversations, not just a loaded page (Lumen phase 3,
+ * sidebar search). Walks the updatedAt index newest-first in IndexedDB and
+ * stops after `limit + 1` matches or on cancellation, so the newest `limit`
+ * matches are returned and `truncated` says whether more exist. Conversations
+ * live only in this renderer's IndexedDB in both the browser and the Electron
+ * app (the desktop backend stores documents, not chat history), so this one
+ * query serves both. A cancelled search resolves with whatever it had found;
+ * callers discard it.
+ */
+export async function searchConversations(
+  query: string,
+  options: ConversationSearchOptions = {}
+): Promise<{ matches: Conversation[]; truncated: boolean }> {
+  const { limit = CONVERSATION_SEARCH_LIMIT, isCancelled } = options;
+  const needle = normalizeConversationQuery(query);
+  if (needle === '') return { matches: [], truncated: false };
+  try {
+    let collection = db.conversations.orderBy('updatedAt').reverse();
+    if (isCancelled) collection = collection.until(() => isCancelled());
+    const found = await collection
+      .filter((c) => conversationMatches(c, needle))
+      .limit(limit + 1)
+      .toArray();
+    return { matches: found.slice(0, limit), truncated: found.length > limit };
+  } catch (error) {
+    console.error('[conversations] Failed to search conversations:', error);
     throw error;
   }
 }

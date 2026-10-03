@@ -5,12 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TrainingApp</title>
     <!-- Offline-safe inline SVG favicon (no external request; the air-gapped
-         bundle would otherwise 404 on the default favicon lookup). -->
+         bundle would otherwise 404 on the default favicon lookup). The Lumen
+         product mark: an Iris accent tile with the book glyph, recoloured for
+         a dark OS theme (docs/design/design-language.md; accent #4a55f0 light,
+         #7a8fff dark; the glyph uses the --accent-fg values). -->
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%231a73e8'/%3E%3Cpath d='M5 7h14v10H5z' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3Cpath d='M5 7l7 6 7-6' fill='none' stroke='%23fff' stroke-width='1.6'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cstyle%3E.t{fill:%234a55f0}.g{stroke:%23fff}@media (prefers-color-scheme:dark){.t{fill:%237a8fff}.g{stroke:%230f111a}}%3C/style%3E%3Crect class='t' width='24' height='24' rx='6'/%3E%3Cg class='g' fill='none' stroke-width='2.75' stroke-linecap='round' stroke-linejoin='round' transform='translate(4.5 4.5) scale(.625)'%3E%3Cpath d='M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z'/%3E%3Cpath d='M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z'/%3E%3C/g%3E%3C/svg%3E"
     />
-    <meta name="theme-color" content="#1a73e8" />
+    <!-- Browser chrome tint = --bg-surface (#ffffff light, #171a25 dark), the
+         colour of the sidebar and top bar. ThemeContext re-syncs both values
+         to the in-app theme when it overrides the OS preference. -->
+    <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#171a25" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
     <!-- Pre-paint theme bootstrap: resolve the stored/system theme and set
          data-theme on <html> BEFORE first paint to avoid a flash of wrong-theme

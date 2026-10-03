@@ -126,7 +126,7 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   });
 
   describe('ChatPage - overlay does not block header toggle', () => {
-    it('overlay has lower z-index than header', () => {
+    it('header controls stay in the document while the blocking overlay is mounted', () => {
       // Override mock to show model blocked state
       vi.doMock('../lib/inference', () => ({
         InferenceModeProvider: ({ children }: { children: React.ReactNode }) => children,
@@ -160,14 +160,9 @@ describe('Task 3.3 Verification - Inference Mode Architecture', () => {
   onOpenSettings={() => {}}
 />);
 
-      // The header has zIndex: 101
-      // The overlay has zIndex: 100
-      // So the header should be above the overlay
-
-      // Get the header element
-      const header = screen.getByRole('banner');
-      const headerStyle = header.getAttribute('style') || '';
-      expect(headerStyle).toContain('zIndex: 101');
+      // PR #147 PRR-030: the old header carried an inline zIndex: 101; the Lumen
+      // PageHeader (phase 3) has no inline style or z-index, so that invariant is
+      // gone. What still matters is below: the header controls stay in the document.
 
       // Get the overlay (blocking) element if it exists
       // The blocking overlay should NOT cover the toggle
