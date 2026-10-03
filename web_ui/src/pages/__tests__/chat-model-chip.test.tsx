@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, test, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 vi.mock('../../lib/inference', () => ({
@@ -49,6 +49,7 @@ import * as inferenceModule from '../../lib/inference';
 import * as themeModule from '../../lib/theme';
 import * as desktopSessionModule from '../../lib/desktop-session';
 import { MODEL_CONNECTION_SECTION_ID } from '../../lib/settings-sections';
+import { saveExternalConfig } from '../../lib/llm/external-provider';
 
 function mockContext(mode: 'browser-local' | 'api', browserEngine: 'wllama' | 'webllm' = 'wllama'): void {
   vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
@@ -168,5 +169,15 @@ describe('ChatPage header model chip', () => {
     const chip = screen.getByTestId('chat-model-chip');
     expect(chip).toHaveAttribute('data-kind', 'desktop-external');
     expect(chip).toHaveTextContent(/^External model$/);
+  });
+
+  test('header chip follows an endpoint save without a remount (review round 2)', () => {
+    mockContext('browser-local');
+    renderChat();
+    expect(screen.getByTestId('chat-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    act(() => {
+      saveExternalConfig({ enabled: true, protocol: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', model: 'saved-model' });
+    });
+    expect(screen.getByTestId('chat-model-chip')).toHaveTextContent('127.0.0.1 · saved-model');
   });
 });

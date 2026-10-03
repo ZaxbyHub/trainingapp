@@ -16,6 +16,7 @@ import { AppShell, DRAWER_MEDIA_QUERY } from '../ui';
 import * as inference from '../lib/inference';
 import * as desktop from '../lib/desktop-session';
 import * as endpointPolicy from '../lib/llm/endpoint-policy';
+import { saveExternalConfig } from '../lib/llm/external-provider';
 import type { ModelStatus } from '../lib/api/types';
 
 function setMode(mode: 'browser-local' | 'api', browserEngine: 'wllama' | 'webllm' = 'wllama') {
@@ -170,5 +171,34 @@ describe('SidebarConnectionChip', () => {
     // The drawer closes (its sidebar is hidden; the menu button reports collapsed).
     expect(chip.closest('[hidden]')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  // Review round 2 (MEDIUM): the sidebar stays mounted while the user edits the
+  // endpoint in Settings, so the chip must follow saves without a remount.
+  it('updates when the endpoint is saved while the chip stays mounted (same tab)', () => {
+    render(<Shell />);
+    const chip = screen.getByTestId('sidebar-model-chip');
+    expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    act(() => {
+      saveExternalConfig({ enabled: true, protocol: 'openai', baseUrl: 'http://127.0.0.1:1234/v1', model: 'model-two' });
+    });
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1 · model-two');
+    act(() => {
+      saveExternalConfig({ enabled: false });
+    });
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+  });
+
+  it('updates when another tab changes the stored config (storage event)', () => {
+    render(<Shell />);
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
+    act(() => {
+      localStorage.setItem(
+        'external-provider-config',
+        JSON.stringify({ enabled: true, protocol: 'anthropic', baseUrl: 'http://127.0.0.1:8080', model: 'other-tab', grounded: true, rememberKey: false })
+      );
+      window.dispatchEvent(new StorageEvent('storage', { key: 'external-provider-config' }));
+    });
+    expect(screen.getByTestId('sidebar-model-chip')).toHaveTextContent('127.0.0.1 · other-tab');
   });
 });
