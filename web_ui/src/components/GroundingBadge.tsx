@@ -12,7 +12,8 @@ import { Badge, Icon } from '../ui';
 import '../pages/chat.css';
 
 const COPY: Record<Grounding, { label: string }> = {
-  grounded: { label: 'Grounded in your documents' },
+  // Lumen phase 5: copy per docs/design/design-language.md section 5 (Chat).
+  grounded: { label: 'From your documents' },
   general: { label: 'General knowledge' },
 };
 

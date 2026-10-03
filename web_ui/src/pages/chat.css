@@ -21,9 +21,10 @@
 .chat-mode__dot--error { background: var(--danger); }
 .chat-mode__status { white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
 
-/* Desktop resident-model load notice (ChatPage, #133). Not a Banner: the Banner root
-   is a live region and the 1 s elapsed counter here must stay outside one (PRR-222). */
-.chat-notice { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-1); width: calc(100% - 2 * var(--space-6)); max-width: calc(var(--w-reading) - 2 * var(--space-6)); margin: 0 auto var(--space-2); padding: var(--space-3) var(--space-4); background: var(--info-subtle); border: 1px solid var(--info-border); border-radius: var(--r-card); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
+/* Desktop resident-model load notice (ChatPage, #133), rendered in the composer card's
+   status row. Not a Banner: the Banner root is a live region and the 1 s elapsed
+   counter here must stay outside one (PRR-222). */
+.chat-notice { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--info-subtle); border: 1px solid var(--info-border); border-radius: var(--r-card); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
 .chat-notice__title { font-weight: 600; }
 
 /* --------------------------------------------------------------- Log */
@@ -137,7 +138,7 @@
 .chat-composer__thumb { display: block; width: 64px; height: 64px; object-fit: cover; border-radius: var(--r-control); border: 1px solid var(--border-subtle); }
 .chat-composer__remove { position: absolute; top: -8px; right: -8px; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: var(--r-pill); background: var(--danger); color: var(--danger-fg-on-fill); cursor: pointer; }
 .chat-composer__error { margin: 0; padding: 0 var(--space-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--danger); }
-.chat-composer__status { padding: 0 var(--space-2) var(--space-1); }
+.chat-composer__status { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 var(--space-2) var(--space-1); }
 .chat-composer__status:empty { display: none; }
 
 /* Streaming indicator (status row) */
@@ -149,7 +150,6 @@
 @media (max-width: 768px) {
   .chat-log__column { padding: var(--space-4) var(--space-4) var(--space-3); }
   .chat-composer { padding: 0 var(--space-4) var(--space-3); }
-  .chat-notice { width: calc(100% - 2 * var(--space-4)); }
 }
 @media (max-width: 500px) {
   .chat-welcome__title { font-size: var(--type-title-size); line-height: var(--type-title-line); }
