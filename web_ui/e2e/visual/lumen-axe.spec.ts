@@ -31,7 +31,8 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  *
  * Phase 3 (shell) removed the old sidebar's "No conversations yet" node
  * (legacy --color-text-muted on --color-surface, 4.18:1) from every light 1440 key,
- * which also emptied 'training:light:1440'. Every remaining entry is page-body debt.
+ * which also emptied 'training:light:1440'. Phase 4 (Settings on Lumen tokens) emptied
+ * every settings key. Every remaining entry is page-body debt.
  */
 const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'overlay:light:1440': [
@@ -45,11 +46,6 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'documents:light:1440': [
     "color-contrast | p:nth-child(4)",
   ],
-  'settings:light:1440': [
-    "color-contrast | #browser-local-desc",
-    "color-contrast | div[role=\"status\"][aria-live=\"polite\"] > p",
-    "color-contrast | span > span[role=\"status\"][aria-live=\"polite\"]",
-  ],
   'overlay:light:500': [
     "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
   ],
@@ -60,21 +56,7 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'documents:light:500': [
     "color-contrast | p:nth-child(4)",
   ],
-  'settings:light:500': [
-    "color-contrast | #browser-local-desc",
-  ],
 };
-
-/**
- * Settings status messages that are timing- and cache-state-dependent: on ubuntu CI they
- * reproduced at 1440, appeared unexpectedly at 500 on master, and were absent at 500 on
- * 39bf1d2. Excluded from BOTH the unexpected and the stale check on the settings light
- * keys. Pre-existing #140/#141 debt: fix by darkening --color-text-muted, then drop this set.
- */
-const MAY_APPEAR: readonly string[] = [
-  'color-contrast | div[role="status"][aria-live="polite"] > p',
-  'color-contrast | span > span[role="status"][aria-live="polite"]',
-];
 
 /**
  * Lumen phase 3: at <= 768px the primary nav lives in the AppShell drawer, opened
@@ -156,12 +138,9 @@ for (const theme of THEMES) {
           if (process.env.LUMEN_AXE_INVENTORY) {
             console.info(`AXE ${key} ${JSON.stringify(found)}`);
           }
-          const flaky = surface === 'settings' && theme === 'light' ? MAY_APPEAR : [];
-          const observed = found.filter((f) => !flaky.includes(f));
-          const expected = known.filter((f) => !flaky.includes(f));
-          const unexpected = observed.filter((f) => !expected.includes(f));
+          const unexpected = found.filter((f) => !known.includes(f));
           expect(unexpected, `new serious/critical axe nodes on ${key}`).toEqual([]);
-          const stale = expected.filter((f) => !observed.includes(f));
+          const stale = known.filter((f) => !found.includes(f));
           expect(stale, `stale baseline entries on ${key} (fixed? remove them)`).toEqual([]);
         });
       }
