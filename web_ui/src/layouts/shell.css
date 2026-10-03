@@ -1,0 +1,55 @@
+/* App-specific sidebar content inside the Lumen AppShell (phase 3): the
+   Conversations section and its rows. Lumen tokens only (no legacy --color-*,
+   no color literals); enforced by layouts/shell-hygiene.test.ts. The shell frame
+   itself (sidebar, rail, drawer, nav) lives in ui/ui.css. */
+
+/* Page frame: PageHeader on top, the (unchanged) page body filling the rest. */
+.app-page { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.app-page__fill { flex: 1; min-height: 0; }
+
+.app-sidebar__conversations { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border-subtle); }
+.app-sidebar__section-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4); }
+.app-sidebar__section-title { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); font-weight: 600; color: var(--text-tertiary); }
+.app-sidebar__list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-3) var(--space-3); }
+.app-sidebar__empty { margin: 0; padding: var(--space-4) var(--space-2); text-align: center; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
+.app-sidebar__more { align-self: center; margin-top: var(--space-1); }
+.app-sidebar__rail-actions { display: flex; justify-content: center; padding: var(--space-2) 0; border-top: 1px solid var(--border-subtle); }
+
+/* ---- Conversation row ---- */
+.app-conv { position: relative; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; width: 100%; padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); border-radius: var(--r-control); color: var(--text-primary); cursor: pointer; text-align: left; }
+.app-conv:hover { background: var(--bg-hover); }
+/* Selected: tint + weight 600 (non-color cue); hover stays visually distinct. */
+.app-conv.ui-selected { background: var(--bg-selected); }
+.app-conv.ui-selected .app-conv__title { font-weight: 600; }
+.app-conv--renaming { cursor: default; }
+.app-conv__row { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; }
+.app-conv__title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); line-height: var(--type-label-line); }
+.app-conv__time { font-size: var(--type-micro-size); line-height: var(--type-micro-line); color: var(--text-tertiary); }
+.app-conv__input { flex: 1; min-width: 0; box-sizing: border-box; padding: 2px var(--space-1); font-family: inherit; font-size: var(--type-label-size); line-height: var(--type-label-line); color: var(--text-primary); background: var(--bg-sunken); border: 1px solid var(--border-control); border-radius: var(--r-control); }
+.app-conv__input:focus-visible { outline: var(--focus-outline-width) solid var(--focus-ring); outline-offset: 0; }
+
+/* Options button: revealed on row hover, keyboard focus inside the row, or while
+   its menu is open; always visible where there is no hover (touch). */
+.app-conv__kebab { flex: none; display: inline-flex; align-items: center; justify-content: center; width: var(--target-min); height: var(--target-min); padding: 0; border: 0; border-radius: var(--r-control); background: transparent; color: var(--text-secondary); cursor: pointer; opacity: 0; }
+.app-conv:hover .app-conv__kebab,
+.app-conv:focus-within .app-conv__kebab,
+.app-conv__kebab[aria-expanded="true"] { opacity: 1; }
+.app-conv__kebab:hover { background: var(--bg-hover-raised); color: var(--text-primary); }
+@media (hover: none) {
+  .app-conv__kebab { opacity: 1; }
+}
+
+/* ---- Row options menu (raised surface) ---- */
+.app-menu { position: absolute; top: calc(100% + var(--space-1)); right: var(--space-2); z-index: 20; min-width: 180px; overflow: hidden; padding: var(--space-1); background: var(--bg-raised); border: 1px solid var(--border-subtle); border-radius: var(--r-card); box-shadow: var(--shadow-2); cursor: default; }
+.app-menu__item { display: block; box-sizing: border-box; width: 100%; min-height: 32px; padding: 0 var(--space-3); border: 0; border-radius: var(--r-control); background: transparent; color: var(--text-primary); font-family: inherit; font-size: var(--type-label-size); line-height: var(--type-label-line); text-align: left; cursor: pointer; }
+.app-menu__item:hover { background: var(--bg-hover-raised); }
+.app-menu__item--danger { color: var(--danger); }
+.app-menu__confirm { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-2); }
+.app-menu__confirm-text { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+.app-menu__confirm-actions { display: flex; gap: var(--space-2); }
+.app-menu__confirm-actions > * { flex: 1; }
+
+@media (forced-colors: active) {
+  .app-conv__kebab { opacity: 1; }
+  .app-menu { border-color: CanvasText; }
+}

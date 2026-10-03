@@ -4,7 +4,7 @@
  * styles/theme.css -> lumen-tokens.css.
  *
  * Deferred (not shipped without real tests): Combobox (ARIA 1.2 model picker),
- * Toast (needs a provider that replaces ToastProvider), AppShell (phase 3).
+ * Toast (needs a provider that replaces ToastProvider).
  */
 import './ui.css';
 
@@ -54,3 +54,14 @@ export {
 } from './Feedback';
 export { Dialog, Tooltip, type DialogProps, type TooltipProps } from './Overlays';
 export { Tabs, type TabItem, type TabsProps } from './Tabs';
+export {
+  AppShell,
+  SideNav,
+  ProductMark,
+  useAppShell,
+  DRAWER_MEDIA_QUERY,
+  type AppShellProps,
+  type SideNavItem,
+  type SideNavProps,
+  type DrawerCloseReason,
+} from './AppShell';

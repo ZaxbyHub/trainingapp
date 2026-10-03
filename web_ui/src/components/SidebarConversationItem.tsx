@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { formatRelativeTime } from '../utils/relativeTime';
+import { Button, Icon } from '../ui';
+import { cx } from '../ui/cx';
 
 interface SidebarConversationItemProps {
   id: string;
@@ -11,6 +13,12 @@ interface SidebarConversationItemProps {
   onDelete: (id: string) => void;
 }
 
+/**
+ * One conversation row. Styling lives in layouts/shell.css (Lumen tokens only):
+ * hover is --bg-hover, selected is --bg-selected + weight 600 (never color
+ * alone), focus is the outline ring, and the options button is revealed on
+ * hover / keyboard focus (always shown on touch devices).
+ */
 export function SidebarConversationItem({
   id,
   title,
@@ -20,16 +28,10 @@ export function SidebarConversationItem({
   onRename,
   onDelete,
 }: SidebarConversationItemProps) {
-  const [hovered, setHovered] = useState(false);
-  // U6b: track keyboard/programmatic focus on the row so a visible focus ring
-  // replaces the bare `outline: 'none'`, and the kebab menu is revealed for
-  // keyboard users (not just on mouse hover).
-  const [isFocused, setIsFocused] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [editTitle, setEditTitle] = useState(title);
-  const [menuHoverIndex, setMenuHoverIndex] = useState<number | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -107,6 +109,8 @@ export function SidebarConversationItem({
       onRename(id, trimmed || title);
       setIsRenaming(false);
     } else if (e.key === 'Escape') {
+      // Consumed here: an enclosing drawer must not also close.
+      e.stopPropagation();
       setIsRenaming(false);
     }
   };
@@ -125,24 +129,14 @@ export function SidebarConversationItem({
       onSelect(id);
     }
     if (e.key === 'Escape' && (isMenuOpen || isDeleteConfirmOpen)) {
+      // Consumed here: Escape closes this menu only, not an enclosing drawer.
+      e.stopPropagation();
       setIsMenuOpen(false);
       setIsDeleteConfirmOpen(false);
     }
   };
 
-  const getMenuItemStyle = (index: number): React.CSSProperties => ({
-    display: 'block',
-    width: '100%',
-    padding: 'var(--spacing-sm) var(--spacing-md)',
-    textAlign: 'left',
-    backgroundColor: menuHoverIndex === index ? 'var(--color-primary)' : 'transparent',
-    color: menuHoverIndex === index ? 'var(--color-text-on-primary)' : 'var(--color-text-primary)',
-    border: 'none',
-    fontSize: 'var(--font-size-small)',
-    fontFamily: 'var(--font-family)',
-    cursor: 'pointer',
-    transition: 'background-color 100ms ease',
-  });
+  const displayTitle = title || 'Untitled conversation';
 
   return (
     <div
@@ -154,41 +148,10 @@ export function SidebarConversationItem({
         }
       }}
       onKeyDown={handleRootKeyDown}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={() => setIsFocused(true)}
-      onBlur={() => setIsFocused(false)}
       aria-current={isSelected ? 'page' : undefined}
-      style={{
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        padding: 'var(--spacing-sm) var(--spacing-md)',
-        border: 'none',
-        borderRadius: 'var(--radius-sm)',
-        backgroundColor: isSelected
-          ? 'var(--color-primary)'
-          : hovered
-          ? 'var(--color-secondary)'
-          : 'transparent',
-        color: isSelected
-          ? 'var(--color-text-on-primary)'
-          : 'var(--color-text-on-bubble-assistant)',
-        cursor: isRenaming ? 'default' : 'pointer',
-        textAlign: 'left',
-        transition: 'background-color 150ms ease, box-shadow 150ms ease',
-        gap: 'var(--spacing-xs)',
-        outline: 'none',
-        // U6b: replace the bare outline:none with a visible focus ring driven
-        // by focus state (covers both keyboard and programmatic focus). Uses a
-        // box-shadow so it renders outside the row's rounded background.
-        boxShadow: isFocused
-          ? '0 0 0 2px rgb(var(--color-primary-rgb), 0.5)'
-          : 'none',
-      }}
+      className={cx('app-conv', 'ui-focusable', isSelected && 'ui-selected', isRenaming && 'app-conv--renaming')}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', width: '100%' }}>
+      <div className="app-conv__row">
         {isRenaming ? (
           <input
             ref={inputRef}
@@ -198,24 +161,11 @@ export function SidebarConversationItem({
             onKeyDown={handleRenameKeyDown}
             onBlur={handleRenameBlur}
             aria-label="Edit conversation title"
-            style={{
-              flex: 1,
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              backgroundColor: 'transparent',
-              border: '1px solid var(--color-primary)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '2px var(--spacing-xs)',
-              color: isSelected ? 'var(--color-text-on-primary)' : 'var(--color-text-primary)',
-              outline: 'none',
-            }}
+            className="app-conv__input"
           />
         ) : (
-          <span style={{
-            flex: 1, fontSize: 'var(--font-size-small)', fontFamily: 'var(--font-family)',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {title || 'Untitled conversation'}
+          <span className="app-conv__title" title={displayTitle}>
+            {displayTitle}
           </span>
         )}
         {!isRenaming && (
@@ -226,80 +176,44 @@ export function SidebarConversationItem({
             aria-label="Conversation options"
             aria-haspopup="menu"
             aria-expanded={isMenuOpen || isDeleteConfirmOpen}
-            style={{
-              opacity: hovered || isFocused ? 1 : 0,
-              transition: 'opacity 150ms ease',
-              backgroundColor: 'transparent', border: 'none', color: 'inherit',
-              fontSize: '20px', lineHeight: 1, padding: 'var(--spacing-xs)',
-              cursor: 'pointer', borderRadius: 'var(--radius-sm)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '24px',
-            }}
+            className="app-conv__kebab ui-focusable"
           >
-            ⋯
+            <Icon name="ellipsis" size={18} />
           </button>
         )}
       </div>
-      <span style={{
-        fontSize: 'var(--font-size-small)', fontFamily: 'var(--font-family)',
-        color: isSelected ? 'var(--color-text-on-primary)' : 'var(--color-text-muted)', opacity: 0.7,
-      }}>
-        {formatRelativeTime(timestamp)}
-      </span>
+      <span className="app-conv__time">{formatRelativeTime(timestamp)}</span>
       {(isMenuOpen || isDeleteConfirmOpen) && (
         <div
           ref={menuRef}
           role="menu"
           aria-label="Conversation actions"
-          style={{
-            position: 'absolute', top: 'calc(100% + var(--spacing-xs))', right: 'var(--spacing-sm)',
-            backgroundColor: 'var(--color-secondary)', borderRadius: 'var(--radius-sm)',
-            boxShadow: 'var(--shadow-md)', minWidth: '180px', zIndex: 20,
-            border: '1px solid var(--color-text-muted)', overflow: 'hidden',
-          }}
+          className="app-menu"
           onClick={(e) => e.stopPropagation()}
         >
           {isDeleteConfirmOpen ? (
-            <div style={{ padding: 'var(--spacing-md)', display: 'flex', flexDirection: 'column', gap: 'var(--spacing-sm)' }} role="alert">
-              <div style={{ fontSize: 'var(--font-size-small)', color: 'var(--color-text-primary)', fontWeight: 500 }}>
-                Delete this conversation?
-              </div>
-              <div style={{ display: 'flex', gap: 'var(--spacing-sm)' }}>
-                <button
-                  role="menuitem"
-                  onClick={handleConfirmDelete}
-                  style={{
-                    flex: 1, padding: 'var(--spacing-sm)',
-                    backgroundColor: 'var(--color-danger)', color: 'var(--color-text-on-primary)',
-                    border: 'none', borderRadius: 'var(--radius-sm)',
-                    fontSize: 'var(--font-size-small)', cursor: 'pointer', fontWeight: 500,
-                  }}
-                >
+            <div className="app-menu__confirm" role="alert">
+              <div className="app-menu__confirm-text">Delete this conversation?</div>
+              <div className="app-menu__confirm-actions">
+                <Button role="menuitem" size="sm" variant="danger" onClick={handleConfirmDelete}>
                   Confirm
-                </button>
-                <button
-                  role="menuitem"
-                  onClick={handleCancelDelete}
-                  style={{
-                    flex: 1, padding: 'var(--spacing-sm)',
-                    backgroundColor: 'transparent', color: 'var(--color-text-muted)',
-                    border: '1px solid var(--color-text-muted)', borderRadius: 'var(--radius-sm)',
-                    fontSize: 'var(--font-size-small)', cursor: 'pointer',
-                  }}
-                >
+                </Button>
+                <Button role="menuitem" size="sm" variant="secondary" onClick={handleCancelDelete}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
             <>
-              <button role="menuitem" onClick={handleRenameClick}
-                onMouseEnter={() => setMenuHoverIndex(0)} onMouseLeave={() => setMenuHoverIndex(null)}
-                style={getMenuItemStyle(0)}>
+              <button type="button" role="menuitem" onClick={handleRenameClick} className="app-menu__item ui-focusable">
                 Rename
               </button>
-              <button role="menuitem" onClick={handleDeleteClick}
-                onMouseEnter={() => setMenuHoverIndex(1)} onMouseLeave={() => setMenuHoverIndex(null)}
-                style={{ ...getMenuItemStyle(1), color: menuHoverIndex === 1 ? 'var(--color-text-on-primary)' : 'var(--color-danger)' }}>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleDeleteClick}
+                className="app-menu__item app-menu__item--danger ui-focusable"
+              >
                 Delete
               </button>
             </>

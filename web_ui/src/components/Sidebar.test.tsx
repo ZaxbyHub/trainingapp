@@ -3,26 +3,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { Sidebar } from './Sidebar';
-
-// Use vi.hoisted to create a mock that works with hoisting
-const mockToggle = vi.fn();
-const mockSetOpen = vi.fn();
-
-const mockState = {
-  isOpen: true,
-  toggle: mockToggle,
-  setOpen: mockSetOpen,
-};
-
-const mockUseSidebarStateFn = vi.hoisted(() => vi.fn(() => mockState));
-
-// Mock useSidebarState hook
-vi.mock('../hooks/useSidebarState', () => ({
-  useSidebarState: mockUseSidebarStateFn,
-}));
 
 describe('Sidebar', () => {
   const defaultProps = {
@@ -38,9 +21,6 @@ describe('Sidebar', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    // Reset the mock to return the default state
-    mockState.isOpen = true;
-    mockUseSidebarStateFn.mockReturnValue(mockState);
   });
 
   afterEach(() => {
@@ -70,10 +50,27 @@ describe('Sidebar', () => {
       expect(screen.getByText('Second Chat')).toBeInTheDocument();
     });
 
-    it('renders "Menu" header when open', () => {
+    it('puts the primary nav first, then a labelled Conversations section', () => {
+      render(<Sidebar {...defaultProps} conversations={conversations} />);
+
+      const nav = screen.getByRole('navigation', { name: 'Main navigation' });
+      const section = screen.getByRole('region', { name: 'Conversations' });
+      // Primary nav at the TOP (design-language.md section 5): nav precedes the list.
+      expect(nav.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(within(nav).getAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual([
+        'Chat',
+        'Documents',
+        'Training',
+        'Settings',
+      ]);
+      expect(within(section).getByRole('button', { name: /new chat/i })).toBeInTheDocument();
+      expect(within(section).getByText('First Chat')).toBeInTheDocument();
+    });
+
+    it('does not show the old "Menu" header', () => {
       render(<Sidebar {...defaultProps} />);
 
-      expect(screen.getByText('Menu')).toBeInTheDocument();
+      expect(screen.queryByText('Menu')).not.toBeInTheDocument();
     });
   });
 
@@ -189,22 +186,8 @@ describe('Sidebar', () => {
     });
   });
 
-  describe('Toggle', () => {
-    it('calls onToggle when collapse button is clicked', () => {
-      const onToggle = vi.fn();
-      render(<Sidebar {...defaultProps} onToggle={onToggle} />);
-
-      fireEvent.click(screen.getByRole('button', { name: /collapse sidebar/i }));
-
-      expect(onToggle).toHaveBeenCalled();
-    });
-
-    it('shows collapse icon when open', () => {
-      render(<Sidebar {...defaultProps} />);
-
-      expect(screen.getByRole('button', { name: /collapse sidebar/i })).toBeInTheDocument();
-    });
-  });
+  // Collapse/expand moved to the AppShell (ui/AppShell.test.tsx covers the toggle,
+  // the rail and the drawer); the sidebar body only reads the shell state.
 
   describe('Edge Cases', () => {
     it('handles undefined conversations prop', () => {

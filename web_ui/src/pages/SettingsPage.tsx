@@ -55,6 +55,7 @@ import type { UpdateStatus } from '../types/desktop';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
 import { ProgressBar, StatusBadge, SectionCard } from '../components/SettingsMetrics';
+import { PageHeader } from '../ui';
 import {
   getProfilePrefix,
   deleteNamespace,
@@ -391,19 +392,6 @@ const pageStyle: React.CSSProperties = {
   // two visible scrollbars and let the header (which scrolled in this
   // container) intersect section content.
   backgroundColor: 'var(--color-bubble-assistant)',
-};
-
-const headerStyle: React.CSSProperties = {
-  padding: 'var(--spacing-xl) var(--spacing-xxl)',
-  borderBottom: '1px solid var(--color-bubble-system)',
-};
-
-const titleStyle: React.CSSProperties = {
-  fontSize: 'var(--font-size-h1)',
-  fontFamily: 'var(--font-family)',
-  fontWeight: 600,
-  color: 'var(--color-text-on-bubble-assistant)',
-  margin: 0,
 };
 
 const contentStyle: React.CSSProperties = {
@@ -1101,9 +1089,10 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
 
   return (
     <div style={pageStyle}>
-      <div style={headerStyle}>
-        <h1 style={titleStyle}>Settings</h1>
-      </div>
+      <PageHeader
+        title="Settings"
+        description="Choose how answers are generated, and manage appearance and storage."
+      />
 
       <div style={contentStyle}>
         {/* ================================================================== */}

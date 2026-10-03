@@ -38,6 +38,7 @@ import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { fetchModelStatus, isElectron, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
+import { PageHeader } from '../ui';
 
 function generateId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -1025,71 +1026,62 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         position: 'relative',
       }}
     >
-      {/* Header */}
-      <header
-        aria-label="Chat controls"
-        style={{
-          padding: 'var(--spacing-sm) var(--spacing-md)',
-          borderBottom: '1px solid var(--color-bubble-system)',
-          backgroundColor: 'var(--color-surface)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          position: 'relative',
-          zIndex: 101,
-          boxShadow: 'var(--shadow-sm)',
-        }}
-      >
-        <div className="chat-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
-          {/* API mode warning */}
-          {mode === 'api' && !isServerConnected && (
-            <span
-              title="The desktop backend is not reachable. Restart the app if this persists."
-              style={{
-                fontSize: 'var(--font-size-caption)',
-                color: 'var(--color-warning)',
-                fontFamily: 'var(--font-family)',
-              }}
-            >
-              Server not connected
-            </span>
-          )}
-          {messages.length > 0 && (
-            <>
-              <button
-                type="button"
-                onClick={() => downloadConversation(messages, 'markdown')}
-                title="Export conversation as Markdown"
-                aria-label="Export conversation as Markdown"
-                style={exportButtonStyle}
-              >
-                Export
-              </button>
-              <button
-                type="button"
-                onClick={handleClearClick}
-                disabled={isLoading}
-                title={isLoading ? 'Cancel the active response before clearing' : 'Clear chat'}
+      {/* Header (Lumen phase 3): the shared PageHeader. The action controls
+          themselves are unchanged here; phase 5 restyles the chat header. */}
+      <PageHeader
+        title="Chat"
+        actions={
+          <div className="chat-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
+            {/* API mode warning */}
+            {mode === 'api' && !isServerConnected && (
+              <span
+                title="The desktop backend is not reachable. Restart the app if this persists."
                 style={{
-                  backgroundColor: clearConfirmState === 'confirming' ? 'var(--color-danger)' : 'transparent',
-                  color: clearConfirmState === 'confirming' ? 'var(--color-text-on-primary)' : 'var(--color-text-muted)',
-                  border: clearConfirmState === 'confirming' ? 'none' : '1px solid var(--color-text-muted)',
-                  borderRadius: 'var(--radius-sm)',
-                  padding: 'var(--spacing-xs) var(--spacing-sm)',
                   fontSize: 'var(--font-size-caption)',
+                  color: 'var(--color-warning)',
                   fontFamily: 'var(--font-family)',
-                  cursor: isLoading ? 'not-allowed' : 'pointer',
-                  opacity: isLoading ? 0.6 : 1,
-                  transition: 'all 0.15s ease',
                 }}
               >
-                {clearConfirmState === 'confirming' ? 'Confirm Clear?' : 'Clear Chat'}
-              </button>
-            </>
-          )}
-          <InferenceModeToggle />
-        </div>
-      </header>
+                Server not connected
+              </span>
+            )}
+            {messages.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => downloadConversation(messages, 'markdown')}
+                  title="Export conversation as Markdown"
+                  aria-label="Export conversation as Markdown"
+                  style={exportButtonStyle}
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearClick}
+                  disabled={isLoading}
+                  title={isLoading ? 'Cancel the active response before clearing' : 'Clear chat'}
+                  style={{
+                    backgroundColor: clearConfirmState === 'confirming' ? 'var(--color-danger)' : 'transparent',
+                    color: clearConfirmState === 'confirming' ? 'var(--color-text-on-primary)' : 'var(--color-text-muted)',
+                    border: clearConfirmState === 'confirming' ? 'none' : '1px solid var(--color-text-muted)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: 'var(--spacing-xs) var(--spacing-sm)',
+                    fontSize: 'var(--font-size-caption)',
+                    fontFamily: 'var(--font-family)',
+                    cursor: isLoading ? 'not-allowed' : 'pointer',
+                    opacity: isLoading ? 0.6 : 1,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {clearConfirmState === 'confirming' ? 'Confirm Clear?' : 'Clear Chat'}
+                </button>
+              </>
+            )}
+            <InferenceModeToggle />
+          </div>
+        }
+      />
 
       {/* Issue #37 P3: COOP/COEP misconfiguration banner.
           Persistent per-session, dismissible. Shows when !crossOriginIsolated,

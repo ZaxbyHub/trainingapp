@@ -163,6 +163,18 @@ describe('DocumentsPage — Electron mode (AC2)', () => {
     expect(mockStore.loadDocuments).not.toHaveBeenCalled();
   });
 
+  it('renders the shared PageHeader: one h1 "Documents", the clear-all action in the header (Lumen phase 3)', async () => {
+    renderWithSession(makeSession({}));
+    await waitFor(() => expect(screen.getByText(/manual\.pdf/i)).toBeTruthy());
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent('Documents');
+    const header = headings[0].closest('header');
+    expect(header).toHaveClass('ui-page-header');
+    // Electron-only header action stays reachable inside the PageHeader actions.
+    expect(header?.contains(screen.getByLabelText('Clear all documents'))).toBe(true);
+  });
+
   it('UPLOAD round-trips through apiClient.uploadFile (not the browser pipeline)', async () => {
     seenEvents.length = 0;
     const listDocuments = vi.fn(async () => ({ documents: [], total: 0 }));

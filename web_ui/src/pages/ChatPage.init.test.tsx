@@ -153,6 +153,26 @@ describe('ChatPage F1 — LLM init before generation (cold send)', () => {
   });
   afterEach(() => cleanup());
 
+  it('renders the shared PageHeader: the only h1 is "Chat"; the welcome hero is an h2 (Lumen phase 3)', () => {
+    render(
+      <ChatPage
+        messages={[]}
+        onMessagesChange={() => {}}
+        onSaveConversation={() => {}}
+        onNewChat={() => {}}
+        currentConversationId={undefined}
+        setCurrentConversationId={() => {}}
+        onOpenSettings={() => {}}
+      />
+    );
+    const headings = screen.getAllByRole('heading', { level: 1 });
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent('Chat');
+    expect(headings[0].closest('header')).toHaveClass('ui-page-header');
+    const hero = document.getElementById('welcome-heading');
+    expect(hero?.tagName).toBe('H2');
+  });
+
   it('awaits llmService.initialize() before orchestrator.query() on a cold send', async () => {
     const { container } = render(
       <ChatPage

@@ -70,14 +70,43 @@ describe('SidebarConversationItem', () => {
       expect(screen.getByText('Untitled conversation')).toBeInTheDocument();
     });
 
-    it('truncates long title with ellipsis', () => {
+    it('a long title is truncated visually but its full text stays available', () => {
       const longTitle = 'A'.repeat(200);
       render(<SidebarConversationItem {...defaultProps} title={longTitle} />);
 
+      // Truncation is CSS (layouts/shell.css .app-conv__title: ellipsis); the
+      // full title stays in the accessible name and in the hover title.
       const titleSpan = screen.getByText(longTitle);
-      const overflow = titleSpan.style.overflow;
-      const textOverflow = titleSpan.style.textOverflow;
-      expect(overflow === 'hidden' || textOverflow === 'ellipsis').toBeTruthy();
+      expect(titleSpan).toHaveClass('app-conv__title');
+      expect(titleSpan).toHaveAttribute('title', longTitle);
+      expect(screen.getByRole('button', { name: new RegExp(longTitle) })).toBeInTheDocument();
+    });
+
+    it('selection is conveyed by aria-current plus the shared selected state, not inline styles', () => {
+      const { rerender } = render(<SidebarConversationItem {...defaultProps} />);
+      const row = screen.getByRole('button', { name: /test conversation/i });
+      expect(row).not.toHaveAttribute('aria-current');
+      expect(row).not.toHaveClass('ui-selected');
+      expect(row).not.toHaveAttribute('style');
+
+      rerender(<SidebarConversationItem {...defaultProps} isSelected={true} />);
+      expect(row).toHaveAttribute('aria-current', 'page');
+      expect(row).toHaveClass('ui-selected');
+      expect(row).toHaveClass('ui-focusable');
+    });
+
+    it('Escape that closes the options menu does not bubble to an enclosing drawer', () => {
+      const outer = vi.fn();
+      render(
+        <div onKeyDown={(e) => outer(e.key)}>
+          <SidebarConversationItem {...defaultProps} />
+        </div>
+      );
+      const row = screen.getByRole('button', { name: /test conversation/i });
+      fireEvent.click(screen.getByRole('button', { name: /conversation options/i }));
+      fireEvent.keyDown(row, { key: 'Escape' });
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(outer).not.toHaveBeenCalled();
     });
 
     it('renders kebab menu button', () => {

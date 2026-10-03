@@ -42,6 +42,30 @@ const ICONS = {
   ],
   'circle-alert': [{ circle: [12, 12, 10] }, { d: 'M12 8v4' }, { d: 'M12 16h.01' }],
   'circle-check': [{ circle: [12, 12, 10] }, { d: 'm9 12 2 2 4-4' }],
+  // Shell navigation (phase 3). The nav glyphs reuse the Feather shapes the old
+  // hand-inlined sidebar SVGs drew, so each destination keeps its icon.
+  'chevron-left': [{ d: 'm15 18-6-6 6-6' }],
+  menu: [{ d: 'M4 12h16' }, { d: 'M4 6h16' }, { d: 'M4 18h16' }],
+  ellipsis: [{ circle: [12, 12, 1] }, { circle: [19, 12, 1] }, { circle: [5, 12, 1] }],
+  'message-square': [{ d: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z' }],
+  'file-text': [
+    { d: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z' },
+    { d: 'M14 2v6h6' },
+    { d: 'M16 13H8' },
+    { d: 'M16 17H8' },
+  ],
+  layers: [{ d: 'M12 2 2 7l10 5 10-5-10-5z' }, { d: 'm2 17 10 5 10-5' }, { d: 'm2 12 10 5 10-5' }],
+  settings: [
+    { circle: [12, 12, 3] },
+    {
+      d: 'M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z',
+    },
+  ],
+  // Product mark glyph (Feather book-open); index.html's favicon draws the same shape.
+  'book-open': [
+    { d: 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z' },
+    { d: 'M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z' },
+  ],
 } as const satisfies Record<string, readonly Shape[]>;
 
 export type IconName = keyof typeof ICONS;

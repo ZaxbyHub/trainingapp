@@ -80,10 +80,13 @@
 .ui-section__head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); margin-bottom: var(--space-4); }
 .ui-section__title { margin: 0; font-size: var(--type-heading-size); line-height: var(--type-heading-line); font-weight: var(--type-heading-weight); color: var(--text-primary); }
 .ui-section__desc { margin: var(--space-1) 0 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
-.ui-page-header { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: var(--space-4); padding: var(--space-6) 0 var(--space-4); }
+/* Page header (phase 3, on every page): it owns its gutter so pages with and without
+   body padding line up, and a subtle divider separates it from the page body. */
+.ui-page-header { box-sizing: border-box; flex: none; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-4); padding: var(--space-4) var(--space-6); border-bottom: 1px solid var(--border-subtle); }
+.ui-page-header__text { min-width: 0; }
 .ui-page-header__title { margin: 0; font-size: var(--type-title-size); line-height: var(--type-title-line); font-weight: var(--type-title-weight); color: var(--text-primary); }
 .ui-page-header__desc { margin: var(--space-1) 0 0; font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-secondary); }
-.ui-page-header__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.ui-page-header__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 
 .ui-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-2); padding: var(--space-12) var(--space-4); color: var(--text-secondary); }
 .ui-empty__icon { color: var(--text-tertiary); }
@@ -204,6 +207,41 @@
 .ui-tabs__panel { padding: var(--space-4) 0; }
 .ui-tabs__panel[hidden] { display: none; }
 
+/* ------------------------------------------------------------ AppShell */
+/* Sidebar 260px, rail 64px (> 768px); overlay drawer + top bar at <= 768px
+   (design-language.md sections 3.5 and 5). <main> is the only page scroller. */
+.ui-shell { display: flex; width: 100%; height: 100dvh; overflow: hidden; background: var(--bg-canvas); color: var(--text-primary); }
+.ui-shell__sidebar { box-sizing: border-box; flex: none; display: flex; flex-direction: column; width: 260px; height: 100%; min-height: 0; background: var(--bg-surface); border-right: 1px solid var(--border-subtle); }
+.ui-shell--collapsed .ui-shell__sidebar { width: 64px; }
+.ui-shell__sidebar[hidden] { display: none; }
+.ui-shell__main { flex: 1; min-width: 0; min-height: 0; overflow: auto; background: var(--bg-canvas); }
+/* Programmatic focus target after drawer navigation (tabindex is removed on blur). */
+.ui-shell__main:focus { outline: none; }
+
+.ui-shell__head { box-sizing: border-box; flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 56px; padding: var(--space-2) var(--space-3) var(--space-2) var(--space-4); }
+.ui-shell--collapsed .ui-shell__head { flex-direction: column; justify-content: center; padding: var(--space-3) 0; }
+.ui-shell__brand { display: inline-flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.ui-shell__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-heading-size); line-height: var(--type-heading-line); font-weight: var(--type-heading-weight); color: var(--text-primary); }
+.ui-shell__mark { flex: none; display: block; }
+.ui-shell__mark-tile { fill: var(--accent); }
+.ui-shell__mark-glyph { color: var(--accent-fg); }
+
+.ui-shell__nav { flex: none; padding: var(--space-2) var(--space-3); }
+.ui-shell__nav-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.ui-shell--collapsed .ui-shell__nav-list > li { display: flex; justify-content: center; }
+.ui-shell__nav-item { position: relative; box-sizing: border-box; display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: var(--target-primary); padding: 0 var(--space-3); border: 0; border-radius: var(--r-control); background: transparent; color: var(--text-secondary); font-family: inherit; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); text-align: left; cursor: pointer; }
+.ui-shell__nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* Active: tint + accent text + 3px accent indicator (never color alone). */
+.ui-shell__nav-item.ui-selected { background: var(--bg-selected); color: var(--accent); font-weight: 600; }
+.ui-shell__nav-item.ui-selected::before { content: ""; position: absolute; left: 0; top: var(--space-2); bottom: var(--space-2); width: 3px; border-radius: var(--r-pill); background: var(--accent); }
+.ui-shell--collapsed .ui-shell__nav-item { justify-content: center; width: var(--target-primary); padding: 0; }
+.ui-shell__nav-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ui-shell__topbar { box-sizing: border-box; flex: none; display: flex; align-items: center; gap: var(--space-2); min-height: 56px; padding: 0 var(--space-4) 0 var(--space-2); background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); }
+.ui-shell--drawer { flex-direction: column; }
+.ui-shell--drawer .ui-shell__sidebar { position: fixed; top: 0; bottom: 0; left: 0; z-index: 300; width: min(300px, calc(100vw - 48px)); height: auto; box-shadow: var(--shadow-3); }
+.ui-shell__scrim { position: fixed; inset: 0; z-index: 299; background: var(--bg-canvas); background: color-mix(in srgb, var(--bg-canvas) 70%, transparent); }
+
 /* Disabled cursor: component rules above declare cursor: pointer on the item and its
    native input, so these need MORE specificity than any of them (see ui-disabled.test.ts). */
 .ui-toggle.ui-disabled, .ui-toggle.ui-disabled *,
@@ -230,9 +268,15 @@
   .ui-button[aria-disabled="true"] { color: GrayText; border-color: GrayText; }
   .ui-banner, .ui-badge, .ui-progress { border: 1px solid CanvasText; }
   .ui-progress__fill { background: Highlight; }
+  /* Shell: the active indicator and the mark must survive forced colors. */
+  .ui-shell__nav-item.ui-selected::before { background: Highlight; }
+  .ui-shell__sidebar, .ui-shell__topbar, .ui-page-header { border-color: CanvasText; }
+  .ui-shell__mark-tile { fill: CanvasText; }
+  .ui-shell__mark-glyph { color: Canvas; }
 }
 
 @media (max-width: 500px) {
   .ui-kv__row { grid-template-columns: 1fr; gap: 0; }
+  .ui-page-header { padding: var(--space-3) var(--space-4); }
   .ui-page-header__actions { width: 100%; }
 }

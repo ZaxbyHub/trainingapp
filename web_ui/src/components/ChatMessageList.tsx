@@ -244,7 +244,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
             // a guaranteed dead end. Guide the user to add documents first.
             <>
               <div>
-                <h1 id="welcome-heading" style={heroStyle}>Add documents to get started</h1>
+                <h2 id="welcome-heading" style={heroStyle}>Add documents to get started</h2>
                 <p style={subtitleStyle}>
                   Upload your documents and I can summarize them, extract key topics, and answer specific questions — all locally in your browser.
                 </p>
@@ -272,7 +272,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
           ) : (
             <>
               <div>
-                <h1 id="welcome-heading" style={heroStyle}>How can I help with your documents?</h1>
+                <h2 id="welcome-heading" style={heroStyle}>How can I help with your documents?</h2>
                 <p style={subtitleStyle}>
                   Ask anything about your uploaded documents. Get summaries, extract insights, or find specific information instantly.
                 </p>
