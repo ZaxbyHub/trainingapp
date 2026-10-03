@@ -3,6 +3,7 @@ import {
   advanceCourseProgress,
   courseProgressView,
   loadCourseProgress,
+  mergeCourseProgress,
   saveCourseProgress,
 } from './course-progress';
 import { TRAINING_PROGRESS_KEY } from '../storage/persisted-keys';
@@ -61,5 +62,14 @@ describe('courseProgressView', () => {
     expect(courseProgressView({ a: 2 }, 'a', 5)).toEqual({ reached: 2, total: 5 });
     expect(courseProgressView({ a: 9 }, 'a', 5)).toEqual({ reached: 5, total: 5 });
     expect(courseProgressView({}, 'a', 5)).toEqual({ reached: 0, total: 5 });
+  });
+});
+
+describe('mergeCourseProgress', () => {
+  it('takes the per-course max and returns the same object when nothing is added', () => {
+    const current = { a: 3, b: 5 };
+    expect(mergeCourseProgress(current, { a: 4, c: 2 })).toEqual({ a: 4, b: 5, c: 2 });
+    expect(mergeCourseProgress(current, { a: 3, b: 1 })).toBe(current);
+    expect(mergeCourseProgress(current, {})).toBe(current);
   });
 });
