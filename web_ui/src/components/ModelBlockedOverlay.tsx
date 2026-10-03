@@ -94,8 +94,9 @@ export function ModelBlockedOverlay({
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        // Above the header (zIndex 101) so the scrim covers header controls,
-        // reinforcing the blocking intent alongside aria-modal.
+        // Stacks above the Chat page's own content (including its PageHeader
+        // controls, which carry no z-index) inside ChatPage's position:relative
+        // root; it covers <main> only, never the app shell's navigation.
         zIndex: 200,
       }}
     >

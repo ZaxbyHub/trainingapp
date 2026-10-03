@@ -18,8 +18,9 @@ import { cx } from './cx';
 
 /**
  * Drawer breakpoint (docs/design/design-language.md section 3.5): at 768 CSS px
- * and below the sidebar becomes an overlay drawer opened from a top bar. Kept
- * in sync with the `max-width: 768px` media queries in ui.css.
+ * and below the sidebar becomes an overlay drawer opened from a top bar. The
+ * switch is JS-driven (this query sets the `ui-shell--drawer` class); ui.css has
+ * no matching media query to keep in sync.
  */
 export const DRAWER_MEDIA_QUERY = '(max-width: 768px)';
 
@@ -147,7 +148,21 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
   // drawer drops the rail tooltips) is removed without a focusout, so
   // document.activeElement alone cannot tell us focus was there.
   const sidebarFocusRef = useRef(false);
+  /** Same idea for the drawer-mode top bar (its menu button unmounts on widening). */
+  const topbarFocusRef = useRef(false);
   const pendingFocus = useRef<DrawerCloseReason | null>(null);
+
+  /**
+   * Focus <main> as a programmatic target only: tabindex is removed again on
+   * blur so a click in the page body never parks focus on <main>.
+   */
+  const focusMain = () => {
+    const main = mainRef.current;
+    if (!main) return;
+    main.setAttribute('tabindex', '-1');
+    main.focus({ preventScroll: true });
+    main.addEventListener('blur', () => main.removeAttribute('tabindex'), { once: true });
+  };
 
   // Leaving drawer mode (window widened) drops any open drawer.
   useEffect(() => {
@@ -168,14 +183,27 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
   // Layout effect: runs after `hidden` is applied but before the browser's
   // focus fixup, so document.activeElement still names the hidden control.
   useLayoutEffect(() => {
-    if (!drawer) return;
     const panel = sidebarRef.current;
     const active = document.activeElement;
-    const lostToBody = (active === null || active === document.body) && sidebarFocusRef.current;
-    if ((panel && panel.contains(active)) || lostToBody) {
-      document.getElementById(menuButtonId)?.focus();
+    const atBody = active === null || active === document.body;
+    if (drawer) {
+      const lostToBody = atBody && sidebarFocusRef.current;
+      if ((panel && panel.contains(active)) || lostToBody) {
+        document.getElementById(menuButtonId)?.focus();
+      }
+      return;
     }
-    // Only the transition into drawer mode matters here.
+    // Widening out of drawer mode (PR #147 PRR-020): the top bar unmounts and,
+    // when the desktop sidebar is the icon rail, the nav buttons remount, so
+    // focus that was in the drawer or on the menu button falls to <body>. Hand
+    // it to the active destination (or <main> if there is none).
+    if (atBody && (sidebarFocusRef.current || topbarFocusRef.current)) {
+      const target = panel?.querySelector<HTMLElement>('nav [aria-current="page"]');
+      if (target) target.focus();
+      else focusMain();
+    }
+    topbarFocusRef.current = false;
+    // Only the drawer-mode transitions matter here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawer]);
 
@@ -202,14 +230,7 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
     if (reason === 'dismiss') {
       document.getElementById(menuButtonId)?.focus();
     } else if (reason === 'navigate') {
-      // Programmatic focus target only: tabindex is removed again on blur so a
-      // click in the page body never parks focus on <main>.
-      const main = mainRef.current;
-      if (main) {
-        main.setAttribute('tabindex', '-1');
-        main.focus({ preventScroll: true });
-        main.addEventListener('blur', () => main.removeAttribute('tabindex'), { once: true });
-      }
+      focusMain();
     }
   }, [drawerOpen, menuButtonId]);
 
@@ -245,7 +266,17 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
     <AppShellContext.Provider value={context}>
       <div className={cx('ui-shell', railed && 'ui-shell--collapsed', drawer && 'ui-shell--drawer')}>
         {drawer ? (
-          <header ref={topbarRef} className="ui-shell__topbar">
+          <header
+            ref={topbarRef}
+            className="ui-shell__topbar"
+            onFocus={() => {
+              topbarFocusRef.current = true;
+            }}
+            onBlur={(e) => {
+              const to = e.relatedTarget as Node | null;
+              if (to ? !e.currentTarget.contains(to) : e.target.isConnected) topbarFocusRef.current = false;
+            }}
+          >
             <IconButton
               id={menuButtonId}
               icon="menu"

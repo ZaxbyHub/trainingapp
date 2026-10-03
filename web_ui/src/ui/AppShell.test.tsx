@@ -339,6 +339,44 @@ describe('AppShell drawer (<= 768px)', () => {
     expect(elsewhere).toHaveFocus();
   });
 
+  it('widening with the drawer open (into the icon rail) moves focus to the active destination, not <body> (PRR-020)', async () => {
+    const user = userEvent.setup();
+    media = stubMatchMedia(true);
+    render(<Harness initialCollapsed />);
+    await user.click(screen.getByRole('button', { name: 'Open navigation' }));
+    const drawerChat = within(screen.getByRole('dialog', { name: 'Navigation' })).getByRole('button', { name: 'Chat' });
+    expect(drawerChat).toHaveFocus();
+    media.set(false); // rail: nav buttons remount inside tooltips
+    const chat = screen.getByRole('button', { name: 'Chat' });
+    expect(chat).toHaveFocus();
+    expect(chat).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('main')).not.toHaveAttribute('inert');
+  });
+
+  it('widening while the menu button has focus moves focus to the active destination (PRR-020)', () => {
+    media = stubMatchMedia(true);
+    render(<Harness />);
+    const menu = screen.getByRole('button', { name: 'Open navigation' });
+    act(() => menu.focus());
+    media.set(false); // the top bar unmounts
+    expect(document.activeElement).not.toBe(document.body);
+    expect(screen.getByRole('button', { name: 'Chat' })).toHaveFocus();
+  });
+
+  it('widening while focus is elsewhere leaves focus alone', () => {
+    media = stubMatchMedia(true);
+    render(
+      <>
+        <button type="button">Elsewhere</button>
+        <Harness />
+      </>
+    );
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+    act(() => elsewhere.focus());
+    media.set(false);
+    expect(elsewhere).toHaveFocus();
+  });
+
   it('widening past the breakpoint drops the open drawer and restores the sidebar', () => {
     media = stubMatchMedia(true);
     render(<Harness />);
