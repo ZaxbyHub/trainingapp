@@ -222,6 +222,74 @@ describe('SidebarConversationItem', () => {
     });
   });
 
+  describe('Options menu keyboard pattern and focus return (PR #147 review PRR-002, PRR-026)', () => {
+    const openWithKeyboard = async (user: ReturnType<typeof userEvent.setup>) => {
+      const kebab = screen.getByRole('button', { name: /conversation options/i });
+      kebab.focus();
+      await user.keyboard('{Enter}');
+      return kebab;
+    };
+
+    it('opening the menu moves focus to its first item; arrows, Home and End move between items', async () => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      await openWithKeyboard(user);
+      const rename = screen.getByRole('menuitem', { name: 'Rename' });
+      const del = screen.getByRole('menuitem', { name: 'Delete' });
+      expect(rename).toHaveFocus();
+      await user.keyboard('{ArrowDown}');
+      expect(del).toHaveFocus();
+      await user.keyboard('{ArrowDown}');
+      expect(rename).toHaveFocus(); // wraps
+      await user.keyboard('{ArrowUp}');
+      expect(del).toHaveFocus(); // wraps back
+      await user.keyboard('{Home}');
+      expect(rename).toHaveFocus();
+      await user.keyboard('{End}');
+      expect(del).toHaveFocus();
+    });
+
+    it('Escape from a menu item closes the menu and returns focus to the options button', async () => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      const kebab = await openWithKeyboard(user);
+      expect(screen.getByRole('menuitem', { name: 'Rename' })).toHaveFocus();
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(kebab).toHaveFocus();
+      expect(kebab).toHaveAttribute('aria-expanded', 'false');
+    });
+
+    it('Delete swaps to the confirmation without dropping focus (focus goes to the options button)', async () => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      const kebab = await openWithKeyboard(user);
+      await user.keyboard('{ArrowDown}');
+      expect(screen.getByRole('menuitem', { name: 'Delete' })).toHaveFocus();
+      await user.keyboard('{Enter}');
+      expect(screen.getByRole('alert')).toHaveTextContent(/Delete this conversation/i);
+      expect(kebab).toHaveFocus();
+      expect(document.activeElement).not.toBe(document.body);
+    });
+
+    it('Escape and Cancel in the delete confirmation return focus to the options button', async () => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      const kebab = await openWithKeyboard(user);
+      await user.keyboard('{ArrowDown}{Enter}');
+      screen.getByRole('menuitem', { name: 'Cancel' }).focus();
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(kebab).toHaveFocus();
+
+      await user.keyboard('{Enter}{ArrowDown}{Enter}');
+      await user.click(screen.getByRole('menuitem', { name: 'Cancel' }));
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(kebab).toHaveFocus();
+      expect(defaultProps.onDelete).not.toHaveBeenCalled();
+    });
+  });
+
   describe('Rename Flow', () => {
     it('enters edit mode when Rename is clicked', () => {
       render(<SidebarConversationItem {...defaultProps} />);

@@ -50,6 +50,15 @@ export function SidebarConversationItem({
     }
   }, [isRenaming]);
 
+  // Menu-button pattern (PR #147 review PRR-026): opening the menu moves focus to
+  // its first item; ArrowUp/ArrowDown/Home/End move between items (see
+  // handleMenuKeyDown); Escape, Cancel and the Delete -> confirm swap hand focus
+  // back to the options button instead of letting it fall to <body> when the
+  // focused item unmounts (PRR-002).
+  useEffect(() => {
+    if (isMenuOpen) menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, [isMenuOpen]);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
@@ -88,6 +97,8 @@ export function SidebarConversationItem({
 
   const handleDeleteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    // The focused "Delete" item is about to unmount: keep focus on the row.
+    kebabRef.current?.focus();
     setIsMenuOpen(false);
     setIsDeleteConfirmOpen(true);
   };
@@ -100,7 +111,20 @@ export function SidebarConversationItem({
 
   const handleCancelDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
+    kebabRef.current?.focus();
     setIsDeleteConfirmOpen(false);
+  };
+
+  const handleMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') return;
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    if (items.length === 0) return;
+    e.preventDefault();
+    const at = items.findIndex((el) => el === document.activeElement);
+    const last = items.length - 1;
+    const next =
+      e.key === 'Home' ? 0 : e.key === 'End' ? last : e.key === 'ArrowDown' ? (at < 0 || at === last ? 0 : at + 1) : at <= 0 ? last : at - 1;
+    items[next].focus();
   };
 
   const handleRenameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -131,6 +155,7 @@ export function SidebarConversationItem({
     if (e.key === 'Escape' && (isMenuOpen || isDeleteConfirmOpen)) {
       // Consumed here: Escape closes this menu only, not an enclosing drawer.
       e.stopPropagation();
+      kebabRef.current?.focus();
       setIsMenuOpen(false);
       setIsDeleteConfirmOpen(false);
     }
@@ -197,6 +222,7 @@ export function SidebarConversationItem({
           aria-label="Conversation actions"
           className="app-menu"
           onClick={(e) => e.stopPropagation()}
+          onKeyDown={handleMenuKeyDown}
         >
           {isDeleteConfirmOpen ? (
             <div className="app-menu__confirm" role="alert">
