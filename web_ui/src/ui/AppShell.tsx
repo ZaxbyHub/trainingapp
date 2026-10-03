@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -119,7 +120,9 @@ export interface AppShellProps {
  * a top bar at 768px and below. The drawer is a modal dialog: focus moves to the
  * active navigation item on open, Tab is trapped inside it, Escape or the scrim
  * closes it, and focus returns to the menu button (dismiss) or to <main>
- * (navigation). Main is the single page scroller.
+ * (navigation). While it is open the top bar and <main> are inert. Narrowing
+ * the window while the sidebar holds focus moves focus to the menu button.
+ * Main is the single page scroller.
  */
 export function AppShell({ productName, sidebar, children, collapsed, onToggleCollapsed }: AppShellProps) {
   const drawer = useMediaQuery(DRAWER_MEDIA_QUERY);
@@ -128,6 +131,12 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
   const menuButtonId = useId();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
+  const topbarRef = useRef<HTMLElement>(null);
+  // Whether keyboard focus is (or was, until a re-render removed the focused
+  // node) inside the sidebar. A focused element that React REMOUNTS (rail ->
+  // drawer drops the rail tooltips) is removed without a focusout, so
+  // document.activeElement alone cannot tell us focus was there.
+  const sidebarFocusRef = useRef(false);
   const pendingFocus = useRef<DrawerCloseReason | null>(null);
 
   // Leaving drawer mode (window widened) drops any open drawer.
@@ -144,7 +153,33 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
     [drawer]
   );
 
+  // Narrowing into drawer mode hides the sidebar. If it held focus, the focus
+  // would fall to <body>; hand it to the menu button that re-opens the nav.
+  // Layout effect: runs after `hidden` is applied but before the browser's
+  // focus fixup, so document.activeElement still names the hidden control.
+  useLayoutEffect(() => {
+    if (!drawer) return;
+    const panel = sidebarRef.current;
+    const active = document.activeElement;
+    const lostToBody = (active === null || active === document.body) && sidebarFocusRef.current;
+    if ((panel && panel.contains(active)) || lostToBody) {
+      document.getElementById(menuButtonId)?.focus();
+    }
+    // Only the transition into drawer mode matters here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawer]);
+
   useEffect(() => {
+    // While the drawer is open, everything behind it (the top bar and <main>,
+    // including any overlay rendered inside <main>) is inert: unreachable by
+    // Tab, pointer and assistive tech. Set via the DOM because React 18 has no
+    // typed `inert` prop. Cleared BEFORE focus is restored below, since an
+    // inert element cannot take focus.
+    for (const el of [mainRef.current, topbarRef.current]) {
+      if (!el) continue;
+      if (drawerOpen) el.setAttribute('inert', '');
+      else el.removeAttribute('inert');
+    }
     if (drawerOpen) {
       const panel = sidebarRef.current;
       const target =
@@ -200,7 +235,7 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
     <AppShellContext.Provider value={context}>
       <div className={cx('ui-shell', railed && 'ui-shell--collapsed', drawer && 'ui-shell--drawer')}>
         {drawer ? (
-          <header className="ui-shell__topbar">
+          <header ref={topbarRef} className="ui-shell__topbar">
             <IconButton
               id={menuButtonId}
               icon="menu"
@@ -222,6 +257,15 @@ export function AppShell({ productName, sidebar, children, collapsed, onToggleCo
           hidden={drawer && !drawerOpen}
           {...(drawer ? { role: 'dialog', 'aria-modal': true, 'aria-label': 'Navigation' } : {})}
           onKeyDown={drawer ? onDrawerKeyDown : undefined}
+          onFocus={() => {
+            sidebarFocusRef.current = true;
+          }}
+          onBlur={(e) => {
+            // A real move elsewhere (to another element, or to <body> while the
+            // blurred control is still rendered, e.g. a click on blank page).
+            const to = e.relatedTarget as Node | null;
+            if (to ? !e.currentTarget.contains(to) : e.target.isConnected) sidebarFocusRef.current = false;
+          }}
         >
           <div className="ui-shell__head">
             <Brand productName={productName} nameHidden={railed} />

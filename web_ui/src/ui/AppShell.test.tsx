@@ -272,6 +272,73 @@ describe('AppShell drawer (<= 768px)', () => {
     expect(main).not.toHaveAttribute('tabindex');
   });
 
+  it('while open, the top bar and <main> (with anything inside it) are inert; closing clears it and restores focus', async () => {
+    const user = userEvent.setup();
+    media = stubMatchMedia(true);
+    const { container } = render(<Harness />);
+    const main = screen.getByRole('main');
+    const topbar = container.querySelector('.ui-shell__topbar') as HTMLElement;
+    const menu = screen.getByRole('button', { name: 'Open navigation' });
+    expect(main).not.toHaveAttribute('inert');
+    expect(topbar).not.toHaveAttribute('inert');
+
+    await user.click(menu);
+    const drawer = screen.getByRole('dialog', { name: 'Navigation' });
+    expect(main).toHaveAttribute('inert');
+    expect(topbar).toHaveAttribute('inert');
+    expect(drawer).not.toHaveAttribute('inert');
+    expect(drawer.closest('[inert]')).toBeNull();
+    // Content rendered inside <main> (e.g. the model-gate overlay) is inert too.
+    expect(within(main).getByRole('heading', { name: 'chat page' }).closest('[inert]')).toBe(main);
+
+    await user.keyboard('{Escape}');
+    expect(main).not.toHaveAttribute('inert');
+    expect(topbar).not.toHaveAttribute('inert');
+    expect(menu).toHaveFocus();
+
+    // Navigation close: inert cleared before focus moves to <main>.
+    await user.click(menu);
+    await user.click(screen.getByRole('button', { name: 'Documents' }));
+    expect(main).not.toHaveAttribute('inert');
+    expect(main).toHaveFocus();
+  });
+
+  it('narrowing while focus is in the desktop sidebar hands focus to the menu button', () => {
+    media = stubMatchMedia(false);
+    render(<Harness />);
+    const documents = screen.getByRole('button', { name: 'Documents' });
+    act(() => documents.focus());
+    expect(documents).toHaveFocus();
+    media.set(true);
+    const menu = screen.getByRole('button', { name: 'Open navigation' });
+    expect(menu).toHaveFocus();
+    expect(document.activeElement).not.toBe(document.body);
+  });
+
+  it('narrowing from the icon rail (nav items remount without their tooltips) still hands focus to the menu button', () => {
+    media = stubMatchMedia(false);
+    render(<Harness initialCollapsed />);
+    const documents = screen.getByRole('button', { name: 'Documents' });
+    act(() => documents.focus());
+    expect(documents).toHaveFocus();
+    media.set(true);
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveFocus();
+  });
+
+  it('narrowing while focus is elsewhere leaves focus alone', () => {
+    media = stubMatchMedia(false);
+    render(
+      <>
+        <button type="button">Elsewhere</button>
+        <Harness />
+      </>
+    );
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+    act(() => elsewhere.focus());
+    media.set(true);
+    expect(elsewhere).toHaveFocus();
+  });
+
   it('widening past the breakpoint drops the open drawer and restores the sidebar', () => {
     media = stubMatchMedia(true);
     render(<Harness />);
