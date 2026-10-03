@@ -2,6 +2,7 @@ import { useEffect, useId, useRef } from 'react';
 import { Button, Icon, IconButton, SideNav, useAppShell, type SideNavItem } from '../ui';
 import { SidebarConversationItem } from './SidebarConversationItem';
 import { CONVERSATION_QUERY_MAX_LENGTH } from '../db/conversation-query';
+import { SidebarConnectionChip } from './SidebarConnectionChip';
 import '../layouts/shell.css';
 
 interface SidebarConversation {
@@ -37,6 +38,8 @@ interface SidebarProps {
   searchTruncated?: boolean;
   /** A search is pending or running: the shown results are not yet current. */
   isSearching?: boolean;
+  /** Footer connection chip target (Settings > model connection); no chip without it. */
+  onOpenModelSettings?: () => void;
 }
 
 /** Primary destinations, at the TOP of the sidebar (design-language.md section 5). */
@@ -71,6 +74,7 @@ export function Sidebar({
   searchResults = null,
   searchTruncated = false,
   isSearching = false,
+  onOpenModelSettings,
 }: SidebarProps) {
   const { collapsed, drawer, closeDrawer } = useAppShell();
   const headingId = useId();
@@ -269,6 +273,7 @@ export function Sidebar({
           </div>
         </section>
       )}
+      {onOpenModelSettings ? <SidebarConnectionChip onOpenModelSettings={onOpenModelSettings} /> : null}
     </>
   );
 }

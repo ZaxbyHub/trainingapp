@@ -32,15 +32,16 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  * Phase 3 (shell) removed the old sidebar's "No conversations yet" node
  * (legacy --color-text-muted on --color-surface, 4.18:1) from every light 1440 key,
  * which also emptied 'training:light:1440'. Every remaining entry is page-body debt.
+ * Phase 5 (chat) restyled the welcome hero on Lumen tokens, which emptied both
+ * 'chat:light:*' keys, and fixed 'overlay:light:1440' `ul:nth-child(3) > li` at the
+ * root: ModelBlockedOverlay's recommendation list moved from legacy --color-text-muted
+ * (4.18:1 on the #f0f0f5 card) to --text-secondary (6.48:1 light, 9.27:1 dark), and its
+ * failures list from --color-danger to --danger (5.70:1 / 5.48:1), verified with the
+ * page behind the card hidden so axe could not report them as merely `incomplete`.
  */
 const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'overlay:light:1440': [
     "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-    "color-contrast | ul:nth-child(3) > li",
-  ],
-  'chat:light:1440': [
-    "color-contrast | div[role=\"region\"] > div:nth-child(1) > p",
-    "color-contrast | div[role=\"region\"] > div:nth-child(3)",
   ],
   'documents:light:1440': [
     "color-contrast | p:nth-child(4)",
@@ -52,10 +53,6 @@ const KNOWN_BASELINE: Record<string, readonly string[]> = {
   ],
   'overlay:light:500': [
     "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-  ],
-  'chat:light:500': [
-    "color-contrast | div[role=\"region\"] > div:nth-child(1) > p",
-    "color-contrast | div[role=\"region\"] > div:nth-child(3)",
   ],
   'documents:light:500': [
     "color-contrast | p:nth-child(4)",

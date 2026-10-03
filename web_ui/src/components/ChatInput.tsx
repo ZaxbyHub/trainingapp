@@ -3,12 +3,14 @@
  * Supports multiline input with auto-resize behavior.
  */
 
-import React, { useRef, useCallback, useState, useEffect } from 'react';
+import React, { useRef, useCallback, useState, useEffect, type ReactNode } from 'react';
 import {
   prepareImage,
   validateImageFile,
   type AttachedImage,
 } from '../lib/processing/image-input';
+import { IconButton } from '../ui';
+import '../pages/chat.css';
 
 interface ChatInputProps {
   onSend: (message: string, images?: AttachedImage[]) => void;
@@ -26,6 +28,9 @@ interface ChatInputProps {
   /** Notifies the parent of the current draft text so a global shortcut
    *  (Ctrl+Enter) can send it without owning the input state. */
   onDraftChange?: (text: string) => void;
+  /** Status row rendered INSIDE the composer card (Lumen phase 5): the streaming /
+   *  model-load indicator. The row collapses when this renders nothing. */
+  status?: ReactNode;
 }
 
 const MAX_HEIGHT = 150;
@@ -40,11 +45,11 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   imageUploadEnabled = false,
   maxImages = 3,
   onDraftChange,
+  status,
 }) => {
   const [value, setValue] = useState('');
   const [images, setImages] = useState<AttachedImage[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
-  const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -54,8 +59,10 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
 
     textarea.style.height = 'auto';
     const newHeight = Math.min(Math.max(textarea.scrollHeight, MIN_HEIGHT), MAX_HEIGHT);
+    // Height is a measured value (CSSOM, not a style prop); whether the content
+    // overflows the cap is a state the stylesheet acts on (pages/chat.css).
     textarea.style.height = `${newHeight}px`;
-    textarea.style.overflowY = textarea.scrollHeight > MAX_HEIGHT ? 'auto' : 'hidden';
+    textarea.dataset.overflow = textarea.scrollHeight > MAX_HEIGHT ? 'scroll' : 'none';
   }, []);
 
   useEffect(() => {
@@ -170,101 +177,64 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     onCancel();
   }, [onCancel]);
 
+  const attachDisabled = isLoading || disabled || images.length >= maxImages;
+  const sendDisabled = !value.trim() || disabled;
+
   return (
-    <div
-      style={{
-        padding: 'var(--spacing-md)',
-        borderTop: '1px solid var(--color-bubble-system)',
-        backgroundColor: 'var(--color-bubble-assistant)',
-        boxShadow: 'var(--shadow-md)',
-      }}
-    >
-      {/* Attached-image previews */}
-      {images.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 'var(--spacing-sm)',
-            maxWidth: '800px',
-            margin: '0 auto var(--spacing-sm)',
-          }}
-        >
-          {images.map((img) => (
-            <div key={img.id} style={{ position: 'relative' }}>
-              <img
-                src={img.dataUrl}
-                alt={img.fileName}
-                style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 'var(--radius-sm)', display: 'block' }}
-              />
-              <button
-                type="button"
-                onClick={() => removeImage(img.id)}
-                aria-label={`Remove ${img.fileName}`}
-                style={{
-                  position: 'absolute', top: -6, right: -6, width: 18, height: 18,
-                  borderRadius: '50%', border: 'none', cursor: 'pointer', lineHeight: 1,
-                  background: 'var(--color-danger)', color: 'var(--color-text-on-primary)', fontSize: 12,
-                }}
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      {attachError && (
-        <div
-          role="alert"
-          style={{
-            maxWidth: '800px', margin: '0 auto var(--spacing-sm)',
-            color: 'var(--color-danger)', fontSize: 'var(--font-size-caption)',
-          }}
-        >
-          {attachError}
-        </div>
-      )}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
-        multiple
-        onChange={(e) => void handleFilesSelected(e.target.files)}
-        style={{ display: 'none' }}
-        aria-hidden="true"
-        tabIndex={-1}
-      />
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          gap: 'var(--spacing-sm)',
-          maxWidth: '800px',
-          margin: '0 auto',
-        }}
-      >
-        {imageUploadEnabled && (
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isLoading || disabled || images.length >= maxImages}
-            title="Attach image"
-            aria-label="Attach image"
-            style={{
-              height: MIN_HEIGHT, width: MIN_HEIGHT, flexShrink: 0,
-              backgroundColor: 'var(--color-bubble-user)',
-              color: 'var(--color-text-on-bubble-user)',
-              border: '1px solid var(--color-bubble-system)', borderRadius: 'var(--radius-md)',
-              cursor: isLoading || disabled || images.length >= maxImages ? 'not-allowed' : 'pointer',
-              fontSize: 'var(--font-size-body)',
-            }}
-          >
-            📎
-          </button>
+    <div className="chat-composer">
+      <div className="chat-composer__card" data-loading={isLoading || undefined}>
+        {/* Attached-image previews */}
+        {images.length > 0 && (
+          <div className="chat-composer__previews">
+            {images.map((img) => (
+              <div key={img.id} className="chat-composer__preview">
+                <img src={img.dataUrl} alt={img.fileName} className="chat-composer__thumb" />
+                <IconButton
+                  icon="x"
+                  iconSize={14}
+                  variant="danger"
+                  size="sm"
+                  tooltipPlacement="top"
+                  className="chat-composer__remove"
+                  onClick={() => removeImage(img.id)}
+                  aria-label={`Remove ${img.fileName}`}
+                />
+              </div>
+            ))}
+          </div>
         )}
-        <div style={{ position: 'relative', flex: 1 }}>
+        {attachError && (
+          <div role="alert" className="chat-composer__error">
+            {attachError}
+          </div>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          multiple
+          onChange={(e) => void handleFilesSelected(e.target.files)}
+          hidden
+          aria-hidden="true"
+          tabIndex={-1}
+        />
+        <div className="chat-composer__row">
+          {imageUploadEnabled && (
+            <IconButton
+              icon="paperclip"
+              variant="ghost"
+              tooltipPlacement="top"
+              className="chat-composer__attach"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={attachDisabled}
+              aria-disabled={attachDisabled || undefined}
+              title="Attach image"
+              aria-label="Attach image"
+            />
+          )}
           <textarea
             ref={textareaRef}
+            className="chat-composer__input"
             value={value}
             onChange={(e) => {
               const next = e.target.value;
@@ -272,100 +242,49 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               onDraftChange?.(next);
             }}
             onKeyDown={handleKeyDown}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
             placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
             disabled={isLoading || disabled}
             rows={1}
-            style={{
-              width: '100%',
-              minHeight: `${MIN_HEIGHT}px`,
-              maxHeight: `${MAX_HEIGHT}px`,
-              padding: 'var(--spacing-md)',
-              paddingRight: value ? 'var(--spacing-xxl)' : 'var(--spacing-md)',
-              fontSize: 'var(--font-size-body)',
-              fontFamily: 'var(--font-family)',
-              border: `1px solid ${isFocused ? 'var(--color-primary)' : 'var(--color-bubble-system)'}`,
-              borderRadius: 'var(--radius-lg)',
-        boxShadow: isFocused
-          ? 'var(--shadow-md)'
-          : 'var(--shadow-sm)',
-              resize: 'none',
-              overflowY: 'hidden',
-              lineHeight: 1.4,
-              backgroundColor: 'var(--color-bubble-user)',
-              color: 'var(--color-text-on-bubble-user)',
-            }}
             aria-label="Message input"
             aria-describedby={disabledReasonId}
           />
           {value && !isLoading && (
-            <button
-              type="button"
+            <IconButton
+              icon="x"
+              iconSize={18}
+              variant="ghost"
+              tooltipPlacement="top"
+              className="chat-composer__clear"
               onClick={handleClear}
-              style={{
-                position: 'absolute',
-                right: 'var(--spacing-sm)',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                padding: 'var(--spacing-xs)',
-                color: 'var(--color-text-muted)',
-                fontSize: 'var(--font-size-body)',
-                lineHeight: 1,
-              }}
               aria-label="Clear input"
-            >
-              ✕
-            </button>
+            />
+          )}
+          {isLoading ? (
+            <IconButton
+              icon="square"
+              iconSize={16}
+              variant="secondary"
+              tooltipPlacement="top"
+              className="chat-composer__stop"
+              onClick={handleCancel}
+              aria-label="Stop generation"
+            />
+          ) : (
+            <IconButton
+              icon="arrow-up"
+              variant="primary"
+              tooltipPlacement="top"
+              className="chat-composer__send"
+              onClick={handleSubmit}
+              disabled={sendDisabled}
+              aria-disabled={sendDisabled || undefined}
+              aria-label="Send message"
+            />
           )}
         </div>
-
-        {isLoading ? (
-          <button
-            type="button"
-            onClick={handleCancel}
-            style={{
-              height: MIN_HEIGHT,
-              padding: 'var(--spacing-sm) var(--spacing-lg)',
-              fontSize: 'var(--font-size-body)',
-              fontFamily: 'var(--font-family)',
-              backgroundColor: 'var(--color-danger)',
-              color: 'var(--color-text-on-primary)',
-              border: 'none',
-              borderRadius: 'var(--radius-md)',
-              cursor: 'pointer',
-              fontWeight: 500,
-            }}
-            aria-label="Stop generation"
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!value.trim() || disabled}
-            style={{
-              height: MIN_HEIGHT,
-              padding: 'var(--spacing-sm) var(--spacing-lg)',
-              fontSize: 'var(--font-size-body)',
-              fontFamily: 'var(--font-family)',
-              backgroundColor: value.trim() ? 'var(--color-primary)' : 'var(--color-secondary)',
-              color: 'var(--color-text-on-primary)',
-              border: 'none',
-              borderRadius: 'var(--radius-md)',
-              cursor: value.trim() ? 'pointer' : 'not-allowed',
-              fontWeight: 500,
-              opacity: value.trim() ? 1 : 0.6,
-            }}
-            aria-label="Send message"
-          >
-            Send
-          </button>
-        )}
+        {/* Status row inside the card (streaming / model-load progress). Hidden by
+            CSS (:empty) when the status element renders nothing. */}
+        <div className="chat-composer__status">{status}</div>
       </div>
     </div>
   );

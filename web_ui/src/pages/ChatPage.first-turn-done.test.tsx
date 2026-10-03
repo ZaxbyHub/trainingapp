@@ -268,7 +268,7 @@ describe('ChatPage terminal callbacks on a first turn (issue #118 guardrail)', (
     await flushUi();
 
     // Terminal done-payload UI must be visible after the FIRST turn.
-    expect(screen.getByText('Grounded in your documents')).toBeInTheDocument();
+    expect(screen.getByText('From your documents')).toBeInTheDocument();
     expect(screen.getByLabelText('Learn panel — where to learn this')).toBeInTheDocument();
     // Structured citation ref: the pill renders label + copy affordance; the
     // cite text lives in the click-to-expand popover, so assert the ref itself.
@@ -340,7 +340,7 @@ describe('ChatPage terminal callbacks on a first turn (issue #118 guardrail)', (
 
     // The terminal update must NOT be written into the switched-to view...
     expect(screen.queryByLabelText('Learn panel — where to learn this')).not.toBeInTheDocument();
-    expect(screen.queryByText('Grounded in your documents')).not.toBeInTheDocument();
+    expect(screen.queryByText('From your documents')).not.toBeInTheDocument();
     // ...but persistence must still target the OWNING conversation (S1).
     const ownerSave = (onSaveConversation as ReturnType<typeof vi.fn>).mock.calls.at(-1);
     expect(ownerSave?.[0]).toBe('conv-A');
@@ -401,7 +401,7 @@ describe('ChatPage terminal callbacks on a first turn (issue #118 guardrail)', (
     await flushUi();
 
     // The first turn renders the payload even though done beat every render.
-    expect(screen.getByText('Grounded in your documents')).toBeInTheDocument();
+    expect(screen.getByText('From your documents')).toBeInTheDocument();
     expect(screen.getByLabelText('Learn panel — where to learn this')).toBeInTheDocument();
   });
 });

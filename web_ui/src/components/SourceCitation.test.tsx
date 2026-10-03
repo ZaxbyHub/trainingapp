@@ -303,9 +303,11 @@ describe('SourceCitation', () => {
     it('respects max-width on pills', () => {
       const { container } = render(<SourceCitation sources={['/very/long/path/to/document.pdf']} />);
 
-      // React serializes maxWidth as "max-width" in the DOM style attribute.
-      const pill = container.querySelector('[style*="max-width: 200px"]');
-      expect(pill).toBeInTheDocument();
+      // Lumen phase 5: legacy chips carry the chat-cite--legacy class, whose
+      // 200px max-width lives in pages/chat.css; the label truncates inside it.
+      const chip = container.querySelector('.chat-cite.chat-cite--legacy');
+      expect(chip).toBeInTheDocument();
+      expect(chip!.querySelector('.chat-cite__label')).toHaveTextContent('document.pdf');
     });
   });
 
@@ -395,6 +397,71 @@ describe('SourceCitation', () => {
       // Structured mode wins: the [1] label appears, legacy filename does not.
       expect(screen.getByText('[1]')).toBeInTheDocument();
       expect(screen.queryByText('legacy.pdf')).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Lumen phase 5 structure: no nested interactive controls, and the narrow-width
+  // count chip (design-language.md section 3.5).
+  // -------------------------------------------------------------------------
+  describe('Lumen phase 5 structure', () => {
+    it('never nests the Copy button inside the role="button" pill (axe nested-interactive)', () => {
+      const { container } = render(
+        <SourceCitation
+          citations={[
+            { docId: 'd1', chunkIndex: 0, source: 'a.pdf', text: 'one' },
+            { docId: 'd2', chunkIndex: 0, source: 'b.pdf', text: 'two' },
+          ]}
+        />
+      );
+      const pills = container.querySelectorAll('[role="button"]');
+      expect(pills).toHaveLength(2);
+      pills.forEach((pill) => expect(pill.querySelector('button, [role="button"]')).toBeNull());
+      expect(screen.getAllByRole('button', { name: 'Copy source text' })).toHaveLength(2);
+    });
+
+    it('legacy mode: the copy button is a sibling of the pill too', () => {
+      const { container } = render(<SourceCitation sources={['/p/a.pdf']} />);
+      const pill = container.querySelector('[role="button"]')!;
+      expect(pill.querySelector('button')).toBeNull();
+      expect(screen.getByRole('button', { name: /copy source path/i })).toBeInTheDocument();
+    });
+
+    it('clicking Copy does not toggle the popover (sibling, not child)', async () => {
+      render(<SourceCitation citations={[{ docId: 'd1', chunkIndex: 0, source: 'a.pdf', text: 'chunk body' }]} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Copy source text' }));
+      await waitFor(() => expect(mockClipboard.writeText).toHaveBeenCalledWith('chunk body'));
+      expect(screen.queryByText('chunk body')).toBeNull();
+    });
+
+    it('offers a count chip that expands the collapsed list (shown only at <= 500px by CSS)', () => {
+      const { container } = render(
+        <SourceCitation
+          citations={[
+            { docId: 'd1', chunkIndex: 0, source: 'a.pdf' },
+            { docId: 'd2', chunkIndex: 0, source: 'b.pdf' },
+          ]}
+        />
+      );
+      // jsdom applies chat.css without the max-width media query: at a wide layout the
+      // count chip is display:none, so it is not in the accessibility tree at all.
+      expect(screen.queryByRole('button', { name: /sources?$/ })).toBeNull();
+      const toggle = container.querySelector<HTMLButtonElement>('button.chat-cites__toggle')!;
+      expect(toggle).toHaveTextContent('2 sources');
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      const list = document.getElementById(toggle.getAttribute('aria-controls')!)!;
+      expect(list).toHaveAttribute('data-collapsed', 'true');
+      // The chips stay in the DOM (wider layouts show them regardless of the toggle).
+      expect(list.querySelectorAll('[role="button"]')).toHaveLength(2);
+
+      fireEvent.click(toggle);
+      expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      expect(list).toHaveAttribute('data-collapsed', 'false');
+    });
+
+    it('uses the singular for one source', () => {
+      const { container } = render(<SourceCitation sources={['/p/only.pdf']} />);
+      expect(container.querySelector('button.chat-cites__toggle')).toHaveTextContent(/^1 source$/);
     });
   });
 });

@@ -10,6 +10,8 @@ import { SourceCitation } from './SourceCitation';
 import { LearnPanel } from './LearnPanel';
 import { GroundingBadge } from './GroundingBadge';
 import { formatRelativeTime } from '../utils/relativeTime';
+import { Banner, Button, Icon } from '../ui';
+import '../pages/chat.css';
 
 interface ChatMessageBubbleProps {
   message: ChatMessage;
@@ -54,107 +56,40 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
     }
   }, [message.content]);
 
-  const bubbleStyle: React.CSSProperties = {
-    maxWidth: '75%',
-    padding: 'var(--spacing-md)',
-    borderRadius: 'var(--radius-md)',
-    position: 'relative',
-    wordBreak: 'break-word',
-  };
-
-  const timeStyle: React.CSSProperties = {
-    fontSize: 'var(--font-size-small)',
-    marginTop: 'var(--spacing-xs)',
-    opacity: 0.7,
-  };
-
-  // Shared inline style for the copy/regenerate action buttons. Visibility is
-  // driven by the `.bubble-action` / `.bubble-row` CSS classes in theme.css
-  // (using :hover / :focus-within) so keyboard and touch users can reach them
-  // — inline styles alone cannot express those pseudo-classes.
-  const actionButtonBaseStyle: React.CSSProperties = {
-    background: 'transparent',
-    border: '1px solid var(--color-bubble-system)',
-    borderRadius: 'var(--radius-sm)',
-    cursor: 'pointer',
-    padding: 'var(--spacing-xs) var(--spacing-sm)',
-    fontSize: 'var(--font-size-caption)',
-    fontFamily: 'var(--font-family)',
-    color: 'var(--color-text-muted)',
-  };
-
-  const regenerateStyle: React.CSSProperties = {
-    ...actionButtonBaseStyle,
-  };
-
-  const cursorStyle: React.CSSProperties = {
-    display: 'inline-block',
-    width: '2px',
-    height: 'var(--font-size-body)',
-    backgroundColor: 'var(--color-text-on-bubble-assistant)',
-    marginLeft: '2px',
-    verticalAlign: 'text-bottom',
-    animation: 'blink 1s step-end infinite',
-  };
+  const copyButton = (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="chat-msg__action"
+      onClick={handleCopy}
+      aria-label={copied ? 'Copied to clipboard' : 'Copy message'}
+    >
+      <Icon name={copied ? 'check' : 'copy'} size={16} />
+      {copied ? 'Copied!' : 'Copy'}
+    </Button>
+  );
 
   if (message.role === 'user') {
     return (
-      <div
-        className="bubble-row"
-        style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          marginBottom: 'var(--spacing-sm)',
-        }}
-      >
-        <div
-          style={{
-            ...bubbleStyle,
-            backgroundColor: 'var(--color-bubble-user)',
-            color: 'var(--color-text-on-bubble-user)',
-            borderBottomRightRadius: 'var(--radius-xs)',
-          }}
-        >
-          <div style={{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-family)' }}>
-            {message.content}
-          </div>
+      <div className="chat-msg chat-msg--user" data-role="user">
+        <div className="chat-msg__bubble">
+          <div className="chat-msg__text">{message.content}</div>
           {message.images && message.images.length > 0 && (
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 'var(--spacing-sm)',
-                marginTop: 'var(--spacing-sm)',
-              }}
-            >
+            <div className="chat-msg__images">
               {message.images.map((img) => (
                 <img
                   key={img.id}
                   src={img.dataUrl}
                   alt={img.fileName || 'attached image'}
-                  style={{
-                    maxWidth: 160,
-                    maxHeight: 160,
-                    borderRadius: 'var(--radius-sm)',
-                    objectFit: 'cover',
-                    display: 'block',
-                  }}
+                  className="chat-msg__image"
                 />
               ))}
             </div>
           )}
-          <div style={{ ...timeStyle, textAlign: 'right' }}>{relativeLabel}</div>
-          <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
-            <button
-              className="bubble-action"
-              style={actionButtonBaseStyle}
-              onClick={handleCopy}
-              aria-label={copied ? 'Copied to clipboard' : 'Copy message'}
-              type="button"
-            >
-              {copied ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
+        </div>
+        <div className="chat-msg__meta">
+          <span className="chat-msg__time">{relativeLabel}</span>
+          {copyButton}
         </div>
       </div>
     );
@@ -162,171 +97,95 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
 
   if (message.role === 'system') {
     return (
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'center',
-          marginBottom: 'var(--spacing-sm)',
-        }}
-      >
-        <div
-          style={{
-            ...bubbleStyle,
-            backgroundColor: 'var(--color-bubble-system)',
-            color: 'var(--color-text-on-bubble-system)',
-            fontSize: 'var(--font-size-caption)',
-            maxWidth: '90%',
-            textAlign: 'center',
-          }}
-        >
-          <div style={{ fontFamily: 'var(--font-family)' }}>{message.content}</div>
-        </div>
+      <div className="chat-msg chat-msg--system" data-role="system">
+        <div className="chat-msg__system">{message.content}</div>
       </div>
     );
   }
 
-  // Assistant message — full-width prose
+  // Assistant message — full-width prose on the canvas (no card).
   return (
-    <div
-      className="bubble-row"
-      style={{
-        display: 'flex',
-        justifyContent: 'flex-start',
-        marginBottom: 'var(--spacing-sm)',
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          padding: 'var(--spacing-md)',
-          backgroundColor: 'var(--color-surface-elevated)',
-          border: '1px solid var(--color-bubble-system)',
-          borderRadius: 'var(--radius-md)',
-        }}
-      >
-        {message.abstain ? (
-          // F2: distinct abstention state. The pipeline deliberately did NOT
-          // answer because it found no usable evidence, so we never show the
-          // model's content or copy/citation actions.
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              padding: 'var(--spacing-sm) var(--spacing-md)',
-              borderRadius: '8px',
-              backgroundColor: 'var(--color-bubble-system)',
-              color: 'var(--color-text-muted)',
-              fontStyle: 'italic',
-              fontFamily: 'var(--font-family)',
-            }}
-          >
-            {message.abstainReason === 'retrieval_degraded'
-              ? 'Retrieval is degraded (semantic search unavailable) and no relevant passages were found.'
-              : 'Insufficient evidence in the knowledge base to answer this question.'}
-          </div>
-        ) : message.error ? (
-          // S6: structured error card. The error message is stored on the
-          // dedicated `error` field (NOT injected into content, which would be
-          // parsed as markdown and could linkify/mangle). The Try-again button
-          // only renders when onRegenerate is present (M4) — otherwise the card
-          // just reports the failure.
-          <div
-            role="alert"
-            style={{
-              padding: 'var(--spacing-md)',
-              borderRadius: '8px',
-              backgroundColor: 'rgba(211, 47, 47, 0.08)',
-              border: '1px solid var(--color-danger)',
-              color: 'var(--color-danger)',
-              fontFamily: 'var(--font-family)',
-            }}
-          >
-            <div style={{ fontSize: 'var(--font-size-body)', marginBottom: 'var(--spacing-xs)' }}>
-              Something went wrong while answering.
+    <div className="chat-msg chat-msg--assistant" data-role="assistant">
+      {message.abstain ? (
+        // F2: distinct abstention state. The pipeline deliberately did NOT
+        // answer because it found no usable evidence, so we never show the
+        // model's content or copy/citation actions.
+        <div role="status" aria-live="polite" className="chat-msg__note">
+          {message.abstainReason === 'retrieval_degraded'
+            ? 'Retrieval is degraded (semantic search unavailable) and no relevant passages were found.'
+            : 'Insufficient evidence in the knowledge base to answer this question.'}
+        </div>
+      ) : message.error ? (
+        // S6: structured error card. The error message is stored on the
+        // dedicated `error` field (NOT injected into content, which would be
+        // parsed as markdown and could linkify/mangle). The Try-again button
+        // only renders when onRegenerate is present (M4) — otherwise the card
+        // just reports the failure. Banner(danger) keeps role="alert".
+        <Banner
+          tone="danger"
+          title="Something went wrong while answering."
+          action={
+            onRegenerate ? (
+              <Button variant="secondary" size="sm" onClick={onRegenerate} aria-label="Try again">
+                <Icon name="rotate-ccw" size={16} />
+                Try again
+              </Button>
+            ) : undefined
+          }
+        >
+          <span className="chat-msg__error-detail">{message.error}</span>
+        </Banner>
+      ) : (
+        <>
+          {/* A7: an empty assistant message (Stop before first token, or a
+              placeholder that never received content) renders only the
+              cursor while streaming, and nothing at all once settled — no
+              bordered box, no Copy button that copies "". */}
+          {message.content === '' && !message.isStreaming ? null : (
+            <div className="chat-msg__body">
+              <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
+              {message.isStreaming && <span className="chat-msg__cursor" aria-hidden="true" />}
             </div>
-            <div style={{ fontSize: 'var(--font-size-caption)', opacity: 0.85, wordBreak: 'break-word' }}>
-              {message.error}
+          )}
+          {/* F4: non-blocking indicator when only keyword search was available. */}
+          {message.retrievalDegraded && (
+            <div role="status" aria-live="polite" className="chat-msg__degraded">
+              Retrieval is degraded — semantic search unavailable (showing keyword-only results).
             </div>
+          )}
+          <div className="chat-msg__meta">
+            <span className="chat-msg__time">{relativeLabel}</span>
+            {copyButton}
             {onRegenerate && (
-              <button
-                className="bubble-action"
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
+                className="chat-msg__action"
                 onClick={onRegenerate}
-                aria-label="Try again"
-                style={{ ...regenerateStyle, marginTop: 'var(--spacing-sm)' }}
+                aria-label="Regenerate response"
               >
-                ↻ Try again
-              </button>
+                <Icon name="rotate-ccw" size={16} />
+                Regenerate
+              </Button>
             )}
           </div>
-        ) : (
-          <>
-            {/* A7: an empty assistant message (Stop before first token, or a
-                placeholder that never received content) renders only the
-                cursor while streaming, and nothing at all once settled — no
-                bordered box, no Copy button that copies "". */}
-            {message.content === '' && !message.isStreaming ? null : (
-              <div style={{ fontFamily: 'var(--font-family)', lineHeight: 'var(--line-height-body)' }}>
-                <MarkdownRenderer content={message.content} isStreaming={message.isStreaming} />
-                {message.isStreaming && <span style={cursorStyle} aria-hidden="true" />}
-              </div>
-            )}
-            {/* F4: non-blocking indicator when only keyword search was available. */}
-            {message.retrievalDegraded && (
-              <div
-                role="status"
-                aria-live="polite"
-                style={{
-                  marginTop: 'var(--spacing-xs)',
-                  fontSize: 'var(--font-size-caption)',
-                  color: 'var(--color-text-muted)',
-                  fontStyle: 'italic',
-                }}
-              >
-                Retrieval is degraded — semantic search unavailable (showing keyword-only results).
-              </div>
-            )}
-            <div style={{ ...timeStyle, textAlign: 'left' }}>{relativeLabel}</div>
-            <div style={{ display: 'flex', gap: 'var(--spacing-sm)', marginTop: 'var(--spacing-sm)' }}>
-              <button
-                className="bubble-action"
-                style={actionButtonBaseStyle}
-                onClick={handleCopy}
-                aria-label={copied ? 'Copied to clipboard' : 'Copy message'}
-                type="button"
-              >
-                {copied ? 'Copied!' : 'Copy'}
-              </button>
-              {onRegenerate && (
-                <button
-                  className="bubble-action"
-                  type="button"
-                  onClick={onRegenerate}
-                  aria-label="Regenerate response"
-                  style={regenerateStyle}
-                >
-                  ↻ Regenerate
-                </button>
-              )}
-            </div>
-            {/* C5 (issue #72): per-answer provenance badge (above the
-                citations it describes); accessible, never color-only. */}
-            <GroundingBadge grounding={message.grounding} />
-            {/* F7: prefer structured numbered citations; fall back to legacy
-                sources string array for older persisted messages. */}
-            {message.citations && message.citations.length > 0 ? (
-              <SourceCitation citations={message.citations} />
-            ) : (
-              message.sources && message.sources.length > 0 && <SourceCitation sources={message.sources} />
-            )}
-            {/* D6 (issue #82): "where to learn this" deep links, rendered after
-                the citations they are derived from. */}
-            {message.learn && message.learn.length > 0 && (
-              <LearnPanel learn={message.learn} onOpenTraining={onOpenTraining} />
-            )}
-          </>
-        )}
-      </div>
+          {/* C5 (issue #72): per-answer provenance badge (above the
+              citations it describes); accessible, never color-only. */}
+          <GroundingBadge grounding={message.grounding} />
+          {/* F7: prefer structured numbered citations; fall back to legacy
+              sources string array for older persisted messages. */}
+          {message.citations && message.citations.length > 0 ? (
+            <SourceCitation citations={message.citations} />
+          ) : (
+            message.sources && message.sources.length > 0 && <SourceCitation sources={message.sources} />
+          )}
+          {/* D6 (issue #82): "where to learn this" deep links, rendered after
+              the citations they are derived from. */}
+          {message.learn && message.learn.length > 0 && (
+            <LearnPanel learn={message.learn} onOpenTraining={onOpenTraining} />
+          )}
+        </>
+      )}
     </div>
   );
 });

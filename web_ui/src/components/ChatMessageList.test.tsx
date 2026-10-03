@@ -48,11 +48,13 @@ describe('ChatMessageList', () => {
       expect(emptyState).toBeInTheDocument();
     });
 
-    it('uses larger padding for empty state', () => {
-      const { container } = render(<ChatMessageList messages={[]} isStreaming={false} />);
+    it('marks the log as empty (welcome layout) when there are no messages', () => {
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
 
-      const messageList = container.querySelector('[style*="padding: var(--spacing-xxl)"]');
-      expect(messageList).toBeInTheDocument();
+      // Lumen phase 5: the empty layout is a state on the log, styled in pages/chat.css.
+      const log = screen.getByRole('log');
+      expect(log).toHaveAttribute('data-state', 'empty');
+      expect(log).toHaveClass('chat-log--empty');
     });
   });
 
@@ -129,15 +131,16 @@ describe('ChatMessageList', () => {
       expect(screen.getByText('Message 3')).toBeInTheDocument();
     });
 
-    it('uses correct padding when messages exist', () => {
+    it('marks the log as populated when messages exist', () => {
       const messages: ChatMessage[] = [
         { id: 'msg-1', role: 'user', content: 'Test', timestamp: Date.now() },
       ];
 
-      const { container } = render(<ChatMessageList messages={messages} isStreaming={false} />);
+      render(<ChatMessageList messages={messages} isStreaming={false} />);
 
-      const messageList = container.querySelector('[style*="padding: var(--spacing-lg)"]');
-      expect(messageList).toBeInTheDocument();
+      const log = screen.getByRole('log');
+      expect(log).toHaveAttribute('data-state', 'populated');
+      expect(log).not.toHaveClass('chat-log--empty');
     });
   });
 

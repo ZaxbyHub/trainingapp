@@ -9,7 +9,8 @@ import { GroundingBadge } from '../GroundingBadge';
 import type { Grounding } from '../../lib/api/types';
 
 const VARIANTS: Array<{ grounding: Grounding; text: string }> = [
-  { grounding: 'grounded', text: 'Grounded in your documents' },
+  // Lumen phase 5 copy (design-language.md section 5); was 'Grounded in your documents'.
+  { grounding: 'grounded', text: 'From your documents' },
   { grounding: 'general', text: 'General knowledge' },
 ];
 
