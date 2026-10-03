@@ -42,3 +42,49 @@ describe('ModelChip', () => {
     expect(screen.getByTestId('chat-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
   });
 });
+
+// Review F6: credentials in a configured endpoint URL (userinfo, path, query) and a
+// stored API key never reach any surface of the chip: text, title, aria-label.
+describe('ModelChip never exposes endpoint credentials', () => {
+  it('https://user:secret@host/v1?api_key=X with a stored key shows only host + model', async () => {
+    const { describeChatModel } = await import('../lib/chat/model-chip');
+    const { DEFAULT_EXTERNAL_CONFIG } = await import('../lib/llm/external-provider');
+    const endpointPolicy = await import('../lib/llm/endpoint-policy');
+    // Keep the endpoint "active" regardless of policy, so the external branch is what
+    // is under test (otherwise the chip would fall back to Local and pass vacuously).
+    const spy = vi.spyOn(endpointPolicy, 'validateEndpointUrl').mockReturnValue({ ok: true } as ReturnType<
+      typeof endpointPolicy.validateEndpointUrl
+    >);
+    try {
+      const d = describeChatModel({
+        mode: 'browser-local',
+        hasDesktopSession: false,
+        desktopModels: null,
+        residentProfile: null,
+        externalConfig: {
+          ...DEFAULT_EXTERNAL_CONFIG,
+          enabled: true,
+          protocol: 'openai',
+          baseUrl: 'https://user:secret@llm.example.com/v1?api_key=X-KEY-IN-QUERY',
+          model: 'gpt-x',
+          apiKey: 'sk-STORED-KEY-123',
+        },
+        browserEngine: 'wllama',
+        wllamaModelId: 'gemma-4-e2b-it',
+        webllmModelId: 'w',
+      });
+      expect(d.kind).toBe('external');
+      render(<ModelChip description={d} onOpenSettings={() => {}} />);
+      const chip = screen.getByTestId('chat-model-chip');
+      expect(chip).toHaveTextContent('llm.example.com · gpt-x');
+      const surfaces = [chip.textContent ?? '', chip.getAttribute('title') ?? '', chip.getAttribute('aria-label') ?? ''];
+      for (const surface of surfaces) {
+        for (const secret of ['user', 'secret', '/v1', 'api_key', 'X-KEY-IN-QUERY', 'sk-STORED-KEY-123', '@']) {
+          expect(surface).not.toContain(secret);
+        }
+      }
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
