@@ -111,6 +111,12 @@ describe('ChatPage model-load gating (#133 round 4)', () => {
     expect(banner.textContent).toContain('quality profile');
     expect(banner.textContent).toContain('chat is disabled');
     expect(banner.textContent).toContain('Documents and Training');
+    // Lumen phase 5 (design-language.md section 5): the notice lives in the composer
+    // card's status row and still explains the disabled textarea (PRR-229).
+    expect(banner.closest('.chat-composer__card')).not.toBeNull();
+    expect(screen.getByRole('textbox')).toHaveAttribute('aria-describedby', 'chat-model-loading-note');
+    // The ticking elapsed counter stays outside the live region (PRR-222).
+    expect(banner.querySelector('[role="status"]')?.textContent).not.toContain('Elapsed');
     // Type text first so the ONLY remaining disabled reason is the load gate
     // (the send button is disabled for an empty input by design).
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'hello' } });

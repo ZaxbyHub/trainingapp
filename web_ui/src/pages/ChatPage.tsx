@@ -1127,32 +1127,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         onOpenTraining={onOpenTraining}
       />
 
-      {isModelLoading && (
-        <div
-          data-testid="chat-model-loading"
-          id="chat-model-loading-note"
-          className="chat-notice"
-        >
-          {/* Only the STABLE sentence is a live region. The 1s-ticking elapsed
-              span stays OUTSIDE it (review PRR-222): text mutations inside a
-              polite live region are announced by screen readers, so a ticking
-              counter in here would drip announcements every second for the
-              whole multi-minute cold load. */}
-          <span role="status" className="chat-notice__title">
-            Loading the AI model ({residentLoad?.profile ?? 'auto'} profile) — chat is disabled until it is ready.
-          </span>
-          <span aria-live="off">
-            Elapsed:{' '}
-            {residentLoad?.loadStartedAt != null
-              ? `${Math.max(0, Math.floor((modelLoadNow - residentLoad.loadStartedAt) / 1000))}s`
-              : '…'}
-            . This happens once per launch and typically takes a few minutes for the Quality model
-            (under a minute for Fast). You can keep using Documents and Training — your chat will be
-            ready here.
-          </span>
-        </div>
-      )}
-
       {/* Input */}
       <ChatInput
         onSend={handleSend}
@@ -1163,15 +1137,45 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         imageUploadEnabled={canAttachImages}
         onDraftChange={(text) => { draftRef.current = text; }}
         status={
-          /* Streaming Indicator — U1: during a cold model load (multi-minute on
-             target CPU hardware), show a determinate progress bar instead of the
-             indeterminate "Generating" cursor so the load is visible. Rendered in
-             the composer card's status row (Lumen phase 5). */
-          <StreamingIndicator
-            isVisible={isLoading}
-            modelLoadProgress={isLoading && modelLoadingProgress > 0 && modelLoadingProgress < 100 ? modelLoadingProgress : undefined}
-            modelLoadLabel="Loading the AI model — one-time, may take a few minutes…"
-          />
+          /* Lumen phase 5 (design-language.md section 5): every chat status lives
+             in the composer card's status row: the desktop resident-model load
+             notice (#133; still the textarea's aria-describedby target) and the
+             streaming indicator. */
+          <>
+            {isModelLoading && (
+              <div
+                data-testid="chat-model-loading"
+                id="chat-model-loading-note"
+                className="chat-notice"
+              >
+                {/* Only the STABLE sentence is a live region. The 1s-ticking elapsed
+                    span stays OUTSIDE it (review PRR-222): text mutations inside a
+                    polite live region are announced by screen readers, so a ticking
+                    counter in here would drip announcements every second for the
+                    whole multi-minute cold load. */}
+                <span role="status" className="chat-notice__title">
+                  Loading the AI model ({residentLoad?.profile ?? 'auto'} profile) — chat is disabled until it is ready.
+                </span>
+                <span aria-live="off">
+                  Elapsed:{' '}
+                  {residentLoad?.loadStartedAt != null
+                    ? `${Math.max(0, Math.floor((modelLoadNow - residentLoad.loadStartedAt) / 1000))}s`
+                    : '…'}
+                  . This happens once per launch and typically takes a few minutes for the Quality model
+                  (under a minute for Fast). You can keep using Documents and Training — your chat will be
+                  ready here.
+                </span>
+              </div>
+            )}
+            {/* Streaming Indicator — U1: during a cold model load (multi-minute on
+                target CPU hardware), show a determinate progress bar instead of the
+                indeterminate "Generating" cursor so the load is visible. */}
+            <StreamingIndicator
+              isVisible={isLoading}
+              modelLoadProgress={isLoading && modelLoadingProgress > 0 && modelLoadingProgress < 100 ? modelLoadingProgress : undefined}
+              modelLoadLabel="Loading the AI model — one-time, may take a few minutes…"
+            />
+          </>
         }
       />
     </div>

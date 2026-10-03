@@ -21,7 +21,7 @@ describe('GroundingBadge render in ChatMessageBubble', () => {
     render(<ChatMessageBubble message={messageWith('grounded')} />);
     const badge = screen.getByRole('status');
     expect(badge).toBeDefined();
-    expect(badge.textContent).toContain('Grounded in your documents');
+    expect(badge.textContent).toContain('From your documents');
   });
 
   it('renders the general badge for grounding="general"', () => {
