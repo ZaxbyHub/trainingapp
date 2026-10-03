@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { Button, Icon, IconButton, SideNav, useAppShell, type SideNavItem } from '../ui';
 import { SidebarConversationItem } from './SidebarConversationItem';
 import '../layouts/shell.css';
@@ -72,6 +72,18 @@ export function Sidebar({
   const searching = searchResults !== null;
   // Busy only while a query is set (clearing is immediate, never "busy").
   const busy = isSearching && searchQuery.trim() !== '';
+  // Stale results while a search is pending are made INACTIVE (inert): not
+  // clickable or focusable, which is what lets shell.css dim them (inactive UI is
+  // exempt from WCAG 1.4.3). Never applied while focus is inside the list (a
+  // re-run triggered by a save while the user is keyboarding through results),
+  // so focus is never dropped; those rows simply stay at full contrast.
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    if (busy && !list.contains(document.activeElement)) list.setAttribute('inert', '');
+    else list.removeAttribute('inert');
+  }, [busy]);
   const shown = searchResults ?? conversations;
   const clearSearch = () => {
     onSearchChange?.('');
@@ -162,7 +174,7 @@ export function Sidebar({
               </p>
             </div>
           ) : null}
-          <div className="app-sidebar__list" aria-busy={busy || undefined}>
+          <div ref={listRef} className="app-sidebar__list" aria-busy={busy || undefined}>
             {shown.length === 0 ? (
               <p className="app-sidebar__empty">{searching ? 'No conversations match' : 'No conversations yet'}</p>
             ) : (

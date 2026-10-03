@@ -159,9 +159,10 @@ export interface ConversationSearchOptions {
   /** Maximum matches to return (default CONVERSATION_SEARCH_LIMIT). */
   limit?: number;
   /**
-   * Checked before each stored conversation is read: once it returns true the
-   * IndexedDB cursor stops (Dexie `until`), so a search superseded by a newer
-   * keystroke stops walking instead of reading the rest of the store.
+   * Checked once per stored conversation as the cursor walks (Dexie `until`,
+   * which sees each record after it has been read and deserialised): once it
+   * returns true the cursor stops, so a search superseded by a newer keystroke
+   * reads at most one more conversation instead of the rest of the store.
    */
   isCancelled?: () => boolean;
 }

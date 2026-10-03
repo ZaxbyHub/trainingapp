@@ -11,6 +11,9 @@
 .app-sidebar__section-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-3) var(--space-3) var(--space-2) var(--space-4); }
 .app-sidebar__section-title { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); font-weight: 600; color: var(--text-tertiary); }
 .app-sidebar__list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 0 var(--space-3) var(--space-3); }
+/* Stale results while a search is pending: dimmed only when the list is also inert
+   (inactive, so exempt from text contrast); no transition, so nothing animates. */
+.app-sidebar__list[aria-busy="true"][inert] { opacity: 0.5; }
 .app-sidebar__empty { margin: 0; padding: var(--space-4) var(--space-2); text-align: center; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
 .app-sidebar__more { align-self: center; margin-top: var(--space-1); }
 .app-sidebar__rail-actions { display: flex; justify-content: center; padding: var(--space-2) 0; border-top: 1px solid var(--border-subtle); }

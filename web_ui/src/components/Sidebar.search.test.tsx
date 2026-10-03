@@ -7,6 +7,8 @@
 import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Sidebar } from './Sidebar';
 import { AppShell, DRAWER_MEDIA_QUERY } from '../ui';
@@ -130,6 +132,35 @@ describe('Sidebar search field', () => {
     expect(list).not.toHaveAttribute('aria-busy');
     expect(screen.queryByTestId('search-spinner')).not.toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('1 conversation found');
+  });
+
+  it('busy: stale rows are inactive (inert) and the stylesheet dims exactly that state, without a transition', () => {
+    const results = [{ id: 'c110', title: 'Quarterly budget', updatedAt: '2026-01-01T00:00:00Z' }];
+    const { rerender, container } = render(<Controlled initial="budg" searchResults={results} isSearching />);
+    const list = container.querySelector('.app-sidebar__list') as HTMLElement;
+    expect(list).toHaveAttribute('aria-busy', 'true');
+    expect(list).toHaveAttribute('inert');
+    rerender(<Controlled initial="budg" searchResults={results} isSearching={false} />);
+    expect(list).not.toHaveAttribute('inert');
+    expect(list).not.toHaveAttribute('aria-busy');
+
+    const css = readFileSync(resolve(__dirname, '../layouts/shell.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    const rule = /\.app-sidebar__list\[aria-busy="true"\]\[inert\]\s*\{([^}]*)\}/.exec(css);
+    expect(rule, 'dim rule keyed on aria-busy + inert').not.toBeNull();
+    expect(rule?.[1]).toMatch(/opacity:\s*0\.5/);
+    expect(css).not.toMatch(/\.app-sidebar__list[^{]*\{[^}]*transition/);
+  });
+
+  it('busy never makes the list inert while focus is inside it (no dropped focus; rows stay full contrast)', () => {
+    const results = [{ id: 'c110', title: 'Quarterly budget', updatedAt: '2026-01-01T00:00:00Z' }];
+    const { rerender, container } = render(<Controlled initial="budg" searchResults={results} />);
+    const row = screen.getByRole('button', { name: /quarterly budget/i });
+    act(() => row.focus());
+    rerender(<Controlled initial="budg" searchResults={results} isSearching />);
+    const list = container.querySelector('.app-sidebar__list') as HTMLElement;
+    expect(list).toHaveAttribute('aria-busy', 'true');
+    expect(list).not.toHaveAttribute('inert');
+    expect(row).toHaveFocus();
   });
 
   it('busy is ignored once the query is cleared (clearing is immediate)', () => {
