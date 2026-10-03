@@ -35,11 +35,11 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  * every settings key. Every remaining entry is page-body debt.
  * Every remaining entry is page-body debt.
  * Phase 5 (chat) restyled the welcome hero on Lumen tokens, which emptied both
- * 'chat:light:*' keys. It also dropped 'overlay:light:1440' `ul:nth-child(3) > li`,
- * but that node is MASKED, not fixed: the overlay's muted recommendation line is still
- * 4.18:1 on its #f0f0f5 card; axe now reports it as `incomplete` (background
- * undeterminable, the restyled hero partially overlaps beneath the card). Phase 7
- * (overlays) owns the real fix.
+ * 'chat:light:*' keys, and fixed 'overlay:light:1440' `ul:nth-child(3) > li` at the
+ * root: ModelBlockedOverlay's recommendation list moved from legacy --color-text-muted
+ * (4.18:1 on the #f0f0f5 card) to --text-secondary (6.48:1 light, 9.27:1 dark), and its
+ * failures list from --color-danger to --danger (5.70:1 / 5.48:1), verified with the
+ * page behind the card hidden so axe could not report them as merely `incomplete`.
  */
 const KNOWN_BASELINE: Record<string, readonly string[]> = {
   'overlay:light:1440': [
