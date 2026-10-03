@@ -64,7 +64,12 @@ export function TextInput({ className, type = 'text', ...rest }: TextInputProps)
   return <input type={type} {...rest} className={cx('ui-input', 'ui-focusable', className)} />;
 }
 
-export function PasswordInput({ className, ...rest }: Omit<TextInputProps, 'type'>) {
+export interface PasswordInputProps extends Omit<TextInputProps, 'type'> {
+  /** Accessible name of the reveal toggle (constant; state is aria-pressed). */
+  revealLabel?: string;
+}
+
+export function PasswordInput({ className, revealLabel = 'Show password', ...rest }: PasswordInputProps) {
   const [shown, setShown] = useState(false);
   return (
     <span className="ui-password">
@@ -75,7 +80,7 @@ export function PasswordInput({ className, ...rest }: Omit<TextInputProps, 'type
       />
       <IconButton
         icon={shown ? 'eye-off' : 'eye'}
-        aria-label="Show password"
+        aria-label={revealLabel}
         aria-pressed={shown}
         size="sm"
         onClick={() => setShown((s) => !s)}

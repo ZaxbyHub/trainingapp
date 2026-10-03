@@ -3,8 +3,8 @@
  * also loads the component stylesheet; the design tokens themselves come from
  * styles/theme.css -> lumen-tokens.css.
  *
- * Deferred (not shipped without real tests): Combobox (ARIA 1.2 model picker),
- * Toast (needs a provider that replaces ToastProvider).
+ * Deferred (not shipped without real tests): Toast (needs a provider that replaces
+ * ToastProvider). Combobox (ARIA 1.2 model picker) shipped in phase 4.
  */
 import './ui.css';
 
@@ -39,8 +39,10 @@ export {
   type FieldProps,
   type FieldControlProps,
   type TextInputProps,
+  type PasswordInputProps,
   type ChoiceOption,
 } from './Forms';
+export { Combobox, type ComboboxProps } from './Combobox';
 export {
   Badge,
   StatusPill,

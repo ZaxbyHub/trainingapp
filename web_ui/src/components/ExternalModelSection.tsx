@@ -28,14 +28,14 @@
  * the base URL with the shared endpoint policy first; airgap builds refuse
  * public hosts with a role="alert" message that names the restriction.
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Banner, Button, Checkbox, Field, Select, Switch, TextInput } from '../ui';
-import { SettingsSection } from './SettingsControls';
+import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Banner, Button, Checkbox, Combobox, Field, PasswordInput, Select, Switch, TextInput } from '../ui';
+import { SettingsRadioCards, SettingsSection, SettingsSubsection } from './SettingsControls';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { IS_AIRGAP } from '../lib/llm/airgap';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
-import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE } from '../lib/llm/provider-error';
+import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE, type ProviderFailureKind } from '../lib/llm/provider-error';
 import {
   keyForBaseUrl,
   keyOriginOf,
@@ -64,6 +64,33 @@ interface DesktopKeyState {
   airgap: boolean;
 }
 
+/**
+ * Generator source (design-language.md section 5, "Model & connection"). A UI choice
+ * over the unchanged stored settings: Built-in model == the external endpoint is OFF;
+ * Local or network server / Cloud provider show the connection form, and egress still
+ * starts only when "Use external model" is switched on. An enabled endpoint shows the
+ * source its base URL belongs to (a public host is a cloud provider).
+ */
+type GeneratorSource = 'builtin' | 'local' | 'cloud';
+
+function sourceOfUrl(baseUrl: string): Exclude<GeneratorSource, 'builtin'> {
+  const verdict = validateEndpointUrl(baseUrl, { airgap: false });
+  return verdict.ok && verdict.kind === 'public' ? 'cloud' : 'local';
+}
+
+/** What a problem is about: a setting the user entered, or a connection-test cause. */
+type ProblemCause = 'setting' | ProviderFailureKind;
+
+const PROBLEM_TITLE: Record<ProblemCause, string> = {
+  setting: 'Check this setting',
+  network: 'Server not reachable',
+  auth: 'The server refused the API key',
+  model: 'Model not available',
+  timeout: 'The server did not answer in time',
+  server: 'The server reported an error',
+  other: 'Connection test failed',
+};
+
 /** Same copy in both apps when the saved key belongs to another origin. */
 function keyElsewhereText(boundOrigin: string): string {
   return `Your saved key is for ${boundOrigin}. Enter the key for this server to use it.`;
@@ -73,7 +100,16 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function ExternalModelSection({ id }: { id?: string }): React.ReactElement {
+export interface ExternalModelSectionProps {
+  id?: string;
+  /**
+   * Built-in model settings, shown while "Built-in model" is the generator source
+   * (SettingsPage passes the engine / desktop-backend controls).
+   */
+  builtIn?: ReactNode;
+}
+
+export function ExternalModelSection({ id, builtIn }: ExternalModelSectionProps): React.ReactElement {
   const { session } = useDesktopSession();
   const desktop = isElectron();
   const [draft, setDraft] = useState<Draft>(() => {
@@ -102,7 +138,12 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     airgap: false,
   });
   const [models, setModels] = useState<string[]>([]);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problemState, setProblemState] = useState<{ message: string; cause: ProblemCause } | null>(null);
+  const problem = problemState?.message ?? null;
+  const setProblem = useCallback((message: string | null, cause: ProblemCause = 'setting') => {
+    setProblemState(message === null ? null : { message, cause });
+  }, []);
+  const problemTitle = (): string => PROBLEM_TITLE[problemState?.cause ?? 'setting'];
   const [status, setStatus] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const mountedRef = useRef(true);
@@ -389,7 +430,7 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     setTesting(true);
     const requested = current.baseUrl;
     try {
-      let result: { ok: boolean; message: string; models?: string[] };
+      let result: { ok: boolean; kind?: ProviderFailureKind; message: string; models?: string[] };
       if (desktop) {
         if (session === null) throw new Error('The desktop backend is not available yet.');
         result = await session.apiClient.testExternalEndpoint({
@@ -420,12 +461,24 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
       if (!mountedRef.current || draftRef.current.baseUrl !== requested) return;
       if (result.models && result.models.length > 0) setModels(result.models);
       if (result.ok) setStatus(result.message);
-      else setProblem(result.message);
+      else setProblem(result.message, result.kind ?? 'other');
     } catch (err) {
-      if (mountedRef.current) setProblem(`Connection test failed: ${errorText(err)}`);
+      if (mountedRef.current) setProblem(`Connection test failed: ${errorText(err)}`, 'network');
     } finally {
       if (mountedRef.current) setTesting(false);
     }
+  };
+
+  const [source, setSource] = useState<GeneratorSource>(() => (draft.enabled ? sourceOfUrl(draft.baseUrl) : 'builtin'));
+  // An enabled endpoint (e.g. the desktop backend's snapshot arriving) shows its own source.
+  useEffect(() => {
+    if (draft.enabled) setSource(sourceOfUrl(draft.baseUrl));
+  }, [draft.enabled, draft.baseUrl]);
+
+  const handleSourceChange = async (next: GeneratorSource) => {
+    setSource(next);
+    // Built-in model: egress off (the safe direction; persisted like the switch).
+    if (next === 'builtin' && draftRef.current.enabled) await handleEnabledChange(false);
   };
 
   const draftOrigin = keyOriginOf(draft.baseUrl);
@@ -442,190 +495,247 @@ export function ExternalModelSection({ id }: { id?: string }): React.ReactElemen
     draft.baseUrl.trim().toLowerCase().startsWith('http://') &&
     validateEndpointUrl(draft.baseUrl, { airgap: false }).kind === 'private';
   const headingId = 'external-model-heading';
+  const cloudBlocked = airgap;
+  const isServer = source !== 'builtin';
 
   return (
     <SettingsSection
       id={id}
-      headingId={headingId}
+      headingId={`${id ?? 'model-connection'}-heading`}
       focusableHeading
-      title="External model"
-      description="Generate answers with a model server on this computer, on your network, or a cloud provider (OpenAI- or Anthropic-compatible). Your documents stay here: retrieval runs locally and only the question, the retrieved passages and recent conversation are sent to the endpoint. Off by default."
+      title="Model & connection"
+      description="Choose what generates answers. Your documents stay here: retrieval runs locally, and with an external model only the question, the retrieved passages and recent conversation are sent to the endpoint. External models are off by default."
       data-testid="external-model-section"
     >
+      <SettingsRadioCards<GeneratorSource>
+        legend="Generator source"
+        name="generator-source"
+        isChecked={(value) => source === value}
+        onChange={(value) => void handleSourceChange(value)}
+        options={[
+          {
+            value: 'builtin',
+            label: 'Built-in model',
+            description: desktop
+              ? 'Answers are generated by this app on this computer. No model server is contacted.'
+              : 'Answers are generated in this browser. No model server is contacted.',
+          },
+          {
+            value: 'local',
+            label: 'Local or network server',
+            description:
+              'A model server on this computer or your network (for example LM Studio, Ollama or a llama.cpp server), OpenAI- or Anthropic-compatible.',
+          },
+          {
+            value: 'cloud',
+            label: 'Cloud provider',
+            description: cloudBlocked
+              ? 'Not available in this air-gapped build: only loopback and private-network endpoints can be used.'
+              : 'A hosted provider such as OpenAI or Anthropic. Needs https and usually an API key.',
+            disabled: cloudBlocked && source !== 'cloud',
+          },
+        ]}
+      />
       {airgap && (
         <p className="settings-text" data-testid="external-airgap-notice">
           Air-gapped build: only loopback and private-network endpoints can be used.
         </p>
       )}
 
-      <Switch
-        id="external-enabled"
-        checked={draft.enabled}
-        aria-checked={draft.enabled}
-        onChange={(e) => void handleEnabledChange(e.target.checked)}
-        label="Use external model"
-      />
+      {!isServer ? (
+        <>
+          {builtIn}
+          <p className="settings-text" data-testid="external-not-applicable">
+            No external model server is used. Choose Local or network server or Cloud provider to connect one.
+          </p>
+        </>
+      ) : (
+        <SettingsSubsection title="Server connection" headingId={headingId}>
+          <p className="settings-text" data-testid="external-usage-state">
+            {draft.enabled
+              ? 'Answers come from this server. The built-in model settings apply when Built-in model is selected.'
+              : 'Not in use yet: answers still come from the built-in model until you switch on Use external model.'}
+          </p>
 
-      <Field label="Protocol" className="settings-field">
-        {(control) => (
-          <Select
-            {...control}
-            value={draft.protocol}
-            onChange={(e) => {
-              const protocol = e.target.value === 'anthropic' ? 'anthropic' : 'openai';
-              update({ protocol });
-              setModels([]);
-              void persist({ protocol });
-            }}
-          >
-            <option value="openai">OpenAI-compatible</option>
-            <option value="anthropic">Anthropic-compatible</option>
-          </Select>
-        )}
-      </Field>
-
-      <Field
-        label="Base URL"
-        className="settings-field"
-        help={
-          <>
-            For example http://localhost:1234 (LM Studio), http://192.168.1.20:11434 (Ollama on your
-            network), https://api.openai.com or https://api.anthropic.com. Public hosts need https.
-            {!desktop &&
-              ' If this page is served over https, the browser blocks plain-http model servers (mixed content) and may ask to allow local-network access: use https on the server, or the desktop app.'}
-          </>
-        }
-      >
-        {(control) => (
-          <TextInput
-            {...control}
-            type="url"
-            autoComplete="off"
-            spellCheck={false}
-            value={draft.baseUrl}
-            onChange={(e) => update({ baseUrl: e.target.value })}
-            onBlur={() => void handleBaseUrlBlur()}
-            placeholder="http://localhost:1234"
+          <Switch
+            id="external-enabled"
+            checked={draft.enabled}
+            aria-checked={draft.enabled}
+            onChange={(e) => void handleEnabledChange(e.target.checked)}
+            label="Use external model"
           />
-        )}
-      </Field>
 
-      <div className="settings-group">
-        <Field
-          label="API key"
-          help={
-            desktop
-              ? keyState.apiKeySet
-                ? 'A key is saved (encrypted by the operating system). Type a new key to replace it.'
-                : 'Optional. Saved encrypted by the desktop app and sent only to this endpoint.'
-              : 'Optional. Stored in this browser and sent only to the server it was entered for.'
-          }
-        >
-          {(control) => (
-            <div className="settings-row">
+          <Field label="Protocol" className="settings-field">
+            {(control) => (
+              <Select
+                {...control}
+                value={draft.protocol}
+                onChange={(e) => {
+                  const protocol = e.target.value === 'anthropic' ? 'anthropic' : 'openai';
+                  update({ protocol });
+                  setModels([]);
+                  void persist({ protocol });
+                }}
+              >
+                <option value="openai">OpenAI-compatible</option>
+                <option value="anthropic">Anthropic-compatible</option>
+              </Select>
+            )}
+          </Field>
+
+          <Field
+            label="Base URL"
+            className="settings-field"
+            help={
+              <>
+                {source === 'cloud'
+                  ? 'For example https://api.openai.com or https://api.anthropic.com. Public hosts need https.'
+                  : 'For example http://localhost:1234 (LM Studio) or http://192.168.1.20:11434 (Ollama on your network).'}
+                {!desktop &&
+                  ' If this page is served over https, the browser blocks plain-http model servers (mixed content) and may ask to allow local-network access: use https on the server, or the desktop app.'}
+              </>
+            }
+          >
+            {(control) => (
               <TextInput
                 {...control}
-                type="password"
-                autoComplete="new-password"
+                type="url"
+                autoComplete="off"
                 spellCheck={false}
-                value={draft.apiKey}
-                onChange={(e) => {
-                  setKeyDropped(false);
-                  keyDirtyRef.current = true;
-                  fieldKeyOriginRef.current = keyOriginOf(draftRef.current.baseUrl);
-                  update({ apiKey: e.target.value });
-                }}
-                onBlur={() => void handleKeyBlur()}
-                placeholder={desktop && keyState.apiKeySet ? 'Saved' : 'Leave empty for servers without a key'}
+                value={draft.baseUrl}
+                onChange={(e) => update({ baseUrl: e.target.value })}
+                onBlur={() => void handleBaseUrlBlur()}
+                placeholder={source === 'cloud' ? 'https://api.openai.com' : 'http://localhost:1234'}
               />
-              {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '' || browserKey.status !== 'none') && (
+            )}
+          </Field>
+
+          <div className="settings-group">
+            <Field
+              label="API key"
+              className="settings-field"
+              help={
+                desktop
+                  ? keyState.apiKeySet
+                    ? 'A key is saved, encrypted by the operating system. Type a new key to replace it.'
+                    : 'Optional. Saved encrypted by the desktop app and sent only to this endpoint.'
+                  : 'Optional. Stored in this browser and sent only to the server it was entered for.'
+              }
+            >
+              {(control) => (
+                <PasswordInput
+                  {...control}
+                  revealLabel="Show API key"
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  value={draft.apiKey}
+                  onChange={(e) => {
+                    setKeyDropped(false);
+                    keyDirtyRef.current = true;
+                    fieldKeyOriginRef.current = keyOriginOf(draftRef.current.baseUrl);
+                    update({ apiKey: e.target.value });
+                  }}
+                  onBlur={() => void handleKeyBlur()}
+                  placeholder={desktop && keyState.apiKeySet ? 'Saved' : 'Leave empty for servers without a key'}
+                />
+              )}
+            </Field>
+            {(desktop ? keyState.apiKeySet || keyState.apiKeyBoundOrigin !== '' : draft.apiKey !== '' || browserKey.status !== 'none') && (
+              <div className="settings-row">
                 <Button variant="secondary" onClick={() => void handleClearKey()}>
                   Clear saved key
                 </Button>
-              )}
-            </div>
-          )}
-        </Field>
-        {!desktop && (
-          <Checkbox
-            id="external-remember-key"
-            checked={draft.rememberKey}
+              </div>
+            )}
+            {!desktop && (
+              <Checkbox
+                id="external-remember-key"
+                checked={draft.rememberKey}
+                onChange={(e) => {
+                  update({ rememberKey: e.target.checked });
+                  // Moves the saved key and its binding between storages; never rebinds.
+                  void persist({ rememberKey: e.target.checked });
+                }}
+                label="Remember API key in this browser (otherwise it is kept for this browser session only)"
+              />
+            )}
+            {desktop && !keyState.apiKeyPersisted && keyState.apiKeySet && (
+              <p className="settings-text">Key kept for this session only: secure storage is unavailable on this computer.</p>
+            )}
+            {keyDropped && draft.apiKey === '' && (
+              <p className="settings-text" data-testid="external-key-dropped">
+                The base URL changed before the API key was saved, so the key was not saved. Enter it again for
+                this server.
+              </p>
+            )}
+            {keyHeld && draft.apiKey !== '' && (
+              <p className="settings-text" data-testid="external-key-held">
+                The API key is not saved yet: it will be saved together with the next valid base URL you
+                enter, and sent only to that server.
+              </p>
+            )}
+            {keyElsewhereOrigin !== '' && (
+              <p className="settings-text" data-testid="external-key-elsewhere">
+                {keyElsewhereText(keyElsewhereOrigin)}
+              </p>
+            )}
+            {plainHttpKey && (
+              <p className="settings-text settings-tone--warning">
+                This key would be sent over plain http to a network host. Prefer https for servers that need a key.
+              </p>
+            )}
+          </div>
+
+          <Field
+            label="Model"
+            className="settings-field"
+            help={models.length > 0 ? `${models.length} model${models.length === 1 ? '' : 's'} listed by the server; you can also type a name.` : undefined}
+          >
+            {(control) => (
+              <Combobox
+                {...control}
+                autoComplete="off"
+                spellCheck={false}
+                value={draft.model}
+                options={models}
+                onValueChange={(model) => update({ model })}
+                onBlur={() => void handleModelBlur()}
+                placeholder="Test the connection to list models"
+              />
+            )}
+          </Field>
+
+          <div className="settings-row">
+            <Button variant="secondary" onClick={() => void handleTest()} loading={testing} disabled={testing}>
+              Test connection
+            </Button>
+            {testing && <span className="settings-text">Testing…</span>}
+          </div>
+
+          <Switch
+            id="external-grounded"
+            checked={draft.grounded}
             onChange={(e) => {
-              update({ rememberKey: e.target.checked });
-              // Moves the saved key and its binding between storages; never rebinds.
-              void persist({ rememberKey: e.target.checked });
+              const grounded = e.target.checked;
+              update({ grounded });
+              void persist({ grounded });
             }}
-            label="Remember API key in this browser (otherwise it is kept for this browser session only)"
+            label="Use my documents (grounded)"
+            description="On: answers use your documents, with citations. Off (Direct chat): questions go straight to the model without retrieval, and answers are labeled General knowledge."
           />
-        )}
-        {desktop && !keyState.apiKeyPersisted && keyState.apiKeySet && (
-          <p className="settings-text">Key kept for this session only: secure storage is unavailable on this computer.</p>
-        )}
-        {keyDropped && draft.apiKey === '' && (
-          <p className="settings-text" data-testid="external-key-dropped">
-            The base URL changed before the API key was saved, so the key was not saved. Enter it again for
-            this server.
-          </p>
-        )}
-        {keyHeld && draft.apiKey !== '' && (
-          <p className="settings-text" data-testid="external-key-held">
-            The API key is not saved yet: it will be saved together with the next valid base URL you
-            enter, and sent only to that server.
-          </p>
-        )}
-        {keyElsewhereOrigin !== '' && (
-          <p className="settings-text" data-testid="external-key-elsewhere">
-            {keyElsewhereText(keyElsewhereOrigin)}
-          </p>
-        )}
-        {plainHttpKey && (
-          <p className="settings-text settings-tone--warning">
-            This key would be sent over plain http to a network host. Prefer https for servers that need a key.
-          </p>
-        )}
-      </div>
 
-      <Field label="Model" className="settings-field">
-        {(control) => (
-          <TextInput
-            {...control}
-            list="external-model-options"
-            autoComplete="off"
-            spellCheck={false}
-            value={draft.model}
-            onChange={(e) => update({ model: e.target.value })}
-            onBlur={() => void handleModelBlur()}
-            placeholder="Test the connection to list models"
-          />
-        )}
-      </Field>
-      <datalist id="external-model-options">
-        {models.map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
-
-      <div className="settings-row">
-        <Button variant="secondary" onClick={() => void handleTest()} loading={testing} disabled={testing}>
-          Test connection
-        </Button>
-        {testing && <span className="settings-text">Testing…</span>}
-      </div>
-
-      <Checkbox
-        id="external-direct-chat"
-        checked={!draft.grounded}
-        onChange={(e) => {
-          const grounded = !e.target.checked;
-          update({ grounded });
-          void persist({ grounded });
-        }}
-        label="Direct chat (no document grounding)"
-        description="Off: answers use your documents with citations. On: questions go straight to the model without retrieval and answers are labeled General knowledge."
-      />
-
-      {status !== null && <Banner tone="success">{status}</Banner>}
-      {problem !== null && <Banner tone="danger">{problem}</Banner>}
+          {status !== null && (
+            <Banner tone="success" title="Connection works">
+              {status}
+            </Banner>
+          )}
+          {problem !== null && (
+            <Banner tone="danger" title={problemTitle()}>
+              {problem}
+            </Banner>
+          )}
+        </SettingsSubsection>
+      )}
     </SettingsSection>
   );
 }

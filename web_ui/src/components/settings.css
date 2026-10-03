@@ -10,14 +10,48 @@
 .settings-page__body {
   box-sizing: border-box;
   width: 100%;
-  max-width: calc(var(--w-form) + 2 * var(--space-6));
-  /* Left-aligned under the PageHeader title (same gutter), not centered. */
+  /* Section nav column + the --w-form content column (design-language.md section 5);
+     left-aligned under the PageHeader title (same gutter), not centered. */
+  max-width: calc(200px + var(--space-8) + var(--w-form) + 2 * var(--space-6));
   margin: 0;
   padding: var(--space-6);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
+  display: grid;
+  grid-template-columns: 200px minmax(0, var(--w-form));
+  column-gap: var(--space-8);
+  align-items: start;
 }
+.settings-page__sections { min-width: 0; display: flex; flex-direction: column; gap: var(--space-6); }
+/* A jumped-to section's heading clears the sticky nav bar (narrow widths). */
+.settings-section { scroll-margin-top: var(--space-4); }
+
+/* ----- Section nav (sticky; bounded by the body, so it never reaches the PageHeader
+   and never becomes a scroll container). */
+.settings-nav { position: sticky; top: var(--space-6); z-index: 2; }
+.settings-nav__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.settings-nav__link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--target-primary);
+  padding: 0 var(--space-3);
+  border-radius: var(--r-control);
+  color: var(--text-secondary);
+  font-size: var(--type-label-size);
+  line-height: var(--type-label-line);
+  font-weight: var(--type-label-weight);
+  text-decoration: none;
+}
+.settings-nav__link:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* Current section: tint + accent text + 3px indicator (never color alone). */
+.settings-nav__link.ui-selected { background: var(--bg-selected); color: var(--accent); font-weight: 600; }
+.settings-nav__link.ui-selected::before { content: ""; position: absolute; left: 0; top: var(--space-2); bottom: var(--space-2); width: 3px; border-radius: var(--r-pill); background: var(--accent); }
+.settings-nav__jump { display: none; }
+.settings-nav__jump-label { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+
+/* ----- Sub-block inside a section (h3). */
+.settings-subsection { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); }
+.settings-subsection:first-child { padding-top: 0; border-top: 0; }
+.settings-subsection__title { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: 600; color: var(--text-primary); }
 
 /* One Section style: heading + description above a surface card holding the controls. */
 .settings-section.ui-section { margin: 0; }
@@ -91,12 +125,30 @@
 .settings-download__stats { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
 .settings-download__actions { display: flex; justify-content: flex-end; }
 
+/* 769-1024px: the nav becomes a wrapped row above the content (sticky at the top). */
+@media (max-width: 1024px) {
+  .settings-page__body { grid-template-columns: minmax(0, 1fr); max-width: calc(var(--w-form) + 2 * var(--space-6)); row-gap: var(--space-4); }
+  .settings-nav { top: 0; margin: 0 calc(-1 * var(--space-6)); padding: var(--space-2) var(--space-6); background: var(--bg-canvas); border-bottom: 1px solid var(--border-subtle); }
+  .settings-nav__list { flex-direction: row; flex-wrap: wrap; }
+  .settings-nav__link.ui-selected::before { left: var(--space-3); right: var(--space-3); top: auto; bottom: 0; width: auto; height: 3px; }
+  .settings-section { scroll-margin-top: var(--space-16); }
+}
+/* <= 768px: a compact "Jump to section" select replaces the link row. */
+@media (max-width: 768px) {
+  .settings-nav__list { display: none; }
+  .settings-nav__jump { display: flex; align-items: center; gap: var(--space-3); }
+  .settings-nav__jump .ui-select { flex: 1; min-width: 0; }
+}
+
 @media (forced-colors: active) {
   .settings-section > .ui-section__body, .settings-well, .settings-danger-zone, .settings-download { border-color: CanvasText; }
+  .settings-nav__link.ui-selected::before { background: Highlight; }
   .settings-meter .ui-progress__fill { background: Highlight; }
 }
 
 @media (max-width: 500px) {
-  .settings-page__body { padding: var(--space-4); gap: var(--space-5); }
+  .settings-page__body { padding: var(--space-4); }
+  .settings-page__sections { gap: var(--space-5); }
+  .settings-nav { margin: 0 calc(-1 * var(--space-4)); padding: var(--space-2) var(--space-4); }
   .settings-section > .ui-section__body { padding: var(--space-4); }
 }

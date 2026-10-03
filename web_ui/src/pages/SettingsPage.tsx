@@ -46,7 +46,7 @@ import {
   type DesktopPresetState,
 } from '../lib/rag/rag-presets';
 import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
-import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
+import { MODEL_CONNECTION_SECTION_ID, SETTINGS_SECTIONS } from '../lib/settings-sections';
 // AC8 (settings-wiring-honesty): the single version source is
 // web_ui/package.json (desktop/package.json is kept in lockstep by test).
 import { version as APP_VERSION } from '../../package.json';
@@ -55,7 +55,12 @@ import type { UpdateStatus } from '../types/desktop';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
 import { ProgressBar, StatusBadge } from '../components/SettingsMetrics';
-import { SettingsRadioCards, SettingsSection } from '../components/SettingsControls';
+import {
+  SettingsNav,
+  SettingsRadioCards,
+  SettingsSection,
+  SettingsSubsection,
+} from '../components/SettingsControls';
 import {
   Banner,
   Button,
@@ -103,7 +108,7 @@ function FirstRunSetupCard(): React.ReactElement | null {
 
   if (window.desktopApi === undefined) return null;
   return (
-    <SettingsSection title="First-run setup" headingId="first-run-heading" data-testid="first-run-setup-section">
+    <SettingsSubsection title="First-run setup" headingId="first-run-heading" data-testid="first-run-setup-section">
       <p className="settings-text">
         {statusLine ?? 'First-run status unavailable (backend starting).'}
       </p>
@@ -112,7 +117,7 @@ function FirstRunSetupCard(): React.ReactElement | null {
           Re-run setup
         </Button>
       </div>
-    </SettingsSection>
+    </SettingsSubsection>
   );
 }
 
@@ -922,190 +927,160 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
       ]
     : [];
 
-  return (
-    <div className="settings-page">
-      <PageHeader
-        title="Settings"
-        description="Choose how answers are generated, and manage appearance and storage."
-      />
-
-      {/* Single-scroller ownership (trace external-llm-provider-settings): the
-          AppShell <main> is the ONLY scroller; nothing in this page sets overflow,
-          so the header and the sections move together. */}
-      <div className="settings-page__body">
-        {/* ================================================================== */}
-        {/* 1. Inference Mode */}
-        {/* ================================================================== */}
-        <SettingsSection title="Inference Mode" headingId="inference-mode-heading" focusableHeading>
-          {/* API server option — the desktop app's built-in backend.
-              settings-wiring-honesty (AC4): the browser app has no
-              API-server mode, so it is offered only inside Electron. */}
+  // ====================================================================
+  // Built-in model settings (Model & connection, generator source
+  // "Built-in model"). settings-wiring-honesty (AC4): only the desktop app
+  // has a second place the built-in model can run (its backend, "api"
+  // mode); the browser app is standalone, so it shows no run-location
+  // choice and no API-server option or copy.
+  // ====================================================================
+  const builtInPanel = (
+    <>
+      {desktopApp && (
+        <SettingsSubsection title="Where the built-in model runs" headingId="inference-mode-heading">
           <SettingsRadioCards<'browser-local' | 'api'>
-            legend="Select inference mode"
+            legend="Where the built-in model runs"
             name="inference-mode"
             isChecked={(value) => mode === value}
             onChange={(value) => setMode(value)}
             options={[
               {
                 value: 'browser-local',
-                label: 'Browser-local',
-                description: 'Run the AI directly in your browser (CPU via wllama, or WebGPU via WebLLM — choose below)',
+                label: 'In this window',
+                description: 'Runs in this app window with wllama (CPU) or WebLLM (WebGPU), chosen below.',
                 descriptionId: 'browser-local-desc',
               },
-              ...(desktopApp
-                ? [
-                    {
-                      value: 'api' as const,
-                      label: 'API Server',
-                      description: 'Use the built-in desktop backend (starts automatically with the app)',
-                      descriptionId: 'api-desc',
-                    },
-                  ]
-                : []),
+              {
+                value: 'api',
+                label: 'Desktop backend',
+                description: "Runs in the desktop app's built-in backend (llama.cpp; starts automatically with the app).",
+                descriptionId: 'api-desc',
+              },
             ]}
           />
-        </SettingsSection>
+        </SettingsSubsection>
+      )}
 
-        {/* ================================================================== */}
-        {/* 1b. External model (universal-provider-settings-overhaul): one     */}
-        {/* region, same controls in the browser app and the desktop app.      */}
-        {/* id={MODEL_CONNECTION_SECTION_ID} marks the section that hosts the  */}
-        {/* external-model controls — the model-blocked overlay's destination */}
-        {/* (settings-wiring-honesty AC10).                                    */}
-        {/* ================================================================== */}
-        <ExternalModelSection id={MODEL_CONNECTION_SECTION_ID} />
-
-        {/* ================================================================== */}
-        {/* 2a. Desktop backend status (Electron mode only — issue #67).       */}
-        {/* Shows the hosted backend's connectivity, active inference profile */}
-        {/* and per-profile model presence; the profile override persists via */}
-        {/* PUT /settings across app restarts (backend settings sidecar).     */}
-        {/* ================================================================== */}
-        {electronMode && (
-          <SettingsSection title="Desktop backend" headingId="desktop-backend-heading">
-            <p className="settings-text">
-              This app is using its built-in desktop backend
-              {desktopSession ? ` at ${desktopSession.baseUrl}` : ''}. Settings below
-              are stored by the backend and survive restarts.
-            </p>
-            {desktopSettingsError && <Banner tone="danger">Settings error: {desktopSettingsError}</Banner>}
-            {/* settings-wiring-honesty (AC7): the profile picks the desktop
-                backend's local model, so it is shown only while that backend
-                generates (api mode). */}
-            {mode === 'api' ? (
-              <div className="settings-group">
-                <p className="settings-label">Inference profile</p>
-                <p className="settings-text">
-                  Answer length and temperature follow this profile unless a Response
-                  Quality preset set them explicitly; an explicit preset wins until you
-                  reset it.
-                </p>
-                <SettingsRadioCards<'quality' | 'fast' | 'auto'>
-                  legend="Inference profile"
-                  name="desktop-inference-profile"
-                  isChecked={(profile) => desktopProfile === profile}
-                  onChange={(profile) => handleDesktopProfileChange(profile)}
-                  options={[
-                    { value: 'quality', label: 'Quality' },
-                    { value: 'fast', label: 'Fast' },
-                    { value: 'auto', label: 'Auto (choose by free memory)' },
-                  ]}
-                />
-              </div>
-            ) : (
-              <p className="settings-text">
-                The inference profile applies only when chat uses the desktop backend
-                (API Server mode).
-              </p>
-            )}
-            <div className="settings-group">
-              <p className="settings-label">Model availability</p>
-              {desktopStatus === null ? (
-                <p className="settings-text">Model status unavailable (backend reachable for chat only if a model loads).</p>
-              ) : (
-                <ul className="settings-list">
-                  <li>
-                    Quality model: {desktopStatus.models.quality.present ? 'found' : 'not found'}
-                  </li>
-                  <li>
-                    Fast model: {desktopStatus.models.fast.present ? 'found' : 'not found'}
-                  </li>
-                  <li>
-                    Active profile right now: {desktopStatus.profile}
-                    {desktopStatus.engine === 'stub' ? ' (development stub backend)' : ''}
-                  </li>
-                </ul>
-              )}
-            </div>
-          </SettingsSection>
-        )}
-
-        {/* ================================================================== */}
-        {/* 2a-2. First-run setup (E2, issue #85): status + Re-run setup.      */}
-        {/* ================================================================== */}
-        {electronMode && <FirstRunSetupCard />}
-
-        {/* ================================================================== */}
-        {/* 3. Browser Engine (browser-local only) + model cache status */}
-        {/* settings-wiring-honesty (AC7): rendered only while browser-local */}
-        {/* generation is active; otherwise one muted line explains why.    */}
-        {/* ================================================================== */}
-        {mode !== 'browser-local' ? (
-          <p className="settings-note" data-testid="browser-engine-hidden">
-            The browser engine applies only to Browser-local mode.
-          </p>
-        ) : (
-        <SettingsSection title="Browser Engine" headingId="browser-engine-heading">
+      {/* Desktop backend status (Electron mode only — issue #67): connectivity,
+          active inference profile and per-profile model presence; the profile
+          override persists via PUT /settings (backend settings sidecar). */}
+      {electronMode && (
+        <SettingsSubsection title="Desktop backend" headingId="desktop-backend-heading">
           <p className="settings-text">
-            Which engine runs local inference in browser-local mode.
-            {capability && (
-              <>
-                {' '}Recommended for this device:{' '}
-                <strong>{capability.recommendedEngine === 'wllama' ? 'wllama' : 'WebLLM'}</strong>.
-              </>
-            )}
+            This app is using its built-in desktop backend
+            {desktopSession ? ` at ${desktopSession.baseUrl}` : ''}. Its settings are stored by the
+            backend and survive restarts.
           </p>
-          <SettingsRadioCards<'wllama' | 'webllm'>
-            legend="Select browser engine"
-            name="browser-engine"
-            isChecked={(engine) => browserEngine === engine}
-            onChange={(engine) => setBrowserEngine(engine)}
-            options={([
-              {
-                id: 'wllama' as const,
-                label: 'wllama (CPU / no GPU)',
-                desc: 'Robust without WebGPU and supports image input (multimodal).',
-              },
-              {
-                id: 'webllm' as const,
-                label: 'WebLLM (WebGPU)',
-                desc: 'Fastest when WebGPU is available; text only. Requires a GPU-capable browser.',
-              },
-            ]).map((opt) => ({
-              value: opt.id,
-              label: opt.label,
-              descriptionId: `${opt.id}-desc`,
-              description: (
-                <>
-                  {opt.desc}
-                  {/* AC9: the ONE derived recommendation (same source as
-                      the header and the Hardware row). */}
-                  {capability?.recommendedEngine === opt.id && ' Recommended.'}
-                </>
-              ),
-            }))}
-          />
-          {capability && browserEngine === 'webllm' && !capability.webgpu && (
-            <p className="settings-text settings-tone--danger">
-              WebGPU was not detected — WebLLM will not run on this device. Switch to wllama, or use the desktop app or an external model server.
+          {desktopSettingsError && <Banner tone="danger">Settings error: {desktopSettingsError}</Banner>}
+          {/* settings-wiring-honesty (AC7): the profile picks the desktop
+              backend's local model, so it is shown only while that backend
+              generates (api mode). */}
+          {mode === 'api' ? (
+            <div className="settings-group">
+              <p className="settings-label">Inference profile</p>
+              <p className="settings-text">
+                Answer length and temperature follow this profile unless a Response
+                Quality preset set them explicitly; an explicit preset wins until you
+                reset it.
+              </p>
+              <SettingsRadioCards<'quality' | 'fast' | 'auto'>
+                legend="Inference profile"
+                name="desktop-inference-profile"
+                isChecked={(profile) => desktopProfile === profile}
+                onChange={(profile) => handleDesktopProfileChange(profile)}
+                options={[
+                  { value: 'quality', label: 'Quality' },
+                  { value: 'fast', label: 'Fast' },
+                  { value: 'auto', label: 'Auto (choose by free memory)' },
+                ]}
+              />
+            </div>
+          ) : (
+            <p className="settings-text">
+              The inference profile applies only when the built-in model runs in the desktop backend.
             </p>
           )}
+          <div className="settings-group">
+            <p className="settings-label">Model availability</p>
+            {desktopStatus === null ? (
+              <p className="settings-text">Model status unavailable (backend reachable for chat only if a model loads).</p>
+            ) : (
+              <ul className="settings-list">
+                <li>
+                  Quality model: {desktopStatus.models.quality.present ? 'found' : 'not found'}
+                </li>
+                <li>
+                  Fast model: {desktopStatus.models.fast.present ? 'found' : 'not found'}
+                </li>
+                <li>
+                  Active profile right now: {desktopStatus.profile}
+                  {desktopStatus.engine === 'stub' ? ' (development stub backend)' : ''}
+                </li>
+              </ul>
+            )}
+          </div>
+        </SettingsSubsection>
+      )}
 
-          {/* Model cache status + download — engine-aware (issue #24 F2/F3/F4).
-              Moved here from the deleted Model Selection section. The status
-              reflects the actually-selected engine, and the Download button
-              only shows for webllm (the only engine with a download step). */}
-          {mode === 'browser-local' && (
+      {/* Browser engine + model cache status (issue #24 F2/F3/F4) and the
+          hardware diagnostic. settings-wiring-honesty (AC7): rendered only
+          while the built-in model runs in this window; otherwise one muted
+          line explains why. */}
+      {mode !== 'browser-local' ? (
+        <p className="settings-text" data-testid="browser-engine-hidden">
+          The browser engine and the hardware check apply only when the built-in model runs in this window.
+        </p>
+      ) : (
+        <>
+          <SettingsSubsection title="Browser engine" headingId="browser-engine-heading">
+            <p className="settings-text">
+              Which engine runs the built-in model in this {desktopApp ? 'window' : 'browser'}.
+              {capability && (
+                <>
+                  {' '}Recommended for this device:{' '}
+                  <strong>{capability.recommendedEngine === 'wllama' ? 'wllama' : 'WebLLM'}</strong>.
+                </>
+              )}
+            </p>
+            <SettingsRadioCards<'wllama' | 'webllm'>
+              legend="Select browser engine"
+              name="browser-engine"
+              isChecked={(engine) => browserEngine === engine}
+              onChange={(engine) => setBrowserEngine(engine)}
+              options={([
+                {
+                  id: 'wllama' as const,
+                  label: 'wllama (CPU / no GPU)',
+                  desc: 'Robust without WebGPU and supports image input (multimodal).',
+                },
+                {
+                  id: 'webllm' as const,
+                  label: 'WebLLM (WebGPU)',
+                  desc: 'Fastest when WebGPU is available; text only. Requires a GPU-capable browser.',
+                },
+              ]).map((opt) => ({
+                value: opt.id,
+                label: opt.label,
+                descriptionId: `${opt.id}-desc`,
+                description: (
+                  <>
+                    {opt.desc}
+                    {/* AC9: the ONE derived recommendation (same source as
+                        the header and the Hardware row). */}
+                    {capability?.recommendedEngine === opt.id && ' Recommended.'}
+                  </>
+                ),
+              }))}
+            />
+            {capability && browserEngine === 'webllm' && !capability.webgpu && (
+              <p className="settings-text settings-tone--danger">
+                WebGPU was not detected — WebLLM will not run on this device. Switch to wllama, or use the desktop app or an external model server.
+              </p>
+            )}
+
+            {/* Model cache status + download — engine-aware. The status
+                reflects the actually-selected engine, and the Download button
+                only shows for webllm (the only engine with a download step). */}
             <div className="settings-group" role="status" aria-live="polite">
               <div className="settings-row">
                 <span className="settings-label settings-row">
@@ -1118,7 +1093,6 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                 </span>
               </div>
 
-              {/* Download progress */}
               {isDownloading && (
                 <ModelDownloadProgress
                   progress={downloadProgress}
@@ -1127,7 +1101,6 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                 />
               )}
 
-              {/* Download button — webllm only (issue #24 F3) */}
               {browserEngine === 'webllm' && !modelCached && !isDownloading && (
                 <>
                   <div className="settings-row">
@@ -1158,253 +1131,294 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                 </p>
               )}
             </div>
-          )}
-        </SettingsSection>
-        )}
+          </SettingsSubsection>
 
-        {/* ================================================================== */}
-        {/* 4. Response Quality (RAG preset) */}
-        {/* ================================================================== */}
-        <SettingsSection title="Response Quality" headingId="rag-preset-heading">
-          <p className="settings-text">
-            {electronMode
-              ? "Trade speed for answer quality. Each preset sets the desktop backend's result count, reranking, answer length and temperature, and also applies to browser-local chat."
-              : 'Trade speed for answer quality in browser-local chat (an external model also uses its answer length and temperature).'}
-          </p>
-          <SettingsRadioCards<RAGPreset>
-            legend="Select response quality preset"
-            name="rag-preset"
-            isChecked={presetChecked}
-            onChange={(preset) => handleRagPresetChange(preset)}
-            // A checked radio fires no change event, so re-selecting the
-            // preset matched on rag_n_results alone (settings saved before
-            // presets wrote the full patch) re-applies its full patch on
-            // click instead.
-            onOptionClick={(preset) => {
-              if (electronMode && presetNeedsReapply && presetChecked(preset)) handleRagPresetChange(preset);
-            }}
-            options={(['fast', 'balanced', 'quality'] as const).map((preset) => ({
-              value: preset,
-              label: RAG_PRESET_LABELS[preset].label,
-              descriptionId: `rag-${preset}-desc`,
-              description: (
-                <>
-                  {RAG_PRESET_LABELS[preset].description}
-                  {electronMode &&
-                    (presetNeedsReapply && presetChecked(preset)
-                      ? ' Re-select a preset to apply its reranking and answer settings.'
-                      : " On the desktop backend it overrides the inference profile's answer length and temperature until reset.")}
-                  {rerankUnavailable && DESKTOP_PRESET_SETTINGS[preset].rag_reranking_enabled &&
-                    ' Reranking unavailable on this installation.'}
-                </>
-              ),
-            }))}
-          />
-          {/* settings-wiring-honesty (AC1): the desktop display state comes
-              from the backend; say so when it is not one of the presets. */}
-          {electronMode && desktopPreset?.kind === 'custom' && (
-            <p className="settings-text" data-testid="rag-preset-state">
-              Custom server settings: the desktop backend&apos;s values match no preset.
-              Browser-local chat uses the {RAG_PRESET_LABELS[ragPreset].label} preset.
-            </p>
-          )}
-          {electronMode && desktopPreset?.kind === 'defaults' && (
-            <p className="settings-text" data-testid="rag-preset-state">
-              Using server defaults: no preset is applied to the desktop backend, so answer
-              length and temperature follow the inference profile.
-            </p>
-          )}
-          {electronMode && desktopPreset !== null && desktopPreset.kind !== 'defaults' && (
-            <div className="settings-row">
-              <Button variant="secondary" onClick={handlePresetReset}>
-                Reset to defaults
-              </Button>
-              <span className="settings-text">
-                Clears the preset on the desktop backend so it uses its default result count,
-                reranking and inference-profile answer settings.
-              </span>
-            </div>
-          )}
-          {presetError && <Banner tone="danger">{presetError}</Banner>}
-        </SettingsSection>
+          <SettingsSubsection
+            title="Hardware capability"
+            headingId="hardware-heading"
+            description="Detected hardware features and recommended configuration"
+          >
+            {capability ? (
+              <>
+                <ProgressBar
+                  value={capability.tier === 'green' ? 100 : capability.tier === 'yellow' ? 50 : 10}
+                  max={100}
+                  label={`Hardware Suitability: ${capability.tier === 'green' ? 'Good' : capability.tier === 'yellow' ? 'Limited' : 'Not suitable — use the desktop app or an external model'}`}
+                  color={capability.tier === 'green' ? 'success' : capability.tier === 'yellow' ? 'warning' : 'danger'}
+                />
+                <KeyValueList items={hardwareItems} className="settings-hardware" />
+                {capability.reasons.length > 0 && (
+                  <p className="settings-text settings-hardware__reasons">{capability.reasons.join(' ')}</p>
+                )}
+              </>
+            ) : (
+              <p className="settings-text">Detecting hardware capability…</p>
+            )}
+          </SettingsSubsection>
+        </>
+      )}
+    </>
+  );
 
-        {/* ================================================================== */}
-        {/* 5. Appearance */}
-        {/* ================================================================== */}
-        <SettingsSection title="Appearance" headingId="appearance-heading">
-          <div className="settings-group">
-            <SegmentedControl
-              legend="Theme"
-              value={themePreference}
-              onChange={(value) => handleThemeChange(value as ThemePreference)}
-              options={(['light', 'dark', 'system'] as const).map((option) => ({
-                value: option,
-                label: option.charAt(0).toUpperCase() + option.slice(1),
-              }))}
-            />
-            <p className="settings-text">
-              System follows your OS color scheme and updates automatically when it changes.
-            </p>
-          </div>
-        </SettingsSection>
+  return (
+    <div className="settings-page">
+      <PageHeader
+        title="Settings"
+        description="Choose how answers are generated, and manage appearance and storage."
+      />
 
-        {/* ================================================================== */}
-        {/* 6. Updates (E5, issue #88; both apps since browser-training-parity */}
-        {/*    AC8 — opt-in, default OFF)                                      */}
-        {/* ================================================================== */}
-        {(electronMode || !desktopApp) && (
-          <SettingsSection title="Updates" headingId="updates-heading" data-testid="updates-section">
-            <UpdatesSection />
-          </SettingsSection>
-        )}
+      {/* Single-scroller ownership (trace external-llm-provider-settings): the
+          AppShell <main> is the ONLY scroller; nothing in this page sets overflow
+          (the section nav is position: sticky, bounded by the page body), so the
+          header, the nav and the sections move together. */}
+      <div className="settings-page__body">
+        <SettingsNav items={SETTINGS_SECTIONS} />
 
-        {/* ================================================================== */}
-        {/* 7. Storage */}
-        {/* ================================================================== */}
-        <SettingsSection
-          title="Storage"
-          headingId="storage-heading"
-          description="Browser storage status and cache management"
-        >
-          {/* Per-kind packaged-model readiness (issue #24 F6).
-              Previously only the aggregate `allReady` was shown, which reported
-              green even when the browser LLM was absent (excluded group). Now
-              each kind is reported individually, scoped to the selected engine. */}
-          {packagesReady && (
-            <div
-              className={`settings-well ${packagesReady.allReady ? 'settings-well--success' : 'settings-well--danger'}`}
-              aria-live="polite"
-            >
-              <PackagedModelReadiness
-                report={packagesReady}
-                browserEngine={browserEngine}
+        <div className="settings-page__sections">
+          {/* ================================================================ */}
+          {/* 1. Model & connection: generator source, built-in model, and the */}
+          {/* external endpoint (universal-provider-settings-overhaul). The id */}
+          {/* is the model-blocked overlay's and the connection chip's target. */}
+          {/* ================================================================ */}
+          <ExternalModelSection id={MODEL_CONNECTION_SECTION_ID} builtIn={builtInPanel} />
+
+          {/* ================================================================ */}
+          {/* 2. Answers (Response Quality / RAG preset) */}
+          {/* ================================================================ */}
+          <SettingsSection
+            id="answers"
+            title="Answers"
+            headingId="answers-heading"
+            focusableHeading
+            description="How answers are retrieved and written."
+          >
+            <SettingsSubsection title="Response quality" headingId="rag-preset-heading">
+              <p className="settings-text">
+                {electronMode
+                  ? "Trade speed for answer quality. Each preset sets the desktop backend's result count, reranking, answer length and temperature, and also applies to chat in this window."
+                  : 'Trade speed for answer quality (an external model also uses its answer length and temperature).'}
+              </p>
+              <SettingsRadioCards<RAGPreset>
+                legend="Select response quality preset"
+                name="rag-preset"
+                isChecked={presetChecked}
+                onChange={(preset) => handleRagPresetChange(preset)}
+                // A checked radio fires no change event, so re-selecting the
+                // preset matched on rag_n_results alone (settings saved before
+                // presets wrote the full patch) re-applies its full patch on
+                // click instead.
+                onOptionClick={(preset) => {
+                  if (electronMode && presetNeedsReapply && presetChecked(preset)) handleRagPresetChange(preset);
+                }}
+                options={(['fast', 'balanced', 'quality'] as const).map((preset) => ({
+                  value: preset,
+                  label: RAG_PRESET_LABELS[preset].label,
+                  descriptionId: `rag-${preset}-desc`,
+                  description: (
+                    <>
+                      {RAG_PRESET_LABELS[preset].description}
+                      {electronMode &&
+                        (presetNeedsReapply && presetChecked(preset)
+                          ? ' Re-select a preset to apply its reranking and answer settings.'
+                          : " On the desktop backend it overrides the inference profile's answer length and temperature until reset.")}
+                      {rerankUnavailable && DESKTOP_PRESET_SETTINGS[preset].rag_reranking_enabled &&
+                        ' Reranking unavailable on this installation.'}
+                    </>
+                  ),
+                }))}
               />
-              {!packagesReady.allReady && packagesReady.missing.length > 0 && (
-                <p className="settings-text">
-                  {packagesReady.missing.length} required model file(s) not found in this build.
-                  See the packaging guide (PACKAGING.md) to bundle models for offline use.
+              {/* settings-wiring-honesty (AC1): the desktop display state comes
+                  from the backend; say so when it is not one of the presets. */}
+              {electronMode && desktopPreset?.kind === 'custom' && (
+                <p className="settings-text" data-testid="rag-preset-state">
+                  Custom server settings: the desktop backend&apos;s values match no preset.
+                  Chat in this window uses the {RAG_PRESET_LABELS[ragPreset].label} preset.
                 </p>
               )}
-            </div>
-          )}
-          {/* settings-wiring-honesty (AC7): browser memory only matters while
-              the model runs in this browser. */}
-          {mode === 'browser-local' ? (
-            <ProgressBar
-              value={memoryTotal - memoryAvailable}
-              max={memoryTotal}
-              label={`Memory Used (${formatMemory(memoryTotal - memoryAvailable)} of ${formatMemory(memoryTotal)})`}
-              color={memoryPressure === 'normal' ? 'success' : memoryPressure === 'moderate' ? 'warning' : 'danger'}
-            />
-          ) : (
-            <p className="settings-text">
-              Browser memory usage is shown in Browser-local mode, where the model runs in this
-              browser.
-            </p>
-          )}
-          <div className="settings-danger-zone">
-            <Button
-              variant="danger"
-              onClick={handleClearCacheClick}
-              aria-describedby="clear-cache-desc"
-            >
-              {clearCacheState === 'confirming' ? 'Click Again to Confirm' : 'Clear Cache'}
-            </Button>
-            <span id="clear-cache-desc" className="settings-text" aria-live="polite">
-              {/* settings-wiring-honesty (AC5/AC6): the copy lists exactly
-                  what is removed and what is kept in each app. */}
-              {clearCacheState === 'confirming'
-                ? desktopApp
-                  ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
-                  : `This deletes the documents and keyword/vector indexes stored in this browser, installed training and knowledge packs, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
-                : desktopApp
-                  ? "Clear this app's browser-side indexes, any WebLLM model files downloaded in this window, and saved settings. Chat history and documents in the desktop library are kept."
-                  : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, installed packs, and saved settings in this browser. Chat history is kept.'}
-            </span>
-            {/* Result feedback (issue #24 F1). PR #140 review (FB140-002): the
-                polite live region is ALWAYS mounted and only its text changes
-                (a region inserted together with its message is not reliably
-                announced). Its own text node is the status badge. After a
-                successful clear a visually-hidden suffix tells screen-reader
-                users the page is about to reload; after a partial failure the
-                explanation is VISIBLE (a child span, so the badge text stays
-                exact), since a reload right after an error would otherwise
-                surprise sighted users too (Stage B review L2). */}
-            <span
-              id="clear-cache-status"
-              role="status"
-              aria-live="polite"
-              data-result={clearCacheResult}
-              className={
-                clearCacheResult === 'cleared'
-                  ? 'settings-text settings-tone--success settings-strong'
-                  : clearCacheResult === 'error'
-                    ? 'settings-text settings-tone--danger settings-strong'
-                    : 'settings-text'
-              }
-            >
-              {clearCacheResult === 'clearing' && 'Clearing…'}
-              {clearCacheResult === 'cleared' && 'Cache cleared'}
-              {clearCacheResult === 'error' && 'Could not clear all data'}
-              {clearCacheResult === 'cleared' && clearCacheReloading && (
-                <span className="ui-visually-hidden">. Reloading the page…</span>
+              {electronMode && desktopPreset?.kind === 'defaults' && (
+                <p className="settings-text" data-testid="rag-preset-state">
+                  Using server defaults: no preset is applied to the desktop backend, so answer
+                  length and temperature follow the inference profile.
+                </p>
               )}
-              {clearCacheResult === 'error' && clearCacheReloading && (
-                <span>. Your saved settings were removed; reloading the page…</span>
+              {electronMode && desktopPreset !== null && desktopPreset.kind !== 'defaults' && (
+                <div className="settings-row">
+                  <Button variant="secondary" onClick={handlePresetReset}>
+                    Reset to defaults
+                  </Button>
+                  <span className="settings-text">
+                    Clears the preset on the desktop backend so it uses its default result count,
+                    reranking and inference-profile answer settings.
+                  </span>
+                </div>
               )}
-            </span>
-          </div>
-        </SettingsSection>
+              {presetError && <Banner tone="danger">{presetError}</Banner>}
+            </SettingsSubsection>
+          </SettingsSection>
 
-        {/* ================================================================== */}
-        {/* 7. Hardware Capability (diagnostic) */}
-        {/* ================================================================== */}
-        {mode !== 'browser-local' ? (
-          <p className="settings-note">
-            Hardware capability is checked for Browser-local mode only.
-          </p>
-        ) : (
-        <SettingsSection
-          title="Hardware Capability"
-          headingId="hardware-heading"
-          description="Detected hardware features and recommended configuration"
-        >
-          {capability ? (
-            <>
-              <ProgressBar
-                value={capability.tier === 'green' ? 100 : capability.tier === 'yellow' ? 50 : 10}
-                max={100}
-                label={`Hardware Suitability: ${capability.tier === 'green' ? 'Good' : capability.tier === 'yellow' ? 'Limited' : 'Not suitable — use the desktop app or an external model'}`}
-                color={capability.tier === 'green' ? 'success' : capability.tier === 'yellow' ? 'warning' : 'danger'}
+          {/* ================================================================ */}
+          {/* 3. Appearance */}
+          {/* ================================================================ */}
+          <SettingsSection id="appearance" title="Appearance" headingId="appearance-heading" focusableHeading>
+            <div className="settings-group">
+              <SegmentedControl
+                legend="Theme"
+                value={themePreference}
+                onChange={(value) => handleThemeChange(value as ThemePreference)}
+                options={(['light', 'dark', 'system'] as const).map((option) => ({
+                  value: option,
+                  label: option.charAt(0).toUpperCase() + option.slice(1),
+                }))}
               />
-              <KeyValueList items={hardwareItems} className="settings-hardware" />
-              {capability.reasons.length > 0 && (
-                <p className="settings-text settings-hardware__reasons">{capability.reasons.join(' ')}</p>
-              )}
-            </>
-          ) : (
-            <p className="settings-text">Detecting hardware capability…</p>
-          )}
-        </SettingsSection>
-        )}
+              <p className="settings-text">
+                System follows your OS color scheme and updates automatically when it changes.
+              </p>
+            </div>
+          </SettingsSection>
 
-        {/* ================================================================== */}
-        {/* 8. About */}
-        {/* ================================================================== */}
-        <SettingsSection title="About" headingId="about-heading">
-          <div className="settings-group">
-            <p className="settings-text settings-text--body">
-              <strong>TrainingApp</strong>
+          {/* ================================================================ */}
+          {/* 4. Storage & privacy */}
+          {/* ================================================================ */}
+          <SettingsSection
+            id="storage-privacy"
+            title="Storage & privacy"
+            headingId="storage-privacy-heading"
+            focusableHeading
+            description="What this app keeps on this device, and how to remove it."
+          >
+            <p className="settings-text" data-testid="privacy-note">
+              Your documents, search indexes and conversations are kept on this device
+              {desktopApp ? ' (by the desktop backend and in this app window)' : ', in this browser'}. Your
+              documents and questions leave this device only when an external model is switched on (Model
+              &amp; connection). Update checks (Updates) and WebLLM model downloads use the network only after
+              you opt in or start them.
             </p>
-            <p className="settings-text settings-text--body">Version: {APP_VERSION}</p>
-            <p className="settings-text settings-text--body">Answers questions about your training material and documents.</p>
-            <p className="settings-text">
-              {mode === 'api'
-                ? 'Answers come from the built-in desktop backend: llama.cpp (node-llama-cpp) generation with hybrid retrieval over the desktop document library.'
-                : 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'}
-            </p>
-          </div>
-        </SettingsSection>
+            {/* Per-kind packaged-model readiness (issue #24 F6): each kind is
+                reported individually, scoped to the selected engine. */}
+            {packagesReady && (
+              <div
+                className={`settings-well ${packagesReady.allReady ? 'settings-well--success' : 'settings-well--danger'}`}
+                aria-live="polite"
+              >
+                <PackagedModelReadiness
+                  report={packagesReady}
+                  browserEngine={browserEngine}
+                />
+                {!packagesReady.allReady && packagesReady.missing.length > 0 && (
+                  <p className="settings-text">
+                    {packagesReady.missing.length} required model file(s) not found in this build.
+                    See the packaging guide (PACKAGING.md) to bundle models for offline use.
+                  </p>
+                )}
+              </div>
+            )}
+            {/* settings-wiring-honesty (AC7): browser memory only matters while
+                the model runs in this browser. */}
+            {mode === 'browser-local' ? (
+              <ProgressBar
+                value={memoryTotal - memoryAvailable}
+                max={memoryTotal}
+                label={`Memory Used (${formatMemory(memoryTotal - memoryAvailable)} of ${formatMemory(memoryTotal)})`}
+                color={memoryPressure === 'normal' ? 'success' : memoryPressure === 'moderate' ? 'warning' : 'danger'}
+              />
+            ) : (
+              <p className="settings-text">
+                Browser memory usage is shown when the built-in model runs in this window.
+              </p>
+            )}
+            <div className="settings-danger-zone">
+              <Button
+                variant="danger"
+                onClick={handleClearCacheClick}
+                aria-describedby="clear-cache-desc"
+              >
+                {clearCacheState === 'confirming' ? 'Click Again to Confirm' : 'Clear Cache'}
+              </Button>
+              <span id="clear-cache-desc" className="settings-text" aria-live="polite">
+                {/* settings-wiring-honesty (AC5/AC6): the copy lists exactly
+                    what is removed and what is kept in each app. */}
+                {clearCacheState === 'confirming'
+                  ? desktopApp
+                    ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
+                    : `This deletes the documents and keyword/vector indexes stored in this browser, installed training and knowledge packs, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
+                  : desktopApp
+                    ? "Clear this app's browser-side indexes, any WebLLM model files downloaded in this window, and saved settings. Chat history and documents in the desktop library are kept."
+                    : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, installed packs, and saved settings in this browser. Chat history is kept.'}
+              </span>
+              {/* Result feedback (issue #24 F1). PR #140 review (FB140-002): the
+                  polite live region is ALWAYS mounted and only its text changes
+                  (a region inserted together with its message is not reliably
+                  announced). Its own text node is the status badge. After a
+                  successful clear a visually-hidden suffix tells screen-reader
+                  users the page is about to reload; after a partial failure the
+                  explanation is VISIBLE (a child span, so the badge text stays
+                  exact), since a reload right after an error would otherwise
+                  surprise sighted users too (Stage B review L2). */}
+              <span
+                id="clear-cache-status"
+                role="status"
+                aria-live="polite"
+                data-result={clearCacheResult}
+                className={
+                  clearCacheResult === 'cleared'
+                    ? 'settings-text settings-tone--success settings-strong'
+                    : clearCacheResult === 'error'
+                      ? 'settings-text settings-tone--danger settings-strong'
+                      : 'settings-text'
+                }
+              >
+                {clearCacheResult === 'clearing' && 'Clearing…'}
+                {clearCacheResult === 'cleared' && 'Cache cleared'}
+                {clearCacheResult === 'error' && 'Could not clear all data'}
+                {clearCacheResult === 'cleared' && clearCacheReloading && (
+                  <span className="ui-visually-hidden">. Reloading the page…</span>
+                )}
+                {clearCacheResult === 'error' && clearCacheReloading && (
+                  <span>. Your saved settings were removed; reloading the page…</span>
+                )}
+              </span>
+            </div>
+          </SettingsSection>
+
+          {/* ================================================================ */}
+          {/* 5. Updates (E5, issue #88; both apps since browser-training-parity */}
+          {/*    AC8 — opt-in, default OFF)                                      */}
+          {/* ================================================================ */}
+          <SettingsSection
+            id="updates"
+            title="Updates"
+            headingId="updates-heading"
+            focusableHeading
+            data-testid="updates-section"
+          >
+            {electronMode || !desktopApp ? (
+              <UpdatesSection />
+            ) : (
+              <p className="settings-text" data-testid="updates-unavailable">
+                Update settings are available once the desktop backend has started.
+              </p>
+            )}
+          </SettingsSection>
+
+          {/* ================================================================ */}
+          {/* 6. About (+ first-run setup in the desktop app, E2 issue #85) */}
+          {/* ================================================================ */}
+          <SettingsSection id="about" title="About" headingId="about-heading" focusableHeading>
+            <div className="settings-group">
+              <p className="settings-text settings-text--body">
+                <strong>TrainingApp</strong>
+              </p>
+              <p className="settings-text settings-text--body">Version: {APP_VERSION}</p>
+              <p className="settings-text settings-text--body">Answers questions about your training material and documents.</p>
+              <p className="settings-text">
+                {mode === 'api'
+                  ? 'Answers come from the built-in desktop backend: llama.cpp (node-llama-cpp) generation with hybrid retrieval over the desktop document library.'
+                  : 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'}
+              </p>
+            </div>
+            {electronMode && <FirstRunSetupCard />}
+          </SettingsSection>
+        </div>
       </div>
     </div>
   );

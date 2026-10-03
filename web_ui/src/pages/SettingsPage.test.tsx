@@ -251,9 +251,9 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Browser Engine')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Browser engine' })).toBeInTheDocument();
     });
-    expect(screen.getByText('Hardware Capability')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Hardware capability' })).toBeInTheDocument();
     // Both engine options present and the persisted choice (wllama) is selected.
     const wllamaRadio = screen.getByRole('radio', { name: /wllama \(cpu/i });
     const webllmRadio = screen.getByRole('radio', { name: /webllm \(webgpu/i });
@@ -290,14 +290,14 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Model & connection' })).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Browser Engine')).toBeInTheDocument();
-    expect(screen.getByText('Response Quality')).toBeInTheDocument();
-    expect(screen.getByText('Appearance')).toBeInTheDocument();
-    expect(screen.getByText('Storage')).toBeInTheDocument();
-    expect(screen.getByText('About')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Browser engine' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Response quality' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'About' })).toBeInTheDocument();
 
     // The dead Model Selection section was deleted (issue #24 F2).
     expect(screen.queryByText('Model Selection')).not.toBeInTheDocument();
@@ -325,19 +325,24 @@ describe('SettingsPage', () => {
     const { container } = render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Model & connection' })).toBeInTheDocument();
     });
 
-    const browserLocalRadio = screen.getByRole('radio', { name: /browser-local/i });
-    // settings-wiring-honesty (AC4): the browser app has no API-server mode.
-    expect(screen.queryByRole('radio', { name: /api server/i })).not.toBeInTheDocument();
+    // settings-wiring-honesty (AC4) + user decision 2026-09-30: the browser app is
+    // standalone (built-in model in this browser, optional external endpoint), so
+    // it offers NO run-location choice and no API-server option or copy.
+    expect(screen.queryByRole('radio', { name: /api server|desktop backend/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /^in this window$/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/api server/i)).not.toBeInTheDocument();
     // universal-provider-settings-overhaul: PR #138's provider MODE is
-    // retired — external endpoints are the External model setting, usable
-    // from either mode — so Browser-local is the browser app's only mode.
+    // retired — external endpoints are the Model & connection generator source.
     expect(screen.queryByRole('radio', { name: /provider server/i })).not.toBeInTheDocument();
-    expect(container.querySelectorAll('input[name="inference-mode"]')).toHaveLength(1);
-    expect(browserLocalRadio).toBeChecked();
-    expect(screen.getByRole('region', { name: /^external model$/i })).toBeInTheDocument();
+    expect(container.querySelectorAll('input[name="inference-mode"]')).toHaveLength(0);
+    // Lumen phase 4 (spec section 5): the generator source; Built-in model by default.
+    expect(screen.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /^local or network server$/i })).not.toBeChecked();
+    expect(screen.getByRole('radio', { name: /^cloud provider$/i })).not.toBeChecked();
+    expect(screen.getByRole('region', { name: /^model & connection$/i })).toBeInTheDocument();
     expect(setMode).not.toHaveBeenCalled();
   });
 
@@ -345,7 +350,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Model & connection' })).toBeInTheDocument();
     });
 
     expect(screen.queryByLabelText(/server url/i)).not.toBeInTheDocument();
@@ -364,7 +369,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Appearance')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
     });
 
     const darkOption = screen.getByRole('radio', { name: /dark/i });
@@ -384,7 +389,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Appearance')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Appearance' })).toBeInTheDocument();
     });
 
     const systemRadio = screen.getByRole('radio', { name: /system/i });
@@ -395,7 +400,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -417,7 +422,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -433,7 +438,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Model & connection' })).toBeInTheDocument();
     });
 
     expect(screen.queryByText('Server Configuration')).not.toBeInTheDocument();
@@ -447,7 +452,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Browser Engine')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Browser engine' })).toBeInTheDocument();
     });
 
     // wllama is the default engine — weights are bundled, no download button.
@@ -526,7 +531,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Response Quality')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Response quality' })).toBeInTheDocument();
     });
 
     // Click directly on the radio input (the circle). With the <label> pattern,
@@ -546,7 +551,7 @@ describe('SettingsPage', () => {
 
     // Wait for settings to load (the memory effect is gated on settingsLoaded).
     await waitFor(() => {
-      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Model & connection' })).toBeInTheDocument();
     });
 
     // ADV-4: exact call count, not just "> initial". After settings load the
@@ -574,7 +579,7 @@ describe('SettingsPage', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Inference Mode')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Model & connection' })).toBeInTheDocument();
     });
 
     // Every radio found by role should be a native <input> (the wrapping

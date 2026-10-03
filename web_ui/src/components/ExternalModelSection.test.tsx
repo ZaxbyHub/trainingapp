@@ -1,6 +1,8 @@
 /**
  * universal-provider-settings-overhaul (AC10/AC11/AC12): the Settings
- * "External model" region.
+ * "Model & connection" region (Lumen phase 4, design-language.md section 5): the
+ * generator source (Built-in model / Local or network server / Cloud provider)
+ * and, for a server source, the connection form.
  *   - browser app: config persists in this browser, the key follows the
  *     Remember rule, Test connection probes the endpoint directly;
  *   - desktop app: every change is a PUT /settings external.* patch, the key
@@ -34,8 +36,18 @@ import type { ApiClient } from '../lib/api';
 
 const KEY = 'sk-panel-SENTINEL-2468';
 
+/**
+ * The Model & connection region. The connection form shows only for a server
+ * generator source, so when it is collapsed (Built-in model) this chooses "Local or
+ * network server" first, as a user would. Choosing a source never saves anything
+ * (egress still needs "Use external model"); the source tests below pin that.
+ */
 function panel(): HTMLElement {
-  return screen.getByRole('region', { name: /external model/i });
+  const region = screen.getByRole('region', { name: /^model & connection$/i });
+  if (within(region).queryByLabelText(/^base url$/i) === null) {
+    fireEvent.click(within(region).getByRole('radio', { name: /^local or network server$/i }));
+  }
+  return region;
 }
 
 beforeEach(() => {
@@ -60,7 +72,9 @@ describe('browser app', () => {
     expect(q.getByLabelText(/^model$/i)).toBeInTheDocument();
     expect(q.getByRole('button', { name: /^test connection$/i })).toBeInTheDocument();
     expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
-    expect(q.getByRole('checkbox', { name: /^direct chat/i })).not.toBeChecked();
+    // "Use my documents (grounded)": on by default (Direct chat off).
+    expect(q.getByRole('switch', { name: /^use my documents \(grounded\)$/i })).toBeChecked();
+    expect(q.getByRole('button', { name: /^show api key$/i })).toHaveAttribute('aria-pressed', 'false');
     expect(q.getByText(/stored in this browser/i)).toBeInTheDocument();
   });
 
@@ -80,8 +94,12 @@ describe('browser app', () => {
     expect(await q.findByRole('status')).toHaveTextContent(/qwen is available/i);
     expect(probeSpy.calls).toBe(1);
     expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toBe('http://localhost:1234/v1/models');
-    const options = [...panel().querySelectorAll('datalist option')].map((o) => o.getAttribute('value'));
-    expect(options).toEqual(['llama-3', 'qwen']);
+    // The model Combobox offers the endpoint's list (ARIA 1.2 listbox popup).
+    const model = q.getByRole('combobox', { name: /^model$/i });
+    fireEvent.keyDown(model, { key: 'ArrowDown' });
+    const list = q.getByRole('listbox');
+    expect(model).toHaveAttribute('aria-controls', list.id);
+    expect(within(list).getAllByRole('option').map((o) => o.textContent)).toEqual(['llama-3', 'qwen']);
   });
 
   test('a policy-refused URL is an alert and is not saved', async () => {
@@ -230,7 +248,7 @@ describe('desktop app', () => {
       expect(key.value).toBe('');
       expect(await q.findByTestId('external-key-dropped')).toBeInTheDocument();
       fireEvent.change(q.getByRole('combobox', { name: /^protocol$/i }), { target: { value: 'anthropic' } });
-      fireEvent.click(q.getByRole('checkbox', { name: /^direct chat/i }));
+      fireEvent.click(q.getByRole('switch', { name: /^use my documents/i }));
       await waitFor(() => expect(updateSettings).toHaveBeenCalledWith({ 'external.grounded': false }));
       // Key blur and Test against C: nothing carries the key.
       fireEvent.focus(key);
@@ -589,7 +607,7 @@ describe('browser app: key-origin binding (F2)', () => {
         fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm' } });
         fireEvent.blur(q.getByLabelText(/^model$/i));
         fireEvent.click(q.getByRole('checkbox', { name: /remember api key/i }));
-        fireEvent.click(q.getByRole('checkbox', { name: /^direct chat/i }));
+        fireEvent.click(q.getByRole('switch', { name: /^use my documents/i }));
         expect(JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage })).not.toContain(KEY);
         // Generation through the saved configuration (endpoint C).
         const ext = await import('../lib/llm/external-provider');
@@ -719,5 +737,63 @@ describe('desktop app: stale re-GET after a refused save (R5-N1)', () => {
     await waitFor(() => expect(puts).toBe(3));
     expect(base.value).toBe(B);
     expect(putBodies.some((body) => body['external.baseUrl'] === C)).toBe(false);
+  });
+});
+
+describe('generator source (Lumen phase 4, design-language.md section 5)', () => {
+  const region = () => screen.getByRole('region', { name: /^model & connection$/i });
+
+  test('Built-in model by default: the connection form collapses to one muted line and the built-in slot shows', () => {
+    render(<ExternalModelSection id="model-connection" builtIn={<p>BUILT-IN SETTINGS</p>} />);
+    const q = within(region());
+    expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+    expect(q.getByText('BUILT-IN SETTINGS')).toBeInTheDocument();
+    expect(q.getByTestId('external-not-applicable')).toHaveTextContent(/no external model server is used/i);
+    expect(q.queryByLabelText(/^base url$/i)).toBeNull();
+    expect(q.queryByRole('switch', { name: /^use external model$/i })).toBeNull();
+  });
+
+  test('choosing a server source shows the form but saves nothing and starts no egress', () => {
+    render(<ExternalModelSection builtIn={<p>BUILT-IN SETTINGS</p>} />);
+    const q = within(region());
+    fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+    expect(q.queryByText('BUILT-IN SETTINGS')).toBeNull();
+    expect(q.getByLabelText(/^base url$/i)).toHaveAttribute('placeholder', 'https://api.openai.com');
+    expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/not in use yet/i);
+    expect(localStorage.getItem('external-provider-config')).toBeNull();
+  });
+
+  test('an enabled endpoint opens on its own source (public host = Cloud provider); Built-in turns egress off', async () => {
+    localStorage.setItem(
+      'external-provider-config',
+      JSON.stringify({ enabled: true, protocol: 'openai', baseUrl: 'https://api.openai.com', model: 'gpt-x', grounded: true }),
+    );
+    render(<ExternalModelSection />);
+    const q = within(region());
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
+    expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked();
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i);
+    fireEvent.click(q.getByRole('radio', { name: /^built-in model$/i }));
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('external-provider-config') ?? '{}').enabled).toBe(false));
+    expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+    // The saved connection is kept (only egress is off).
+    expect(JSON.parse(localStorage.getItem('external-provider-config') ?? '{}').baseUrl).toBe('https://api.openai.com');
+  });
+
+  test('a failed connection test names its cause in the Banner title', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 401 })));
+    render(<ExternalModelSection />);
+    const q = within(panel());
+    fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://localhost:1234' } });
+    fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm' } });
+    fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
+    const alert = await q.findByRole('alert');
+    expect(alert).toHaveTextContent(/the server refused the api key/i);
+    // A setting problem (policy refusal) is titled as such, not as a connection cause.
+    fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://169.254.169.254' } });
+    fireEvent.blur(q.getByLabelText(/^base url$/i));
+    await waitFor(() => expect(q.getByRole('alert')).toHaveTextContent(/check this setting/i));
   });
 });

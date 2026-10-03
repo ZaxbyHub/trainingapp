@@ -160,6 +160,16 @@
 .ui-radio-card__label { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
 .ui-radio-card__desc { font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
 
+/* Combobox (ARIA 1.2 editable combobox + listbox popup). The list is a raised popover. */
+.ui-combobox { position: relative; display: block; }
+.ui-combobox__list { position: absolute; z-index: 1050; top: calc(100% + var(--space-1)); left: 0; right: 0; box-sizing: border-box; max-height: 240px; overflow-y: auto; margin: 0; padding: var(--space-1); list-style: none; background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-control); border-radius: var(--r-control); box-shadow: var(--shadow-2); }
+.ui-combobox__list[hidden] { display: none; }
+.ui-combobox__option, .ui-combobox__empty { padding: var(--space-2) var(--space-3); border-radius: var(--r-control); font-size: var(--type-body-size); line-height: var(--type-body-line); overflow-wrap: anywhere; }
+.ui-combobox__option { cursor: pointer; }
+.ui-combobox__option:hover, .ui-combobox__option--active { background: var(--bg-hover-raised); }
+.ui-combobox__option[aria-selected="true"] { font-weight: 600; }
+.ui-combobox__empty { color: var(--text-tertiary); }
+
 /* ------------------------------------------------------------ Feedback */
 .ui-badge { display: inline-flex; align-items: center; gap: var(--space-1); padding: 2px var(--space-2); border-radius: var(--r-pill); border: 1px solid transparent; font-size: var(--type-micro-size); line-height: var(--type-micro-line); font-weight: var(--type-micro-weight); }
 .ui-badge--neutral { background: var(--bg-sunken); color: var(--text-secondary); border-color: var(--border-subtle); }
@@ -269,6 +279,7 @@
   .ui-switch .ui-toggle__input:checked + .ui-switch__track { border-color: Highlight; }
   .ui-button[aria-disabled="true"] { color: GrayText; border-color: GrayText; }
   .ui-banner, .ui-badge, .ui-progress { border: 1px solid CanvasText; }
+  .ui-combobox__option--active { outline: 2px solid Highlight; outline-offset: -2px; }
   .ui-progress__fill { background: Highlight; }
   /* Shell: the active indicator and the mark must survive forced colors. */
   .ui-shell__nav-item.ui-selected::before { background: Highlight; }
