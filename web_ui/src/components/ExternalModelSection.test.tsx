@@ -41,9 +41,14 @@ import { DesktopSessionProvider, type DesktopSession } from '../lib/desktop-sess
 import { DESKTOP_MODELS_CHANGED_EVENT } from '../lib/desktop-models-events';
 import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../test/desktop-bridge-stub';
 import type { ApiClient } from '../lib/api';
-import { ApiError } from '../lib/api/types';
+import { ApiError, type ModelStatus } from '../lib/api/types';
 
 const KEY = 'sk-panel-SENTINEL-2468';
+
+/** The backend's /status/models answer; only the engine matters to the section. */
+function backendModels(engine: 'external' | 'llama.cpp'): ModelStatus {
+  return { engine, profile: 'auto', models: { quality: { present: true }, fast: { present: true } } };
+}
 
 /**
  * The Model & connection region. The connection form shows only for a server
@@ -1011,9 +1016,9 @@ describe('review L1/L6 (final critic)', () => {
     const s: DesktopSession = { baseUrl: 'http://127.0.0.1:4567', token: 't', mode: 'node', apiClient, sseUrl: () => 'x' };
     return s;
   }
-  const renderWith = (s: DesktopSession | null) =>
+  const renderWith = (s: DesktopSession | null, engine?: 'external' | 'llama.cpp') =>
     render(
-      <DesktopSessionProvider value={{ session: s, models: null, loading: false, error: null }}>
+      <DesktopSessionProvider value={{ session: s, models: engine ? backendModels(engine) : null, loading: false, error: null }}>
         <ExternalModelSection />
       </DesktopSessionProvider>,
     );
@@ -1396,15 +1401,17 @@ describe('review L1/L6 (final critic)', () => {
         { 'external.enabled': true, 'external.baseUrl': 'https://api.openai.com', 'external.model': 'gpt-x', 'external.airgap': false },
         () => Promise.reject(new Error('unused')),
       );
-      renderWith(s);
+      renderWith(s, 'external');
       const q = within(region());
       await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
       // The backend would answer from the public URL, so the UI never says it is refused.
       expect(q.queryByTestId('external-airgap-refused')).toBeNull();
-      expect(q.queryByTestId('external-airgap-notice')).toBeNull();
       expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i);
+      // The renderer still enforces its own air-gap flag, so Cloud is not offered (a public URL
+      // typed here would be refused) and the notice says why.
       expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeChecked();
-      expect(q.getByRole('radio', { name: /^cloud provider$/i })).not.toHaveAttribute('aria-disabled');
+      expect(q.getByRole('radio', { name: /^cloud provider$/i })).toHaveAttribute('aria-disabled', 'true');
+      expect(q.getByTestId('external-airgap-notice')).toBeInTheDocument();
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -1477,70 +1484,77 @@ describe('final critic LOW-1, LOW-3, NIT-2 (desktop)', () => {
     const s: DesktopSession = { baseUrl: 'http://127.0.0.1:4567', token: 't', mode: 'node', apiClient, sseUrl: () => 'x' };
     return s;
   }
-  const renderDesktopWith = (
-    s: DesktopSession,
-    props: { inferenceMode?: 'browser-local' | 'api'; onInferenceModeChange?: (m: 'browser-local' | 'api') => void } = {},
-  ) =>
+  const renderDesktopWith = (s: DesktopSession, engine?: 'external' | 'llama.cpp') =>
     render(
-      <DesktopSessionProvider value={{ session: s, models: null, loading: false, error: null }}>
-        <ExternalModelSection builtIn={<p data-testid="builtin-marker">BUILT-IN</p>} {...props} />
+      <DesktopSessionProvider value={{ session: s, models: engine ? backendModels(engine) : null, loading: false, error: null }}>
+        <ExternalModelSection builtIn={<p data-testid="builtin-marker">BUILT-IN</p>} />
       </DesktopSessionProvider>,
     );
 
-  test('LOW-1: switching on the external model while the model runs in this window moves it to the desktop backend', async () => {
+  // What answers follows the backend's reported engine (chat goes to /ask/stream whenever it is
+  // 'external', whatever the run location; pinned in chat-provider-branch.test.tsx).
+  test("backend engine 'external': claims the server answers and the built-in model is not used", async () => {
     installDesktopBridgeStub();
-    const onMode = vi.fn();
-    const s = makeSession(async () => LOCAL);
-    renderDesktopWith(s, { inferenceMode: 'browser-local', onInferenceModeChange: onMode });
-    const q = within(region());
-    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
-    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
-    await waitFor(() => expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000'));
-    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
-    await waitFor(() => expect(onMode).toHaveBeenCalledWith('api'));
-    expect(onMode).toHaveBeenCalledTimes(1);
-  });
-
-  test('LOW-1: switching on with the desktop backend already selected leaves the run location alone and says the server answers', async () => {
-    installDesktopBridgeStub();
-    const onMode = vi.fn();
-    const s = makeSession(async () => LOCAL);
-    renderDesktopWith(s, { inferenceMode: 'api', onInferenceModeChange: onMode });
-    const q = within(region());
-    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
-    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
-    await waitFor(() => expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000'));
-    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
-    await waitFor(() => expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i));
-    expect(onMode).not.toHaveBeenCalled();
-    expect(q.getByTestId('builtin-not-used')).toBeInTheDocument();
-  });
-
-  test('LOW-1: a failed switch-on does not change the run location', async () => {
-    installDesktopBridgeStub();
-    const onMode = vi.fn();
-    const s = makeSession(async () => LOCAL);
-    (s.apiClient.updateSettings as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('refused'));
-    renderDesktopWith(s, { inferenceMode: 'browser-local', onInferenceModeChange: onMode });
-    const q = within(region());
-    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
-    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
-    await waitFor(() => expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000'));
-    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
-    await waitFor(() => expect(q.getByTestId('external-problem')).not.toBeEmptyDOMElement());
-    expect(onMode).not.toHaveBeenCalled();
-  });
-
-  test('LOW-1: an enabled endpoint while the model runs in this window never claims it answers, and keeps the run-location controls', async () => {
-    installDesktopBridgeStub();
-    renderDesktopWith(makeSession(async () => ({ ...LOCAL, 'external.enabled': true })), { inferenceMode: 'browser-local' });
+    renderDesktopWith(makeSession(async () => ({ ...LOCAL, 'external.enabled': true })), 'external');
     const q = within(region());
     await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
-    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers only when the model runs in the desktop backend/i);
-    expect(q.getByTestId('external-usage-state')).not.toHaveTextContent(/answers come from this server/i);
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i);
+    expect(q.getByTestId('builtin-not-used')).toBeInTheDocument();
+    expect(q.queryByTestId('builtin-still-answering')).toBeNull();
+  });
+
+  test("backend engine 'llama.cpp' with the switch on: no claim either way, built-in settings stay", async () => {
+    installDesktopBridgeStub();
+    renderDesktopWith(makeSession(async () => ({ ...LOCAL, 'external.enabled': true })), 'llama.cpp');
+    const q = within(region());
+    await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+    const usage = q.getByTestId('external-usage-state');
+    expect(usage).not.toHaveTextContent(/answers come from this server/i);
+    expect(usage).not.toHaveTextContent(/answers still come from the built-in model/i);
     expect(q.queryByTestId('builtin-not-used')).toBeNull();
-    expect(q.getByTestId('builtin-still-answering')).toHaveTextContent(/runs in this window, so the built-in model answers/i);
+    expect(q.getByTestId('builtin-still-answering')).not.toHaveTextContent(/until you switch on|answers come from the built-in/i);
     expect(q.getByTestId('builtin-marker')).toBeInTheDocument();
+  });
+
+  test('models not loaded yet with the switch on: neutral copy, no run-location wording', async () => {
+    installDesktopBridgeStub();
+    renderDesktopWith(makeSession(async () => ({ ...LOCAL, 'external.enabled': true })));
+    const q = within(region());
+    await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+    expect(q.getByTestId('external-usage-state')).not.toHaveTextContent(/answers come from this server|in this window/i);
+    expect(q.queryByTestId('builtin-not-used')).toBeNull();
+  });
+
+  test("switch off and engine 'llama.cpp': the built-in model answers", async () => {
+    installDesktopBridgeStub();
+    renderDesktopWith(makeSession(async () => LOCAL), 'llama.cpp');
+    const q = within(region());
+    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers still come from the built-in model/i);
+    expect(q.queryByTestId('builtin-not-used')).toBeNull();
+  });
+
+  test('switching on stays neutral until the backend reports external, then claims the server answers', async () => {
+    installDesktopBridgeStub();
+    const s = makeSession(async () => LOCAL);
+    const tree = (engine: 'external' | 'llama.cpp') => (
+      <DesktopSessionProvider value={{ session: s, models: backendModels(engine), loading: false, error: null }}>
+        <ExternalModelSection builtIn={<p data-testid="builtin-marker">BUILT-IN</p>} />
+      </DesktopSessionProvider>
+    );
+    const { rerender } = render(tree('llama.cpp'));
+    const q = within(region());
+    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+    await waitFor(() => expect(q.getByLabelText(/^base url$/i)).toHaveValue('http://192.168.1.20:8000'));
+    fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
+    await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+    await waitFor(() => expect(s.apiClient.updateSettings).toHaveBeenCalled());
+    // The models reload has not landed: no wrong claim in either direction.
+    expect(q.getByTestId('external-usage-state')).not.toHaveTextContent(/answers come from this server|answers still come from the built-in/i);
+    rerender(tree('external'));
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i);
+    expect(q.getByTestId('builtin-not-used')).toBeInTheDocument();
   });
 
   test('LOW-3: a renderer built air-gapped still refuses a public URL when the backend is not air-gapped (copy follows the backend)', async () => {
@@ -1550,10 +1564,12 @@ describe('final critic LOW-1, LOW-3, NIT-2 (desktop)', () => {
     renderDesktopWith(s);
     const q = within(region());
     await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
-    // The copy follows the backend: no air-gap notice, Cloud selectable.
-    expect(q.queryByTestId('external-airgap-notice')).toBeNull();
-    fireEvent.click(q.getByRole('radio', { name: /^cloud provider$/i }));
-    expect(q.getByRole('radio', { name: /^cloud provider$/i })).not.toHaveAttribute('aria-disabled');
+    // Enforcement is the bundle flag OR the backend's: Cloud is not offered and says why.
+    const cloud = q.getByRole('radio', { name: /^cloud provider$/i });
+    expect(cloud).toBeDisabled();
+    expect(q.getByTestId('external-airgap-notice')).toBeInTheDocument();
+    expect(cloud).toHaveAccessibleDescription(/not available in this air-gapped build/i);
+    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
     const base = q.getByLabelText(/^base url$/i);
     fireEvent.change(base, { target: { value: 'https://api.openai.com' } });
     fireEvent.blur(base);

@@ -1182,8 +1182,6 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
           <ExternalModelSection
             id={MODEL_CONNECTION_SECTION_ID}
             builtIn={builtInPanel}
-            inferenceMode={mode}
-            onInferenceModeChange={setMode}
             // Shown for every generator source: a failed backend settings read must
             // stay visible even while an external model is selected.
             notice={desktopSettingsError ? <Banner tone="danger">Settings error: {desktopSettingsError}</Banner> : null}
