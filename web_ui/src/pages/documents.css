@@ -64,6 +64,13 @@
 .app-doc { box-sizing: border-box; grid-template-areas: "icon name size chunks status actions" "icon date size chunks status actions"; grid-template-rows: auto auto; align-content: center; align-items: center; height: 60px; background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); transition: opacity var(--dur-base) var(--ease-standard); }
 .app-doc--deleting { opacity: 0.5; }
 .app-doc__icon { grid-area: icon; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--r-control); background: var(--bg-selected); color: var(--accent); }
+/* Per-type tile (section 5 "type icon"): shape AND tint differ per type; the
+   icon is decorative because the file name beside it carries the extension. */
+.app-doc__icon--pdf { background: var(--danger-subtle); color: var(--danger); }
+.app-doc__icon--doc { background: var(--info-subtle); color: var(--info); }
+.app-doc__icon--sheet { background: var(--success-subtle); color: var(--success); }
+.app-doc__icon--slides { background: var(--warning-subtle); color: var(--warning); }
+.app-doc__icon--other { background: var(--bg-sunken); color: var(--text-secondary); }
 .app-doc__name { grid-area: name; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
 .app-doc__date, .app-doc__size, .app-doc__chunks { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
 .app-doc__date { grid-area: date; }

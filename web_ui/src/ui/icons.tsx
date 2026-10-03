@@ -72,6 +72,32 @@ const ICONS = {
     { d: 'M3 6h18' },
     { d: 'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2' },
   ],
+  // Documents (phase 6): per-type document icons (design-language section 5
+  // "type icon"). Page outline shared with Lucide's file icons.
+  file: [{ d: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z' }, { d: 'M14 2v4a2 2 0 0 0 2 2h4' }],
+  // PDF: a page with a "P" (Lucide has no PDF glyph).
+  'file-pdf': [
+    { d: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z' },
+    { d: 'M14 2v4a2 2 0 0 0 2 2h4' },
+    { d: 'M10 18v-6h2a2 2 0 0 1 0 4h-2' },
+  ],
+  // Word-processor document: a page with a "T".
+  'file-type': [
+    { d: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z' },
+    { d: 'M14 2v4a2 2 0 0 0 2 2h4' },
+    { d: 'M9 13v-1h6v1' },
+    { d: 'M12 12v6' },
+    { d: 'M11 18h2' },
+  ],
+  'file-spreadsheet': [
+    { d: 'M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z' },
+    { d: 'M14 2v4a2 2 0 0 0 2 2h4' },
+    { d: 'M8 13h2' },
+    { d: 'M14 13h2' },
+    { d: 'M8 17h2' },
+    { d: 'M14 17h2' },
+  ],
+  presentation: [{ d: 'M2 3h20' }, { d: 'M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3' }, { d: 'm7 21 5-5 5 5' }],
 } as const satisfies Record<string, readonly Shape[]>;
 
 export type IconName = keyof typeof ICONS;

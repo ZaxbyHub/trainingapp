@@ -9,7 +9,7 @@
 
 import React, { useCallback, useState, useRef, useLayoutEffect } from 'react';
 import type { DocumentEntry } from '../types/document';
-import { Button, Icon, IconButton, ProgressBar, StatusPill } from '../ui';
+import { Button, Icon, IconButton, ProgressBar, StatusPill, type IconName } from '../ui';
 import { cx } from '../ui/cx';
 import '../pages/documents.css';
 
@@ -74,6 +74,39 @@ function getStatusLabel(status: DocumentEntry['status']): string {
   }
 }
 
+/**
+ * Lumen phase 6 (design-language section 5 "type icon"): the document type,
+ * from the file name's extension (the stored fileType differs between the
+ * browser pipeline and desktop rows, the name does not). Decorative: the name
+ * next to it already carries the extension.
+ */
+type DocKind = 'pdf' | 'doc' | 'sheet' | 'slides' | 'text' | 'other';
+const KIND_BY_EXTENSION: Record<string, DocKind> = {
+  pdf: 'pdf',
+  doc: 'doc',
+  docx: 'doc',
+  xls: 'sheet',
+  xlsx: 'sheet',
+  csv: 'sheet',
+  ppt: 'slides',
+  pptx: 'slides',
+  txt: 'text',
+  md: 'text',
+};
+const KIND_ICON: Record<DocKind, IconName> = {
+  pdf: 'file-pdf',
+  doc: 'file-type',
+  sheet: 'file-spreadsheet',
+  slides: 'presentation',
+  text: 'file-text',
+  other: 'file',
+};
+export function documentKind(fileName: string): DocKind {
+  const dot = fileName.lastIndexOf('.');
+  const extension = dot < 0 ? '' : fileName.slice(dot + 1).toLowerCase();
+  return KIND_BY_EXTENSION[extension] ?? 'other';
+}
+
 /** Must match the `.app-doc` row height in pages/documents.css. */
 const ITEM_HEIGHT = 60;
 const BUFFER = 5;
@@ -105,25 +138,35 @@ const DocumentItem = React.memo<{
     setIsConfirming(false);
   }, []);
 
+  const kind = documentKind(doc.fileName);
   return (
     <div className={cx('app-doc', isDeleting && 'app-doc--deleting')}>
       {/* Table cells (Lumen phase 6): one cell per value, placed by CSS grid areas
           (pages/documents.css), so narrow widths reflow them instead of duplicating. */}
-      <div className="app-doc__icon">
-        <Icon name="file-text" />
+      <div className={`app-doc__icon app-doc__icon--${kind}`} data-kind={kind}>
+        <Icon name={KIND_ICON[kind]} />
       </div>
       <p className="app-doc__name" title={doc.fileName}>
         {doc.fileName}
       </p>
       <span className="app-doc__date">{formatDate(doc.uploadedAt)}</span>
-      <span className="app-doc__size">{formatFileSize(doc.fileSize)}</span>
+      <span className="app-doc__size">
+        <span className="ui-visually-hidden">Size: </span>
+        {formatFileSize(doc.fileSize)}
+      </span>
       <span className="app-doc__chunks">
-        {doc.chunkCount !== undefined && doc.chunkCount > 0 ? `${doc.chunkCount} chunks` : null}
+        {doc.chunkCount !== undefined && doc.chunkCount > 0 ? (
+          <>
+            <span className="ui-visually-hidden">Chunks: </span>
+            {`${doc.chunkCount} chunks`}
+          </>
+        ) : null}
       </span>
 
       {/* Status (collapsed during delete-confirmation to make room). */}
       {!isConfirming && (
         <div aria-live="polite" className="app-doc__status">
+          <span className="ui-visually-hidden">Status: </span>
           <StatusPill status={getStatusTone(doc.status)}>{getStatusLabel(doc.status)}</StatusPill>
 
           {/* Progress bar for uploading/processing */}
