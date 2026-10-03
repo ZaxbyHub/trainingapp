@@ -109,7 +109,8 @@
 .chat-learn__open { flex: none; }
 
 /* ---------------------------------------------------------- Markdown */
-/* Restyle only: the renderer's URL allowlist and no-raw-HTML rules are untouched (#143). */
+/* Restyle only: the renderer's URL allowlist and no-raw-HTML rules are untouched. This
+   does not address #143 (remote images still render). */
 .chat-md { overflow-wrap: anywhere; }
 .chat-md > :first-child { margin-top: 0; }
 .chat-md > :last-child { margin-bottom: 0; }

@@ -165,7 +165,8 @@ export function ModelBlockedOverlay({
           <ul
             style={{
               textAlign: 'left',
-              color: 'var(--color-danger)',
+              // Lumen phase 5: legacy --color-danger failed AA on the card (unmasked axe).
+              color: 'var(--danger)',
               fontSize: 'var(--font-size-caption)',
               fontFamily: 'var(--font-family)',
               margin: 'var(--spacing-sm) 0',
@@ -179,7 +180,8 @@ export function ModelBlockedOverlay({
           <ul
             style={{
               textAlign: 'left',
-              color: 'var(--color-text-muted)',
+              // Lumen phase 5: legacy --color-text-muted was 4.18:1 on the card.
+              color: 'var(--text-secondary)',
               fontSize: 'var(--font-size-caption)',
               fontFamily: 'var(--font-family)',
               margin: 'var(--spacing-sm) 0',
