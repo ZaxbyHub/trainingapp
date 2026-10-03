@@ -85,6 +85,9 @@ async function clickNav(page: Page, name: string): Promise<void> {
   const menu = page.getByRole('button', { name: 'Open navigation' });
   if (await menu.isVisible()) await menu.click();
   await page.getByRole('button', { name, exact: true }).click({ force: true });
+  // Park the pointer on the (non-interactive) brand corner so no hover state or
+  // icon-rail tooltip from the clicked item enters the capture.
+  await page.mouse.move(0, 0);
 }
 
 async function blockExternalNetwork(page: Page): Promise<void> {
