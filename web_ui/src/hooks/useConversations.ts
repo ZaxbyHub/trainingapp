@@ -147,7 +147,9 @@ export function useConversations() {
           // read snapshot may predate it, so walk once more to stay current.
           rerunAfterFlight.current = false;
           void runSearchRef.current(searchQueryRef.current);
-        } else {
+        } else if (debounceTimer.current === null) {
+          // A newer query still inside its debounce window keeps the busy cue:
+          // the results this walk produced are already stale for it.
           setIsSearching(false);
         }
       }

@@ -945,6 +945,24 @@ describe('useConversations', () => {
     });
   });
 
+  describe('Busy cue does not flicker off between queries (review appendix, rejected-candidate 7 side note)', () => {
+    it('a walk finishing while a newer query is still debouncing leaves isSearching on', async () => {
+      const pending: Array<(v: unknown) => void> = [];
+      mockSearchConversations.mockImplementation(() => new Promise((r) => { pending.push(r); }));
+      mockListConversations.mockResolvedValue([]);
+      const { result } = renderHook(() => useConversations());
+      await waitFor(() => expect(mockListConversations).toHaveBeenCalled());
+      act(() => result.current.setSearchQuery('bud'));
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      act(() => result.current.setSearchQuery('budget')); // debounce pending, walk 1 still reading
+      await act(async () => pending[0]({ matches: [], truncated: false }));
+      expect(result.current.isSearching).toBe(true);
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(2));
+      await act(async () => pending[1]({ matches: [], truncated: false }));
+      expect(result.current.isSearching).toBe(false);
+    });
+  });
+
   describe('Load more vs refresh race (PRR-005)', () => {
     it('a refresh during a pending "Load more" discards the stale page (no duplicates, no stale tail)', async () => {
       const first = Array.from({ length: 50 }, (_, i) =>
