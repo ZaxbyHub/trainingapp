@@ -1,0 +1,63 @@
+// Per-course training progress (Lumen phase 6, design-language.md section 5:
+// course card "progress"): the furthest slide position the learner has reached,
+// persisted in localStorage next to the last-opened course.
+//
+// Pure helpers over a plain map; TrainingPage owns the state and calls
+// saveCourseProgress. Positions are the 1-based spine positions from
+// slide-position.ts, so progress is only ever recorded when a position is KNOWN
+// (never in the desktop renderer, never before the slide docs are ready).
+import { TRAINING_PROGRESS_KEY } from '../storage/persisted-keys';
+
+/** courseId -> furthest 1-based slide position reached. */
+export type CourseProgress = Readonly<Record<string, number>>;
+
+/** Read the stored progress; anything malformed or unreadable is dropped. */
+export function loadCourseProgress(): CourseProgress {
+  try {
+    const raw = window.localStorage.getItem(TRAINING_PROGRESS_KEY);
+    if (raw === null) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    const out: Record<string, number> = {};
+    for (const [courseId, value] of Object.entries(parsed)) {
+      if (typeof value === 'number' && Number.isInteger(value) && value > 0) out[courseId] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function saveCourseProgress(progress: CourseProgress): void {
+  try {
+    window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify(progress));
+  } catch {
+    // storage may be unavailable (privacy mode); progress still shows this session
+  }
+}
+
+/**
+ * Record that `position` was reached in `courseId`. Progress only moves forward:
+ * returns the SAME object when `position` is not beyond the stored furthest one.
+ */
+export function advanceCourseProgress(progress: CourseProgress, courseId: string, position: number): CourseProgress {
+  if (!courseId || !Number.isInteger(position) || position < 1) return progress;
+  if ((progress[courseId] ?? 0) >= position) return progress;
+  return { ...progress, [courseId]: position };
+}
+
+export interface CourseProgressView {
+  /** Slides reached, clamped to [0, total] (a course can shrink in an update). */
+  reached: number;
+  total: number;
+}
+
+/** What a card shows; null when the slide count is unknown (nothing is guessed). */
+export function courseProgressView(
+  progress: CourseProgress,
+  courseId: string,
+  total: number | null
+): CourseProgressView | null {
+  if (total === null || total < 1) return null;
+  return { reached: Math.min(progress[courseId] ?? 0, total), total };
+}

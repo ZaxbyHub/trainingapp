@@ -61,3 +61,7 @@
   .app-training__title-select { flex: 1 1 100%; order: 1; }
   .app-training__slidepos { order: 2; flex-basis: 100%; }
 }
+
+/* Course-card progress: bar + "k of n slides" (only when the slide count is known). */
+.app-course__progress { display: flex; flex-direction: column; gap: var(--space-1); margin-top: var(--space-1); }
+.app-course__progress-text { font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }

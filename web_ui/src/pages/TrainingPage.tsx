@@ -26,9 +26,16 @@ import type { TrainingPlayerSlideState } from '../components/training-player-bri
 import { usePackClient } from '../lib/packs/pack-client';
 import { LAST_PACK_KEY } from '../lib/storage/persisted-keys';
 import type { PackInfo } from '../lib/api/types';
+import {
+  advanceCourseProgress,
+  courseProgressView,
+  loadCourseProgress,
+  saveCourseProgress,
+  type CourseProgress,
+} from '../lib/training/course-progress';
 import { courseSlideCount, slideDocsAvailable, slidePosition } from '../lib/training/slide-position';
 import { isElectron } from '../lib/desktop-session';
-import { Badge, Button, Icon, PageHeader, Select } from '../ui';
+import { Badge, Button, Icon, PageHeader, ProgressBar, Select } from '../ui';
 import './training.css';
 
 const TRAINING_DESCRIPTION = 'Play the training courses installed on this device.';
@@ -84,14 +91,8 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   const [currentSlide, setCurrentSlide] = useState<TrainingPlayerSlideState | null>(null);
   // Polite confirmation for the Pin button (the pin itself shows up in Chat).
   const [pinAnnouncement, setPinAnnouncement] = useState('');
-  const handleSlideChange = useCallback(
-    (event: TrainingPlayerSlideState) => {
-      setCurrentSlide(event);
-      setPinAnnouncement('');
-      onSlideChange?.(event);
-    },
-    [onSlideChange]
-  );
+  // Furthest slide reached per course (persisted; drives the course-card progress).
+  const [progress, setProgress] = useState<CourseProgress>(() => loadCourseProgress());
   // Slide docs live in the browser keyword index, which initializes after boot
   // and exposes no ready event: poll until ready so slide counts and "x of n"
   // appear without a remount. Never in the desktop renderer (no browser index).
@@ -313,6 +314,27 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
     setCurrentSlide(null);
   }, [playerDir]);
 
+  // Every player event is forwarded UNCHANGED (D7); the page additionally records
+  // the furthest position reached, only when the position is KNOWN (slide docs ready).
+  const handleSlideChange = useCallback(
+    (event: TrainingPlayerSlideState) => {
+      setCurrentSlide(event);
+      setPinAnnouncement('');
+      if (slideDocsReady) {
+        const reached = slidePosition(playerCourseId, event.slideId);
+        if (reached !== null) {
+          const next = advanceCourseProgress(progress, playerCourseId, reached.index);
+          if (next !== progress) {
+            saveCourseProgress(next);
+            setProgress(next);
+          }
+        }
+      }
+      onSlideChange?.(event);
+    },
+    [onSlideChange, slideDocsReady, playerCourseId, progress]
+  );
+
   // "Slide x of n" from the course's ingested slide docs; the title alone when
   // they are not available (desktop renderer, index not ready). Never guessed.
   const position = useMemo(
@@ -326,9 +348,11 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
         ? `Slide ${position.index} of ${position.total} · ${currentSlide.slideTitle}`
         : `Slide: ${currentSlide.slideTitle}`;
 
-  // Course cards: no cover, progress or slide-count fields exist on an installed
-  // pack, so the card shows a monogram tile, the slide count when the ingested
-  // slide docs give it, and "Last opened" (LAST_PACK_KEY) in place of progress.
+  // Course cards: no cover art exists on an installed pack, so the card shows a
+  // monogram tile, the slide count and the learner's progress (furthest slide
+  // reached, course-progress.ts) when the ingested slide docs give the count, and
+  // "Last opened" (LAST_PACK_KEY) as secondary text. Progress needs a known count:
+  // without one (desktop, index not ready) the card shows neither number.
   const lastOpenedId = (() => {
     if (typeof window === 'undefined') return '';
     try {
@@ -357,8 +381,8 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   const deepLinked = deepLinkedPackDir !== '';
   return (
     <div className="app-page">
-      {/* Header (Lumen phase 3): the shared PageHeader, on both views. */}
-      <PageHeader title="Training" description={TRAINING_DESCRIPTION} />
+      {/* Header (Lumen phase 3): the shared PageHeader on both views; slim (no description) on the player page, H1 kept. */}
+      <PageHeader title="Training" description={showPlayer ? undefined : TRAINING_DESCRIPTION} />
       <div
         className={showPlayer ? 'app-page__fill app-training app-training--player' : 'app-training'}
         data-testid={showPlayer && deepLinked ? undefined : 'training-page'}
@@ -463,6 +487,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
               const dir = packDirKey(pack);
               const title = pack.name ?? pack.packId;
               const slides = slideCounts.get(pack.packId) ?? null;
+              const view = courseProgressView(progress, pack.packId, slides);
               return (
                 <li key={dir} className="app-training__grid-item">
                   <button
@@ -480,6 +505,18 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
                       <span className="app-course__meta">
                         {slides !== null ? `${slides} slide${slides === 1 ? '' : 's'}` : 'Storyline course'}
                       </span>
+                      {view !== null ? (
+                        <span className="app-course__progress">
+                          <ProgressBar
+                            label={`${title} progress: ${view.reached} of ${view.total} slides`}
+                            value={view.reached}
+                            max={view.total}
+                          />
+                          <span className="app-course__progress-text">
+                            {view.reached === 0 ? 'Not started' : `${view.reached} of ${view.total} slides`}
+                          </span>
+                        </span>
+                      ) : null}
                       <span className="app-course__badges">
                         <Badge>v{pack.version}</Badge>
                         {lastOpenedId === pack.packId && <Badge tone="accent">Last opened</Badge>}
