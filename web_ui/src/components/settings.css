@@ -86,7 +86,8 @@
 .settings-row > .ui-input { flex: 1 1 16rem; width: auto; min-width: 0; max-width: 32rem; }
 .settings-list { margin: 0; padding-left: var(--space-5); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
 .settings-code { font-family: var(--font-mono); font-size: var(--type-caption-size); overflow-wrap: anywhere; word-break: break-all; color: var(--text-primary); }
-.settings-field > .ui-input, .settings-field > .ui-select { max-width: 32rem; }
+.settings-field > .ui-input, .settings-field > .ui-select,
+.settings-field > .ui-password, .settings-field > .ui-combobox { max-width: 32rem; }
 
 /* Radio cards: the ui-radio-card look with the Settings markup contract (title span +
    description <p>, see SettingsRadioCards). */
@@ -131,7 +132,9 @@
   .settings-nav { top: 0; margin: 0 calc(-1 * var(--space-6)); padding: var(--space-2) var(--space-6); background: var(--bg-canvas); border-bottom: 1px solid var(--border-subtle); }
   .settings-nav__list { flex-direction: row; flex-wrap: wrap; }
   .settings-nav__link.ui-selected::before { left: var(--space-3); right: var(--space-3); top: auto; bottom: 0; width: auto; height: 3px; }
-  .settings-section { scroll-margin-top: var(--space-16); }
+  /* WCAG 2.2 SC 2.4.11 (focus not obscured): anything scrolled into view, by focus or
+     by a jump, stops below the sticky nav bar instead of underneath it. */
+  .settings-section, .settings-page__sections * { scroll-margin-top: calc(var(--space-16) + var(--space-2)); }
 }
 /* <= 768px: a compact "Jump to section" select replaces the link row. */
 @media (max-width: 768px) {

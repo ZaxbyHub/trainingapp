@@ -16,7 +16,7 @@
  * The native `<input type="radio">` stays the only AT-facing radio (issue #24 F9): the
  * wrapping `<label>` has no role, and clicking the card checks the input natively.
  */
-import { useEffect, useId, useState, type HTMLAttributes, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type HTMLAttributes, type MouseEvent, type ReactNode } from 'react';
 import { cx } from '../ui/cx';
 import '../ui';
 import './settings.css';
@@ -145,6 +145,11 @@ export function SettingsSubsection({
   );
 }
 
+/** A section is current once its top is within this distance of the scroller's top. */
+const SECTION_LINE_PX = 120;
+/** After a nav jump, scroll-driven updates pause this long (the jump's own scroll). */
+const JUMP_LOCK_MS = 600;
+
 export interface SettingsNavItem {
   id: string;
   label: string;
@@ -168,33 +173,51 @@ export function goToSettingsSection(id: string): boolean {
  * beside the form at > 1024px, a wrapped row at 769-1024px, and a "Jump to section"
  * select at <= 768px (CSS picks one; the other is display:none, so it leaves the
  * accessibility tree). The current section carries aria-current="true" (link) and is
- * the select's value; it follows the scroll position when IntersectionObserver exists.
+ * the select's value; it follows the scroll position of <main>.
  */
 export function SettingsNav({ items, label = 'Settings sections' }: { items: readonly SettingsNavItem[]; label?: string }) {
   const [current, setCurrent] = useState<string>(items[0]?.id ?? '');
   const selectId = useId();
 
+  // Set by a nav jump: the jump's own scroll must not override the chosen section.
+  const lockUntilRef = useRef(0);
+
   useEffect(() => {
-    if (typeof IntersectionObserver === 'undefined') return undefined;
-    const targets = items.map((i) => document.getElementById(i.id)).filter((el): el is HTMLElement => el !== null);
-    if (targets.length === 0) return undefined;
-    // The page scrolls inside <main> (AppShell), so that is the observer root.
-    const root = targets[0].closest('main');
-    const visible = new Map<string, boolean>();
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) visible.set(e.target.id, e.isIntersecting);
-        const first = items.find((i) => visible.get(i.id));
-        if (first) setCurrent(first.id);
-      },
-      // A section counts once it reaches the top band of the scroller.
-      { root, rootMargin: '0px 0px -65% 0px', threshold: 0 },
-    );
-    targets.forEach((t) => observer.observe(t));
-    return () => observer.disconnect();
+    const first = document.getElementById(items[0]?.id ?? '');
+    // The page scrolls inside <main> (AppShell).
+    const scroller = first?.closest('main');
+    if (!scroller) return undefined;
+    let frame = 0;
+    const sync = () => {
+      frame = 0;
+      if (performance.now() < lockUntilRef.current) return;
+      const top = scroller.getBoundingClientRect().top;
+      let next = items[0].id;
+      if (scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) {
+        // At the bottom a short last section can never reach the line.
+        next = items[items.length - 1].id;
+      } else {
+        // The current section is the last one whose top has passed a line just below
+        // the sticky nav (narrow widths) / the top of the scroller.
+        for (const item of items) {
+          const el = document.getElementById(item.id);
+          if (el && el.getBoundingClientRect().top - top <= SECTION_LINE_PX) next = item.id;
+        }
+      }
+      setCurrent(next);
+    };
+    const onScroll = () => {
+      if (frame === 0) frame = requestAnimationFrame(sync);
+    };
+    scroller.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      scroller.removeEventListener('scroll', onScroll);
+      if (frame !== 0) cancelAnimationFrame(frame);
+    };
   }, [items]);
 
   const go = (id: string) => {
+    lockUntilRef.current = performance.now() + JUMP_LOCK_MS;
     if (goToSettingsSection(id)) setCurrent(id);
   };
 
