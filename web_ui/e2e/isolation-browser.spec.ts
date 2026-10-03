@@ -23,7 +23,11 @@
  *     sends nothing to a cross-origin sink (the boot page's header CSP);
  *   - course content cannot navigate its own frame, or the boot frame through
  *     its DOM, to another origin (the app shell's runtime frame-src policy,
- *     ADR-0012 threat model item 6).
+ *     ADR-0012 threat model item 6);
+ *   - course content cannot create a same-origin child iframe and steer it
+ *     off-origin through child.contentWindow.location.href (the course's own
+ *     frame-src: a child's immediate embedder is the course document, PR 144
+ *     review R1.1).
  *
  * The course script only records outcomes; it carries no payload beyond what
  * the assertions need. Run under web_ui/playwright.config.ts (vite preview of
@@ -40,6 +44,7 @@ const CLICK_PACK = 'isolation-click-course';
 const OTHER_PACK = 'isolation-other-course';
 const ESCAPE_PACK = 'isolation-escape-course';
 const NAV_PACK = 'isolation-nav-egress-course';
+const CHILD_NAV_PACK = 'isolation-child-nav-course';
 const WORKER_PACK = 'isolation-worker-course';
 
 /**
@@ -551,6 +556,79 @@ test('a course cannot navigate its own frame or the boot frame off the player or
   const player = new URL(appOrigin);
   player.hostname = player.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
   await expect(page.locator('head meta[http-equiv="Content-Security-Policy"]')).toHaveAttribute('content', `frame-src ${player.origin}`);
+});
+
+/**
+ * The child-iframe navigation course (PR 144 review R1.1): `frame-src` governs
+ * which documents a frame may LOAD, and the app page's runtime frame-src only
+ * covers frames the app embeds. A frame the COURSE creates has the course
+ * document as its immediate embedder, so the course's own CSP `frame-src
+ * 'self'` must refuse a navigation of that child to another origin. The course
+ * creates a same-origin child (a relay-served pack document), waits for it to
+ * load, then assigns `child.contentWindow.location.href` to the local sink.
+ * Each step is announced on the console so the row is not vacuous. Loopback
+ * sink only; nothing leaves the machine.
+ */
+function childNavStoryHtml(): string {
+  const script = `
+(function () {
+  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  var SINK = appOrigin + '/__child-nav-sink/';
+  var child = document.createElement('iframe');
+  child.onload = function () {
+    if (child.dataset.navigated) return;
+    child.dataset.navigated = '1';
+    console.log('CHILD-NAV child-loaded ' + child.contentWindow.location.pathname);
+    setTimeout(function () {
+      try {
+        child.contentWindow.location.href = SINK + 'child?data=course-secret';
+        console.log('CHILD-NAV navigation-attempted');
+      } catch (e) {
+        console.log('CHILD-NAV navigation-threw ' + ((e && e.name) || e));
+      }
+    }, 500);
+  };
+  child.src = '/training/${CHILD_NAV_PACK}/child.html';
+  document.body.appendChild(child);
+  console.log('CHILD-NAV child-created');
+})();`;
+  return `<!doctype html><html><head><title>child nav probe</title></head><body><pre id="child-nav-probe">running</pre><script>${script}</script></body></html>`;
+}
+
+test('a course cannot steer a child iframe it created off-origin (grandchild navigation egress)', async ({ page }) => {
+  const logs: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().startsWith('CHILD-NAV')) logs.push(message.text());
+  });
+  await page.goto('/');
+  const appOrigin = new URL(page.url()).origin;
+  const hits: string[] = [];
+  await page.route(`${appOrigin}/__child-nav-sink/**`, (route) => {
+    hits.push(route.request().url());
+    return route.fulfill({ status: 204 });
+  });
+  await page.getByRole('button', { name: 'Documents', exact: true }).click();
+  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+  await install(
+    page,
+    await packZip(CHILD_NAV_PACK, '1.0.0', { 'story.html': childNavStoryHtml(), 'child.html': '<!doctype html><title>child</title><p>same-origin child</p>' }),
+    'child-nav.zip',
+    CHILD_NAV_PACK,
+    '1.0.0',
+  );
+  await page.getByRole('button', { name: 'Training', exact: true }).click();
+  const option = page.getByTestId('training-pack-select').locator('option', { hasText: CHILD_NAV_PACK });
+  await expect(option).toHaveCount(1, { timeout: 30_000 });
+  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+
+  await expect.poll(() => logs.some((l) => l === 'CHILD-NAV navigation-attempted' || l.startsWith('CHILD-NAV navigation-threw')), { timeout: 60_000 }).toBe(true);
+  await page.waitForTimeout(2000);
+  // Non-vacuous: the course created a same-origin child, it loaded the pack
+  // document, and the course then attempted the off-origin navigation.
+  expect(logs).toEqual(expect.arrayContaining(['CHILD-NAV child-created', `CHILD-NAV child-loaded /training/${CHILD_NAV_PACK}/child.html`]));
+  expect(logs.some((l) => l === 'CHILD-NAV navigation-attempted' || l.startsWith('CHILD-NAV navigation-threw'))).toBe(true);
+  expect(hits, 'grandchild navigation egress from a course-created frame').toEqual([]);
+  expect(new URL(page.url()).origin).toBe(appOrigin);
 });
 
 test('course content cannot run a same-origin app asset as an unconfined worker (review round 4 F1)', async ({ page }) => {
