@@ -125,31 +125,40 @@ const scrollToRow = async (page: Page, row: number): Promise<void> => {
   await settle(page);
 };
 
-test('row 60 of 80 stays at the top, and focus stays on its control, across the breakpoint', async ({ page }) => {
-  test.setTimeout(120_000);
-  await resizeTo(page, 800);
-  await boot(page);
-  await resizeTo(page, 800);
-  expect((await snapshot(page)).itemHeight).toBe(STACKED_ITEM_HEIGHT);
+for (const [row, label] of [[60, 'row 60'], [70, 'row 70 with focus on its Delete button']] as const) {
+  test(`${label} of 80 stays at the top across the breakpoint`, async ({ page }) => {
+    test.setTimeout(120_000);
+    await resizeTo(page, 800);
+    await boot(page);
+    await resizeTo(page, 800);
+    expect((await snapshot(page)).itemHeight).toBe(STACKED_ITEM_HEIGHT);
 
-  await scrollToRow(page, 60);
-  expect((await snapshot(page)).first).toBe(name(60));
-  await page.getByRole('button', { name: `Delete ${name(70)}` }).focus();
+    // Deep enough that the wide layout (60px rows) has a smaller maximum scrollTop
+    // than the stacked position: the browser clamps it the moment the row height
+    // changes, so only a position captured before the switch survives.
+    await scrollToRow(page, row);
+    expect((await snapshot(page)).first).toBe(name(row));
+    const control = `Delete ${name(row)}`;
+    if (row === 70) {
+      await page.getByRole('button', { name: control }).focus();
+      expect((await snapshot(page)).active).toBe(control);
+    }
 
-  await resizeTo(page, 1000);
-  const wide = await snapshot(page);
-  expect(wide.itemHeight).toBe(ITEM_HEIGHT);
-  expect(wide.first).toBe(name(60));
-  expect(Math.abs(wide.firstOffset)).toBeLessThanOrEqual(1);
-  expect(wide.active).toBe(`Delete ${name(70)}`);
+    await resizeTo(page, 1000);
+    const wide = await snapshot(page);
+    expect(wide.itemHeight).toBe(ITEM_HEIGHT);
+    expect(wide.first).toBe(name(row));
+    expect(Math.abs(wide.firstOffset)).toBeLessThanOrEqual(1);
+    if (row === 70) expect(wide.active).toBe(control);
 
-  await resizeTo(page, 800);
-  const back = await snapshot(page);
-  expect(back.itemHeight).toBe(STACKED_ITEM_HEIGHT);
-  expect(back.first).toBe(name(60));
-  expect(Math.abs(back.firstOffset)).toBeLessThanOrEqual(1);
-  expect(back.active).toBe(`Delete ${name(70)}`);
-});
+    await resizeTo(page, 800);
+    const back = await snapshot(page);
+    expect(back.itemHeight).toBe(STACKED_ITEM_HEIGHT);
+    expect(back.first).toBe(name(row));
+    expect(Math.abs(back.firstOffset)).toBeLessThanOrEqual(1);
+    if (row === 70) expect(back.active).toBe(control);
+  });
+}
 
 test('the inline row height equals the rendered row height on both sides of the 800/801 boundary', async ({ page }) => {
   test.setTimeout(180_000);
