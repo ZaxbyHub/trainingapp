@@ -130,6 +130,58 @@ describe('PacksPanel training slot and auto-switch signal (Lumen phase 6)', () =
     expect(onTrainingPackAdded).toHaveBeenCalledTimes(1);
   });
 
+  it('moves focus to the Training packs heading when the switch unmounts the focused Documents panel', async () => {
+    // A Documents tabpanel holding the knowledge slot, as DocumentsPage renders it.
+    const documentsPanel = document.createElement('div');
+    documentsPanel.setAttribute('role', 'tabpanel');
+    documentsPanel.setAttribute('data-slot', '');
+    const knowledge = document.createElement('div');
+    documentsPanel.appendChild(knowledge);
+    document.body.appendChild(documentsPanel);
+    const training = slot();
+    const { client, notify } = makeClient([[KNOWLEDGE], [KNOWLEDGE, COURSE]]);
+    const onTrainingPackAdded = vi.fn();
+    const { rerender } = render(
+      <ToastProvider>
+        <PacksPanel client={client} slots={{ knowledge, training: null }} onTrainingPackAdded={onTrainingPackAdded} />
+      </ToastProvider>
+    );
+    const install = await screen.findByRole('button', { name: /Install pack \.zip/ });
+    install.focus();
+    expect(document.activeElement).toBe(install);
+
+    await act(async () => notify()); // a training pack appears -> the page switches tabs
+    expect(onTrainingPackAdded).toHaveBeenCalledTimes(1);
+    rerender(
+      <ToastProvider>
+        <PacksPanel client={client} slots={{ knowledge: null, training }} onTrainingPackAdded={onTrainingPackAdded} />
+      </ToastProvider>
+    );
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Training packs' })));
+  });
+
+  it('does not steal focus the user moved elsewhere before the switch landed', async () => {
+    const outside = document.createElement('button');
+    outside.setAttribute('data-slot', '');
+    document.body.appendChild(outside);
+    const { client, notify } = makeClient([[KNOWLEDGE], [KNOWLEDGE, COURSE]]);
+    const { rerender } = render(
+      <ToastProvider>
+        <PacksPanel client={client} slots={{ knowledge: slot(), training: null }} onTrainingPackAdded={() => undefined} />
+      </ToastProvider>
+    );
+    await screen.findByTestId('pack-row-handbook-1.0.0');
+    outside.focus();
+    await act(async () => notify());
+    rerender(
+      <ToastProvider>
+        <PacksPanel client={client} slots={{ knowledge: null, training: slot() }} onTrainingPackAdded={() => undefined} />
+      </ToastProvider>
+    );
+    await screen.findByTestId('pack-row-course-a-1.0.0');
+    expect(document.activeElement).toBe(outside);
+  });
+
   it('re-lists when refreshToken changes', async () => {
     const { client } = makeClient([[KNOWLEDGE], [KNOWLEDGE, COURSE]]);
     const target = slot();

@@ -193,6 +193,12 @@ export function PacksPanel({
   const knownRowsRef = useRef<Set<string> | null>(null);
   const onTrainingPackAddedRef = useRef(onTrainingPackAdded);
   onTrainingPackAddedRef.current = onTrainingPackAdded;
+  const slotsRef = useRef(slots);
+  slotsRef.current = slots;
+  // WCAG 2.4.3: the page switches tabs when a training pack appears, which
+  // unmounts the Documents panel. If focus was in that panel (or already lost),
+  // move it to the Training packs heading once that tab has mounted.
+  const pendingTrainingFocusRef = useRef(false);
 
   const refresh = useCallback(async (): Promise<PackInfo[]> => {
     const list = await client.listPacks();
@@ -201,11 +207,27 @@ export function PacksPanel({
     const known = knownRowsRef.current;
     knownRowsRef.current = new Set(list.map(rowId));
     if (known !== null && list.some((pack) => isTrainingPack(pack) && !known.has(rowId(pack)))) {
+      const current = slotsRef.current;
+      if (current !== undefined && current.training === null) {
+        const active = document.activeElement;
+        const documentsPanel = current.knowledge?.closest('[role="tabpanel"]') ?? null;
+        pendingTrainingFocusRef.current =
+          active === null || active === document.body || (documentsPanel !== null && documentsPanel.contains(active));
+      }
       onTrainingPackAddedRef.current?.();
     }
     void refreshStorage();
     return list;
   }, [client, refreshStorage]);
+
+  const trainingSlotElement = slots?.training ?? null;
+  useEffect(() => {
+    if (trainingSlotElement === null || !pendingTrainingFocusRef.current) return;
+    pendingTrainingFocusRef.current = false;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return; // the user moved focus: keep it
+    document.getElementById('training-packs-heading')?.focus();
+  }, [trainingSlotElement]);
 
   const initialRefreshToken = useRef(refreshToken);
   useEffect(() => {
@@ -552,7 +574,7 @@ export function PacksPanel({
               onDrop={onDropInstall}
             >
               <div className="app-packs__head">
-                <h2 id="training-packs-heading" className="app-packs__title">
+                <h2 id="training-packs-heading" className="app-packs__title ui-focusable" tabIndex={-1}>
                   Training packs
                 </h2>
                 {installButton('Install course pack .zip')}
