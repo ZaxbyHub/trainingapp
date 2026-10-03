@@ -81,8 +81,11 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
     [onSlideChange]
   );
   // A new lifted deep link (chat "Open in training") always opens its player.
+  // Only a SET target counts: Back clears it (onLeaveDeepLink), and resetting
+  // here on that clear would let the picker auto-select the sole or remembered
+  // course and reopen a player the user just left (phase-6 review H1).
   useEffect(() => {
-    setLibraryRequested(false);
+    if (initialPackId) setLibraryRequested(false);
   }, [initialPackId]);
 
   const urlPack = useMemo(() => {
