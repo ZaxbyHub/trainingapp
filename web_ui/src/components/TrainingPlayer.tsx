@@ -26,7 +26,7 @@
  *  - Before the course starts the player reports no state; polls stay
  *    silent and queued jumps wait inside the pack bridge until ready.
  */
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, type CSSProperties, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import {
   createTrainingPlayerBridge,
   type TrainingPlayerBridge,
@@ -72,6 +72,19 @@ export interface TrainingPlayerHandle {
 }
 
 const POLL_INTERVAL_MS = 1000;
+
+const alertStyle: CSSProperties = { margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)', outline: 'none' };
+
+/**
+ * Callback ref (stable identity, so it runs once when an alert mounts): move
+ * keyboard focus to a failure notice so AT/keyboard users land on it instead
+ * of only hearing a role=alert announcement - the same queueMicrotask focus
+ * pattern as the Settings Updates error (PR 144 review F19). The alerts carry
+ * tabIndex={-1} so they are programmatically focusable but not tab stops.
+ */
+function focusAlertOnAppear(element: HTMLParagraphElement | null): void {
+  if (element !== null) queueMicrotask(() => element.focus());
+}
 
 export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerProps>(
   function TrainingPlayer({ packId, initialSlideId, onSlideChange }, ref) {
@@ -250,31 +263,31 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
           </span>
         </div>
         {location === null && framed && (
-          <p role="alert" data-testid="training-player-framed" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-framed" style={alertStyle}>
             Course playback is disabled because this app is embedded in another page. Open the app directly in its own
             browser tab to play courses.
           </p>
         )}
         {location === null && originStatus === 'host-unsupported' && (
-          <p role="alert" data-testid="training-player-host-unsupported" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-host-unsupported" style={alertStyle}>
             Course playback is not available on this host: it does not serve the course player. Serve the app with
             the bundled start scripts (start.bat / start.command) or play courses in the desktop app.
           </p>
         )}
         {location === null && originStatus === 'policy-failed' && (
-          <p role="alert" data-testid="training-player-unsecured" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-unsecured" style={alertStyle}>
             Course playback is unavailable: the course player could not be secured in this page. Reload the app; if this
             persists, play courses in the desktop app.
           </p>
         )}
         {location === null && originStatus === 'no-origin' && (
-          <p role="alert" data-testid="training-player-unavailable" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-unavailable" style={alertStyle}>
             Course playback needs a player origin: open the app at http://localhost or http://127.0.0.1 (its loopback
             alias serves the player), or configure player-origin.json / VITE_TRAININGAPP_PLAYER_ORIGIN for this host.
           </p>
         )}
         {playerError !== null && location !== null && (
-          <p role="alert" data-testid="training-player-error" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-error" style={alertStyle}>
             Course player could not start: {playerError}. Course playback is supported in current Chrome and Edge (Safari is not
             supported).{' '}
             <button type="button" onClick={() => window.location.reload()}>

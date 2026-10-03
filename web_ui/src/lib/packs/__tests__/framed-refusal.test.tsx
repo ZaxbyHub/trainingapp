@@ -14,7 +14,7 @@
  */
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('../../../components/training-player-bridge', () => ({
   frameOrigin: () => null,
@@ -96,6 +96,29 @@ describe('framed app refusal (F1)', () => {
     expect(screen.getByTestId('training-player-framed')).toHaveTextContent(/embedded in another page/);
     expect(screen.queryByTestId('training-player-unavailable')).toBeNull();
     expect(screen.getByTestId('training-player-frame').getAttribute('src')).toBe('about:blank');
+  });
+});
+
+describe('player failure alerts take keyboard focus (PR 144 review F19)', () => {
+  it('FR5b the framed notice is focusable (tabIndex -1) and receives focus when it appears', async () => {
+    frameTheApp();
+    render(<TrainingPlayer packId="pack-a" />);
+    const alert = screen.getByTestId('training-player-framed');
+    expect(alert).toHaveAttribute('role', 'alert');
+    expect(alert).toHaveAttribute('tabindex', '-1');
+    await waitFor(() => expect(alert).toHaveFocus());
+  });
+
+  it('FR5c the host-unsupported notice is focusable and takes focus too', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === 'player-origin.json') return new Response('<html>spa</html>', { status: 200, headers: { 'content-type': 'text/html' } });
+      return new Response('Not Found', { status: 404, headers: { 'content-type': 'text/plain' } });
+    });
+    await resolvePlayerOrigin(fetchImpl as unknown as typeof fetch);
+    render(<TrainingPlayer packId="pack-a" />);
+    const alert = screen.getByTestId('training-player-host-unsupported');
+    expect(alert).toHaveAttribute('tabindex', '-1');
+    await waitFor(() => expect(alert).toHaveFocus());
   });
 });
 
