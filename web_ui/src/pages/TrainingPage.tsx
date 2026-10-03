@@ -26,7 +26,8 @@ import type { TrainingPlayerSlideState } from '../components/training-player-bri
 import { usePackClient } from '../lib/packs/pack-client';
 import { LAST_PACK_KEY } from '../lib/storage/persisted-keys';
 import type { PackInfo } from '../lib/api/types';
-import { courseSlideCount, slidePosition } from '../lib/training/slide-position';
+import { courseSlideCount, slideDocsAvailable, slidePosition } from '../lib/training/slide-position';
+import { isElectron } from '../lib/desktop-session';
 import { Badge, Button, Icon, PageHeader, Select } from '../ui';
 import './training.css';
 
@@ -38,9 +39,13 @@ export interface TrainingPageProps {
   /** D6 (issue #82): slide to jump to once a pack is open. */
   pendingSlideId?: string;
   /**
-   * D7 (issue #83): forwarded VERBATIM to TrainingPlayer.onSlideChange — the
+   * D7 (issue #83): receives the player's slidechange event VERBATIM — the
    * frozen `{slideId, slideTitle}` payload reaches the caller (App, which owns
    * the pinned-slide state) unchanged. Do not decorate the event here.
+   * Called once per player slidechange, and (Lumen phase 6) once more with the
+   * SAME event object each time the user presses "Pin slide to Chat" — App pins
+   * every slidechange already, so a re-forward only restores a pin the user
+   * dismissed in Chat; it never carries a new or modified payload.
    */
   onSlideChange?: (event: TrainingPlayerSlideState) => void;
   /**
@@ -73,13 +78,27 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   // The slide the player last reported (for the header and pin-slide). The event
   // is forwarded to onSlideChange UNCHANGED and exactly once (D7 contract).
   const [currentSlide, setCurrentSlide] = useState<TrainingPlayerSlideState | null>(null);
+  // Polite confirmation for the Pin button (the pin itself shows up in Chat).
+  const [pinAnnouncement, setPinAnnouncement] = useState('');
   const handleSlideChange = useCallback(
     (event: TrainingPlayerSlideState) => {
       setCurrentSlide(event);
+      setPinAnnouncement('');
       onSlideChange?.(event);
     },
     [onSlideChange]
   );
+  // Slide docs live in the browser keyword index, which initializes after boot
+  // and exposes no ready event: poll until ready so slide counts and "x of n"
+  // appear without a remount. Never in the desktop renderer (no browser index).
+  const [slideDocsReady, setSlideDocsReady] = useState(() => !isElectron() && slideDocsAvailable());
+  useEffect(() => {
+    if (slideDocsReady || isElectron()) return undefined;
+    const timer = window.setInterval(() => {
+      if (slideDocsAvailable()) setSlideDocsReady(true);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [slideDocsReady]);
   // A new lifted deep link (chat "Open in training") always opens its player.
   // Only a SET target counts: Back clears it (onLeaveDeepLink), and resetting
   // here on that clear would let the picker auto-select the sole or remembered
@@ -287,7 +306,10 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
 
   // "Slide x of n" from the course's ingested slide docs; the title alone when
   // they are not available (desktop renderer, index not ready). Never guessed.
-  const position = currentSlide === null ? null : slidePosition(playerCourseId, currentSlide.slideId);
+  const position = useMemo(
+    () => (currentSlide === null || !slideDocsReady ? null : slidePosition(playerCourseId, currentSlide.slideId)),
+    [currentSlide, playerCourseId, slideDocsReady]
+  );
   const slideLabel =
     currentSlide === null
       ? 'Start the course to see your slide'
@@ -307,8 +329,11 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
     }
   })();
   const slideCounts = useMemo(
-    () => new Map(courses.map((pack) => [pack.packId, courseSlideCount(pack.packId)] as const)),
-    [courses]
+    () =>
+      new Map(
+        courses.map((pack) => [pack.packId, slideDocsReady ? courseSlideCount(pack.packId) : null] as const)
+      ),
+    [courses, slideDocsReady]
   );
 
   const backToLibrary = (): void => {
@@ -378,12 +403,19 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
               onClick={() => {
                 // Re-forwards the SAME event object the player emitted (App pins
                 // every slide change already; this restores a dismissed pin).
-                if (currentSlide !== null) onSlideChange?.(currentSlide);
+                if (currentSlide === null) return;
+                onSlideChange?.(currentSlide);
+                setPinAnnouncement('Slide pinned to Chat');
               }}
             >
               <Icon name="message-square" size={16} />
               Pin slide to Chat
             </Button>
+          ) : null}
+          {showPlayer ? (
+            <span role="status" className="ui-visually-hidden">
+              {pinAnnouncement}
+            </span>
           ) : null}
           {!showPlayer && courses.length > 0 ? (
             <p className="app-training__hint">

@@ -13,7 +13,21 @@
 // the slide title alone and omit the count; nothing is guessed.
 import { getKeywordIndex } from '../search/keyword-index';
 
-const SLIDE_DOC_RE = /(?:^|\/)slide-(\d+)-(.+)\.json$/i;
+/**
+ * The SAME anchored shape pack ingest uses to recognise a slide doc
+ * (`isSlideDocPath` in lib/packs/pack-ingest.ts), plus capture groups for the
+ * position and the slide id. Ingest stores the pack-relative path as the chunk
+ * source, so the anchor matches exactly what ingest treated as a slide doc; a
+ * looser pattern could count other docs. Mirrored rather than imported because
+ * that predicate is module-private in the security-scoped lib/packs, which this
+ * phase leaves untouched; slide-position.test.ts pins the two in sync.
+ */
+export const SLIDE_DOC_PATH_RE = /^docs\/slide-(\d+)-(.+)\.json$/;
+
+/** Whether slide docs can be read at all (the browser keyword index is ready). */
+export function slideDocsAvailable(): boolean {
+  return getKeywordIndex().isReady();
+}
 
 /** slideId -> 1-based spine position, for one course; null when unavailable. */
 function courseSlides(courseId: string): Map<string, number> | null {
@@ -23,11 +37,11 @@ function courseSlides(courseId: string): Map<string, number> | null {
   const slides = new Map<string, number>();
   // chunkIndex 0 = exactly one hit per slide doc; no result cap.
   const hits = index.findChunks(
-    (meta) => meta.packId === courseId && meta.chunkIndex === 0 && SLIDE_DOC_RE.test((meta.source ?? '').replace(/\\/g, '/')),
+    (meta) => meta.packId === courseId && meta.chunkIndex === 0 && SLIDE_DOC_PATH_RE.test(meta.source ?? ''),
     Number.POSITIVE_INFINITY
   );
   for (const hit of hits) {
-    const match = SLIDE_DOC_RE.exec((hit.source ?? '').replace(/\\/g, '/'));
+    const match = SLIDE_DOC_PATH_RE.exec(hit.source ?? '');
     if (match === null) continue;
     const position = Number(match[1]);
     if (Number.isInteger(position) && position > 0) slides.set(match[2], position);
