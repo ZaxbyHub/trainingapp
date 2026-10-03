@@ -6,8 +6,18 @@ import {
   updateConversation,
   deleteConversation,
   countConversations,
+  searchConversations,
   type Conversation,
 } from '../db/conversations';
+
+/** Delay between the last keystroke and the conversation search query. */
+export const CONVERSATION_SEARCH_DEBOUNCE_MS = 250;
+
+const toSummary = (c: Conversation): ConversationSummary => ({
+  id: c.id,
+  title: c.title,
+  updatedAt: new Date(c.updatedAt).toISOString(),
+});
 import type { ChatMessage } from '../types/chat';
 
 /**
@@ -83,23 +93,71 @@ export function useConversations() {
 
   const clearPersistenceError = useCallback(() => setPersistenceError(null), []);
 
+  // Sidebar search (Lumen phase 3). Queries the WHOLE store (searchConversations),
+  // never filters the loaded page. `searchResults` is null while no query is set.
+  // A sequence number drops responses that arrive after a newer query.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<ConversationSummary[] | null>(null);
+  const [searchTruncated, setSearchTruncated] = useState(false);
+  const [isSearching, setIsSearching] = useState(false);
+  const searchSeq = useRef(0);
+  const searchQueryRef = useRef('');
+  useEffect(() => {
+    searchQueryRef.current = searchQuery;
+  }, [searchQuery]);
+
+  const runSearch = useCallback(async (query: string) => {
+    const seq = ++searchSeq.current;
+    if (query.trim() === '') {
+      setSearchResults(null);
+      setSearchTruncated(false);
+      setIsSearching(false);
+      return;
+    }
+    setIsSearching(true);
+    try {
+      const { matches, truncated } = await searchConversations(query);
+      if (seq !== searchSeq.current) return;
+      setSearchResults(matches.map(toSummary));
+      setSearchTruncated(truncated);
+    } catch (error) {
+      if (seq !== searchSeq.current) return;
+      console.error('[useConversations] Failed to search conversations:', error);
+      setPersistenceError('Failed to search conversations');
+      setSearchResults([]);
+      setSearchTruncated(false);
+    } finally {
+      if (seq === searchSeq.current) setIsSearching(false);
+    }
+  }, []);
+
+  // Debounce: clearing the query takes effect immediately; typing waits.
+  useEffect(() => {
+    if (searchQuery.trim() === '') {
+      void runSearch('');
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      void runSearch(searchQuery);
+    }, CONVERSATION_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchQuery, runSearch]);
+
   // Load conversation list from Dexie on mount
   const refreshConversations = useCallback(async () => {
     try {
       const list = await listConversations(0, pageSize);
-      setConversations(list.map(c => ({
-        id: c.id,
-        title: c.title,
-        updatedAt: new Date(c.updatedAt).toISOString(),
-      })));
+      setConversations(list.map(toSummary));
       const total = await countConversations();
       setHasMore(list.length < total);
       setPersistenceError(null);
+      // Keep an active search in step with renames, deletes and new saves.
+      if (searchQueryRef.current.trim() !== '') void runSearch(searchQueryRef.current);
     } catch (error) {
       console.error('[useConversations] Failed to load conversations:', error);
       setPersistenceError('Failed to load conversations');
     }
-  }, [pageSize]);
+  }, [pageSize, runSearch]);
 
   // Load more conversations for pagination
   const loadMore = useCallback(async () => {
@@ -311,5 +369,10 @@ export function useConversations() {
     isLoadingMore,
     persistenceError,
     clearPersistenceError,
+    searchQuery,
+    setSearchQuery,
+    searchResults,
+    searchTruncated,
+    isSearching,
   };
 }

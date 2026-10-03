@@ -4,7 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
-import { useConversations } from './useConversations';
+import { CONVERSATION_SEARCH_DEBOUNCE_MS, useConversations } from './useConversations';
 import type { ChatMessage } from '../types/chat';
 
 // Mock the conversations database module
@@ -15,6 +15,7 @@ vi.mock('../db/conversations', () => ({
   updateConversation: vi.fn(),
   deleteConversation: vi.fn(),
   countConversations: vi.fn(),
+  searchConversations: vi.fn(),
 }));
 
 import * as conversationsDb from '../db/conversations';
@@ -25,6 +26,7 @@ const mockCreateConversation = conversationsDb.createConversation as ReturnType<
 const mockUpdateConversation = conversationsDb.updateConversation as ReturnType<typeof vi.fn>;
 const mockDeleteConversation = conversationsDb.deleteConversation as ReturnType<typeof vi.fn>;
 const mockCountConversations = conversationsDb.countConversations as ReturnType<typeof vi.fn>;
+const mockSearchConversations = conversationsDb.searchConversations as ReturnType<typeof vi.fn>;
 
 // Helper to create mock conversation
 const createMockConversation = (overrides: Partial<{
@@ -54,6 +56,7 @@ describe('useConversations', () => {
     mockUpdateConversation.mockResolvedValue(undefined);
     mockDeleteConversation.mockResolvedValue(undefined);
     mockCountConversations.mockResolvedValue(0);
+    mockSearchConversations.mockResolvedValue({ matches: [], truncated: false });
   });
 
   afterEach(() => {
@@ -754,6 +757,112 @@ describe('useConversations', () => {
         result.current.setCurrentConversationId(undefined);
       });
       expect(result.current.currentConversationId).toBeUndefined();
+    });
+  });
+
+  describe('Search (Lumen phase 3: all conversations, debounced)', () => {
+    const page = Array.from({ length: 50 }, (_, i) =>
+      createMockConversation({ id: `conv-${i}`, title: `Recent ${i}`, updatedAt: 10_000 - i })
+    );
+    const old = createMockConversation({ id: 'conv-110', title: 'Quarterly budget review', updatedAt: 1 });
+
+    async function mountWithPage() {
+      mockListConversations.mockImplementation(async (offset: number, size: number) =>
+        page.slice(offset, offset + size)
+      );
+      mockCountConversations.mockResolvedValue(120);
+      const hook = renderHook(() => useConversations());
+      await waitFor(() => expect(hook.result.current.conversations).toHaveLength(50));
+      return hook;
+    }
+
+    it('queries the whole store, so a match beyond the loaded page is found', async () => {
+      mockSearchConversations.mockResolvedValue({ matches: [old], truncated: false });
+      const { result } = await mountWithPage();
+      expect(result.current.conversations.some((c) => c.id === 'conv-110')).toBe(false);
+      expect(result.current.searchResults).toBeNull();
+
+      act(() => result.current.setSearchQuery('budget'));
+      await waitFor(() => expect(result.current.searchResults).not.toBeNull());
+      expect(mockSearchConversations).toHaveBeenCalledWith('budget');
+      expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-110']);
+      // The paginated list is untouched: no client-side filtering of the loaded page.
+      expect(result.current.conversations).toHaveLength(50);
+    });
+
+    it('is debounced: rapid typing issues one query, for the final text', async () => {
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('b'));
+      act(() => result.current.setSearchQuery('bu'));
+      act(() => result.current.setSearchQuery('bud'));
+      expect(mockSearchConversations).not.toHaveBeenCalled();
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      await new Promise((r) => setTimeout(r, CONVERSATION_SEARCH_DEBOUNCE_MS + 50));
+      expect(mockSearchConversations).toHaveBeenCalledTimes(1);
+      expect(mockSearchConversations).toHaveBeenCalledWith('bud');
+    });
+
+    it('no match yields an empty result list (the "No conversations match" state)', async () => {
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('zzz'));
+      await waitFor(() => expect(result.current.searchResults).toEqual([]));
+      expect(result.current.isSearching).toBe(false);
+    });
+
+    it('clearing the query drops the results immediately and stops searching', async () => {
+      mockSearchConversations.mockResolvedValue({ matches: [old], truncated: true });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('budget'));
+      await waitFor(() => expect(result.current.searchResults).toHaveLength(1));
+      expect(result.current.searchTruncated).toBe(true);
+      act(() => result.current.setSearchQuery(''));
+      expect(result.current.searchResults).toBeNull();
+      expect(result.current.searchTruncated).toBe(false);
+      await new Promise((r) => setTimeout(r, CONVERSATION_SEARCH_DEBOUNCE_MS + 50));
+      expect(mockSearchConversations).toHaveBeenCalledTimes(1);
+    });
+
+    it('a slower, older query never overwrites a newer one', async () => {
+      let resolveOld: (v: unknown) => void = () => {};
+      mockSearchConversations
+        .mockImplementationOnce(() => new Promise((r) => { resolveOld = r; }))
+        .mockResolvedValueOnce({ matches: [page[3]], truncated: false });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('first'));
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      act(() => result.current.setSearchQuery('second'));
+      await waitFor(() => expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-3']));
+      await act(async () => resolveOld({ matches: [old], truncated: false }));
+      expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-3']);
+    });
+
+    it('desktop (Electron) path: same renderer store query, no backend call', async () => {
+      // Chat history lives in the renderer's IndexedDB in the desktop app too;
+      // the desktop backend has no conversation API. Search must not reach for one.
+      const fetchSpy = vi.spyOn(globalThis, 'fetch');
+      (window as unknown as { desktopApi?: unknown }).desktopApi = {};
+      try {
+        mockSearchConversations.mockResolvedValue({ matches: [old], truncated: false });
+        const { result } = await mountWithPage();
+        act(() => result.current.setSearchQuery('budget'));
+        await waitFor(() => expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-110']));
+        expect(mockSearchConversations).toHaveBeenCalledWith('budget');
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        delete (window as unknown as { desktopApi?: unknown }).desktopApi;
+        fetchSpy.mockRestore();
+      }
+    });
+
+    it('a rename re-runs an active search so results stay current', async () => {
+      mockSearchConversations.mockResolvedValue({ matches: [old], truncated: false });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('budget'));
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await result.current.renameConversation('conv-110', 'Budget v2');
+      });
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(2));
     });
   });
 });
