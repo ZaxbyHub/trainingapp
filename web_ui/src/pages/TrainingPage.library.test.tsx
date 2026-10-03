@@ -40,6 +40,14 @@ vi.mock('../components/training-player-bridge', () => ({
 }));
 
 import { TrainingPage } from './TrainingPage';
+import { useState } from 'react';
+import { LAST_PACK_KEY } from '../lib/storage/persisted-keys';
+
+/** App-like host: onLeaveDeepLink really clears the lifted target (App's setTrainingTarget(null)). */
+function DeepLinkHost({ initial }: { initial: string }) {
+  const [target, setTarget] = useState<string | undefined>(initial);
+  return <TrainingPage initialPackId={target} onLeaveDeepLink={() => setTarget(undefined)} />;
+}
 
 const course = (packId: string, name: string, version = '1.0.0') => ({
   packId,
@@ -138,5 +146,47 @@ describe('Training library and player page (Lumen phase 6)', () => {
     expect(onLeaveDeepLink).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('training-player-frame')).toBeNull();
     expect(screen.getByTestId('training-course-course-a')).toBeTruthy();
+  });
+
+  // H1 (phase-6 review): App clearing the lifted target after Back must NOT
+  // re-open a player (the sole course, or a remembered course that differs).
+  describe('Back from a deep link with a host that really clears it', () => {
+    it('sole course: Back shows the library and stays there', async () => {
+      listPacks.mockResolvedValue([COURSE_A]);
+      render(<DeepLinkHost initial="course-a" />);
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+      expect(await screen.findByTestId('training-course-course-a')).toBeTruthy();
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(screen.queryByTestId('training-player-frame')).toBeNull();
+    });
+
+    it('remembered last course differs from the deep link: Back shows the library, not the remembered course', async () => {
+      window.localStorage.setItem(LAST_PACK_KEY, 'course-a/1.0.0');
+      listPacks.mockResolvedValue([COURSE_A, COURSE_B]);
+      render(<DeepLinkHost initial="course-b" />);
+      const frame = (await screen.findByTestId('training-player-frame')) as HTMLIFrameElement;
+      expect(frame.src.startsWith('app://training/course-b/2.1.0/story.html')).toBe(true);
+      fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+      expect(await screen.findByTestId('training-course-course-b')).toBeTruthy();
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(screen.queryByTestId('training-player-frame')).toBeNull();
+    });
+
+    it('nothing remembered: Back shows the library', async () => {
+      listPacks.mockResolvedValue([COURSE_A, COURSE_B]);
+      render(<DeepLinkHost initial="course-b" />);
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+      expect(await screen.findByTestId('training-course-course-a')).toBeTruthy();
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(screen.queryByTestId('training-player-frame')).toBeNull();
+    });
   });
 });
