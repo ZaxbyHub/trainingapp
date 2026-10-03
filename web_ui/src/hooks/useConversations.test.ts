@@ -400,6 +400,31 @@ describe('useConversations', () => {
       expect(result.current.persistenceError).toBe('Failed to delete conversation');
     });
 
+    it('removeConversation resolves true on success and false when the delete throws', async () => {
+      const mockConvs = [createMockConversation({ id: 'conv-1' }), createMockConversation({ id: 'conv-2' })];
+      mockListConversations.mockResolvedValue(mockConvs);
+      mockCountConversations.mockResolvedValue(2);
+
+      const { result } = renderHook(() => useConversations());
+
+      await waitFor(() => {
+        expect(result.current.conversations.length).toBe(2);
+      });
+
+      let ok: boolean | undefined;
+      await act(async () => {
+        ok = await result.current.removeConversation('conv-1');
+      });
+      expect(ok).toBe(true);
+
+      mockDeleteConversation.mockRejectedValueOnce(new Error('Delete failed'));
+      await act(async () => {
+        ok = await result.current.removeConversation('conv-2');
+      });
+      expect(ok).toBe(false);
+      expect(result.current.persistenceError).toBe('Failed to delete conversation');
+    });
+
     it('clearPersistenceError clears the error', async () => {
       mockListConversations.mockRejectedValueOnce(new Error('Database error'));
 

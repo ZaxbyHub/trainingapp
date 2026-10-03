@@ -404,8 +404,9 @@ export function useConversations() {
    * clears currentConversationId and currentMessages.
    *
    * @param id - Conversation ID to delete
+   * @returns true when deleted, false when the delete failed (error state is set)
    */
-  const removeConversation = useCallback(async (id: string) => {
+  const removeConversation = useCallback(async (id: string): Promise<boolean> => {
     try {
       await deleteConversation(id);
       if (currentConversationId === id) {
@@ -414,9 +415,11 @@ export function useConversations() {
       }
       await refreshConversations();
       setPersistenceError(null);
+      return true;
     } catch (error) {
       console.error('[useConversations] Failed to delete conversation:', error);
       setPersistenceError('Failed to delete conversation');
+      return false;
     }
   }, [currentConversationId, refreshConversations]);
 

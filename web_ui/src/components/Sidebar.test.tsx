@@ -305,9 +305,12 @@ describe('Sidebar', () => {
       expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
     });
 
-    it('drops the pending rescue when the delete fails, so a later list change does not steal focus', async () => {
+    it.each([
+      ['rejects', () => vi.fn().mockRejectedValue(new Error('nope'))],
+      ['resolves false', () => vi.fn().mockResolvedValue(false)],
+    ])('drops the pending rescue when the delete %s, so a later list change does not steal focus', async (_n, make) => {
       const user = userEvent.setup();
-      const onDelete = vi.fn().mockRejectedValue(new Error('nope'));
+      const onDelete = make();
       const { rerender } = render(<Sidebar {...defaultProps} conversations={three} onDeleteConversation={onDelete} />);
       await deleteRow(user, 'Alpha');
       await act(async () => {
@@ -318,6 +321,81 @@ describe('Sidebar', () => {
       (document.activeElement as HTMLElement | null)?.blur();
       // The row disappears later for an unrelated reason (e.g. another tab).
       rerender(<Sidebar {...defaultProps} conversations={three.slice(1)} onDeleteConversation={onDelete} />);
+      expect(document.activeElement).toBe(document.body);
+    });
+
+    it('B-1: keeps the rescue after a successful async delete while a search drops the row later', async () => {
+      const user = userEvent.setup();
+      let startSearch: () => void = () => {};
+      let landResults: (ids: string[]) => void = () => {};
+      function Searching() {
+        const [items, setItems] = useState(three);
+        const [busy, setBusy] = useState(false);
+        startSearch = () => setBusy(true);
+        landResults = (ids) => {
+          setItems(three.filter((c) => ids.includes(c.id)));
+          setBusy(false);
+        };
+        return (
+          <Sidebar
+            {...defaultProps}
+            conversations={three}
+            searchResults={items}
+            searchQuery="a"
+            isSearching={busy}
+            onSearchChange={() => {}}
+            // Resolves true after a microtask; the search results land later.
+            onDeleteConversation={async () => {
+              await Promise.resolve();
+              return true;
+            }}
+          />
+        );
+      }
+      render(<Searching />);
+      await deleteRow(user, 'Alpha');
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByText('Alpha')).toBeInTheDocument(); // promise settled, row still shown
+      // The post-delete refresh starts a search (focus is still in the list, so it
+      // is not made inert) and the results, minus Alpha, land afterwards.
+      act(() => startSearch());
+      act(() => landResults(['b', 'c']));
+      expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+      expect(screen.getByText('Bravo').closest('button')).toHaveFocus();
+    });
+
+    it('L-1: drops the entry after one attempt even when the target cannot take focus', async () => {
+      const user = userEvent.setup();
+      let setItemsExt: (items: typeof three) => void = () => {};
+      function Harness() {
+        const [items, setItems] = useState([three[0]]);
+        setItemsExt = setItems;
+        return (
+          <Sidebar
+            {...defaultProps}
+            conversations={items}
+            onDeleteConversation={(id) => setItems((prev) => prev.filter((c) => c.id !== id))}
+          />
+        );
+      }
+      render(<Harness />);
+      const row = screen.getByText('Alpha').closest('.app-conv') as HTMLElement;
+      await user.click(row.querySelector('button[aria-label="Conversation options"]') as HTMLElement);
+      await user.click(screen.getByRole('menuitem', { name: 'Delete' }));
+      const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus').mockImplementation(() => {});
+      try {
+        await user.click(screen.getByRole('menuitem', { name: 'Confirm' }));
+        expect(screen.queryByText('Alpha')).not.toBeInTheDocument();
+        expect(focusSpy).toHaveBeenCalled(); // the one attempt (New chat), which silently failed
+        expect(document.activeElement).toBe(document.body);
+      } finally {
+        focusSpy.mockRestore();
+      }
+      // A much later list change must not pull focus: the entry is gone.
+      act(() => setItemsExt([three[1]]));
+      expect(screen.getByText('Bravo')).toBeInTheDocument();
       expect(document.activeElement).toBe(document.body);
     });
   });

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { Button, Icon, IconButton, SideNav, useAppShell, type SideNavItem } from '../ui';
 import { SidebarConversationItem } from './SidebarConversationItem';
 import { CONVERSATION_QUERY_MAX_LENGTH } from '../db/conversation-query';
@@ -20,8 +20,12 @@ interface SidebarProps {
   onSelectConversation: (id: string) => void;
   onNavigate: (page: SidebarPage) => void;
   onRenameConversation?: (id: string, newTitle: string) => void;
-  /** May return a promise; its settling lets the sidebar expire a failed delete's focus rescue. */
-  onDeleteConversation?: (id: string) => void | Promise<unknown>;
+  /**
+   * May return a promise. Resolving `false` or rejecting is the explicit failure
+   * signal that expires the delete's pending focus rescue; any other resolution
+   * keeps it until the row actually leaves the list.
+   */
+  onDeleteConversation?: (id: string) => void | Promise<boolean | void>;
   hasMore?: boolean;
   onLoadMore?: () => void;
   /** Conversation search (whole store, see useConversations). Omit to hide the field. */
@@ -94,33 +98,29 @@ export function Sidebar({
   // contains it, focus the next row's select button, else the previous one, else
   // the search field (or New chat when there is no search field).
   //
-  // The entry is consumed only once focus has actually landed (or the user moved
-  // on, or the delete failed). While the list is inert (a search re-run is in
-  // flight) the rescue is deferred and retried on the next shown/busy change,
-  // because focus() on an inert row is a silent no-op.
-  const pendingDeleteFocus = useRef<{ id: string; index: number; settled: boolean } | null>(null);
-  // Bumped when a delete's promise settles so the rescue effect re-evaluates.
-  const [settledTick, setSettledTick] = useState(0);
+  // The entry is dropped once one non-deferred attempt has been made (whether or
+  // not focus landed), when the user moved on, or when the delete explicitly
+  // failed (resolved false or rejected). A delete that resolves successfully does
+  // NOT drop it: the row may leave `shown` later (an active search refreshes
+  // asynchronously after the delete settles). While the list is inert (a search
+  // re-run is in flight) the rescue is deferred and retried on the next
+  // shown/busy change, because focus() on an inert row is a silent no-op.
+  const pendingDeleteFocus = useRef<{ id: string; index: number } | null>(null);
   const deleteConversation = (id: string) => {
-    const entry = { id, index: shown.findIndex((c) => c.id === id), settled: false };
+    const entry = { id, index: shown.findIndex((c) => c.id === id) };
     pendingDeleteFocus.current = entry;
-    const settle = () => {
-      entry.settled = true;
-      setSettledTick((n) => n + 1);
+    const expire = () => {
+      if (pendingDeleteFocus.current === entry) pendingDeleteFocus.current = null;
     };
-    // Void return: no settle signal, so the entry waits for the row to leave.
-    Promise.resolve(onDeleteConversation?.(id)).then(settle, settle);
+    // Void return: no failure signal, so the entry waits for the row to leave.
+    Promise.resolve(onDeleteConversation?.(id)).then((deleted) => {
+      if (deleted === false) expire();
+    }, expire);
   };
   useEffect(() => {
     const pending = pendingDeleteFocus.current;
     if (!pending) return;
-    if (shown.some((c) => c.id === pending.id)) {
-      // Still listed: if the delete already settled it failed (or was a no-op),
-      // so nothing will ever remove the row; drop the entry rather than let a
-      // later unrelated change to `shown` pull focus into the list.
-      if (pending.settled) pendingDeleteFocus.current = null;
-      return;
-    }
+    if (shown.some((c) => c.id === pending.id)) return; // row not gone yet
     const active = document.activeElement;
     if (active && active !== document.body) {
       pendingDeleteFocus.current = null; // the user already moved on
@@ -137,8 +137,8 @@ export function Sidebar({
       newChatRef.current?.querySelector<HTMLElement>('button') ??
       null;
     target?.focus();
-    if (target && document.activeElement === target) pendingDeleteFocus.current = null;
-  }, [shown, busy, settledTick, searchId]);
+    pendingDeleteFocus.current = null; // one attempt only, even if focus did not land
+  }, [shown, busy, searchId]);
   const clearSearch = () => {
     onSearchChange?.('');
     document.getElementById(searchId)?.focus();
