@@ -773,6 +773,25 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
         </SettingsSubsection>
       )}
 
+      {/* L7 + review N2/L-b: the feedback regions are ALWAYS mounted with a constant
+          aria-live/aria-atomic and NO role (a role toggled on with the message made
+          NVDA/JAWS announce twice); only their content changes. They sit right after
+          the connection form, next to the field or button that triggered them. */}
+      <div className="settings-live" aria-live="polite" aria-atomic="true" data-testid="external-status">
+        {status !== null && (
+          <Banner live={false} tone="success" title="Connection works">
+            {status}
+          </Banner>
+        )}
+      </div>
+      <div className="settings-live" aria-live="assertive" aria-atomic="true" data-testid="external-problem">
+        {problem !== null && (
+          <Banner live={false} tone="danger" title={problemTitle()}>
+            {problem}
+          </Banner>
+        )}
+      </div>
+
       {/* M2: whenever egress is off, the built-in model is what answers, so its
           controls stay rendered (engine, download, cache status, run location,
           profile, backend status) under every source. */}
@@ -791,23 +810,6 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
         </p>
       )}
 
-      {/* L7: the feedback regions are ALWAYS mounted (aria-live from the start, as
-          Clear Cache does) and only their content changes, so each message is
-          announced; the role is present while there is a message. */}
-      <div className="settings-live" aria-live="polite" aria-atomic="true" role={status !== null ? 'status' : undefined}>
-        {status !== null && (
-          <Banner live={false} tone="success" title="Connection works">
-            {status}
-          </Banner>
-        )}
-      </div>
-      <div className="settings-live" aria-live="assertive" aria-atomic="true" role={problem !== null ? 'alert' : undefined}>
-        {problem !== null && (
-          <Banner live={false} tone="danger" title={problemTitle()}>
-            {problem}
-          </Banner>
-        )}
-      </div>
     </SettingsSection>
   );
 }

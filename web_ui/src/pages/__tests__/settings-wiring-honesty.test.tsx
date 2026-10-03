@@ -554,14 +554,15 @@ describe('Lumen phase 4: six sections + section nav (design-language.md section 
     fireEvent.change(select, { target: { value: 'about' } });
     expect(select).toHaveFocus();
     expect(select.value).toBe('about');
-    // Explicit activation moves focus: Enter on the select ...
+    // Explicit activation moves focus: Enter on the select (read one frame later, after
+    // a Firefox open-dropdown commit has fired change; review L-d) ...
     fireEvent.keyDown(select, { key: 'Enter' });
-    expect(screen.getByRole('heading', { level: 2, name: /^about$/i })).toHaveFocus();
-    // ... or the adjacent Go button.
+    await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: /^about$/i })).toHaveFocus());
+    // ... or the adjacent Go button ("Go to section"), which reads the select's actual value.
     select.focus();
     fireEvent.change(select, { target: { value: 'updates' } });
     expect(select).toHaveFocus();
-    fireEvent.click(within(nav).getByRole('button', { name: /^go$/i, hidden: true }));
+    fireEvent.click(within(nav).getByRole('button', { name: /^go to section$/i, hidden: true }));
     expect(screen.getByRole('heading', { level: 2, name: /^updates$/i })).toHaveFocus();
   });
 

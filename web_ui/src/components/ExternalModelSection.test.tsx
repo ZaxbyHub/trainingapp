@@ -92,7 +92,7 @@ describe('browser app', () => {
     fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://localhost:1234' } });
     fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'qwen' } });
     fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
-    expect(await q.findByRole('status')).toHaveTextContent(/qwen is available/i);
+    await waitFor(() => expect(q.getByTestId('external-status')).toHaveTextContent(/qwen is available/i));
     expect(probeSpy.calls).toBe(1);
     expect(String((fetchSpy.mock.calls[0] as unknown[])[0])).toBe('http://localhost:1234/v1/models');
     // The model Combobox offers the endpoint's list (ARIA 1.2 listbox popup).
@@ -109,7 +109,7 @@ describe('browser app', () => {
     const base = q.getByLabelText(/^base url$/i);
     fireEvent.change(base, { target: { value: 'http://169.254.169.254' } });
     fireEvent.blur(base);
-    expect(await q.findByRole('alert')).toHaveTextContent(/metadata/);
+    await waitFor(() => expect(q.getByTestId('external-problem')).toHaveTextContent(/metadata/));
     expect(localStorage.getItem('external-provider-config')).toBeNull();
   });
 
@@ -117,7 +117,7 @@ describe('browser app', () => {
     render(<ExternalModelSection />);
     const q = within(panel());
     fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
-    expect(await q.findByRole('alert')).toHaveTextContent(/base URL and choose a model/i);
+    await waitFor(() => expect(q.getByTestId('external-problem')).toHaveTextContent(/base URL and choose a model/i));
     expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
   });
 
@@ -149,13 +149,14 @@ describe('browser app', () => {
     const key = q.getByLabelText(/^api key$/i);
     fireEvent.change(key, { target: { value: 'sk-INLINE-☃-SENTINEL' } });
     fireEvent.blur(key);
-    const alert = await q.findByRole('alert');
+    const alert = q.getByTestId('external-problem');
+    await waitFor(() => expect(alert).not.toBeEmptyDOMElement());
     expect(alert).toHaveTextContent(/cannot be sent in an HTTP header/);
     expect(alert.textContent).not.toContain('SENTINEL');
     const dump = JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage });
     expect(dump).not.toContain('SENTINEL');
     fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
-    await waitFor(() => expect(q.getByRole('alert')).toHaveTextContent(/cannot be sent in an HTTP header/));
+    await waitFor(() => expect(q.getByTestId('external-problem')).toHaveTextContent(/cannot be sent in an HTTP header/));
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
@@ -224,7 +225,7 @@ describe('desktop app', () => {
     fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://192.168.1.20:8000' } });
     fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm1' } });
     fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
-    expect(await q.findByRole('status')).toHaveTextContent(/m1 is available/);
+    await waitFor(() => expect(q.getByTestId('external-status')).toHaveTextContent(/m1 is available/));
     expect(testExternalEndpoint).toHaveBeenCalledWith({ protocol: 'openai', baseUrl: 'http://192.168.1.20:8000', model: 'm1' });
     expect(probeSpy.calls).toBe(0);
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -449,7 +450,8 @@ describe('desktop app', () => {
     // (an <input> strips CR/LF itself, so the reachable case is a non-Latin-1 paste)
     fireEvent.change(key, { target: { value: 'sk-INLINE-\u{1F511}-SENTINEL' } });
     fireEvent.blur(key);
-    const alert = await q.findByRole('alert');
+    const alert = q.getByTestId('external-problem');
+    await waitFor(() => expect(alert).not.toBeEmptyDOMElement());
     expect(alert).toHaveTextContent(/cannot be sent in an HTTP header/);
     expect(alert.textContent).not.toContain('SENTINEL');
     expect(updateSettings).not.toHaveBeenCalled();
@@ -485,7 +487,7 @@ describe('desktop app', () => {
     await q.findByTestId('external-airgap-notice');
     fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'https://api.anthropic.com' } });
     fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
-    expect(await q.findByRole('alert')).toHaveTextContent(/air-?gap/i);
+    await waitFor(() => expect(q.getByTestId('external-problem')).toHaveTextContent(/air-?gap/i));
     expect(testExternalEndpoint).not.toHaveBeenCalled();
   });
 
@@ -672,7 +674,7 @@ describe('browser app: key-origin binding (F2)', () => {
     expect(q.getByTestId('external-key-saved')).toBeInTheDocument();
     fireEvent.change(base, { target: { value: 'http://169.254.169.254' } });
     fireEvent.blur(base);
-    expect(await q.findByRole('alert')).toHaveTextContent(/metadata/);
+    await waitFor(() => expect(q.getByTestId('external-problem')).toHaveTextContent(/metadata/));
     fireEvent.focus(key);
     fireEvent.blur(key);
     expect(localStorage.getItem('external-provider-apikey-origin')).toBe(a.base);
@@ -854,12 +856,13 @@ describe('generator source (Lumen phase 4, design-language.md section 5)', () =>
     fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://localhost:1234' } });
     fireEvent.change(q.getByLabelText(/^model$/i), { target: { value: 'm' } });
     fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
-    const alert = await q.findByRole('alert');
+    const alert = q.getByTestId('external-problem');
+    await waitFor(() => expect(alert).not.toBeEmptyDOMElement());
     expect(alert).toHaveTextContent(/the server refused the api key/i);
     // A setting problem (policy refusal) is titled as such, not as a connection cause.
     fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://169.254.169.254' } });
     fireEvent.blur(q.getByLabelText(/^base url$/i));
-    await waitFor(() => expect(q.getByRole('alert')).toHaveTextContent(/check this setting/i));
+    await waitFor(() => expect(q.getByTestId('external-problem')).toHaveTextContent(/check this setting/i));
   });
 });
 
@@ -927,7 +930,7 @@ describe('review round 3 (M4, L1, L2, L3, L5, L7)', () => {
     fireEvent.change(q.getByLabelText(/^base url$/i), { target: { value: 'http://localhost:1234' } });
     fireEvent.blur(q.getByLabelText(/^base url$/i));
     fireEvent.click(q.getByRole('button', { name: /^test connection$/i }));
-    await waitFor(() => expect(q.getByRole('status')).toHaveTextContent(/available|connected|models/i));
+    await waitFor(() => expect(q.getByTestId('external-status')).toHaveTextContent(/available|connected|models/i));
     const model = q.getByRole('combobox', { name: /^model$/i });
     model.focus();
     fireEvent.keyDown(model, { key: 'ArrowDown' });
@@ -947,17 +950,39 @@ describe('review round 3 (M4, L1, L2, L3, L5, L7)', () => {
     );
   });
 
-  test('L7: the feedback live regions are mounted before any message and keep their identity', async () => {
+  test('L7/L-b: the feedback live regions are always mounted, with a constant aria-live and no role', async () => {
     render(<ExternalModelSection />);
     const q = within(panel());
     const live = region().querySelectorAll('.settings-live');
     expect(live).toHaveLength(2);
     expect(live[0]).toHaveAttribute('aria-live', 'polite');
     expect(live[1]).toHaveAttribute('aria-live', 'assertive');
-    expect(live[1]).not.toHaveAttribute('role');
+    for (const el of live) {
+      expect(el).toHaveAttribute('aria-atomic', 'true');
+      expect(el).not.toHaveAttribute('role');
+    }
     fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
-    const alert = await q.findByRole('alert');
-    expect(alert).toBe(live[1]);
-    expect(alert).toHaveTextContent(/base URL and choose a model/i);
+    await waitFor(() => expect(live[1]).toHaveTextContent(/base URL and choose a model/i));
+    // Same element, still no role (no double announcement), and the Banner adds none.
+    expect(region().querySelectorAll('.settings-live')[1]).toBe(live[1]);
+    expect(live[1]).not.toHaveAttribute('role');
+    expect(live[1].querySelector('[role]')).toBeNull();
+  });
+
+  test('N2: the feedback regions sit right after the connection form, before the built-in settings', () => {
+    render(<ExternalModelSection builtIn={<p data-testid="builtin-marker">BUILT-IN</p>} />);
+    const q = within(panel());
+    const before = (a: Element, b: Element) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    const testButton = q.getByRole('button', { name: /^test connection$/i });
+    const status = q.getByTestId('external-status');
+    const problem = q.getByTestId('external-problem');
+    const builtIn = q.getByTestId('builtin-marker');
+    expect(before(testButton, status)).toBe(true);
+    expect(before(status, problem)).toBe(true);
+    expect(before(problem, builtIn)).toBe(true);
+    // Nothing but the grounded switch (end of the form) separates them from the form.
+    const form = q.getByRole('group', { name: /^server connection$/i });
+    expect(form.nextElementSibling).toBe(status);
+    expect(status.nextElementSibling).toBe(problem);
   });
 });

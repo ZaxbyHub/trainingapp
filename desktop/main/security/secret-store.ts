@@ -35,6 +35,11 @@ export interface SecretStore {
   /** Throws when the value cannot be stored securely. */
   set(name: string, value: string): void;
   delete(name: string): void;
+  /**
+   * false: values live in process memory only and are lost on restart (memory
+   * stores). Omitted / true: values survive restarts (encrypted on disk).
+   */
+  readonly persistent?: boolean;
 }
 
 interface SecretFile {
@@ -143,6 +148,7 @@ export function createSafeStorageSecretStore(opts: { safeStorage: SafeStorageLik
 export function createMemorySecretStore(): SecretStore {
   const data = new Map<string, string>();
   return {
+    persistent: false,
     get: (name) => data.get(name) ?? null,
     set: (name, value) => {
       data.set(name, value);

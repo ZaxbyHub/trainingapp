@@ -208,6 +208,8 @@ export function SettingsNav({ items, label = 'Settings sections' }: { items: rea
   // The section a jump targeted: kept current after the jump while it sits at the line.
   const jumpTargetRef = useRef<string | null>(null);
   const syncRef = useRef<() => void>(() => undefined);
+  // Go / Enter act on the select's ACTUAL value (never a possibly stale `current`).
+  const selectRef = useRef<HTMLSelectElement>(null);
   const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -224,13 +226,21 @@ export function SettingsNav({ items, label = 'Settings sections' }: { items: rea
         const el = document.getElementById(id);
         return el ? el.getBoundingClientRect().top - top : Number.POSITIVE_INFINITY;
       };
+      const atBottom =
+        scroller.scrollHeight > scroller.clientHeight + 1 &&
+        scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2;
+      // A jumped-to section stays current while it is visible: at the line, or (near the
+      // end of the page, where a short section can never reach the line) anywhere in view.
       const jumped = jumpTargetRef.current;
-      if (jumped !== null && offset(jumped) >= -2 && offset(jumped) <= SECTION_LINE_PX) {
-        setCurrent(jumped);
-        return;
+      if (jumped !== null) {
+        const at = offset(jumped);
+        if (at >= -2 && (at <= SECTION_LINE_PX || (atBottom && at < scroller.clientHeight))) {
+          setCurrent(jumped);
+          return;
+        }
       }
       let next = items[0].id;
-      if (scroller.scrollHeight > scroller.clientHeight + 1 && scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2) {
+      if (atBottom) {
         // At the bottom a short last section can never reach the line.
         next = items[items.length - 1].id;
       } else {
@@ -309,16 +319,22 @@ export function SettingsNav({ items, label = 'Settings sections' }: { items: rea
           Jump to section
         </label>
         <select
+          ref={selectRef}
           id={selectId}
           className="ui-select ui-focusable"
           value={current}
           // Scroll only: focus stays on the select (arrow keys fire change on Windows).
           onChange={(e) => jump(e.target.value, false)}
           onKeyDown={(e: KeyboardEvent<HTMLSelectElement>) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              jump(e.currentTarget.value, true);
-            }
+            if (e.key !== 'Enter') return;
+            // Not preventDefault: in Firefox, Enter on an OPEN dropdown commits the
+            // highlighted option and fires `change` AFTER this keydown. Read the value one
+            // frame later, once that change has settled, so focus goes to the section the
+            // select now shows.
+            requestAnimationFrame(() => {
+              const value = selectRef.current?.value;
+              if (value) jump(value, true);
+            });
           }}
         >
           {items.map((item) => (
@@ -327,7 +343,11 @@ export function SettingsNav({ items, label = 'Settings sections' }: { items: rea
             </option>
           ))}
         </select>
-        <Button variant="secondary" onClick={() => jump(current, true)}>
+        <Button
+          variant="secondary"
+          aria-label="Go to section"
+          onClick={() => jump(selectRef.current?.value ?? current, true)}
+        >
           Go
         </Button>
       </div>

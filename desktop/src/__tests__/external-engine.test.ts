@@ -20,6 +20,7 @@ import { NodeBackendHost } from '../../main/backend';
 import { LlamaEngine } from '../../main/backend/inference/llama-engine';
 import { createBackendServer, listenOnRandomPort } from '../../main/backend/server';
 import { createLoopbackGuard } from '../../main/security/loopback-guard';
+import { createMemorySecretStore } from '../../main/security/secret-store';
 import { ExternalProviderError } from '../../main/backend/net/provider-error';
 import type { RetrievalSurface } from '../../main/backend/types';
 
@@ -211,6 +212,19 @@ describe('key-origin binding (I1/I2)', () => {
     expect(second.engine.responseSettings()['external.apiKeySet']).toBe(true);
     await second.engine.query('hello');
     expect(ext.requests[0]?.headers.authorization).toBe(`Bearer ${KEY}`);
+  });
+
+  // Review L-a: the headless dev-server keeps keys in a memory store, which does not
+  // survive a restart, so it must not report the key as persisted.
+  it('a memory secret store reports apiKeyPersisted false; a persistent store reports true', async () => {
+    const ext = await endpoint();
+    const memory = newEngine(createMemorySecretStore() as unknown as ReturnType<typeof mapStore>);
+    expect(memory.engine.applySettingsPatch(enable(ext.base, { 'external.apiKey': KEY })).ok).toBe(true);
+    expect(memory.engine.responseSettings()['external.apiKeySet']).toBe(true);
+    expect(memory.engine.responseSettings()['external.apiKeyPersisted']).toBe(false);
+    const disk = newEngine();
+    expect(disk.engine.applySettingsPatch(enable(ext.base, { 'external.apiKey': KEY })).ok).toBe(true);
+    expect(disk.engine.responseSettings()['external.apiKeyPersisted']).toBe(true);
   });
 
   it('secure storage unavailable: the key is kept for the session only, never written', async () => {
