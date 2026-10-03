@@ -165,6 +165,47 @@ for (const theme of THEMES) {
           expect(stale, `stale baseline entries on ${key} (fixed? remove them)`).toEqual([]);
         });
       }
+
+      // Lumen phase 3 (review F6): the AppShell nav drawer, open, at the drawer width.
+      // It is a modal dialog over an inert page, opened here on Chat with the model
+      // gate still up (the state the drawer and the overlay share in real use). No
+      // KNOWN_BASELINE entry exists or may be added for this key: zero nodes allowed.
+      if (width === 500) {
+        test('drawer', async ({ page }) => {
+          await blockExternalNetwork(page);
+          await page.addInitScript((t) => {
+            try {
+              localStorage.setItem('theme-preference', t);
+            } catch {
+              /* ignore */
+            }
+          }, theme);
+          await page.goto('/');
+          await expect(page.getByText('Initializing search services', { exact: false })).toHaveCount(0, {
+            timeout: 60_000,
+          });
+          await page.evaluate(() => document.fonts.ready);
+          await page.getByRole('button', { name: 'Open navigation' }).click();
+          const drawer = page.getByRole('dialog', { name: 'Navigation' });
+          await expect(drawer).toBeVisible();
+          await expect(drawer.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+          await page.waitForTimeout(500);
+
+          const results = await new AxeBuilder({ page })
+            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])
+            .analyze();
+          const found = results.violations
+            .filter((v) => v.impact === 'serious' || v.impact === 'critical')
+            .flatMap((v) => v.nodes.map((n) => `${v.id} | ${n.target.join(' ')}`))
+            .sort();
+          const key = `drawer:${theme}:${width}`;
+          if (process.env.LUMEN_AXE_INVENTORY) {
+            console.info(`AXE ${key} ${JSON.stringify(found)}`);
+          }
+          expect(KNOWN_BASELINE[key], `${key} must never be baselined`).toBeUndefined();
+          expect(found, `serious/critical axe nodes on ${key}`).toEqual([]);
+        });
+      }
     });
   }
 }
