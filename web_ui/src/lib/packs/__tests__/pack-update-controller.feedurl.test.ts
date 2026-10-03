@@ -1,20 +1,21 @@
 // @vitest-environment node
 /**
- * The pack-updates localStorage record is user-writable, so its feedUrl is
- * scheme-checked when the record is LOADED (PR 144 review F13): a non-https
- * value is dropped and the controller falls back to the default feed.
+ * The pack-updates localStorage record is user-writable, so a non-https
+ * feedUrl fails CLOSED (PR 144 review F13): the check is refused with a
+ * visible error, no request is made, and the default feed is NOT substituted.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { BrowserUpdatesController, type BrowserUpdatesDeps } from '../pack-update-controller';
-import { DEFAULT_UPDATE_FEED_URL } from '../pack-update-browser';
 import { PACK_UPDATES_STATE_KEY } from '../../storage/persisted-keys';
 
-function controllerWith(record: unknown): BrowserUpdatesController {
+function controllerWith(record: unknown) {
   const store = new Map<string, string>([[PACK_UPDATES_STATE_KEY, JSON.stringify(record)]]);
+  const fetchFeed = vi.fn(async (_url: string): Promise<string> => '{}');
+  const downloadArtifact = vi.fn(async (_url: string, _bytes: number): Promise<Uint8Array> => new Uint8Array());
   const deps: BrowserUpdatesDeps = {
     manager: () => ({ listPacks: async () => [], installPack: async () => { throw new Error('unused'); } }),
-    fetchFeed: async () => { throw new Error('unused'); },
-    downloadArtifact: async () => { throw new Error('unused'); },
+    fetchFeed,
+    downloadArtifact,
     trustedKeys: () => [],
     storage: () => ({
       getItem: (key: string) => store.get(key) ?? null,
@@ -23,25 +24,39 @@ function controllerWith(record: unknown): BrowserUpdatesController {
     airgap: false,
     now: () => new Date(0),
   };
-  return new BrowserUpdatesController(deps);
+  return { controller: new BrowserUpdatesController(deps), fetchFeed, downloadArtifact };
 }
 
-describe('pack-updates feedUrl scheme check on load', () => {
-  it('keeps an https feedUrl', async () => {
-    const status = await controllerWith({ optIn: true, feedUrl: 'https://mirror.example/feed.json' }).getUpdateStatus();
-    expect(status.optIn).toBe(true);
-    expect(status.feedUrl).toBe('https://mirror.example/feed.json');
-  });
-
+describe('pack-updates feedUrl scheme check', () => {
   it.each([
     'http://mirror.example/feed.json',
     'file:///etc/passwd',
     'javascript:alert(1)',
     'ftp://mirror.example/feed.json',
     'not a url',
-  ])('drops %s and falls back to the default feed (opt-in preserved)', async (feedUrl) => {
-    const status = await controllerWith({ optIn: true, feedUrl }).getUpdateStatus();
-    expect(status.optIn).toBe(true);
-    expect(status.feedUrl).toBe(DEFAULT_UPDATE_FEED_URL);
+  ])('refuses %s: no fetch, visible error, opt-in kept', async (feedUrl) => {
+    const { controller, fetchFeed, downloadArtifact } = controllerWith({ optIn: true, feedUrl });
+    const result = await controller.checkForUpdates();
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/must be https/);
+    expect(result.status?.error).toMatch(/must be https/);
+    expect(result.status?.optIn).toBe(true);
+    expect(result.status?.candidates).toEqual([]);
+    expect(fetchFeed).not.toHaveBeenCalled();
+    expect(downloadArtifact).not.toHaveBeenCalled();
+  });
+
+  it('still fetches a configured https feedUrl', async () => {
+    const { controller, fetchFeed } = controllerWith({ optIn: true, feedUrl: 'https://mirror.example/feed.json' });
+    await controller.checkForUpdates();
+    expect(fetchFeed).toHaveBeenCalledTimes(1);
+    expect(fetchFeed).toHaveBeenCalledWith('https://mirror.example/feed.json');
+  });
+
+  it('falls back to the default feed only when no feedUrl is configured', async () => {
+    const { controller, fetchFeed } = controllerWith({ optIn: true });
+    await controller.checkForUpdates();
+    expect(fetchFeed).toHaveBeenCalledTimes(1);
+    expect(String(fetchFeed.mock.calls[0]?.[0])).toMatch(/^https:/);
   });
 });

@@ -314,6 +314,12 @@ export async function runUpdateCheck(
     return { skipped: true, reason: 'opt-in' };
   }
   const url = state.feedUrl !== undefined && state.feedUrl !== '' ? state.feedUrl : DEFAULT_UPDATE_FEED_URL;
+  // Fail closed (PR 144 review F13): the pack-updates record is plain
+  // localStorage, so a configured non-https feed URL is refused here before any
+  // request, never silently replaced by the default feed.
+  if (!isHttpsUrl(url)) {
+    return { skipped: false, candidates: [], refused: [], error: 'update feed URL must be https; no request was made' };
+  }
   let feedText: string;
   try {
     feedText = await deps.fetchFeed(url);
