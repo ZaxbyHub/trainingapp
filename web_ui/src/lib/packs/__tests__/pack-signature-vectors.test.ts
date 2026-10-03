@@ -20,6 +20,26 @@ const bytes = (b64: string): Uint8Array => new Uint8Array(Buffer.from(b64, 'base
 const hex = (b: Uint8Array): string => Buffer.from(b).toString('hex');
 
 describe('contracts/pack-signature-vectors.json (browser verifier)', () => {
+  // it.each over an empty corpus registers zero tests and passes green, so the
+  // corpus must prove it is non-empty and well-shaped (PR 144 review F12).
+  it('has both accept and refuse vectors and the expected keys (not vacuous)', () => {
+    expect(data.vectors.length).toBeGreaterThan(0);
+    expect(data.canonical.length).toBeGreaterThan(0);
+    expect(data.vectors.some((vec) => vec.ok)).toBe(true);
+    expect(data.vectors.filter((vec) => !vec.ok).length).toBeGreaterThan(10);
+    for (const vec of data.vectors) {
+      expect(typeof vec.id).toBe('string');
+      expect(typeof vec.manifest_b64).toBe('string');
+      expect(typeof vec.ok).toBe('boolean');
+      expect(Array.isArray(vec.trusted)).toBe(true);
+      expect('signature' in vec).toBe(true);
+    }
+    for (const c of data.canonical) {
+      expect(typeof c.manifest_b64).toBe('string');
+      expect(typeof c.canonical_hex).toBe('string');
+    }
+  });
+
   it.each(data.vectors.map((vec) => [vec.id, vec] as const))('verdict %s', async (_id, vec) => {
     const res = await verifyPackSignature(bytes(vec.manifest_b64), vec.signature ?? undefined, vec.trusted);
     expect(res.ok, res.detail ?? '').toBe(vec.ok);

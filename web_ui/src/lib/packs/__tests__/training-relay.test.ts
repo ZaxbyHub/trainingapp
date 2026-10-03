@@ -53,6 +53,21 @@ const read = async (relay: TrainingRelay, handle: number, offset: number, length
   (await relay.handleRequest({ type: 'read', id, handle, offset, length })) as RelayReadResponse;
 
 describe('shared containment vectors (desktop resolveTrainingRequest parity)', () => {
+  // it.each over an empty corpus registers zero tests and passes green, so the
+  // corpus must prove it is non-empty and well-shaped (PR 144 review F12).
+  it('has served and refused vectors and the expected keys (not vacuous)', () => {
+    expect(typeof VECTORS.pack_id).toBe('string');
+    expect(VECTORS.files.length).toBeGreaterThan(0);
+    expect(VECTORS.vectors.length).toBeGreaterThan(0);
+    for (const v of VECTORS.vectors) {
+      expect(typeof v.id).toBe('string');
+      expect(typeof v.path).toBe('string');
+      expect(typeof v.status).toBe('number');
+    }
+    expect(VECTORS.vectors.some((v) => v.status === 200)).toBe(true);
+    expect(VECTORS.vectors.some((v) => v.status !== 200)).toBe(true);
+  });
+
   const files = Object.fromEntries(VECTORS.files.map((f) => [f, `content of ${f}`]));
   it.each(VECTORS.vectors.map((v) => [v.id, v] as const))('%s', async (_id, vector) => {
     const { relay } = relayWith(files);

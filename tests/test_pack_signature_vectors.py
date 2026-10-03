@@ -37,6 +37,12 @@ def _verdict(vector) -> bool:
 
 
 def test_vectors_are_not_vacuous():
+    assert len(VECTORS["vectors"]) > 0
+    assert len(VECTORS["canonical"]) > 0
+    for vector in VECTORS["vectors"]:
+        assert {"id", "manifest_b64", "signature", "trusted", "ok"} <= vector.keys()
+    for case in VECTORS["canonical"]:
+        assert {"id", "manifest_b64", "canonical_hex"} <= case.keys()
     oks = [v["ok"] for v in VECTORS["vectors"]]
     assert any(oks)
     assert oks.count(False) > 10

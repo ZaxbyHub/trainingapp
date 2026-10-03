@@ -9,14 +9,16 @@
 // labels (deterministic); the RSA key is generated per run (its only use is the
 // key-type gate, whose verdict does not depend on the key bytes).
 //
-// usage: node contracts/tests/gen-pack-signature-vectors.mjs
+// usage: node contracts/tests/gen-pack-signature-vectors.mjs [outFile]
+// (outFile defaults to the committed corpus; desktop/src/__tests__/pack-signature-vectors.test.ts
+// passes a temp path to prove the committed corpus still matches this generator.)
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from 'node:crypto';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const out = path.join(here, '..', 'pack-signature-vectors.json');
+const out = process.argv[2] ? path.resolve(process.argv[2]) : path.join(here, '..', 'pack-signature-vectors.json');
 
 const PKCS8_ED25519_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
 function keypair(label) {
