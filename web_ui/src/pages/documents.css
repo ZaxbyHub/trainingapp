@@ -53,7 +53,9 @@
 /* ---- Document table: role=list rows laid out as a CSS-grid table ---- */
 .app-doc-table { overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-card); box-shadow: var(--shadow-1); }
 .app-doc-table__head,
-.app-doc { display: grid; grid-template-columns: 36px minmax(0, 1fr) 88px 96px minmax(120px, max-content) 32px; column-gap: var(--space-3); padding: 0 var(--space-4); }
+/* Fixed tracks: every row is its own grid, so only fixed widths line the columns up
+   (the status track fits pill + progress + Cancel; longer error text ellipsizes). */
+.app-doc { display: grid; grid-template-columns: 36px minmax(0, 1fr) 88px 96px 288px 32px; column-gap: var(--space-3); padding: 0 var(--space-4); }
 .app-doc-table__head { grid-template-areas: "icon name size chunks status actions"; align-items: center; min-height: 36px; background: var(--bg-sunken); border-bottom: 1px solid var(--border-subtle); font-size: var(--type-micro-size); line-height: var(--type-micro-line); font-weight: 600; color: var(--text-secondary); }
 /* Decorative column labels: generated content, so they add no text to the DOM. */
 .app-doc-table__head [data-label]::before { content: attr(data-label); }
@@ -88,8 +90,10 @@
 }
 
 /* Table -> list rows (design-language.md section 3.5): the same cells reflow, the
-   name takes the first line and date / size / chunks share the second. */
-@media (max-width: 768px) {
+   name takes the first line and date / size / chunks share the second. Applied up
+   to 900px rather than 768px: with the 64px rail, the fixed table tracks would
+   squeeze the name column below a readable width between 769 and ~900px. */
+@media (max-width: 900px) {
   .app-doc-table__head { display: none; }
   .app-doc { grid-template-columns: 36px max-content max-content minmax(0, 1fr) max-content 32px; grid-template-areas: "icon name name name status actions" "icon date size chunks status actions"; column-gap: var(--space-2); padding: 0 var(--space-3); }
   .app-doc__size::before, .app-doc__chunks:not(:empty)::before { content: "•"; margin-right: var(--space-2); }

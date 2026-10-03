@@ -79,14 +79,27 @@ export function DocumentsPage() {
   const packClient = usePackClient();
   // Lumen phase 6 ("Documents | Training packs" tabs, identical in both apps).
   const [activeTab, setActiveTab] = useState<'documents' | 'training'>('documents');
-  // The Training packs panel is a slot the single PacksPanel portals its
-  // training-class rows into (one instance: one install input, one set of toasts).
+  // Tab slots the single, always-mounted PacksPanel portals into: its knowledge
+  // section in the Documents tab, its training-class rows in the Training packs
+  // tab (one instance: one install input, one set of toasts). The Tabs primitive
+  // mounts only the active panel, so the inactive slot is null.
+  const [knowledgePacksSlot, setKnowledgePacksSlot] = useState<HTMLDivElement | null>(null);
   const [trainingPacksSlot, setTrainingPacksSlot] = useState<HTMLDivElement | null>(null);
   // Bumped after installs this page makes itself (DropZone .zip), so the panel
   // re-lists in the desktop app too (its pack client has no change subscription).
   const [packsRefreshToken, setPacksRefreshToken] = useState(0);
-  // The header Upload action opens the DropZone's own file input.
+  // The header Upload action opens the DropZone's own file input. From the
+  // Training packs tab the DropZone is not mounted yet: switch tabs, then open
+  // it once the zone registered (still inside the click's user activation).
   const openDocumentPickerRef = useRef<(() => void) | null>(null);
+  const pendingUploadRef = useRef(false);
+  useEffect(() => {
+    if (activeTab !== 'documents' || !pendingUploadRef.current) return;
+    const open = openDocumentPickerRef.current;
+    if (open === null) return;
+    pendingUploadRef.current = false;
+    open();
+  });
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // F4/F13: latest documents mirror so the debounced save reads CURRENT state
   // at fire-time (not the schedule-time snapshot) and the unmount flush can
@@ -772,18 +785,7 @@ export function DocumentsPage() {
       {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
           ADR-0012): the same panel over the PackClient seam. Mounted above
           the document drop zone. */}
-      {packClient !== null && (
-        <div className="app-docs__panel-fixed">
-          <PacksPanel
-            client={packClient}
-            trainingSlot={trainingPacksSlot}
-            // A training pack that appears (installed here, by the dropzone, or
-            // elsewhere in this tab) is shown where it lives.
-            onTrainingPackAdded={() => setActiveTab('training')}
-            refreshToken={packsRefreshToken}
-          />
-        </div>
-      )}
+      {packClient !== null && <div className="app-docs__panel-fixed" ref={setKnowledgePacksSlot} />}
 
       {/* Drop zone */}
       <div className="app-docs__panel-fixed">
@@ -847,8 +849,13 @@ export function DocumentsPage() {
               size="sm"
               variant="primary"
               onClick={() => {
+                const open = openDocumentPickerRef.current;
+                if (activeTab === 'documents' && open !== null) {
+                  open();
+                  return;
+                }
+                pendingUploadRef.current = true;
                 setActiveTab('documents');
-                openDocumentPickerRef.current?.();
               }}
             >
               <Icon name="upload" size={16} />
@@ -894,6 +901,21 @@ export function DocumentsPage() {
           />
         ) : (
           <div className="app-docs__single">{documentsBody}</div>
+        )}
+
+        {/* The pack owner: always mounted (after the tabs, so the DropZone's
+            input stays the first file input in DOM order). In place it renders
+            only the hidden pack-install-input; its sections portal into the
+            mounted tab slot. */}
+        {packClient !== null && (
+          <PacksPanel
+            client={packClient}
+            slots={{ knowledge: knowledgePacksSlot, training: trainingPacksSlot }}
+            // A training pack that appears (installed here, by the dropzone, or
+            // elsewhere in this tab) is shown where it lives.
+            onTrainingPackAdded={() => setActiveTab('training')}
+            refreshToken={packsRefreshToken}
+          />
         )}
       </div>
     </div>
