@@ -286,7 +286,12 @@ for (const theme of THEMES) {
       });
 
       for (const state of STATES) {
-        test(state.id, async ({ page }) => {
+        // PR #147 PRR-029: the "Provider server" radio this state selects was removed
+        // by #142, so the state fails before capture on master too. Phase 4 (Settings
+        // rebuild) replaces it with a state for the new connection UI; until then it is
+        // a known failure, not a red local pixel run.
+        const known = state.id === 'settings-provider' ? test.fixme : test;
+        known(state.id, async ({ page }) => {
           await boot(page, theme);
           if (state.seed) await seedPopulated(page);
           if ((await page.getByRole('alertdialog').count()) > 0) await hideModelGate(page);

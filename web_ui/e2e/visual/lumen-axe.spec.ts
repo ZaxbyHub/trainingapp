@@ -166,10 +166,13 @@ for (const theme of THEMES) {
         });
       }
 
-      // Lumen phase 3 (review F6): the AppShell nav drawer, open, at the drawer width.
-      // It is a modal dialog over an inert page, opened here on Chat with the model
-      // gate still up (the state the drawer and the overlay share in real use). No
-      // KNOWN_BASELINE entry exists or may be added for this key: zero nodes allowed.
+      // Lumen phase 3 (review F6): the AppShell nav drawer, open, at the drawer width,
+      // opened on Chat with the model gate up (asserted below). What this scans: the
+      // drawer (a modal dialog) and the shell around it. While the drawer is open the
+      // top bar and <main> are inert, so axe excludes them, and with them the model
+      // gate inside <main>; the gate itself is scanned by the 'overlay' pass above.
+      // (PR #147 PRR-004: the earlier wording implied the gate was scanned here.)
+      // No KNOWN_BASELINE entry exists or may be added for this key: zero nodes allowed.
       if (width === 500) {
         test('drawer', async ({ page }) => {
           await blockExternalNetwork(page);
@@ -185,10 +188,18 @@ for (const theme of THEMES) {
             timeout: 60_000,
           });
           await page.evaluate(() => document.fonts.ready);
+          // The scenario is "drawer over the model gate": require the gate (same opt-out
+          // as the overlay pass for builds with staged weights).
+          const gateShown = (await page.locator('[role="alertdialog"]').count()) > 0;
+          if (!gateShown && process.env.LUMEN_ALLOW_NO_OVERLAY === '1') test.skip(true, 'overlay opt-out (LUMEN_ALLOW_NO_OVERLAY=1)');
+          expect(gateShown, 'model-gate overlay must be up behind the drawer').toBe(true);
           await page.getByRole('button', { name: 'Open navigation' }).click();
           const drawer = page.getByRole('dialog', { name: 'Navigation' });
           await expect(drawer).toBeVisible();
           await expect(drawer.getByRole('navigation', { name: 'Main navigation' })).toBeVisible();
+          // Document what axe can and cannot see: everything behind the drawer is inert.
+          await expect(page.locator('main')).toHaveAttribute('inert', '');
+          await expect(page.locator('.ui-shell__topbar')).toHaveAttribute('inert', '');
           await page.waitForTimeout(500);
 
           const results = await new AxeBuilder({ page })
