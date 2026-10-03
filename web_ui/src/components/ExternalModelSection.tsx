@@ -42,6 +42,10 @@ import { ApiError } from '../lib/api/types';
 import { IS_AIRGAP } from '../lib/llm/airgap';
 import { validateEndpointUrl } from '../lib/llm/endpoint-policy';
 import { isHeaderSafeValue, UNSENDABLE_KEY_MESSAGE, type ProviderFailureKind } from '../lib/llm/provider-error';
+
+// Bounded re-read of /status/models while the backend's engine is unconfirmed.
+const MODELS_RETRY_MAX = 3;
+const MODELS_RETRY_BASE_MS = 1500;
 import {
   keyForBaseUrl,
   keyOriginOf,
@@ -605,7 +609,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   const savedOrigin = keyOriginOf(savedBaseUrl);
   const savedNote =
     source === 'builtin' && savedSource !== null && !draft.enabled
-      ? savedSource === 'cloud' && airgap
+      ? savedSource === 'cloud' && enforceAirgap
         ? `A Cloud provider is saved${savedOrigin !== '' ? ` (${savedOrigin})` : ''} but cannot be used in this air-gapped build. Choose Local or network server to change it.`
         : `A ${savedSource === 'cloud' ? 'Cloud provider' : 'Local or network server'} is saved but not in use${savedOrigin !== '' ? ` (${savedOrigin})` : ''}. Choose it to edit or switch it on.`
       : null;
@@ -620,6 +624,28 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   const backendExternal = desktop && backendModels?.engine === 'external';
   const externalAnswers = draft.enabled && !refusedPublic && (!desktop || backendExternal);
   const backendUnconfirmed = desktop && !refusedPublic && draft.enabled !== backendExternal;
+  // Bounded retry: the models reload is fire-and-forget (App swallows a failed fetch), so while
+  // the backend's engine disagrees with the switch, re-signal the existing loopback
+  // /status/models re-read a few times with backoff. Stops when confirmed, on a switch change,
+  // when the budget is spent, or on unmount.
+  const modelsRetryRef = useRef(0);
+  const [modelsRetryTick, setModelsRetryTick] = useState(0);
+  useEffect(() => {
+    modelsRetryRef.current = 0;
+  }, [draft.enabled]);
+  useEffect(() => {
+    if (!backendUnconfirmed) {
+      modelsRetryRef.current = 0;
+      return undefined;
+    }
+    if (modelsRetryRef.current >= MODELS_RETRY_MAX) return undefined;
+    const timer = setTimeout(() => {
+      modelsRetryRef.current += 1;
+      notifyDesktopModelsChanged();
+      setModelsRetryTick((n) => n + 1);
+    }, MODELS_RETRY_BASE_MS * 2 ** modelsRetryRef.current);
+    return () => clearTimeout(timer);
+  }, [backendUnconfirmed, draft.enabled, modelsRetryTick]);
   // The same endpoint after it was switched off: it cannot be switched back on here.
   // Also when Cloud was picked before the backend snapshot reported the air-gap, so the
   // radio never shows Cloud checked under "Not in use yet".
@@ -694,7 +720,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
           },
         ]}
       />
-      {(airgap || enforceAirgap) && (
+      {enforceAirgap && (
         <p className="settings-text" data-testid="external-airgap-notice">
           Air-gapped build: only loopback and private-network endpoints can be used.
         </p>
@@ -722,7 +748,7 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
           ) : (
             <p className="settings-text" data-testid="external-usage-state">
               {backendUnconfirmed
-                ? 'The desktop backend decides which model answers: it uses this server only while Use external model is on and it has a server address and a model.'
+                ? 'Waiting for the desktop backend to confirm which model answers.'
                 : draft.enabled
                   ? 'Answers come from this server. The built-in model settings apply when Built-in model is selected.'
                   : 'Not in use yet: answers still come from the built-in model until you switch on Use external model.'}
@@ -925,12 +951,10 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       {isServer && !externalAnswers && (
         <>
           <p className="settings-text" data-testid="builtin-still-answering">
-            {backendUnconfirmed
+            {backendUnconfirmed || (refusedPublic && desktop)
               ? "The built-in model's settings:"
               : refusedPublic
-                ? desktop
-                  ? "The built-in model's settings:"
-                  : 'Answers come from the built-in model. Its settings:'
+                ? 'Answers come from the built-in model. Its settings:'
                 : 'Until you switch on Use external model, answers come from the built-in model. Its settings:'}
           </p>
           {builtIn}

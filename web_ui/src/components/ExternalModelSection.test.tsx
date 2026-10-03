@@ -14,7 +14,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 
 const airgapFlag = vi.hoisted(() => ({ on: false }));
@@ -38,7 +38,7 @@ vi.mock('../lib/llm/external-provider', async (importOriginal) => {
 
 import { ExternalModelSection } from './ExternalModelSection';
 import { DesktopSessionProvider, type DesktopSession } from '../lib/desktop-session';
-import { DESKTOP_MODELS_CHANGED_EVENT } from '../lib/desktop-models-events';
+import { DESKTOP_MODELS_CHANGED_EVENT, subscribeLatestModelStatus } from '../lib/desktop-models-events';
 import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../test/desktop-bridge-stub';
 import type { ApiClient } from '../lib/api';
 import { ApiError, type ModelStatus } from '../lib/api/types';
@@ -1609,5 +1609,120 @@ describe('final critic LOW-1, LOW-3, NIT-2 (desktop)', () => {
     await waitFor(() => expect(q.getByTestId('external-airgap-blocked')).toHaveTextContent(/can't be used in this air-gapped build/i));
     expect(q.queryByTestId('external-usage-state')).toBeNull();
     expect(q.getByRole('radio', { name: /^cloud provider$/i })).toHaveAttribute('aria-disabled', 'true');
+  });
+});
+
+describe('review LOW-1/LOW-2/LOW-3 (lumen phase 4 settings)', () => {
+  const region = () => screen.getByRole('region', { name: /^model & connection$/i });
+  const LOCAL = { 'external.enabled': false, 'external.baseUrl': 'http://192.168.1.20:8000', 'external.model': 'm1' };
+  const WAITING = /waiting for the desktop backend to confirm which model answers/i;
+
+  function makeSession(settings: Record<string, unknown>) {
+    const apiClient = {
+      getSettings: vi.fn(async () => settings as never),
+      updateSettings: vi.fn(async (patch: Record<string, unknown>) => ({ ...settings, ...patch }) as never),
+      testExternalEndpoint: vi.fn(),
+    } as unknown as ApiClient;
+    const s: DesktopSession = { baseUrl: 'http://127.0.0.1:4567', token: 't', mode: 'node', apiClient, sseUrl: () => 'x' };
+    return s;
+  }
+  const renderDesktop = (s: DesktopSession, engine?: 'external' | 'llama.cpp') =>
+    render(
+      <DesktopSessionProvider value={{ session: s, models: engine ? backendModels(engine) : null, loading: false, error: null }}>
+        <ExternalModelSection />
+      </DesktopSessionProvider>,
+    );
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('LOW-1: unconfirmed backend says it is waiting, not that the server answers', async () => {
+    installDesktopBridgeStub();
+    renderDesktop(makeSession({ ...LOCAL, 'external.enabled': true }));
+    const q = within(region());
+    await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(WAITING);
+    expect(q.getByTestId('external-usage-state')).not.toHaveTextContent(/uses this server/i);
+  });
+
+  test('LOW-1: a failed reload is retried and the retry flips the copy to confirmed', async () => {
+    installDesktopBridgeStub();
+    const s = makeSession({ ...LOCAL, 'external.enabled': true });
+    const fetchStatus = vi
+      .fn<() => Promise<ModelStatus>>()
+      .mockRejectedValueOnce(new Error('loopback down'))
+      .mockResolvedValue(backendModels('external'));
+    function Harness() {
+      const [models, setModels] = React.useState<ModelStatus | null>(null);
+      React.useEffect(() => subscribeLatestModelStatus(fetchStatus, setModels), []);
+      return (
+        <DesktopSessionProvider value={{ session: s, models, loading: false, error: null }}>
+          <ExternalModelSection />
+        </DesktopSessionProvider>
+      );
+    }
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<Harness />);
+    const q = within(region());
+    await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(WAITING);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1600);
+    });
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(WAITING);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3100);
+    });
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    expect(q.getByTestId('external-usage-state')).toHaveTextContent(/answers come from this server/i);
+  });
+
+  test('LOW-1: the retry is bounded and stops on unmount', async () => {
+    installDesktopBridgeStub();
+    const spy = vi.fn();
+    window.addEventListener(DESKTOP_MODELS_CHANGED_EVENT, spy);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { unmount } = renderDesktop(makeSession({ ...LOCAL, 'external.enabled': true }));
+    const q = within(region());
+    await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
+    // Each attempt re-arms the next one after a render, so step the clock one act at a time.
+    for (let i = 0; i < 8; i += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(7000);
+      });
+    }
+    expect(spy).toHaveBeenCalledTimes(3);
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    expect(spy).toHaveBeenCalledTimes(3);
+    window.removeEventListener(DESKTOP_MODELS_CHANGED_EVENT, spy);
+  });
+
+  test('LOW-2: bundle air-gapped, backend not, switch off, public URL saved: no "choose it to edit" beside a disabled Cloud', async () => {
+    installDesktopBridgeStub();
+    airgapFlag.on = true;
+    const s = makeSession({ ...LOCAL, 'external.baseUrl': 'https://api.openai.com', 'external.airgap': false });
+    renderDesktop(s, 'llama.cpp');
+    const q = within(region());
+    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+    await waitFor(() => expect(q.getByTestId('external-saved-not-in-use')).toHaveTextContent(/cannot be used in this air-gapped build/i));
+    expect(q.getByTestId('external-saved-not-in-use')).not.toHaveTextContent(/choose it to edit or switch it on/i);
+    expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeDisabled();
+  });
+
+  test("LOW-3: switch off with a stale 'external' engine shows the waiting copy, never 'built-in answers'", async () => {
+    installDesktopBridgeStub();
+    const s = makeSession(LOCAL);
+    renderDesktop(s, 'external');
+    const q = within(region());
+    await waitFor(() => expect(s.apiClient.getSettings).toHaveBeenCalled());
+    fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+    const usage = q.getByTestId('external-usage-state');
+    expect(usage).toHaveTextContent(WAITING);
+    expect(usage).not.toHaveTextContent(/answers still come from the built-in model/i);
   });
 });
