@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ThemeProvider } from './lib/theme';
 import { ToastProvider } from './components/ToastProvider';
 import { InferenceModeProvider, useInferenceMode } from './lib/inference/InferenceModeContext';
+import { MODEL_CONNECTION_SECTION_ID } from './lib/settings-sections';
 import { seedInferenceModeForDesktop as seedInferenceModeForDesktopImpl } from './lib/inference/desktop-seed';
 import {
   DesktopSessionProvider,
@@ -397,6 +398,7 @@ function AppContent() {
       searchResults={searchResults}
       searchTruncated={searchTruncated}
       isSearching={isSearching}
+      onOpenModelSettings={() => openSettings(MODEL_CONNECTION_SECTION_ID)}
     >
       {/* E2 (issue #85): first-run validation wizard gate — renders the
           overlay only when a first run (or drift re-run) is needed. */}
