@@ -24,7 +24,11 @@
  *                         has no reachable populated state without faking the bridge.
  *   settings              Settings, every section (inference, engine, quality, appearance,
  *                         storage, hardware, about)
- *   settings-provider     Settings with "Provider server" selected (its connection fields)
+ *   settings-external     Settings with the External model section configured and switched on
+ *                         (Base URL + Model filled, "Use external model" on). Replaces the old
+ *                         settings-provider state: #142 retired the "Provider server" inference
+ *                         mode (and its radio), moving those connection fields into this section.
+ *                         No connection test runs (cross-origin traffic is aborted anyway).
  *   overlay-model-not-ready   the alertdialog browser builds without staged weights show
  * Seeding writes raw IndexedDB records (conversations: Dexie store
  * `docqa_conversations`; documents: `<profile>-doc-qa-documents`) and reloads;
@@ -70,10 +74,19 @@ const STATES: StateDef[] = [
   { id: 'training-empty', nav: 'Training' },
   { id: 'settings', nav: 'Settings' },
   {
-    id: 'settings-provider',
+    id: 'settings-external',
     nav: 'Settings',
     act: async (page) => {
-      await page.getByRole('radio', { name: /Provider server/ }).check({ force: true });
+      await page.getByLabel('Base URL', { exact: true }).fill('http://localhost:1234');
+      // Moving focus blurs the field, which saves it (the switch requires a saved URL + model).
+      await page.getByLabel('Model', { exact: true }).focus();
+      await page.getByLabel('Model', { exact: true }).fill('local-model');
+      await page.getByRole('button', { name: 'Test connection' }).focus();
+      await page.getByRole('switch', { name: 'Use external model' }).check({ force: true });
+      await expect(page.getByRole('switch', { name: 'Use external model' })).toBeChecked();
+      // No focus ring or caret in the capture.
+      await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null));
+      await page.mouse.move(0, 0);
       await page.waitForTimeout(300);
     },
   },
@@ -238,17 +251,18 @@ async function fitViewportToContent(page: Page, width: number): Promise<void> {
 
 /**
  * Machine-derived VALUE cells of the Hardware Capability section only (suitability
- * bar, WebGPU / multi-threading badges, memory tier, recommended engine, reasons
+ * meter, WebGPU / multi-threading badges, memory tier, recommended engine, reasons
  * sentence). The section card, its heading, description and row labels stay in the
- * baseline so a restyle of that section still shows a diff.
+ * baseline so a restyle of that section still shows a diff. Lumen phase 4: the rows
+ * are a KeyValueList (dt label / dd value).
  */
 function hardwareValueMasks(page: Page): Locator[] {
   const section = page.locator('section[aria-labelledby="hardware-heading"]');
   return [
     section.getByRole('progressbar'),
     section.locator('span[role="status"]'),
-    section.locator('xpath=.//span[normalize-space(.)="Memory Tier" or normalize-space(.)="Recommended Engine"]/following-sibling::span[1]'),
-    section.locator('xpath=./div/p'),
+    section.locator('xpath=.//dt[normalize-space(.)="Memory Tier" or normalize-space(.)="Recommended Engine"]/following-sibling::dd[1]'),
+    section.locator('.settings-hardware__reasons'),
   ];
 }
 
@@ -256,7 +270,8 @@ function hardwareValueMasks(page: Page): Locator[] {
 function dynamicMasks(page: Page): Locator[] {
   return [
     page.getByText(/Recommended for this device/i),
-    page.getByText(/Memory Used/i),
+    // The whole memory meter (label, percentage and fill are machine-derived).
+    page.getByRole('progressbar', { name: /Memory Used/i }),
     ...hardwareValueMasks(page),
     page.locator('time'),
   ];
