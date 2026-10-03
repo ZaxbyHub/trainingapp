@@ -4,9 +4,10 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { DocumentList, documentKind } from './DocumentList';
+import { ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from './documentRowLayout';
 import type { DocumentEntry } from '../types/document';
 
 describe('DocumentList', () => {
@@ -358,39 +359,104 @@ describe('DocumentList', () => {
     });
   });
 
-  // Lumen phase 6 review B1: stacked rows below 760px are taller, and the
-  // virtualization offsets must follow (pages/documents.css, STACKED_ITEM_HEIGHT).
-  describe('Stacked row height (review B1)', () => {
-    const rowTops = (stacked: boolean): string[] => {
-      const spy = vi.spyOn(window, 'matchMedia').mockImplementation(
-        (query: string) =>
-          ({
-            matches: stacked,
-            media: query,
-            addEventListener: () => {},
-            removeEventListener: () => {},
-          }) as unknown as MediaQueryList
+  // Lumen phase 6 review B1: stacked rows are taller, and the virtualization offsets
+  // must follow the layout the CSS has active. That layout is an `@container` query
+  // on the table, so the height follows the TABLE's width (ResizeObserver), not the
+  // viewport (documentRowLayout.test.ts pins the CSS threshold to the same constant).
+  describe('Stacked row height follows the table container (critic B1)', () => {
+    let width = 1000;
+    let observerCallback: ResizeObserverCallback | null = null;
+    let rectSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      observerCallback = null;
+      rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          const w = this.classList.contains('app-doc-table') ? width : 0; // jsdom loads no CSS: no borders to subtract
+          return { width: w, height: 0, top: 0, left: 0, right: w, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+        });
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(cb: ResizeObserverCallback) {
+            observerCallback = cb;
+          }
+          observe() {}
+          disconnect() {}
+          unobserve() {}
+        }
       );
-      const { container, unmount } = render(
-        <div style={{ height: '300px', overflow: 'auto' }}>
+    });
+    afterEach(() => {
+      rectSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    const resizeTo = (next: number) => {
+      width = next;
+      act(() => {
+        observerCallback?.([{ contentRect: { width: next } } as ResizeObserverEntry], {} as ResizeObserver);
+      });
+    };
+    const ids = ['a', 'b'];
+    const renderList = (n = 2) =>
+      render(
+        <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
           <DocumentList
-            documents={[createDocument({ id: 'a' }), createDocument({ id: 'b' })]}
+            documents={Array.from({ length: n }, (_, i) => createDocument({ id: ids[i] ?? `d${i}` }))}
             onDelete={vi.fn()}
             deletingId={null}
           />
         </div>
       );
-      const tops = Array.from(container.querySelectorAll<HTMLElement>('[role="listitem"]')).map(
+    const tops = (container: HTMLElement): string[] =>
+      Array.from(container.querySelectorAll<HTMLElement>('[role="listitem"]')).map(
         (el) => el.style.top + '/' + el.style.height
       );
-      unmount();
-      spy.mockRestore();
-      return tops;
-    };
 
-    it('uses 60px rows on wide layouts and 112px stacked rows at narrow widths', () => {
-      expect(rowTops(false)).toEqual(['0px/60px', '60px/60px']);
-      expect(rowTops(true)).toEqual(['0px/112px', '112px/112px']);
+    it('exports the shared constants the CSS rule is pinned to', () => {
+      expect(STACKED_MAX_WIDTH).toBe(800);
+      expect(ITEM_HEIGHT).toBe(60);
+      expect(STACKED_ITEM_HEIGHT).toBe(112);
+    });
+
+    it('uses 60px rows above the breakpoint and 112px at or below it', () => {
+      width = STACKED_MAX_WIDTH + 1;
+      const wide = renderList();
+      expect(tops(wide.container)).toEqual(['0px/60px', '60px/60px']);
+      wide.unmount();
+      width = STACKED_MAX_WIDTH;
+      const narrow = renderList();
+      expect(tops(narrow.container)).toEqual(['0px/112px', '112px/112px']);
+    });
+
+    it('an unmeasured container (0px, e.g. jsdom) keeps the wide height', () => {
+      width = 0;
+      const { container } = renderList();
+      expect(tops(container)).toEqual(['0px/60px', '60px/60px']);
+    });
+
+    it('re-evaluates when the container resizes (sidebar toggled, window resized)', () => {
+      width = 1000;
+      const { container } = renderList();
+      expect(tops(container)[1]).toBe('60px/60px');
+      resizeTo(700);
+      expect(tops(container)[1]).toBe('112px/112px');
+      resizeTo(STACKED_MAX_WIDTH + 1);
+      expect(tops(container)[1]).toBe('60px/60px');
+    });
+
+    it('keeps the same row at the top of the list across a layout switch (index, not pixels)', () => {
+      width = 1000;
+      const { container, getByTestId } = renderList(40);
+      const scroller = getByTestId('scroller');
+      scroller.scrollTop = 600; // row 10 at 60px
+      resizeTo(700);
+      expect(scroller.scrollTop).toBe(10 * STACKED_ITEM_HEIGHT);
+      expect(tops(container).some((t) => t.startsWith(`${10 * STACKED_ITEM_HEIGHT}px/`))).toBe(true);
+      resizeTo(1000);
+      expect(scroller.scrollTop).toBe(10 * ITEM_HEIGHT);
     });
   });
 
