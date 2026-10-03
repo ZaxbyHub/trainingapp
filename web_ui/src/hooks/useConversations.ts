@@ -116,7 +116,10 @@ export function useConversations() {
     }
     setIsSearching(true);
     try {
-      const { matches, truncated } = await searchConversations(query);
+      // The cursor stops as soon as a newer search (or a clear) bumps the sequence.
+      const { matches, truncated } = await searchConversations(query, {
+        isCancelled: () => seq !== searchSeq.current,
+      });
       if (seq !== searchSeq.current) return;
       setSearchResults(matches.map(toSummary));
       setSearchTruncated(truncated);
@@ -131,12 +134,15 @@ export function useConversations() {
     }
   }, []);
 
-  // Debounce: clearing the query takes effect immediately; typing waits.
+  // Debounce: clearing the query takes effect immediately; typing waits. The
+  // shown results are stale from the first keystroke, so isSearching turns on
+  // now, not when the query starts.
   useEffect(() => {
     if (searchQuery.trim() === '') {
       void runSearch('');
       return undefined;
     }
+    setIsSearching(true);
     const timer = setTimeout(() => {
       void runSearch(searchQuery);
     }, CONVERSATION_SEARCH_DEBOUNCE_MS);

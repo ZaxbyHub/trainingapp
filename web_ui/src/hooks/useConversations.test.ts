@@ -784,7 +784,7 @@ describe('useConversations', () => {
 
       act(() => result.current.setSearchQuery('budget'));
       await waitFor(() => expect(result.current.searchResults).not.toBeNull());
-      expect(mockSearchConversations).toHaveBeenCalledWith('budget');
+      expect(mockSearchConversations).toHaveBeenCalledWith('budget', expect.objectContaining({ isCancelled: expect.any(Function) }));
       expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-110']);
       // The paginated list is untouched: no client-side filtering of the loaded page.
       expect(result.current.conversations).toHaveLength(50);
@@ -799,7 +799,7 @@ describe('useConversations', () => {
       await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
       await new Promise((r) => setTimeout(r, CONVERSATION_SEARCH_DEBOUNCE_MS + 50));
       expect(mockSearchConversations).toHaveBeenCalledTimes(1);
-      expect(mockSearchConversations).toHaveBeenCalledWith('bud');
+      expect(mockSearchConversations).toHaveBeenCalledWith('bud', expect.objectContaining({ isCancelled: expect.any(Function) }));
     });
 
     it('no match yields an empty result list (the "No conversations match" state)', async () => {
@@ -836,6 +836,39 @@ describe('useConversations', () => {
       expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-3']);
     });
 
+    it('a superseded search is told to stop: its isCancelled() flips once a newer query starts', async () => {
+      const tokens: Array<() => boolean> = [];
+      mockSearchConversations.mockImplementation(
+        (_q: string, opts?: { isCancelled?: () => boolean }) => {
+          if (opts?.isCancelled) tokens.push(opts.isCancelled);
+          return new Promise(() => {}); // never settles: the walk is "still running"
+        }
+      );
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('first'));
+      await waitFor(() => expect(tokens).toHaveLength(1));
+      expect(tokens[0]()).toBe(false);
+      act(() => result.current.setSearchQuery('second'));
+      await waitFor(() => expect(tokens).toHaveLength(2));
+      expect(tokens[0]()).toBe(true); // the stale walk stops
+      expect(tokens[1]()).toBe(false);
+      act(() => result.current.setSearchQuery(''));
+      expect(tokens[1]()).toBe(true); // clearing cancels the in-flight walk too
+    });
+
+    it('isSearching is true from the first keystroke (results are stale) until the query settles', async () => {
+      let settle: (v: unknown) => void = () => {};
+      mockSearchConversations.mockImplementation(() => new Promise((r) => { settle = r; }));
+      const { result } = await mountWithPage();
+      expect(result.current.isSearching).toBe(false);
+      act(() => result.current.setSearchQuery('bud'));
+      expect(result.current.isSearching).toBe(true); // before the debounce fires
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      expect(result.current.isSearching).toBe(true);
+      await act(async () => settle({ matches: [], truncated: false }));
+      expect(result.current.isSearching).toBe(false);
+    });
+
     it('desktop (Electron) path: same renderer store query, no backend call', async () => {
       // Chat history lives in the renderer's IndexedDB in the desktop app too;
       // the desktop backend has no conversation API. Search must not reach for one.
@@ -846,7 +879,7 @@ describe('useConversations', () => {
         const { result } = await mountWithPage();
         act(() => result.current.setSearchQuery('budget'));
         await waitFor(() => expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-110']));
-        expect(mockSearchConversations).toHaveBeenCalledWith('budget');
+        expect(mockSearchConversations).toHaveBeenCalledWith('budget', expect.objectContaining({ isCancelled: expect.any(Function) }));
         expect(fetchSpy).not.toHaveBeenCalled();
       } finally {
         delete (window as unknown as { desktopApi?: unknown }).desktopApi;

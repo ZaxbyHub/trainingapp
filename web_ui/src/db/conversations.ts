@@ -121,44 +121,72 @@ export async function countConversations(): Promise<number> {
 /** Most matches a search returns (newest first); the caller is told when more exist. */
 export const CONVERSATION_SEARCH_LIMIT = 50;
 
-/** Normalise a search query: trimmed, case-folded. Empty means "no search". */
+const NON_ASCII = /[^\u0000-\u007f]/;
+
+/**
+ * Normalise a search query: trimmed, Unicode NFC, lower-cased. Empty means
+ * "no search". NFC makes a precomposed "é" (U+00E9) and a decomposed one
+ * ("e" + U+0301) the same needle.
+ */
 export function normalizeConversationQuery(query: string): string {
-  return query.trim().toLocaleLowerCase();
+  return query.trim().normalize('NFC').toLowerCase();
 }
 
 /**
- * Whether a conversation matches a normalised query: a case-insensitive
- * substring of its title or of any message's text.
+ * Whether a conversation matches an already-normalised needle: a substring of
+ * its title or of any message's text. Cheap path first: the title, then the
+ * messages, returning on the first hit. The haystack is NFC-normalised only
+ * when the needle contains non-ASCII characters; for an ASCII needle that step
+ * cannot create a match (it only composes letters with combining marks) and it
+ * is the most expensive part of a full-store walk.
  */
 export function conversationMatches(conversation: Conversation, needle: string): boolean {
   if (needle === '') return false;
-  if ((conversation.title ?? '').toLocaleLowerCase().includes(needle)) return true;
-  return (conversation.messages ?? []).some(
-    (m) => typeof m.content === 'string' && m.content.toLocaleLowerCase().includes(needle)
-  );
+  const fold = NON_ASCII.test(needle)
+    ? (text: string) => text.normalize('NFC').toLowerCase()
+    : (text: string) => text.toLowerCase();
+  if (typeof conversation.title === 'string' && fold(conversation.title).includes(needle)) return true;
+  const messages = conversation.messages;
+  if (!Array.isArray(messages)) return false;
+  for (let i = 0; i < messages.length; i += 1) {
+    const text = messages[i]?.content;
+    if (typeof text === 'string' && fold(text).includes(needle)) return true;
+  }
+  return false;
+}
+
+export interface ConversationSearchOptions {
+  /** Maximum matches to return (default CONVERSATION_SEARCH_LIMIT). */
+  limit?: number;
+  /**
+   * Checked before each stored conversation is read: once it returns true the
+   * IndexedDB cursor stops (Dexie `until`), so a search superseded by a newer
+   * keystroke stops walking instead of reading the rest of the store.
+   */
+  isCancelled?: () => boolean;
 }
 
 /**
  * Search ALL stored conversations, not just a loaded page (Lumen phase 3,
  * sidebar search). Walks the updatedAt index newest-first in IndexedDB and
- * stops after `limit + 1` matches, so the newest `limit` matches are returned
- * and `truncated` says whether more exist. Conversations live only in this
- * renderer's IndexedDB in both the browser and the Electron app (the desktop
- * backend stores documents, not chat history), so this one query serves both.
- *
- * @param query - Raw user query (trimmed and case-folded here)
- * @param limit - Maximum matches to return (default CONVERSATION_SEARCH_LIMIT)
+ * stops after `limit + 1` matches or on cancellation, so the newest `limit`
+ * matches are returned and `truncated` says whether more exist. Conversations
+ * live only in this renderer's IndexedDB in both the browser and the Electron
+ * app (the desktop backend stores documents, not chat history), so this one
+ * query serves both. A cancelled search resolves with whatever it had found;
+ * callers discard it.
  */
 export async function searchConversations(
   query: string,
-  limit: number = CONVERSATION_SEARCH_LIMIT
+  options: ConversationSearchOptions = {}
 ): Promise<{ matches: Conversation[]; truncated: boolean }> {
+  const { limit = CONVERSATION_SEARCH_LIMIT, isCancelled } = options;
   const needle = normalizeConversationQuery(query);
   if (needle === '') return { matches: [], truncated: false };
   try {
-    const found = await db.conversations
-      .orderBy('updatedAt')
-      .reverse()
+    let collection = db.conversations.orderBy('updatedAt').reverse();
+    if (isCancelled) collection = collection.until(() => isCancelled());
+    const found = await collection
       .filter((c) => conversationMatches(c, needle))
       .limit(limit + 1)
       .toArray();
