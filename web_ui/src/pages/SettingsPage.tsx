@@ -60,6 +60,7 @@ import {
   Banner,
   Button,
   Checkbox,
+  Icon,
   KeyValueList,
   PageHeader,
   SegmentedControl,
@@ -1452,8 +1453,9 @@ function PackagedModelReadiness({
     {
       label: 'Packaged Models (overall)',
       value: (
-        <span className={`settings-strong ${report.allReady ? 'settings-tone--success' : 'settings-tone--danger'}`}>
-          <span aria-hidden="true">{report.allReady ? '✓ ' : '✗ '}</span>
+        <span className={`settings-strong settings-inline-icon ${report.allReady ? 'settings-tone--success' : 'settings-tone--danger'}`}>
+          {/* Decorative (aria-hidden) shape cue; the word carries the state. */}
+          <Icon name={report.allReady ? 'circle-check' : 'circle-alert'} size={14} />
           {report.allReady ? 'Ready' : 'Missing'}
         </span>
       ),

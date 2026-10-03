@@ -11,7 +11,8 @@
   box-sizing: border-box;
   width: 100%;
   max-width: calc(var(--w-form) + 2 * var(--space-6));
-  margin: 0 auto;
+  /* Left-aligned under the PageHeader title (same gutter), not centered. */
+  margin: 0;
   padding: var(--space-6);
   display: flex;
   flex-direction: column;
@@ -37,6 +38,7 @@
 .settings-text--body { font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-primary); }
 .settings-label { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
 .settings-strong { font-weight: 600; }
+.settings-inline-icon { display: inline-flex; align-items: center; gap: var(--space-1); }
 .settings-tone--success { color: var(--success); }
 .settings-tone--warning { color: var(--warning); }
 .settings-tone--danger { color: var(--danger); }
