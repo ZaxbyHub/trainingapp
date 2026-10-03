@@ -77,15 +77,15 @@ interface DesktopKeyState {
  * starts only when "Use external model" is switched on. The radio always matches the
  * generator that actually answers, so on load (and on the first desktop snapshot) the
  * source is `enabled ? sourceOfUrl(saved URL) : 'builtin'`: an enabled endpoint opens on
- * its source (a public host is a cloud provider); a disabled one opens on Built-in model,
- * with one line saying which saved server is not in use. The saved URL, model and
+ * its source (a public host is a cloud provider, in an air-gapped build too); a disabled one
+ * opens on Built-in model, with one line saying which saved server is not in use. The saved URL, model and
  * grounded setting are kept (Built-in persists only {enabled:false}), so choosing that
  * source again restores them. Within a session, picking a server source only shows the
  * form: nothing is enabled, saved or contacted. In an air-gapped build the Cloud option is
- * always disabled and never the derived source: a disabled public URL shows Built-in model
- * (with a note), and the unexpected case of an ENABLED public URL shows the connection form
- * under Local or network server, so the switch stays visible and can turn it off (the
- * endpoint policy still refuses the URL).
+ * never selectable, but a public URL keeps its own source: a disabled one shows Built-in
+ * model (with a note), and the unexpected case of an ENABLED one shows Cloud provider checked
+ * and disabled, with the connection form and the switch still visible and a line saying the
+ * endpoint policy refuses it and the built-in model answers, so the switch can turn it off.
  */
 type GeneratorSource = 'builtin' | 'local' | 'cloud';
 
@@ -94,11 +94,9 @@ function sourceOfUrl(baseUrl: string): Exclude<GeneratorSource, 'builtin'> {
   return verdict.ok && verdict.kind === 'public' ? 'cloud' : 'local';
 }
 
-/** The generator source that actually answers for a saved config (see GeneratorSource). */
-function derivedSource(enabled: boolean, baseUrl: string, airgap: boolean): GeneratorSource {
-  if (!enabled || baseUrl.trim() === '') return 'builtin';
-  const source = sourceOfUrl(baseUrl);
-  return source === 'cloud' && airgap ? 'local' : source;
+/** The generator source a saved config belongs to (see GeneratorSource). */
+function derivedSource(enabled: boolean, baseUrl: string): GeneratorSource {
+  return !enabled || baseUrl.trim() === '' ? 'builtin' : sourceOfUrl(baseUrl);
 }
 
 /**
@@ -179,9 +177,11 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // generator source is classified from it, so typing in the field never flips the
   // radio while egress is on; only a saved URL (blur, enable, backend answer) does.
   const [savedBaseUrl, setSavedBaseUrl] = useState(draft.baseUrl);
-  const [source, setSource] = useState<GeneratorSource>(() => derivedSource(draft.enabled, draft.baseUrl, IS_AIRGAP));
-  // N1: whether the user chose a source themselves (the first desktop snapshot must not undo that).
-  const sourcePickedRef = useRef(false);
+  const [source, setSource] = useState<GeneratorSource>(() => derivedSource(draft.enabled, draft.baseUrl));
+  // N1: the source the user chose themselves, if any (the first desktop snapshot must not undo that).
+  const sourcePickedRef = useRef<GeneratorSource | null>(null);
+  // The latest handleEnabledChange (applyDesktopSettings is created once, before it exists).
+  const enabledChangeRef = useRef<(enabled: boolean) => Promise<void>>(async () => undefined);
   // Browser key-origin binding: the origin the key in the field belongs to
   // (loaded key: its bound origin, which equals the shown URL's; typed key:
   // the URL shown while typing), and whether it was typed since the last save.
@@ -228,8 +228,12 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     // The first backend snapshot is the saved config: the source that actually answers
     // (an enabled endpoint's own source, else Built-in model), unless the user already chose.
     if (firstSnapshot && !sourcePickedRef.current) {
-      setSource(derivedSource(s['external.enabled'] === true, nextBaseUrl, IS_AIRGAP || s['external.airgap'] === true));
+      setSource(derivedSource(s['external.enabled'] === true, nextBaseUrl));
     }
+    // The user picked Built-in model before this first snapshot, and the backend says egress is
+    // on: honour the pick by switching it off (otherwise the radio would show Built-in model
+    // while the saved endpoint still answers).
+    const honourBuiltinPick = firstSnapshot && sourcePickedRef.current === 'builtin' && s['external.enabled'] === true;
     // A typed key belongs to the URL that was SHOWN when it was typed. When the
     // backend's answer replaces the shown URL (e.g. after a save of another
     // field, or the first settings load), the typed key is dropped (fail
@@ -259,6 +263,10 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       apiKeyBoundOrigin: typeof s['external.apiKeyBoundOrigin'] === 'string' ? (s['external.apiKeyBoundOrigin'] as string) : '',
       airgap: s['external.airgap'] === true,
     });
+    if (honourBuiltinPick) {
+      draftRef.current = { ...draftRef.current, enabled: true }; // so a refused PUT restores the backend's state
+      void enabledChangeRef.current(false);
+    }
   }, []);
 
   // Desktop write sequence (review round 3 R3-N1): incremented when a PUT is
@@ -491,6 +499,8 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
     if (!(await persist(patch)) && mountedRef.current) setDraft((prev) => ({ ...prev, enabled: previous }));
   };
 
+  enabledChangeRef.current = handleEnabledChange;
+
   const handleTest = async () => {
     const current = draftRef.current;
     setStatus(null);
@@ -550,11 +560,11 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   // An enabled endpoint (e.g. the desktop backend's snapshot arriving) shows the source
   // its saved base URL belongs to.
   useEffect(() => {
-    if (draft.enabled) setSource(derivedSource(true, savedBaseUrl, airgap));
-  }, [draft.enabled, savedBaseUrl, airgap]);
+    if (draft.enabled) setSource(derivedSource(true, savedBaseUrl));
+  }, [draft.enabled, savedBaseUrl]);
 
   const handleSourceChange = async (next: GeneratorSource) => {
-    sourcePickedRef.current = true;
+    sourcePickedRef.current = next;
     setSource(next);
     // Built-in model: egress off (the safe direction; persisted like the switch).
     if (next === 'builtin' && draftRef.current.enabled) await handleEnabledChange(false);
@@ -582,10 +592,13 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
   const savedNote =
     source === 'builtin' && savedSource !== null && !draft.enabled
       ? savedSource === 'cloud' && airgap
-        ? `A Cloud provider is saved${savedOrigin !== '' ? ` (${savedOrigin})` : ''} but cannot be used in this air-gapped build.`
+        ? `A Cloud provider is saved${savedOrigin !== '' ? ` (${savedOrigin})` : ''} but cannot be used in this air-gapped build. Choose Local or network server to change it.`
         : `A ${savedSource === 'cloud' ? 'Cloud provider' : 'Local or network server'} is saved but not in use${savedOrigin !== '' ? ` (${savedOrigin})` : ''}. Choose it to edit or switch it on.`
       : null;
   const isServer = source !== 'builtin';
+  // Air-gapped build with an ENABLED public endpoint: the policy refuses it, so the built-in
+  // model answers; the form and the switch stay so the user can switch it off.
+  const refusedPublic = airgap && draft.enabled && savedSource === 'cloud';
   // Browser: the saved key bound to the URL shown is in memory (draft) but is never
   // written into the field's DOM value (review L1): the field is write-only, as on
   // the desktop, and a line says a key is saved.
@@ -671,11 +684,17 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
         </>
       ) : (
         <SettingsSubsection title="Server connection" headingId={headingId}>
-          <p className="settings-text" data-testid="external-usage-state">
-            {draft.enabled
-              ? 'Answers come from this server. The built-in model settings apply when Built-in model is selected.'
-              : 'Not in use yet: answers still come from the built-in model until you switch on Use external model.'}
-          </p>
+          {refusedPublic ? (
+            <p className="settings-text settings-tone--warning" data-testid="external-airgap-refused">
+              This public endpoint is refused in this air-gapped build; answers come from the built-in model. Switch off Use external model.
+            </p>
+          ) : (
+            <p className="settings-text" data-testid="external-usage-state">
+              {draft.enabled
+                ? 'Answers come from this server. The built-in model settings apply when Built-in model is selected.'
+                : 'Not in use yet: answers still come from the built-in model until you switch on Use external model.'}
+            </p>
+          )}
 
           <Switch
             id="external-enabled"
@@ -870,15 +889,17 @@ export function ExternalModelSection({ id, builtIn, notice }: ExternalModelSecti
       {/* M2: whenever egress is off, the built-in model is what answers, so its
           controls stay rendered (engine, download, cache status, run location,
           profile, backend status) under every source. */}
-      {isServer && !draft.enabled && (
+      {isServer && (!draft.enabled || refusedPublic) && (
         <>
           <p className="settings-text" data-testid="builtin-still-answering">
-            Until you switch on Use external model, answers come from the built-in model. Its settings:
+            {refusedPublic
+              ? 'Answers come from the built-in model. Its settings:'
+              : 'Until you switch on Use external model, answers come from the built-in model. Its settings:'}
           </p>
           {builtIn}
         </>
       )}
-      {isServer && draft.enabled && (
+      {isServer && draft.enabled && !refusedPublic && (
         <p className="settings-text" data-testid="builtin-not-used">
           The built-in model is not used while the external model answers. Its settings return when you switch
           off Use external model or choose Built-in model.

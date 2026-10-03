@@ -107,6 +107,35 @@ describe('SettingsRadioCards', () => {
     expect(onOptionClick).toHaveBeenCalledWith('quality');
   });
 
+  it('a checked but disabled option stays focusable (aria-disabled, not native disabled) and is not changed by a click', () => {
+    const onChange = vi.fn();
+    render(
+      <SettingsRadioCards<string>
+        legend="Source"
+        name="src"
+        options={[
+          { value: 'a', label: 'A' },
+          { value: 'b', label: 'B', disabled: true },
+          { value: 'c', label: 'C', disabled: true },
+        ]}
+        isChecked={(v) => v === 'b'}
+        onChange={onChange}
+      />,
+    );
+    const b = screen.getByRole('radio', { name: 'B' });
+    expect(b).toBeChecked();
+    expect(b).toHaveAttribute('aria-disabled', 'true');
+    expect(b).not.toHaveAttribute('disabled');
+    expect(b.closest('label')).toHaveClass('ui-selected', 'ui-disabled');
+    // An unchecked disabled option is natively disabled.
+    expect(screen.getByRole('radio', { name: 'C' })).toBeDisabled();
+    expect(screen.getByRole('radio', { name: 'C' })).not.toHaveAttribute('aria-disabled');
+    b.focus();
+    expect(b).toHaveFocus();
+    fireEvent.click(b);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('allows no option to be checked (desktop preset state not read yet)', () => {
     renderCards('none');
     for (const r of screen.getAllByRole('radio')) expect(r).not.toBeChecked();

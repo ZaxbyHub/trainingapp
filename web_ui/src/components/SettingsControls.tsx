@@ -110,7 +110,11 @@ export function SettingsRadioCards<V extends string>({
               name={name}
               value={o.value}
               checked={checked}
-              disabled={o.disabled}
+              // A checked option that is not selectable keeps aria-disabled instead of the native
+              // attribute: a natively disabled checked radio is skipped by Tab, which then lands
+              // on another option of the group instead of the checked one.
+              disabled={o.disabled && !checked}
+              aria-disabled={o.disabled && checked ? true : undefined}
               onChange={() => onChange(o.value)}
               onClick={onOptionClick ? () => onOptionClick(o.value) : undefined}
               aria-labelledby={labelId}

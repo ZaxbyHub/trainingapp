@@ -1064,6 +1064,16 @@ describe('review L1/L6 (final critic)', () => {
     expect(await runTest()).toHaveTextContent(/the desktop backend refused the test/i);
   });
 
+  // NIT-1: 501 is the real engine-without-external path (desktop server.ts), a 5xx.
+  test('N2: a 501 (engine without external-model support) is titled as a failure to run the test', async () => {
+    installDesktopBridgeStub();
+    renderWith(desktopSession({}, () => Promise.reject(new ApiError(501, 'External models are not supported by this engine'))));
+    const problem = await runTest();
+    expect(problem).toHaveTextContent(/the desktop backend failed to run the test/i);
+    expect(problem).toHaveTextContent(/not supported by this engine/i);
+    expect(problem).not.toHaveTextContent(/refused the test/i);
+  });
+
   // L6 (rework): the radio always matches the generator that actually answers.
   const saveBrowser = (cfg: Record<string, unknown>) =>
     localStorage.setItem(
@@ -1262,6 +1272,33 @@ describe('review L1/L6 (final critic)', () => {
     });
   });
 
+  describe('LOW-2: Built-in picked before the first desktop snapshot', () => {
+    test('an enabled snapshot is switched off so the pick is honoured', async () => {
+      installDesktopBridgeStub();
+      const fetchSpy = noFetch();
+      let release: (v: never) => void = () => undefined;
+      const pending = new Promise<never>((resolve) => {
+        release = resolve;
+      });
+      const s = desktopSession({}, () => Promise.reject(new Error('unused')));
+      (s.apiClient.getSettings as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => pending);
+      renderWith(s);
+      const q = within(region());
+      // Built-in is already checked before the snapshot, so pick another source and come back.
+      fireEvent.click(q.getByRole('radio', { name: /^local or network server$/i }));
+      fireEvent.click(q.getByRole('radio', { name: /^built-in model$/i }));
+      expect(s.apiClient.updateSettings).not.toHaveBeenCalled();
+      release({ 'external.enabled': true, 'external.baseUrl': 'http://192.168.1.20:8000', 'external.model': 'm1' } as never);
+      await waitFor(() => expect(s.apiClient.updateSettings).toHaveBeenCalledWith({ 'external.enabled': false }));
+      expect(s.apiClient.updateSettings).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(q.getByTestId('external-saved-not-in-use')).toBeInTheDocument());
+      expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
+      expect(q.queryByRole('switch', { name: /^use external model$/i })).toBeNull();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
+    });
+  });
+
   describe('N3: air-gapped build', () => {
     test('a saved public URL (not enabled) shows Built-in model; Cloud stays disabled and never selected', async () => {
       installDesktopBridgeStub();
@@ -1277,13 +1314,21 @@ describe('review L1/L6 (final critic)', () => {
       expect(cloud).toBeDisabled();
       expect(cloud).not.toBeChecked();
       expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked();
-      expect(q.getByTestId('external-saved-not-in-use')).toHaveTextContent(/cannot be used in this air-gapped build/i);
+      expect(q.getByTestId('external-saved-not-in-use')).toHaveTextContent(
+        /cannot be used in this air-gapped build\. Choose Local or network server to change it\./i,
+      );
+      // The way the note names is real: Local is selectable and shows the saved URL to edit.
+      const local = q.getByRole('radio', { name: /^local or network server$/i });
+      expect(local).toBeEnabled();
+      fireEvent.click(local);
+      expect(q.getByLabelText(/^base url$/i)).toHaveValue('https://api.openai.com');
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(probeSpy.calls).toBe(0);
     });
 
-    test('an enabled public URL shows the form under Local or network server; Cloud stays disabled and unselected', async () => {
+    test('an enabled public URL keeps Cloud checked and disabled, says it is refused, and the switch turns it off', async () => {
       installDesktopBridgeStub();
+      const fetchSpy = noFetch();
       const s = desktopSession(
         { 'external.enabled': true, 'external.baseUrl': 'https://api.openai.com', 'external.model': 'gpt-x', 'external.airgap': true },
         () => Promise.reject(new Error('unused')),
@@ -1291,12 +1336,41 @@ describe('review L1/L6 (final critic)', () => {
       renderWith(s);
       const q = within(region());
       await waitFor(() => expect(q.getByRole('switch', { name: /^use external model$/i })).toBeChecked());
-      expect(q.getByRole('radio', { name: /^cloud provider$/i })).toBeDisabled();
-      expect(q.getByRole('radio', { name: /^cloud provider$/i })).not.toBeChecked();
-      expect(q.getByRole('radio', { name: /^local or network server$/i })).toBeChecked();
+      const cloud = q.getByRole('radio', { name: /^cloud provider$/i });
+      expect(cloud).toBeChecked();
+      expect(cloud).toHaveAttribute('aria-disabled', 'true'); // disabled but still focusable (see SettingsControls)
+      expect(cloud).toHaveAccessibleDescription(/not available in this air-gapped build/i);
+      expect(q.getByRole('radio', { name: /^local or network server$/i })).not.toBeChecked();
+      expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeEnabled();
+      expect(q.getByTestId('external-airgap-refused')).toHaveTextContent(
+        'This public endpoint is refused in this air-gapped build; answers come from the built-in model. Switch off Use external model.',
+      );
+      expect(q.queryByTestId('external-usage-state')).toBeNull();
+      expect(q.getByLabelText(/^base url$/i)).toHaveValue('https://api.openai.com');
       // The switch is reachable, so the user can turn the refused endpoint off.
       fireEvent.click(q.getByRole('switch', { name: /^use external model$/i }));
       await waitFor(() => expect(s.apiClient.updateSettings).toHaveBeenCalledWith({ 'external.enabled': false }));
+      await waitFor(() => expect(q.queryByTestId('external-airgap-refused')).toBeNull());
+      expect(q.getByRole('switch', { name: /^use external model$/i })).not.toBeChecked();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
+    });
+
+    test('the built-in off path works from the refused state (Built-in model calls the same switch-off)', async () => {
+      installDesktopBridgeStub();
+      const fetchSpy = noFetch();
+      const s = desktopSession(
+        { 'external.enabled': true, 'external.baseUrl': 'https://api.openai.com', 'external.model': 'gpt-x', 'external.airgap': true },
+        () => Promise.reject(new Error('unused')),
+      );
+      renderWith(s);
+      const q = within(region());
+      await waitFor(() => expect(q.getByTestId('external-airgap-refused')).toBeInTheDocument());
+      fireEvent.click(q.getByRole('radio', { name: /^built-in model$/i }));
+      await waitFor(() => expect(s.apiClient.updateSettings).toHaveBeenCalledWith({ 'external.enabled': false }));
+      await waitFor(() => expect(q.getByRole('radio', { name: /^built-in model$/i })).toBeChecked());
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(probeSpy.calls).toBe(0);
     });
   });
 });

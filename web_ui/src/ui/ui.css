@@ -156,6 +156,8 @@
 .ui-radio-card:hover:not(.ui-disabled) { background: var(--bg-hover); }
 .ui-radio-card.ui-selected { background: var(--bg-selected); border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
 .ui-radio-card__input { margin: 3px 0 0; accent-color: var(--accent); }
+/* A checked option that cannot be chosen (aria-disabled, so Tab still reaches it) reads as disabled. */
+.ui-radio-card__input[aria-disabled="true"] { accent-color: var(--text-disabled); }
 .ui-radio-card__text { display: flex; flex-direction: column; }
 .ui-radio-card__label { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
 .ui-radio-card__desc { font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
