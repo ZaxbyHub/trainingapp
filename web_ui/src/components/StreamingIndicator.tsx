@@ -4,6 +4,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { ProgressBar } from '../ui';
+import '../pages/chat.css';
 
 interface StreamingIndicatorProps {
   isVisible: boolean;
@@ -59,69 +61,32 @@ export function StreamingIndicator({ isVisible, modelLoadProgress, modelLoadLabe
     return null;
   }
 
-  const containerStyle: React.CSSProperties = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '4px 0',
-  };
-
-  const textStyle: React.CSSProperties = {
-    fontFamily: 'var(--font-family)',
-    fontSize: 'var(--font-size-caption)',
-    color: 'var(--color-text-muted)',
-    fontWeight: 500,
-  };
-
-  const cursorStyle: React.CSSProperties = {
-    animation: 'blink 1s step-end infinite',
-    color: 'var(--color-text-muted)',
-    marginLeft: '2px',
-  };
-
   // U1: determinate model-load bar.
   if (isLoadingModel) {
     const pct = Math.max(0, Math.min(100, Math.round(modelLoadProgress ?? 0)));
     return (
       <div
-        style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-xs)', padding: '4px 0', width: '100%', maxWidth: '420px' }}
+        className="chat-streaming chat-streaming--load"
         data-testid="streaming-indicator"
         role="status"
         aria-live="polite"
         aria-label={`Loading AI model, ${pct}% complete`}
       >
-        <span style={textStyle}>
+        <span>
           {modelLoadLabel ?? 'Loading the AI model — one-time, may take a few minutes…'} {pct}%
         </span>
-        <div
-          style={{
-            height: '6px',
-            width: '100%',
-            backgroundColor: 'var(--color-bubble-system)',
-            borderRadius: 'var(--radius-xs)',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              height: '100%',
-              width: `${pct}%`,
-              backgroundColor: 'var(--color-primary)',
-              borderRadius: 'var(--radius-xs)',
-              transition: 'width 200ms ease',
-            }}
-          />
-        </div>
+        <ProgressBar label="Loading the AI model" value={pct} />
       </div>
     );
   }
 
   return (
-    <div style={containerStyle} data-testid="streaming-indicator" role="status" aria-live="polite" aria-label="Generating response">
+    <div className="chat-streaming" data-testid="streaming-indicator" role="status" aria-live="polite" aria-label="Generating response">
       {prefersReducedMotion ? (
-        <span style={textStyle}>Generating...</span>
+        <span>Generating...</span>
       ) : (
-        <span style={textStyle}>
-          Generating<span style={cursorStyle}>▋</span>
+        <span>
+          Generating<span className="chat-streaming__cursor" aria-hidden="true">▋</span>
         </span>
       )}
     </div>

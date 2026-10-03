@@ -3,7 +3,7 @@
  * Displays messages, renders markdown, and supports streaming responses.
  */
 
-import { useState, useCallback, useRef, useEffect, useMemo, type CSSProperties } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { ChatMessage, TrainingTarget, CitationRef } from '../types/chat';
 import type { SearchResult } from '../types/search';
 import type { ModelStatus } from '../lib/api/types';
@@ -38,7 +38,11 @@ import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { fetchModelStatus, isElectron, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
-import { PageHeader } from '../ui';
+import { Button, Icon, PageHeader, StatusPill } from '../ui';
+import { ModelChip } from '../components/ModelChip';
+import { describeChatModel, routesToDesktopBackend } from '../lib/chat/model-chip';
+import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
+import './chat.css';
 
 function generateId(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -100,18 +104,6 @@ export interface ChatPageProps {
 export function ChatPage(props: ChatPageProps) {
   return <ChatPageInner {...props} />;
 }
-
-const exportButtonStyle: CSSProperties = {
-  backgroundColor: 'transparent',
-  color: 'var(--color-text-muted)',
-  border: '1px solid var(--color-text-muted)',
-  borderRadius: 'var(--radius-sm)',
-  padding: 'var(--spacing-xs) var(--spacing-sm)',
-  fontSize: 'var(--font-size-caption)',
-  fontFamily: 'var(--font-family)',
-  cursor: 'pointer',
-  transition: 'all 0.15s ease',
-};
 
 /**
  * C7 (issue #74): citations for a finished answer, from whichever surface
@@ -604,7 +596,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // external engine, every turn goes to the backend regardless of the
     // renderer's local mode (the "Use external model" switch is the single
     // control; only the backend can reach the endpoint).
-    const toDesktopBackend = mode === 'api' || (desktopSession !== null && desktopModels?.engine === 'external');
+    // Lumen phase 5: the same predicate drives the header model chip, so the chip
+    // always names the generator this branch actually uses.
+    const toDesktopBackend = routesToDesktopBackend(mode, desktopSession !== null, desktopModels?.engine);
     if (toDesktopBackend) {
       // Desktop backend mode — SSE streaming via /ask/stream endpoint. Wrap
       // setup so a synchronous throw (e.g. URL validation) routes to onError
@@ -1016,69 +1010,66 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     onOpenSettings,
   });
 
+  // Lumen phase 5 model chip: which generator answers the next turn, from the same
+  // inputs runGeneration routes on (lib/chat/model-chip.ts documents each mode).
+  const modelDescription = describeChatModel({
+    mode,
+    hasDesktopSession: desktopSession !== null,
+    desktopModels,
+    residentProfile: residentLoad?.profile ?? null,
+    // Inside Electron the renderer's stored external config is not authoritative
+    // (runGeneration ignores it there too).
+    externalConfig: isElectron() ? null : loadExternalConfig(),
+    browserEngine,
+    wllamaModelId: LLM_MODEL_DIR,
+    webllmModelId: WEBLLM_DEFAULT_MODEL_ID,
+  });
+
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        backgroundColor: 'var(--color-bg)',
-        position: 'relative',
-      }}
-    >
-      {/* Header (Lumen phase 3): the shared PageHeader. The action controls
-          themselves are unchanged here; phase 5 restyles the chat header. */}
+    <div className="chat-page">
+      {/* Header (Lumen phase 5): model chip, desktop mode toggle, connection
+          warning, then the conversation actions. */}
       <PageHeader
         title="Chat"
         actions={
-          <div className="chat-header-actions" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-md)' }}>
+          <div className="chat-header-actions">
+            <ModelChip
+              description={modelDescription}
+              onOpenSettings={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}
+            />
+            <InferenceModeToggle />
             {/* API mode warning */}
             {mode === 'api' && !isServerConnected && (
-              <span
-                title="The desktop backend is not reachable. Restart the app if this persists."
-                style={{
-                  fontSize: 'var(--font-size-caption)',
-                  color: 'var(--color-warning)',
-                  fontFamily: 'var(--font-family)',
-                }}
-              >
-                Server not connected
+              <span title="The desktop backend is not reachable. Restart the app if this persists.">
+                <StatusPill status="warning">Server not connected</StatusPill>
               </span>
             )}
             {messages.length > 0 && (
               <>
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => downloadConversation(messages, 'markdown')}
                   title="Export conversation as Markdown"
                   aria-label="Export conversation as Markdown"
-                  style={exportButtonStyle}
                 >
+                  <Icon name="download" size={16} />
                   Export
-                </button>
-                <button
-                  type="button"
+                </Button>
+                <Button
+                  variant={clearConfirmState === 'confirming' ? 'danger' : 'ghost'}
+                  size="sm"
                   onClick={handleClearClick}
                   disabled={isLoading}
+                  aria-disabled={isLoading || undefined}
                   title={isLoading ? 'Cancel the active response before clearing' : 'Clear chat'}
-                  style={{
-                    backgroundColor: clearConfirmState === 'confirming' ? 'var(--color-danger)' : 'transparent',
-                    color: clearConfirmState === 'confirming' ? 'var(--color-text-on-primary)' : 'var(--color-text-muted)',
-                    border: clearConfirmState === 'confirming' ? 'none' : '1px solid var(--color-text-muted)',
-                    borderRadius: 'var(--radius-sm)',
-                    padding: 'var(--spacing-xs) var(--spacing-sm)',
-                    fontSize: 'var(--font-size-caption)',
-                    fontFamily: 'var(--font-family)',
-                    cursor: isLoading ? 'not-allowed' : 'pointer',
-                    opacity: isLoading ? 0.6 : 1,
-                    transition: 'all 0.15s ease',
-                  }}
+                  data-state={clearConfirmState}
                 >
+                  <Icon name="trash" size={16} />
                   {clearConfirmState === 'confirming' ? 'Confirm Clear?' : 'Clear Chat'}
-                </button>
+                </Button>
               </>
             )}
-            <InferenceModeToggle />
           </div>
         }
       />
@@ -1136,45 +1127,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         onOpenTraining={onOpenTraining}
       />
 
-      {/* Streaming Indicator — U1: during a cold model load (multi-minute on
-          target CPU hardware), show a determinate progress bar instead of the
-          indeterminate "Generating" cursor so the load is visible. */}
-      <div
-        style={{
-          padding: 'var(--spacing-xs) var(--spacing-lg)',
-          minHeight: '28px',
-        }}
-      >
-        <StreamingIndicator
-          isVisible={isLoading}
-          modelLoadProgress={isLoading && modelLoadingProgress > 0 && modelLoadingProgress < 100 ? modelLoadingProgress : undefined}
-          modelLoadLabel="Loading the AI model — one-time, may take a few minutes…"
-        />
-      </div>
-
       {isModelLoading && (
         <div
           data-testid="chat-model-loading"
           id="chat-model-loading-note"
-          style={{
-            margin: '0 var(--spacing-lg)',
-            padding: 'var(--spacing-md)',
-            border: '1px solid var(--color-border)',
-            borderRadius: 'var(--radius-md)',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--spacing-xs)',
-            fontFamily: 'var(--font-family)',
-            fontSize: 'var(--font-size-caption)',
-            color: 'var(--color-text-primary)',
-          }}
+          className="chat-notice"
         >
           {/* Only the STABLE sentence is a live region. The 1s-ticking elapsed
               span stays OUTSIDE it (review PRR-222): text mutations inside a
               polite live region are announced by screen readers, so a ticking
               counter in here would drip announcements every second for the
               whole multi-minute cold load. */}
-          <span role="status" style={{ fontWeight: 600 }}>
+          <span role="status" className="chat-notice__title">
             Loading the AI model ({residentLoad?.profile ?? 'auto'} profile) — chat is disabled until it is ready.
           </span>
           <span aria-live="off">
@@ -1198,6 +1162,17 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         disabledReasonId={isModelLoading ? 'chat-model-loading-note' : undefined}
         imageUploadEnabled={canAttachImages}
         onDraftChange={(text) => { draftRef.current = text; }}
+        status={
+          /* Streaming Indicator — U1: during a cold model load (multi-minute on
+             target CPU hardware), show a determinate progress bar instead of the
+             indeterminate "Generating" cursor so the load is visible. Rendered in
+             the composer card's status row (Lumen phase 5). */
+          <StreamingIndicator
+            isVisible={isLoading}
+            modelLoadProgress={isLoading && modelLoadingProgress > 0 && modelLoadingProgress < 100 ? modelLoadingProgress : undefined}
+            modelLoadLabel="Loading the AI model — one-time, may take a few minutes…"
+          />
+        }
       />
     </div>
   );

@@ -66,6 +66,48 @@ const ICONS = {
     { d: 'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z' },
     { d: 'M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z' },
   ],
+  // Chat (phase 5): composer, message actions, header actions, model chip, grounding.
+  // Lucide rect/line primitives are expressed as equivalent paths (Shape has no rect).
+  'arrow-up': [{ d: 'm5 12 7-7 7 7' }, { d: 'M12 19V5' }],
+  'arrow-down': [{ d: 'M12 5v14' }, { d: 'm19 12-7 7-7-7' }],
+  square: [{ d: 'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z' }],
+  paperclip: [
+    { d: 'm21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48' },
+  ],
+  copy: [
+    { d: 'M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z' },
+    { d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2' },
+  ],
+  'rotate-ccw': [{ d: 'M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8' }, { d: 'M3 3v5h5' }],
+  download: [
+    { d: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4' },
+    { d: 'm7 10 5 5 5-5' },
+    { d: 'M12 15V3' },
+  ],
+  trash: [
+    { d: 'M3 6h18' },
+    { d: 'M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6' },
+    { d: 'M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2' },
+  ],
+  globe: [{ circle: [12, 12, 10] }, { d: 'M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20' }, { d: 'M2 12h20' }],
+  cpu: [
+    { d: 'M6 4h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z' },
+    { d: 'M9 9h6v6H9z' },
+    { d: 'M15 2v2' },
+    { d: 'M15 20v2' },
+    { d: 'M2 15h2' },
+    { d: 'M2 9h2' },
+    { d: 'M20 15h2' },
+    { d: 'M20 9h2' },
+    { d: 'M9 2v2' },
+    { d: 'M9 20v2' },
+  ],
+  server: [
+    { d: 'M4 2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z' },
+    { d: 'M4 14h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z' },
+    { d: 'M6 6h.01' },
+    { d: 'M6 18h.01' },
+  ],
 } as const satisfies Record<string, readonly Shape[]>;
 
 export type IconName = keyof typeof ICONS;
