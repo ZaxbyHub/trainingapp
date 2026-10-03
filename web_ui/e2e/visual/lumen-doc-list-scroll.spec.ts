@@ -19,6 +19,10 @@ import { ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from '../../src/c
 
 const NOW = Date.UTC(2026, 8, 30, 12, 0, 0);
 const COUNT = 80;
+// scrollTop is whole pixels and the row index is fractional (the 1px table border shifts it
+// by a hair), so a switch may land up to a couple of px off the exact row boundary: a
+// row with <= SLIVER px showing is not the top row, and the offset tolerance matches.
+const SLIVER = 4;
 const name = (i: number): string => `Doc-${String(i).padStart(3, '0')}.pdf`;
 
 async function boot(page: Page): Promise<void> {
@@ -83,7 +87,7 @@ const resizeTo = async (page: Page, width: number): Promise<void> => {
 };
 
 interface Snapshot {
-  /** File name of the first row that is at least partly visible. */
+  /** File name of the first row with more than a SLIVER of itself visible. */
   first: string | null | undefined;
   /** That row's top edge relative to the scroller's top edge (0 = flush). */
   firstOffset: number;
@@ -94,13 +98,13 @@ interface Snapshot {
 }
 
 const snapshot = (page: Page): Promise<Snapshot> =>
-  page.evaluate(() => {
+  page.evaluate((sliver) => {
     const table = document.querySelector('.app-doc-table') as HTMLElement;
     const region = document.querySelector('.app-docs__list-region') as HTMLElement;
     const items = Array.from(document.querySelectorAll<HTMLElement>('.app-doc-list__item'));
     const regionTop = region.getBoundingClientRect().top;
     const first = items
-      .filter((item) => item.getBoundingClientRect().bottom > regionTop + 1)
+      .filter((item) => item.getBoundingClientRect().bottom > regionTop + sliver)
       .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
     const style = getComputedStyle(table);
     const inset = [style.borderLeftWidth, style.borderRightWidth, style.paddingLeft, style.paddingRight].reduce(
@@ -116,7 +120,7 @@ const snapshot = (page: Page): Promise<Snapshot> =>
       tableWidth: table.getBoundingClientRect().width - inset,
       active: active === document.body ? 'BODY' : active?.getAttribute('aria-label'),
     };
-  });
+  }, SLIVER);
 
 const scrollToRow = async (page: Page, row: number): Promise<void> => {
   await page.evaluate((top) => {
@@ -148,14 +152,14 @@ for (const [row, label] of [[60, 'row 60'], [70, 'row 70 with focus on its Delet
     const wide = await snapshot(page);
     expect(wide.itemHeight).toBe(ITEM_HEIGHT);
     expect(wide.first).toBe(name(row));
-    expect(Math.abs(wide.firstOffset)).toBeLessThanOrEqual(1);
+    expect(Math.abs(wide.firstOffset)).toBeLessThanOrEqual(SLIVER);
     if (row === 70) expect(wide.active).toBe(control);
 
     await resizeTo(page, 800);
     const back = await snapshot(page);
     expect(back.itemHeight).toBe(STACKED_ITEM_HEIGHT);
     expect(back.first).toBe(name(row));
-    expect(Math.abs(back.firstOffset)).toBeLessThanOrEqual(1);
+    expect(Math.abs(back.firstOffset)).toBeLessThanOrEqual(SLIVER);
     if (row === 70) expect(back.active).toBe(control);
   });
 }
