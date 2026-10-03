@@ -180,6 +180,63 @@ describe('PacksPanel training slot and auto-switch signal (Lumen phase 6)', () =
     );
     await screen.findByTestId('pack-row-course-a-1.0.0');
     expect(document.activeElement).toBe(outside);
+    // ...and the switch is announced politely instead (review L5).
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('status').some((el) => /Showing the Training packs tab/.test(el.textContent ?? ''))
+      ).toBe(true)
+    );
+  });
+
+  it('applies only the newest listPacks response when refreshes resolve out of order (review L5)', async () => {
+    const onTrainingPackAdded = vi.fn();
+    const resolvers: Array<(list: PackInfo[]) => void> = [];
+    let call = 0;
+    let listener: (() => void) | null = null;
+    const client = {
+      kind: 'browser',
+      listPacks: vi.fn(() => {
+        call += 1;
+        if (call === 1) return Promise.resolve([KNOWLEDGE]); // first load
+        return new Promise<PackInfo[]>((resolve) => resolvers.push(resolve));
+      }),
+      installPack: vi.fn(),
+      removePack: vi.fn(),
+      rollbackPack: vi.fn(),
+      subscribe: (fn: () => void) => {
+        listener = fn;
+        return () => {
+          listener = null;
+        };
+      },
+    } as unknown as PackClient;
+    render(
+      <ToastProvider>
+        <PacksPanel client={client} slots={{ knowledge: slot(), training: slot() }} onTrainingPackAdded={onTrainingPackAdded} />
+      </ToastProvider>
+    );
+    await screen.findByTestId('pack-row-handbook-1.0.0');
+    await act(async () => listener?.()); // refresh A (older)
+    await act(async () => listener?.()); // refresh B (newer)
+    expect(resolvers).toHaveLength(2);
+    await act(async () => resolvers[1]([KNOWLEDGE, COURSE])); // B lands first: the course appears
+    expect(screen.getByTestId('pack-row-course-a-1.0.0')).toBeTruthy();
+    expect(onTrainingPackAdded).toHaveBeenCalledTimes(1);
+    await act(async () => resolvers[0]([KNOWLEDGE])); // stale A lands last: ignored
+    expect(screen.getByTestId('pack-row-course-a-1.0.0')).toBeTruthy();
+    expect(onTrainingPackAdded).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows the packs capability warning on the Training packs tab too (review L4)', async () => {
+    const { client } = makeClient([[KNOWLEDGE]]);
+    (client as unknown as { capabilityIssue: () => string }).capabilityIssue = () => 'Pack storage is unavailable in this browser.';
+    render(
+      <ToastProvider>
+        <PacksPanel client={client} slots={{ knowledge: null, training: slot() }} />
+      </ToastProvider>
+    );
+    const heading = await screen.findByRole('heading', { name: 'Training packs' });
+    expect(heading.closest('section')).toHaveTextContent('Pack storage is unavailable in this browser.');
   });
 
   it('re-lists when refreshToken changes', async () => {
