@@ -513,15 +513,20 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
                       </span>
                       {view !== null ? (
                         <span className="app-course__progress">
-                          <ProgressBar
-                            label={
-                              view.reached === 0
-                                ? `${title} progress: not started`
-                                : `${title} progress: reached slide ${view.reached} of ${view.total}`
-                            }
-                            value={view.reached}
-                            max={view.total}
-                          />
+                          {/* Decorative inside the card button: a progressbar there still
+                              contributes its raw value to the button's name (Chromium), so the
+                              visible text below is the single source of the progress. */}
+                          <span className="app-course__bar" aria-hidden="true">
+                            <ProgressBar
+                              label={
+                                view.reached === 0
+                                  ? `${title} progress: not started`
+                                  : `${title} progress: reached slide ${view.reached} of ${view.total}`
+                              }
+                              value={view.reached}
+                              max={view.total}
+                            />
+                          </span>
                           <span className="app-course__progress-text">
                             {view.reached === 0 ? 'Not started' : `Reached slide ${view.reached} of ${view.total}`}
                           </span>

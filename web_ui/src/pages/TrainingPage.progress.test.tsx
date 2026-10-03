@@ -79,7 +79,7 @@ describe('course-card progress (B2)', () => {
     render(<TrainingPage />);
     const a = await card('course-a');
     expect(a).toHaveTextContent('Not started');
-    const bar = within(a).getByRole('progressbar');
+    const bar = within(a).getByRole('progressbar', { hidden: true });
     expect(bar).toHaveAttribute('aria-valuenow', '0');
     expect(bar).toHaveAttribute('aria-valuemax', '4');
     expect(stored()).toBeNull();
@@ -98,7 +98,7 @@ describe('course-card progress (B2)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
     const a = await card('course-a');
     expect(a).toHaveTextContent('Reached slide 3 of 4');
-    expect(within(a).getByRole('progressbar')).toHaveAttribute('aria-valuenow', '3');
+    expect(within(a).getByRole('progressbar', { hidden: true })).toHaveAttribute('aria-valuenow', '3');
     // The other course is untouched.
     expect(await card('course-b')).toHaveTextContent('Not started');
   });
@@ -140,7 +140,7 @@ describe('course-card progress (B2)', () => {
     const a = await card('course-a');
     expect(a).toHaveTextContent('Storyline course');
     expect(a.textContent).not.toMatch(/[0-9]+ of [0-9]+|Not started|Reached/);
-    expect(within(a).queryByRole('progressbar')).toBeNull();
+    expect(within(a).queryByRole('progressbar', { hidden: true })).toBeNull();
 
     fireEvent.click(a);
     await screen.findByTestId('stub-player');
@@ -153,17 +153,21 @@ describe('course-card progress (B2)', () => {
     render(<TrainingPage />);
     const a = await card('course-a');
     expect(a).toHaveTextContent('Storyline course');
-    expect(within(a).queryByRole('progressbar')).toBeNull();
+    expect(within(a).queryByRole('progressbar', { hidden: true })).toBeNull();
   });
 
   it('announces the progress accessibly (card name and a labelled progressbar)', async () => {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3 }));
     render(<TrainingPage />);
     const a = await card('course-a');
-    // A progressbar inside a button is presentational for assistive tech, so the
-    // button's own name must carry the progress text.
+    // The button's own name carries the progress text.
     expect(screen.getByRole('button', { name: /Safety Onboarding.*Reached slide 3 of 4/ })).toBe(a);
-    const bar = within(a).getByRole('progressbar', { name: 'Safety Onboarding progress: reached slide 3 of 4' });
+    // The bar is decorative inside the button (Chromium folds an embedded progressbar's raw
+    // value into the button name): the progress is announced once, through the text.
+    expect(a.querySelector('.app-course__bar')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.queryByRole('progressbar')).toBeNull();
+    expect((a.textContent ?? '').match(/Reached slide 3 of 4/g)).toHaveLength(1);
+    const bar = within(a).getByRole('progressbar', { hidden: true, name: 'Safety Onboarding progress: reached slide 3 of 4' });
     expect(bar).toHaveAttribute('aria-valuemin', '0');
     expect(bar).toHaveAttribute('aria-valuemax', '4');
     expect(bar).toHaveAttribute('aria-valuenow', '3');
@@ -180,7 +184,7 @@ describe('progress semantics and storage merge (critic L3, N4)', () => {
     const a = await card('course-a');
     expect(a).toHaveTextContent('Reached slide 4 of 4');
     expect(a.textContent).not.toMatch(/\b4 of 4 slides\b/);
-    expect(within(a).getByRole('progressbar')).toHaveAccessibleName('Safety Onboarding progress: reached slide 4 of 4');
+    expect(within(a).getByRole('progressbar', { hidden: true })).toHaveAccessibleName('Safety Onboarding progress: reached slide 4 of 4');
   });
 
   it('keeps another tab\'s progress for a different course when recording', async () => {
@@ -195,13 +199,14 @@ describe('progress semantics and storage merge (critic L3, N4)', () => {
     expect(await card('course-b')).toHaveTextContent('Reached slide 5 of 6'); // this tab adopts it too
   });
 
-  it('two events in one batch both land (functional state update, no stale closure)', async () => {
+  it('a later, earlier-slide event in the same batch cannot regress the furthest slide (no stale closure)', async () => {
     render(<TrainingPage />);
     fireEvent.click(await card('course-a'));
     await screen.findByTestId('stub-player');
     await act(async () => {
-      player.emit?.({ slideId: 's2', slideTitle: 'T2' });
+      // Same render, same callback: a closure over the old progress would write {a: 2} last.
       player.emit?.({ slideId: 's3', slideTitle: 'T3' });
+      player.emit?.({ slideId: 's2', slideTitle: 'T2' });
     });
     expect(stored()).toEqual({ 'course-a': 3 });
     fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
