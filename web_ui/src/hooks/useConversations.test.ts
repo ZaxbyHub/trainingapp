@@ -887,15 +887,96 @@ describe('useConversations', () => {
       }
     });
 
-    it('a rename re-runs an active search so results stay current', async () => {
-      mockSearchConversations.mockResolvedValue({ matches: [old], truncated: false });
+    it('a rename re-runs an active search and the NEW title appears in the results (PRR-017)', async () => {
+      // A tiny live "store" the search mock reads, so the rename really changes what it finds.
+      const live = new Map([[old.id, { ...old }]]);
+      mockSearchConversations.mockImplementation(async (q: string) => ({
+        matches: [...live.values()].filter((c) => c.title.toLowerCase().includes(q.toLowerCase())),
+        truncated: false,
+      }));
+      mockUpdateConversation.mockImplementation(async (id: string, changes: { title?: string }) => {
+        const row = live.get(id);
+        if (row && changes.title) live.set(id, { ...row, title: changes.title });
+      });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('budget'));
+      await waitFor(() => expect(result.current.searchResults?.map((c) => c.title)).toEqual(['Quarterly budget review']));
+      await act(async () => {
+        await result.current.renameConversation('conv-110', 'Budget v2 (final)');
+      });
+      await waitFor(() => expect(result.current.searchResults?.map((c) => c.title)).toEqual(['Budget v2 (final)']));
+      expect(result.current.isSearching).toBe(false);
+    });
+
+    it('a mutation during an in-flight walk does not restart it; the walk is re-run once when it finishes (PRR-011)', async () => {
+      const pending: Array<(v: unknown) => void> = [];
+      mockSearchConversations.mockImplementation(() => new Promise((r) => { pending.push(r); }));
       const { result } = await mountWithPage();
       act(() => result.current.setSearchQuery('budget'));
       await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
       await act(async () => {
-        await result.current.renameConversation('conv-110', 'Budget v2');
+        await result.current.renameConversation('conv-1', 'Renamed');
       });
+      // The identical in-flight walk was neither cancelled nor restarted.
+      expect(mockSearchConversations).toHaveBeenCalledTimes(1);
+      const token = mockSearchConversations.mock.calls[0][1] as { isCancelled: () => boolean };
+      expect(token.isCancelled()).toBe(false);
+      await act(async () => pending[0]({ matches: [old], truncated: false }));
+      // ...and re-run exactly once afterwards, so results reflect the rename.
       await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(2));
+      expect(result.current.isSearching).toBe(true);
+      await act(async () => pending[1]({ matches: [], truncated: false }));
+      expect(result.current.searchResults).toEqual([]);
+      expect(result.current.isSearching).toBe(false);
+    });
+
+    it('a mutation while the debounce is pending runs the search now and clears the timer (no second run) (PRR-011)', async () => {
+      mockSearchConversations.mockResolvedValue({ matches: [old], truncated: false });
+      const { result } = await mountWithPage();
+      act(() => result.current.setSearchQuery('budget'));
+      expect(mockSearchConversations).not.toHaveBeenCalled(); // still debouncing
+      await act(async () => {
+        await result.current.renameConversation('conv-1', 'Renamed');
+      });
+      await waitFor(() => expect(mockSearchConversations).toHaveBeenCalledTimes(1));
+      await new Promise((r) => setTimeout(r, CONVERSATION_SEARCH_DEBOUNCE_MS + 80));
+      expect(mockSearchConversations).toHaveBeenCalledTimes(1);
+      expect(result.current.searchResults?.map((c) => c.id)).toEqual(['conv-110']);
+    });
+  });
+
+  describe('Load more vs refresh race (PRR-005)', () => {
+    it('a refresh during a pending "Load more" discards the stale page (no duplicates, no stale tail)', async () => {
+      const first = Array.from({ length: 50 }, (_, i) =>
+        createMockConversation({ id: `conv-${i}`, title: `Recent ${i}`, updatedAt: 10_000 - i })
+      );
+      const second = Array.from({ length: 50 }, (_, i) =>
+        createMockConversation({ id: `conv-${50 + i}`, title: `Older ${i}`, updatedAt: 5_000 - i })
+      );
+      let resolveMore: (v: unknown) => void = () => {};
+      let refreshedFirst = first;
+      mockCountConversations.mockResolvedValue(120);
+      mockListConversations.mockImplementation((offset: number) => {
+        if (offset === 0) return Promise.resolve(refreshedFirst);
+        return new Promise((r) => { resolveMore = r; });
+      });
+      const { result } = renderHook(() => useConversations());
+      await waitFor(() => expect(result.current.conversations).toHaveLength(50));
+
+      let loading: Promise<void> = Promise.resolve();
+      act(() => { loading = result.current.loadMore(); });
+      // While page 2 loads, a rename moves conv-60 (a page-2 row) to the top.
+      refreshedFirst = [createMockConversation({ id: 'conv-60', title: 'Renamed', updatedAt: 20_000 }), ...first.slice(0, 49)];
+      await act(async () => {
+        await result.current.renameConversation('conv-60', 'Renamed');
+      });
+      await act(async () => {
+        resolveMore(second);
+        await loading;
+      });
+      const ids = result.current.conversations.map((c) => c.id);
+      expect(new Set(ids).size).toBe(ids.length); // no duplicate conv-60
+      expect(ids).toEqual(refreshedFirst.map((c) => c.id)); // stale tail dropped
     });
   });
 });

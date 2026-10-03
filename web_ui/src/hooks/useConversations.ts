@@ -105,15 +105,25 @@ export function useConversations() {
   useEffect(() => {
     searchQueryRef.current = searchQuery;
   }, [searchQuery]);
+  // PR #147 PRR-011: refresh-driven re-runs coordinate with the debounce and an
+  // in-flight walk instead of always starting a new one.
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inFlightQuery = useRef<string | null>(null);
+  const rerunAfterFlight = useRef(false);
+  const runSearchRef = useRef<(query: string) => Promise<void>>(async () => {});
 
   const runSearch = useCallback(async (query: string) => {
     const seq = ++searchSeq.current;
+    // This walk starts after any pending mutation, so it already sees it.
+    rerunAfterFlight.current = false;
     if (query.trim() === '') {
+      inFlightQuery.current = null;
       setSearchResults(null);
       setSearchTruncated(false);
       setIsSearching(false);
       return;
     }
+    inFlightQuery.current = query;
     setIsSearching(true);
     try {
       // The cursor stops as soon as a newer search (or a clear) bumps the sequence.
@@ -130,9 +140,20 @@ export function useConversations() {
       setSearchResults([]);
       setSearchTruncated(false);
     } finally {
-      if (seq === searchSeq.current) setIsSearching(false);
+      if (seq === searchSeq.current) {
+        inFlightQuery.current = null;
+        if (rerunAfterFlight.current) {
+          // A save/rename/delete landed while this walk was reading: its
+          // read snapshot may predate it, so walk once more to stay current.
+          rerunAfterFlight.current = false;
+          void runSearchRef.current(searchQueryRef.current);
+        } else {
+          setIsSearching(false);
+        }
+      }
     }
   }, []);
+  runSearchRef.current = runSearch;
 
   // Debounce: clearing the query takes effect immediately; typing waits. The
   // shown results are stale from the first keystroke, so isSearching turns on
@@ -144,40 +165,78 @@ export function useConversations() {
     }
     setIsSearching(true);
     const timer = setTimeout(() => {
+      debounceTimer.current = null;
       void runSearch(searchQuery);
     }, CONVERSATION_SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
+    debounceTimer.current = timer;
+    return () => {
+      clearTimeout(timer);
+      if (debounceTimer.current === timer) debounceTimer.current = null;
+    };
   }, [searchQuery, runSearch]);
+
+  /**
+   * Keep an active search in step with a mutation (rename, delete, save):
+   * - a debounced query still pending runs now (its timer is cleared, so it
+   *   does not run twice);
+   * - an identical walk already in flight is not restarted; it is re-run once
+   *   when it finishes, because its read may predate the mutation;
+   * - otherwise the current query runs now.
+   */
+  const refreshActiveSearch = useCallback(() => {
+    const query = searchQueryRef.current;
+    if (query.trim() === '') return;
+    if (debounceTimer.current !== null) {
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+      void runSearch(query);
+    } else if (inFlightQuery.current === query) {
+      rerunAfterFlight.current = true;
+    } else {
+      void runSearch(query);
+    }
+  }, [runSearch]);
+
+  // PR #147 PRR-005: bumped by every list refresh; a "Load more" (or an older
+  // refresh) that resolves after a newer refresh discards its stale result.
+  const listGeneration = useRef(0);
 
   // Load conversation list from Dexie on mount
   const refreshConversations = useCallback(async () => {
+    const generation = ++listGeneration.current;
     try {
       const list = await listConversations(0, pageSize);
-      setConversations(list.map(toSummary));
       const total = await countConversations();
+      if (generation !== listGeneration.current) return;
+      setConversations(list.map(toSummary));
       setHasMore(list.length < total);
       setPersistenceError(null);
       // Keep an active search in step with renames, deletes and new saves.
-      if (searchQueryRef.current.trim() !== '') void runSearch(searchQueryRef.current);
+      refreshActiveSearch();
     } catch (error) {
       console.error('[useConversations] Failed to load conversations:', error);
       setPersistenceError('Failed to load conversations');
     }
-  }, [pageSize, runSearch]);
+  }, [pageSize, refreshActiveSearch]);
 
   // Load more conversations for pagination
   const loadMore = useCallback(async () => {
     if (isLoadingMore) return;
     try {
       setIsLoadingMore(true);
+      const generation = listGeneration.current;
       const more = await listConversations(conversations.length, pageSize);
+      // A refresh (rename/save/delete) replaced the first page while this page
+      // was loading: its offset no longer lines up, so drop it.
+      if (generation !== listGeneration.current) return;
       if (more.length > 0) {
-        setConversations(prev => [...prev, ...more.map(c => ({
-          id: c.id,
-          title: c.title,
-          updatedAt: new Date(c.updatedAt).toISOString(),
-        }))]);
         const total = await countConversations();
+        if (generation !== listGeneration.current) return;
+        // Defensive de-duplication by id on top of the generation check.
+        setConversations(prev => {
+          const seen = new Set(prev.map(c => c.id));
+          return [...prev, ...more.filter(c => !seen.has(c.id)).map(toSummary)];
+        });
         setHasMore(conversations.length + more.length < total);
       } else {
         setHasMore(false);
