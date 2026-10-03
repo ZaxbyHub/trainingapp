@@ -23,7 +23,7 @@
 
 /* Desktop resident-model load notice (ChatPage, #133). Not a Banner: the Banner root
    is a live region and the 1 s elapsed counter here must stay outside one (PRR-222). */
-.chat-notice { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-1); width: calc(100% - 2 * var(--space-6)); max-width: var(--w-reading); margin: 0 auto var(--space-2); padding: var(--space-3) var(--space-4); background: var(--info-subtle); border: 1px solid var(--info-border); border-radius: var(--r-card); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
+.chat-notice { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-1); width: calc(100% - 2 * var(--space-6)); max-width: calc(var(--w-reading) - 2 * var(--space-6)); margin: 0 auto var(--space-2); padding: var(--space-3) var(--space-4); background: var(--info-subtle); border: 1px solid var(--info-border); border-radius: var(--r-card); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
 .chat-notice__title { font-weight: 600; }
 
 /* --------------------------------------------------------------- Log */
@@ -123,7 +123,8 @@
 /* ---------------------------------------------------------- Composer */
 /* One raised card: attach, textarea, clear, integrated Send/Stop, and a status row. */
 .chat-composer { flex: none; padding: 0 var(--space-6) var(--space-4); }
-.chat-composer__card { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--w-reading); margin: 0 auto; padding: var(--space-2); background: var(--bg-raised); border: 1px solid var(--border-control); border-radius: var(--r-overlay); box-shadow: var(--shadow-2); transition: border-color var(--dur-fast) var(--ease-standard); }
+/* Card width = the log column's content width (reading width minus the column gutters), so edges line up. */
+.chat-composer__card { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-2); max-width: calc(var(--w-reading) - 2 * var(--space-6)); margin: 0 auto; padding: var(--space-2); background: var(--bg-raised); border: 1px solid var(--border-control); border-radius: var(--r-overlay); box-shadow: var(--shadow-2); transition: border-color var(--dur-fast) var(--ease-standard); }
 .chat-composer__card:focus-within { border-color: var(--accent); }
 .chat-composer__row { display: flex; align-items: flex-end; gap: var(--space-1); }
 .chat-composer__input { box-sizing: border-box; flex: 1 1 160px; min-width: 0; min-height: 40px; max-height: 150px; margin: 0; padding: var(--space-2); background: transparent; color: var(--text-primary); border: 0; resize: none; overflow-y: hidden; font-family: inherit; font-size: var(--type-body-size); line-height: var(--type-body-line); }
