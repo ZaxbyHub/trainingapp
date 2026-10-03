@@ -26,7 +26,7 @@
  *  - Before the course starts the player reports no state; polls stay
  *    silent and queued jumps wait inside the pack bridge until ready.
  */
-import { forwardRef, type CSSProperties, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import {
   createTrainingPlayerBridge,
   type TrainingPlayerBridge,
@@ -35,6 +35,7 @@ import {
 import { isElectron } from '../lib/desktop-session';
 import { browserTrainingHost } from '../lib/packs/browser-training';
 import { browserTrainingUrl, getPlayerOriginStatus, getResolvedPlayerOrigin, isPlayerOriginPending, resolvePlayerOrigin } from '../lib/packs/player-origin';
+import '../pages/training.css';
 
 /**
  * Sandbox of the course frame (review round 1, F2; desktop parity with the
@@ -73,7 +74,13 @@ export interface TrainingPlayerHandle {
 
 const POLL_INTERVAL_MS = 1000;
 
-const alertStyle: CSSProperties = { margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)', outline: 'none' };
+/**
+ * Lumen phase 6: presentation of the failure notices only (banner look; they are
+ * still programmatic-focus targets without an outline, as before). The notices'
+ * role, ref, tabIndex and testids are unchanged.
+ */
+const WARNING_ALERT_CLASS = 'ui-banner ui-banner--warning app-player__alert';
+const DANGER_ALERT_CLASS = 'ui-banner ui-banner--danger app-player__alert';
 
 /**
  * Callback ref (stable identity, so it runs once when an alert mounts): move
@@ -238,67 +245,53 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
     }, [packId]);
 
     return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--spacing-sm)',
-          height: '100%',
-          minHeight: 0,
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--spacing-md)',
-            padding: 'var(--spacing-sm) var(--spacing-md)',
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-            color: 'var(--color-text-muted)',
-          }}
-        >
-          <span>
-            Current slide:{' '}
+      <div className="app-player">
+        <div className="app-player__bar">
+          <span className="app-player__slide">
+            <span className="app-player__bar-label">Current slide:</span>{' '}
             <span data-testid="training-player-slide">
               {current === null ? '' : `${current.slideId}|${current.slideTitle}`}
             </span>
           </span>
         </div>
         {location === null && (originStatus === 'ok' || originStatus === 'no-origin') && originPending && (
-          <p role="status" aria-live="polite" data-testid="training-player-preparing" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+          <p role="status" aria-live="polite" data-testid="training-player-preparing" className="app-player__status">
             Preparing the course player…
           </p>
         )}
         {location === null && framed && (
-          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-framed" style={alertStyle}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-framed" className={WARNING_ALERT_CLASS}>
             Course playback is disabled because this app is embedded in another page. Open the app directly in its own
             browser tab to play courses.
           </p>
         )}
         {location === null && originStatus === 'host-unsupported' && (
-          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-host-unsupported" style={alertStyle}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-host-unsupported" className={WARNING_ALERT_CLASS}>
             Course playback is not available on this host: it does not serve the course player. Serve the app with
             the bundled start scripts (start.bat / start.command) or play courses in the desktop app.
           </p>
         )}
         {location === null && originStatus === 'policy-failed' && (
-          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-unsecured" style={alertStyle}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-unsecured" className={DANGER_ALERT_CLASS}>
             Course playback is unavailable: the course player could not be secured in this page. Reload the app; if this
             persists, play courses in the desktop app.
           </p>
         )}
         {location === null && originStatus === 'no-origin' && !originPending && (
-          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-unavailable" style={alertStyle}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-unavailable" className={WARNING_ALERT_CLASS}>
             Course playback needs a player origin: open the app at http://localhost or http://127.0.0.1 (its loopback
             alias serves the player), or configure player-origin.json / VITE_TRAININGAPP_PLAYER_ORIGIN for this host.
           </p>
         )}
         {playerError !== null && location !== null && (
-          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-error" style={alertStyle}>
+          <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-error" className={DANGER_ALERT_CLASS}>
             Course player could not start: {playerError}. Course playback is supported in current Chrome and Edge (Safari is not
             supported).{' '}
-            <button type="button" onClick={() => window.location.reload()}>
+            <button
+              type="button"
+              className="ui-button ui-button--secondary ui-button--sm ui-focusable"
+              onClick={() => window.location.reload()}
+            >
               Reload
             </button>
           </p>
@@ -319,17 +312,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             backgroundColor: 'var(--color-surface)',
           }}
         />
-        <div
-          data-testid="training-player-slidechange"
-          style={{
-            maxHeight: '96px',
-            overflowY: 'auto',
-            padding: 'var(--spacing-xs) var(--spacing-md)',
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-            color: 'var(--color-text-muted)',
-          }}
-        >
+        <div data-testid="training-player-slidechange" className="app-player__log">
           {changeLog.map((entry, index) => (
             <div key={`${entry.slideId}-${index}`} data-trainingapp-entry="">
               {entry.slideId}|{entry.slideTitle}

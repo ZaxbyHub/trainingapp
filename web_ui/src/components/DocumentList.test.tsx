@@ -170,8 +170,9 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
-      const progressBar = document.querySelector('div[style*="80px"]');
-      expect(progressBar).toBeInTheDocument();
+      // Lumen phase 6: role/value assertions (was an inline width-style string).
+      const progressBar = screen.getByRole('progressbar');
+      expect(progressBar).toHaveAttribute('aria-valuenow', String(documents[0].progress));
     });
 
     it('displays progress bar for processing documents', () => {
@@ -181,8 +182,9 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
-      const progressBar = document.querySelector('div[style*="80px"]');
-      expect(progressBar).toBeInTheDocument();
+      // Lumen phase 6: role/value assertions (was an inline width-style string).
+      const progressBar = screen.getByRole('progressbar');
+      expect(progressBar).toHaveAttribute('aria-valuenow', String(documents[0].progress));
     });
 
     it('hides progress bar for ready documents', () => {
@@ -192,9 +194,7 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
-      // Progress bar divs are 80px wide, ready status should not have them
-      const progressBars = document.querySelectorAll('div[style*="80px"]');
-      expect(progressBars).toHaveLength(0);
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
     it('hides progress bar for error documents', () => {
@@ -204,8 +204,7 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
-      const progressBars = document.querySelectorAll('div[style*="80px"]');
-      expect(progressBars).toHaveLength(0);
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
     it('displays chunk count when available', () => {
@@ -304,11 +303,11 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId="doc-123" />);
 
-      // The document item should have opacity 0.5 when deleting
-      // We can verify by checking the parent element of the delete button
+      // Lumen phase 6: the dimmed state is the row's deleting modifier class
+      // (pages/documents.css sets its opacity), not an inline style string.
       const deleteButton = screen.getByRole('button', { name: /delete deleting\.pdf/i });
-      const parentWithOpacity = deleteButton.closest('div[style*="opacity"]');
-      expect(parentWithOpacity).toBeInTheDocument();
+      expect(deleteButton.closest('.app-doc')).toHaveClass('app-doc--deleting');
+      expect(deleteButton).toBeDisabled();
     });
   });
 

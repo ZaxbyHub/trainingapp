@@ -5,7 +5,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { DropZone } from '../components/DropZone';
 import { DocumentList } from '../components/DocumentList';
-import { LoadingSkeleton } from '../components/LoadingSkeleton';
 import { useToast } from '../components/ToastProvider';
 import type { DocumentEntry } from '../types/document';
 import { extractDocument, SUPPORTED_EXTENSIONS } from '../lib/processing/extractor-factory';
@@ -21,7 +20,8 @@ import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { PacksPanel } from '../components/PacksPanel';
 import { usePackClient } from '../lib/packs/pack-client';
 import type { DocumentInfo } from '../lib/api';
-import { PageHeader } from '../ui';
+import { Badge, Banner, Button, IconButton, PageHeader, Skeleton } from '../ui';
+import './documents.css';
 
 const DOCUMENTS_DESCRIPTION = 'Add files and knowledge packs that Chat can search and cite.';
 
@@ -744,18 +744,10 @@ export function DocumentsPage() {
     return (
       <div className="app-page">
         <PageHeader title="Documents" description={DOCUMENTS_DESCRIPTION} />
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 'var(--spacing-sm)',
-            flex: 1,
-            minHeight: 0,
-            padding: 'var(--spacing-lg)',
-          }}
-          aria-label="Loading documents"
-        >
-          <LoadingSkeleton variant="card" count={3} ariaLabel="Loading documents" />
+        <div className="app-docs__loading" role="status" aria-busy="true" aria-label="Loading documents">
+          <Skeleton height={60} />
+          <Skeleton height={60} />
+          <Skeleton height={60} />
         </div>
       </div>
     );
@@ -763,132 +755,61 @@ export function DocumentsPage() {
 
   return (
     <div className="app-page">
-      {/* Header (Lumen phase 3): the shared PageHeader. The action controls are
-          unchanged here; phase 6 restyles the Documents page. */}
+      {/* Header (Lumen phases 3 and 6): the shared PageHeader; its actions are the
+          supported-file count chip and the Electron-only Clear all (two-step). */}
       <PageHeader
         title="Documents"
         description={DOCUMENTS_DESCRIPTION}
         actions={
           <>
             {electronMode && documents.length > 0 && (
-              <button
-                type="button"
+              <Button
+                size="sm"
+                variant={clearAllConfirming ? 'danger' : 'secondary'}
                 onClick={handleClearAll}
                 aria-label={clearAllConfirming ? 'Confirm clear all documents' : 'Clear all documents'}
-                style={{
-                  fontSize: 'var(--font-size-small)',
-                  fontFamily: 'var(--font-family)',
-                  cursor: 'pointer',
-                  padding: 'var(--spacing-xs) var(--spacing-sm)',
-                  borderRadius: '12px',
-                  border: '1px solid ' + (clearAllConfirming ? 'var(--color-danger)' : 'transparent'),
-                  color: clearAllConfirming ? 'var(--color-danger)' : 'var(--color-text-muted)',
-                  backgroundColor: 'var(--color-bubble-system)',
-                }}
               >
                 {clearAllConfirming ? 'Click again to clear ALL documents' : 'Clear all'}
-              </button>
+              </Button>
             )}
             {supportedCount > 0 && (
-              <span
-                style={{
-                  fontSize: 'var(--font-size-small)',
-                  fontFamily: 'var(--font-family)',
-                  color: 'var(--color-text-muted)',
-                  backgroundColor: 'var(--color-bubble-system)',
-                  padding: 'var(--spacing-xs) var(--spacing-sm)',
-                  borderRadius: '12px',
-                }}
-              >
+              <Badge>
                 {supportedCount} supported file{supportedCount !== 1 ? 's' : ''}
-              </span>
+              </Badge>
             )}
           </>
         }
       />
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          flex: 1,
-          minHeight: 0,
-          padding: 'var(--spacing-lg)',
-          gap: 'var(--spacing-lg)',
-          overflow: 'hidden',
-        }}
-      >
-
+      <div className="app-docs">
         {/* F9: one-time re-index notice after an embedding-model upgrade. */}
         {showReindexNotice && (
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: 'var(--spacing-sm)',
-              padding: 'var(--spacing-sm) var(--spacing-md)',
-              borderRadius: '8px',
-              backgroundColor: 'var(--color-bubble-system)',
-              color: 'var(--color-text-muted)',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              flexShrink: 0,
-            }}
+          <Banner
+            tone="info"
+            className="app-docs__fixed"
+            action={<IconButton icon="x" size="sm" aria-label="Dismiss notice" onClick={dismissReindexNotice} />}
           >
-            <span>
-              The search index was upgraded. Re-add your documents to rebuild the index and restore full retrieval quality.
-            </span>
-            <button
-              type="button"
-              onClick={dismissReindexNotice}
-              aria-label="Dismiss notice"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                color: 'var(--color-text-muted)',
-                fontSize: 'var(--font-size-body)',
-                padding: '0 var(--spacing-xs)',
-                flexShrink: 0,
-              }}
-            >
-              ×
-            </button>
-          </div>
+            The search index was upgraded. Re-add your documents to rebuild the index and restore full retrieval quality.
+          </Banner>
         )}
 
         {/* F5: transient duplicate-upload notice. */}
         {duplicateNotice && (
-          <div
-            role="status"
-            aria-live="polite"
-            style={{
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              borderRadius: '8px',
-              backgroundColor: 'var(--color-bubble-system)',
-              color: 'var(--color-text-muted)',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              flexShrink: 0,
-            }}
-          >
+          <Banner tone="info" className="app-docs__fixed">
             {duplicateNotice}
-          </div>
+          </Banner>
         )}
 
         {/* Knowledge Packs panel — both apps (C7 issue #74; browser parity
             ADR-0012): the same panel over the PackClient seam. Mounted above
             the document drop zone. */}
         {packClient !== null && (
-          <div style={{ flexShrink: 0 }}>
+          <div className="app-docs__fixed">
             <PacksPanel client={packClient} />
           </div>
         )}
 
         {/* Drop zone */}
-        <div style={{ flexShrink: 0 }}>
+        <div className="app-docs__fixed">
           <DropZone
             onFilesSelected={handleFilesSelected}
             accept={[...SUPPORTED_EXTENSIONS, '.zip'].join(',')}
@@ -907,8 +828,8 @@ export function DocumentsPage() {
           />
         </div>
 
-        {/* Document list */}
-        <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+        {/* Document list: its own scroll region (the list virtualizes against it). */}
+        <div className="app-docs__list-region">
           <DocumentList
             documents={documents}
             onDelete={electronMode ? undefined : handleDelete}

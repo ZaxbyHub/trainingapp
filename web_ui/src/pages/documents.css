@@ -1,0 +1,80 @@
+/* Lumen phase 6: the Documents surface (DocumentsPage, PacksPanel, DropZone,
+   DocumentList). Lumen tokens only (no legacy --color-* / --spacing-*, no color
+   literals); enforced by pages/documents-training-hygiene.test.ts. Primitive
+   styles (Button, Badge, Banner, ProgressBar, Skeleton) live in ui/ui.css. */
+
+/* ---- Page body ---- */
+/* The body keeps the pre-Lumen frame on purpose: the packs panel and dropzone do
+   not shrink and the document list owns its own scroll region, because the list's
+   virtualization assumes it starts at the top of its scroller. */
+.app-docs { box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); width: 100%; max-width: var(--w-wide); margin: 0 auto; padding: var(--space-6); overflow: hidden; }
+.app-docs__fixed { flex: none; }
+.app-docs__list-region { flex: 1; min-height: 0; overflow: auto; }
+.app-docs__loading { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-2); width: 100%; max-width: var(--w-wide); margin: 0 auto; padding: var(--space-6); }
+.app-docs__loading .ui-skeleton { display: block; width: 100%; }
+
+/* Natively disabled Lumen buttons on this surface. ui.css styles only aria-disabled;
+   these controls stay natively disabled (test contract), which also removes them
+   from the tab order, so they carry both attributes and get the same look here. */
+.app-docs .ui-button:disabled { background: var(--bg-sunken); color: var(--text-disabled); border-color: var(--border-subtle); cursor: not-allowed; filter: none; }
+
+/* ---- Knowledge packs panel ---- */
+.app-packs__head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.app-packs__title { flex: 1; min-width: 0; margin: 0; font-size: var(--type-heading-size); line-height: var(--type-heading-line); font-weight: var(--type-heading-weight); color: var(--text-primary); }
+.app-packs__note { display: flex; align-items: flex-start; gap: var(--space-2); margin: var(--space-2) 0 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.app-packs__note .ui-icon { margin-top: 1px; }
+.app-packs__note--warning { color: var(--warning); }
+.app-packs__empty { margin: var(--space-3) 0 0; font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-secondary); }
+.app-packs__list { list-style: none; margin: var(--space-3) 0 0; padding: 0; border-top: 1px solid var(--border-subtle); }
+.app-packs__row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-subtle); }
+.app-packs__row:last-child { border-bottom: 0; padding-bottom: 0; }
+.app-packs__ident { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; font-size: var(--type-label-size); line-height: var(--type-label-line); color: var(--text-primary); }
+.app-packs__name { font-weight: 600; }
+.app-packs__meta { color: var(--text-secondary); }
+
+/* ---- Dropzone (dashed sunken well) ---- */
+.app-dropzone { box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); min-height: 152px; padding: var(--space-6) var(--space-4); background: var(--bg-sunken); color: var(--text-primary); border: 2px dashed var(--border-control); border-radius: var(--r-card); text-align: center; cursor: pointer; transition: background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard); }
+.app-dropzone:hover { border-color: var(--accent); }
+.app-dropzone--active { background: var(--bg-selected); border-color: var(--accent); border-style: solid; }
+.app-dropzone--disabled, .app-dropzone--disabled:hover { color: var(--text-disabled); border-color: var(--border-subtle); cursor: not-allowed; }
+.app-dropzone__icon { margin-bottom: var(--space-2); color: var(--accent); }
+.app-dropzone--disabled .app-dropzone__icon { color: var(--text-disabled); }
+.app-dropzone__title { margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); font-weight: var(--type-label-weight); }
+.app-dropzone__hint { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
+.app-dropzone--disabled .app-dropzone__hint { color: var(--text-disabled); }
+
+/* ---- Document list ---- */
+.app-doc-list { overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-card); box-shadow: var(--shadow-1); }
+.app-doc-list__item:last-child .app-doc { border-bottom-color: transparent; }
+/* Row height is fixed (DocumentList ITEM_HEIGHT = 60): the list is virtualized. */
+.app-doc { box-sizing: border-box; display: flex; align-items: center; gap: var(--space-3); height: 60px; padding: 0 var(--space-4); background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); transition: opacity var(--dur-base) var(--ease-standard); }
+.app-doc--deleting { opacity: 0.5; }
+.app-doc__icon { flex: none; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--r-control); background: var(--bg-selected); color: var(--accent); }
+.app-doc__info { flex: 1; min-width: 0; }
+.app-doc__name { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+/* Block (not flex) so a narrow row ends in an ellipsis instead of a clipped word. */
+.app-doc__meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
+.app-doc__meta > span + span { margin-left: var(--space-2); }
+.app-doc__status { flex: none; display: flex; align-items: center; gap: var(--space-2); max-width: 50%; }
+.app-doc__progress { flex: none; width: 80px; }
+.app-doc__error { min-width: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--danger); }
+.app-doc__confirm { flex: none; display: flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 60%; }
+.app-doc__confirm-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
+.app-doc__delete { color: var(--text-secondary); }
+.app-doc__delete:hover:not(:disabled) { background: var(--danger-subtle); color: var(--danger); }
+
+/* ---- Empty list (ui-empty layout, but the title is a <p>: a heading here would
+   collide with the page's "Documents" heading queries) ---- */
+.app-doc-list__empty { padding: var(--space-10) var(--space-4); }
+.app-doc-list__empty-title { margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+
+@media (forced-colors: active) {
+  .app-dropzone, .app-doc-list { border-color: CanvasText; }
+  .app-dropzone--active { border-color: Highlight; }
+}
+
+@media (max-width: 500px) {
+  .app-docs, .app-docs__loading { padding: var(--space-4); }
+  .app-doc { padding: 0 var(--space-3); gap: var(--space-2); }
+  .app-doc__error { max-width: 96px; }
+}
