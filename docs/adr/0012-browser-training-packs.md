@@ -323,9 +323,9 @@ exactly as on desktop.
   browser quota is at least twice the pack's unpacked size (room to keep the previous version for
   rollback), and the app asks for persistent storage.
   - **Eviction and recovery (PR 144 review F1).** The persistence request is fire-and-forget and
-    the browser may deny it. If the browser evicts the origin's storage, the pack bytes (and
-    possibly the registry, since eviction is origin-wide) are gone and the relay answers 404 for
-    that pack; nothing is restored automatically. The only recovery is to reinstall the pack from
+    the browser may deny it. If the browser evicts the origin's storage, the pack bytes and the
+    registry go together (eviction is origin-wide), so the evicted packs disappear from the
+    list; nothing is restored automatically. The only recovery is to reinstall the pack from
     its `.zip` (a feed update does not help: it skips packs that are not installed). Packs shows "(not persistent: the browser may evict installed packs under storage
     pressure)" when persistence was not granted.
   - **No Web Locks (PR 144 review F6).** Without Web Locks the install lock falls back to a
@@ -337,8 +337,8 @@ exactly as on desktop.
   embeds them with the browser model when it is ready; every chunk carries its `packId`, so Learn
   rows carry `pack_id` and linked rows are computed at ask time. The post-install keyword-index
   ingest is best-effort and does not resume: a failure is logged, the pack stays installed and
-  active, and its slides are not searchable until the pack is reinstalled (or rolled back and
-  re-activated, which re-runs the ingest); only the embedding half resumes, on
+  active, and its slides are not searchable until the pack is removed and reinstalled (reinstalling the same
+  active version is refused) or rolled back and re-activated (which re-runs the ingest); only the embedding half resumes, on
   `embedding-service-ready`.
 
 ### Updates

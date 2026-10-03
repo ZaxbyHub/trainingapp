@@ -309,9 +309,8 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   regression row is not yet written and is tracked in follow-up #145.
 - **Storage eviction.** Persistent storage is requested fire-and-forget and
   may be denied. If the browser evicts the origin's storage, installed pack
-  bytes (and possibly the registry, since eviction is origin-wide) are gone
-  and course requests for the pack answer 404; nothing is restored
-  automatically. The only recovery is to reinstall the pack from its `.zip`
+  bytes and the registry go together (eviction is origin-wide), so the evicted
+  packs disappear from the list; nothing is restored automatically. The only recovery is to reinstall the pack from its `.zip`
   (a feed update does not help: it skips packs that are not installed). Packs shows
   "(not persistent: the browser may evict installed packs under storage
   pressure)" when persistence was not granted.
@@ -321,8 +320,9 @@ and is cross-referenced from it. Pack format semantics are frozen by C1
   could leave two active rows; roll back to the intended version to recover.
 - **Search indexing.** The post-install keyword-index ingest is best-effort and
   does not resume: a failure is logged, the pack stays installed and active,
-  and its slides are not searchable until the pack is reinstalled or rolled
-  back and re-activated. Only the embedding half resumes (on
+  and its slides are not searchable until the pack is removed and reinstalled
+  (reinstalling the same active version is refused) or rolled back and
+  re-activated. Only the embedding half resumes (on
   `embedding-service-ready`).
 - **Messaging.** The slide bridge uses exact target origins and one-shot
   `MessagePort` replies; no first-party `postMessage` uses `'*'` (source

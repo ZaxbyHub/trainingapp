@@ -268,6 +268,16 @@ export function getResolvedPlayerOrigin(): string | null {
   return framePolicyOrigin === resolved ? resolved : null;
 }
 
+/**
+ * True while start-up resolution has not settled (up to the config-fetch
+ * bound): the browser app, not framed, not Electron (which needs no
+ * resolution), with a resolvable app origin. Lets the player announce progress
+ * instead of rendering nothing a screen reader can hear (PR 144 review F19).
+ */
+export function isPlayerOriginPending(): boolean {
+  return !isElectron() && !isFramedContext() && resolved === undefined && currentAppOrigin() !== null;
+}
+
 /** Resolves once start-up resolution settled: true iff `playerOrigin` is resolved and its frame policy installed. */
 export async function playerFramePolicyReady(playerOrigin: string): Promise<boolean> {
   await resolvePlayerOrigin();

@@ -34,7 +34,7 @@ import {
 } from './training-player-bridge';
 import { isElectron } from '../lib/desktop-session';
 import { browserTrainingHost } from '../lib/packs/browser-training';
-import { browserTrainingUrl, getPlayerOriginStatus, getResolvedPlayerOrigin, resolvePlayerOrigin } from '../lib/packs/player-origin';
+import { browserTrainingUrl, getPlayerOriginStatus, getResolvedPlayerOrigin, isPlayerOriginPending, resolvePlayerOrigin } from '../lib/packs/player-origin';
 
 /**
  * Sandbox of the course frame (review round 1, F2; desktop parity with the
@@ -262,6 +262,11 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
             </span>
           </span>
         </div>
+        {location === null && originStatus === 'ok' && isPlayerOriginPending() && (
+          <p role="status" aria-live="polite" data-testid="training-player-preparing" style={{ margin: 0, padding: 'var(--spacing-sm) var(--spacing-md)' }}>
+            Preparing the course player…
+          </p>
+        )}
         {location === null && framed && (
           <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-framed" style={alertStyle}>
             Course playback is disabled because this app is embedded in another page. Open the app directly in its own
