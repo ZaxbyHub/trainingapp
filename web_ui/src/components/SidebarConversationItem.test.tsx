@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import '@testing-library/jest-dom';
+import userEvent from '@testing-library/user-event';
 import { SidebarConversationItem } from './SidebarConversationItem';
 
 // Mock formatRelativeTime to control timestamp display
@@ -36,7 +37,7 @@ describe('SidebarConversationItem', () => {
 
   const renderComponent = (props = defaultProps) => {
     const utils = render(<SidebarConversationItem {...props} />);
-    // Get the main container (div with role="button")
+    // The row's select button (a native <button>; the options button is its sibling)
     const container = utils.getByRole('button', { name: /test conversation/i });
     return { ...utils, container };
   };
@@ -84,15 +85,28 @@ describe('SidebarConversationItem', () => {
 
     it('selection is conveyed by aria-current plus the shared selected state, not inline styles', () => {
       const { rerender } = render(<SidebarConversationItem {...defaultProps} />);
-      const row = screen.getByRole('button', { name: /test conversation/i });
-      expect(row).not.toHaveAttribute('aria-current');
+      const select = screen.getByRole('button', { name: /test conversation/i });
+      const row = select.closest('.app-conv') as HTMLElement;
+      expect(select).not.toHaveAttribute('aria-current');
       expect(row).not.toHaveClass('ui-selected');
       expect(row).not.toHaveAttribute('style');
+      expect(select).not.toHaveAttribute('style');
 
       rerender(<SidebarConversationItem {...defaultProps} isSelected={true} />);
-      expect(row).toHaveAttribute('aria-current', 'true');
+      expect(select).toHaveAttribute('aria-current', 'true');
       expect(row).toHaveClass('ui-selected');
-      expect(row).toHaveClass('ui-focusable');
+      expect(select).toHaveClass('ui-focusable');
+    });
+
+    it('the select and options controls are sibling native buttons (no nested interactive)', () => {
+      render(<SidebarConversationItem {...defaultProps} />);
+      const select = screen.getByRole('button', { name: /test conversation/i });
+      const kebab = screen.getByRole('button', { name: /conversation options/i });
+      expect(select.tagName).toBe('BUTTON');
+      expect(select.contains(kebab)).toBe(false);
+      expect(kebab.contains(select)).toBe(false);
+      expect(select.closest('[role="button"]')).toBeNull();
+      expect(select.parentElement).toBe(kebab.parentElement);
     });
 
     it('Escape that closes the options menu does not bubble to an enclosing drawer', () => {
@@ -145,26 +159,42 @@ describe('SidebarConversationItem', () => {
       expect(defaultProps.onSelect).not.toHaveBeenCalled();
     });
 
-    it('calls onSelect with Enter key when not renaming', () => {
+    it('calls onSelect with Enter key when not renaming', async () => {
+      const user = userEvent.setup();
       render(<SidebarConversationItem {...defaultProps} />);
 
-      const container = screen.getByRole('button', { name: /test conversation/i });
-      fireEvent.keyDown(container, { key: 'Enter' });
+      screen.getByRole('button', { name: /test conversation/i }).focus();
+      await user.keyboard('{Enter}');
 
       expect(defaultProps.onSelect).toHaveBeenCalledWith('conv-1');
     });
 
-    it('calls onSelect with Space key when not renaming', () => {
+    it('calls onSelect with Space key when not renaming', async () => {
+      const user = userEvent.setup();
       render(<SidebarConversationItem {...defaultProps} />);
 
-      const container = screen.getByRole('button', { name: /test conversation/i });
-      fireEvent.keyDown(container, { key: ' ' });
+      screen.getByRole('button', { name: /test conversation/i }).focus();
+      await user.keyboard(' ');
 
       expect(defaultProps.onSelect).toHaveBeenCalledWith('conv-1');
     });
   });
 
   describe('Context Menu', () => {
+    it.each([
+      ['Enter', '{Enter}'],
+      ['Space', ' '],
+    ])('%s on the options button opens the menu and does not select the row (WCAG 2.1.1)', async (_name, key) => {
+      const user = userEvent.setup();
+      render(<SidebarConversationItem {...defaultProps} />);
+      const kebab = screen.getByRole('button', { name: /conversation options/i });
+      kebab.focus();
+      await user.keyboard(key);
+      expect(screen.getByRole('menu')).toBeInTheDocument();
+      expect(kebab).toHaveAttribute('aria-expanded', 'true');
+      expect(defaultProps.onSelect).not.toHaveBeenCalled();
+    });
+
     it('opens menu when kebab button is clicked', () => {
       render(<SidebarConversationItem {...defaultProps} />);
 

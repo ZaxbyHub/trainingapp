@@ -152,7 +152,7 @@ describe('Sidebar', () => {
       );
 
       const firstConv = screen.getByText('First Chat');
-      expect(firstConv.closest('[role="button"]')).toHaveAttribute('aria-current', 'true');
+      expect(firstConv.closest('button')).toHaveAttribute('aria-current', 'true');
     });
 
     it('with a selected conversation on the Chat page, exactly one element is aria-current="page" (the Chat nav item)', () => {
@@ -162,9 +162,9 @@ describe('Sidebar', () => {
       const pageCurrent = container.querySelectorAll('[aria-current="page"]');
       expect(pageCurrent).toHaveLength(1);
       expect(pageCurrent[0]).toBe(screen.getByRole('button', { name: /^chat$/i }));
-      const selectedRow = screen.getByText('Second Chat').closest('[role="button"]');
+      const selectedRow = screen.getByText('Second Chat').closest('button');
       expect(selectedRow).toHaveAttribute('aria-current', 'true');
-      expect(screen.getByText('First Chat').closest('[role="button"]')).not.toHaveAttribute('aria-current');
+      expect(screen.getByText('First Chat').closest('button')).not.toHaveAttribute('aria-current');
     });
   });
 
@@ -223,7 +223,7 @@ describe('Sidebar', () => {
       fireEvent.mouseEnter(firstConv);
 
       // Get the kebab button for the first conversation
-      const firstConvContainer = firstConv.closest('[role="button"]');
+      const firstConvContainer = firstConv.closest('.app-conv');
       const kebabButton = firstConvContainer?.querySelector('button[aria-label="Conversation options"]') as HTMLButtonElement;
       fireEvent.click(kebabButton);
 
@@ -253,7 +253,7 @@ describe('Sidebar', () => {
       fireEvent.mouseEnter(firstConv);
 
       // Get the kebab button for the first conversation
-      const firstConvContainer = firstConv.closest('[role="button"]');
+      const firstConvContainer = firstConv.closest('.app-conv');
       const kebabButton = firstConvContainer?.querySelector('button[aria-label="Conversation options"]') as HTMLButtonElement;
       fireEvent.click(kebabButton);
 

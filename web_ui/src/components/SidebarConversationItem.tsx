@@ -123,11 +123,11 @@ export function SidebarConversationItem({
     setIsRenaming(false);
   };
 
+  // Escape closes this row's menu or delete confirmation only. Selection is the
+  // native <button> below (Enter/Space activate it natively), so no key handler
+  // here can swallow Enter/Space meant for the options button (phase-3 critic:
+  // the old role="button" row selected the conversation instead, WCAG 2.1.1).
   const handleRootKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if ((e.key === 'Enter' || e.key === ' ') && !isRenaming && !isMenuOpen && !isDeleteConfirmOpen) {
-      e.preventDefault();
-      onSelect(id);
-    }
     if (e.key === 'Escape' && (isMenuOpen || isDeleteConfirmOpen)) {
       // Consumed here: Escape closes this menu only, not an enclosing drawer.
       e.stopPropagation();
@@ -137,24 +137,17 @@ export function SidebarConversationItem({
   };
 
   const displayTitle = title || 'Untitled conversation';
+  const time = <span className="app-conv__time">{formatRelativeTime(timestamp)}</span>;
 
+  // Structure: the row is a plain container holding two SIBLING buttons (select,
+  // options), not a role="button" with a button nested inside it.
   return (
     <div
-      role="button"
-      tabIndex={0}
-      onClick={() => {
-        if (!isRenaming && !isMenuOpen && !isDeleteConfirmOpen) {
-          onSelect(id);
-        }
-      }}
       onKeyDown={handleRootKeyDown}
-      // 'true', not 'page' (phase-3 review F4): the current PAGE is the Chat nav
-      // item; the selected conversation is the current item within this list.
-      aria-current={isSelected ? 'true' : undefined}
-      className={cx('app-conv', 'ui-focusable', isSelected && 'ui-selected', isRenaming && 'app-conv--renaming')}
+      className={cx('app-conv', isSelected && 'ui-selected')}
     >
-      <div className="app-conv__row">
-        {isRenaming ? (
+      {isRenaming ? (
+        <div className="app-conv__edit">
           <input
             ref={inputRef}
             type="text"
@@ -165,26 +158,38 @@ export function SidebarConversationItem({
             aria-label="Edit conversation title"
             className="app-conv__input"
           />
-        ) : (
+          {time}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            if (!isMenuOpen && !isDeleteConfirmOpen) onSelect(id);
+          }}
+          // 'true', not 'page' (phase-3 review F4): the current PAGE is the Chat nav
+          // item; the selected conversation is the current item within this list.
+          aria-current={isSelected ? 'true' : undefined}
+          className="app-conv__select ui-focusable"
+        >
           <span className="app-conv__title" title={displayTitle}>
             {displayTitle}
           </span>
-        )}
-        {!isRenaming && (
-          <button
-            ref={kebabRef}
-            type="button"
-            onClick={handleKebabClick}
-            aria-label="Conversation options"
-            aria-haspopup="menu"
-            aria-expanded={isMenuOpen || isDeleteConfirmOpen}
-            className="app-conv__kebab ui-focusable"
-          >
-            <Icon name="ellipsis" size={18} />
-          </button>
-        )}
-      </div>
-      <span className="app-conv__time">{formatRelativeTime(timestamp)}</span>
+          {time}
+        </button>
+      )}
+      {!isRenaming && (
+        <button
+          ref={kebabRef}
+          type="button"
+          onClick={handleKebabClick}
+          aria-label="Conversation options"
+          aria-haspopup="menu"
+          aria-expanded={isMenuOpen || isDeleteConfirmOpen}
+          className="app-conv__kebab ui-focusable"
+        >
+          <Icon name="ellipsis" size={18} />
+        </button>
+      )}
       {(isMenuOpen || isDeleteConfirmOpen) && (
         <div
           ref={menuRef}
