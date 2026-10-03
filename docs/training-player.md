@@ -275,8 +275,10 @@ Courses run on a dedicated player origin instead:
   and the app sandboxes the boot frame (`allow-scripts allow-same-origin`). A
   course therefore cannot frame a same-origin page that runs under a weaker
   policy than its own (final-critic FC6). A framed app never starts the course
-  player, and the boot page runs only directly under the top-level page. CSP
-  on the course does not govern navigation; the app page's `frame-src` does.
+  player, and the boot page runs only directly under the top-level page. A
+  frame's navigations are governed by its embedder's `frame-src`: for a frame
+  the course creates, that is the course CSP's `frame-src 'self'`; for the
+  course frame and the boot frame, it is the app page's `frame-src`.
   The browser app installs `frame-src <player origin>` (a runtime meta CSP)
   once the player origin resolves, and loads neither player frame before
   that. A course therefore cannot navigate its own frame, or the boot frame,

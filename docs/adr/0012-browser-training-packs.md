@@ -255,7 +255,9 @@ could be served were not isolated from app storage.
 6. **Navigation egress (closed).** CSP on a course document does not govern navigation: a course
    could navigate its own frame, or the boot frame through the boot frame's DOM (a link it inserts
    and clicks), to any URL and carry data in the address. Both were measured on Chromium before
-   this fix. What decides where a frame may navigate is the EMBEDDING page's `frame-src`. On
+   this fix. What decides where a frame may navigate is the EMBEDDING page's `frame-src` (for a
+   frame the course itself creates, that is the course CSP's `frame-src 'self'`, pinned by the
+   grandchild-iframe row of `web_ui/e2e/isolation-browser.spec.ts`). On
    desktop that is the renderer CSP's `frame-src 'self' app:`. In the browser app the app shell
    installs, once the player origin resolves, a runtime
    `<meta http-equiv="Content-Security-Policy" content="frame-src <player origin>">`
