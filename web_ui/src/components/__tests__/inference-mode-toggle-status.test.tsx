@@ -61,6 +61,27 @@ describe('InferenceModeToggle honest status', () => {
     expect(screen.getByTestId('inference-mode-status')).toHaveAttribute('title', 'In this window (model loading, 42%)');
   });
 
+  it('browser-local, a load that failed partway (progress reset to 0) returns to "Not ready", not "Loading…"', () => {
+    ctx({ isModelReady: false, modelLoadingProgress: 40 });
+    const { rerender } = render(<InferenceModeToggle />);
+    expect(statusWord()).toBe('Loading…');
+    // ChatPage's runGeneration catch resets the shared progress on a failed/aborted load.
+    ctx({ isModelReady: false, modelLoadingProgress: 0 });
+    rerender(<InferenceModeToggle />);
+    expect(statusWord()).toBe('Not ready');
+    expect(screen.getByTestId('inference-mode-status')).toHaveAttribute('title', 'In this window (model not loaded)');
+  });
+
+  it('browser-local, search-services boot alone (no partial progress, terminal 100) never shows "Loading…"', () => {
+    // useServiceInitialization no longer writes a partial value; the only value it reports is 100.
+    ctx({ isModelReady: false, modelLoadingProgress: 0 });
+    const { rerender } = render(<InferenceModeToggle />);
+    expect(statusWord()).toBe('Not ready');
+    ctx({ isModelReady: false, modelLoadingProgress: 100 });
+    rerender(<InferenceModeToggle />);
+    expect(statusWord()).toBe('Not ready');
+  });
+
   it('browser-local, ready: "Ready"', () => {
     ctx({ isModelReady: true, modelLoadingProgress: 100 });
     render(<InferenceModeToggle />);

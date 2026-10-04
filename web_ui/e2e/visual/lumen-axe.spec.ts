@@ -33,7 +33,6 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  * (legacy --color-text-muted on --color-surface, 4.18:1) from every light 1440 key,
  * which also emptied 'training:light:1440'. Phase 4 (Settings on Lumen tokens) emptied
  * every settings key. Every remaining entry is page-body debt.
- * Every remaining entry is page-body debt.
  * Phase 5 (chat) restyled the welcome hero on Lumen tokens, which emptied both
  * 'chat:light:*' keys, and fixed 'overlay:light:1440' `ul:nth-child(3) > li` at the
  * root: ModelBlockedOverlay's recommendation list moved from legacy --color-text-muted

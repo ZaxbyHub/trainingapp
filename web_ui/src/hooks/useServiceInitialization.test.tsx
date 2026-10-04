@@ -233,8 +233,9 @@ describe('useServiceInitialization', () => {
       expect(screen.getByTestId('step').textContent).toBeTruthy();
     });
 
-    it('calls setModelLoadingProgress with correct values (10, 100) on boot; 30/70 deferred to ensure* calls', async () => {
-      // Boot progress: 10 (start search) -> 100 (ready). Embedding 70% and any 30% now happen only on first query via ensureEmbeddingServiceReady.
+    it('boot never reports a partial model-load progress; only the terminal 100 (30/70 deferred to ensure* calls)', async () => {
+      // Boot is not a model load: it must not write a partial progress (the 10 used to make
+      // InferenceModeToggle flash "Loading…"). Only the terminal 100 is reported.
       function TestComponent() {
         useServiceInitialization({
           setModelReady: mockSetModelReady,
@@ -247,13 +248,11 @@ describe('useServiceInitialization', () => {
       render(<TestComponent />);
 
       await waitFor(() => {
-        expect(mockSetModelLoadingProgress).toHaveBeenCalledWith(10);
-      });
-
-      await waitFor(() => {
         expect(mockSetModelLoadingProgress).toHaveBeenCalledWith(100);
       });
 
+      expect(mockSetModelLoadingProgress.mock.calls.every(([p]) => p === 100)).toBe(true);
+      expect(mockSetModelLoadingProgress).not.toHaveBeenCalledWith(10);
       // No embedding step on boot anymore
       expect(mockSetModelLoadingProgress).not.toHaveBeenCalledWith(30);
       expect(mockSetModelLoadingProgress).not.toHaveBeenCalledWith(70);

@@ -810,6 +810,12 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
             }
           }
         } catch (error) {
+          // A failed or aborted load must not leave a stale 0 < progress < 100 behind
+          // (InferenceModeToggle would keep saying "Loading…"). Skip the reset only when a
+          // newer stream has taken over the shared progress value.
+          if (tokenStreamManagerRef.current === streamManager || tokenStreamManagerRef.current === null) {
+            setModelLoadingProgress(0);
+          }
           if (error instanceof DOMException && error.name === 'AbortError') {
             return; // User cancelled — no error message needed
           }
