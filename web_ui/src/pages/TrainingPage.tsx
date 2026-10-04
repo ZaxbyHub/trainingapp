@@ -20,7 +20,7 @@
  * (install path: a Storyline pack zip on the Documents page, or staged with
  * the installer), auto-selects the sole course, and remembers the last one.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TrainingPlayer, courseIdOf } from '../components/TrainingPlayer';
 import type { TrainingPlayerSlideState } from '../components/training-player-bridge';
 import { usePackClient } from '../lib/packs/pack-client';
@@ -104,17 +104,25 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   const [pinAnnouncement, setPinAnnouncement] = useState('');
   // Furthest slide reached per course (persisted; drives the course-card progress).
   const [progress, setProgress] = useState<CourseProgress>(() => loadCourseProgress());
+  // This tab's view of the progress, readable from the (stable) slide handler: every write
+  // persists fresh storage UNION this map UNION the new position, so a value another tab's
+  // simultaneous write dropped from storage is healed by this tab's next write.
+  const progressRef = useRef<CourseProgress>(progress);
+  progressRef.current = progress;
   // Storage is the shared truth across tabs (PRR-203/206): fold in what another tab
   // records (an idle tab would otherwise never see it), and drop everything when the
   // progress is cleared (Clear Cache in any tab) so cleared progress is neither shown
   // nor merged back into storage by this tab's next slide change.
   useEffect(
     () =>
-      subscribeCourseProgress((stored) =>
+      subscribeCourseProgress((stored) => {
+        // A clear empties the in-memory map FIRST (also the ref the next write reads), so a
+        // cleared tab can never merge cleared progress back into storage.
+        if (stored === null) progressRef.current = {};
         setProgress((current) =>
           stored === null ? (Object.keys(current).length === 0 ? current : {}) : mergeCourseProgress(current, stored)
-        )
-      ),
+        );
+      }),
     []
   );
   // Slide docs live in the browser keyword index, which initializes after boot
@@ -368,12 +376,18 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
         const reached = slidePosition(playerCourseId, event.slideId);
         if (reached !== null) {
           // Storage is the shared truth across tabs: re-read it so another tab's
-          // progress (for any course) is kept, raise only this course, and write
-          // back. The state update is functional (and pure) so a burst of events
-          // never works from a stale closure.
+          // progress (for any course) is kept, fold in this tab's own map (per-course
+          // max, so a value a simultaneous write dropped from storage is re-persisted),
+          // raise only this course, and write back when anything changed. Merges are
+          // monotonic, so a burst of events never regresses from a stale closure.
           const stored = loadCourseProgress();
-          const next = advanceCourseProgress(stored, playerCourseId, reached.index);
+          const next = advanceCourseProgress(
+            mergeCourseProgress(stored, progressRef.current),
+            playerCourseId,
+            reached.index
+          );
           if (next !== stored) saveCourseProgress(next);
+          progressRef.current = mergeCourseProgress(progressRef.current, next);
           setProgress((current) => mergeCourseProgress(current, next));
         }
       }

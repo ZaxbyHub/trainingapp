@@ -120,6 +120,33 @@ describe('cross-tab training progress (PRR-203/206)', () => {
     expect(await card('course-b')).toHaveTextContent('Not started');
   });
 
+  it('heals a value a simultaneous write from another tab dropped from storage on the next slide change', async () => {
+    window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-b': 5 }));
+    render(<TrainingPage />);
+    expect(await card('course-b')).toHaveTextContent('Reached slide 5 of 6');
+    // A racing write from another tab replaced the stored map without course-b (no storage
+    // event reaches this tab for it, as if the events were coalesced or missed).
+    window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 1 }));
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    await slide('s2');
+    expect(stored()).toEqual({ 'course-a': 2, 'course-b': 5 });
+  });
+
+  it('Clear Cache in this tab: the next write holds only the new position', async () => {
+    window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3, 'course-b': 5 }));
+    render(<TrainingPage />);
+    expect(await card('course-b')).toHaveTextContent('Reached slide 5 of 6');
+    act(() => {
+      clearUserSettings();
+    });
+    expect(await card('course-b')).toHaveTextContent('Not started');
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    await slide('s1');
+    expect(stored()).toEqual({ 'course-a': 1 });
+  });
+
   it('a whole-storage clear (key === null) also drops the progress', async () => {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3 }));
     render(<TrainingPage />);
