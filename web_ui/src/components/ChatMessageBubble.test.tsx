@@ -298,6 +298,28 @@ describe('ChatMessageBubble', () => {
       expect(container.firstChild).not.toBeNull();
     });
 
+    it('PRE-1: an empty assistant message has no Copy button and no meta row (nothing to copy, nothing to act on)', () => {
+      const message: ChatMessage = { id: 'a-empty', role: 'assistant', content: '', timestamp: Date.now() };
+      const { container } = render(<ChatMessageBubble message={message} />);
+      expect(screen.queryByRole('button', { name: /copy message/i })).toBeNull();
+      expect(container.querySelector('.chat-msg__meta')).toBeNull();
+    });
+
+    it('PRE-1: an empty assistant message that can be regenerated keeps Regenerate but still no Copy', async () => {
+      const onRegenerate = vi.fn();
+      const message: ChatMessage = { id: 'a-empty2', role: 'assistant', content: '', timestamp: Date.now() };
+      render(<ChatMessageBubble message={message} onRegenerate={onRegenerate} />);
+      expect(screen.queryByRole('button', { name: /copy message/i })).toBeNull();
+      expect(screen.getByRole('button', { name: /regenerate response/i })).toBeInTheDocument();
+      expect(mockClipboard.writeText).not.toHaveBeenCalled();
+    });
+
+    it('PRE-1: an assistant message with content still offers Copy', () => {
+      const message: ChatMessage = { id: 'a-full', role: 'assistant', content: 'Answer', timestamp: Date.now() };
+      render(<ChatMessageBubble message={message} />);
+      expect(screen.getByRole('button', { name: /copy message/i })).toBeInTheDocument();
+    });
+
     it('handles very long message content', () => {
       const longContent = 'A'.repeat(10000);
       const message: ChatMessage = {

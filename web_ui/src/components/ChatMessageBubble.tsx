@@ -56,7 +56,8 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
     }
   }, [message.content]);
 
-  const copyButton = (
+  // PRE-1: an empty message has nothing to copy (it would write '' to the clipboard).
+  const copyButton = message.content === '' ? null : (
     <Button
       variant="ghost"
       size="sm"
@@ -153,6 +154,9 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
               Retrieval is degraded — semantic search unavailable (showing keyword-only results).
             </div>
           )}
+          {/* PRE-1: a settled empty reply with no Regenerate action would leave a
+              meta row holding only a timestamp under nothing; omit it. */}
+          {message.content === '' && !message.isStreaming && !onRegenerate ? null : (
           <div className="chat-msg__meta">
             <span className="chat-msg__time">{relativeLabel}</span>
             {copyButton}
@@ -169,6 +173,7 @@ export const ChatMessageBubble: React.FC<ChatMessageBubbleProps> = React.memo(({
               </Button>
             )}
           </div>
+          )}
           {/* C5 (issue #72): per-answer provenance badge (above the
               citations it describes); accessible, never color-only. */}
           <GroundingBadge grounding={message.grounding} />
