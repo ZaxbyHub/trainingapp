@@ -574,15 +574,25 @@ export function DocumentsPage() {
       if (!electronMode) {
         const zipFiles = files.filter((f) => f.name.toLowerCase().endsWith('.zip'));
         const docFiles = files.filter((f) => !f.name.toLowerCase().endsWith('.zip'));
-        for (const zip of zipFiles) {
-          if (packClient === null) break;
-          try {
-            const result = await packClient.installPack(zip);
-            showToast(`Installed ${result.packId} v${result.version}`, 'success');
-            setPacksRefreshToken((n) => n + 1);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            showToast(`Failed to install pack "${zip.name}": ${message}`, 'error');
+        if (zipFiles.length > 0 && packClient === null) {
+          // No pack client yet (Electron before its desktop session exists): the dropzone
+          // still advertises .zip, so say why nothing was installed instead of dropping it.
+          const names = zipFiles.slice(0, 3).map((f) => f.name).join(', ');
+          const extra = zipFiles.length > 3 ? ` and ${zipFiles.length - 3} more` : '';
+          showToast(
+            `Could not install ${names}${extra}: knowledge packs are not available yet (the app is still starting). Try again in a moment.`,
+            'error'
+          );
+        } else if (packClient !== null) {
+          for (const zip of zipFiles) {
+            try {
+              const result = await packClient.installPack(zip);
+              showToast(`Installed ${result.packId} v${result.version}`, 'success');
+              setPacksRefreshToken((n) => n + 1);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error);
+              showToast(`Failed to install pack "${zip.name}": ${message}`, 'error');
+            }
           }
         }
         if (docFiles.length === 0) {
