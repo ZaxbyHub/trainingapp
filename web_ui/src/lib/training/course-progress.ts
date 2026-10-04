@@ -28,6 +28,19 @@ export function loadCourseProgress(): CourseProgress {
   }
 }
 
+/**
+ * True iff a progress map is stored at all. An ABSENT key means the progress was cleared
+ * (Clear Cache in any tab): a clobbering write always writes a map, never removes the key.
+ * Readable immediately, unlike the `storage` event, which arrives as a later task.
+ */
+export function hasStoredCourseProgress(): boolean {
+  try {
+    return window.localStorage.getItem(TRAINING_PROGRESS_KEY) !== null;
+  } catch {
+    return false;
+  }
+}
+
 export function saveCourseProgress(progress: CourseProgress): void {
   try {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify(progress));

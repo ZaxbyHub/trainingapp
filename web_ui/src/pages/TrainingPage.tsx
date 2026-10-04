@@ -30,6 +30,7 @@ import {
   advanceCourseProgress,
   courseProgressView,
   loadCourseProgress,
+  hasStoredCourseProgress,
   mergeCourseProgress,
   saveCourseProgress,
   subscribeCourseProgress,
@@ -380,7 +381,14 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
           // max, so a value a simultaneous write dropped from storage is re-persisted),
           // raise only this course, and write back when anything changed. Merges are
           // monotonic, so a burst of events never regresses from a stale closure.
+          // Residual (three tabs): tab A clears, tab C then writes a NEW map, and this tab
+          // writes before its own clear event arrives: the key is present again, so this
+          // tab's pre-clear map is merged back. Closing it needs a clear generation counter.
           const stored = loadCourseProgress();
+          // The key is gone: the progress was cleared by another tab and this tab's clear
+          // event has not been delivered yet (it is a later task). Drop what we hold now.
+          const cleared = !hasStoredCourseProgress();
+          if (cleared) progressRef.current = {};
           const next = advanceCourseProgress(
             mergeCourseProgress(stored, progressRef.current),
             playerCourseId,
@@ -388,7 +396,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
           );
           if (next !== stored) saveCourseProgress(next);
           progressRef.current = mergeCourseProgress(progressRef.current, next);
-          setProgress((current) => mergeCourseProgress(current, next));
+          setProgress((current) => (cleared ? next : mergeCourseProgress(current, next)));
         }
       }
       onSlideChange?.(event);

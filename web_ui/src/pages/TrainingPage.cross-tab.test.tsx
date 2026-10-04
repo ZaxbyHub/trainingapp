@@ -133,6 +133,37 @@ describe('cross-tab training progress (PRR-203/206)', () => {
     expect(stored()).toEqual({ 'course-a': 2, 'course-b': 5 });
   });
 
+  it('P1: another tab clears and a slide write lands BEFORE the storage event is delivered: only the new position is written', async () => {
+    window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3, 'course-b': 5 }));
+    render(<TrainingPage />);
+    expect(await card('course-b')).toHaveTextContent('Reached slide 5 of 6');
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    window.localStorage.removeItem(TRAINING_PROGRESS_KEY); // the other tab's Clear Cache; its event is still queued
+    await slide('s1');
+    expect(stored()).toEqual({ 'course-a': 1 });
+    await otherTabWrote(null); // the queued event arrives late: nothing comes back
+    expect(stored()).toEqual({ 'course-a': 1 });
+    fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+    expect(await card('course-b')).toHaveTextContent('Not started');
+  });
+
+  it('P2: the clear event and a slide event land in the same batch (no re-render between): only the new position is written', async () => {
+    window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3, 'course-b': 5 }));
+    render(<TrainingPage />);
+    expect(await card('course-b')).toHaveTextContent('Reached slide 5 of 6');
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    await act(async () => {
+      window.localStorage.removeItem(TRAINING_PROGRESS_KEY);
+      window.dispatchEvent(
+        new StorageEvent('storage', { key: TRAINING_PROGRESS_KEY, newValue: null, storageArea: window.localStorage })
+      );
+      player.emit?.({ slideId: 's1', slideTitle: 'Title s1' });
+    });
+    expect(stored()).toEqual({ 'course-a': 1 });
+  });
+
   it('Clear Cache in this tab: the next write holds only the new position', async () => {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3, 'course-b': 5 }));
     render(<TrainingPage />);
