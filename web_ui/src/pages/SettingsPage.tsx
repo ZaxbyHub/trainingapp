@@ -46,7 +46,7 @@ import {
   type DesktopPresetState,
 } from '../lib/rag/rag-presets';
 import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
-import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
+import { MODEL_CONNECTION_SECTION_ID, SETTINGS_SECTIONS } from '../lib/settings-sections';
 // AC8 (settings-wiring-honesty): the single version source is
 // web_ui/package.json (desktop/package.json is kept in lockstep by test).
 import { version as APP_VERSION } from '../../package.json';
@@ -54,8 +54,23 @@ import { ExternalModelSection } from '../components/ExternalModelSection';
 import type { UpdateStatus } from '../types/desktop';
 import { getMemoryBudget, getMemoryPressureStatus } from '../lib/embeddings/memory-aware';
 import { ModelDownloadProgress } from '../components/ModelDownloadProgress';
-import { ProgressBar, StatusBadge, SectionCard } from '../components/SettingsMetrics';
-import { PageHeader } from '../ui';
+import { ProgressBar, StatusBadge } from '../components/SettingsMetrics';
+import {
+  SettingsNav,
+  SettingsRadioCards,
+  SettingsSection,
+  SettingsSubsection,
+} from '../components/SettingsControls';
+import {
+  Banner,
+  Button,
+  Checkbox,
+  Icon,
+  KeyValueList,
+  PageHeader,
+  SegmentedControl,
+  type KeyValueItem,
+} from '../ui';
 import {
   getProfilePrefix,
   deleteNamespace,
@@ -93,19 +108,16 @@ function FirstRunSetupCard(): React.ReactElement | null {
 
   if (window.desktopApi === undefined) return null;
   return (
-    <section style={sectionStyle} aria-labelledby="first-run-heading" data-testid="first-run-setup-section">
-      <h2 id="first-run-heading" style={sectionTitleStyle}>
-        First-run setup
-      </h2>
-      <div style={fieldGroupStyle}>
-        <p style={descriptionStyle}>
-          {statusLine ?? 'First-run status unavailable (backend starting).'}
-        </p>
-        <button type="button" onClick={() => void handleRerun()} data-testid="first-run-rerun">
+    <SettingsSubsection title="First-run setup" headingId="first-run-heading" data-testid="first-run-setup-section">
+      <p className="settings-text">
+        {statusLine ?? 'First-run status unavailable (backend starting).'}
+      </p>
+      <div className="settings-row">
+        <Button variant="secondary" onClick={() => void handleRerun()} data-testid="first-run-rerun">
           Re-run setup
-        </button>
+        </Button>
       </div>
-    </section>
+    </SettingsSubsection>
   );
 }
 
@@ -194,99 +206,100 @@ function UpdatesSection(): React.ReactElement {
     }
   };
 
+  const checkDisabled = busy || status === null || !status.optIn;
   return (
-    <div style={fieldGroupStyle}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', flexWrap: 'wrap' }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-          <input
-            type="checkbox"
-            data-testid="updates-opt-in"
-            checked={status?.optIn ?? false}
-            disabled={busy || status === null || (IS_AIRGAP && !isElectron())}
-            aria-busy={busy}
-            onChange={() => void handleToggle()}
-          />
-          <span>Check for updates automatically (opt-in; the app works fully offline)</span>
-        </label>
-        <button
-          type="button"
-          data-testid="updates-check-now"
+    <>
+      <div className="settings-row">
+        <Checkbox
+          data-testid="updates-opt-in"
+          checked={status?.optIn ?? false}
+          disabled={busy || status === null || (IS_AIRGAP && !isElectron())}
           aria-busy={busy}
-          disabled={busy || status === null || !status.optIn}
+          onChange={() => void handleToggle()}
+          label="Check for updates automatically (opt-in; the app works fully offline)"
+        />
+        <Button
+          variant="secondary"
+          data-testid="updates-check-now"
+          loading={busy}
+          disabled={checkDisabled}
+          aria-disabled={checkDisabled}
           onClick={() => void handleCheckNow()}
         >
           {busy ? 'Checking…' : 'Check for updates now'}
-        </button>
+        </Button>
       </div>
       {error !== null && (
         <p
           role="alert"
           ref={errorRef}
           tabIndex={-1}
-          style={{ ...descriptionStyle, color: 'var(--color-danger, #c00)', outline: 'none' }}
+          className="settings-text settings-tone--danger settings-focus-target"
           data-testid="updates-error"
         >
           {error}
         </p>
       )}
       {status !== null && status.optIn && status.error !== null && (
-        <p role="alert" style={{ ...descriptionStyle, color: 'var(--color-danger, #c00)' }}>
+        <p role="alert" className="settings-text settings-tone--danger">
           Last check failed: {status.error}
         </p>
       )}
       {status !== null && status.optIn && status.appUpdate !== null && (
-        <p style={descriptionStyle} data-testid="updates-app-available">
+        <p className="settings-text" data-testid="updates-app-available">
           App update available: v{status.appUpdate.availableVersion} (currently v
           {status.appUpdate.currentVersion}).{' '}
-          <button
-            type="button"
+          <Button
+            variant="secondary"
+            size="sm"
             data-testid="updates-app-open-download"
             disabled={openBusy}
+            aria-disabled={openBusy}
             onClick={() => void handleOpenDownload(status.appUpdate?.downloadUrl ?? '')}
           >
             Open download page
-          </button>{' '}
+          </Button>{' '}
           and run the installer to update; your data is kept. Download URL (copyable):{' '}
-          <code style={{ wordBreak: 'break-all' }} data-testid="updates-app-url">
+          <code className="settings-code" data-testid="updates-app-url">
             {status.appUpdate.downloadUrl}
           </code>
           . Expected sha256:{' '}
-          <code style={{ wordBreak: 'break-all' }} data-testid="updates-app-sha256">
+          <code className="settings-code" data-testid="updates-app-sha256">
             {status.appUpdate.sha256}
           </code>{' '}
           (verify the downloaded file against it before running, per docs/updates.md).
         </p>
       )}
       {status !== null && status.optIn && status.refused.length > 0 && (
-        <p style={descriptionStyle} data-testid="updates-refused">
+        <p className="settings-text" data-testid="updates-refused">
           {status.refused.length} update{status.refused.length === 1 ? '' : 's'} refused (signature
           verification failed):{' '}
           {status.refused.map((entry) => `${entry.packId} v${entry.version}`).join(', ')}
         </p>
       )}
       {status !== null && status.optIn && status.checkedAt !== null && (
-        <p role="status" aria-live="polite" style={descriptionStyle} data-testid="updates-status-line">
+        <p role="status" aria-live="polite" className="settings-text" data-testid="updates-status-line">
           Last checked {new Date(status.checkedAt).toLocaleString()}. Pack updates, if any, are
           surfaced on the Knowledge Packs panel (Documents page).
         </p>
       )}
       {IS_AIRGAP && !isElectron() && (
-        <p style={descriptionStyle} data-testid="updates-airgap">
+        <p className="settings-text" data-testid="updates-airgap">
           {AIRGAP_UPDATES_DETAIL}
         </p>
       )}
       {!isElectron() && !IS_AIRGAP && (
-        <p style={{ ...descriptionStyle, color: 'var(--color-text-primary)' }} data-testid="updates-browser-note">
+        <p className="settings-text" data-testid="updates-browser-note">
           In the browser app the feed and the pack downloads are fetched by this page, so their host must allow
           cross-origin requests (a CORS-enabled mirror); if it does not, the check reports the refusal and the
           desktop app remains the way to apply updates.
         </p>
       )}
-      <p style={descriptionStyle}>
+      <p className="settings-text">
         Update feeds are Ed25519-signed; anything failing signature verification is refused with no
         unsigned fallback. See the Updates runbook (docs/updates.md) for the feed format.
       </p>
-    </div>
+    </>
   );
 }
 
@@ -380,188 +393,6 @@ function deleteEdgeVecBlob(prefix: string): Promise<void> {
 }
 
 // ============================================================================
-// Styles
-// ============================================================================
-
-const pageStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  minHeight: '100%',
-  // Single-scroller ownership (trace external-llm-provider-settings): the
-  // AppLayout <main> is the ONLY scroller — a nested overflow here produced
-  // two visible scrollbars and let the header (which scrolled in this
-  // container) intersect section content.
-  backgroundColor: 'var(--color-bubble-assistant)',
-};
-
-const contentStyle: React.CSSProperties = {
-  flex: 1,
-  padding: 'var(--spacing-xxl)',
-  // No nested scroller here (trace external-llm-provider-settings): the page
-  // scrolls in the AppLayout <main> so header and content move together.
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-xxl)',
-  maxWidth: '720px',
-  width: '100%',
-  margin: '0 auto',
-};
-
-const sectionStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-lg)',
-};
-
-const sectionTitleStyle: React.CSSProperties = {
-  fontSize: 'var(--font-size-h2)',
-  fontFamily: 'var(--font-family)',
-  fontWeight: 600,
-  color: 'var(--color-text-on-bubble-assistant)',
-  margin: 0,
-  paddingBottom: 'var(--spacing-sm)',
-  borderBottom: '1px solid var(--color-bubble-system)',
-};
-
-const fieldGroupStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-md)',
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-on-bubble-assistant)',
-  fontWeight: 500,
-};
-
-const descriptionStyle: React.CSSProperties = {
-  fontSize: 'var(--font-size-caption)',
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-muted)',
-  // No negative top margin (trace external-llm-provider-settings): the old
-  // `calc(-1 * var(--spacing-sm))` pulled every description up into the
-  // preceding control's line box, visually overprinting radio-card titles.
-  marginTop: 0,
-};
-
-const radioGroupStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-sm)',
-};
-
-const radioOptionStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 'var(--spacing-sm)',
-  padding: 'var(--spacing-md)',
-  backgroundColor: 'var(--color-bubble-system)',
-  borderRadius: '6px',
-  cursor: 'pointer',
-  border: '2px solid transparent',
-  transition: 'border-color 0.15s ease',
-};
-
-const radioOptionSelectedStyle: React.CSSProperties = {
-  ...radioOptionStyle,
-  // Full shorthand (issue #41 / trace external-llm-provider-settings): mixing
-  // this longhand with the shorthand `border` above made React warn under
-  // jsdom and risked a stale border frame on selection.
-  border: '2px solid var(--color-primary)',
-};
-
-const radioInputStyle: React.CSSProperties = {
-  width: '16px',
-  height: '16px',
-  accentColor: 'var(--color-primary)',
-  cursor: 'pointer',
-  flexShrink: 0,
-};
-
-const radioLabelStyle: React.CSSProperties = {
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-on-bubble-assistant)',
-  cursor: 'pointer',
-};
-
-const buttonRowStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 'var(--spacing-md)',
-  alignItems: 'center',
-  flexWrap: 'wrap',
-};
-
-const primaryButtonStyle: React.CSSProperties = {
-  padding: 'var(--spacing-sm) var(--spacing-lg)',
-  backgroundColor: 'var(--color-primary)',
-  color: 'var(--color-text-on-primary)',
-  border: 'none',
-  borderRadius: '6px',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  cursor: 'pointer',
-  transition: 'background-color 0.15s ease',
-};
-
-const secondaryButtonStyle: React.CSSProperties = {
-  padding: 'var(--spacing-sm) var(--spacing-lg)',
-  backgroundColor: 'var(--color-bubble-system)',
-  color: 'var(--color-text-on-bubble-assistant)',
-  border: '1px solid var(--color-secondary)',
-  borderRadius: '6px',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  cursor: 'pointer',
-  transition: 'all 0.15s ease',
-};
-
-const dangerButtonStyle: React.CSSProperties = {
-  padding: 'var(--spacing-sm) var(--spacing-lg)',
-  backgroundColor: 'var(--color-danger)',
-  color: 'var(--color-text-on-primary)',
-  border: 'none',
-  borderRadius: '6px',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  cursor: 'pointer',
-  transition: 'background-color 0.15s ease',
-};
-
-const storageInfoStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-sm)',
-  padding: 'var(--spacing-lg)',
-  backgroundColor: 'var(--color-bubble-system)',
-  borderRadius: '6px',
-};
-
-const storageRowStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-on-bubble-assistant)',
-};
-
-const storageLabelStyle: React.CSSProperties = {
-  color: 'var(--color-text-muted)',
-};
-
-const aboutSectionStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-sm)',
-  fontSize: 'var(--font-size-body)',
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-muted)',
-};
-
-// ============================================================================
 // SettingsPage (inner component — uses contexts)
 // ============================================================================
 
@@ -576,19 +407,6 @@ const CLEARED_SETTINGS_COPY =
  * status reset so the message is still showing when the page reloads.
  */
 export const RELOAD_AFTER_CLEAR_MS = 2000;
-
-/** Screen-reader-only text (same inline pattern as the radio-group legends). */
-const visuallyHiddenStyle: React.CSSProperties = {
-  position: 'absolute',
-  width: 1,
-  height: 1,
-  padding: 0,
-  margin: -1,
-  overflow: 'hidden',
-  clip: 'rect(0,0,0,0)',
-  whiteSpace: 'nowrap',
-  border: 0,
-};
 
 interface SettingsPageProps {
   /**
@@ -1087,197 +905,135 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
     return `${mb} MB`;
   };
 
-  return (
-    <div style={pageStyle}>
-      <PageHeader
-        title="Settings"
-        description="Choose how answers are generated, and manage appearance and storage."
-      />
+  const hardwareItems: KeyValueItem[] = capability
+    ? [
+        {
+          label: 'WebGPU',
+          value: <StatusBadge status={capability.webgpu ? 'ready' : 'error'} label={capability.webgpu ? 'Available' : 'Not available'} />,
+        },
+        {
+          label: 'Multi-threading',
+          value: <StatusBadge status={capability.crossOriginIsolated ? 'ready' : 'not-ready'} label={capability.crossOriginIsolated ? 'Enabled' : 'Single-threaded'} />,
+        },
+        { label: 'Memory Tier', value: <span className="settings-strong">{capability.memoryTier}</span> },
+        {
+          label: 'Recommended Engine',
+          value: (
+            <span className="settings-strong settings-tone--accent">
+              {capability.recommendedEngine === 'wllama' ? 'wllama' : 'WebLLM'}
+            </span>
+          ),
+        },
+      ]
+    : [];
 
-      <div style={contentStyle}>
-        {/* ================================================================== */}
-        {/* 1. Inference Mode */}
-        {/* ================================================================== */}
-        <section
-          style={sectionStyle}
-          aria-labelledby="inference-mode-heading"
-        >
-          <h2 id="inference-mode-heading" style={sectionTitleStyle} tabIndex={-1}>
-            Inference Mode
-          </h2>
-          <div style={fieldGroupStyle}>
-            <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
-              <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select inference mode</legend>
-              <div style={radioGroupStyle}>
-                {/* Browser-local option */}
-                {/* Radio a11y (issue #24 F9): the wrapping <label> is presentational
-                    (no role="radio"); the native <input type="radio"> is the sole
-                    AT-facing radio. Clicking the card checks the input via native
-                    label behavior — no duplicate onClick, no double-fire. */}
-                <label
-                  style={mode === 'browser-local' ? radioOptionSelectedStyle : radioOptionStyle}
-                >
-                  <input
-                    type="radio"
-                    name="inference-mode"
-                    value="browser-local"
-                    checked={mode === 'browser-local'}
-                    onChange={() => setMode('browser-local')}
-                    style={radioInputStyle}
-                    aria-describedby="browser-local-desc"
-                  />
-                  <div>
-                    <span style={radioLabelStyle}>Browser-local</span>
-                    <p id="browser-local-desc" style={descriptionStyle}>
-                      Run the AI directly in your browser (CPU via wllama, or WebGPU via WebLLM — choose below)
-                    </p>
-                  </div>
-                </label>
+  // ====================================================================
+  // Built-in model settings (Model & connection, generator source
+  // "Built-in model"). settings-wiring-honesty (AC4): only the desktop app
+  // has a second place the built-in model can run (its backend, "api"
+  // mode); the browser app is standalone, so it shows no run-location
+  // choice and no API-server option or copy.
+  // ====================================================================
+  const builtInPanel = (
+    <>
+      {desktopApp && (
+        <SettingsSubsection title="Where the built-in model runs" headingId="inference-mode-heading">
+          <SettingsRadioCards<'browser-local' | 'api'>
+            legend="Where the built-in model runs"
+            name="inference-mode"
+            isChecked={(value) => mode === value}
+            onChange={(value) => setMode(value)}
+            options={[
+              {
+                value: 'browser-local',
+                label: 'In this window',
+                description: 'Runs in this app window with wllama (CPU) or WebLLM (WebGPU), chosen below.',
+                descriptionId: 'browser-local-desc',
+              },
+              {
+                value: 'api',
+                label: 'Desktop backend',
+                description: "Runs in the desktop app's built-in backend (llama.cpp; starts automatically with the app).",
+                descriptionId: 'api-desc',
+              },
+            ]}
+          />
+        </SettingsSubsection>
+      )}
 
-                {/* API server option — the desktop app's built-in backend.
-                    settings-wiring-honesty (AC4): the browser app has no
-                    API-server mode, so it is offered only inside Electron. */}
-                {desktopApp && (
-                  <label
-                    style={mode === 'api' ? radioOptionSelectedStyle : radioOptionStyle}
-                  >
-                    <input
-                      type="radio"
-                      name="inference-mode"
-                      value="api"
-                      checked={mode === 'api'}
-                      onChange={() => setMode('api')}
-                      style={radioInputStyle}
-                      aria-describedby="api-desc"
-                    />
-                    <div>
-                      <span style={radioLabelStyle}>API Server</span>
-                      <p id="api-desc" style={descriptionStyle}>
-                        Use the built-in desktop backend (starts automatically with the app)
-                      </p>
-                    </div>
-                  </label>
-                )}
-
-              </div>
-            </fieldset>
-          </div>
-        </section>
-
-        {/* ================================================================== */}
-        {/* 1b. External model (universal-provider-settings-overhaul): one     */}
-        {/* region, same controls in the browser app and the desktop app.      */}
-        {/* id={MODEL_CONNECTION_SECTION_ID} marks the section that hosts the  */}
-        {/* external-model controls — the model-blocked overlay's destination */}
-        {/* (settings-wiring-honesty AC10).                                    */}
-        {/* ================================================================== */}
-        <ExternalModelSection id={MODEL_CONNECTION_SECTION_ID} />
-
-        {/* ================================================================== */}
-        {/* 2a. Desktop backend status (Electron mode only — issue #67).       */}
-        {/* Shows the hosted backend's connectivity, active inference profile */}
-        {/* and per-profile model presence; the profile override persists via */}
-        {/* PUT /settings across app restarts (backend settings sidecar).     */}
-        {/* ================================================================== */}
-        {electronMode && (
-          <section style={sectionStyle} aria-labelledby="desktop-backend-heading">
-            <h2 id="desktop-backend-heading" style={sectionTitleStyle}>
-              Desktop backend
-            </h2>
-            <div style={fieldGroupStyle}>
-              <p style={descriptionStyle}>
-                This app is using its built-in desktop backend
-                {desktopSession ? ` at ${desktopSession.baseUrl}` : ''}. Settings below
-                are stored by the backend and survive restarts.
-              </p>
-              {desktopSettingsError && (
-                <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }} role="alert">
-                  Settings error: {desktopSettingsError}
-                </p>
-              )}
-              {/* settings-wiring-honesty (AC7): the profile picks the desktop
-                  backend's local model, so it is shown only while that backend
-                  generates (api mode). */}
-              {mode === 'api' ? (
-              <div>
-                <span style={labelStyle}>Inference profile</span>
-                <p style={descriptionStyle}>
-                  Answer length and temperature follow this profile unless a Response
-                  Quality preset set them explicitly; an explicit preset wins until you
-                  reset it.
-                </p>
-                <div role="radiogroup" aria-label="Inference profile">
-                  {(['quality', 'fast', 'auto'] as const).map((profile) => (
-                    <div key={profile}>
-                      <label>
-                        <input
-                          type="radio"
-                          name="desktop-inference-profile"
-                          value={profile}
-                          checked={desktopProfile === profile}
-                          onChange={() => handleDesktopProfileChange(profile)}
-                        />{' '}
-                        {profile === 'auto'
-                          ? 'Auto (choose by free memory)'
-                          : profile === 'quality'
-                            ? 'Quality'
-                            : 'Fast'}
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              ) : (
-                <p style={descriptionStyle}>
-                  The inference profile applies only when chat uses the desktop backend
-                  (API Server mode).
-                </p>
-              )}
-              <div>
-                <span style={labelStyle}>Model availability</span>
-                {desktopStatus === null ? (
-                  <p style={descriptionStyle}>Model status unavailable (backend reachable for chat only if a model loads).</p>
-                ) : (
-                  <ul style={{ ...descriptionStyle, margin: 0, paddingLeft: 'var(--spacing-lg)' }}>
-                    <li>
-                      Quality model: {desktopStatus.models.quality.present ? 'found' : 'not found'}
-                    </li>
-                    <li>
-                      Fast model: {desktopStatus.models.fast.present ? 'found' : 'not found'}
-                    </li>
-                    <li>
-                      Active profile right now: {desktopStatus.profile}
-                      {desktopStatus.engine === 'stub' ? ' (development stub backend)' : ''}
-                    </li>
-                  </ul>
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ================================================================== */}
-        {/* 2a-2. First-run setup (E2, issue #85): status + Re-run setup.      */}
-        {/* ================================================================== */}
-        {electronMode && <FirstRunSetupCard />}
-
-        {/* ================================================================== */}
-        {/* 3. Browser Engine (browser-local only) + model cache status */}
-        {/* settings-wiring-honesty (AC7): rendered only while browser-local */}
-        {/* generation is active; otherwise one muted line explains why.    */}
-        {/* ================================================================== */}
-        {mode !== 'browser-local' ? (
-          <p style={descriptionStyle} data-testid="browser-engine-hidden">
-            The browser engine applies only to Browser-local mode.
+      {/* Desktop backend status (Electron mode only — issue #67): connectivity,
+          active inference profile and per-profile model presence; the profile
+          override persists via PUT /settings (backend settings sidecar). */}
+      {electronMode && (
+        <SettingsSubsection title="Desktop backend" headingId="desktop-backend-heading">
+          <p className="settings-text">
+            This app is using its built-in desktop backend
+            {desktopSession ? ` at ${desktopSession.baseUrl}` : ''}. Its settings are stored by the
+            backend and survive restarts.
           </p>
-        ) : (
-        <section style={sectionStyle} aria-labelledby="browser-engine-heading">
-          <h2 id="browser-engine-heading" style={sectionTitleStyle}>
-            Browser Engine
-          </h2>
-          <div style={fieldGroupStyle}>
-            <p style={descriptionStyle}>
-              Which engine runs local inference in browser-local mode.
+          {/* settings-wiring-honesty (AC7): the profile picks the desktop
+              backend's local model, so it is shown only while that backend
+              generates (api mode). */}
+          {mode === 'api' ? (
+            <div className="settings-group">
+              <p className="settings-label">Inference profile</p>
+              <p className="settings-text">
+                Answer length and temperature follow this profile unless a Response
+                Quality preset set them explicitly; an explicit preset wins until you
+                reset it.
+              </p>
+              <SettingsRadioCards<'quality' | 'fast' | 'auto'>
+                legend="Inference profile"
+                name="desktop-inference-profile"
+                isChecked={(profile) => desktopProfile === profile}
+                onChange={(profile) => handleDesktopProfileChange(profile)}
+                options={[
+                  { value: 'quality', label: 'Quality' },
+                  { value: 'fast', label: 'Fast' },
+                  { value: 'auto', label: 'Auto (choose by free memory)' },
+                ]}
+              />
+            </div>
+          ) : (
+            <p className="settings-text">
+              The inference profile applies only when the built-in model runs in the desktop backend.
+            </p>
+          )}
+          <div className="settings-group">
+            <p className="settings-label">Model availability</p>
+            {desktopStatus === null ? (
+              <p className="settings-text">Model status unavailable (backend reachable for chat only if a model loads).</p>
+            ) : (
+              <ul className="settings-list">
+                <li>
+                  Quality model: {desktopStatus.models.quality.present ? 'found' : 'not found'}
+                </li>
+                <li>
+                  Fast model: {desktopStatus.models.fast.present ? 'found' : 'not found'}
+                </li>
+                <li>
+                  Active profile right now: {desktopStatus.profile}
+                  {desktopStatus.engine === 'stub' ? ' (development stub backend)' : ''}
+                </li>
+              </ul>
+            )}
+          </div>
+        </SettingsSubsection>
+      )}
+
+      {/* Browser engine + model cache status (issue #24 F2/F3/F4) and the
+          hardware diagnostic. settings-wiring-honesty (AC7): rendered only
+          while the built-in model runs in this window; otherwise one muted
+          line explains why. */}
+      {mode !== 'browser-local' ? (
+        <p className="settings-text" data-testid="browser-engine-hidden">
+          The browser engine and the hardware check apply only when the built-in model runs in this window.
+        </p>
+      ) : (
+        <>
+          <SettingsSubsection title="Browser engine" headingId="browser-engine-heading">
+            <p className="settings-text">
+              Which engine runs the built-in model in this {desktopApp ? 'window' : 'browser'}.
               {capability && (
                 <>
                   {' '}Recommended for this device:{' '}
@@ -1285,435 +1041,389 @@ function SettingsPageInner({ initialSection, reloadPage }: SettingsPageProps): R
                 </>
               )}
             </p>
-            <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
-              <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select browser engine</legend>
-              <div style={radioGroupStyle}>
-                {([
-                  {
-                    id: 'wllama' as const,
-                    label: 'wllama (CPU / no GPU)',
-                    desc: 'Robust without WebGPU and supports image input (multimodal).',
-                  },
-                  {
-                    id: 'webllm' as const,
-                    label: 'WebLLM (WebGPU)',
-                    desc: 'Fastest when WebGPU is available; text only. Requires a GPU-capable browser.',
-                  },
-                ]).map((opt) => (
-                  <label
-                    key={opt.id}
-                    style={browserEngine === opt.id ? radioOptionSelectedStyle : radioOptionStyle}
-                  >
-                    <input
-                      type="radio"
-                      name="browser-engine"
-                      value={opt.id}
-                      checked={browserEngine === opt.id}
-                      onChange={() => setBrowserEngine(opt.id)}
-                      style={radioInputStyle}
-                      aria-describedby={`${opt.id}-desc`}
-                    />
-                    <div>
-                      <span style={radioLabelStyle}>{opt.label}</span>
-                      <p id={`${opt.id}-desc`} style={descriptionStyle}>
-                        {opt.desc}
-                        {/* AC9: the ONE derived recommendation (same source as
-                            the header and the Hardware row). */}
-                        {capability?.recommendedEngine === opt.id && ' Recommended.'}
-                      </p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
+            <SettingsRadioCards<'wllama' | 'webllm'>
+              legend="Select browser engine"
+              name="browser-engine"
+              isChecked={(engine) => browserEngine === engine}
+              onChange={(engine) => setBrowserEngine(engine)}
+              options={([
+                {
+                  id: 'wllama' as const,
+                  label: 'wllama (CPU / no GPU)',
+                  desc: 'Robust without WebGPU and supports image input (multimodal).',
+                },
+                {
+                  id: 'webllm' as const,
+                  label: 'WebLLM (WebGPU)',
+                  desc: 'Fastest when WebGPU is available; text only. Requires a GPU-capable browser.',
+                },
+              ]).map((opt) => ({
+                value: opt.id,
+                label: opt.label,
+                descriptionId: `${opt.id}-desc`,
+                description: (
+                  <>
+                    {opt.desc}
+                    {/* AC9: the ONE derived recommendation (same source as
+                        the header and the Hardware row). */}
+                    {capability?.recommendedEngine === opt.id && ' Recommended.'}
+                  </>
+                ),
+              }))}
+            />
             {capability && browserEngine === 'webllm' && !capability.webgpu && (
-              <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }}>
+              <p className="settings-text settings-tone--danger">
                 WebGPU was not detected — WebLLM will not run on this device. Switch to wllama, or use the desktop app or an external model server.
               </p>
             )}
 
-            {/* Model cache status + download — engine-aware (issue #24 F2/F3/F4).
-                Moved here from the deleted Model Selection section. The status
+            {/* Model cache status + download — engine-aware. The status
                 reflects the actually-selected engine, and the Download button
                 only shows for webllm (the only engine with a download step). */}
-            {mode === 'browser-local' && (
-              <div style={fieldGroupStyle} role="status" aria-live="polite">
-                <div style={buttonRowStyle}>
-                  <span style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-                    Status:
-                    {modelCached ? (
-                      <StatusBadge status="ready" label="Cached" />
-                    ) : (
-                      <StatusBadge status="not-ready" label="Not cached" />
-                    )}
-                  </span>
-                </div>
-
-                {/* Download progress */}
-                {isDownloading && (
-                  <ModelDownloadProgress
-                    progress={downloadProgress}
-                    onCancel={handleCancelDownload}
-                    isQuotaError={isQuotaError}
-                  />
-                )}
-
-                {/* Download button — webllm only (issue #24 F3) */}
-                {browserEngine === 'webllm' && !modelCached && !isDownloading && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={handleDownloadModel}
-                      style={primaryButtonStyle}
-                    >
-                      Download Model
-                    </button>
-                    <p style={{ ...descriptionStyle, color: 'var(--color-warning)' }}>
-                      Requires internet access (~1.9 GB) — downloads weights from the WebLLM CDN.
-                    </p>
-                  </>
-                )}
-
-                {browserEngine === 'webllm' && modelCached && !isDownloading && (
-                  <span style={{ ...labelStyle, color: 'var(--color-primary)' }}>
-                    Model ready to use
-                  </span>
-                )}
-
-                {browserEngine === 'wllama' && modelCached && (
-                  <p style={descriptionStyle}>
-                    Weights are bundled with this build — no download needed. The model loads automatically on first use.
-                  </p>
-                )}
-                {browserEngine === 'wllama' && !modelCached && (
-                  <p style={{ ...descriptionStyle, color: 'var(--color-warning)' }}>
-                    The packaged model is missing from this build. The wllama engine cannot download it. Contact your administrator or rebuild with the weights staged (see PACKAGING.md).
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        </section>
-        )}
-
-        {/* ================================================================== */}
-        {/* 4. Response Quality (RAG preset) */}
-        {/* ================================================================== */}
-        <section style={sectionStyle} aria-labelledby="rag-preset-heading">
-          <h2 id="rag-preset-heading" style={sectionTitleStyle}>
-            Response Quality
-          </h2>
-          <div style={fieldGroupStyle}>
-            <p style={descriptionStyle}>
-              {electronMode
-                ? "Trade speed for answer quality. Each preset sets the desktop backend's result count, reranking, answer length and temperature, and also applies to browser-local chat."
-                : 'Trade speed for answer quality in browser-local chat (an external model also uses its answer length and temperature).'}
-            </p>
-            <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
-              <legend style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clip: 'rect(0,0,0,0)', whiteSpace: 'nowrap', border: 0 }}>Select response quality preset</legend>
-              <div style={radioGroupStyle}>
-                {(['fast', 'balanced', 'quality'] as const).map((preset) => (
-                  <label
-                    key={preset}
-                    style={presetChecked(preset) ? radioOptionSelectedStyle : radioOptionStyle}
-                  >
-                    <input
-                      type="radio"
-                      name="rag-preset"
-                      value={preset}
-                      checked={presetChecked(preset)}
-                      onChange={() => handleRagPresetChange(preset)}
-                      // A checked radio fires no change event, so re-selecting
-                      // the preset matched on rag_n_results alone (settings
-                      // saved before presets wrote the full patch) re-applies
-                      // its full patch on click instead.
-                      onClick={() => {
-                        if (electronMode && presetNeedsReapply && presetChecked(preset)) handleRagPresetChange(preset);
-                      }}
-                      style={radioInputStyle}
-                      aria-describedby={`rag-${preset}-desc`}
-                    />
-                    <div>
-                      <span style={radioLabelStyle}>{RAG_PRESET_LABELS[preset].label}</span>
-                      <p id={`rag-${preset}-desc`} style={descriptionStyle}>
-                        {RAG_PRESET_LABELS[preset].description}
-                        {electronMode &&
-                          (presetNeedsReapply && presetChecked(preset)
-                            ? ' Re-select a preset to apply its reranking and answer settings.'
-                            : " On the desktop backend it overrides the inference profile's answer length and temperature until reset.")}
-                        {rerankUnavailable && DESKTOP_PRESET_SETTINGS[preset].rag_reranking_enabled &&
-                          ' Reranking unavailable on this installation.'}
-                      </p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            {/* settings-wiring-honesty (AC1): the desktop display state comes
-                from the backend; say so when it is not one of the presets. */}
-            {electronMode && desktopPreset?.kind === 'custom' && (
-              <p style={descriptionStyle} data-testid="rag-preset-state">
-                Custom server settings: the desktop backend&apos;s values match no preset.
-                Browser-local chat uses the {RAG_PRESET_LABELS[ragPreset].label} preset.
-              </p>
-            )}
-            {electronMode && desktopPreset?.kind === 'defaults' && (
-              <p style={descriptionStyle} data-testid="rag-preset-state">
-                Using server defaults: no preset is applied to the desktop backend, so answer
-                length and temperature follow the inference profile.
-              </p>
-            )}
-            {electronMode && desktopPreset !== null && desktopPreset.kind !== 'defaults' && (
-              <div style={buttonRowStyle}>
-                <button type="button" onClick={handlePresetReset} style={secondaryButtonStyle}>
-                  Reset to defaults
-                </button>
-                <span style={descriptionStyle}>
-                  Clears the preset on the desktop backend so it uses its default result count,
-                  reranking and inference-profile answer settings.
+            <div className="settings-group" role="status" aria-live="polite">
+              <div className="settings-row">
+                <span className="settings-label settings-row">
+                  Status:
+                  {modelCached ? (
+                    <StatusBadge status="ready" label="Cached" />
+                  ) : (
+                    <StatusBadge status="not-ready" label="Not cached" />
+                  )}
                 </span>
               </div>
-            )}
-            {presetError && (
-              <p style={{ ...descriptionStyle, color: 'var(--color-danger)' }} role="alert">
-                {presetError}
-              </p>
-            )}
-          </div>
-        </section>
 
-        {/* ================================================================== */}
-        {/* 5. Appearance */}
-        {/* ================================================================== */}
-        <section style={sectionStyle} aria-labelledby="appearance-heading">
-          <h2 id="appearance-heading" style={sectionTitleStyle}>
-            Appearance
-          </h2>
-          <div style={fieldGroupStyle}>
-            <fieldset style={{ border: 'none', margin: 0, padding: 0 }}>
-              <legend style={{ ...labelStyle, marginBottom: 'var(--spacing-sm)' }}>
-                Theme
-              </legend>
-              <div style={{ display: 'flex', gap: 'var(--spacing-md)', flexWrap: 'wrap' }}>
-                {(['light', 'dark', 'system'] as const).map((option) => (
-                  <label
-                    key={option}
-                    style={
-                      themePreference === option
-                        ? radioOptionSelectedStyle
-                        : radioOptionStyle
-                    }
-                  >
-                    <input
-                      type="radio"
-                      name="theme"
-                      value={option}
-                      checked={themePreference === option}
-                      onChange={() => handleThemeChange(option)}
-                      style={radioInputStyle}
-                    />
-                    <span style={radioLabelStyle}>
-                      {option.charAt(0).toUpperCase() + option.slice(1)}
-                    </span>
-                  </label>
-                ))}
-              </div>
-              <p style={descriptionStyle}>
-                System follows your OS color scheme and updates automatically when it changes.
-              </p>
-            </fieldset>
-          </div>
-        </section>
+              {isDownloading && (
+                <ModelDownloadProgress
+                  progress={downloadProgress}
+                  onCancel={handleCancelDownload}
+                  isQuotaError={isQuotaError}
+                />
+              )}
 
-        {/* ================================================================== */}
-        {/* 6. Updates (E5, issue #88; both apps since browser-training-parity */}
-        {/*    AC8 — opt-in, default OFF)                                      */}
-        {/* ================================================================== */}
-        {(electronMode || !desktopApp) && (
-          <section style={sectionStyle} aria-labelledby="updates-heading" data-testid="updates-section">
-            <h2 id="updates-heading" style={sectionTitleStyle}>
-              Updates
-            </h2>
-            <UpdatesSection />
-          </section>
-        )}
+              {browserEngine === 'webllm' && !modelCached && !isDownloading && (
+                <>
+                  <div className="settings-row">
+                    <Button variant="primary" onClick={handleDownloadModel}>
+                      Download Model
+                    </Button>
+                  </div>
+                  <p className="settings-text settings-tone--warning">
+                    Requires internet access (~1.9 GB) — downloads weights from the WebLLM CDN.
+                  </p>
+                </>
+              )}
 
-        {/* ================================================================== */}
-        {/* 7. Storage */}
-        {/* ================================================================== */}
-        <SectionCard
-          title="Storage"
-          id="storage-heading"
-          description="Browser storage status and cache management"
-        >
-          {/* Per-kind packaged-model readiness (issue #24 F6).
-              Previously only the aggregate `allReady` was shown, which reported
-              green even when the browser LLM was absent (excluded group). Now
-              each kind is reported individually, scoped to the selected engine. */}
-          {packagesReady && (
-            <div
-              style={{
-                ...storageInfoStyle,
-                borderLeft: `4px solid ${packagesReady.allReady ? 'var(--color-success)' : 'var(--color-danger)'}`,
-              }}
-              aria-live="polite"
-            >
-              <PackagedModelReadiness
-                report={packagesReady}
-                browserEngine={browserEngine}
-              />
-              {!packagesReady.allReady && packagesReady.missing.length > 0 && (
-                <p style={descriptionStyle}>
-                  {packagesReady.missing.length} required model file(s) not found in this build.
-                  See the packaging guide (PACKAGING.md) to bundle models for offline use.
+              {browserEngine === 'webllm' && modelCached && !isDownloading && (
+                <span className="settings-label settings-tone--accent">
+                  Model ready to use
+                </span>
+              )}
+
+              {browserEngine === 'wllama' && modelCached && (
+                <p className="settings-text">
+                  Weights are bundled with this build — no download needed. The model loads automatically on first use.
+                </p>
+              )}
+              {browserEngine === 'wllama' && !modelCached && (
+                <p className="settings-text settings-tone--warning">
+                  The packaged model is missing from this build. The wllama engine cannot download it. Contact your administrator or rebuild with the weights staged (see PACKAGING.md).
                 </p>
               )}
             </div>
-          )}
-          {/* settings-wiring-honesty (AC7): browser memory only matters while
-              the model runs in this browser. */}
-          {mode === 'browser-local' ? (
-            <ProgressBar
-              value={memoryTotal - memoryAvailable}
-              max={memoryTotal}
-              label={`Memory Used (${formatMemory(memoryTotal - memoryAvailable)} of ${formatMemory(memoryTotal)})`}
-              color={memoryPressure === 'normal' ? 'success' : memoryPressure === 'moderate' ? 'warning' : 'danger'}
-            />
-          ) : (
-            <p style={descriptionStyle}>
-              Browser memory usage is shown in Browser-local mode, where the model runs in this
-              browser.
-            </p>
-          )}
-          <div style={buttonRowStyle}>
-            <button
-              type="button"
-              onClick={handleClearCacheClick}
-              style={
-                clearCacheState === 'confirming'
-                  ? { ...dangerButtonStyle, backgroundColor: 'var(--color-danger)' }
-                  : dangerButtonStyle
-              }
-              aria-describedby="clear-cache-desc"
-            >
-              {clearCacheState === 'confirming' ? 'Click Again to Confirm' : 'Clear Cache'}
-            </button>
-            <span id="clear-cache-desc" style={descriptionStyle} aria-live="polite">
-              {/* settings-wiring-honesty (AC5/AC6): the copy lists exactly
-                  what is removed and what is kept in each app. */}
-              {clearCacheState === 'confirming'
-                ? desktopApp
-                  ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
-                  : `This deletes the documents and keyword/vector indexes stored in this browser, installed training and knowledge packs, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
-                : desktopApp
-                  ? "Clear this app's browser-side indexes, any WebLLM model files downloaded in this window, and saved settings. Chat history and documents in the desktop library are kept."
-                  : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, installed packs, and saved settings in this browser. Chat history is kept.'}
-            </span>
-            {/* Result feedback (issue #24 F1). PR #140 review (FB140-002): the
-                polite live region is ALWAYS mounted and only its text changes
-                (a region inserted together with its message is not reliably
-                announced). Its own text node is the status badge. After a
-                successful clear a visually-hidden suffix tells screen-reader
-                users the page is about to reload; after a partial failure the
-                explanation is VISIBLE (a child span, so the badge text stays
-                exact), since a reload right after an error would otherwise
-                surprise sighted users too (Stage B review L2). */}
-            <span
-              id="clear-cache-status"
-              role="status"
-              aria-live="polite"
-              style={
-                clearCacheResult === 'cleared'
-                  ? { ...descriptionStyle, color: 'var(--color-success)' }
-                  : clearCacheResult === 'error'
-                    ? { ...descriptionStyle, color: 'var(--color-danger)' }
-                    : descriptionStyle
-              }
-            >
-              {clearCacheResult === 'clearing' && 'Clearing…'}
-              {clearCacheResult === 'cleared' && 'Cache cleared'}
-              {clearCacheResult === 'error' && 'Could not clear all data'}
-              {clearCacheResult === 'cleared' && clearCacheReloading && (
-                <span style={visuallyHiddenStyle}>. Reloading the page…</span>
-              )}
-              {clearCacheResult === 'error' && clearCacheReloading && (
-                <span>. Your saved settings were removed; reloading the page…</span>
-              )}
-            </span>
-          </div>
-        </SectionCard>
+          </SettingsSubsection>
 
-        {/* ================================================================== */}
-        {/* 7. Hardware Capability (diagnostic) */}
-        {/* ================================================================== */}
-        {mode !== 'browser-local' ? (
-          <p style={descriptionStyle}>
-            Hardware capability is checked for Browser-local mode only.
-          </p>
-        ) : (
-        <SectionCard
-          title="Hardware Capability"
-          id="hardware-heading"
-          description="Detected hardware features and recommended configuration"
-        >
-          {capability ? (
-            <>
-              <ProgressBar
-                value={capability.tier === 'green' ? 100 : capability.tier === 'yellow' ? 50 : 10}
-                max={100}
-                label={`Hardware Suitability: ${capability.tier === 'green' ? 'Good' : capability.tier === 'yellow' ? 'Limited' : 'Not suitable — use the desktop app or an external model'}`}
-                color={capability.tier === 'green' ? 'success' : capability.tier === 'yellow' ? 'warning' : 'danger'}
+          <SettingsSubsection
+            title="Hardware capability"
+            headingId="hardware-heading"
+            description="Detected hardware features and recommended configuration"
+          >
+            {capability ? (
+              <>
+                <ProgressBar
+                  value={capability.tier === 'green' ? 100 : capability.tier === 'yellow' ? 50 : 10}
+                  max={100}
+                  label={`Hardware Suitability: ${capability.tier === 'green' ? 'Good' : capability.tier === 'yellow' ? 'Limited' : 'Not suitable — use the desktop app or an external model'}`}
+                  color={capability.tier === 'green' ? 'success' : capability.tier === 'yellow' ? 'warning' : 'danger'}
+                />
+                <KeyValueList items={hardwareItems} className="settings-hardware" />
+                {capability.reasons.length > 0 && (
+                  <p className="settings-text settings-hardware__reasons">{capability.reasons.join(' ')}</p>
+                )}
+              </>
+            ) : (
+              <p className="settings-text">Detecting hardware capability…</p>
+            )}
+          </SettingsSubsection>
+        </>
+      )}
+    </>
+  );
+
+  return (
+    <div className="settings-page">
+      <PageHeader
+        title="Settings"
+        description="Choose how answers are generated, and manage appearance and storage."
+      />
+
+      {/* Single-scroller ownership (trace external-llm-provider-settings): the
+          AppShell <main> is the ONLY scroller; nothing in this page sets overflow
+          (the section nav is position: sticky, bounded by the page body), so the
+          header, the nav and the sections move together. */}
+      <div className="settings-page__body">
+        <SettingsNav items={SETTINGS_SECTIONS} />
+
+        <div className="settings-page__sections">
+          {/* ================================================================ */}
+          {/* 1. Model & connection: generator source, built-in model, and the */}
+          {/* external endpoint (universal-provider-settings-overhaul). The id */}
+          {/* is the model-blocked overlay's and the connection chip's target. */}
+          {/* ================================================================ */}
+          <ExternalModelSection
+            id={MODEL_CONNECTION_SECTION_ID}
+            builtIn={builtInPanel}
+            // Shown for every generator source: a failed backend settings read must
+            // stay visible even while an external model is selected.
+            notice={desktopSettingsError ? <Banner tone="danger">Settings error: {desktopSettingsError}</Banner> : null}
+          />
+
+          {/* ================================================================ */}
+          {/* 2. Answers (Response Quality / RAG preset) */}
+          {/* ================================================================ */}
+          <SettingsSection
+            id="answers"
+            title="Answers"
+            headingId="answers-heading"
+            focusableHeading
+            description="How answers are retrieved and written."
+          >
+            <SettingsSubsection title="Response quality" headingId="rag-preset-heading">
+              <p className="settings-text">
+                {electronMode
+                  ? "Trade speed for answer quality. Each preset sets the desktop backend's result count, reranking, answer length and temperature, and also applies to chat in this window."
+                  : 'Trade speed for answer quality (an external model also uses its answer length and temperature).'}
+              </p>
+              <SettingsRadioCards<RAGPreset>
+                legend="Select response quality preset"
+                name="rag-preset"
+                isChecked={presetChecked}
+                onChange={(preset) => handleRagPresetChange(preset)}
+                // A checked radio fires no change event, so re-selecting the
+                // preset matched on rag_n_results alone (settings saved before
+                // presets wrote the full patch) re-applies its full patch on
+                // click instead.
+                onOptionClick={(preset) => {
+                  if (electronMode && presetNeedsReapply && presetChecked(preset)) handleRagPresetChange(preset);
+                }}
+                options={(['fast', 'balanced', 'quality'] as const).map((preset) => ({
+                  value: preset,
+                  label: RAG_PRESET_LABELS[preset].label,
+                  descriptionId: `rag-${preset}-desc`,
+                  description: (
+                    <>
+                      {RAG_PRESET_LABELS[preset].description}
+                      {electronMode &&
+                        (presetNeedsReapply && presetChecked(preset)
+                          ? ' Re-select a preset to apply its reranking and answer settings.'
+                          : " On the desktop backend it overrides the inference profile's answer length and temperature until reset.")}
+                      {rerankUnavailable && DESKTOP_PRESET_SETTINGS[preset].rag_reranking_enabled &&
+                        ' Reranking unavailable on this installation.'}
+                    </>
+                  ),
+                }))}
               />
-              <div style={storageInfoStyle}>
-                <div style={storageRowStyle}>
-                  <span style={storageLabelStyle}>WebGPU</span>
-                  <StatusBadge status={capability.webgpu ? 'ready' : 'error'} label={capability.webgpu ? 'Available' : 'Not available'} />
-                </div>
-                <div style={storageRowStyle}>
-                  <span style={storageLabelStyle}>Multi-threading</span>
-                  <StatusBadge status={capability.crossOriginIsolated ? 'ready' : 'not-ready'} label={capability.crossOriginIsolated ? 'Enabled' : 'Single-threaded'} />
-                </div>
-                <div style={storageRowStyle}>
-                  <span style={storageLabelStyle}>Memory Tier</span>
-                  <span style={{ fontWeight: 500 }}>{capability.memoryTier}</span>
-                </div>
-                <div style={storageRowStyle}>
-                  <span style={storageLabelStyle}>Recommended Engine</span>
-                  <span style={{ fontWeight: 500, color: 'var(--color-primary)' }}>
-                    {capability.recommendedEngine === 'wllama' ? 'wllama' : 'WebLLM'}
+              {/* settings-wiring-honesty (AC1): the desktop display state comes
+                  from the backend; say so when it is not one of the presets. */}
+              {electronMode && desktopPreset?.kind === 'custom' && (
+                <p className="settings-text" data-testid="rag-preset-state">
+                  Custom server settings: the desktop backend&apos;s values match no preset.
+                  Chat in this window uses the {RAG_PRESET_LABELS[ragPreset].label} preset.
+                </p>
+              )}
+              {electronMode && desktopPreset?.kind === 'defaults' && (
+                <p className="settings-text" data-testid="rag-preset-state">
+                  Using server defaults: no preset is applied to the desktop backend, so answer
+                  length and temperature follow the inference profile.
+                </p>
+              )}
+              {electronMode && desktopPreset !== null && desktopPreset.kind !== 'defaults' && (
+                <div className="settings-row">
+                  <Button variant="secondary" onClick={handlePresetReset}>
+                    Reset to defaults
+                  </Button>
+                  <span className="settings-text">
+                    Clears the preset on the desktop backend so it uses its default result count,
+                    reranking and inference-profile answer settings.
                   </span>
                 </div>
-              </div>
-              {capability.reasons.length > 0 && (
-                <p style={descriptionStyle}>{capability.reasons.join(' ')}</p>
               )}
-            </>
-          ) : (
-            <p style={descriptionStyle}>Detecting hardware capability…</p>
-          )}
-        </SectionCard>
-        )}
+              {presetError && <Banner tone="danger">{presetError}</Banner>}
+            </SettingsSubsection>
+          </SettingsSection>
 
-        {/* ================================================================== */}
-        {/* 8. About */}
-        {/* ================================================================== */}
-        <section style={sectionStyle} aria-labelledby="about-heading">
-          <h2 id="about-heading" style={sectionTitleStyle}>
-            About
-          </h2>
-          <div style={aboutSectionStyle}>
-            <p>
-              <strong>TrainingApp</strong>
+          {/* ================================================================ */}
+          {/* 3. Appearance */}
+          {/* ================================================================ */}
+          <SettingsSection id="appearance" title="Appearance" headingId="appearance-heading" focusableHeading>
+            <div className="settings-group">
+              <SegmentedControl
+                legend="Theme"
+                value={themePreference}
+                onChange={(value) => handleThemeChange(value as ThemePreference)}
+                options={(['light', 'dark', 'system'] as const).map((option) => ({
+                  value: option,
+                  label: option.charAt(0).toUpperCase() + option.slice(1),
+                }))}
+              />
+              <p className="settings-text">
+                System follows your OS color scheme and updates automatically when it changes.
+              </p>
+            </div>
+          </SettingsSection>
+
+          {/* ================================================================ */}
+          {/* 4. Storage & privacy */}
+          {/* ================================================================ */}
+          <SettingsSection
+            id="storage-privacy"
+            title="Storage & privacy"
+            headingId="storage-privacy-heading"
+            focusableHeading
+            description="What this app keeps on this device, and how to remove it."
+          >
+            <p className="settings-text" data-testid="privacy-note">
+              Your documents, search indexes and conversations are kept on this device
+              {desktopApp ? ' (by the desktop backend and in this app window)' : ', in this browser'}. Your
+              documents and questions leave this device only when an external model is switched on (Model
+              &amp; connection). Update checks (Updates) and WebLLM model downloads use the network only after
+              you opt in or start them.
             </p>
-            <p>Version: {APP_VERSION}</p>
-            <p>Answers questions about your training material and documents.</p>
-            <p style={{ marginTop: 'var(--spacing-md)', fontSize: 'var(--font-size-caption)' }}>
-              {mode === 'api'
-                ? 'Answers come from the built-in desktop backend: llama.cpp (node-llama-cpp) generation with hybrid retrieval over the desktop document library.'
-                : 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'}
-            </p>
-          </div>
-        </section>
+            {/* Per-kind packaged-model readiness (issue #24 F6): each kind is
+                reported individually, scoped to the selected engine. */}
+            {packagesReady && (
+              <div
+                className={`settings-well ${packagesReady.allReady ? 'settings-well--success' : 'settings-well--danger'}`}
+                aria-live="polite"
+              >
+                <PackagedModelReadiness
+                  report={packagesReady}
+                  browserEngine={browserEngine}
+                />
+                {!packagesReady.allReady && packagesReady.missing.length > 0 && (
+                  <p className="settings-text">
+                    {packagesReady.missing.length} required model file(s) not found in this build.
+                    See the packaging guide (PACKAGING.md) to bundle models for offline use.
+                  </p>
+                )}
+              </div>
+            )}
+            {/* settings-wiring-honesty (AC7): browser memory only matters while
+                the model runs in this browser. */}
+            {mode === 'browser-local' ? (
+              <ProgressBar
+                value={memoryTotal - memoryAvailable}
+                max={memoryTotal}
+                label={`Memory Used (${formatMemory(memoryTotal - memoryAvailable)} of ${formatMemory(memoryTotal)})`}
+                color={memoryPressure === 'normal' ? 'success' : memoryPressure === 'moderate' ? 'warning' : 'danger'}
+              />
+            ) : (
+              <p className="settings-text">
+                Browser memory usage is shown when the built-in model runs in this window.
+              </p>
+            )}
+            <div className="settings-danger-zone">
+              <Button
+                variant="danger"
+                onClick={handleClearCacheClick}
+                aria-describedby="clear-cache-desc"
+              >
+                {clearCacheState === 'confirming' ? 'Click Again to Confirm' : 'Clear Cache'}
+              </Button>
+              <span id="clear-cache-desc" className="settings-text" aria-live="polite">
+                {/* settings-wiring-honesty (AC5/AC6): the copy lists exactly
+                    what is removed and what is kept in each app. */}
+                {clearCacheState === 'confirming'
+                  ? desktopApp
+                    ? `This deletes the browser-side document and keyword/vector index databases kept in this app window, any WebLLM model files downloaded in this window, orphaned data from earlier sessions, and your saved settings here (${CLEARED_SETTINGS_COPY}), then reloads. Kept: your chat history (conversations), and the documents and settings stored by the desktop backend; to remove documents, use the Documents page. This cannot be undone.`
+                    : `This deletes the documents and keyword/vector indexes stored in this browser, installed training and knowledge packs, downloaded WebLLM model files (the default wllama engine stores none), and your saved settings (${CLEARED_SETTINGS_COPY}), plus orphaned data from earlier sessions, then reloads the page. Your chat history (conversations) is kept. This cannot be undone.`
+                  : desktopApp
+                    ? "Clear this app's browser-side indexes, any WebLLM model files downloaded in this window, and saved settings. Chat history and documents in the desktop library are kept."
+                    : 'Clear downloaded WebLLM model files (the default wllama engine stores none), search indexes, installed packs, and saved settings in this browser. Chat history is kept.'}
+              </span>
+              {/* Result feedback (issue #24 F1). PR #140 review (FB140-002): the
+                  polite live region is ALWAYS mounted and only its text changes
+                  (a region inserted together with its message is not reliably
+                  announced). Its own text node is the status badge. After a
+                  successful clear a visually-hidden suffix tells screen-reader
+                  users the page is about to reload; after a partial failure the
+                  explanation is VISIBLE (a child span, so the badge text stays
+                  exact), since a reload right after an error would otherwise
+                  surprise sighted users too (Stage B review L2). */}
+              <span
+                id="clear-cache-status"
+                role="status"
+                aria-live="polite"
+                data-result={clearCacheResult}
+                className={
+                  clearCacheResult === 'cleared'
+                    ? 'settings-text settings-tone--success settings-strong'
+                    : clearCacheResult === 'error'
+                      ? 'settings-text settings-tone--danger settings-strong'
+                      : 'settings-text'
+                }
+              >
+                {clearCacheResult === 'clearing' && 'Clearing…'}
+                {clearCacheResult === 'cleared' && 'Cache cleared'}
+                {clearCacheResult === 'error' && 'Could not clear all data'}
+                {clearCacheResult === 'cleared' && clearCacheReloading && (
+                  <span className="ui-visually-hidden">. Reloading the page…</span>
+                )}
+                {clearCacheResult === 'error' && clearCacheReloading && (
+                  <span>. Your saved settings were removed; reloading the page…</span>
+                )}
+              </span>
+            </div>
+          </SettingsSection>
+
+          {/* ================================================================ */}
+          {/* 5. Updates (E5, issue #88; both apps since browser-training-parity */}
+          {/*    AC8 — opt-in, default OFF)                                      */}
+          {/* ================================================================ */}
+          <SettingsSection
+            id="updates"
+            title="Updates"
+            headingId="updates-heading"
+            focusableHeading
+            data-testid="updates-section"
+          >
+            {electronMode || !desktopApp ? (
+              <UpdatesSection />
+            ) : (
+              <p className="settings-text" data-testid="updates-unavailable">
+                Update settings are available once the desktop backend has started.
+              </p>
+            )}
+          </SettingsSection>
+
+          {/* ================================================================ */}
+          {/* 6. About (+ first-run setup in the desktop app, E2 issue #85) */}
+          {/* ================================================================ */}
+          <SettingsSection id="about" title="About" headingId="about-heading" focusableHeading>
+            <div className="settings-group">
+              <p className="settings-text settings-text--body">
+                <strong>TrainingApp</strong>
+              </p>
+              <p className="settings-text settings-text--body">Version: {APP_VERSION}</p>
+              <p className="settings-text settings-text--body">Answers questions about your training material and documents.</p>
+              <p className="settings-text">
+                {mode === 'api'
+                  ? 'Answers come from the built-in desktop backend: llama.cpp (node-llama-cpp) generation with hybrid retrieval over the desktop document library.'
+                  : 'Runs in this browser with WebLLM (WebGPU) or wllama (WebAssembly), or with the external model you configured; documents are stored in IndexedDB.'}
+              </p>
+            </div>
+            {electronMode && <FirstRunSetupCard />}
+          </SettingsSection>
+        </div>
       </div>
     </div>
   );
@@ -1758,57 +1468,52 @@ function PackagedModelReadiness({
     byKind.set(m.kind, arr);
   }
 
-  return (
-    <>
-      <div style={storageRowStyle}>
-        <span style={storageLabelStyle}>Packaged Models (overall)</span>
-        <span style={{ fontWeight: 500, color: report.allReady ? 'var(--color-success)' : 'var(--color-danger)' }}>
-          <span aria-hidden="true">{report.allReady ? '✓ ' : '✗ '}</span>
+  const items: KeyValueItem[] = [
+    {
+      label: 'Packaged Models (overall)',
+      value: (
+        <span className={`settings-strong settings-inline-icon ${report.allReady ? 'settings-tone--success' : 'settings-tone--danger'}`}>
+          {/* Decorative (aria-hidden) shape cue; the word carries the state. */}
+          <Icon name={report.allReady ? 'circle-check' : 'circle-alert'} size={14} />
           {report.allReady ? 'Ready' : 'Missing'}
         </span>
-      </div>
-      {kindOrder.map((kind) => {
-        const models = byKind.get(kind);
-        if (!models || models.length === 0) return null;
-        // Suppress the packaged llm kind for webllm — its weights are in Cache
-        // Storage, not packaged. Showing "Ready" here would contradict the
-        // "Not cached" status above for a webllm user without a download.
-        if (kind === 'llm' && browserEngine === 'webllm') {
-          return (
-            <div key={kind} style={storageRowStyle}>
-              <span style={storageLabelStyle}>{KIND_LABELS[kind]}</span>
-              <span style={{ fontSize: 'var(--font-size-caption)', color: 'var(--color-text-muted)' }}>
-                WebLLM weights are not packaged — see cache status above
-              </span>
-            </div>
-          );
-        }
-        const allReady = models.every((m) => m.ready);
-        const allExcluded = models.every((m) => m.excluded);
-        // Check allExcluded BEFORE allReady: an excluded model reports
-        // ready=true (model-manifest.ts marks excluded groups ready), so
-        // allReady would otherwise win and show green for "Excluded from
-        // build" — a misleading color. Map excluded to 'not-ready' (warning)
-        // to match the label.
-        const status: 'ready' | 'error' | 'not-ready' = allExcluded
-          ? 'not-ready'
-          : allReady
-            ? 'ready'
-            : 'error';
-        const label = allExcluded
-          ? 'Excluded from build'
-          : allReady
-            ? 'Ready'
-            : 'Missing';
-        return (
-          <div key={kind} style={storageRowStyle}>
-            <span style={storageLabelStyle}>{KIND_LABELS[kind]}</span>
-            <StatusBadge status={status} label={label} />
-          </div>
-        );
-      })}
-    </>
-  );
+      ),
+    },
+  ];
+  for (const kind of kindOrder) {
+    const models = byKind.get(kind);
+    if (!models || models.length === 0) continue;
+    // Suppress the packaged llm kind for webllm — its weights are in Cache
+    // Storage, not packaged. Showing "Ready" here would contradict the
+    // "Not cached" status above for a webllm user without a download.
+    if (kind === 'llm' && browserEngine === 'webllm') {
+      items.push({
+        label: KIND_LABELS[kind],
+        value: <span className="settings-text">WebLLM weights are not packaged — see cache status above</span>,
+      });
+      continue;
+    }
+    const allReady = models.every((m) => m.ready);
+    const allExcluded = models.every((m) => m.excluded);
+    // Check allExcluded BEFORE allReady: an excluded model reports
+    // ready=true (model-manifest.ts marks excluded groups ready), so
+    // allReady would otherwise win and show green for "Excluded from
+    // build" — a misleading color. Map excluded to 'not-ready' (warning)
+    // to match the label.
+    const status: 'ready' | 'error' | 'not-ready' = allExcluded
+      ? 'not-ready'
+      : allReady
+        ? 'ready'
+        : 'error';
+    const label = allExcluded
+      ? 'Excluded from build'
+      : allReady
+        ? 'Ready'
+        : 'Missing';
+    items.push({ label: KIND_LABELS[kind], value: <StatusBadge status={status} label={label} /> });
+  }
+
+  return <KeyValueList items={items} />;
 }
 
 // ============================================================================

@@ -175,7 +175,7 @@ async function stepUntilSettled(): Promise<void> {
 async function renderReadyWithFakeTimers(reloadPage: () => void): Promise<HTMLElement> {
   render(<SettingsPage reloadPage={reloadPage} />);
   await waitFor(() => {
-    expect(screen.getByText('Storage')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
   });
   vi.useFakeTimers();
   return screen.getByRole('button', { name: /clear cache/i });
@@ -266,7 +266,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -288,7 +288,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -308,7 +308,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -328,7 +328,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -344,7 +344,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -368,7 +368,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -384,7 +384,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -405,7 +405,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -424,7 +424,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -450,7 +450,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -493,7 +493,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -521,7 +521,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });
@@ -566,6 +566,8 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
       expect(region?.textContent).toMatch(/reloading/i);
       // The visible badge text stays exactly "Cache cleared".
       expect(screen.getByText('Cache cleared')).toBe(region);
+      // After a SUCCESSFUL clear the reload suffix is for screen readers only.
+      expect(screen.getByText(/reloading the page/i)).toHaveClass('ui-visually-hidden');
     });
 
     // FB140-002: the reload waits long enough for the announcement, and
@@ -623,8 +625,10 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
         // Stage B review (L2): sighted users also see why the page reloads.
         const note = screen.getByText(/your saved settings were removed; reloading the page/i);
         expect(clearStatusRegion()).toContainElement(note);
-        expect(note.style.position).not.toBe('absolute');
-        expect(note.style.clip).toBe('');
+        // Lumen phase 4: screen-reader-only text is the ui-visually-hidden class, so
+        // assert the class (an inline-style check would now pass vacuously).
+        expect(note).not.toHaveClass('ui-visually-hidden');
+        expect(note.closest('.ui-visually-hidden')).toBeNull();
         for (const key of USER_SETTING_KEYS) expect(localStorage.getItem(key)).toBeNull();
         for (const key of INTERNAL_KEYS) expect(localStorage.getItem(key)).toBe('keep');
         // The steps after the failed one still ran.
@@ -689,7 +693,7 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     render(<SettingsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Storage')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: /clear cache/i });

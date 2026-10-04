@@ -177,7 +177,7 @@ export interface FailureContext {
   apiKey?: string;
 }
 
-const SETTINGS_HINT = 'Settings → External model';
+const SETTINGS_HINT = 'Settings → Model & connection';
 
 export function authError(ctx: FailureContext, status?: number, upstream?: string): ProviderError {
   const detail = upstream ? ` (${scrubSecrets(upstream, ctx.apiKey).slice(0, 200)})` : '';

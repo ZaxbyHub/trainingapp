@@ -267,7 +267,7 @@ export class ModelReadinessGate {
     if (webgpuRequired && !webgpu) {
       failures.push('WebGPU is not available in this browser.');
       recommendations.push(
-        'Switch to the wllama engine (runs on CPU, no WebGPU), or use an external model server (Settings → External model).'
+        'Switch to the wllama engine (runs on CPU, no WebGPU), or use an external model server (Settings → Model & connection).'
       );
     } else if (!webgpuRequired && !webgpu) {
       // Informational only for wllama — it does not need WebGPU.
@@ -285,7 +285,7 @@ export class ModelReadinessGate {
       );
       recommendations.push(
         `Use a smaller model that fits within ${availableGB} GB of available memory, ` +
-        'or use an external model server (Settings → External model) for memory-intensive inference.'
+        'or use an external model server (Settings → Model & connection) for memory-intensive inference.'
       );
     }
 

@@ -5,9 +5,26 @@
  */
 
 /**
- * The section that hosts the external-model (OpenAI- or Anthropic-compatible
- * endpoint: local server, LAN or cloud) controls. Whichever section hosts
- * those controls carries this id; today that is the always-rendered External
- * model section (components/ExternalModelSection.tsx) in both apps.
+ * The section that hosts the generator choice and the external-model (OpenAI-
+ * or Anthropic-compatible endpoint: local server, LAN or cloud) controls:
+ * "Model & connection" (docs/design/design-language.md section 5), rendered by
+ * components/ExternalModelSection.tsx in both apps. It is the model-blocked
+ * overlay's destination and the footer connection chip's target.
  */
 export const MODEL_CONNECTION_SECTION_ID = 'model-connection';
+
+/**
+ * The six Settings sections, in page order (design-language.md section 5). Each id
+ * is the section element's id (an `initialSection` / in-page nav target); its h2 is
+ * `${id}-heading`.
+ */
+export const SETTINGS_SECTIONS = [
+  { id: MODEL_CONNECTION_SECTION_ID, label: 'Model & connection' },
+  { id: 'answers', label: 'Answers' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'storage-privacy', label: 'Storage & privacy' },
+  { id: 'updates', label: 'Updates' },
+  { id: 'about', label: 'About' },
+] as const;
+
+export type SettingsSectionId = (typeof SETTINGS_SECTIONS)[number]['id'];

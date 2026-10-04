@@ -1,0 +1,161 @@
+/* Settings page body (Lumen phase 4, docs/design/design-language.md sections 5 and 6).
+   Lumen tokens only (no legacy --color-*/--spacing-*, no color literals); enforced by
+   components/settings-hygiene.test.ts. Section, radio-card, field, badge and banner
+   looks come from ui/ui.css; this file only lays them out for Settings.
+
+   Single-scroller rule (desktop/e2e/settings-layout.spec.ts): nothing here may set
+   overflow on an ancestor of the sections; <main> (AppShell) is the only scroller. */
+
+.settings-page { display: flex; flex-direction: column; min-height: 100%; background: var(--bg-canvas); color: var(--text-primary); }
+.settings-page__body {
+  box-sizing: border-box;
+  width: 100%;
+  /* Section nav column + the --w-form content column (design-language.md section 5);
+     left-aligned under the PageHeader title (same gutter), not centered. */
+  max-width: calc(200px + var(--space-8) + var(--w-form) + 2 * var(--space-6));
+  margin: 0;
+  padding: var(--space-6);
+  display: grid;
+  grid-template-columns: 200px minmax(0, var(--w-form));
+  column-gap: var(--space-8);
+  align-items: start;
+}
+.settings-page__sections { min-width: 0; display: flex; flex-direction: column; gap: var(--space-6); }
+/* A jumped-to section's heading clears the sticky nav bar (narrow widths). */
+.settings-section { scroll-margin-top: var(--space-4); }
+
+/* ----- Section nav (sticky; bounded by the body, so it never reaches the PageHeader
+   and never becomes a scroll container). */
+.settings-nav { position: sticky; top: var(--space-6); z-index: 2; }
+.settings-nav__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.settings-nav__link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--target-primary);
+  padding: 0 var(--space-3);
+  border-radius: var(--r-control);
+  color: var(--text-secondary);
+  font-size: var(--type-label-size);
+  line-height: var(--type-label-line);
+  font-weight: var(--type-label-weight);
+  text-decoration: none;
+}
+.settings-nav__link:hover { background: var(--bg-hover); color: var(--text-primary); }
+/* Current section: tint + accent text + 3px indicator (never color alone). */
+.settings-nav__link.ui-selected { background: var(--bg-selected); color: var(--accent); font-weight: 600; }
+.settings-nav__link.ui-selected::before { content: ""; position: absolute; left: 0; top: var(--space-2); bottom: var(--space-2); width: 3px; border-radius: var(--r-pill); background: var(--accent); }
+.settings-nav__jump { display: none; }
+.settings-nav__jump-label { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+
+/* ----- Sub-block inside a section (h3). */
+.settings-subsection { display: flex; flex-direction: column; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--border-subtle); }
+.settings-subsection:first-child { padding-top: 0; border-top: 0; }
+.settings-subsection__title { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: 600; color: var(--text-primary); }
+
+/* One Section style: heading + description above a surface card holding the controls. */
+.settings-section.ui-section { margin: 0; }
+.settings-section > .ui-section__head { margin-bottom: var(--space-3); }
+.settings-section > .ui-section__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-1);
+}
+
+/* Text roles inside a section. */
+.settings-text { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.settings-text--body { font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-primary); }
+.settings-text--block { display: block; margin-top: 0.25rem; }
+.settings-label { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+.settings-strong { font-weight: 600; }
+.settings-inline-icon { display: inline-flex; align-items: center; gap: var(--space-1); }
+.settings-tone--success { color: var(--success); }
+.settings-tone--warning { color: var(--warning); }
+.settings-tone--danger { color: var(--danger); }
+.settings-tone--accent { color: var(--accent); }
+/* Always-mounted live regions (feedback banners): while empty they take no space
+   (the negative margin cancels the section body's flex gap) yet stay in the
+   accessibility tree, so the next message is announced. */
+.settings-section > .ui-section__body > .settings-live:empty { margin-top: calc(-1 * var(--space-4)); }
+
+.settings-group { display: flex; flex-direction: column; gap: var(--space-2); }
+.settings-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+.settings-row > .ui-input { flex: 1 1 16rem; width: auto; min-width: 0; max-width: 32rem; }
+.settings-list { margin: 0; padding-left: var(--space-5); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.settings-code { font-family: var(--font-mono); font-size: var(--type-caption-size); overflow-wrap: anywhere; word-break: break-all; color: var(--text-primary); }
+.settings-field > .ui-input, .settings-field > .ui-select,
+.settings-field > .ui-password, .settings-field > .ui-combobox { max-width: 32rem; }
+
+/* Radio cards: the ui-radio-card look with the Settings markup contract (title span +
+   description <p>, see SettingsRadioCards). */
+.settings-radio-cards .ui-radio-card__desc { margin: 0; }
+.settings-radio-cards .ui-radio-card__text { min-width: 0; }
+
+/* Status well: a bordered block whose leading stripe repeats the (always written) state. */
+.settings-well { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3) var(--space-4); border: 1px solid var(--border-subtle); border-left-width: 4px; border-radius: var(--r-control); }
+.settings-well--success { border-left-color: var(--success); }
+.settings-well--danger { border-left-color: var(--danger); }
+
+/* Meter (SettingsMetrics ProgressBar): visible label + percentage over a ui-progress bar. */
+.settings-meter { display: flex; flex-direction: column; gap: var(--space-1); width: 100%; }
+.settings-meter__head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.settings-meter__value { flex: none; font-weight: 600; color: var(--text-primary); }
+.settings-meter--success .ui-progress__fill { background: var(--success); }
+.settings-meter--warning .ui-progress__fill { background: var(--warning); }
+.settings-meter--danger .ui-progress__fill { background: var(--danger); }
+.settings-meter--info .ui-progress__fill { background: var(--info); }
+
+.settings-status-badge__icon { display: inline-flex; }
+
+/* Programmatic focus target (the Updates error, PRR-012): no ring after a pointer
+   action, the standard ring when the user arrived by keyboard. */
+.settings-focus-target:focus:not(:focus-visible) { outline: none; }
+.settings-focus-target:focus-visible { outline: var(--focus-outline-width) solid var(--focus-ring); outline-offset: var(--focus-outline-offset); }
+
+/* Destructive zone (Clear Cache): the danger edge marks the irreversible action. */
+.settings-danger-zone { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding: var(--space-4); border: 1px solid var(--danger-border); border-radius: var(--r-control); }
+
+/* Model download progress (webllm). */
+.settings-download { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border-subtle); border-radius: var(--r-control); }
+.settings-download--error { border-color: var(--danger-border); }
+.settings-download__head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.settings-download__name { font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+.settings-download__stats { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.settings-download__actions { display: flex; justify-content: flex-end; }
+
+/* 769-1024px: the nav becomes a wrapped row above the content (sticky at the top). */
+@media (max-width: 1024px) {
+  .settings-page__body { grid-template-columns: minmax(0, 1fr); max-width: calc(var(--w-form) + 2 * var(--space-6)); row-gap: var(--space-4); }
+  .settings-nav { top: 0; margin: 0 calc(-1 * var(--space-6)); padding: var(--space-2) var(--space-6); background: var(--bg-canvas); border-bottom: 1px solid var(--border-subtle); }
+  .settings-nav__list { flex-direction: row; flex-wrap: wrap; }
+  .settings-nav__link.ui-selected::before { left: var(--space-3); right: var(--space-3); top: auto; bottom: 0; width: auto; height: 3px; }
+  /* WCAG 2.2 SC 2.4.11 (focus not obscured): anything scrolled into view, by focus or
+     by a jump, stops below the sticky nav bar instead of underneath it. */
+  /* --settings-nav-h is measured by SettingsNav (wrapped rows included). */
+  .settings-section, .settings-page__sections * { scroll-margin-top: calc(var(--settings-nav-h, var(--space-16)) + var(--space-2)); }
+}
+/* <= 768px: a compact "Jump to section" select replaces the link row. */
+@media (max-width: 768px) {
+  .settings-nav__list { display: none; }
+  .settings-nav__jump { display: flex; align-items: center; gap: var(--space-3); }
+  .settings-nav__jump .ui-select { flex: 1; min-width: 0; }
+  .settings-nav__jump .ui-button { flex: none; }
+}
+
+@media (forced-colors: active) {
+  .settings-section > .ui-section__body, .settings-well, .settings-danger-zone, .settings-download { border-color: CanvasText; }
+  .settings-nav__link.ui-selected::before { background: Highlight; }
+  .settings-meter .ui-progress__fill { background: Highlight; }
+}
+
+@media (max-width: 500px) {
+  .settings-page__body { padding: var(--space-4); }
+  .settings-page__sections { gap: var(--space-5); }
+  .settings-nav { margin: 0 calc(-1 * var(--space-4)); padding: var(--space-2) var(--space-4); }
+  .settings-section > .ui-section__body { padding: var(--space-4); }
+}

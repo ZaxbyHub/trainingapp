@@ -129,6 +129,7 @@ export const UNSENDABLE_KEY_MESSAGE =
 function memoryStore(): SecretStore {
   const data = new Map<string, string>();
   return {
+    persistent: false,
     get: (name) => data.get(name) ?? null,
     set: (name, value) => {
       data.set(name, value);
@@ -442,7 +443,9 @@ export class ExternalProviderState {
       'external.model': this.values.model,
       'external.grounded': this.values.grounded,
       'external.apiKeySet': this.keyFor(this.values.baseUrl) !== null,
-      'external.apiKeyPersisted': this.sessionKey === null,
+      // A key is persisted only when it went to a store that survives restarts:
+      // not a session-only fallback key, and not a memory store (headless dev-server).
+      'external.apiKeyPersisted': this.sessionKey === null && this.store.persistent !== false,
       'external.apiKeyBoundOrigin': this.storedKey() !== null ? (this.boundOrigin() ?? '') : '',
       'external.airgap': this.airgap(),
     };

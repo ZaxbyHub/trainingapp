@@ -318,7 +318,7 @@ export function rollBackUnsavedSettings(
       // NOT "back in effect".
       keyRestored = false;
       leftovers.push(
-        `the stored API key could not be put back (${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}), so the saved API key will not be used until you enter it again in Settings → External model`,
+        `the stored API key could not be put back (${restoreErr instanceof Error ? restoreErr.message : String(restoreErr)}), so the saved API key will not be used until you enter it again in Settings → Model & connection`,
       );
     }
     if (rewriteExternal !== undefined) {

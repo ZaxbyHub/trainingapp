@@ -283,7 +283,7 @@ OpenRouter). The decision and its security consequences are recorded in
   into the desktop backend's settings, with the legacy renderer copy, including its key,
   deleted.
 
-### Setup (Settings → External model)
+### Setup (Settings → Model & connection)
 
 The same controls appear in the browser app and the desktop app:
 

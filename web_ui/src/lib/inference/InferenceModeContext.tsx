@@ -4,7 +4,7 @@
  * (settings-wiring-honesty: the browser app has no API-server mode).
  * External OpenAI/Anthropic-compatible endpoints are NOT a mode
  * (universal-provider-settings-overhaul): they replace the generator inside
- * either mode and are configured in Settings -> External model
+ * either mode and are configured in Settings -> Model & connection
  * (lib/llm/external-provider.ts). PR #138's 'provider' mode is retired; a
  * stored legacy blob is migrated once by lib/llm/external-migration.ts.
  */
@@ -188,7 +188,7 @@ export function InferenceModeProvider({ children }: { children: React.ReactNode 
       setState((prev) => ({
         ...prev,
         isModelReady: false,
-        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Switch engines, or use the desktop app or an external model (Settings → External model).',
+        modeError: detail.message ?? 'WebGPU context was lost and recovery failed. Switch engines, or use the desktop app or an external model (Settings → Model & connection).',
       }));
     };
     if (typeof window !== 'undefined') {

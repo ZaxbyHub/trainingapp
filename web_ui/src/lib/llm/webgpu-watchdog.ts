@@ -272,7 +272,7 @@ export function createRecoveryHandler(service: WebLLMService): (reason: string) 
     if (!webgpuAvailable) {
       const message =
         'WebGPU context was lost and is no longer available. ' +
-        'Please switch to the wllama engine or an external model server (Settings → External model) for LLM inference.';
+        'Please switch to the wllama engine or an external model server (Settings → Model & connection) for LLM inference.';
       console.error('[WebGPUWatchdog] WebGPU unavailable after context loss.');
       // Surface the failure to the UI via the readiness event + a dedicated
       // recovery-failed event the app can show as a toast/modeError.
@@ -296,7 +296,7 @@ export function createRecoveryHandler(service: WebLLMService): (reason: string) 
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[WebGPUWatchdog] Re-initialization failed:', msg);
-      const message = `WebGPU recovery failed: ${msg}. Please switch to the wllama engine or an external model server (Settings → External model) for LLM inference.`;
+      const message = `WebGPU recovery failed: ${msg}. Please switch to the wllama engine or an external model server (Settings → Model & connection) for LLM inference.`;
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
           new CustomEvent('webgpu-recovery-failed', { detail: { message } })
