@@ -21,6 +21,9 @@ import { saveExternalConfig } from '../lib/llm/external-provider';
 import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
 import type { ModelStatus } from '../lib/api/types';
 
+/** Anchored match: the sentence exactly once (the tooltip's aria-hidden copy adds only whitespace). */
+const onceRegExp = (s: string) => ({ asymmetricMatch: (v: unknown) => typeof v === 'string' && v.trim() === s });
+
 function setMode(mode: 'browser-local' | 'api', browserEngine: 'wllama' | 'webllm' = 'wllama') {
   vi.mocked(inference.useInferenceMode).mockReturnValue({ mode, browserEngine, isModelReady: true } as unknown as ReturnType<
     typeof inference.useInferenceMode
@@ -178,6 +181,26 @@ describe('SidebarConnectionChip', () => {
     expect(railSentence).toHaveAttribute('hidden');
     expect(railSentence.textContent).toBe(sentence);
     expect(btn).toHaveAccessibleDescription(sentence);
+  });
+
+  it('R3-1: the expanded footer chip and the rail button both show the sentence on focus, once for assistive tech', () => {
+    const { unmount } = render(<Shell />);
+    const sentence = screen.getByTestId('sidebar-model-chip-detail').textContent ?? '';
+    const chip = screen.getByTestId('sidebar-model-chip');
+    expect(chip).not.toHaveAttribute('title');
+    fireEvent.focus(chip);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(sentence);
+    expect(chip).toHaveAccessibleDescription(onceRegExp(sentence));
+    unmount();
+
+    render(<Shell collapsed />);
+    const btn = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it. Open model settings' });
+    fireEvent.focus(btn);
+    const tip = screen.getByRole('tooltip');
+    expect(tip).toHaveTextContent(sentence);
+    expect(tip).toHaveTextContent('Model: Local · Google Gemma 4 E2B-it');
+    expect(btn).not.toHaveAttribute('title');
+    expect(btn).toHaveAccessibleDescription(onceRegExp(sentence));
   });
 
   it('drawer (<= 768px): choosing the chip opens settings and closes the drawer', () => {

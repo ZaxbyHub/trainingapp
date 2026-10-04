@@ -4,6 +4,9 @@ import '@testing-library/jest-dom';
 import { ModelChip } from './ModelChip';
 import type { ChatModelDescription } from '../lib/chat/model-chip';
 
+/** Anchored match: the sentence exactly once (the tooltip's aria-hidden copy adds only whitespace). */
+const onceRegExp = (s: string) => ({ asymmetricMatch: (v: unknown) => typeof v === 'string' && v.trim() === s });
+
 const local: ChatModelDescription = {
   kind: 'local',
   source: 'Local',
@@ -19,7 +22,6 @@ describe('ModelChip', () => {
     render(<ModelChip description={local} onOpenSettings={onOpen} />);
     const chip = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it. Open model settings' });
     expect(chip).toHaveTextContent('Local · Google Gemma 4 E2B-it');
-    expect(chip).toHaveAttribute('title', local.detail);
     expect(chip).toHaveAttribute('data-kind', 'local');
     fireEvent.click(chip);
     expect(onOpen).toHaveBeenCalledTimes(1);
@@ -32,6 +34,18 @@ describe('ModelChip', () => {
     expect(screen.getByTestId('chat-model-chip-detail')).toHaveAttribute('hidden');
     // The accessible name is unchanged (the hidden node is a description, not part of the name).
     expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it. Open model settings');
+  });
+
+  it('R3-1: focus shows the sentence in a tooltip, the native title is gone, and the description is still exactly the sentence', () => {
+    render(<ModelChip description={local} onOpenSettings={() => {}} />);
+    const chip = screen.getByTestId('chat-model-chip');
+    expect(chip).not.toHaveAttribute('title');
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.focus(chip);
+    expect(screen.getByRole('tooltip')).toHaveTextContent(local.detail);
+    // Tooltip copy is aria-hidden: described by the hidden node only, once (the empty
+    // tooltip contributes only whitespace).
+    expect(chip).toHaveAccessibleDescription(onceRegExp(local.detail));
   });
 
   it('PRR-119: the static (no settings link) chip also carries the sentence as its description', () => {

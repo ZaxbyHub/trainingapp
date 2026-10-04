@@ -25,7 +25,7 @@ import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { focusSettingsSection, MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
 import { chatModelText, describeChatModel } from '../lib/chat/model-chip';
-import { IconButton, useAppShell } from '../ui';
+import { Button, Icon, Tooltip, useAppShell } from '../ui';
 import { ModelChip, MODEL_CHIP_ICON } from './ModelChip';
 import '../pages/chat.css';
 
@@ -71,16 +71,28 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
   if (collapsed) {
     return (
       <div className="app-sidebar__connection app-sidebar__connection--rail" data-testid="sidebar-connection">
-        <IconButton
-          icon={MODEL_CHIP_ICON[description.kind]}
-          tooltipPlacement="end"
-          aria-label={`Model: ${chatModelText(description)}. Open model settings`}
-          // The rail tooltip repeats only the name; the sentence that says what the
-          // model does (grounded vs direct, profile) must not be tooltip-only.
-          aria-describedby={railDetailId}
-          data-kind={description.kind}
-          onClick={open}
-        />
+        {/* Same markup as IconButton, but the tooltip also carries the sentence that says what
+            the model does (grounded vs direct, profile). Its copy is aria-hidden: assistive
+            tech reads the label as the name and the hidden node below as the description. */}
+        <Tooltip
+          placement="end"
+          content={
+            <span aria-hidden="true">
+              {`Model: ${chatModelText(description)}. ${description.detail}`}
+            </span>
+          }
+        >
+          <Button
+            variant="ghost"
+            className="ui-icon-button"
+            aria-label={`Model: ${chatModelText(description)}. Open model settings`}
+            aria-describedby={railDetailId}
+            data-kind={description.kind}
+            onClick={open}
+          >
+            <Icon name={MODEL_CHIP_ICON[description.kind]} />
+          </Button>
+        </Tooltip>
         <span id={railDetailId} hidden data-testid="sidebar-model-chip-detail">
           {description.detail}
         </span>
@@ -89,7 +101,7 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
   }
   return (
     <div className="app-sidebar__connection" data-testid="sidebar-connection">
-      <ModelChip description={description} onOpenSettings={open} testId="sidebar-model-chip" />
+      <ModelChip description={description} onOpenSettings={open} testId="sidebar-model-chip" tooltipPlacement="top" />
     </div>
   );
 }

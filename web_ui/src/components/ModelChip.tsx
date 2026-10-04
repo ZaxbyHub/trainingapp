@@ -4,7 +4,7 @@
  * path routes on. Clicking it opens Settings at the model-connection section.
  */
 import { useId } from 'react';
-import { Icon, type IconName } from '../ui';
+import { Icon, Tooltip, type IconName, type TooltipProps } from '../ui';
 import { chatModelText, NOT_READY_SUFFIX, type ChatModelDescription } from '../lib/chat/model-chip';
 import '../pages/chat.css';
 
@@ -22,13 +22,16 @@ export interface ModelChipProps {
   onOpenSettings?: () => void;
   /** data-testid (the Chat header and the sidebar footer render one each). */
   testId?: string;
+  /** Where the detail tooltip opens (header: 'bottom', sidebar footer: 'top'). */
+  tooltipPlacement?: TooltipProps['placement'];
 }
 
-export function ModelChip({ description, onOpenSettings, testId = 'chat-model-chip' }: ModelChipProps) {
+export function ModelChip({ description, onOpenSettings, testId = 'chat-model-chip', tooltipPlacement = 'bottom' }: ModelChipProps) {
   const text = chatModelText(description);
-  // The grounded-vs-direct / profile sentence (description.detail) is essential, so it is
-  // never carried by the title tooltip alone: a visually-hidden node, referenced by
-  // aria-describedby, exposes it to assistive tech (the visible layout is unchanged).
+  // The grounded-vs-direct / profile sentence (description.detail) is essential. Sighted
+  // users get it from the repo Tooltip (hover AND keyboard focus); assistive tech gets it
+  // from a hidden node referenced by aria-describedby. The tooltip's own copy is
+  // aria-hidden so the description is read exactly once while the tooltip is open.
   const detailId = useId();
   const detail = (
     <span id={detailId} hidden data-testid={`${testId}-detail`}>
@@ -72,18 +75,19 @@ export function ModelChip({ description, onOpenSettings, testId = 'chat-model-ch
   }
   return (
     <>
-      <button
-        type="button"
-        className="chat-model-chip ui-focusable"
-        data-testid={testId}
-        data-kind={description.kind}
-        title={description.detail}
-        aria-label={`Model: ${text}. Open model settings`}
-        aria-describedby={detailId}
-        onClick={onOpenSettings}
-      >
-        {content}
-      </button>
+      <Tooltip content={<span aria-hidden="true">{description.detail}</span>} placement={tooltipPlacement}>
+        <button
+          type="button"
+          className="chat-model-chip ui-focusable"
+          data-testid={testId}
+          data-kind={description.kind}
+          aria-label={`Model: ${text}. Open model settings`}
+          aria-describedby={detailId}
+          onClick={onOpenSettings}
+        >
+          {content}
+        </button>
+      </Tooltip>
       {detail}
     </>
   );

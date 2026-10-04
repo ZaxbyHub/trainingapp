@@ -20,6 +20,9 @@
    the shell sidebar; the full chip in the sidebar/drawer, an icon button in the rail. */
 .app-sidebar__connection { flex: none; margin-top: auto; padding: var(--space-3); border-top: 1px solid var(--border-subtle); }
 .app-sidebar__connection .chat-model-chip { width: 100%; max-width: 100%; }
+/* The chip's detail Tooltip wrapper must not change the chip's box: full-width in the footer, shrinkable in the header. */
+.app-sidebar__connection:not(.app-sidebar__connection--rail) .ui-tooltip-wrap { display: flex; width: 100%; }
+.chat-header-actions .ui-tooltip-wrap { min-width: 0; max-width: 100%; }
 .app-sidebar__connection--rail { display: flex; justify-content: center; padding: var(--space-2) 0; }
 
 /* Desktop-only mode toggle (InferenceModeToggle). The dot is decorative; the
