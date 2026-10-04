@@ -21,7 +21,7 @@ import { saveExternalConfig } from '../lib/llm/external-provider';
 import { clearSessionSettings, clearUserSettings } from '../lib/storage/persisted-keys';
 import type { ModelStatus } from '../lib/api/types';
 
-/** Anchored match: the sentence exactly once (the tooltip's aria-hidden copy adds only whitespace). */
+/** Anchored match: the sentence exactly once (the Tooltip is describe={false}, so it adds nothing). */
 const onceRegExp = (s: string) => ({ asymmetricMatch: (v: unknown) => typeof v === 'string' && v.trim() === s });
 
 function setMode(mode: 'browser-local' | 'api', browserEngine: 'wllama' | 'webllm' = 'wllama') {

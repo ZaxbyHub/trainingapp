@@ -72,16 +72,9 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
     return (
       <div className="app-sidebar__connection app-sidebar__connection--rail" data-testid="sidebar-connection">
         {/* Same markup as IconButton, but the tooltip also carries the sentence that says what
-            the model does (grounded vs direct, profile). Its copy is aria-hidden: assistive
-            tech reads the label as the name and the hidden node below as the description. */}
-        <Tooltip
-          placement="end"
-          content={
-            <span aria-hidden="true">
-              {`Model: ${chatModelText(description)}. ${description.detail}`}
-            </span>
-          }
-        >
+            the model does (grounded vs direct, profile). describe={false}: assistive tech reads the
+            label as the name and the hidden node below as the description, once. */}
+        <Tooltip placement="end" describe={false} content={`Model: ${chatModelText(description)}. ${description.detail}`}>
           <Button
             variant="ghost"
             className="ui-icon-button"

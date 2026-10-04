@@ -95,6 +95,29 @@ describe('Dialog', () => {
 });
 
 describe('Tooltip', () => {
+  it('describe={false}: the open tooltip has readable text but is not added to the trigger description', () => {
+    render(
+      <Tooltip content="Extra detail" describe={false}>
+        <button type="button" aria-describedby="own">Go</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    fireEvent.focus(btn);
+    expect(screen.getByRole('tooltip')).toHaveAccessibleName('Extra detail');
+    expect(btn.getAttribute('aria-describedby')).toBe('own');
+  });
+
+  it('default: the open tooltip is added to the trigger description (unchanged behaviour)', () => {
+    render(
+      <Tooltip content="Extra detail">
+        <button type="button">Go</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    fireEvent.focus(btn);
+    expect(btn).toHaveAccessibleDescription('Extra detail');
+  });
+
   it("placement 'end' renders beside the trigger and skips the below-trigger viewport shift", async () => {
     render(
       <Tooltip content="Documents" placement="end">

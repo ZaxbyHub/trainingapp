@@ -13,11 +13,14 @@
  * without model weights (and lifts the local-model gate), so the run needs no
  * staged weights and no network. Run under web_ui/playwright.config.ts.
  */
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 const NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
 
-async function boot(page: Page, baseURL: string): Promise<void> {
+const LONG_MODEL = 'an-extremely-long-model-identifier-for-truncation-checks-v1-instruct-q4_k_m';
+
+async function boot(page: Page, baseURL: string, model = 'probe-model', external = true): Promise<void> {
   await page.route('**/*', (route) => {
     const host = new URL(route.request().url()).hostname;
     return host === '127.0.0.1' || host === 'localhost' ? route.continue() : route.abort();
@@ -26,16 +29,17 @@ async function boot(page: Page, baseURL: string): Promise<void> {
   await page.route('**/probe/v1/**', () => {
     /* never fulfilled */
   });
-  await page.addInitScript((base) => {
+  await page.addInitScript(({ base, model, external }) => {
+    if (!external) return;
     try {
       localStorage.setItem(
         'external-provider-config',
-        JSON.stringify({ enabled: true, protocol: 'openai', baseUrl: `${base}/probe/v1`, model: 'probe-model', grounded: false, rememberKey: false })
+        JSON.stringify({ enabled: true, protocol: 'openai', baseUrl: `${base}/probe/v1`, model, grounded: false, rememberKey: false })
       );
     } catch {
       /* ignore */
     }
-  }, baseURL);
+  }, { base: baseURL, model, external });
   await page.goto('/');
   await expect(page.getByText('Initializing search services', { exact: false })).toHaveCount(0, { timeout: 60_000 });
 }
@@ -154,6 +158,48 @@ test.describe('chat reflow (Lumen phase 5)', () => {
     const box = (await popover.boundingBox())!;
     // Capped at 480px; with a chip-wide containing block it collapsed to ~160px.
     expect(box.width).toBeGreaterThanOrEqual(400);
+  });
+
+  test('rail chip tooltip opens upward inside the viewport on focus, with an accessible name (axe clean)', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await boot(page, baseURL!, LONG_MODEL);
+    const rail = page.locator('.app-sidebar__connection--rail button');
+    await expect(rail).toBeVisible();
+    await rail.focus();
+    const tip = page.getByRole('tooltip');
+    await expect(tip).toBeVisible();
+    await expect(tip).toContainText(LONG_MODEL);
+    const box = (await tip.boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(900);
+    expect(box.x + box.width).toBeLessThanOrEqual(1024);
+    const axe = await new AxeBuilder({ page }).withRules(['aria-tooltip-name', 'aria-valid-attr-value', 'duplicate-id-aria']).analyze();
+    expect(axe.violations.map((v) => `${v.id}:${v.nodes.length}`)).toEqual([]);
+  });
+
+  test('header chip with a very long model name ellipsizes inside the header at 500px and 768px', async ({ page, baseURL }) => {
+    await boot(page, baseURL!, LONG_MODEL);
+    for (const width of [500, 768]) {
+      await page.setViewportSize({ width, height: 900 });
+      const m = await page.evaluate(() => {
+        const chip = document.querySelector('[data-testid="chat-model-chip"]') as HTMLElement;
+        const name = chip.querySelector('.chat-model-chip__name') as HTMLElement;
+        const header = chip.closest('.ui-page-header') as HTMLElement;
+        return { chipRight: chip.getBoundingClientRect().right, headerRight: header.getBoundingClientRect().right, truncated: name.scrollWidth > name.clientWidth };
+      });
+      expect(m.chipRight, `chip inside header @ ${width}`).toBeLessThanOrEqual(m.headerRight + 0.5);
+      expect(m.truncated, `name ellipsized @ ${width}`).toBe(true);
+    }
+  });
+
+  test('header chip keeps the "not ready" suffix visible at 500px (local model, no external endpoint)', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 500, height: 900 });
+    await boot(page, baseURL!, 'probe-model', false);
+    const suffix = page.getByTestId('chat-model-chip-suffix');
+    await expect(suffix).toBeVisible();
+    const chip = (await page.getByTestId('chat-model-chip').boundingBox())!;
+    const s = (await suffix.boundingBox())!;
+    expect(s.x + s.width).toBeLessThanOrEqual(chip.x + chip.width + 0.5);
   });
 
   test('the composer status row collapses when idle and shows while generating', async ({ page, baseURL }) => {

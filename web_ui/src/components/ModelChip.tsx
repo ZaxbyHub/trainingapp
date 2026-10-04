@@ -30,8 +30,8 @@ export function ModelChip({ description, onOpenSettings, testId = 'chat-model-ch
   const text = chatModelText(description);
   // The grounded-vs-direct / profile sentence (description.detail) is essential. Sighted
   // users get it from the repo Tooltip (hover AND keyboard focus); assistive tech gets it
-  // from a hidden node referenced by aria-describedby. The tooltip's own copy is
-  // aria-hidden so the description is read exactly once while the tooltip is open.
+  // from a hidden node referenced by aria-describedby; the Tooltip is told not to describe
+  // the trigger (describe={false}) so the description is read exactly once while it is open.
   const detailId = useId();
   const detail = (
     <span id={detailId} hidden data-testid={`${testId}-detail`}>
@@ -75,7 +75,7 @@ export function ModelChip({ description, onOpenSettings, testId = 'chat-model-ch
   }
   return (
     <>
-      <Tooltip content={<span aria-hidden="true">{description.detail}</span>} placement={tooltipPlacement}>
+      <Tooltip content={description.detail} placement={tooltipPlacement} describe={false}>
         <button
           type="button"
           className="chat-model-chip ui-focusable"

@@ -4,7 +4,7 @@ import '@testing-library/jest-dom';
 import { ModelChip } from './ModelChip';
 import type { ChatModelDescription } from '../lib/chat/model-chip';
 
-/** Anchored match: the sentence exactly once (the tooltip's aria-hidden copy adds only whitespace). */
+/** Anchored match: the sentence exactly once (the Tooltip is describe={false}, so it adds nothing). */
 const onceRegExp = (s: string) => ({ asymmetricMatch: (v: unknown) => typeof v === 'string' && v.trim() === s });
 
 const local: ChatModelDescription = {
@@ -43,8 +43,8 @@ describe('ModelChip', () => {
     expect(screen.queryByRole('tooltip')).toBeNull();
     fireEvent.focus(chip);
     expect(screen.getByRole('tooltip')).toHaveTextContent(local.detail);
-    // Tooltip copy is aria-hidden: described by the hidden node only, once (the empty
-    // tooltip contributes only whitespace).
+    expect(screen.getByRole('tooltip')).toHaveAccessibleName(local.detail);
+    // Tooltip is describe={false}: described by the hidden node only, once.
     expect(chip).toHaveAccessibleDescription(onceRegExp(local.detail));
   });
 
