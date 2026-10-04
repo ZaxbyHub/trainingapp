@@ -109,6 +109,20 @@ describe('course-card slide counts follow the keyword index readiness (L2)', () 
     expect(screen.getByTestId('training-course-course-a')).toHaveTextContent('12 slides');
   });
 
+  it('PRR-202: becoming visible again (visibilitychange) re-arms the poll too', async () => {
+    vi.useFakeTimers();
+    render(<TrainingPage />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    expect(screen.getByTestId('training-course-course-a')).toHaveTextContent('Storyline course');
+    index.ready = true;
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(screen.getByTestId('training-course-course-a')).toHaveTextContent('12 slides');
+  });
+
   it('PRR-202: a focus while the index is still not ready restarts the poll, which then picks the index up', async () => {
     vi.useFakeTimers();
     render(<TrainingPage />);
