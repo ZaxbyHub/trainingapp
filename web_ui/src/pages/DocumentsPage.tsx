@@ -896,6 +896,11 @@ export function DocumentsPage() {
               onClick={() => {
                 const open = openDocumentPickerRef.current;
                 if (activeTab === 'documents' && open !== null) {
+                  // The user is choosing files right now: that supersedes a pending deferred
+                  // Training-tab switch (selectTab clears it). Otherwise the finishing drop
+                  // would switch tabs while the OS file dialog is open and unmount this
+                  // very file input (the Tabs render only the active panel).
+                  selectTab('documents');
                   open();
                   return;
                 }

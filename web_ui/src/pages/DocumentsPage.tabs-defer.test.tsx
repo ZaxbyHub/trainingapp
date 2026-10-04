@@ -33,13 +33,18 @@ vi.mock('../lib/search/keyword-index', () => ({
 vi.mock('../lib/embeddings/embedding-service', () => ({
   getEmbeddingService: vi.fn(() => ({ isReady: () => false })),
 }));
-const extraction = vi.hoisted(() => ({ release: null as null | (() => void) }));
+const extraction = vi.hoisted(() => ({
+  // The most recent extraction, and every extraction by file name (two drops can be in flight).
+  release: null as null | (() => void),
+  byName: new Map<string, () => void>(),
+}));
 vi.mock('../lib/processing/extractor-factory', () => ({
   // Held open until the test releases it: the document upload is "in flight".
   extractDocument: vi.fn(
-    () =>
+    (file: File) =>
       new Promise((resolve) => {
         extraction.release = () => resolve({ fullText: 'plain text body', pages: undefined });
+        extraction.byName.set(file.name, extraction.release);
       })
   ),
   SUPPORTED_EXTENSIONS: ['.pdf', '.txt'],
@@ -96,6 +101,7 @@ afterEach(() => {
   store.packs = [];
   store.listeners.clear();
   extraction.release = null;
+  extraction.byName.clear();
   install.mode = 'ok';
   install.hold = null;
   vi.restoreAllMocks();
@@ -310,5 +316,95 @@ describe('Documents header Upload action (review L2)', () => {
     // The pending open was consumed: later renders do not reopen the picker.
     await settle();
     expect(click).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Documents header Upload supersedes a pending deferred switch (review PRR-207)', () => {
+  it('a drop that finishes while the file dialog is open does not switch tabs or unmount the picker', async () => {
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined);
+    await renderPage();
+    dropZipAndDoc();
+    await waitFor(() => expect(extraction.release).not.toBeNull());
+    await settle();
+    expect(store.packs).toHaveLength(1); // pack appeared mid-drop: the switch is deferred
+
+    // The user clicks Upload: the OS file dialog opens on the Documents tab's own input.
+    const pickerInput = document.querySelector('input[type="file"][accept*=".txt"]');
+    expect(pickerInput).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Upload' }));
+    expect(click).toHaveBeenCalledTimes(1);
+
+    // The drop finishes while the dialog is still open: no yank, the input is still mounted.
+    await act(async () => extraction.release?.());
+    await settle();
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'false');
+    expect(pickerInput?.isConnected).toBe(true);
+    expect(screen.queryByText(/A new training pack was added/)).toBeNull();
+  });
+});
+
+// PRE-b (review): the picker is opened from the header Upload button (or the dropzone, which
+// keeps focus itself). Nothing in the page may move focus off the control that opened the dialog,
+// because the browser hands focus back to the previously focused element when the dialog closes.
+describe('Documents header Upload keeps focus on its own button (review PRE-b)', () => {
+  it('stays focused after opening the picker from the Documents tab', async () => {
+    vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined);
+    await renderPage();
+    const upload = screen.getByRole('button', { name: 'Upload' });
+    upload.focus();
+    fireEvent.click(upload);
+    await settle();
+    expect(document.activeElement).toBe(upload);
+  });
+
+  it('stays focused after the switch from the Training packs tab and the picker open', async () => {
+    const click = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => undefined);
+    await renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: 'Training packs' }));
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true'));
+    click.mockClear();
+    const upload = screen.getByRole('button', { name: 'Upload' });
+    upload.focus();
+    fireEvent.click(upload);
+    await waitFor(() => expect(click).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(document.activeElement).toBe(upload);
+  });
+});
+
+// PRR-221: two drops can be in flight at once (a second drop while the first still uploads).
+// The deferred Training switch belongs to the LAST drop to finish, not the first.
+describe('Documents tabs: two concurrent drops (review PRR-221)', () => {
+  it('finishing the second drop first does not switch tabs; finishing the last one does; both documents are listed', async () => {
+    await renderPage();
+    dropZipAndDoc(); // drop A: course-a.zip + notes.txt
+    await waitFor(() => expect(extraction.byName.has('notes.txt')).toBe(true));
+    await settle();
+    expect(store.packs).toHaveLength(1); // the pack landed mid-drop A: the switch is deferred
+
+    // Drop B arrives while A is still uploading.
+    fireEvent.drop(screen.getByRole('button', { name: /drop files here or click to select/i }), {
+      dataTransfer: { files: [new File(['again'], 'second.txt', { type: 'text/plain' })] },
+    });
+    await waitFor(() => expect(extraction.byName.has('second.txt')).toBe(true));
+    expect(screen.getByText('notes.txt')).toBeInTheDocument();
+    expect(screen.getByText('second.txt')).toBeInTheDocument();
+
+    // B finishes first: A is still in flight, so the tab must not move.
+    await act(async () => extraction.byName.get('second.txt')?.());
+    await settle();
+    expect(screen.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('notes.txt')).toBeInTheDocument();
+    expect(screen.getByText('second.txt')).toBeInTheDocument();
+
+    // A (the last drop in flight) finishes: now the deferred switch fires, exactly once.
+    await act(async () => extraction.byName.get('notes.txt')?.());
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true'));
+
+    // Both documents survived the switch.
+    fireEvent.click(screen.getByRole('tab', { name: 'Documents' }));
+    expect(await screen.findByText('notes.txt')).toBeInTheDocument();
+    expect(screen.getByText('second.txt')).toBeInTheDocument();
   });
 });
