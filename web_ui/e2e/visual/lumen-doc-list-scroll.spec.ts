@@ -216,6 +216,88 @@ test('focus on the last fully visible wide row survives wide -> stacked in a tal
   expect(inRegion).toBe(true);
 });
 
+// Review LOW-A / LOW-B. Arming, cancelling and confirming a delete each remove the control
+// that has focus; a removed element drops focus to <body> unless it is moved on purpose.
+const activeLabel = (page: Page): Promise<string | null | undefined> =>
+  page.evaluate(() => {
+    const active = document.activeElement;
+    return active === document.body ? 'BODY' : active?.getAttribute('aria-label');
+  });
+
+const visibleInRegion = (page: Page, label: string): Promise<boolean> =>
+  page.evaluate((text) => {
+    const region = (document.querySelector('.app-docs__list-region') as HTMLElement).getBoundingClientRect();
+    const el = document.querySelector<HTMLElement>(`[aria-label="${text}"]`);
+    if (!el) return false;
+    const box = el.getBoundingClientRect();
+    return box.width > 0 && box.height > 0 && box.top >= region.top && box.bottom <= region.bottom;
+  }, label);
+
+test('arm -> Cancel keeps focus on the controls; Confirm hands focus to the next row, never <body>', async ({ page }) => {
+  test.setTimeout(120_000);
+  await resizeTo(page, 800);
+  await boot(page);
+  await resizeTo(page, 800);
+
+  // Arm: focus lands on Cancel (the safe default), on screen.
+  await page.getByRole('button', { name: `Delete ${name(5)}` }).click();
+  expect(await activeLabel(page)).toBe(`Cancel delete ${name(5)}`);
+  expect(await visibleInRegion(page, `Cancel delete ${name(5)}`)).toBe(true);
+
+  // Cancel: focus returns to that row's trash button.
+  await page.getByRole('button', { name: `Cancel delete ${name(5)}` }).click();
+  expect(await activeLabel(page)).toBe(`Delete ${name(5)}`);
+
+  // Arm again and Confirm: focus moves to the next row's delete button (the document
+  // really is removed), and stays off <body> once the row is gone.
+  await page.getByRole('button', { name: `Delete ${name(5)}` }).click();
+  await page.getByRole('button', { name: `Confirm delete ${name(5)}` }).click();
+  expect(await activeLabel(page)).toBe(`Delete ${name(6)}`);
+  await expect(page.getByRole('button', { name: `Delete ${name(5)}` })).toHaveCount(0);
+  await settle(page);
+  expect(await activeLabel(page)).toBe(`Delete ${name(6)}`);
+});
+
+// Decision (documented in DocumentList.tsx): an armed row keeps focus on Cancel, so it stays
+// pinned and mounted while it is scrolled out of sight (a focused control must not vanish).
+// What must not happen is the pin outliving the focus: once focus moves elsewhere the armed
+// row and its neighbours are virtualized away and the armed state goes with them.
+test('an armed row stays pinned only while it holds focus; the armed state does not linger', async ({ page }) => {
+  test.setTimeout(120_000);
+  await resizeTo(page, 800);
+  await boot(page);
+  await resizeTo(page, 800);
+
+  await page.getByRole('button', { name: `Delete ${name(5)}` }).click();
+  expect(await activeLabel(page)).toBe(`Cancel delete ${name(5)}`);
+
+  await scrollToRow(page, 60);
+  // Focus is untouched by scrolling, so the armed row is still mounted and focused.
+  expect(await activeLabel(page)).toBe(`Cancel delete ${name(5)}`);
+  await expect(page.getByRole('button', { name: `Cancel delete ${name(5)}` })).toHaveCount(1);
+
+  // Moving focus to a visible control drops the pin: the armed row is unmounted.
+  await page.getByRole('button', { name: `Delete ${name(60)}` }).focus();
+  await settle(page);
+  expect(await activeLabel(page)).toBe(`Delete ${name(60)}`);
+  await expect(page.getByRole('button', { name: `Cancel delete ${name(5)}` })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: `Delete ${name(4)}` })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: `Delete ${name(6)}` })).toHaveCount(0);
+
+  // Back at the top the row is a plain row again, not armed.
+  await scrollToRow(page, 0);
+  await expect(page.getByRole('button', { name: `Delete ${name(5)}` })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: `Cancel delete ${name(5)}` })).toHaveCount(0);
+
+  // Rows expose their place in the full list (pinned rows make the mounted set non-contiguous).
+  const positions = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('.app-doc-list__item'))
+      .slice(0, 2)
+      .map((el) => [el.getAttribute('aria-posinset'), el.getAttribute('aria-setsize')])
+  );
+  expect(positions).toEqual([['1', '80'], ['2', '80']]);
+});
+
 test('the inline row height equals the rendered row height on both sides of the 800/801 boundary', async ({ page }) => {
   test.setTimeout(180_000);
   await resizeTo(page, 1000);
