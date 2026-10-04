@@ -83,6 +83,11 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   // ?pack= is read from the location ONCE plus on explicit picker changes —
   // a plain memo would not see pushState, so an override state mirrors it.
   const [packOverride, setPackOverride] = useState<string | null>(null);
+  // PRE-c: the user explicitly chose "Select a course..." — the sole-course /
+  // remembered-course auto-select must not win straight back (snap-back). A plain
+  // packOverride of '' cannot carry this: it is the same string the location
+  // yields with no ?pack=, so the selection memo would not even re-run.
+  const [deselected, setDeselected] = useState(false);
   // Lumen phase 6: the player page's Back shows the course library even when a
   // course is selected (with a sole course the picker auto-selects it, so the
   // library needs an explicit flag). Cleared by any course choice.
@@ -282,6 +287,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
       const byId = courses.find((pack) => pack.packId === urlPack);
       if (byId !== undefined) return byId;
     }
+    if (deselected) return undefined;
     // Auto-select the sole course; with several, remember the last one —
     // matching the stored dir key first and, after a version upgrade retires
     // that dir, the same course's preferred (active) row.
@@ -297,7 +303,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
       }
     }
     return undefined;
-  }, [deepLinkedPackDir, urlPack, activePacks, courses]);
+  }, [deepLinkedPackDir, urlPack, activePacks, courses, deselected]);
 
   const selectedDir =
     deepLinkedPackDir !== ''
@@ -311,7 +317,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
     const url = new URL(window.location.href);
     if (dir === '') url.searchParams.delete('pack');
     else url.searchParams.set('pack', dir);
-    window.history.pushState({}, '', url);
+    window.history.pushState(dir === '' ? { trainingDeselected: true } : {}, '', url);
     // Remember the course so the next visit auto-selects it (the LAST_PACK_KEY
     // read in the selection memo was write-less dead code until this —
     // round-7 review note).
@@ -321,14 +327,16 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
       // storage may be unavailable (privacy mode); selection still works
     }
     setPackOverride(dir);
+    setDeselected(dir === '');
     setLibraryRequested(false);
   };
   // History navigation (back/forward) mutates location.search without going
   // through selectPack — sync the override mirror so the URL and the picker
   // agree (PRR-203).
   useEffect(() => {
-    const onPopState = (): void => {
+    const onPopState = (event: PopStateEvent): void => {
       setPackOverride(new URLSearchParams(window.location.search).get('pack'));
+      setDeselected((event.state as { trainingDeselected?: boolean } | null)?.trainingDeselected === true);
       setLibraryRequested(false);
     };
     window.addEventListener('popstate', onPopState);

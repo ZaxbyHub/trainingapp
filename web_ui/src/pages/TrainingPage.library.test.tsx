@@ -197,4 +197,59 @@ describe('Training library and player page (Lumen phase 6)', () => {
       expect(screen.queryByTestId('training-player-frame')).toBeNull();
     });
   });
+  // PRE-c (PR 150 review, pre-existing): choosing "Select a course..." must stay deselected.
+  // With a sole course the auto-select used to win straight back (snap-back), reopening
+  // the player the user just left.
+  describe('deselecting the course in the picker (PRE-c)', () => {
+    it('sole course: choosing "Select a course..." in the library keeps the library (no snap-back)', async () => {
+      listPacks.mockResolvedValue([COURSE_A]);
+      render(<TrainingPage />);
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+      fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+      const select = screen.getByTestId('training-pack-select') as HTMLSelectElement;
+      fireEvent.change(select, { target: { value: '' } });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(screen.queryByTestId('training-player-frame')).toBeNull();
+      expect((screen.getByTestId('training-pack-select') as HTMLSelectElement).value).toBe('');
+      // The library card still opens the course afterwards.
+      fireEvent.click(screen.getByTestId('training-course-course-a'));
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+    });
+
+    it('sole course: deselecting from the player picker returns to the library', async () => {
+      listPacks.mockResolvedValue([COURSE_A]);
+      render(<TrainingPage />);
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+      fireEvent.change(screen.getByTestId('training-pack-select'), { target: { value: '' } });
+      expect(await screen.findByTestId('training-course-course-a')).toBeTruthy();
+      expect(screen.queryByTestId('training-player-frame')).toBeNull();
+    });
+
+    it('history Back to the deselected entry keeps the library (the flag rides the history state)', async () => {
+      listPacks.mockResolvedValue([COURSE_A]);
+      render(<TrainingPage />);
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+      fireEvent.change(screen.getByTestId('training-pack-select'), { target: { value: '' } });
+      fireEvent.click(await screen.findByTestId('training-course-course-a'));
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+      await act(async () => {
+        window.history.back();
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(await screen.findByTestId('training-course-course-a')).toBeTruthy();
+      expect(screen.queryByTestId('training-player-frame')).toBeNull();
+    });
+
+    it('a remembered last course does not snap back either', async () => {
+      window.localStorage.setItem(LAST_PACK_KEY, 'course-b/2.1.0');
+      listPacks.mockResolvedValue([COURSE_A, COURSE_B]);
+      render(<TrainingPage />);
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+      fireEvent.change(screen.getByTestId('training-pack-select'), { target: { value: '' } });
+      expect(await screen.findByTestId('training-course-course-a')).toBeTruthy();
+      expect(screen.queryByTestId('training-player-frame')).toBeNull();
+    });
+  });
 });
