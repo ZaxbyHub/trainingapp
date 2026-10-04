@@ -192,14 +192,21 @@ test.describe('chat reflow (Lumen phase 5)', () => {
     }
   });
 
-  test('header chip keeps the "not ready" suffix visible at 500px (local model, no external endpoint)', async ({ page, baseURL }) => {
-    await page.setViewportSize({ width: 500, height: 900 });
+  test('header chip keeps the "not ready" suffix visible and inside the header at 500px and 360px (local model, no external endpoint)', async ({ page, baseURL }) => {
     await boot(page, baseURL!, 'probe-model', false);
-    const suffix = page.getByTestId('chat-model-chip-suffix');
-    await expect(suffix).toBeVisible();
-    const chip = (await page.getByTestId('chat-model-chip').boundingBox())!;
-    const s = (await suffix.boundingBox())!;
-    expect(s.x + s.width).toBeLessThanOrEqual(chip.x + chip.width + 0.5);
+    // Local-mode names are short, so this does NOT discriminate the .chat-header-actions
+    // shrink rule (verified: it still passes without it); the long-name ellipsis test above
+    // is the guard for that rule. This one pins the suffix + header containment at narrow widths.
+    for (const width of [500, 360]) {
+      await page.setViewportSize({ width, height: 900 });
+      const suffix = page.getByTestId('chat-model-chip-suffix');
+      await expect(suffix).toBeVisible();
+      const chip = (await page.getByTestId('chat-model-chip').boundingBox())!;
+      const s = (await suffix.boundingBox())!;
+      expect(s.x + s.width, `suffix inside chip @ ${width}`).toBeLessThanOrEqual(chip.x + chip.width + 0.5);
+      const header = (await page.locator('.ui-page-header').boundingBox())!;
+      expect(chip.x + chip.width, `chip inside header @ ${width}`).toBeLessThanOrEqual(header.x + header.width + 0.5);
+    }
   });
 
   test('the composer status row collapses when idle and shows while generating', async ({ page, baseURL }) => {
