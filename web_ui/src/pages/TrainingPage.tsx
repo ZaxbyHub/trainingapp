@@ -414,6 +414,28 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
     [courses, slideDocsReady]
   );
 
+  // PRE-d: a deep link to a course that is not installed (list loaded, no row for
+  // the id) or to a slide that course does not have used to open a silent blank
+  // player. The player still renders (frozen D7 contract: deep links play without
+  // consulting the list), but the page now says what is wrong and offers the way
+  // back. Known only when the list loaded; the slide check needs the ingested
+  // slide docs (never claimed where positions are unknown).
+  const deepLinkCourseMissing =
+    showPlayer &&
+    deepLinkedPackDir !== '' &&
+    packs !== null &&
+    !courses.some((pack) => pack.packId === playerCourseId);
+  const deepLinkSlideMissing =
+    showPlayer &&
+    !deepLinkCourseMissing &&
+    initialPackId !== undefined &&
+    initialPackId !== '' &&
+    pendingSlideId !== undefined &&
+    pendingSlideId !== '' &&
+    slideDocsReady &&
+    courseSlideCount(playerCourseId) !== null &&
+    slidePosition(playerCourseId, pendingSlideId) === null;
+
   const backToLibrary = (): void => {
     // A lifted chat deep link lives in App: release it so the library (and a
     // course picked from it) is what this page shows next.
@@ -508,6 +530,21 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
           </p>
         )}
 
+        {deepLinkCourseMissing ? (
+          <p role="status" data-testid="training-deeplink-missing" className="ui-banner ui-banner--warning app-training__error">
+            The linked course ({playerCourseId}) is not installed on this device. Install its training pack zip on the
+            Documents page, or pick one of the installed courses.{' '}
+            <Button size="sm" variant="secondary" onClick={backToLibrary}>
+              Show all courses
+            </Button>
+          </p>
+        ) : null}
+        {deepLinkSlideMissing ? (
+          <p role="status" data-testid="training-deeplink-slide-missing" className="ui-banner ui-banner--warning app-training__error">
+            The linked slide was not found in this course (it may have changed in an update), so the course opens
+            without jumping to it.
+          </p>
+        ) : null}
         {showPlayer ? (
           <TrainingPlayer packId={playerDir} initialSlideId={pendingSlideId} onSlideChange={handleSlideChange} />
         ) : packs === null || courses.length === 0 ? (
