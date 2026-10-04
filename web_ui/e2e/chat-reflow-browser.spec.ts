@@ -83,6 +83,13 @@ async function seedCitedConversation(page: Page): Promise<void> {
 }
 
 test.describe('chat reflow (Lumen phase 5)', () => {
+  // boot() waits up to 60s for the search services to initialise, and the seeded
+  // tests wait for it twice (boot + reload) plus a 15s render wait. Playwright's
+  // 30s default test timeout would cut those waits short, so size it to cover the
+  // worst case (60 + 60 + 15 s plus the interactions) without touching the global
+  // config.
+  test.describe.configure({ timeout: 180_000 });
+
   test('<= 500px: citation chips stay hidden until the "N sources" chip is pressed', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 500, height: 900 });
     await boot(page, baseURL!);
