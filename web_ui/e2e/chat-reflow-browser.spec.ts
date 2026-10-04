@@ -41,8 +41,8 @@ async function boot(page: Page, baseURL: string): Promise<void> {
 }
 
 /** One conversation whose answer carries two structured citations, then reload. */
-async function seedCitedConversation(page: Page, longNames = false): Promise<void> {
-  await page.evaluate(async ({ now, longNames }) => {
+async function seedCitedConversation(page: Page, longNames = false, onlyFirst = false): Promise<void> {
+  await page.evaluate(async ({ now, longNames, onlyFirst }) => {
     const db = await new Promise<IDBDatabase>((res, rej) => {
       const r = indexedDB.open('docqa_conversations');
       r.onsuccess = () => res(r.result);
@@ -66,9 +66,9 @@ async function seedCitedConversation(page: Page, longNames = false): Promise<voi
             timestamp: now,
             grounding: 'grounded',
             citations: [
-              { docId: 'd1', chunkIndex: 0, source: longNames ? 'A-very-long-employee-handbook-document-name-number-1.pdf' : 'Employee-Handbook.pdf', page: 4, text: 'New hires receive 15 days.' },
+              { docId: 'd1', chunkIndex: 0, source: longNames ? 'A-very-long-employee-handbook-document-name-number-1.pdf' : 'Employee-Handbook.pdf', page: 4, text: onlyFirst ? 'New hires receive 15 days. '.repeat(40) : 'New hires receive 15 days.' },
               { docId: 'd2', chunkIndex: 0, source: longNames ? 'A-very-long-employee-handbook-document-name-number-2.pdf' : 'Benefits-Overview.pdf', page: 2, text: longNames ? 'Carry-over is capped. '.repeat(40) : 'Carry-over is capped.' },
-            ],
+            ].slice(0, onlyFirst ? 1 : 2),
           },
         ],
       });
@@ -76,7 +76,7 @@ async function seedCitedConversation(page: Page, longNames = false): Promise<voi
       t.onerror = () => rej(t.error);
     });
     db.close();
-  }, { now: NOW, longNames });
+  }, { now: NOW, longNames, onlyFirst });
   await page.reload();
   await expect(page.getByText('Initializing search services', { exact: false })).toHaveCount(0, { timeout: 60_000 });
   await expect(page.getByText('Fifteen days', { exact: false })).toBeVisible({ timeout: 15_000 });
@@ -140,6 +140,20 @@ test.describe('chat reflow (Lumen phase 5)', () => {
     expect(box.x + box.width).toBeLessThanOrEqual(600);
     const overflow = await page.locator('.chat-log').evaluate((el) => el.scrollWidth - el.clientWidth);
     expect(overflow).toBe(0);
+  });
+
+  test('PRE-4: a lone short chip still opens a full-width popover (list is column-wide, not chip-wide)', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await boot(page, baseURL!);
+    await seedCitedConversation(page, false, true);
+
+    const pill = page.getByRole('button', { name: /^Source 1:/ });
+    await pill.click();
+    const popover = page.locator('.chat-cite__popover');
+    await expect(popover).toBeVisible();
+    const box = (await popover.boundingBox())!;
+    // Capped at 480px; with a chip-wide containing block it collapsed to ~160px.
+    expect(box.width).toBeGreaterThanOrEqual(400);
   });
 
   test('the composer status row collapses when idle and shows while generating', async ({ page, baseURL }) => {
