@@ -22,8 +22,8 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   // Lumen visual specs live under e2e/visual and run only through
-  // playwright.visual.config.ts. CI runs the axe + tooltip-overflow subset there
-  // (npm run test:visual:a11y:ci); the screenshot spec is a manual Windows gate
+  // playwright.visual.config.ts. CI runs the a11y subset there (axe, tooltip-overflow,
+  // doc-row-reflow, doc-list-scroll: npm run test:visual:a11y:ci); the screenshot spec is a manual Windows gate
   // (e2e/visual/README.md). Never run them in this default harness.
   testIgnore: ['**/visual/**'],
   fullyParallel: false,

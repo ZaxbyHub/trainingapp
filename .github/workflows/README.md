@@ -42,7 +42,7 @@ Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (f
 ### 2. Web UI (`web-ui.yml`) — path-scoped (`webui` bucket: `web_ui/**`, `contracts/**`, the workflow file, and the three desktop twins `desktop-twin-drift.test.ts` pins: `desktop/main/security/csp.ts`, `desktop/main/protocol.ts`, `desktop/main/backend/packs/pack-archive-rules.ts`)
 
 **Triggers:** push to main/master, all PRs (unfiltered; scoping at job level).
-**Jobs:** `web-ui` (typecheck app+tests, build, vitest, prepare-models/validate-build packaging checks) and `web-ui e2e` (browser-mode Knowledge Pack install + course-playback Playwright spec, ADR-0012, then the Lumen a11y visual subset `npm run test:visual:a11y:ci` — axe + tooltip-overflow only; the screenshot spec is a manual Windows gate, see `web_ui/e2e/visual/README.md`; the job keeps its original `browser-mode pack gate` display name because that name is the required status context). Both required.
+**Jobs:** `web-ui` (typecheck app+tests, build, vitest, prepare-models/validate-build packaging checks) and `web-ui e2e` (browser-mode Knowledge Pack install + course-playback Playwright spec, ADR-0012, then the Lumen a11y visual subset `npm run test:visual:a11y:ci` — the axe, tooltip-overflow, doc-row-reflow and doc-list-scroll specs only; the screenshot spec is a manual Windows gate, see `web_ui/e2e/visual/README.md`; the job keeps its original `browser-mode pack gate` display name because that name is the required status context). Both required.
 
 ### 3. Conformance (`conformance.yml`) — path-scoped (`conformance`, `pack` buckets) — required
 
