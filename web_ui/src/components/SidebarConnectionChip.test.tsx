@@ -175,7 +175,7 @@ describe('SidebarConnectionChip', () => {
     render(<Shell collapsed />);
     const btn = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it. Open model settings' });
     const railSentence = screen.getByTestId('sidebar-model-chip-detail');
-    expect(railSentence).toHaveClass('ui-visually-hidden');
+    expect(railSentence).toHaveAttribute('hidden');
     expect(railSentence.textContent).toBe(sentence);
     expect(btn).toHaveAccessibleDescription(sentence);
   });

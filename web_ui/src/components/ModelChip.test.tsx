@@ -29,7 +29,7 @@ describe('ModelChip', () => {
     render(<ModelChip description={local} onOpenSettings={() => {}} />);
     const chip = screen.getByTestId('chat-model-chip');
     expect(chip).toHaveAccessibleDescription(local.detail);
-    expect(screen.getByTestId('chat-model-chip-detail')).toHaveClass('ui-visually-hidden');
+    expect(screen.getByTestId('chat-model-chip-detail')).toHaveAttribute('hidden');
     // The accessible name is unchanged (the hidden node is a description, not part of the name).
     expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it. Open model settings');
   });

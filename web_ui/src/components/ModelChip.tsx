@@ -31,7 +31,7 @@ export function ModelChip({ description, onOpenSettings, testId = 'chat-model-ch
   // aria-describedby, exposes it to assistive tech (the visible layout is unchanged).
   const detailId = useId();
   const detail = (
-    <span id={detailId} className="ui-visually-hidden" data-testid={`${testId}-detail`}>
+    <span id={detailId} hidden data-testid={`${testId}-detail`}>
       {description.detail}
     </span>
   );
