@@ -207,7 +207,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // the next transition.
     const residentKey = (r: ModelStatus['resident'] | undefined): string =>
       r ? `${r.state}|${r.profile ?? ''}` : '';
-    let lastResident: string | null = desktopModelsRef.current ? residentKey(desktopModelsRef.current.resident) : null;
+    // A missing snapshot (App's boot fetch failed) or one without a resident counts as '' so the
+    // first successful poll that reports a resident notifies once.
+    let lastResident: string | null = residentKey(desktopModelsRef.current?.resident);
     const poll = (): void => {
       void fetchModelStatus(desktopSession)
         .then((status) => {

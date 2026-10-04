@@ -69,8 +69,8 @@ const session = {
 } as unknown as DesktopSession;
 
 /** Mirrors App.tsx: snapshot state + subscribeLatestModelStatus(fetchModelStatus). */
-function AppLike() {
-  const [models, setModels] = React.useState<ModelStatus | null>(status('quality'));
+function AppLike({ initial = status('quality') }: { initial?: ModelStatus | null } = {}) {
+  const [models, setModels] = React.useState<ModelStatus | null>(initial);
   React.useEffect(
     () =>
       subscribeLatestModelStatus(
@@ -137,6 +137,24 @@ describe('footer chip follows the resident model (PRR-107)', () => {
     const footer = await screen.findByTestId('sidebar-model-chip');
     await waitFor(() => expect(footer).toHaveTextContent('Fast profile'), { timeout: 2500 });
   }, 10_000);
+
+  test('INFO-1: App snapshot missing at boot -> first successful poll notifies once', async () => {
+    let changed = 0;
+    const count = () => {
+      changed += 1;
+    };
+    window.addEventListener(DESKTOP_MODELS_CHANGED_EVENT, count);
+    try {
+      render(<AppLike initial={null} />);
+      const footer = await screen.findByTestId('sidebar-model-chip');
+      await waitFor(() => expect(footer).toHaveTextContent('Quality profile'), { timeout: 2500 });
+      // Two more unchanged polls: no further notifications (no loop).
+      await new Promise((r) => setTimeout(r, 4300));
+      expect(changed).toBe(1);
+    } finally {
+      window.removeEventListener(DESKTOP_MODELS_CHANGED_EVENT, count);
+    }
+  }, 15_000);
 
   test('L3: unchanged polls do not cause App re-reads (no notify storm)', async () => {
     let changed = 0;
