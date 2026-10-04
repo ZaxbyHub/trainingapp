@@ -209,14 +209,14 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       r ? `${r.state}|${r.profile ?? ''}` : '';
     // A missing snapshot (App's boot fetch failed) or one without a resident counts as '' so the
     // first successful poll that reports a resident notifies once.
-    let lastResident: string | null = residentKey(desktopModelsRef.current?.resident);
+    let lastResident: string = residentKey(desktopModelsRef.current?.resident);
     const poll = (): void => {
       void fetchModelStatus(desktopSession)
         .then((status) => {
           if (cancelled) return;
           setModelLoad(status.resident ?? null);
           const key = residentKey(status.resident);
-          if (lastResident !== null && lastResident !== key) notifyDesktopModelsChanged();
+          if (lastResident !== key) notifyDesktopModelsChanged();
           lastResident = key;
         })
         .catch(() => {
