@@ -41,11 +41,14 @@ export function hasStoredCourseProgress(): boolean {
   }
 }
 
-export function saveCourseProgress(progress: CourseProgress): void {
+/** Returns false when storage refused the write (privacy mode, quota). */
+export function saveCourseProgress(progress: CourseProgress): boolean {
   try {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify(progress));
+    return true;
   } catch {
     // storage may be unavailable (privacy mode); progress still shows this session
+    return false;
   }
 }
 

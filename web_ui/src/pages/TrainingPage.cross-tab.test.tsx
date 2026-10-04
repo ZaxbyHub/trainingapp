@@ -75,6 +75,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
 });
 
 describe('cross-tab training progress (PRR-203/206)', () => {
@@ -162,6 +163,24 @@ describe('cross-tab training progress (PRR-203/206)', () => {
       player.emit?.({ slideId: 's1', slideTitle: 'Title s1' });
     });
     expect(stored()).toEqual({ 'course-a': 1 });
+  });
+
+  it('Q1: unwritable storage (setItem throws) keeps in-session progress forward-only and other courses shown', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError');
+    });
+    render(<TrainingPage />);
+    fireEvent.click(await card('course-b'));
+    await screen.findByTestId('stub-player');
+    await slide('s3');
+    fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    await slide('s4');
+    await slide('s1');
+    fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+    expect(await card('course-a')).toHaveTextContent('Reached slide 4 of 4');
+    expect(await card('course-b')).toHaveTextContent('Reached slide 3 of 6');
   });
 
   it('Clear Cache in this tab: the next write holds only the new position', async () => {

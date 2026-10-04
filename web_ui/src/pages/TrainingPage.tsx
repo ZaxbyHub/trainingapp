@@ -109,6 +109,10 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   // persists fresh storage UNION this map UNION the new position, so a value another tab's
   // simultaneous write dropped from storage is healed by this tab's next write.
   const progressRef = useRef<CourseProgress>(progress);
+  // Whether progress has ever been in storage for this tab (present at mount, written by
+  // this tab, or announced by another). Only then does an ABSENT key mean "cleared": with
+  // unusable storage the key is always absent and nothing was ever cleared.
+  const seenStoredRef = useRef<boolean>(hasStoredCourseProgress());
   progressRef.current = progress;
   // Storage is the shared truth across tabs (PRR-203/206): fold in what another tab
   // records (an idle tab would otherwise never see it), and drop everything when the
@@ -117,6 +121,7 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   useEffect(
     () =>
       subscribeCourseProgress((stored) => {
+        if (stored !== null) seenStoredRef.current = true;
         // A clear empties the in-memory map FIRST (also the ref the next write reads), so a
         // cleared tab can never merge cleared progress back into storage.
         if (stored === null) progressRef.current = {};
@@ -387,14 +392,14 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
           const stored = loadCourseProgress();
           // The key is gone: the progress was cleared by another tab and this tab's clear
           // event has not been delivered yet (it is a later task). Drop what we hold now.
-          const cleared = !hasStoredCourseProgress();
+          const cleared = seenStoredRef.current && !hasStoredCourseProgress();
           if (cleared) progressRef.current = {};
           const next = advanceCourseProgress(
             mergeCourseProgress(stored, progressRef.current),
             playerCourseId,
             reached.index
           );
-          if (next !== stored) saveCourseProgress(next);
+          if (next !== stored && saveCourseProgress(next)) seenStoredRef.current = true;
           progressRef.current = mergeCourseProgress(progressRef.current, next);
           setProgress((current) => (cleared ? next : mergeCourseProgress(current, next)));
         }

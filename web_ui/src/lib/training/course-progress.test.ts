@@ -33,7 +33,7 @@ describe('advanceCourseProgress', () => {
 
 describe('load/save', () => {
   it('round-trips and drops malformed entries', () => {
-    saveCourseProgress({ a: 2 });
+    expect(saveCourseProgress({ a: 2 })).toBe(true);
     expect(loadCourseProgress()).toEqual({ a: 2 });
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ a: 2, b: 'x', c: 0, d: 1.5, e: 4 }));
     expect(loadCourseProgress()).toEqual({ a: 2, e: 4 });
@@ -51,7 +51,7 @@ describe('load/save', () => {
       throw new Error('denied');
     });
     expect(loadCourseProgress()).toEqual({});
-    expect(() => saveCourseProgress({ a: 1 })).not.toThrow();
+    expect(saveCourseProgress({ a: 1 })).toBe(false);
   });
 });
 
