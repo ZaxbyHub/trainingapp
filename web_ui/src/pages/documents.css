@@ -16,8 +16,11 @@
 .app-docs__single { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); }
 .app-docs__panel-fixed { flex: none; }
 /* The virtualized DocumentList owns its scroll position across a stack/wide switch.
-   Scroll anchoring would also shift scrollTop by the table head (shown only in the wide
-   layout) before the list can read it, so it is off. */
+   overflow-anchor: none is load-bearing: with scroll anchoring on, the browser shifts
+   scrollTop by the table head (shown only in the wide layout) and by the row-height
+   change before the list's layout effect can read the position, so the row kept at the
+   top would drift. Accepted tradeoff: with anchoring off, an async delete of a row ABOVE
+   the viewport shifts the visible rows by one row (nothing re-anchors the scroll). */
 .app-docs__list-region { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; }
 .app-docs__training { flex: 1; min-height: 0; overflow: auto; }
 .app-docs__loading { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-2); width: 100%; max-width: var(--w-wide); margin: 0 auto; padding: var(--space-6); }
