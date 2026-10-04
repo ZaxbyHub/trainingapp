@@ -149,6 +149,13 @@ function measureListOffset(scroller: HTMLElement, listEl: HTMLElement): number {
   return listEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
 }
 
+/** Scrolls `active` into the scroller when any part of it lies outside (WCAG 2.4.11). */
+function keepInView(scroller: HTMLElement, active: HTMLElement): void {
+  const view = scroller.getBoundingClientRect();
+  const box = active.getBoundingClientRect();
+  if (box.top < view.top || box.bottom > view.bottom) active.scrollIntoView({ block: 'nearest' });
+}
+
 const DocumentItem = React.memo<{
   doc: DocumentEntry;
   onDelete?: (docId: string) => void;
@@ -172,6 +179,20 @@ const DocumentItem = React.memo<{
   //   confirm -> handled by the list (onDeleteConfirmed moves it to a neighbour)
   const rootRef = useRef<HTMLDivElement>(null);
   const pendingFocusRef = useRef<'cancel' | 'trash' | null>(null);
+  // True while the processing row's "Cancel indexing" button holds focus. Removing a
+  // focused element fires no blur, so the flag survives the removal and tells the
+  // effect below that focus was lost to it (not moved on by the user).
+  const indexingCancelFocusedRef = useRef(false);
+
+  // Indexing finished (or failed): the focused "Cancel indexing" button is gone and
+  // focus would fall to <body>. Hand it to this row's delete button instead.
+  useLayoutEffect(() => {
+    if (!indexingCancelFocusedRef.current || doc.status === 'processing') return;
+    indexingCancelFocusedRef.current = false;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    rootRef.current?.querySelector<HTMLElement>('[data-doc-action="delete"]')?.focus();
+  }, [doc.status]);
 
   useLayoutEffect(() => {
     const target = pendingFocusRef.current;
@@ -250,6 +271,12 @@ const DocumentItem = React.memo<{
               size="sm"
               variant="secondary"
               onClick={() => onCancelIndexing(doc.id)}
+              onFocus={() => {
+                indexingCancelFocusedRef.current = true;
+              }}
+              onBlur={() => {
+                indexingCancelFocusedRef.current = false;
+              }}
               aria-label={`Cancel indexing ${doc.fileName}`}
             >
               Cancel
@@ -367,6 +394,9 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
         target.focus();
       } else if (listEl) {
         emptyFocusPendingRef.current = neighbour === undefined;
+        // Programmatic-focus target only: tabindex exists just while focus is on it,
+        // so clicking plain row text never lands focus on the list.
+        listEl.setAttribute('tabindex', '-1');
         listEl.focus();
       }
     }, []);
@@ -376,8 +406,21 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     useLayoutEffect(() => {
       if (documents.length === 0 && emptyFocusPendingRef.current) {
         emptyFocusPendingRef.current = false;
+        emptyRef.current?.setAttribute('tabindex', '-1');
         emptyRef.current?.focus();
       }
+    }, [documents.length]);
+
+    // Deleting a row shifts the rows below it up while focus (just handed to the next
+    // row's delete button, which scrolled into view BEFORE the shift) stays on its
+    // control: with overflow-anchor off nothing re-anchors, so the control can end up
+    // clipped by the scroll region. Re-check on every length change (WCAG 2.4.11).
+    useLayoutEffect(() => {
+      const scroller = scrollContainerRef.current;
+      const listEl = listRef.current;
+      const active = document.activeElement;
+      if (scroller === null || listEl === null || !(active instanceof HTMLElement)) return;
+      if (active !== scroller && listEl.contains(active)) keepInView(scroller, active);
     }, [documents.length]);
 
     // A pin must never outlive the focus it protects. A removed focused element fires
@@ -411,9 +454,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       // can leave it outside the scroll area even though it is still mounted.
       const active = document.activeElement;
       if (active instanceof HTMLElement && active !== scroller && listEl.contains(active)) {
-        const view = scroller.getBoundingClientRect();
-        const box = active.getBoundingClientRect();
-        if (box.top < view.top || box.bottom > view.bottom) active.scrollIntoView({ block: 'nearest' });
+        keepInView(scroller, active);
       }
       lastScrollTopRef.current = scroller.scrollTop;
       listOffsetRef.current = offset;
@@ -484,7 +525,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       // ui-empty layout with a <p> title: a heading here would collide with the
       // page's "Documents" heading.
       return (
-        <div ref={emptyRef} tabIndex={-1} className="ui-empty app-doc-list__empty">
+        <div ref={emptyRef} onBlur={(event) => event.currentTarget.removeAttribute('tabindex')} className="ui-empty app-doc-list__empty">
           <Icon name="file-text" size={32} className="ui-empty__icon" />
           <p className="app-doc-list__empty-title">No documents uploaded yet</p>
         </div>
@@ -533,9 +574,11 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
         role="list"
         aria-label="Uploaded documents"
         className="app-doc-list"
-        tabIndex={-1}
         onBlur={(event) => {
-          if (event.target === event.currentTarget) emptyFocusPendingRef.current = false;
+          if (event.target === event.currentTarget) {
+            emptyFocusPendingRef.current = false;
+            event.currentTarget.removeAttribute('tabindex');
+          }
         }}
       >
         {/* Placeholder div maintains the full scroll height for the scrollbar.

@@ -338,6 +338,20 @@ describe('DocumentList', () => {
         expect(document.activeElement?.className).toContain('app-doc-list__empty');
       });
 
+      // Review NIT-2: clicking plain row text must not land focus on the list.
+      it('gives the list a tabindex only while focus has to land on it', () => {
+        const only = [createDocument({ id: 'a', fileName: 'a.pdf' })];
+        render(<DocumentList documents={only} onDelete={vi.fn()} deletingId={null} />);
+        const list = screen.getByRole('list', { name: 'Uploaded documents' });
+        expect(list.hasAttribute('tabindex')).toBe(false);
+        arm('a.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+        expect(document.activeElement).toBe(list);
+        expect(list.getAttribute('tabindex')).toBe('-1');
+        act(() => list.blur());
+        expect(list.hasAttribute('tabindex')).toBe(false);
+      });
+
       it('a failed delete that leaves the list alone does not hijack focus later', () => {
         const only = [createDocument({ id: 'a', fileName: 'a.pdf' })];
         const { rerender } = render(<DocumentList documents={only} onDelete={vi.fn()} deletingId={null} />);
@@ -694,12 +708,16 @@ describe('DocumentList', () => {
       // Review LOW-A mechanism: a focused control that is REMOVED (here the processing
       // row's "Cancel indexing" button, gone once indexing finishes) fires no blur, so
       // onBlur alone left the row and its neighbours pinned for good.
+      // (No onDelete here: the host exposes no per-document delete, so there is no control to
+      // hand focus to and it really is lost.)
+      const rowNames = (container: HTMLElement): string[] =>
+        Array.from(container.querySelectorAll('.app-doc__name')).map((el) => el.textContent ?? '');
       it('clears the pin when the focused control disappears without a blur', () => {
         const documents = (status: 'processing' | 'ready') =>
           names.map((fileName, i) => createDocument({ id: `d${i}`, fileName, status: i === 70 ? status : 'ready' }));
         const tree = (status: 'processing' | 'ready') => (
           <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
-            <DocumentList documents={documents(status)} onDelete={vi.fn()} onCancelIndexing={vi.fn()} deletingId={null} />
+            <DocumentList documents={documents(status)} onCancelIndexing={vi.fn()} deletingId={null} />
           </div>
         );
         const { scroller, container, rerender } = setup(700);
@@ -710,13 +728,47 @@ describe('DocumentList', () => {
         cancelIndexing.focus();
         scroller.scrollTop = 0;
         fireEvent.scroll(scroller);
-        expect(deleteLabels(container)).toContain('Delete Doc-069.pdf');
+        expect(rowNames(container)).toContain('Doc-069.pdf');
 
         rerender(tree('ready'));
         expect(document.activeElement).toBe(document.body);
-        expect(deleteLabels(container)).not.toContain('Delete Doc-069.pdf');
-        expect(deleteLabels(container)).not.toContain('Delete Doc-070.pdf');
-        expect(deleteLabels(container)).not.toContain('Delete Doc-071.pdf');
+        expect(rowNames(container)).not.toContain('Doc-069.pdf');
+        expect(rowNames(container)).not.toContain('Doc-070.pdf');
+        expect(rowNames(container)).not.toContain('Doc-071.pdf');
+      });
+
+      // Review NIT-1: when indexing finishes the focused "Cancel indexing" button is removed;
+      // focus goes to that row's delete button rather than <body>.
+      it('moves focus to the row delete button when the focused Cancel indexing control goes away', () => {
+        const documents = (status: 'processing' | 'ready') =>
+          names.map((fileName, i) => createDocument({ id: `d${i}`, fileName, status: i === 3 ? status : 'ready' }));
+        const tree = (status: 'processing' | 'ready') => (
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents(status)} onDelete={vi.fn()} onCancelIndexing={vi.fn()} deletingId={null} />
+          </div>
+        );
+        const { rerender } = setup(700);
+        rerender(tree('processing'));
+        screen.getByRole('button', { name: 'Cancel indexing Doc-003.pdf' }).focus();
+        rerender(tree('ready'));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-003.pdf' }));
+      });
+
+      it('leaves focus alone when the user already moved off Cancel indexing before it finished', () => {
+        const documents = (status: 'processing' | 'ready') =>
+          names.map((fileName, i) => createDocument({ id: `d${i}`, fileName, status: i === 3 ? status : 'ready' }));
+        const tree = (status: 'processing' | 'ready') => (
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents(status)} onDelete={vi.fn()} onCancelIndexing={vi.fn()} deletingId={null} />
+          </div>
+        );
+        const { rerender } = setup(700);
+        rerender(tree('processing'));
+        screen.getByRole('button', { name: 'Cancel indexing Doc-003.pdf' }).focus();
+        const other = screen.getByRole('button', { name: 'Delete Doc-004.pdf' });
+        other.focus();
+        rerender(tree('ready'));
+        expect(document.activeElement).toBe(other);
       });
 
       // Review LOW-3: the wide layout's table head is above the list, so converting the

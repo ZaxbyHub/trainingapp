@@ -258,6 +258,50 @@ test('arm -> Cancel keeps focus on the controls; Confirm hands focus to the next
   expect(await activeLabel(page)).toBe(`Delete ${name(6)}`);
 });
 
+// Review LOW-1: Confirm focuses the next row's delete button (scrolling it into view), THEN the
+// deleted row disappears from above and the rows below shift up. With overflow-anchor off nothing
+// re-anchors, so the focused control could end up clipped by the scroll region (WCAG 2.4.11).
+// Confirm on the last fully visible row, where the shift matters most.
+for (const [width, height, layout] of [[800, 760, 'stacked'], [1000, 700, 'wide']] as const) {
+  test(`after Confirm the focused neighbour is fully inside the scroll region (${layout} @ H=${height})`, async ({ page }) => {
+    test.setTimeout(120_000);
+    const size = async (): Promise<void> => {
+      await page.setViewportSize({ width, height });
+      await settle(page);
+    };
+    await size();
+    await boot(page);
+    await size();
+    const rowHeight = layout === 'stacked' ? STACKED_ITEM_HEIGHT : ITEM_HEIGHT;
+    await page.evaluate((top) => {
+      (document.querySelector('.app-docs__list-region') as HTMLElement).scrollTop = top;
+    }, 20 * rowHeight);
+    await settle(page);
+
+    const last = await page.evaluate(() => {
+      const region = (document.querySelector('.app-docs__list-region') as HTMLElement).getBoundingClientRect();
+      const rows = Array.from(document.querySelectorAll<HTMLElement>('.app-doc-list__item'))
+        .filter((item) => {
+          const box = item.getBoundingClientRect();
+          return box.top >= region.top && box.bottom <= region.bottom;
+        })
+        .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+      return rows[rows.length - 1]?.querySelector('.app-doc__name')?.textContent;
+    });
+    expect(last).toBeTruthy();
+    const index = Number(/Doc-(\d+)\.pdf/.exec(last as string)?.[1]);
+
+    await page.getByRole('button', { name: `Delete ${last}` }).click();
+    await page.getByRole('button', { name: `Confirm delete ${last}` }).click();
+    await expect(page.getByRole('button', { name: `Delete ${last}` })).toHaveCount(0);
+    await settle(page);
+
+    const next = `Delete ${name(index + 1)}`;
+    expect(await activeLabel(page)).toBe(next);
+    expect(await visibleInRegion(page, next)).toBe(true);
+  });
+}
+
 // Decision (documented in DocumentList.tsx): an armed row keeps focus on Cancel, so it stays
 // pinned and mounted while it is scrolled out of sight (a focused control must not vanish).
 // What must not happen is the pin outliving the focus: once focus moves elsewhere the armed
