@@ -15,6 +15,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useInferenceMode } from '../lib/inference';
 import { fetchModelStatus, isElectron, useDesktopSession } from '../lib/desktop-session';
+import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { getBrowserPackManager } from '../lib/packs/browser-pack-manager';
 import { releaseBrowserTrainingIfEmpty } from '../lib/packs/browser-training';
 import { AIRGAP_UPDATES_DETAIL, getUpdatesBridge } from '../lib/packs/pack-update-controller';
@@ -549,6 +550,10 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
       setDesktopProfile(profile);
       desktopSession.apiClient
         .updateSettings({ 'inference.profile': profile })
+        // The profile decides which model answers, so tell App to re-read
+        // /status/models: the sidebar footer chip names the model from that
+        // snapshot and would otherwise keep the old profile until a reload.
+        .then(() => notifyDesktopModelsChanged())
         .catch((err) => setDesktopSettingsError(err instanceof Error ? err.message : String(err)));
     },
     [desktopSession]

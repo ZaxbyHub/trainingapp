@@ -112,6 +112,7 @@ import { RELOAD_AFTER_CLEAR_MS, SettingsPage } from '../SettingsPage';
 import { DesktopSessionProvider, type DesktopSession } from '../../lib/desktop-session';
 import { installDesktopBridgeStub, removeDesktopBridgeStub } from '../../test/desktop-bridge-stub';
 import type { ApiClient } from '../../lib/api';
+import { DESKTOP_MODELS_CHANGED_EVENT } from '../../lib/desktop-models-events';
 import { DESKTOP_PRESET_KEYS, DESKTOP_PRESET_SETTINGS } from '../../lib/rag/rag-presets';
 import { INTERNAL_KEYS, USER_SETTING_KEYS } from '../../lib/storage/persisted-keys';
 import pkg from '../../../package.json';
@@ -304,6 +305,37 @@ describe('desktop Response Quality preset (AC1-AC3)', () => {
     await settle();
     // Balanced and Quality rerank; Fast does not.
     expect(screen.getAllByText(/reranking unavailable on this installation/i)).toHaveLength(2);
+  });
+
+  test('saving the inference profile notifies the app to re-read /status/models (footer chip), only after the PUT succeeds', async () => {
+    H.reset({ mode: 'api' });
+    const changed = vi.fn();
+    window.addEventListener(DESKTOP_MODELS_CHANGED_EVENT, changed);
+    try {
+      let fail = false;
+      const { session, updateSettings } = makeSession(backend([], {}), async () => {
+        if (fail) throw new Error('backend down');
+        return { status: 'ok' };
+      });
+      const { container } = renderElectron(session);
+      await settle();
+      const radio = (v: string) => container.querySelector(`input[name="desktop-inference-profile"][value="${v}"]`) as HTMLInputElement;
+      await act(async () => {
+        fireEvent.click(radio('fast'));
+      });
+      await settle();
+      expect(updateSettings).toHaveBeenCalledWith({ 'inference.profile': 'fast' });
+      expect(changed).toHaveBeenCalledTimes(1);
+
+      fail = true;
+      await act(async () => {
+        fireEvent.click(radio('quality'));
+      });
+      await settle();
+      expect(changed).toHaveBeenCalledTimes(1); // a failed save must not announce a change
+    } finally {
+      window.removeEventListener(DESKTOP_MODELS_CHANGED_EVENT, changed);
+    }
   });
 
   test('a failed PUT shows an error and reverts the selection', async () => {
