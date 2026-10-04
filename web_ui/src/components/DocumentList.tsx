@@ -371,10 +371,12 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     documentsRef.current = documents;
     const emptyRef = useRef<HTMLDivElement>(null);
     const emptyFocusPendingRef = useRef(false);
-    // Set by Confirm: the next shrink of the list may leave the focused neighbour
-    // clipped, so the length effect below re-checks it. Only then: a count change
-    // from elsewhere (an upload) must never scroll the user away from where they are.
-    const keepFocusedInViewRef = useRef(false);
+    // Confirmed deletes whose removal has not landed yet. Each shrink of the list may
+    // leave the focused neighbour clipped, so the length effect below re-checks it, and
+    // consumes one pending delete per row removed. A COUNT, not a flag: two quick
+    // confirms (keyboard) land separately and both need the re-check. Only then: a count
+    // change from elsewhere (an upload) must never scroll the user away from where they are.
+    const pendingDeletesRef = useRef(0);
     const previousLengthRef = useRef(documents.length);
 
     const findRow = (id: string): HTMLElement | undefined =>
@@ -390,7 +392,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       const index = docs.findIndex((doc) => doc.id === docId);
       const neighbour = docs[index + 1] ?? docs[index - 1];
       const listEl = listRef.current;
-      keepFocusedInViewRef.current = true;
+      pendingDeletesRef.current += 1;
       const target =
         neighbour === undefined
           ? undefined
@@ -425,13 +427,14 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     useLayoutEffect(() => {
       const previous = previousLengthRef.current;
       previousLengthRef.current = documents.length;
-      if (!keepFocusedInViewRef.current) return;
-      // The flag outlives a failed delete; a growing list proves this change is not ours.
+      if (pendingDeletesRef.current === 0) return;
+      // Pending deletes outlive a failed delete; a growing list proves this change is not
+      // ours (and that anything still pending is stale).
       if (documents.length >= previous) {
-        if (documents.length > previous) keepFocusedInViewRef.current = false;
+        if (documents.length > previous) pendingDeletesRef.current = 0;
         return;
       }
-      keepFocusedInViewRef.current = false;
+      pendingDeletesRef.current = Math.max(0, pendingDeletesRef.current - (previous - documents.length));
       const scroller = scrollContainerRef.current;
       const listEl = listRef.current;
       const active = document.activeElement;

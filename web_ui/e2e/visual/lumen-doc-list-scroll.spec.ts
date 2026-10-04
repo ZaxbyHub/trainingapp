@@ -266,8 +266,16 @@ test('arm -> Cancel keeps focus on the controls; Confirm hands focus to the next
 // The wide layout shows a 37px table head above the list; ignoring it leaves the last visible
 // row's neighbour fully on screen and the wide case unable to fail.
 const WIDE_HEAD = 37;
-for (const [width, height, layout] of [[800, 760, 'stacked'], [1000, 700, 'wide']] as const) {
-  test(`after Confirm the focused neighbour is fully inside the scroll region (${layout} @ H=${height})`, async ({ page }) => {
+// Review LOW-3: two quick confirmed deletes (keyboard: Enter on the neighbour that just got
+// focus, Shift+Tab to Confirm, Enter) land separately, and the second removal must be re-checked
+// too. `deletes` is how many rows are confirmed back to back.
+for (const [width, height, layout, deletes] of [
+  [800, 760, 'stacked', 1],
+  [1000, 700, 'wide', 1],
+  [800, 760, 'stacked', 2],
+  [1000, 700, 'wide', 2],
+] as const) {
+  test(`after Confirm the focused neighbour is fully inside the scroll region (${layout} @ H=${height}, ${deletes} quick delete${deletes === 1 ? '' : 's'})`, async ({ page }) => {
     test.setTimeout(120_000);
     const size = async (): Promise<void> => {
       await page.setViewportSize({ width, height });
@@ -297,10 +305,16 @@ for (const [width, height, layout] of [[800, 760, 'stacked'], [1000, 700, 'wide'
 
     await page.getByRole('button', { name: `Delete ${last}` }).click();
     await page.getByRole('button', { name: `Confirm delete ${last}` }).click();
+    if (deletes === 2) {
+      await page.keyboard.press('Enter');
+      await page.keyboard.press('Shift+Tab');
+      await page.keyboard.press('Enter');
+      await expect(page.getByRole('button', { name: `Delete ${name(index + 1)}` })).toHaveCount(0);
+    }
     await expect(page.getByRole('button', { name: `Delete ${last}` })).toHaveCount(0);
     await settle(page);
 
-    const next = `Delete ${name(index + 1)}`;
+    const next = `Delete ${name(index + deletes)}`;
     expect(await activeLabel(page)).toBe(next);
     expect(await visibleInRegion(page, next)).toBe(true);
   });

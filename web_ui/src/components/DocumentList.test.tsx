@@ -835,6 +835,81 @@ describe('DocumentList', () => {
           expect(scrollIntoView).not.toHaveBeenCalled();
         });
       });
+
+      // Review LOW-1/LOW-2/LOW-3: after a confirmed delete the focused neighbour is re-checked
+      // against the scroll area when the row removal lands, once per removed row, and never
+      // for a count change that is not ours.
+      describe('re-check after a confirmed delete', () => {
+        const scrollIntoView = vi.fn();
+        beforeEach(() => {
+          scrollIntoView.mockClear();
+          Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+        });
+        afterEach(() => {
+          delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+        });
+        const all = () => names.map((fileName, i) => createDocument({ id: `d${i}`, fileName }));
+        const view = (documents: ReturnType<typeof all>) => (
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents} onDelete={vi.fn()} deletingId={null} />
+          </div>
+        );
+        // Confirm the delete of Doc-070 with the focused neighbour (Doc-071) clipped.
+        const confirmWithClippedNeighbour = () => {
+          const ctx = setup(700);
+          ctx.scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+          fireEvent.scroll(ctx.scroller);
+          const base = rectSpy.getMockImplementation()!;
+          rectSpy.mockImplementation(function (this: HTMLElement) {
+            const rect = (t: number, bt: number) =>
+              ({ width: 0, height: bt - t, top: t, left: 0, right: 0, bottom: bt, x: 0, y: t, toJSON: () => ({}) }) as DOMRect;
+            if (this.getAttribute('aria-label')?.startsWith('Delete ')) return rect(CLIENT_HEIGHT + 100, CLIENT_HEIGHT + 128);
+            if (this.dataset.testid === 'scroller') return rect(0, CLIENT_HEIGHT);
+            return base.call(this);
+          });
+          fireEvent.click(screen.getByRole('button', { name: 'Delete Doc-070.pdf' }));
+          fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Doc-070.pdf' }));
+          expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-071.pdf' }));
+          return ctx;
+        };
+
+        it('re-checks when the removal lands and consumes the pending delete', () => {
+          const { rerender } = confirmWithClippedNeighbour();
+          expect(scrollIntoView).not.toHaveBeenCalled();
+          rerender(view(all().filter((doc) => doc.id !== 'd70')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+          // A later removal that was not confirmed here must not scroll.
+          rerender(view(all().filter((doc) => doc.id !== 'd70' && doc.id !== 'd10')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        });
+
+        it('keeps the pending delete while the count is unchanged', () => {
+          const { rerender } = confirmWithClippedNeighbour();
+          rerender(view(all().map((doc) => ({ ...doc }))));
+          expect(scrollIntoView).not.toHaveBeenCalled();
+          rerender(view(all().filter((doc) => doc.id !== 'd70')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        });
+
+        it('clears the pending delete when the list grows (no yank on a later upload or removal)', () => {
+          const { rerender } = confirmWithClippedNeighbour();
+          rerender(view([...all(), createDocument({ id: 'new', fileName: 'New.pdf' })]));
+          expect(scrollIntoView).not.toHaveBeenCalled();
+          rerender(view(all().filter((doc) => doc.id !== 'd70')));
+          expect(scrollIntoView).not.toHaveBeenCalled();
+        });
+
+        it('two quick confirms need two re-checks (a counter, not a flag)', () => {
+          const { rerender } = confirmWithClippedNeighbour();
+          // Second confirm on the neighbour that just received focus, before the first lands.
+          fireEvent.click(screen.getByRole('button', { name: 'Delete Doc-071.pdf' }));
+          fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Doc-071.pdf' }));
+          rerender(view(all().filter((doc) => doc.id !== 'd70')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+          rerender(view(all().filter((doc) => doc.id !== 'd70' && doc.id !== 'd71')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(2);
+        });
+      });
     });
   });
 
