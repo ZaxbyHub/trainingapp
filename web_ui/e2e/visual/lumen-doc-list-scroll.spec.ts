@@ -164,6 +164,58 @@ for (const [row, label] of [[60, 'row 60'], [70, 'row 70 with focus on its Delet
   });
 }
 
+// Review (focus blocker): in a TALL viewport the stacked window (112px rows) reaches
+// fewer rows than the wide one (60px rows) did, so a focused row near the bottom of
+// the wide view fell outside it, was unmounted, and focus dropped to <body>. The
+// focused row stays mounted and, if the conversion left it off-screen, is scrolled
+// back into the scroll region (WCAG 2.4.11).
+test('focus on the last fully visible wide row survives wide -> stacked in a tall viewport', async ({ page }) => {
+  test.setTimeout(120_000);
+  const resizeTall = async (width: number): Promise<void> => {
+    await page.setViewportSize({ width, height: 1440 });
+    await settle(page);
+  };
+  await resizeTall(1000);
+  await boot(page);
+  await resizeTall(1000);
+  expect((await snapshot(page)).itemHeight).toBe(ITEM_HEIGHT);
+
+  // Scroll to row 20 (the wide layout's list starts below its table head).
+  await page.evaluate((rowHeight) => {
+    const region = document.querySelector('.app-docs__list-region') as HTMLElement;
+    const list = document.querySelector('.app-doc-list') as HTMLElement;
+    const offset = list.getBoundingClientRect().top - region.getBoundingClientRect().top + region.scrollTop;
+    region.scrollTop = offset + 20 * rowHeight;
+  }, ITEM_HEIGHT);
+  await settle(page);
+
+  const last = await page.evaluate(() => {
+    const region = (document.querySelector('.app-docs__list-region') as HTMLElement).getBoundingClientRect();
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.app-doc-list__item'))
+      .filter((item) => {
+        const box = item.getBoundingClientRect();
+        return box.top >= region.top && box.bottom <= region.bottom;
+      })
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    return rows[rows.length - 1]?.querySelector('.app-doc__name')?.textContent;
+  });
+  expect(last).toBeTruthy();
+  const control = `Delete ${last}`;
+  await page.getByRole('button', { name: control }).focus();
+  expect((await snapshot(page)).active).toBe(control);
+
+  await resizeTall(800);
+  const stacked = await snapshot(page);
+  expect(stacked.itemHeight).toBe(STACKED_ITEM_HEIGHT);
+  expect(stacked.active).toBe(control);
+  const inRegion = await page.evaluate((label) => {
+    const region = (document.querySelector('.app-docs__list-region') as HTMLElement).getBoundingClientRect();
+    const box = (document.activeElement as HTMLElement).getBoundingClientRect();
+    return document.activeElement?.getAttribute('aria-label') === label && box.top >= region.top && box.bottom <= region.bottom;
+  }, control);
+  expect(inRegion).toBe(true);
+});
+
 test('the inline row height equals the rendered row height on both sides of the 800/801 boundary', async ({ page }) => {
   test.setTimeout(180_000);
   await resizeTo(page, 1000);

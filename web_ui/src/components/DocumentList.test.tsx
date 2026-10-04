@@ -518,6 +518,98 @@ describe('DocumentList', () => {
         resizeTo(700);
         expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-070.pdf' }));
       });
+
+      // Review (focus blocker): the window follows the scroll position, so a focused
+      // row far outside it used to unmount and drop focus to <body>.
+      it('keeps the focused row (and its neighbours) rendered when the window moves away', () => {
+        const { scroller, container } = setup(700);
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        const trigger = screen.getByRole('button', { name: 'Delete Doc-070.pdf' });
+        trigger.focus();
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        expect(screen.getByRole('button', { name: 'Delete Doc-070.pdf' })).toBe(trigger);
+        expect(document.activeElement).toBe(trigger);
+        // Tab / Shift+Tab can still reach the next and previous rows, in index order.
+        const labels = deleteLabels(container);
+        expect(labels).toContain('Delete Doc-069.pdf');
+        expect(labels).toContain('Delete Doc-071.pdf');
+        expect(labels).not.toContain('Delete Doc-072.pdf');
+        expect(labels).toEqual([...labels].sort());
+        const pinned = Array.from(container.querySelectorAll<HTMLElement>('[role="listitem"]')).find((el) =>
+          el.contains(trigger)
+        );
+        expect(pinned?.style.top).toBe(`${70 * STACKED_ITEM_HEIGHT}px`);
+        // Once focus leaves the list, the row is virtualized away again.
+        act(() => trigger.blur());
+        expect(deleteLabels(container)).not.toContain('Delete Doc-070.pdf');
+      });
+
+      // Review LOW-3: the wide layout's table head is above the list, so converting the
+      // top of the list must land on scrollTop 0, not on the head offset.
+      it('shows the table head when switching stacked -> wide at the very top', () => {
+        const { scroller } = setup(700);
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        resizeTo(1000);
+        expect(scroller.scrollTop).toBe(0);
+        resizeTo(700);
+        expect(scroller.scrollTop).toBe(0);
+      });
+
+      it('rounds (not truncates) the converted scrollTop', () => {
+        const { scroller } = setup(700);
+        scroller.scrollTop = 3380; // row 30.18 of 112px rows
+        fireEvent.scroll(scroller);
+        resizeTo(1000);
+        // 37 + 30.18 * 60 = 1847.71: truncating would land on 1847.
+        expect(scroller.scrollTop).toBe(1848);
+      });
+
+      // Review LOW-2 (WCAG 2.4.11): a focused control left outside the scroll area by
+      // the conversion is scrolled back into view, minimally.
+      describe('focused control visibility after a layout switch', () => {
+        const scrollIntoView = vi.fn();
+        beforeEach(() => {
+          scrollIntoView.mockClear();
+          Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+        });
+        afterEach(() => {
+          delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+        });
+        const placeControl = (top: number) => {
+          const base = rectSpy.getMockImplementation()!;
+          rectSpy.mockImplementation(function (this: HTMLElement) {
+            const rect = (t: number, b: number) =>
+              ({ width: 0, height: b - t, top: t, left: 0, right: 0, bottom: b, x: 0, y: t, toJSON: () => ({}) }) as DOMRect;
+            if (this.getAttribute('aria-label') === 'Delete Doc-070.pdf') return rect(top, top + 28);
+            if (this.dataset.testid === 'scroller') return rect(0, CLIENT_HEIGHT);
+            return base.call(this);
+          });
+        };
+
+        it('scrolls a focused control that ended up below the scroll area into view (block: nearest)', () => {
+          const { scroller } = setup(1000);
+          scroller.scrollTop = HEAD + 70 * ITEM_HEIGHT;
+          fireEvent.scroll(scroller);
+          screen.getByRole('button', { name: 'Delete Doc-070.pdf' }).focus();
+          placeControl(CLIENT_HEIGHT + 100);
+          resizeTo(700);
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+          expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+        });
+
+        it('leaves the scroll position alone when the focused control is already visible', () => {
+          const { scroller } = setup(1000);
+          scroller.scrollTop = HEAD + 70 * ITEM_HEIGHT;
+          fireEvent.scroll(scroller);
+          screen.getByRole('button', { name: 'Delete Doc-070.pdf' }).focus();
+          placeControl(100);
+          resizeTo(700);
+          expect(scrollIntoView).not.toHaveBeenCalled();
+        });
+      });
     });
   });
 

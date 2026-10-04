@@ -307,6 +307,9 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     const lastScrollTopRef = useRef(0);
     const listOffsetRef = useRef(0);
     const previousHeightRef = useRef(itemHeight);
+    // The document whose row holds keyboard focus. Keyed by id (not index) so it
+    // survives a layout switch; that row is always kept mounted (see below).
+    const [focusedId, setFocusedId] = useState<string | null>(null);
     // A layout switch changes the row height: keep the same ROW at the top of the
     // list (scroll position by item index, not by pixels). The list does not start
     // at the scroller's top (the wide layout shows a table head above it), so the
@@ -319,7 +322,19 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       if (previous === itemHeight || scroller === null || listEl === null) return;
       const row = (lastScrollTopRef.current - listOffsetRef.current) / previous;
       const offset = measureListOffset(scroller, listEl);
-      scroller.scrollTop = offset + row * itemHeight;
+      // At the very top (the table head still showing) stay at 0: re-adding the wide
+      // layout's head offset would scroll the head out of view. Otherwise round (a
+      // truncating assignment lands up to 1px short of the row boundary).
+      const atTop = lastScrollTopRef.current <= listOffsetRef.current;
+      scroller.scrollTop = atTop ? 0 : Math.round(offset + row * itemHeight);
+      // Keep the focused control on screen (WCAG 2.4.11): the row-index conversion
+      // can leave it outside the scroll area even though it is still mounted.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== scroller && listEl.contains(active)) {
+        const view = scroller.getBoundingClientRect();
+        const box = active.getBoundingClientRect();
+        if (box.top < view.top || box.bottom > view.bottom) active.scrollIntoView({ block: 'nearest' });
+      }
       lastScrollTopRef.current = scroller.scrollTop;
       listOffsetRef.current = offset;
       setScroll({ top: scroller.scrollTop, height: itemHeight });
@@ -406,7 +421,18 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       totalItems,
       Math.ceil((scrollTop + containerHeight) / itemHeight) + BUFFER
     );
-    const visibleDocuments = documents.slice(startIndex, endIndex);
+    // The focused row (and its neighbours, so Tab / Shift+Tab still reach the next
+    // and previous rows) stays mounted wherever the window is: unmounting a focused
+    // control drops focus to <body>. Rendered in index order to keep tab order.
+    const focusedIndex = focusedId === null ? -1 : documents.findIndex((doc) => doc.id === focusedId);
+    const renderedSet = new Set<number>();
+    for (let i = startIndex; i < endIndex; i++) renderedSet.add(i);
+    if (focusedIndex >= 0) {
+      for (let i = Math.max(0, focusedIndex - 1); i <= Math.min(totalItems - 1, focusedIndex + 1); i++) {
+        renderedSet.add(i);
+      }
+    }
+    const renderedIndices = Array.from(renderedSet).sort((a, b) => a - b);
     const totalHeight = totalItems * itemHeight;
 
     return (
@@ -426,13 +452,20 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
         {/* Placeholder div maintains the full scroll height for the scrollbar.
             Positional inline styles only: virtualization computes them per render. */}
         <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
-          {visibleDocuments.map((doc, i) => {
-            const index = startIndex + i;
+          {renderedIndices.map((index) => {
+            const doc = documents[index]!;
             return (
               <div
                 key={doc.id}
                 role="listitem"
                 className="app-doc-list__item"
+                onFocus={() => setFocusedId(doc.id)}
+                onBlur={(event) => {
+                  // Focus moving to another control in the same row keeps it pinned.
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setFocusedId((current) => (current === doc.id ? null : current));
+                  }
+                }}
                 style={{
                   position: 'absolute',
                   top: `${index * itemHeight}px`,
