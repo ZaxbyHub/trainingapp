@@ -164,6 +164,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   const messages = messagesProp;
   const setMessages = onMessagesChange;
   const [isLoading, setIsLoading] = useState(false);
+  // PRE-2: true once the in-flight turn was cancelled (Stop / clear / switch); reset when
+  // the next turn starts. Lets the message list announce "Response stopped", not "complete".
+  const [turnStopped, setTurnStopped] = useState(false);
   // #133: the desktop backend's resident-model load state (polled while a
   // load is in flight) — drives the "chat disabled while the model loads"
   // banner. Null = unknown/not applicable (browser mode, or the backend
@@ -294,6 +297,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     } catch (err) {
       console.warn('[ChatPage] LLM interrupt failed during stream cancel', err);
     }
+    setTurnStopped(true);
     setIsLoading(false);
   }, [browserEngine]);
 
@@ -866,6 +870,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     const appended = [...messagesRef.current, userMessage, assistantMessage];
     messagesRef.current = appended;
     setMessages(appended);
+    setTurnStopped(false);
     setIsLoading(true);
 
     // S1+S2: capture the owning conversation id + snapshot at send time, and
@@ -928,6 +933,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     });
     messagesRef.current = regenerated;
     setMessages(regenerated);
+    setTurnStopped(false);
     setIsLoading(true);
     // F1: regenerate re-uses the current conversation; set the owning ref so
     // runGeneration's saves target it.
@@ -1133,6 +1139,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       <ChatMessageList
         messages={messages}
         isStreaming={isLoading}
+        stopped={turnStopped}
         onRegenerate={!isLoading && lastTurnRef.current ? handleRegenerate : undefined}
         onSuggestedPrompt={(prompt) => handleSend(prompt)}
         onNavigateToDocuments={onNavigateToDocuments}

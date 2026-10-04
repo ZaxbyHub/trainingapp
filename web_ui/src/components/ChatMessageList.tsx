@@ -14,6 +14,10 @@ interface ChatMessageListProps {
   onNavigateToDocuments?: () => void;
   /** D6 (issue #82): "Open in training" deep link from the Learn panel. */
   onOpenTraining?: (target: { packId?: string; slideId: string }) => void;
+  /** PRE-2: the turn that just ended was cancelled by the user (Stop, clear, or a
+   *  conversation switch), so the status region says "Response stopped" instead of
+   *  claiming "Response complete". */
+  stopped?: boolean;
 }
 
 const SCROLL_THRESHOLD = 100;
@@ -37,6 +41,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   onSuggestedPrompt,
   onNavigateToDocuments,
   onOpenTraining,
+  stopped = false,
 }) => {
   // U4: document-count-aware empty state. With zero docs, suggesting prompts
   // that route through the cold-load then abstain is a guaranteed dead end.
@@ -50,8 +55,8 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   // the answer begins). During the rest of streaming we respect the
   // near-bottom heuristic — never yanking a reader who scrolled up.
   const prevLastRoleRef = useRef<string | undefined>(undefined);
-  // Visually-hidden region that announces "Response complete" when streaming
-  // ends (the role="log" container announces content mutations but not the
+  // Visually-hidden region that announces "Response complete" (or "Response
+  // stopped" after a cancel) when streaming ends (the role="log" container announces content mutations but not the
   // completion transition itself — this region does).
   const [completionNotice, setCompletionNotice] = useState('');
   const prevIsStreamingRef = useRef(false);
@@ -100,14 +105,14 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   // Announce completion when streaming transitions true -> false with content.
   useEffect(() => {
     if (prevIsStreamingRef.current && !isStreaming && messages.length > 0) {
-      setCompletionNotice('Response complete');
+      setCompletionNotice(stopped ? 'Response stopped' : 'Response complete');
     }
     // Clear the notice when a new generation starts so it can fire again.
     if (isStreaming && !prevIsStreamingRef.current) {
       setCompletionNotice('');
     }
     prevIsStreamingRef.current = isStreaming;
-  }, [isStreaming, messages.length]);
+  }, [isStreaming, messages.length, stopped]);
 
   // Shared 60-second ticker so relative timestamps ("Just now", "3m ago")
   // recompute instead of freezing at the value computed on first render.

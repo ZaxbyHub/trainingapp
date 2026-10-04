@@ -386,6 +386,30 @@ describe('ChatMessageList', () => {
     });
   });
 
+  describe('Cancel announcement (PRE-2)', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'msg-1', role: 'user', content: 'Question', timestamp: Date.now() },
+      { id: 'msg-2', role: 'assistant', content: 'Par', timestamp: Date.now(), isStreaming: true },
+    ];
+
+    it('announces "Response stopped", never "Response complete", when the turn was cancelled', () => {
+      const { rerender } = render(<ChatMessageList messages={msgs} isStreaming={true} />);
+      rerender(<ChatMessageList messages={msgs} isStreaming={false} stopped />);
+      const status = screen.getByRole('status');
+      expect(status.textContent).toContain('Response stopped');
+      expect(status.textContent).not.toContain('Response complete');
+    });
+
+    it('a new turn after a stop clears the notice and a normal finish announces completion again', () => {
+      const { rerender } = render(<ChatMessageList messages={msgs} isStreaming={true} />);
+      rerender(<ChatMessageList messages={msgs} isStreaming={false} stopped />);
+      rerender(<ChatMessageList messages={msgs} isStreaming={true} stopped={false} />);
+      expect(screen.getByRole('status').textContent).toBe('');
+      rerender(<ChatMessageList messages={msgs} isStreaming={false} stopped={false} />);
+      expect(screen.getByRole('status').textContent).toContain('Response complete');
+    });
+  });
+
   describe('Zero-document empty state (U4)', () => {
     it('renders the add-documents hero when documentCount is 0', () => {
       mockUseDocumentCount.mockReturnValue({ count: 0, loading: false });
