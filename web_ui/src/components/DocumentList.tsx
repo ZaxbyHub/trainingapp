@@ -11,7 +11,7 @@ import React, { useCallback, useState, useRef, useLayoutEffect } from 'react';
 import type { DocumentEntry } from '../types/document';
 import { Button, Icon, IconButton, ProgressBar, StatusPill, type IconName } from '../ui';
 import { cx } from '../ui/cx';
-import { ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from './documentRowLayout';
+import { DOC_DATE_FORMAT_OPTIONS, ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from './documentRowLayout';
 import '../pages/documents.css';
 
 interface DocumentListProps {
@@ -39,13 +39,7 @@ function formatFileSize(bytes: number): string {
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return new Date(timestamp).toLocaleDateString(undefined, DOC_DATE_FORMAT_OPTIONS);
 }
 
 /** Lumen phase 6: status is a StatusPill (icon + text, never color alone). */
@@ -238,7 +232,9 @@ const DocumentItem = React.memo<{
         {doc.fileName}
       </p>
       <span className="app-doc__meta">
-        <span className="app-doc__date">{formatDate(doc.uploadedAt)}</span>
+        <span className="app-doc__date" title={formatDate(doc.uploadedAt)}>
+          {formatDate(doc.uploadedAt)}
+        </span>
         <span className="app-doc__size">
           <span className="ui-visually-hidden">Size: </span>
           {formatFileSize(doc.fileSize)}

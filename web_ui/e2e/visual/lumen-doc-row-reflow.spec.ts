@@ -23,7 +23,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test } from '@playwright/test';
-import { ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from '../../src/components/documentRowLayout';
+import {
+  DOC_DATE_FORMAT_OPTIONS,
+  ITEM_HEIGHT,
+  STACKED_ITEM_HEIGHT,
+  STACKED_MAX_WIDTH,
+} from '../../src/components/documentRowLayout';
 
 const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
 const stripComments = (text: string): string =>
@@ -36,6 +41,19 @@ const CSS = [
   DOCUMENTS_CSS,
 ].join('\n');
 const SOURCE = stripComments(read('../../src/components/DocumentList.tsx'));
+
+/**
+ * The uploaded-at date is locale dependent, so the sweep renders several: the real format
+ * (DOC_DATE_FORMAT_OPTIONS, the one DocumentList uses) in a few locales, plus a fixed worst case
+ * that does not depend on the ICU data of the machine running the spec.
+ */
+const SAMPLE = Date.UTC(2026, 8, 30, 23, 44);
+const DATES: Record<string, string> = {
+  'en-US': new Date(SAMPLE).toLocaleDateString('en-US', { ...DOC_DATE_FORMAT_OPTIONS, timeZone: 'UTC' }),
+  'de-DE': new Date(SAMPLE).toLocaleDateString('de-DE', { ...DOC_DATE_FORMAT_OPTIONS, timeZone: 'UTC' }),
+  'fi-FI': new Date(SAMPLE).toLocaleDateString('fi-FI', { ...DOC_DATE_FORMAT_OPTIONS, timeZone: 'UTC' }),
+  'worst case': 'Donnerstag, 30. September 2026 um 23:44 Uhr MESZ',
+};
 
 const LONG_NAME = 'Employee-Handbook-2026-final-v2-with-a-very-long-name.pdf'; // 56 characters
 const PILL = (text: string, tone: string): string =>
@@ -68,14 +86,14 @@ const STATES: Record<string, { cells: string; controls: string[] }> = {
 };
 
 /** `main` is the area right of the sidebar, like the app shell's content column. */
-const html = (cells: string, sidebar: number, itemHeight: number): string => `<!doctype html><html data-theme="light"><head><meta charset="utf-8">
+const html = (cells: string, sidebar: number, itemHeight: number, date: string): string => `<!doctype html><html data-theme="light"><head><meta charset="utf-8">
 <style>${CSS}\nbody{margin:0;font-family:sans-serif}</style></head><body>
 <div style="display:flex;width:100%"><div style="flex:none;width:${sidebar}px"></div><main style="flex:1;min-width:0">
 <div class="app-docs"><div class="app-doc-table"><div class="app-doc-list"><div class="app-doc-list__item" id="item" style="position:relative;height:${itemHeight}px">
 <div class="app-doc" id="row">
   <div class="app-doc__icon"><svg class="ui-icon" width="20" height="20"></svg></div>
   <p class="app-doc__name">${LONG_NAME}</p>
-  <span class="app-doc__meta"><span class="app-doc__date">Sep 30, 2026, 11:44 PM</span><span class="app-doc__size">117.2 KB</span><span class="app-doc__chunks">1234 chunks</span></span>
+  <span class="app-doc__meta"><span class="app-doc__date" title="${date}">${date}</span><span class="app-doc__size">117.2 KB</span><span class="app-doc__chunks">1234 chunks</span></span>
   ${cells}
 </div></div></div></div></div></main></div></body></html>`;
 
@@ -107,6 +125,8 @@ test('markup mirrors DocumentList (drift check, comments stripped)', () => {
   ]) {
     expect(SOURCE, cls).toContain(cls);
   }
+  // The date format the sweep renders is the one the component formats with.
+  expect(SOURCE).toContain('DOC_DATE_FORMAT_OPTIONS');
 });
 
 interface Box {
@@ -138,17 +158,21 @@ const DRAWER_MAX_WIDTH = 768; // AppShell DRAWER_MEDIA_QUERY
 const VIEWPORTS = [320, 360, 500, 640, 760, 761, 768, 800, 850, 901, 925, 1024, 1100, 1280, 1440];
 
 for (const [state, spec] of Object.entries(STATES)) {
-  test(`${state} row keeps every control inside the table (drawer, rail 64, sidebar 260)`, async ({ page }) => {
+  test(`${state} row keeps every control inside the table (drawer, rail 64, sidebar 260; every date locale)`, async ({ page }) => {
+    test.setTimeout(180_000);
     const failures: string[] = [];
     let wide = 0;
     let stacked = 0;
     for (const width of VIEWPORTS) {
       // AppShell: at <= 768px the sidebar is an overlay drawer (no column); above it, 64px rail or 260px sidebar.
-      for (const sidebar of width <= DRAWER_MAX_WIDTH ? [0] : SIDEBARS) {
+      for (const [sidebar, dateLabel] of (width <= DRAWER_MAX_WIDTH ? [0] : SIDEBARS).flatMap((s) =>
+        Object.keys(DATES).map((d) => [s, d] as const)
+      )) {
+        const date = DATES[dateLabel];
         await page.setViewportSize({ width, height: 700 });
         // Pass 1: measure the container (table content box); pass 2: give the list item the row
         // height the virtualization derives from the SAME threshold.
-        await page.setContent(html(spec.cells, sidebar, ITEM_HEIGHT));
+        await page.setContent(html(spec.cells, sidebar, ITEM_HEIGHT, date));
         const tableContentWidth = await page.evaluate(() => {
           const table = document.querySelector('.app-doc-table') as HTMLElement;
           const style = getComputedStyle(table);
@@ -160,7 +184,7 @@ for (const [state, spec] of Object.entries(STATES)) {
         if (isStacked) stacked += 1;
         else wide += 1;
         const itemHeight = isStacked ? STACKED_ITEM_HEIGHT : ITEM_HEIGHT;
-        await page.setContent(html(spec.cells, sidebar, itemHeight));
+        await page.setContent(html(spec.cells, sidebar, itemHeight, date));
         const m: Measure = await page.evaluate((ids) => {
           const table = document.querySelector('.app-doc-table') as HTMLElement;
           const tableRect = table.getBoundingClientRect();
@@ -202,7 +226,7 @@ for (const [state, spec] of Object.entries(STATES)) {
             controls,
           };
         }, spec.controls);
-        const at = `sidebar ${sidebar} viewport ${width} (container ${Math.round(m.tableContentWidth)}px, ${isStacked ? 'stacked' : 'wide'})`;
+        const at = `sidebar ${sidebar} viewport ${width} date ${dateLabel} (container ${Math.round(m.tableContentWidth)}px, ${isStacked ? 'stacked' : 'wide'})`;
         const fail = (why: string): number => failures.push(`${at}: ${why}`);
         // The CSS must have switched layout exactly where the virtualization height says it did.
         if (Math.abs(m.rowHeight - itemHeight) > 0.5) fail(`row is ${m.rowHeight}px, virtualization assumes ${itemHeight}px`);
@@ -239,7 +263,7 @@ for (const [label, extra, expectHeight] of [
   test(`processing and 56-char confirm rows fit ${label}`, async ({ page }) => {
     await page.setViewportSize({ width: STACKED_MAX_WIDTH + extra + 2 + 48, height: 700 }); // sidebar 0
     for (const state of ['processing', 'confirm (56-char name)']) {
-      await page.setContent(html(STATES[state].cells, 0, expectHeight));
+      await page.setContent(html(STATES[state].cells, 0, expectHeight, DATES['worst case']));
       const m = await page.evaluate(() => {
         const row = document.getElementById('row')!;
         const table = document.querySelector('.app-doc-table') as HTMLElement;
@@ -263,5 +287,30 @@ for (const [label, extra, expectHeight] of [
       expect(m.overflowY, `${state} overflow y`).toBeLessThanOrEqual(0);
       expect(m.clipped, `${state} clipped controls`).toBe(0);
     }
+  });
+}
+
+// Review PRR-211: the stacked row's height is fixed (virtualization), and two meta lines fill it
+// exactly. The date is locale dependent, so the meta block must never grow a THIRD line, whatever
+// the date or the table width: here a table narrower than the 320px reflow floor (what 400% text
+// zoom does to the room a row has) forces size and chunks onto separate lines.
+for (const dateLabel of Object.keys(DATES)) {
+  test(`stacked row meta stays within two lines when the table is narrower than the reflow floor (${dateLabel} date)`, async ({ page }) => {
+    await page.setViewportSize({ width: 200, height: 700 });
+    await page.setContent(html(STATES.ready.cells, 0, STACKED_ITEM_HEIGHT, DATES[dateLabel]));
+    const m = await page.evaluate(() => {
+      const row = document.getElementById('row')!;
+      const meta = row.querySelector('.app-doc__meta') as HTMLElement;
+      const table = document.querySelector('.app-doc-table') as HTMLElement;
+      return {
+        container: table.getBoundingClientRect().width,
+        metaHeight: meta.getBoundingClientRect().height,
+        lineHeight: parseFloat(getComputedStyle(meta.querySelector('.app-doc__date') as HTMLElement).lineHeight),
+        rowOverflowY: row.scrollHeight - row.clientHeight,
+      };
+    });
+    expect(m.container, 'narrower than the 320px floor').toBeLessThan(200);
+    expect(m.metaHeight).toBeLessThanOrEqual(2 * m.lineHeight + 0.5);
+    expect(m.rowOverflowY).toBeLessThanOrEqual(0);
   });
 }

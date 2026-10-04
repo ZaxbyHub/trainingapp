@@ -9,6 +9,20 @@
  * a row really has.
  */
 
+/**
+ * Options of the uploaded-at date shown in every row (DocumentList's `formatDate`).
+ * Shared so the reflow spec renders the real format in several locales: the date's
+ * length is locale dependent (a German or Finnish date is far longer than the
+ * en-US one), and the fixed row heights below must hold for the longest.
+ */
+export const DOC_DATE_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+};
+
 /** Wide (table) row height; the `.app-doc` height in pages/documents.css. */
 export const ITEM_HEIGHT = 60;
 

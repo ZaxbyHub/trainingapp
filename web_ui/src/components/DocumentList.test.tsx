@@ -109,6 +109,17 @@ describe('DocumentList', () => {
       const documentElement = screen.getByText('dated.pdf').closest('div');
       expect(documentElement).toBeInTheDocument();
     });
+
+    // Review PRR-211: the date ellipsizes when the stacked row is narrow; the full text stays available.
+    it('carries the full date as the title of the (possibly ellipsized) date cell', () => {
+      const uploadedAt = new Date('2024-01-15T10:30:00').getTime();
+      const { container } = render(
+        <DocumentList documents={[createDocument({ id: 'doc-1', uploadedAt })]} onDelete={vi.fn()} deletingId={null} />
+      );
+      const cell = container.querySelector('.app-doc__date');
+      expect(cell?.textContent).toBeTruthy();
+      expect(cell?.getAttribute('title')).toBe(cell?.textContent);
+    });
   });
 
   describe('Status Badges', () => {
