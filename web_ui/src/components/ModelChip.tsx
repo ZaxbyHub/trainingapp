@@ -3,6 +3,7 @@
  * turn, as described by lib/chat/model-chip.ts from the same predicates the send
  * path routes on. Clicking it opens Settings at the model-connection section.
  */
+import { useId } from 'react';
 import { Icon, type IconName } from '../ui';
 import { chatModelText, NOT_READY_SUFFIX, type ChatModelDescription } from '../lib/chat/model-chip';
 import '../pages/chat.css';
@@ -25,6 +26,15 @@ export interface ModelChipProps {
 
 export function ModelChip({ description, onOpenSettings, testId = 'chat-model-chip' }: ModelChipProps) {
   const text = chatModelText(description);
+  // The grounded-vs-direct / profile sentence (description.detail) is essential, so it is
+  // never carried by the title tooltip alone: a visually-hidden node, referenced by
+  // aria-describedby, exposes it to assistive tech (the visible layout is unchanged).
+  const detailId = useId();
+  const detail = (
+    <span id={detailId} className="ui-visually-hidden" data-testid={`${testId}-detail`}>
+      {description.detail}
+    </span>
+  );
   const content = (
     <>
       <Icon name={MODEL_CHIP_ICON[description.kind]} size={16} />
@@ -46,22 +56,35 @@ export function ModelChip({ description, onOpenSettings, testId = 'chat-model-ch
   );
   if (!onOpenSettings) {
     return (
-      <span className="chat-model-chip" data-testid={testId} data-kind={description.kind} title={description.detail}>
-        {content}
-      </span>
+      <>
+        <span
+          className="chat-model-chip"
+          data-testid={testId}
+          data-kind={description.kind}
+          title={description.detail}
+          aria-describedby={detailId}
+        >
+          {content}
+        </span>
+        {detail}
+      </>
     );
   }
   return (
-    <button
-      type="button"
-      className="chat-model-chip ui-focusable"
-      data-testid={testId}
-      data-kind={description.kind}
-      title={description.detail}
-      aria-label={`Model: ${text}. Open model settings`}
-      onClick={onOpenSettings}
-    >
-      {content}
-    </button>
+    <>
+      <button
+        type="button"
+        className="chat-model-chip ui-focusable"
+        data-testid={testId}
+        data-kind={description.kind}
+        title={description.detail}
+        aria-label={`Model: ${text}. Open model settings`}
+        aria-describedby={detailId}
+        onClick={onOpenSettings}
+      >
+        {content}
+      </button>
+      {detail}
+    </>
   );
 }

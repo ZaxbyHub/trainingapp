@@ -25,6 +25,20 @@ describe('ModelChip', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it('PRR-119: the detail sentence is exposed as the accessible description, not only via title', () => {
+    render(<ModelChip description={local} onOpenSettings={() => {}} />);
+    const chip = screen.getByTestId('chat-model-chip');
+    expect(chip).toHaveAccessibleDescription(local.detail);
+    expect(screen.getByTestId('chat-model-chip-detail')).toHaveClass('ui-visually-hidden');
+    // The accessible name is unchanged (the hidden node is a description, not part of the name).
+    expect(chip).toHaveAccessibleName('Model: Local · Google Gemma 4 E2B-it. Open model settings');
+  });
+
+  it('PRR-119: the static (no settings link) chip also carries the sentence as its description', () => {
+    render(<ModelChip description={local} testId="static-chip" />);
+    expect(screen.getByTestId('static-chip')).toHaveAccessibleDescription(local.detail);
+  });
+
   it('names only the mode when there is no reliable model name', () => {
     render(
       <ModelChip

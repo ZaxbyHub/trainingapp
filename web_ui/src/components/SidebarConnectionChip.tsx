@@ -16,6 +16,7 @@
  * Expanded sidebar and drawer: the full chip. 64px rail: an icon-only button whose
  * tooltip (beside the rail, placement 'end') carries the chip text.
  */
+import { useId } from 'react';
 import { useInferenceMode } from '../lib/inference';
 import { isElectron, useDesktopSession } from '../lib/desktop-session';
 import { useExternalConfig } from '../lib/llm/use-external-config';
@@ -34,6 +35,7 @@ export interface SidebarConnectionChipProps {
 
 export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnectionChipProps) {
   const { collapsed, drawer, closeDrawer } = useAppShell();
+  const railDetailId = useId();
   const { mode, browserEngine, isModelReady } = useInferenceMode();
   const { session, models } = useDesktopSession();
   // Live: the sidebar stays mounted while Settings saves a new endpoint.
@@ -70,9 +72,15 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
           icon={MODEL_CHIP_ICON[description.kind]}
           tooltipPlacement="end"
           aria-label={`Model: ${chatModelText(description)}. Open model settings`}
+          // The rail tooltip repeats only the name; the sentence that says what the
+          // model does (grounded vs direct, profile) must not be tooltip-only.
+          aria-describedby={railDetailId}
           data-kind={description.kind}
           onClick={open}
         />
+        <span id={railDetailId} className="ui-visually-hidden" data-testid="sidebar-model-chip-detail">
+          {description.detail}
+        </span>
       </div>
     );
   }

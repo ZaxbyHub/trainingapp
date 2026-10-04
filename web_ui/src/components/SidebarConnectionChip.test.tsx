@@ -164,6 +164,22 @@ describe('SidebarConnectionChip', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it('PRR-119: the detail sentence is a described-by node in both the expanded chip and the rail button', () => {
+    const { unmount } = render(<Shell />);
+    const chip = screen.getByTestId('sidebar-model-chip');
+    const sentence = screen.getByTestId('sidebar-model-chip-detail').textContent ?? '';
+    expect(sentence.length).toBeGreaterThan(0);
+    expect(chip).toHaveAccessibleDescription(sentence);
+    unmount();
+
+    render(<Shell collapsed />);
+    const btn = screen.getByRole('button', { name: 'Model: Local · Google Gemma 4 E2B-it. Open model settings' });
+    const railSentence = screen.getByTestId('sidebar-model-chip-detail');
+    expect(railSentence).toHaveClass('ui-visually-hidden');
+    expect(railSentence.textContent).toBe(sentence);
+    expect(btn).toHaveAccessibleDescription(sentence);
+  });
+
   it('drawer (<= 768px): choosing the chip opens settings and closes the drawer', () => {
     mediaRestore?.();
     stubMatchMedia(true);
