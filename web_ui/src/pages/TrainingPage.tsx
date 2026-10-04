@@ -32,6 +32,7 @@ import {
   loadCourseProgress,
   mergeCourseProgress,
   saveCourseProgress,
+  subscribeCourseProgress,
   type CourseProgress,
 } from '../lib/training/course-progress';
 import { courseSlideCount, slideDocsAvailable, slidePosition } from '../lib/training/slide-position';
@@ -94,12 +95,28 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   const [pinAnnouncement, setPinAnnouncement] = useState('');
   // Furthest slide reached per course (persisted; drives the course-card progress).
   const [progress, setProgress] = useState<CourseProgress>(() => loadCourseProgress());
+  // Storage is the shared truth across tabs (PRR-203/206): fold in what another tab
+  // records (an idle tab would otherwise never see it), and drop everything when the
+  // progress is cleared (Clear Cache in any tab) so cleared progress is neither shown
+  // nor merged back into storage by this tab's next slide change.
+  useEffect(
+    () =>
+      subscribeCourseProgress((stored) =>
+        setProgress((current) =>
+          stored === null ? (Object.keys(current).length === 0 ? current : {}) : mergeCourseProgress(current, stored)
+        )
+      ),
+    []
+  );
   // Slide docs live in the browser keyword index, which initializes after boot
   // and exposes no ready event: poll until ready so slide counts and "x of n"
   // appear without a remount. Never in the desktop renderer (no browser index).
   // Bounded: gives up after SLIDE_DOCS_POLL_MAX attempts (~1 minute) so an index
-  // that never becomes ready does not poll for the life of the page.
+  // that never becomes ready does not poll for the life of the page — but it is
+  // RE-ARMED (PRR-202) whenever the window regains focus or becomes visible, so a
+  // slow first index build recovers the counts without a remount.
   const [slideDocsReady, setSlideDocsReady] = useState(() => !isElectron() && slideDocsAvailable());
+  const [pollEpoch, setPollEpoch] = useState(0);
   useEffect(() => {
     if (slideDocsReady || isElectron()) return undefined;
     let attempts = 0;
@@ -109,6 +126,20 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
       else if (attempts >= SLIDE_DOCS_POLL_MAX) window.clearInterval(timer);
     }, 1000);
     return () => window.clearInterval(timer);
+  }, [slideDocsReady, pollEpoch]);
+  useEffect(() => {
+    if (slideDocsReady || isElectron()) return undefined;
+    const rearm = (): void => {
+      if (document.visibilityState === 'hidden') return;
+      if (slideDocsAvailable()) setSlideDocsReady(true);
+      else setPollEpoch((epoch) => epoch + 1);
+    };
+    window.addEventListener('focus', rearm);
+    document.addEventListener('visibilitychange', rearm);
+    return () => {
+      window.removeEventListener('focus', rearm);
+      document.removeEventListener('visibilitychange', rearm);
+    };
   }, [slideDocsReady]);
   // A new lifted deep link (chat "Open in training") always opens its player.
   // Only a SET target counts: Back clears it (onLeaveDeepLink), and resetting

@@ -6,7 +6,7 @@
 // saveCourseProgress. Positions are the 1-based spine positions from
 // slide-position.ts, so progress is only ever recorded when a position is KNOWN
 // (never in the desktop renderer, never before the slide docs are ready).
-import { TRAINING_PROGRESS_KEY } from '../storage/persisted-keys';
+import { TRAINING_PROGRESS_KEY, USER_SETTINGS_CLEARED_EVENT } from '../storage/persisted-keys';
 
 /** courseId -> furthest 1-based slide position reached. */
 export type CourseProgress = Readonly<Record<string, number>>;
@@ -60,6 +60,34 @@ export function mergeCourseProgress(current: CourseProgress, incoming: CoursePro
     merged[courseId] = position;
   }
   return merged ?? current;
+}
+
+/**
+ * Follow changes to the stored progress that this tab did not make itself (the
+ * `storage` event only ever fires for OTHER tabs' writes), plus Clear Cache in this
+ * tab. `onChange(map)` carries what another tab wrote; `onChange(null)` means the
+ * stored progress was CLEARED (key removed, or the whole storage emptied), so the
+ * listener must drop what it holds in memory rather than keep showing - or later
+ * re-persisting - progress the user just cleared. Returns the unsubscribe.
+ */
+export function subscribeCourseProgress(onChange: (stored: CourseProgress | null) => void): () => void {
+  const onStorage = (event: StorageEvent): void => {
+    // sessionStorage changes are not ours (the registry keeps this key in localStorage only).
+    if (event.storageArea !== null && event.storageArea === window.sessionStorage) return;
+    if (event.key === null) {
+      onChange(null); // storage.clear()
+      return;
+    }
+    if (event.key !== TRAINING_PROGRESS_KEY) return;
+    onChange(event.newValue === null ? null : loadCourseProgress());
+  };
+  const onCleared = (): void => onChange(null);
+  window.addEventListener('storage', onStorage);
+  window.addEventListener(USER_SETTINGS_CLEARED_EVENT, onCleared);
+  return () => {
+    window.removeEventListener('storage', onStorage);
+    window.removeEventListener(USER_SETTINGS_CLEARED_EVENT, onCleared);
+  };
 }
 
 export interface CourseProgressView {

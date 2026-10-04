@@ -87,4 +87,41 @@ describe('course-card slide counts follow the keyword index readiness (L2)', () 
     });
     expect(slideDocsAvailable).toHaveBeenCalledTimes(60);
   });
+  it('PRR-202: re-arms after the cap when the window regains focus, so counts recover without a remount', async () => {
+    vi.useFakeTimers();
+    render(<TrainingPage />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000); // exhaust the 60 attempts; the index is still not ready
+    });
+    expect(screen.getByTestId('training-course-course-a')).toHaveTextContent('Storyline course');
+
+    // The index finishes building after the poll gave up: nothing changes on its own...
+    index.ready = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByTestId('training-course-course-a')).toHaveTextContent('Storyline course');
+
+    // ...until the user comes back to the window.
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+    expect(screen.getByTestId('training-course-course-a')).toHaveTextContent('12 slides');
+  });
+
+  it('PRR-202: a focus while the index is still not ready restarts the poll, which then picks the index up', async () => {
+    vi.useFakeTimers();
+    render(<TrainingPage />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus')); // still not ready: re-arms the poll
+    });
+    index.ready = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1100);
+    });
+    expect(screen.getByTestId('training-course-course-a')).toHaveTextContent('12 slides');
+  });
 });
