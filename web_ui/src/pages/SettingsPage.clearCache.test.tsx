@@ -401,6 +401,18 @@ describe('SettingsPage — Clear Cache (issue #24 F1)', () => {
     ).toBeInTheDocument();
   });
 
+  test('confirmation text names the course progress and last-opened course it removes (PRR-220)', async () => {
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Storage & privacy' })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /clear cache/i }));
+
+    expect(screen.getByText(/last-opened course, course progress/i)).toBeInTheDocument();
+  });
+
   test('returns to idle after clearing', async () => {
     render(<SettingsPage />);
 
