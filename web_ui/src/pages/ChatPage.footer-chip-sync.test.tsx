@@ -48,7 +48,7 @@ import { SidebarConnectionChip } from '../components/SidebarConnectionChip';
 import { AppShell } from '../ui';
 import * as inferenceModule from '../lib/inference';
 import { DesktopSessionProvider, fetchModelStatus, type DesktopSession } from '../lib/desktop-session';
-import { subscribeLatestModelStatus } from '../lib/desktop-models-events';
+import { DESKTOP_MODELS_CHANGED_EVENT, subscribeLatestModelStatus } from '../lib/desktop-models-events';
 import type { ModelStatus } from '../lib/api/types';
 
 function status(profile: 'quality' | 'fast'): ModelStatus {
@@ -130,6 +130,30 @@ describe('footer chip follows the resident model (PRR-107)', () => {
     cleanup();
     vi.unstubAllGlobals();
   });
+
+  test('L2: a swap that happened while Chat was not mounted is announced on the first poll', async () => {
+    served = status('fast'); // backend already moved; App's snapshot (seeded 'quality') is stale
+    render(<AppLike />);
+    const footer = await screen.findByTestId('sidebar-model-chip');
+    await waitFor(() => expect(footer).toHaveTextContent('Fast profile'), { timeout: 2500 });
+  }, 10_000);
+
+  test('L3: unchanged polls do not cause App re-reads (no notify storm)', async () => {
+    let changed = 0;
+    const count = () => {
+      changed += 1;
+    };
+    window.addEventListener(DESKTOP_MODELS_CHANGED_EVENT, count);
+    try {
+      render(<AppLike />);
+      await screen.findByTestId('chat-model-chip');
+      // >= 2 polls (2s interval) with the backend unchanged.
+      await new Promise((r) => setTimeout(r, 4600));
+      expect(changed).toBe(0);
+    } finally {
+      window.removeEventListener(DESKTOP_MODELS_CHANGED_EVENT, count);
+    }
+  }, 15_000);
 
   test('after the backend swaps its resident profile, header and footer chips both name the new one', async () => {
     render(<AppLike />);

@@ -192,6 +192,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   const modelsAbsent = desktopModels !== null && modelsAbsentForRealEngine(desktopModels);
   const pollEligible =
     !desktopExternal && desktopSession !== null && !modelsAbsent;
+  // Read inside the poll effect without re-running it on every snapshot change.
+  const desktopModelsRef = useRef(desktopModels);
+  desktopModelsRef.current = desktopModels;
   useEffect(() => {
     if (!pollEligible) return;
     let cancelled = false;
@@ -199,13 +202,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     // App's /status/models snapshot (the sidebar footer chip) goes stale the moment the
     // resident state/profile moves. Announce each transition so App re-reads it and the
     // footer chip keeps naming the same model as this page's header chip.
-    let lastResident: string | null = null;
+    // Seeded from App's own snapshot so a swap that happened while Chat was not mounted
+    // (or during startup warmup) is announced on the first poll instead of waiting for
+    // the next transition.
+    const residentKey = (r: ModelStatus['resident'] | undefined): string =>
+      r ? `${r.state}|${r.profile ?? ''}` : '';
+    let lastResident: string | null = desktopModelsRef.current ? residentKey(desktopModelsRef.current.resident) : null;
     const poll = (): void => {
       void fetchModelStatus(desktopSession)
         .then((status) => {
           if (cancelled) return;
           setModelLoad(status.resident ?? null);
-          const key = status.resident ? `${status.resident.state}|${status.resident.profile ?? ''}` : '';
+          const key = residentKey(status.resident);
           if (lastResident !== null && lastResident !== key) notifyDesktopModelsChanged();
           lastResident = key;
         })
@@ -414,6 +422,7 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
         tokenStreamManagerRef.current.cancel();
         tokenStreamManagerRef.current = null;
       }
+      setTurnStopped(true);
       setIsLoading(false);
     }
   }, [browserEngine, mode, currentConversationId, onSaveConversation, setMessages]);

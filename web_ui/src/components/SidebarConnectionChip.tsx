@@ -47,9 +47,9 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
     desktopModels: models,
     // The resident profile from the /status/models snapshot. The Chat header polls the
     // same endpoint every ~2s; this snapshot is re-read on models-changed events, which
-    // ChatPage's poll fires on every resident transition, so the footer trails the header
-    // by at most one refetch (and only while Chat is mounted, the only place a query can
-    // trigger the swap).
+    // ChatPage's poll fires on every resident transition it observes (its first poll is
+    // compared with this snapshot too). While Chat is not mounted nothing polls, so a swap
+    // there (startup warmup included) is picked up on the next Chat visit.
     residentProfile: models?.resident?.profile ?? null,
     // Inside Electron the renderer's stored external config is not authoritative.
     externalConfig: isElectron() ? null : externalConfig,
@@ -81,7 +81,7 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
           data-kind={description.kind}
           onClick={open}
         />
-        <span id={railDetailId} className="ui-visually-hidden" data-testid="sidebar-model-chip-detail">
+        <span id={railDetailId} hidden data-testid="sidebar-model-chip-detail">
           {description.detail}
         </span>
       </div>

@@ -111,20 +111,58 @@ describe('ChatPage live-region announcement on Stop (PRE-2)', () => {
     cleanup();
   });
 
-  async function startTurn(gate: Promise<void>, finish: boolean) {
-    const orchestrator = { query: vi.fn().mockImplementation(parkedStream(gate, finish)) };
-    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(() => orchestrator as unknown as ragModule.RAGOrchestrator);
-    render(<Page />);
+  let orchestrator: { query: ReturnType<typeof vi.fn> };
+  async function send(text: string) {
     await act(async () => {
-      fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Question' } });
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: text } });
       fireEvent.click(screen.getByRole('button', { name: /send message/i }));
     });
     await flush();
+  }
+  async function startTurn(gate: Promise<void>, finish: boolean) {
+    orchestrator = { query: vi.fn().mockImplementation(parkedStream(gate, finish)) };
+    vi.mocked(ragModule.RAGOrchestrator).mockImplementation(() => orchestrator as unknown as ragModule.RAGOrchestrator);
+    const view = render(<Page />);
+    await send('Question');
+    return view;
   }
 
   test('Stop announces "Response stopped" and never "Response complete"', async () => {
     await startTurn(new Promise<void>(() => {}), false); // never resolves: parked mid-answer
     fireEvent.click(await screen.findByRole('button', { name: /stop generation/i }));
+    await flush();
+    expect(screen.queryByRole('button', { name: /stop generation/i })).toBeNull();
+    expect(statusText()).toContain('Response stopped');
+    expect(statusText()).not.toContain('Response complete');
+  });
+
+  test('L4: after a Stop, the next turn resets the stopped flag and its normal finish says "Response complete"', async () => {
+    await startTurn(new Promise<void>(() => {}), false);
+    fireEvent.click(await screen.findByRole('button', { name: /stop generation/i }));
+    await flush();
+    expect(statusText()).toContain('Response stopped');
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    orchestrator.query.mockImplementation(parkedStream(gate, true));
+    await send('Again');
+    await act(async () => {
+      release();
+    });
+    await flush();
+    expect(statusText()).toContain('Response complete');
+    expect(statusText()).not.toContain('Response stopped');
+  });
+
+  test('L1: switching the browser engine mid-answer announces "Response stopped"', async () => {
+    const { rerender } = await startTurn(new Promise<void>(() => {}), false);
+    vi.mocked(inferenceModule.useInferenceMode).mockReturnValue({
+      ...vi.mocked(inferenceModule.useInferenceMode)(),
+      browserEngine: 'webllm',
+    } as unknown as ReturnType<typeof inferenceModule.useInferenceMode>);
+    rerender(<Page />);
     await flush();
     expect(screen.queryByRole('button', { name: /stop generation/i })).toBeNull();
     expect(statusText()).toContain('Response stopped');

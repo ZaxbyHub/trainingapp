@@ -105,14 +105,17 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   // Announce completion when streaming transitions true -> false with content.
   useEffect(() => {
     if (prevIsStreamingRef.current && !isStreaming && messages.length > 0) {
-      setCompletionNotice(stopped ? 'Response stopped' : 'Response complete');
+      const last = messages[messages.length - 1];
+      setCompletionNotice(
+        stopped ? 'Response stopped' : last?.role === 'assistant' && last.error ? 'Response failed' : 'Response complete'
+      );
     }
     // Clear the notice when a new generation starts so it can fire again.
     if (isStreaming && !prevIsStreamingRef.current) {
       setCompletionNotice('');
     }
     prevIsStreamingRef.current = isStreaming;
-  }, [isStreaming, messages.length, stopped]);
+  }, [isStreaming, messages, stopped]);
 
   // Shared 60-second ticker so relative timestamps ("Just now", "3m ago")
   // recompute instead of freezing at the value computed on first render.

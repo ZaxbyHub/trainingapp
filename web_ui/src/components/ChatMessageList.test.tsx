@@ -410,6 +410,21 @@ describe('ChatMessageList', () => {
     });
   });
 
+  describe('Failure announcement', () => {
+    it('announces "Response failed", not "Response complete", when the last reply errored', () => {
+      const streaming: ChatMessage[] = [
+        { id: 'u', role: 'user', content: 'Q', timestamp: Date.now() },
+        { id: 'a', role: 'assistant', content: '', timestamp: Date.now(), isStreaming: true },
+      ];
+      const failed: ChatMessage[] = [streaming[0], { ...streaming[1], isStreaming: false, error: 'boom' }];
+      const { rerender } = render(<ChatMessageList messages={streaming} isStreaming={true} />);
+      rerender(<ChatMessageList messages={failed} isStreaming={false} />);
+      const status = screen.getAllByRole('status').map((n) => n.textContent).join('|');
+      expect(status).toContain('Response failed');
+      expect(status).not.toContain('Response complete');
+    });
+  });
+
   describe('Zero-document empty state (U4)', () => {
     it('renders the add-documents hero when documentCount is 0', () => {
       mockUseDocumentCount.mockReturnValue({ count: 0, loading: false });
