@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, act, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ChatMessageList } from './ChatMessageList';
 import type { ChatMessage } from '../types/chat';
@@ -48,11 +48,13 @@ describe('ChatMessageList', () => {
       expect(emptyState).toBeInTheDocument();
     });
 
-    it('uses larger padding for empty state', () => {
-      const { container } = render(<ChatMessageList messages={[]} isStreaming={false} />);
+    it('shows the welcome region (and no message list or jump button) inside the log when there are no messages', () => {
+      render(<ChatMessageList messages={[]} isStreaming={false} />);
 
-      const messageList = container.querySelector('[style*="padding: var(--spacing-xxl)"]');
-      expect(messageList).toBeInTheDocument();
+      const log = screen.getByRole('log');
+      expect(within(log).getByRole('region', { name: /How can I help/i })).toBeInTheDocument();
+      expect(log.querySelector('.chat-msg')).toBeNull();
+      expect(within(log).queryByRole('button', { name: /jump to latest/i })).toBeNull();
     });
   });
 
@@ -129,15 +131,17 @@ describe('ChatMessageList', () => {
       expect(screen.getByText('Message 3')).toBeInTheDocument();
     });
 
-    it('uses correct padding when messages exist', () => {
+    it('replaces the welcome region with the messages when messages exist', () => {
       const messages: ChatMessage[] = [
         { id: 'msg-1', role: 'user', content: 'Test', timestamp: Date.now() },
       ];
 
-      const { container } = render(<ChatMessageList messages={messages} isStreaming={false} />);
+      render(<ChatMessageList messages={messages} isStreaming={false} />);
 
-      const messageList = container.querySelector('[style*="padding: var(--spacing-lg)"]');
-      expect(messageList).toBeInTheDocument();
+      const log = screen.getByRole('log');
+      expect(within(log).queryByRole('region', { name: /How can I help/i })).toBeNull();
+      expect(within(log).queryByText('Suggested prompts')).toBeNull();
+      expect(within(log).getByText('Test')).toBeInTheDocument();
     });
   });
 
@@ -379,6 +383,45 @@ describe('ChatMessageList', () => {
       // The visually-hidden status region should now carry the completion text.
       const status = screen.getByRole('status');
       expect(status.textContent).toContain('Response complete');
+    });
+  });
+
+  describe('Cancel announcement (PRE-2)', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'msg-1', role: 'user', content: 'Question', timestamp: Date.now() },
+      { id: 'msg-2', role: 'assistant', content: 'Par', timestamp: Date.now(), isStreaming: true },
+    ];
+
+    it('announces "Response stopped", never "Response complete", when the turn was cancelled', () => {
+      const { rerender } = render(<ChatMessageList messages={msgs} isStreaming={true} />);
+      rerender(<ChatMessageList messages={msgs} isStreaming={false} stopped />);
+      const status = screen.getByRole('status');
+      expect(status.textContent).toContain('Response stopped');
+      expect(status.textContent).not.toContain('Response complete');
+    });
+
+    it('a new turn after a stop clears the notice and a normal finish announces completion again', () => {
+      const { rerender } = render(<ChatMessageList messages={msgs} isStreaming={true} />);
+      rerender(<ChatMessageList messages={msgs} isStreaming={false} stopped />);
+      rerender(<ChatMessageList messages={msgs} isStreaming={true} stopped={false} />);
+      expect(screen.getByRole('status').textContent).toBe('');
+      rerender(<ChatMessageList messages={msgs} isStreaming={false} stopped={false} />);
+      expect(screen.getByRole('status').textContent).toContain('Response complete');
+    });
+  });
+
+  describe('Failure announcement', () => {
+    it('announces "Response failed", not "Response complete", when the last reply errored', () => {
+      const streaming: ChatMessage[] = [
+        { id: 'u', role: 'user', content: 'Q', timestamp: Date.now() },
+        { id: 'a', role: 'assistant', content: '', timestamp: Date.now(), isStreaming: true },
+      ];
+      const failed: ChatMessage[] = [streaming[0], { ...streaming[1], isStreaming: false, error: 'boom' }];
+      const { rerender } = render(<ChatMessageList messages={streaming} isStreaming={true} />);
+      rerender(<ChatMessageList messages={failed} isStreaming={false} />);
+      const status = screen.getAllByRole('status').map((n) => n.textContent).join('|');
+      expect(status).toContain('Response failed');
+      expect(status).not.toContain('Response complete');
     });
   });
 

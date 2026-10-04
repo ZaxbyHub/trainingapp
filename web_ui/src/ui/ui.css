@@ -212,6 +212,14 @@
 .ui-tooltip { position: absolute; z-index: 1100; top: calc(100% + var(--space-1)); left: 50%; transform: translateX(calc(-50% + var(--ui-tooltip-shift, 0px))); width: max-content; max-width: min(240px, calc(100vw - 16px)); padding: var(--space-1) var(--space-2); background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-control); border-radius: var(--r-control); box-shadow: var(--shadow-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
 
 .ui-tooltip--end { top: 50%; left: calc(100% + var(--space-2)); transform: translateY(-50%); }
+/* WCAG 1.4.13 hoverable: a transparent bridge covers the gap between trigger and tooltip so the
+   pointer can cross it without leaving the wrapper (the tooltip only exists while shown, so the
+   bridge never blocks clicks on anything when hidden). */
+.ui-tooltip::before { content: ''; position: absolute; left: 0; right: 0; top: calc(-1 * var(--space-1)); height: var(--space-1); }
+.ui-tooltip--top::before { top: auto; bottom: calc(-1 * var(--space-1)); }
+.ui-tooltip--end::before { top: 0; bottom: 0; left: calc(-1 * var(--space-2)); right: auto; width: var(--space-2); height: auto; }
+/* Above the trigger; keeps the centred transform and --ui-tooltip-shift of the default. */
+.ui-tooltip--top { top: auto; bottom: calc(100% + var(--space-1)); }
 
 .ui-tabs__list { display: flex; gap: var(--space-1); border-bottom: 1px solid var(--border-subtle); overflow-x: auto; }
 .ui-tabs__tab { min-height: var(--target-primary); padding: 0 var(--space-4); background: transparent; color: var(--text-secondary); border: 0; border-bottom: 3px solid transparent; font-family: inherit; font-size: var(--type-label-size); font-weight: var(--type-label-weight); cursor: pointer; }

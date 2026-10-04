@@ -259,16 +259,31 @@ describe('ChatInput', () => {
   });
 
   describe('Auto-resize Behavior', () => {
-    it('adjusts height based on content', () => {
+    // Lumen phase 5: the old assertion only checked that an inline height existed.
+    // This pins the behaviour instead: the measured height is clamped to
+    // [40, 150] px and the textarea reports an overflow STATE once content
+    // exceeds the cap (pages/chat.css turns that state into a scrollbar).
+    it('grows with content, clamps at the cap, and reports overflow state', () => {
       const mockSend = vi.fn();
       render(<ChatInput onSend={mockSend} isLoading={false} onCancel={vi.fn()} />);
 
-      const textarea = screen.getByPlaceholderText('Ask a question… (Enter to send, Shift+Enter for a new line)');
-      fireEvent.change(textarea, { target: { value: 'Line 1\nLine 2\nLine 3' } });
+      const textarea = screen.getByRole('textbox', { name: 'Message input' }) as HTMLTextAreaElement;
+      let contentHeight = 96;
+      Object.defineProperty(textarea, 'scrollHeight', { configurable: true, get: () => contentHeight });
 
-      // The height should change based on content
-      const style = (textarea as HTMLTextAreaElement).style;
-      expect(style.height).toBeTruthy();
+      fireEvent.change(textarea, { target: { value: 'Line 1\nLine 2\nLine 3' } });
+      expect(textarea.style.height).toBe('96px');
+      expect(textarea).toHaveAttribute('data-overflow', 'none');
+
+      contentHeight = 400;
+      fireEvent.change(textarea, { target: { value: 'many\nlines\nof\ntext' } });
+      expect(textarea.style.height).toBe('150px');
+      expect(textarea).toHaveAttribute('data-overflow', 'scroll');
+
+      contentHeight = 10;
+      fireEvent.change(textarea, { target: { value: 'x' } });
+      expect(textarea.style.height).toBe('40px');
+      expect(textarea).toHaveAttribute('data-overflow', 'none');
     });
   });
 
@@ -466,6 +481,32 @@ describe('ChatInput', () => {
       fireEvent.click(removeBtn);
 
       expect(screen.queryByRole('button', { name: /remove/i })).not.toBeInTheDocument();
+    });
+  });
+
+  // Lumen phase 5 review (F2): the composer's icon-only controls are IconButtons
+  // (accessible name + tooltip, design-language.md section 4). The composer sits at the
+  // bottom of the page, so the tooltips open upward (placement 'top').
+  describe('Icon button tooltips', () => {
+    it('Send, Clear and Stop show an upward tooltip on focus', () => {
+      const { rerender } = render(<ChatInput onSend={vi.fn()} isLoading={false} onCancel={vi.fn()} />);
+      fireEvent.change(screen.getByRole('textbox', { name: 'Message input' }), { target: { value: 'hi' } });
+
+      for (const name of ['Send message', 'Clear input']) {
+        const btn = screen.getByRole('button', { name });
+        fireEvent.focus(btn);
+        const tip = screen.getByRole('tooltip');
+        expect(tip).toHaveTextContent(name);
+        expect(tip).toHaveClass('ui-tooltip--top');
+        fireEvent.blur(btn);
+        expect(screen.queryByRole('tooltip')).toBeNull();
+      }
+
+      rerender(<ChatInput onSend={vi.fn()} isLoading={true} onCancel={vi.fn()} />);
+      const stop = screen.getByRole('button', { name: 'Stop generation' });
+      fireEvent.focus(stop);
+      expect(screen.getByRole('tooltip')).toHaveTextContent('Stop generation');
+      expect(screen.getByRole('tooltip')).toHaveClass('ui-tooltip--top');
     });
   });
 });

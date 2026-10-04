@@ -14,6 +14,9 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Button } from '../ui';
+import { cx } from '../ui/cx';
+import '../pages/chat.css';
 
 /** Schemes allowed in rendered links. Everything else (javascript:, data:,
  *  blob:, file:, …) is stripped. N10 additionally rejects scheme-less URLs
@@ -73,52 +76,20 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code }) => {
   }, [code]);
 
   return (
-    <div style={{ margin: 'var(--spacing-sm) 0', position: 'relative' }}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: 'var(--color-bubble-system)',
-          color: 'var(--color-text-muted)',
-          fontSize: 'var(--font-size-caption)',
-          fontFamily: 'var(--font-family)',
-          padding: 'var(--spacing-xs) var(--spacing-sm)',
-          borderRadius: '6px 6px 0 0',
-          borderBottom: '1px solid var(--color-bubble-system)',
-        }}
-      >
+    <div className="chat-md__codeblock">
+      <div className="chat-md__codehead">
         <span>{language || 'code'}</span>
-        <button
-          type="button"
-          className="bubble-action"
+        <Button
+          variant="ghost"
+          size="sm"
+          className="chat-md__copy"
           onClick={handleCopy}
           aria-label={copied ? 'Copied code to clipboard' : 'Copy code to clipboard'}
-          style={{
-            background: 'transparent',
-            border: '1px solid var(--color-bubble-system)',
-            borderRadius: 'var(--radius-sm)',
-            cursor: 'pointer',
-            padding: 'var(--spacing-xs) var(--spacing-sm)',
-            fontSize: 'var(--font-size-caption)',
-            fontFamily: 'var(--font-family)',
-            color: 'var(--color-text-muted)',
-          }}
         >
           {copied ? 'Copied!' : 'Copy'}
-        </button>
+        </Button>
       </div>
-      <pre
-        style={{
-          backgroundColor: 'var(--color-bubble-system)',
-          padding: 'var(--spacing-md)',
-          borderRadius: '0 0 6px 6px',
-          overflowX: 'auto',
-          fontFamily: 'monospace',
-          fontSize: 'var(--font-size-body)',
-          margin: 0,
-        }}
-      >
+      <pre className="chat-md__pre">
         <code>{code}</code>
       </pre>
     </div>
@@ -185,7 +156,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
   }, []);
 
   return (
-    <div style={{ fontFamily: 'var(--font-family)', lineHeight: 'var(--line-height-body)', wordBreak: 'break-word' }}>
+    <div className="chat-md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         urlTransform={allowlistUrlTransform}
@@ -210,13 +181,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
             }
             return (
               <code
-                style={{
-                  backgroundColor: 'var(--color-bubble-system)',
-                  padding: '1px 4px',
-                  borderRadius: '3px',
-                  fontFamily: 'monospace',
-                  fontSize: '0.95em',
-                }}
+                className="chat-md__code"
                 {...rest}
               >
                 {children}
@@ -234,7 +199,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ color: 'var(--color-primary)', textDecoration: 'underline' }}
+                className="chat-md__link"
                 {...rest}
               >
                 {children}
@@ -243,13 +208,9 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
           },
           table({ children, ...rest }) {
             return (
-              <div style={{ overflowX: 'auto', margin: 'var(--spacing-sm) 0' }}>
+              <div className="chat-md__tablewrap">
                 <table
-                  style={{
-                    borderCollapse: 'collapse',
-                    width: '100%',
-                    fontSize: 'var(--font-size-body)',
-                  }}
+                  className="chat-md__table"
                   {...rest}
                 >
                   {children}
@@ -260,13 +221,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
           th({ children, ...rest }) {
             return (
               <th
-                style={{
-                  border: '1px solid var(--color-bubble-system)',
-                  padding: 'var(--spacing-xs) var(--spacing-sm)',
-                  textAlign: 'left',
-                  backgroundColor: 'var(--color-bubble-system)',
-                  fontWeight: 600,
-                }}
+                className="chat-md__th"
                 {...rest}
               >
                 {children}
@@ -276,10 +231,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
           td({ children, ...rest }) {
             return (
               <td
-                style={{
-                  border: '1px solid var(--color-bubble-system)',
-                  padding: 'var(--spacing-xs) var(--spacing-sm)',
-                }}
+                className="chat-md__td"
                 {...rest}
               >
                 {children}
@@ -289,13 +241,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
           blockquote({ children, ...rest }) {
             return (
               <blockquote
-                style={{
-                  margin: 'var(--spacing-sm) 0',
-                  paddingLeft: 'var(--spacing-md)',
-                  borderLeft: '3px solid var(--color-secondary)',
-                  color: 'var(--color-text-muted)',
-                  fontStyle: 'italic',
-                }}
+                className="chat-md__quote"
                 {...rest}
               >
                 {children}
@@ -305,39 +251,35 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
           hr({ ...rest }) {
             return (
               <hr
-                style={{
-                  border: 'none',
-                  borderTop: '1px solid var(--color-bubble-system)',
-                  margin: 'var(--spacing-md) 0',
-                }}
+                className="chat-md__hr"
                 {...rest}
               />
             );
           },
           ul({ children, ...rest }) {
             return (
-              <ul style={{ margin: 'var(--spacing-sm) 0', paddingLeft: 'var(--spacing-xl)' }} {...rest}>
+              <ul {...rest} className={cx('chat-md__list', rest.className)}>
                 {children}
               </ul>
             );
           },
           ol({ children, ...rest }) {
             return (
-              <ol style={{ margin: 'var(--spacing-sm) 0', paddingLeft: 'var(--spacing-xl)' }} {...rest}>
+              <ol {...rest} className={cx('chat-md__list', rest.className)}>
                 {children}
               </ol>
             );
           },
           li({ children, ...rest }) {
             return (
-              <li style={{ marginBottom: 'var(--spacing-xs)' }} {...rest}>
+              <li {...rest} className={cx('chat-md__li', rest.className)}>
                 {children}
               </li>
             );
           },
           p({ children, ...rest }) {
             return (
-              <p style={{ margin: 'var(--spacing-sm) 0' }} {...rest}>
+              <p className="chat-md__p" {...rest}>
                 {children}
               </p>
             );
@@ -356,26 +298,10 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = React.memo(({ c
   );
 });
 
-/** Map heading levels onto the existing font-size tokens. */
-const HEADING_STYLES: Record<number, React.CSSProperties> = {
-  1: { fontSize: 'var(--font-size-display)', marginTop: 'var(--spacing-lg)', marginBottom: 'var(--spacing-sm)' },
-  2: { fontSize: 'var(--font-size-h1)', marginTop: 'var(--spacing-lg)', marginBottom: 'var(--spacing-sm)' },
-  3: { fontSize: 'var(--font-size-h2)', marginTop: 'var(--spacing-md)', marginBottom: 'var(--spacing-xs)' },
-  4: { fontSize: 'var(--font-size-h3)', marginTop: 'var(--spacing-md)', marginBottom: 'var(--spacing-xs)' },
-  5: { fontSize: 'var(--font-size-body)', marginTop: 'var(--spacing-sm)', marginBottom: 'var(--spacing-xs)' },
-  6: { fontSize: 'var(--font-size-caption)', marginTop: 'var(--spacing-sm)', marginBottom: 'var(--spacing-xs)' },
-};
-
-const SHARED_HEADING_STYLE: React.CSSProperties = {
-  fontWeight: 600,
-  fontFamily: 'var(--font-family)',
-  color: 'var(--color-text-primary)',
-  lineHeight: 'var(--line-height-tight)',
-};
-
+/** Heading levels map onto the Lumen type scale in pages/chat.css (.chat-md__h1..h6). */
 const Heading: React.FC<{ level: 1 | 2 | 3 | 4 | 5 | 6; children?: React.ReactNode }> = ({ level, children }) => {
   const Tag = (`h${level}` as 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6');
-  return <Tag style={{ ...SHARED_HEADING_STYLE, ...HEADING_STYLES[level] }}>{children}</Tag>;
+  return <Tag className={`chat-md__h chat-md__h${level}`}>{children}</Tag>;
 };
 
 MarkdownRenderer.displayName = 'MarkdownRenderer';

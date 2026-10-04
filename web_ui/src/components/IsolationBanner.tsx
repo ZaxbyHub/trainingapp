@@ -9,35 +9,14 @@
  * returns on reload until the underlying misconfiguration is fixed.
  */
 
-import { useState, useEffect, type CSSProperties } from 'react';
+import { useState, useEffect } from 'react';
+import { Banner, Button } from '../ui';
+import '../pages/chat.css';
 
 // Module-level dismissal so the banner stays hidden for the rest of the session
 // after the user dismisses it, but re-appears on a fresh page load if the
 // misconfiguration persists.
 let sessionDismissed = false;
-
-const bannerStyle: CSSProperties = {
-  backgroundColor: 'var(--color-warning)',
-  color: 'var(--color-text-on-warning, #1a1300)',
-  padding: 'var(--spacing-sm) var(--spacing-md)',
-  fontSize: 'var(--font-size-caption)',
-  fontFamily: 'var(--font-family)',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: 'var(--spacing-md)',
-  borderBottom: '1px solid rgba(0,0,0,0.1)',
-};
-
-const dismissButtonStyle: CSSProperties = {
-  background: 'transparent',
-  border: '1px solid currentColor',
-  color: 'inherit',
-  fontSize: 'var(--font-size-caption)',
-  padding: '2px var(--spacing-sm)',
-  borderRadius: 'var(--radius-sm)',
-  cursor: 'pointer',
-};
 
 /**
  * Banner component. Reads `crossOriginIsolated` once at mount (it cannot change
@@ -66,20 +45,19 @@ export function IsolationBanner(): JSX.Element | null {
     setDismissed(true);
   };
 
+  // Lumen phase 5: the ui Banner (tone warning keeps role="alert").
   return (
-    <div role="alert" style={bannerStyle}>
-      <span>
-        This deployment is misconfigured — responses will be several times slower.
-        Cross-Origin Isolation is off. See the packaging guide.
-      </span>
-      <button
-        type="button"
-        style={dismissButtonStyle}
-        onClick={handleDismiss}
-        aria-label="Dismiss misconfiguration banner"
-      >
-        Dismiss
-      </button>
-    </div>
+    <Banner
+      tone="warning"
+      className="chat-isolation"
+      action={
+        <Button size="sm" onClick={handleDismiss} aria-label="Dismiss misconfiguration banner">
+          Dismiss
+        </Button>
+      }
+    >
+      This deployment is misconfigured — responses will be several times slower.
+      Cross-Origin Isolation is off. See the packaging guide.
+    </Banner>
   );
 }

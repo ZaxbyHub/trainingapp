@@ -95,6 +95,59 @@ describe('Dialog', () => {
 });
 
 describe('Tooltip', () => {
+  it('hoverable (WCAG 1.4.13): moving from the trigger onto the tooltip keeps it open; leaving both closes it', () => {
+    render(
+      <Tooltip content="Detail text">
+        <button type="button">Go</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    fireEvent.mouseOver(btn);
+    const tip = screen.getByRole('tooltip');
+    // Pointer moves trigger -> tooltip (a descendant of the wrapper): stays open.
+    fireEvent.mouseOut(btn, { relatedTarget: tip });
+    fireEvent.mouseOver(tip, { relatedTarget: btn });
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Pointer leaves the tooltip for something outside: closes.
+    fireEvent.mouseOut(tip, { relatedTarget: document.body });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('Escape still dismisses an open (hovered) tooltip', () => {
+    render(
+      <Tooltip content="Detail text">
+        <button type="button">Go</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    fireEvent.mouseOver(btn);
+    fireEvent.keyDown(btn, { key: 'Escape' });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('describe={false}: the open tooltip has readable text but is not added to the trigger description', () => {
+    render(
+      <Tooltip content="Extra detail" describe={false}>
+        <button type="button" aria-describedby="own">Go</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    fireEvent.focus(btn);
+    expect(screen.getByRole('tooltip')).toHaveAccessibleName('Extra detail');
+    expect(btn.getAttribute('aria-describedby')).toBe('own');
+  });
+
+  it('default: the open tooltip is added to the trigger description (unchanged behaviour)', () => {
+    render(
+      <Tooltip content="Extra detail">
+        <button type="button">Go</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    fireEvent.focus(btn);
+    expect(btn).toHaveAccessibleDescription('Extra detail');
+  });
+
   it("placement 'end' renders beside the trigger and skips the below-trigger viewport shift", async () => {
     render(
       <Tooltip content="Documents" placement="end">
@@ -105,6 +158,29 @@ describe('Tooltip', () => {
     const tip = screen.getByRole('tooltip');
     expect(tip).toHaveClass('ui-tooltip', 'ui-tooltip--end');
     expect(tip.style.getPropertyValue('--ui-tooltip-shift')).toBe('');
+  });
+
+  it("placement 'top' renders above the trigger and still clamps horizontally into the viewport", async () => {
+    render(
+      <Tooltip content="Send message" placement="top">
+        <button type="button" aria-label="Send message">S</button>
+      </Tooltip>
+    );
+    // Measured unshifted, the tip overflows a 500px viewport on the right by 14px.
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      left: 400, right: 506, top: 0, bottom: 20, width: 106, height: 20, x: 400, y: 0, toJSON: () => ({}),
+    } as DOMRect);
+    const cw = vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(500);
+    try {
+      await userEvent.tab();
+      const tip = screen.getByRole('tooltip');
+      expect(tip).toHaveClass('ui-tooltip', 'ui-tooltip--top');
+      expect(tip).not.toHaveClass('ui-tooltip--end');
+      expect(tip.style.getPropertyValue('--ui-tooltip-shift')).toBe('-14px');
+    } finally {
+      rect.mockRestore();
+      cw.mockRestore();
+    }
   });
 
   it('appears on keyboard focus, describes the trigger, and Escape dismisses', async () => {

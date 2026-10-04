@@ -53,8 +53,10 @@ describe('ChatMessageBubble', () => {
       };
 
       const { container } = render(<ChatMessageBubble message={message} />);
-      const bubble = container.querySelector('[style*="justify-content: flex-end"]');
+      // Lumen phase 5: right alignment is the chat-msg--user row (pages/chat.css).
+      const bubble = container.querySelector('[data-role="user"]');
       expect(bubble).toBeInTheDocument();
+      expect(bubble).toHaveClass('chat-msg', 'chat-msg--user');
     });
 
     it('shows relative time for user message', () => {
@@ -105,8 +107,9 @@ describe('ChatMessageBubble', () => {
       };
 
       const { container } = render(<ChatMessageBubble message={message} />);
-      const bubble = container.querySelector('[style*="justify-content: flex-start"]');
+      const bubble = container.querySelector('[data-role="assistant"]');
       expect(bubble).toBeInTheDocument();
+      expect(bubble).toHaveClass('chat-msg', 'chat-msg--assistant');
     });
 
     it('shows streaming cursor when isStreaming is true', () => {
@@ -120,9 +123,10 @@ describe('ChatMessageBubble', () => {
 
       render(<ChatMessageBubble message={message} />);
 
-      // Cursor is rendered as a span with blink animation
-      const cursor = document.querySelector('span[aria-hidden="true"]');
+      // Cursor is a decorative (aria-hidden) span; its blink lives in pages/chat.css.
+      const cursor = document.querySelector('span.chat-msg__cursor');
       expect(cursor).toBeInTheDocument();
+      expect(cursor).toHaveAttribute('aria-hidden', 'true');
     });
 
     it('does not show streaming cursor when isStreaming is false', () => {
@@ -136,7 +140,7 @@ describe('ChatMessageBubble', () => {
 
       render(<ChatMessageBubble message={message} />);
 
-      const cursor = document.querySelector('span[style*="animation: blink"]');
+      const cursor = document.querySelector('span.chat-msg__cursor');
       expect(cursor).not.toBeInTheDocument();
     });
   });
@@ -151,8 +155,9 @@ describe('ChatMessageBubble', () => {
       };
 
       const { container } = render(<ChatMessageBubble message={message} />);
-      const bubble = container.querySelector('[style*="justify-content: center"]');
+      const bubble = container.querySelector('[data-role="system"]');
       expect(bubble).toBeInTheDocument();
+      expect(bubble).toHaveClass('chat-msg', 'chat-msg--system');
       expect(screen.getByText('System notification')).toBeInTheDocument();
     });
 
@@ -199,7 +204,7 @@ describe('ChatMessageBubble', () => {
 
       render(<ChatMessageBubble message={message} />);
 
-      const bubble = document.querySelector('[style*="justify-content: flex-start"]');
+      const bubble = document.querySelector('[data-role="assistant"]');
       fireEvent.mouseEnter(bubble!);
 
       await waitFor(() => {
@@ -293,6 +298,28 @@ describe('ChatMessageBubble', () => {
       expect(container.firstChild).not.toBeNull();
     });
 
+    it('PRE-1: an empty assistant message has no Copy button and no meta row (nothing to copy, nothing to act on)', () => {
+      const message: ChatMessage = { id: 'a-empty', role: 'assistant', content: '', timestamp: Date.now() };
+      const { container } = render(<ChatMessageBubble message={message} />);
+      expect(screen.queryByRole('button', { name: /copy message/i })).toBeNull();
+      expect(container.querySelector('.chat-msg__meta')).toBeNull();
+    });
+
+    it('PRE-1: an empty assistant message that can be regenerated keeps Regenerate but still no Copy', async () => {
+      const onRegenerate = vi.fn();
+      const message: ChatMessage = { id: 'a-empty2', role: 'assistant', content: '', timestamp: Date.now() };
+      render(<ChatMessageBubble message={message} onRegenerate={onRegenerate} />);
+      expect(screen.queryByRole('button', { name: /copy message/i })).toBeNull();
+      expect(screen.getByRole('button', { name: /regenerate response/i })).toBeInTheDocument();
+      expect(mockClipboard.writeText).not.toHaveBeenCalled();
+    });
+
+    it('PRE-1: an assistant message with content still offers Copy', () => {
+      const message: ChatMessage = { id: 'a-full', role: 'assistant', content: 'Answer', timestamp: Date.now() };
+      render(<ChatMessageBubble message={message} />);
+      expect(screen.getByRole('button', { name: /copy message/i })).toBeInTheDocument();
+    });
+
     it('handles very long message content', () => {
       const longContent = 'A'.repeat(10000);
       const message: ChatMessage = {
@@ -333,7 +360,7 @@ describe('ChatMessageBubble', () => {
       const { container, unmount } = render(<ChatMessageBubble message={message} />);
 
       // Hover to reveal copy button (with real timers)
-      const bubble = container.querySelector('[style*="justify-content: flex-end"]');
+      const bubble = container.querySelector('[data-role="user"]');
       await userEvent.hover(bubble!);
 
       // Button is now visible, click it to start timer

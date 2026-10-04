@@ -10,8 +10,10 @@
  *    messages). Pills show the basename with copy/expand, as before.
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useId } from 'react';
 import type { CitationRef } from '../types/chat';
+import { Button, Icon } from '../ui';
+import '../pages/chat.css';
 
 interface SourceCitationProps {
   /** Legacy: bare source path/id strings. */
@@ -32,6 +34,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
 
   useEffect(() => {
     return () => {
@@ -88,18 +91,21 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
     setExpandedKey((prev) => (prev === key ? null : key));
   }, []);
 
+  // Pill keyboard contract (unchanged): Enter/Space toggle the popover, Escape closes it.
+  const pillKeyDown = (key: string) => (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handleToggleExpand(key);
+    }
+    if (e.key === 'Escape') {
+      setExpandedKey(null);
+    }
+  };
+
   // ---- Structured citation mode (F7) ----
   if (citations && citations.length > 0) {
     return (
-      <div
-        ref={containerRef}
-        style={{
-          marginTop: 'var(--spacing-sm)',
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 'var(--spacing-xs)',
-        }}
-      >
+      <CitationGroup containerRef={containerRef} listId={listId} count={citations.length}>
         {citations.map((cite, index) => {
           const key = `cite-${index}-${cite.docId}-${cite.chunkIndex}`;
           const label = cite.source ? getBasename(cite.source) : cite.docId;
@@ -111,85 +117,32 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
             cite.packId && cite.packVersion ? ` — ${cite.packId} v${cite.packVersion}` : '';
           const isExpanded = expandedKey === key;
           const isCopied = copiedKey === key;
+          const popoverId = `${listId}-pop-${index}`;
 
-          const pillStyle: React.CSSProperties = {
-            backgroundColor: 'var(--color-source-pill-bg)',
-            padding: '2px 6px',
-            borderRadius: '4px',
-            fontSize: 'var(--font-size-small)',
-            color: 'var(--color-text-muted)',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '4px',
-            maxWidth: '240px',
-            cursor: 'pointer',
-            position: 'relative',
-          };
-
-          const popoverStyle: React.CSSProperties = {
-            position: 'absolute',
-            top: '100%',
-            left: 0,
-            marginTop: '4px',
-            backgroundColor: 'var(--color-surface-elevated)',
-            color: 'var(--color-text-on-bubble-assistant)',
-            padding: 'var(--spacing-sm)',
-            borderRadius: '4px',
-            border: '1px solid var(--color-bubble-system)',
-            fontSize: 'var(--font-size-caption)',
-            zIndex: 10,
-            maxWidth: 'min(60vw, 480px)',
-            whiteSpace: 'normal',
-            wordBreak: 'break-word',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-            lineHeight: 'var(--line-height-body)',
-          };
-
+          // The pill and its Copy button are SIBLINGS inside the chip (a button
+          // nested in a role="button" is an axe nested-interactive violation).
           return (
-            <div
-              key={key}
-              role="button"
-              tabIndex={0}
-              aria-expanded={isExpanded}
-              aria-label={`Source ${index + 1}: ${label}${pageSuffix}${packSuffix}`}
-              style={pillStyle}
-              onClick={() => handleToggleExpand(key)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleToggleExpand(key);
-                }
-                if (e.key === 'Escape') {
-                  setExpandedKey(null);
-                }
-              }}
-            >
-              <span style={{ fontWeight: 600 }}>[{index + 1}]</span>
-              <span
-                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                title={`${label}${pageSuffix}${packSuffix}`}
+            <div key={key} className="chat-cite" data-expanded={isExpanded || undefined}>
+              <div
+                role="button"
+                tabIndex={0}
+                aria-expanded={isExpanded}
+                aria-controls={isExpanded && cite.text ? popoverId : undefined}
+                aria-label={`Source ${index + 1}: ${label}${pageSuffix}${packSuffix}`}
+                className="chat-cite__pill ui-focusable"
+                onClick={() => handleToggleExpand(key)}
+                onKeyDown={pillKeyDown(key)}
               >
-                {label}
-                {pageSuffix}
-                {packSuffix && (
-                  <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>
-                    {packSuffix}
-                  </span>
-                )}
-              </span>
+                <span className="chat-cite__num">[{index + 1}]</span>
+                <span className="chat-cite__label" title={`${label}${pageSuffix}${packSuffix}`}>
+                  {label}
+                  {pageSuffix}
+                  {packSuffix && <span className="chat-cite__pack">{packSuffix}</span>}
+                </span>
+              </div>
               {cite.text && (
                 <button
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    padding: '0',
-                    fontSize: 'var(--font-size-caption)',
-                    color: 'var(--color-text-muted)',
-                    opacity: isCopied ? 0.7 : 0.5,
-                    transition: 'opacity 0.15s ease',
-                    flexShrink: 0,
-                  }}
+                  className="chat-cite__copy ui-focusable"
                   onClick={(e) => handleCopy(key, cite.text ?? '', e)}
                   aria-label={isCopied ? 'Copied' : 'Copy source text'}
                   type="button"
@@ -198,14 +151,14 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
                 </button>
               )}
               {isExpanded && cite.text && (
-                <div style={popoverStyle} onClick={(e) => e.stopPropagation()}>
+                <div id={popoverId} className="chat-cite__popover" onClick={(e) => e.stopPropagation()}>
                   {cite.text}
                 </div>
               )}
             </div>
           );
         })}
-      </div>
+      </CitationGroup>
     );
   }
 
@@ -215,87 +168,32 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
   }
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        marginTop: 'var(--spacing-sm)',
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 'var(--spacing-xs)',
-      }}
-    >
+    <CitationGroup containerRef={containerRef} listId={listId} count={sources.length}>
       {sources.map((source, index) => {
         const filename = getBasename(source);
         const key = `source-${index}-${source}`;
         const isExpanded = expandedKey === key;
         const isCopied = copiedKey === key;
-
-        const pillStyle: React.CSSProperties = {
-          backgroundColor: 'var(--color-source-pill-bg)',
-          padding: '2px 6px',
-          borderRadius: '4px',
-          fontSize: 'var(--font-size-small)',
-          color: 'var(--color-text-muted)',
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '4px',
-          maxWidth: '200px',
-          cursor: 'pointer',
-          position: 'relative',
-        };
-
-        const legacyPopoverStyle: React.CSSProperties = {
-          position: 'absolute',
-          top: '100%',
-          left: 0,
-          marginTop: '4px',
-          backgroundColor: 'var(--color-surface-elevated)',
-          color: 'var(--color-text-on-bubble-assistant)',
-          padding: 'var(--spacing-xs)',
-          borderRadius: '4px',
-          border: '1px solid var(--color-bubble-system)',
-          fontSize: 'var(--font-size-caption)',
-          zIndex: 10,
-          maxWidth: 'min(60vw, 480px)',
-          whiteSpace: 'normal',
-          wordBreak: 'break-all',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-        };
+        const popoverId = `${listId}-pop-${index}`;
 
         return (
-          <div
-            key={key}
-            role="button"
-            tabIndex={0}
-            aria-expanded={isExpanded}
-            aria-label={`Source ${index + 1}: ${filename}`}
-            style={pillStyle}
-            onClick={() => handleToggleExpand(key)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                handleToggleExpand(key);
-              }
-              if (e.key === 'Escape') {
-                setExpandedKey(null);
-              }
-            }}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={source}>
-              {filename}
-            </span>
+          <div key={key} className="chat-cite chat-cite--legacy" data-expanded={isExpanded || undefined}>
+            <div
+              role="button"
+              tabIndex={0}
+              aria-expanded={isExpanded}
+              aria-controls={isExpanded ? popoverId : undefined}
+              aria-label={`Source ${index + 1}: ${filename}`}
+              className="chat-cite__pill ui-focusable"
+              onClick={() => handleToggleExpand(key)}
+              onKeyDown={pillKeyDown(key)}
+            >
+              <span className="chat-cite__label" title={source}>
+                {filename}
+              </span>
+            </div>
             <button
-              style={{
-                background: 'transparent',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '0',
-                fontSize: 'var(--font-size-caption)',
-                color: 'var(--color-text-muted)',
-                opacity: isCopied ? 0.7 : 0.5,
-                transition: 'opacity 0.15s ease',
-                flexShrink: 0,
-              }}
+              className="chat-cite__copy ui-focusable"
               onClick={(e) => handleCopy(key, source, e)}
               aria-label={isCopied ? 'Copied' : 'Copy source path'}
               type="button"
@@ -303,15 +201,51 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
               {isCopied ? '✓' : 'Copy'}
             </button>
             {isExpanded && (
-              <div style={legacyPopoverStyle} onClick={(e) => e.stopPropagation()}>
+              <div id={popoverId} className="chat-cite__popover chat-cite__popover--path" onClick={(e) => e.stopPropagation()}>
                 {source}
               </div>
             )}
           </div>
         );
       })}
-    </div>
+    </CitationGroup>
   );
 });
+
+/**
+ * Wrapper shared by both modes. At <= 500px (design-language.md section 3.5) the
+ * chips collapse behind a count chip ("2 sources"); the toggle and the collapse are
+ * CSS-driven (chat.css), so wider layouts never show the toggle.
+ */
+function CitationGroup({
+  containerRef,
+  listId,
+  count,
+  children,
+}: {
+  containerRef: React.RefObject<HTMLDivElement>;
+  listId: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div ref={containerRef} className="chat-cites">
+      <Button
+        size="sm"
+        className="chat-cites__toggle"
+        aria-expanded={open}
+        aria-controls={listId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {count} {count === 1 ? 'source' : 'sources'}
+        <Icon name={open ? 'chevron-down' : 'chevron-right'} size={16} />
+      </Button>
+      <div id={listId} className="chat-cites__list" data-collapsed={open ? 'false' : 'true'}>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 SourceCitation.displayName = 'SourceCitation';

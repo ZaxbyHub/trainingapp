@@ -1,16 +1,20 @@
 /**
  * Inference mode toggle component - shows current mode and allows switching.
- * Displays status indicator (green/yellow/red) based on mode readiness.
+ * Displays a status dot plus a status word (never color alone; Lumen phase 5)
+ * based on mode readiness. Rendered only inside the desktop app.
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useInferenceMode, type InferenceMode } from '../lib/inference';
 import { isElectron } from '../lib/desktop-session';
+import { Button } from '../ui';
+import '../pages/chat.css';
 
 export function InferenceModeToggle() {
   const {
     mode,
     isModelReady,
+    modelLoadingProgress,
     isServerConnected,
     modeError,
     serverUrl,
@@ -41,16 +45,26 @@ export function InferenceModeToggle() {
     }
   }, [mode, setMode, checkServerConnectivity]);
 
-  const getStatusColor = (): string => {
+  // Honest state (review F3): "Loading…" only while a load is actually running.
+  // modelLoadingProgress is strictly between 0 and 100 exactly while a load reports
+  // progress (the same signal ChatPage's composer indicator uses); otherwise a model
+  // that is not ready is simply not loaded (weights absent, not cached, or never
+  // requested), and saying "Loading…" would be a lie.
+  const loadInProgress = modelLoadingProgress > 0 && modelLoadingProgress < 100;
+
+  type StatusTone = 'ok' | 'pending' | 'error';
+  /** word === null: no visible word (the page already shows the state). */
+  const getStatus = (): { tone: StatusTone; word: string | null } => {
     if (mode === 'browser-local') {
-      if (isModelReady) return '#22c55e'; // green
-      return '#eab308'; // yellow - loading
+      if (isModelReady) return { tone: 'ok', word: 'Ready' };
+      return loadInProgress ? { tone: 'pending', word: 'Loading…' } : { tone: 'pending', word: 'Not ready' };
     }
     // API mode
-    if (isChecking) return '#eab308'; // yellow - checking
-    if (isServerConnected) return '#22c55e'; // green
-    if (modeError) return '#ef4444'; // red - error
-    return '#eab308'; // yellow - not checked or checking
+    if (isChecking) return { tone: 'pending', word: 'Checking…' };
+    if (isServerConnected) return { tone: 'ok', word: 'Connected' };
+    // Review F8: ChatPage already shows a "Server not connected" pill in this state,
+    // so the toggle does not repeat it visibly (the hidden sentence still reads it).
+    return { tone: modeError ? 'error' : 'pending', word: null };
   };
 
   const getModeLabel = (): string => {
@@ -62,7 +76,8 @@ export function InferenceModeToggle() {
   const getTooltipText = (): string => {
     if (mode === 'browser-local') {
       if (isModelReady) return 'In this window (model ready)';
-      return 'In this window (model loading...)';
+      if (loadInProgress) return `In this window (model loading, ${Math.round(modelLoadingProgress)}%)`;
+      return 'In this window (model not loaded)';
     }
     if (isChecking) return 'Desktop backend (checking connectivity...)';
     if (isServerConnected) return 'Desktop backend (connected)';
@@ -70,7 +85,7 @@ export function InferenceModeToggle() {
     return 'Desktop backend (not connected)';
   };
 
-  const statusColor = getStatusColor();
+  const status = getStatus();
 
   // U7b air-gap safety: the toggle is a one-click flip to API mode, so only
   // render it when the desktop app's built-in backend is the target
@@ -82,58 +97,37 @@ export function InferenceModeToggle() {
   }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)' }}>
-      {/* Status indicator dot */}
-      <div
+    <div className="chat-mode">
+      {/* Status indicator dot (decorative; the status word carries the state) */}
+      <span
         title={getTooltipText()}
-        style={{
-          width: 8,
-          height: 8,
-          borderRadius: '50%',
-          backgroundColor: statusColor,
-          transition: 'background-color 0.2s ease',
-        }}
+        aria-hidden="true"
+        className={`chat-mode__dot chat-mode__dot--${status.tone}`}
+        data-status={status.tone}
       />
 
-      {/* U7b: visible mode label next to the dot, so the current mode is
-          legible without hovering for the tooltip. */}
-      <span
-        aria-label={getTooltipText()}
-        style={{
-          fontSize: 'var(--font-size-caption)',
-          fontFamily: 'var(--font-family)',
-          color: 'var(--color-text-muted)',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {getModeLabel()}
+      {/* U7b: the current state is legible without hovering for the tooltip.
+          The full tooltip sentence is exposed as visually hidden text (aria-label
+          is not allowed on a role-less span). */}
+      <span className="chat-mode__status" title={getTooltipText()} data-testid="inference-mode-status">
+        {status.word}
+        <span className="ui-visually-hidden">{status.word ? ' ' : ''}({getTooltipText()})</span>
       </span>
 
-      {/* Mode toggle button */}
-      <button
-        type="button"
+      {/* Mode toggle button: its visible label is the current mode. */}
+      <Button
+        size="sm"
+        variant="secondary"
         onClick={handleToggle}
         disabled={isChecking}
+        aria-disabled={isChecking || undefined}
         title={getTooltipText()}
         aria-pressed={mode === 'api'}
-        aria-label={`Inference mode: ${mode}. Click to toggle.`}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 'var(--spacing-xs)',
-          padding: 'var(--spacing-xs) var(--spacing-sm)',
-          backgroundColor: 'transparent',
-          border: '1px solid var(--color-text-muted)',
-          borderRadius: '4px',
-          color: 'var(--color-text-muted)',
-          fontSize: 'var(--font-size-caption)',
-          fontFamily: 'var(--font-family)',
-          cursor: 'pointer',
-          transition: 'all 0.15s ease',
-        }}
+        // WCAG 2.5.3 (review F8): the accessible name contains the visible label.
+        aria-label={`Inference mode: ${getModeLabel()}. Click to toggle.`}
       >
-        <span style={{ fontWeight: 500 }}>{getModeLabel()}</span>
-      </button>
+        {getModeLabel()}
+      </Button>
     </div>
   );
 }

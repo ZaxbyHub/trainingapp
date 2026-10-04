@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { ThemeProvider } from './lib/theme';
 import { ToastProvider } from './components/ToastProvider';
 import { InferenceModeProvider, useInferenceMode } from './lib/inference/InferenceModeContext';
+import { MODEL_CONNECTION_SECTION_ID } from './lib/settings-sections';
 import { seedInferenceModeForDesktop as seedInferenceModeForDesktopImpl } from './lib/inference/desktop-seed';
 import {
   DesktopSessionProvider,
@@ -184,6 +185,9 @@ function AppContent() {
   // for (null = top of the page), e.g. the model-blocked overlay's external
   // model action.
   const [settingsSection, setSettingsSection] = useState<string | null>(null);
+  // Bumped on every openSettings call so a repeated request for the section Settings
+  // already targets (same state value, no re-render) still scrolls and focuses it.
+  const [settingsRequest, setSettingsRequest] = useState(0);
   // D6 (issue #82): lifted training navigation target so a chat-side
   // "Open in training" deep link survives the page switch and is consumed by
   // TrainingPage → TrainingPlayer's initialSlideId auto-jump.
@@ -233,6 +237,7 @@ function AppContent() {
   // a click event, so only a string counts as a section request.
   const openSettings = (section?: unknown) => {
     setSettingsSection(typeof section === 'string' ? section : null);
+    setSettingsRequest((n) => n + 1);
     setCurrentPage('settings');
   };
   const goToDocuments = () => setCurrentPage('documents');
@@ -362,7 +367,7 @@ function AppContent() {
       case 'settings':
         return (
           <ErrorBoundary>
-            <SettingsPage initialSection={settingsSection ?? undefined} />
+            <SettingsPage initialSection={settingsSection ?? undefined} sectionRequest={settingsRequest} />
           </ErrorBoundary>
         );
       case 'training':
@@ -397,6 +402,7 @@ function AppContent() {
       searchResults={searchResults}
       searchTruncated={searchTruncated}
       isSearching={isSearching}
+      onOpenModelSettings={() => openSettings(MODEL_CONNECTION_SECTION_ID)}
     >
       {/* E2 (issue #85): first-run validation wizard gate — renders the
           overlay only when a first run (or drift re-run) is needed. */}

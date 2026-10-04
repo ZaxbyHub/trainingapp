@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AppShell, DRAWER_MEDIA_QUERY, SideNav, type SideNavItem } from './index';
+import { AppShell, DRAWER_MEDIA_QUERY, SideNav, useAppShell, type SideNavItem } from './index';
 
 const ITEMS: readonly SideNavItem[] = [
   { id: 'chat', label: 'Chat', icon: 'message-square' },
@@ -389,5 +389,28 @@ describe('AppShell drawer (<= 768px)', () => {
     // Narrowing again starts closed (the drawer state is never persisted).
     media.set(true);
     expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveAttribute('aria-expanded', 'false');
+  });
+});
+
+describe('AppShell closeDrawer while the drawer is closed (NIT-1)', () => {
+  it('ignores a close request made while closed, so its callback cannot run on a later close', () => {
+    const afterNavigate = vi.fn(() => true);
+    let close: ReturnType<typeof useAppShell>['closeDrawer'] | null = null;
+    function Probe() {
+      close = useAppShell().closeDrawer;
+      return null;
+    }
+    media = stubMatchMedia(true);
+    render(
+      <AppShell productName="TrainingApp" collapsed={false} onToggleCollapsed={() => {}} sidebar={<Probe />}>
+        <h1>page</h1>
+      </AppShell>
+    );
+    // Drawer mode but not open: this must not leave a pending focus step behind.
+    act(() => close!('navigate', afterNavigate));
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    // Widening drops the open drawer without going through closeDrawer.
+    media.set(false);
+    expect(afterNavigate).not.toHaveBeenCalled();
   });
 });

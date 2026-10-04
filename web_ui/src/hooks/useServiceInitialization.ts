@@ -146,7 +146,10 @@ export const useServiceInitialization: UseServiceInitialization = ({
     // Step 1 only: lightweight search services on boot (fast, <100ms).
     // Embedding model and readiness gate are deferred to first use via ensure*() exports.
     setCurrentStep('Initializing search services...');
-    setModelLoadingProgress(10);
+    // Deliberately no setModelLoadingProgress(10) here: that value is the LLM-load
+    // progress (InferenceModeToggle "Loading…", ModelBlockedOverlay bar, ChatPage
+    // composer indicator). Search-services boot is not a model load, so it must not
+    // drive it; the terminal 100 below still marks boot complete.
 
     try {
       const vectorIndex = getVectorIndex();

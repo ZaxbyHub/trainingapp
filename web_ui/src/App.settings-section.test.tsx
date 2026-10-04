@@ -81,8 +81,8 @@ vi.mock('./pages/DocumentsPage', () => ({
 }));
 
 vi.mock('./pages/SettingsPage', () => ({
-  SettingsPage: ({ initialSection }: { initialSection?: string }) => (
-    <div data-testid="settings-page-stub" data-section={initialSection ?? 'none'}>
+  SettingsPage: ({ initialSection, sectionRequest }: { initialSection?: string; sectionRequest?: number }) => (
+    <div data-testid="settings-page-stub" data-section={initialSection ?? 'none'} data-request={sectionRequest}>
       Settings Page
     </div>
   ),
@@ -114,5 +114,21 @@ describe('App openSettings(section) seam (settings-wiring-honesty AC10)', () => 
     fireEvent.click(screen.getByRole('button', { name: 'Chat' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
     expect((await screen.findByTestId('settings-page-stub')).getAttribute('data-section')).toBe('none');
+  });
+
+  // Review L3: React skips the re-render when the same section is set again, so a
+  // repeated request must still change a prop (the request counter) for Settings to
+  // re-run its scroll-and-focus effect.
+  it('requesting the same section again changes the request counter (a re-click re-focuses)', async () => {
+    expect(await openFromChat('stub: external model action')).toBe('model-connection');
+    const request = () => Number(screen.getByTestId('settings-page-stub').getAttribute('data-request'));
+    const first = request();
+    // Settings already targets model-connection; the footer chip asks for it again.
+    fireEvent.click(screen.getByRole('button', { name: /Open model settings/ }));
+    const second = request();
+    expect(screen.getByTestId('settings-page-stub').getAttribute('data-section')).toBe('model-connection');
+    expect(second).toBeGreaterThan(first);
+    fireEvent.click(screen.getByRole('button', { name: /Open model settings/ }));
+    expect(request()).toBeGreaterThan(second);
   });
 });

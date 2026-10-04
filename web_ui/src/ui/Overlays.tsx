@@ -116,8 +116,16 @@ export interface TooltipProps {
    * 'bottom' (default): centred below the trigger, shifted to stay in the viewport.
    * 'end': beside the trigger on its inline-end side (e.g. the shell's icon rail,
    * where a tooltip below would cover the next item).
+   * 'top': centred above the trigger, with the same horizontal viewport shift as
+   * 'bottom' (for bottom-anchored controls such as the chat composer).
    */
-  placement?: 'bottom' | 'end';
+  placement?: 'bottom' | 'end' | 'top';
+  /**
+   * Default true: while shown, the tooltip's id is added to the trigger's aria-describedby.
+   * Pass false when the trigger already has its own persistent description (the tooltip is
+   * then a purely visual duplicate and must not be read a second time).
+   */
+  describe?: boolean;
   /** A single focusable element; it receives aria-describedby. */
   children: ReactElement<{ 'aria-describedby'?: string; 'aria-label'?: string; 'aria-labelledby'?: string }>;
 }
@@ -129,7 +137,7 @@ export interface TooltipProps {
  * disabled control is hover-only (it cannot take focus), so the reason it is disabled
  * must also be stated elsewhere; prefer Button's aria-disabled, which stays focusable.
  */
-export function Tooltip({ content, children, placement = 'bottom' }: TooltipProps) {
+export function Tooltip({ content, children, placement = 'bottom', describe = true }: TooltipProps) {
   const id = useId();
   const [shown, setShown] = useState(false);
   const [labelledDuplicate, setLabelledDuplicate] = useState(false);
@@ -185,7 +193,7 @@ export function Tooltip({ content, children, placement = 'bottom' }: TooltipProp
   // Keep the tooltip inside the viewport: measure unshifted, then apply the correction.
   useLayoutEffect(() => {
     const tip = tipRef.current;
-    if (!shown || !tip || placement !== 'bottom') return;
+    if (!shown || !tip || placement === 'end') return;
     tip.style.setProperty('--ui-tooltip-shift', '0px');
     const shift = computeTooltipShift(tip.getBoundingClientRect(), document.documentElement.clientWidth);
     tip.style.setProperty('--ui-tooltip-shift', `${shift}px`);
@@ -211,9 +219,9 @@ export function Tooltip({ content, children, placement = 'bottom' }: TooltipProp
         }
       }}
     >
-      {cloneElement(children, { 'aria-describedby': mergeIds(shown && !duplicatesName ? id : undefined, children.props['aria-describedby']) })}
+      {cloneElement(children, { 'aria-describedby': mergeIds(describe && shown && !duplicatesName ? id : undefined, children.props['aria-describedby']) })}
       {shown ? (
-        <span ref={tipRef} role="tooltip" id={id} className={cx('ui-tooltip', placement === 'end' && 'ui-tooltip--end')}>
+        <span ref={tipRef} role="tooltip" id={id} className={cx('ui-tooltip', placement === 'end' && 'ui-tooltip--end', placement === 'top' && 'ui-tooltip--top')}>
           {content}
         </span>
       ) : null}
