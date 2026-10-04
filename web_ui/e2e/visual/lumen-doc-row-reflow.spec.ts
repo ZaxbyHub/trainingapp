@@ -43,6 +43,28 @@ const CSS = [
 const SOURCE = stripComments(read('../../src/components/DocumentList.tsx'));
 
 /**
+ * The shell geometry the sweep assumes is READ from the real sources, not retyped: a change to the
+ * sidebar, the rail, the drawer breakpoint or the page padding moves the sweep with it (and a
+ * refactor that hides the value from these patterns fails loudly instead of silently drifting).
+ */
+const TOKENS_CSS = stripComments(read('../../src/styles/lumen-tokens.css'));
+const UI_CSS = stripComments(read('../../src/ui/ui.css'));
+const SHELL_SOURCE = stripComments(read('../../src/ui/AppShell.tsx'));
+const grab = (text: string, pattern: RegExp, what: string): number => {
+  const match = pattern.exec(text);
+  if (match === null) throw new Error(`lumen-doc-row-reflow: cannot find ${what}; update the spec's source pattern`);
+  return Number(match[1]);
+};
+const SIDEBAR_WIDTH = grab(UI_CSS, /\.ui-shell__sidebar\s*\{[^}]*\bwidth:\s*(\d+)px/, 'the expanded sidebar width (ui.css)');
+const RAIL_WIDTH = grab(UI_CSS, /\.ui-shell--collapsed\s+\.ui-shell__sidebar\s*\{[^}]*\bwidth:\s*(\d+)px/, 'the collapsed rail width (ui.css)');
+const DRAWER_MAX_WIDTH = grab(SHELL_SOURCE, /DRAWER_MEDIA_QUERY\s*=\s*'\(max-width:\s*(\d+)px\)'/, 'DRAWER_MEDIA_QUERY (AppShell.tsx)');
+const SPACE_6 = grab(TOKENS_CSS, /--space-6:\s*(\d+)px/, '--space-6 (lumen-tokens.css)');
+const PAGE_PADDING_RULE = /\.app-docs\s*\{[^}]*\bpadding:\s*var\(--space-4\)\s+var\(--space-6\)/;
+const TABLE_BORDER = grab(DOCUMENTS_CSS, /\.app-doc-table\s*\{[^}]*\bborder:\s*(\d+)px\s+solid/, 'the table border (documents.css)');
+/** Horizontal room the page takes around the table above the 500px padding step: padding x2 + border x2. */
+const TABLE_CHROME = 2 * SPACE_6 + 2 * TABLE_BORDER;
+
+/**
  * The uploaded-at date is locale dependent, so the sweep renders several: the real format
  * (DOC_DATE_FORMAT_OPTIONS, the one DocumentList uses) in a few locales, plus a fixed worst case
  * that does not depend on the ICU data of the machine running the spec.
@@ -108,6 +130,14 @@ test('CSS breakpoint and row heights match the constants DocumentList virtualize
   expect(/\.app-doc-table\s*\{[^}]*container-type:\s*inline-size/.test(DOCUMENTS_CSS)).toBe(true);
 });
 
+test('shell geometry is read from the real CSS and the page padding rule is the one assumed', () => {
+  expect(RAIL_WIDTH).toBeLessThan(SIDEBAR_WIDTH);
+  expect(DRAWER_MAX_WIDTH).toBeGreaterThan(500); // the 500px padding step stays inside the drawer range
+  expect(PAGE_PADDING_RULE.test(DOCUMENTS_CSS), '.app-docs pads its sides with var(--space-6)').toBe(true);
+  // Above the 500px step nothing else narrows the table: the content column is the page body.
+  expect(/@media\s*\(max-width:\s*500px\)\s*\{[^}]*\.app-docs\b/.test(DOCUMENTS_CSS)).toBe(true);
+});
+
 test('markup mirrors DocumentList (drift check, comments stripped)', () => {
   for (const cls of [
     'app-doc__icon',
@@ -153,9 +183,10 @@ interface Measure {
 }
 
 /** The critic's clipping band is 761 / 800 / 850 / 901 with the 260px sidebar; 64 is the rail. */
-const SIDEBARS = [64, 260];
-const DRAWER_MAX_WIDTH = 768; // AppShell DRAWER_MEDIA_QUERY
-const VIEWPORTS = [320, 360, 500, 640, 760, 761, 768, 800, 850, 901, 925, 1024, 1100, 1280, 1440];
+const SIDEBARS = [RAIL_WIDTH, SIDEBAR_WIDTH];
+const VIEWPORTS = [
+  ...new Set([320, 360, 500, 640, 760, 761, 768, 800, 850, 901, 925, 1024, 1100, 1280, 1440, DRAWER_MAX_WIDTH, DRAWER_MAX_WIDTH + 1]),
+].sort((a, b) => a - b);
 
 for (const [state, spec] of Object.entries(STATES)) {
   test(`${state} row keeps every control inside the table (drawer, rail 64, sidebar 260; every date locale)`, async ({ page }) => {
@@ -261,7 +292,7 @@ for (const [label, extra, expectHeight] of [
   ['one px above the breakpoint (wide)', 1, ITEM_HEIGHT],
 ] as const) {
   test(`processing and 56-char confirm rows fit ${label}`, async ({ page }) => {
-    await page.setViewportSize({ width: STACKED_MAX_WIDTH + extra + 2 + 48, height: 700 }); // sidebar 0
+    await page.setViewportSize({ width: STACKED_MAX_WIDTH + extra + TABLE_CHROME, height: 700 }); // sidebar 0
     for (const state of ['processing', 'confirm (56-char name)']) {
       await page.setContent(html(STATES[state].cells, 0, expectHeight, DATES['worst case']));
       const m = await page.evaluate(() => {
