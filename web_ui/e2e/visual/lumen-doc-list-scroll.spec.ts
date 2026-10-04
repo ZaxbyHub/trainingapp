@@ -405,6 +405,33 @@ for (const [width, height, layout] of [
   });
 }
 
+// PRE-b: the header Upload button opens the document picker; the page must leave focus on that
+// button (the browser hands focus back to it when the dialog closes). Headless Chromium does not
+// model the OS dialog closing, so this pins what the page controls: opening the chooser, and
+// completing or cancelling it, never moves focus off Upload, from either tab.
+for (const fromTraining of [false, true]) {
+  test(`header Upload keeps focus on its own button around the file chooser (${fromTraining ? 'from the Training packs tab' : 'on the Documents tab'})`, async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.setViewportSize({ width: 1000, height: 760 });
+    await boot(page);
+    if (fromTraining) {
+      await page.getByRole('tab', { name: 'Training packs' }).click();
+      await expect(page.getByRole('tab', { name: 'Training packs' })).toHaveAttribute('aria-selected', 'true');
+    }
+    const upload = page.getByRole('button', { name: 'Upload', exact: true });
+    await upload.focus();
+    const chooser = page.waitForEvent('filechooser');
+    await upload.click();
+    const fileChooser = await chooser;
+    await expect(page.getByRole('tab', { name: 'Documents' })).toHaveAttribute('aria-selected', 'true');
+    await expect(upload).toBeFocused();
+    // Cancelling the dialog (no files) leaves focus where it was.
+    await fileChooser.setFiles([]);
+    await settle(page);
+    await expect(upload).toBeFocused();
+  });
+}
+
 // Review LOW-2: the re-check after a delete must not run for other count changes. With focus in
 // a row that is pinned off screen, an upload (list grows, focus untouched) used to yank the
 // scroll position back to the focused row.
