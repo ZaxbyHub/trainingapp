@@ -82,18 +82,21 @@ function getStatusLabel(status: DocumentEntry['status']): string {
  * next to it already carries the extension.
  */
 type DocKind = 'pdf' | 'doc' | 'sheet' | 'slides' | 'text' | 'other';
-const KIND_BY_EXTENSION: Record<string, DocKind> = {
-  pdf: 'pdf',
-  doc: 'doc',
-  docx: 'doc',
-  xls: 'sheet',
-  xlsx: 'sheet',
-  csv: 'sheet',
-  ppt: 'slides',
-  pptx: 'slides',
-  txt: 'text',
-  md: 'text',
-};
+// A Map, not an object literal: the extension is user-controlled (any file name can be
+// picked under "All Files"), and a plain object would answer `x.constructor` or
+// `x.__proto__` with an inherited member instead of falling through to 'other'.
+const KIND_BY_EXTENSION: ReadonlyMap<string, DocKind> = new Map<string, DocKind>([
+  ['pdf', 'pdf'],
+  ['doc', 'doc'],
+  ['docx', 'doc'],
+  ['xls', 'sheet'],
+  ['xlsx', 'sheet'],
+  ['csv', 'sheet'],
+  ['ppt', 'slides'],
+  ['pptx', 'slides'],
+  ['txt', 'text'],
+  ['md', 'text'],
+]);
 const KIND_ICON: Record<DocKind, IconName> = {
   pdf: 'file-pdf',
   doc: 'file-type',
@@ -105,7 +108,7 @@ const KIND_ICON: Record<DocKind, IconName> = {
 export function documentKind(fileName: string): DocKind {
   const dot = fileName.lastIndexOf('.');
   const extension = dot < 0 ? '' : fileName.slice(dot + 1).toLowerCase();
-  return KIND_BY_EXTENSION[extension] ?? 'other';
+  return KIND_BY_EXTENSION.get(extension) ?? 'other';
 }
 
 /** Content-box width of `el` in CSS px, fractional like the `@container` query

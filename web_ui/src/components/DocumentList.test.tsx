@@ -1000,6 +1000,19 @@ describe('DocumentList', () => {
       expect(documentKind('no-extension')).toBe('other');
     });
 
+    // Review PRR-201: the extension comes from a user-chosen file name.
+    it.each(['x.constructor', 'x.__proto__', 'x.toString', 'x.hasOwnProperty', 'x.valueOf'])(
+      'treats %s as an unknown type instead of an inherited object member',
+      (fileName) => {
+        expect(documentKind(fileName)).toBe('other');
+        const { container } = render(
+          <DocumentList documents={[createDocument({ id: 'a', fileName })]} onDelete={vi.fn()} deletingId={null} />
+        );
+        expect(container.querySelector('.app-doc__icon')?.getAttribute('data-kind')).toBe('other');
+        expect(screen.getByText(fileName)).toBeInTheDocument();
+      }
+    );
+
     it('renders a different type icon per kind in each row', () => {
       const documents = [
         createDocument({ id: 'a', fileName: 'a.pdf' }),
