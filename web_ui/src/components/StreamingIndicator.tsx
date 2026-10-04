@@ -65,15 +65,19 @@ export function StreamingIndicator({ isVisible, modelLoadProgress, modelLoadLabe
   if (isLoadingModel) {
     const pct = Math.max(0, Math.min(100, Math.round(modelLoadProgress ?? 0)));
     return (
+      // PRE-3: the ticking percentage is visual only (aria-hidden, and kept out of the
+      // accessible name) so the live region's announced text stays stable while the
+      // load progresses; the bar below is the programmatic progress carrier.
       <div
         className="chat-streaming chat-streaming--load"
         data-testid="streaming-indicator"
         role="status"
         aria-live="polite"
-        aria-label={`Loading AI model, ${pct}% complete`}
+        aria-label="Loading AI model"
       >
         <span>
-          {modelLoadLabel ?? 'Loading the AI model — one-time, may take a few minutes…'} {pct}%
+          {modelLoadLabel ?? 'Loading the AI model — one-time, may take a few minutes…'}{' '}
+          <span aria-hidden="true" data-testid="streaming-indicator-pct">{pct}%</span>
         </span>
         <ProgressBar label="Loading the AI model" value={pct} />
       </div>

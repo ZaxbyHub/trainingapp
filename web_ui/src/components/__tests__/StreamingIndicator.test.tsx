@@ -73,6 +73,26 @@ describe('StreamingIndicator', () => {
     expect(container.getAttribute('aria-live')).toBe('polite');
   });
 
+  it('PRE-3: the ticking load percentage is aria-hidden and the live region text/name do not change per tick', () => {
+    const { rerender } = render(<StreamingIndicator isVisible={true} modelLoadProgress={10} modelLoadLabel="Loading model" />);
+    const region = screen.getByTestId('streaming-indicator');
+    const pct = screen.getByTestId('streaming-indicator-pct');
+    expect(pct).toHaveAttribute('aria-hidden', 'true');
+    expect(pct).toHaveTextContent('10%');
+    // Visual text is unchanged: label and percentage still read together.
+    expect(region).toHaveTextContent('Loading model 10%');
+    const nameAt10 = region.getAttribute('aria-label');
+    expect(nameAt10).not.toMatch(/\d/);
+
+    rerender(<StreamingIndicator isVisible={true} modelLoadProgress={55} modelLoadLabel="Loading model" />);
+    expect(screen.getByTestId('streaming-indicator-pct')).toHaveTextContent('55%');
+    expect(region.getAttribute('aria-label')).toBe(nameAt10);
+    // Nothing a screen reader would read (non-aria-hidden text) contains the digits.
+    const clone = region.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+    expect(clone.textContent).not.toMatch(/\d/);
+  });
+
   it('registers change listener on matchMedia', () => {
     render(<StreamingIndicator isVisible={true} />);
 
