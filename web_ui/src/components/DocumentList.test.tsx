@@ -952,7 +952,12 @@ describe('DocumentList', () => {
           expect(scrollIntoView).toHaveBeenCalledTimes(1);
         });
 
-        it('keeps the pending delete while the count is unchanged', () => {
+        // What this proves: a re-render that leaves the row count alone (a status or progress
+        // tick) neither scrolls nor uses up the pending delete, so the removal that lands later
+        // is still re-checked. It cannot fail through the effect's `documents.length >= previous`
+        // equality branch: the effect is keyed on [documents.length] and never runs on a
+        // same-length render, so that guarantee is the dependency array itself.
+        it('a same-length re-render neither scrolls nor consumes the pending delete', () => {
           const { rerender } = confirmWithClippedNeighbour();
           rerender(view(all().map((doc) => ({ ...doc }))));
           expect(scrollIntoView).not.toHaveBeenCalled();
