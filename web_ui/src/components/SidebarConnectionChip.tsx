@@ -9,8 +9,9 @@
  * only the mode when no reliable model name exists (desktop external engine, no
  * backend status). The sidebar has no resident-load poll, so the desktop profile
  * comes from the /status/models snapshot App re-reads on models-changed events
- * (fired when "Use external model" is toggled and when the inference profile is
- * saved), and the browser external config is read live (useExternalConfig) so a save in
+ * (fired when "Use external model" is toggled, when the inference profile is saved,
+ * and when ChatPage's resident-model poll sees the resident state/profile move; the
+ * backend swaps the resident model lazily, on the next query), and the browser external config is read live (useExternalConfig) so a save in
  * Settings updates the chip without a remount.
  *
  * Expanded sidebar and drawer: the full chip. 64px rail: an icon-only button whose
@@ -45,8 +46,10 @@ export function SidebarConnectionChip({ onOpenModelSettings }: SidebarConnection
     hasDesktopSession: session !== null,
     desktopModels: models,
     // The resident profile from the /status/models snapshot. The Chat header polls the
-    // same endpoint every ~2s, while this snapshot refreshes on models-changed events,
-    // so the two can differ for a moment while a profile load is in flight.
+    // same endpoint every ~2s; this snapshot is re-read on models-changed events, which
+    // ChatPage's poll fires on every resident transition, so the footer trails the header
+    // by at most one refetch (and only while Chat is mounted, the only place a query can
+    // trigger the swap).
     residentProfile: models?.resident?.profile ?? null,
     // Inside Electron the renderer's stored external config is not authoritative.
     externalConfig: isElectron() ? null : externalConfig,

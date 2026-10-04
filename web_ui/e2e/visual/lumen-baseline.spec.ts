@@ -60,7 +60,7 @@ const HEIGHT = 900;
 /**
  * Known sub-pixel anti-aliasing flake at the 64px-rail Settings gear: the
  * `training-empty` light 1024px capture differs from its baseline by ~2px around
- * the rail gear on some runs (measured; it reproduces on master too, so it is not
+ * the rail gear on some runs (figure from the PR #149 body; it reproduces on master too, so it is not
  * a regression from any one change). Tolerance is scoped to EXACTLY that
  * state/theme/width: every other capture keeps zero tolerance (no maxDiffPixels),
  * so a real layout change anywhere else still fails. Playwright applies the

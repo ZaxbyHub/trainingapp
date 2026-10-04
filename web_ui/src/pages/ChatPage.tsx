@@ -37,6 +37,7 @@ import { downloadConversation } from '../lib/export/conversation-export';
 import { messagesForRegenerate } from '../lib/chat/message-ops';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { fetchModelStatus, isElectron, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
+import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
 import { Button, Icon, PageHeader, StatusPill } from '../ui';
 import { ModelChip } from '../components/ModelChip';
@@ -194,11 +195,19 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   useEffect(() => {
     if (!pollEligible) return;
     let cancelled = false;
+    // The resident model swaps lazily (a profile change takes effect on the next query), so
+    // App's /status/models snapshot (the sidebar footer chip) goes stale the moment the
+    // resident state/profile moves. Announce each transition so App re-reads it and the
+    // footer chip keeps naming the same model as this page's header chip.
+    let lastResident: string | null = null;
     const poll = (): void => {
       void fetchModelStatus(desktopSession)
         .then((status) => {
           if (cancelled) return;
           setModelLoad(status.resident ?? null);
+          const key = status.resident ? `${status.resident.state}|${status.resident.profile ?? ''}` : '';
+          if (lastResident !== null && lastResident !== key) notifyDesktopModelsChanged();
+          lastResident = key;
         })
         .catch(() => {
           // Transient poll failure (PRR-204): KEEP the last-known state — a
