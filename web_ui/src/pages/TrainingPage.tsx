@@ -87,7 +87,11 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
   // remembered-course auto-select must not win straight back (snap-back). A plain
   // packOverride of '' cannot carry this: it is the same string the location
   // yields with no ?pack=, so the selection memo would not even re-run.
-  const [deselected, setDeselected] = useState(false);
+  // Initialised from the history entry: leaving Training and coming back keeps the entry
+  // (and its flag), so the sole course must not auto-open again.
+  const [deselected, setDeselected] = useState(
+    () => typeof window !== 'undefined' && (window.history.state as { trainingDeselected?: boolean } | null)?.trainingDeselected === true,
+  );
   // Lumen phase 6: the player page's Back shows the course library even when a
   // course is selected (with a sole course the picker auto-selects it, so the
   // library needs an explicit flag). Cleared by any course choice.

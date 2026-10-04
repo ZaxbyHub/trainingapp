@@ -242,6 +242,22 @@ describe('Training library and player page (Lumen phase 6)', () => {
       expect(screen.queryByTestId('training-player-frame')).toBeNull();
     });
 
+    it('leaving Training and coming back keeps the library while the history entry says deselected', async () => {
+      listPacks.mockResolvedValue([COURSE_A]);
+      const first = render(<TrainingPage />);
+      expect(await screen.findByTestId('training-player-frame')).toBeTruthy();
+      fireEvent.change(screen.getByTestId('training-pack-select'), { target: { value: '' } });
+      expect(await screen.findByTestId('training-course-course-a')).toBeTruthy();
+      expect((window.history.state as { trainingDeselected?: boolean } | null)?.trainingDeselected).toBe(true);
+      first.unmount();
+      render(<TrainingPage />);
+      expect(await screen.findByTestId('training-course-course-a')).toBeTruthy();
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+      });
+      expect(screen.queryByTestId('training-player-frame')).toBeNull();
+    });
+
     it('a remembered last course does not snap back either', async () => {
       window.localStorage.setItem(LAST_PACK_KEY, 'course-b/2.1.0');
       listPacks.mockResolvedValue([COURSE_A, COURSE_B]);
