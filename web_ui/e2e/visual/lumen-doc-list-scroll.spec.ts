@@ -320,6 +320,91 @@ for (const [width, height, layout, deletes] of [
   });
 }
 
+// Critic C-1: two quick deletes from the BOTTOM of the list. After the last row is confirmed,
+// focus sits on the previous row's trash; confirming that row too (Enter, Shift+Tab, Enter)
+// before the first removal landed used to pick the still-present last row as the focus target:
+// its trash is disabled while its delete runs, focus() was a no-op and focus dropped to <body>.
+// Not timing dependent: the page's IndexedDB `delete` requests are held (their success handlers
+// are withheld) until released, so the first removal provably has NOT landed when the second
+// Confirm fires, and the test asserts that rather than hoping for the race.
+for (const [width, height, layout] of [
+  [800, 760, 'stacked'],
+  [1000, 700, 'wide'],
+] as const) {
+  test(`bottom-up: confirming the last two rows back to back never drops focus to <body> (${layout} @ H=${height})`, async ({ page }) => {
+    test.setTimeout(120_000);
+    await page.addInitScript(() => {
+      const w = window as unknown as { __holdDeletes: boolean; __held: Array<() => void> };
+      w.__holdDeletes = false;
+      w.__held = [];
+      const original = IDBObjectStore.prototype.delete;
+      IDBObjectStore.prototype.delete = function (this: IDBObjectStore, ...args: Parameters<IDBObjectStore['delete']>) {
+        const request = original.apply(this, args);
+        if (this.name !== 'documents' || !w.__holdDeletes) return request;
+        // The app assigns request.onsuccess after calling delete(): keep that handler aside and
+        // run it only when released.
+        let handler: ((this: IDBRequest, event: Event) => unknown) | null = null;
+        Object.defineProperty(request, 'onsuccess', {
+          configurable: true,
+          get: () => handler,
+          set: (fn) => {
+            handler = fn;
+          },
+        });
+        request.addEventListener('success', (event) => {
+          w.__held.push(() => handler?.call(request, event));
+        });
+        return request;
+      } as typeof IDBObjectStore.prototype.delete;
+    });
+    const size = async (): Promise<void> => {
+      await page.setViewportSize({ width, height });
+      await settle(page);
+    };
+    await size();
+    await boot(page);
+    await size();
+    await page.evaluate(() => {
+      (window as unknown as { __holdDeletes: boolean }).__holdDeletes = true;
+      const region = document.querySelector('.app-docs__list-region') as HTMLElement;
+      region.scrollTop = region.scrollHeight;
+    });
+    await settle(page);
+    const held = (): Promise<number> =>
+      page.evaluate(() => (window as unknown as { __held: unknown[] }).__held.length);
+
+    const lastRow = name(COUNT - 1);
+    const secondRow = name(COUNT - 2);
+    const thirdRow = name(COUNT - 3);
+    await page.getByRole('button', { name: `Delete ${lastRow}` }).click();
+    await page.getByRole('button', { name: `Confirm delete ${lastRow}` }).click();
+    expect(await activeLabel(page)).toBe(`Delete ${secondRow}`);
+    // The first delete is in flight (held) and its row is still in the list.
+    await expect.poll(held).toBe(1);
+    await expect(page.getByRole('button', { name: `Delete ${lastRow}` })).toHaveCount(1);
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Enter');
+    await expect.poll(held).toBe(2);
+    // Both rows are still present, so the neighbour picker had to skip the in-flight last row.
+    await expect(page.getByRole('button', { name: `Delete ${lastRow}` })).toHaveCount(1);
+    expect(await activeLabel(page)).toBe(`Delete ${thirdRow}`);
+
+    // Let both removals land: focus stays on the surviving neighbour, in view.
+    await page.evaluate(() => {
+      const w = window as unknown as { __holdDeletes: boolean; __held: Array<() => void> };
+      w.__holdDeletes = false;
+      w.__held.splice(0).forEach((run) => run());
+    });
+    await expect(page.getByRole('button', { name: `Delete ${lastRow}` })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: `Delete ${secondRow}` })).toHaveCount(0);
+    await settle(page);
+    expect(await activeLabel(page)).toBe(`Delete ${thirdRow}`);
+    expect(await visibleInRegion(page, `Delete ${thirdRow}`)).toBe(true);
+  });
+}
+
 // Review LOW-2: the re-check after a delete must not run for other count changes. With focus in
 // a row that is pinned off screen, an upload (list grows, focus untouched) used to yank the
 // scroll position back to the focused row.
