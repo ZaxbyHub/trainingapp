@@ -177,6 +177,30 @@ test.describe('chat reflow (Lumen phase 5)', () => {
     expect(axe.violations.map((v) => `${v.id}:${v.nodes.length}`)).toEqual([]);
   });
 
+  test('chip tooltips are hoverable: the pointer can cross the gap onto the tooltip without closing it (rail and header)', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    await boot(page, baseURL!, LONG_MODEL);
+    for (const [name, locator] of [
+      ['rail', page.locator('.app-sidebar__connection--rail button')],
+      ['header', page.getByTestId('chat-model-chip')],
+    ] as const) {
+      await locator.hover();
+      const tip = page.getByRole('tooltip');
+      await expect(tip, `${name} tooltip opens`).toBeVisible();
+      const trigger = (await locator.boundingBox())!;
+      const box = (await tip.boundingBox())!;
+      // Move in small steps from the trigger centre to the tooltip centre (crossing the gap).
+      const from = { x: trigger.x + trigger.width / 2, y: trigger.y + trigger.height / 2 };
+      const to = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.move(to.x, to.y, { steps: 25 });
+      await expect(tip, `${name} tooltip stays open over the tooltip`).toBeVisible();
+      // Leaving both closes it.
+      await page.mouse.move(600, 450, { steps: 5 });
+      await expect(tip, `${name} tooltip closes when the pointer leaves`).toBeHidden();
+    }
+  });
+
   test('header chip with a very long model name ellipsizes inside the header at 500px and 768px', async ({ page, baseURL }) => {
     await boot(page, baseURL!, LONG_MODEL);
     for (const width of [500, 768]) {

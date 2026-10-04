@@ -48,11 +48,6 @@ describe('ModelChip', () => {
     expect(chip).toHaveAccessibleDescription(onceRegExp(local.detail));
   });
 
-  it('PRR-119: the static (no settings link) chip also carries the sentence as its description', () => {
-    render(<ModelChip description={local} testId="static-chip" />);
-    expect(screen.getByTestId('static-chip')).toHaveAccessibleDescription(local.detail);
-  });
-
   it('names only the mode when there is no reliable model name', () => {
     render(
       <ModelChip
@@ -89,11 +84,6 @@ describe('ModelChip', () => {
     expect(screen.queryByTestId('chat-model-chip-suffix')).toBeNull();
   });
 
-  it('renders static text (not a button) without an open handler', () => {
-    render(<ModelChip description={local} />);
-    expect(screen.queryByRole('button')).toBeNull();
-    expect(screen.getByTestId('chat-model-chip')).toHaveTextContent('Local · Google Gemma 4 E2B-it');
-  });
 });
 
 // Review F6: credentials in a configured endpoint URL (userinfo, path, query) and a

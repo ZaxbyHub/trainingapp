@@ -95,6 +95,36 @@ describe('Dialog', () => {
 });
 
 describe('Tooltip', () => {
+  it('hoverable (WCAG 1.4.13): moving from the trigger onto the tooltip keeps it open; leaving both closes it', () => {
+    render(
+      <Tooltip content="Detail text">
+        <button type="button">Go</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    fireEvent.mouseOver(btn);
+    const tip = screen.getByRole('tooltip');
+    // Pointer moves trigger -> tooltip (a descendant of the wrapper): stays open.
+    fireEvent.mouseOut(btn, { relatedTarget: tip });
+    fireEvent.mouseOver(tip, { relatedTarget: btn });
+    expect(screen.getByRole('tooltip')).toBeInTheDocument();
+    // Pointer leaves the tooltip for something outside: closes.
+    fireEvent.mouseOut(tip, { relatedTarget: document.body });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('Escape still dismisses an open (hovered) tooltip', () => {
+    render(
+      <Tooltip content="Detail text">
+        <button type="button">Go</button>
+      </Tooltip>,
+    );
+    const btn = screen.getByRole('button', { name: 'Go' });
+    fireEvent.mouseOver(btn);
+    fireEvent.keyDown(btn, { key: 'Escape' });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
   it('describe={false}: the open tooltip has readable text but is not added to the trigger description', () => {
     render(
       <Tooltip content="Extra detail" describe={false}>

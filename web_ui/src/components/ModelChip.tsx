@@ -18,8 +18,8 @@ export const MODEL_CHIP_ICON: Record<ChatModelDescription['kind'], IconName> = {
 
 export interface ModelChipProps {
   description: ChatModelDescription;
-  /** Opens Settings at the model-connection section. Without it the chip is static text. */
-  onOpenSettings?: () => void;
+  /** Opens Settings at the model-connection section. */
+  onOpenSettings: () => void;
   /** data-testid (the Chat header and the sidebar footer render one each). */
   testId?: string;
   /** Where the detail tooltip opens (header: 'bottom', sidebar footer: 'top'). */
@@ -57,22 +57,6 @@ export function ModelChip({ description, onOpenSettings, testId = 'chat-model-ch
       </span>
     </>
   );
-  if (!onOpenSettings) {
-    return (
-      <>
-        <span
-          className="chat-model-chip"
-          data-testid={testId}
-          data-kind={description.kind}
-          title={description.detail}
-          aria-describedby={detailId}
-        >
-          {content}
-        </span>
-        {detail}
-      </>
-    );
-  }
   return (
     <>
       <Tooltip content={description.detail} placement={tooltipPlacement} describe={false}>
