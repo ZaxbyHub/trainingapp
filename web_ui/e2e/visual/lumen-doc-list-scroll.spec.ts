@@ -263,6 +263,9 @@ test('arm -> Cancel keeps focus on the controls; Confirm hands focus to the next
 // deleted row disappears from above and the rows below shift up. With overflow-anchor off nothing
 // re-anchors, so the focused control could end up clipped by the scroll region (WCAG 2.4.11).
 // Confirm on the last fully visible row, where the shift matters most.
+// The wide layout shows a 37px table head above the list; ignoring it leaves the last visible
+// row's neighbour fully on screen and the wide case unable to fail.
+const WIDE_HEAD = 37;
 for (const [width, height, layout] of [[800, 760, 'stacked'], [1000, 700, 'wide']] as const) {
   test(`after Confirm the focused neighbour is fully inside the scroll region (${layout} @ H=${height})`, async ({ page }) => {
     test.setTimeout(120_000);
@@ -276,7 +279,7 @@ for (const [width, height, layout] of [[800, 760, 'stacked'], [1000, 700, 'wide'
     const rowHeight = layout === 'stacked' ? STACKED_ITEM_HEIGHT : ITEM_HEIGHT;
     await page.evaluate((top) => {
       (document.querySelector('.app-docs__list-region') as HTMLElement).scrollTop = top;
-    }, 20 * rowHeight);
+    }, (layout === 'wide' ? WIDE_HEAD : 0) + 20 * rowHeight);
     await settle(page);
 
     const last = await page.evaluate(() => {
@@ -302,6 +305,34 @@ for (const [width, height, layout] of [[800, 760, 'stacked'], [1000, 700, 'wide'
     expect(await visibleInRegion(page, next)).toBe(true);
   });
 }
+
+// Review LOW-2: the re-check after a delete must not run for other count changes. With focus in
+// a row that is pinned off screen, an upload (list grows, focus untouched) used to yank the
+// scroll position back to the focused row.
+test('adding a document does not scroll away from where the user is while focus is in a pinned row', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.setViewportSize({ width: 1000, height: 760 });
+  await boot(page);
+  await page.setViewportSize({ width: 1000, height: 760 });
+  await settle(page);
+  await page.getByRole('button', { name: `Delete ${name(3)}` }).focus();
+  await page.evaluate((top) => {
+    (document.querySelector('.app-docs__list-region') as HTMLElement).scrollTop = top;
+  }, WIDE_HEAD + 50 * ITEM_HEIGHT);
+  await settle(page);
+  expect(await activeLabel(page)).toBe(`Delete ${name(3)}`);
+  const scrollTop = (): Promise<number> =>
+    page.evaluate(() => Math.round((document.querySelector('.app-docs__list-region') as HTMLElement).scrollTop));
+  const before = await scrollTop();
+
+  await page.locator('input[type="file"]').first().setInputFiles([
+    { name: 'New-A.txt', mimeType: 'text/plain', buffer: Buffer.from('hello world alpha beta gamma '.repeat(50)) },
+  ]);
+  await expect(page.getByText('New-A.txt').first()).toBeAttached({ timeout: 30_000 });
+  await settle(page);
+  expect(await activeLabel(page)).toBe(`Delete ${name(3)}`);
+  expect(await scrollTop()).toBe(before);
+});
 
 // Decision (documented in DocumentList.tsx): an armed row keeps focus on Cancel, so it stays
 // pinned and mounted while it is scrolled out of sight (a focused control must not vanish).

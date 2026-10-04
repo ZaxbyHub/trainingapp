@@ -186,13 +186,14 @@ const DocumentItem = React.memo<{
 
   // Indexing finished (or failed): the focused "Cancel indexing" button is gone and
   // focus would fall to <body>. Hand it to this row's delete button instead.
+  const hasIndexingCancel = doc.status === 'processing' && onCancelIndexing !== undefined;
   useLayoutEffect(() => {
-    if (!indexingCancelFocusedRef.current || doc.status === 'processing') return;
+    if (!indexingCancelFocusedRef.current || hasIndexingCancel) return;
     indexingCancelFocusedRef.current = false;
     const active = document.activeElement;
     if (active !== null && active !== document.body) return;
     rootRef.current?.querySelector<HTMLElement>('[data-doc-action="delete"]')?.focus();
-  }, [doc.status]);
+  }, [hasIndexingCancel]);
 
   useLayoutEffect(() => {
     const target = pendingFocusRef.current;
@@ -370,6 +371,11 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     documentsRef.current = documents;
     const emptyRef = useRef<HTMLDivElement>(null);
     const emptyFocusPendingRef = useRef(false);
+    // Set by Confirm: the next shrink of the list may leave the focused neighbour
+    // clipped, so the length effect below re-checks it. Only then: a count change
+    // from elsewhere (an upload) must never scroll the user away from where they are.
+    const keepFocusedInViewRef = useRef(false);
+    const previousLengthRef = useRef(documents.length);
 
     const findRow = (id: string): HTMLElement | undefined =>
       Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-doc-id]') ?? []).find(
@@ -384,6 +390,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       const index = docs.findIndex((doc) => doc.id === docId);
       const neighbour = docs[index + 1] ?? docs[index - 1];
       const listEl = listRef.current;
+      keepFocusedInViewRef.current = true;
       const target =
         neighbour === undefined
           ? undefined
@@ -416,6 +423,15 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     // control: with overflow-anchor off nothing re-anchors, so the control can end up
     // clipped by the scroll region. Re-check on every length change (WCAG 2.4.11).
     useLayoutEffect(() => {
+      const previous = previousLengthRef.current;
+      previousLengthRef.current = documents.length;
+      if (!keepFocusedInViewRef.current) return;
+      // The flag outlives a failed delete; a growing list proves this change is not ours.
+      if (documents.length >= previous) {
+        if (documents.length > previous) keepFocusedInViewRef.current = false;
+        return;
+      }
+      keepFocusedInViewRef.current = false;
       const scroller = scrollContainerRef.current;
       const listEl = listRef.current;
       const active = document.activeElement;
