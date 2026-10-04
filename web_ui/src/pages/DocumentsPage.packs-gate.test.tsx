@@ -317,7 +317,7 @@ describe('browser mode: mixed and repeated selections', () => {
 // Review PRR-218: inside Electron, before the desktop session exists, there is no pack client,
 // yet the dropzone advertises .zip. A zip arriving then must say why nothing happened.
 describe('Electron before its desktop session: a pack zip is refused out loud (review PRR-218)', () => {
-  const NOT_READY = /Could not install pack-early\.zip: knowledge packs are not available yet/;
+  const NOT_READY = /Could not install pack-early\.zip: knowledge packs are not available right now .*restart the app/;
   const early = () => fileFromBytes(new Uint8Array([80, 75, 3, 4]), 'pack-early.zip');
 
   it('a dropped zip shows an error and reaches neither the pack API nor the document pipeline', async () => {

@@ -580,7 +580,7 @@ export function DocumentsPage() {
           const names = zipFiles.slice(0, 3).map((f) => f.name).join(', ');
           const extra = zipFiles.length > 3 ? ` and ${zipFiles.length - 3} more` : '';
           showToast(
-            `Could not install ${names}${extra}: knowledge packs are not available yet (the app is still starting). Try again in a moment.`,
+            `Could not install ${names}${extra}: knowledge packs are not available right now (the desktop backend has not connected). Try again in a moment; if this persists, restart the app.`,
             'error'
           );
         } else if (packClient !== null) {
