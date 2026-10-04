@@ -183,6 +183,33 @@ describe('cross-tab training progress (PRR-203/206)', () => {
     expect(await card('course-b')).toHaveTextContent('Reached slide 3 of 6');
   });
 
+  it('R1: fresh profile; this tab saved, another tab clears, this tab writes before the event: only the new position', async () => {
+    render(<TrainingPage />); // the key is absent at mount
+    fireEvent.click(await card('course-b'));
+    await screen.findByTestId('stub-player');
+    await slide('s3');
+    expect(stored()).toEqual({ 'course-b': 3 });
+    fireEvent.click(screen.getByRole('button', { name: 'All courses' }));
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    window.localStorage.removeItem(TRAINING_PROGRESS_KEY); // the other tab's clear; its event is still queued
+    await slide('s1');
+    expect(stored()).toEqual({ 'course-a': 1 });
+  });
+
+  it('R2: fresh profile; another tab writes then clears, this tab writes before the clear event: only the new position', async () => {
+    render(<TrainingPage />);
+    expect(await card('course-b')).toHaveTextContent('Not started');
+    window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-b': 5 }));
+    await otherTabWrote(JSON.stringify({ 'course-b': 5 }));
+    expect(await card('course-b')).toHaveTextContent('Reached slide 5 of 6');
+    fireEvent.click(await card('course-a'));
+    await screen.findByTestId('stub-player');
+    window.localStorage.removeItem(TRAINING_PROGRESS_KEY);
+    await slide('s1');
+    expect(stored()).toEqual({ 'course-a': 1 });
+  });
+
   it('Clear Cache in this tab: the next write holds only the new position', async () => {
     window.localStorage.setItem(TRAINING_PROGRESS_KEY, JSON.stringify({ 'course-a': 3, 'course-b': 5 }));
     render(<TrainingPage />);
