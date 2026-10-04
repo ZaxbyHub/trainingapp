@@ -378,6 +378,13 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     // change from elsewhere (an upload) must never scroll the user away from where they are.
     const pendingDeletesRef = useRef(0);
     const previousLengthRef = useRef(documents.length);
+    // Ids whose delete was confirmed here and whose row has not left `documents` yet.
+    // Such a row is on its way out (its trash is disabled while its delete is in flight,
+    // and it unmounts once the delete lands), so it is never a focus target for the next
+    // delete. Pruned only when the row is gone, NOT when the list grows: an upload landing
+    // mid-delete does not end the delete. A delete that fails leaves its id here, so that
+    // row is merely skipped as a focus target until it goes away.
+    const pendingRemovalIdsRef = useRef<Set<string>>(new Set());
 
     const findRow = (id: string): HTMLElement | undefined =>
       Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-doc-id]') ?? []).find(
@@ -385,12 +392,16 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       );
 
     // Confirm removes the focused Confirm button (and, once the delete lands, the row):
-    // hand focus to the next row's delete button, else the previous one, else the list
-    // itself (and the empty state if that was the last document), never <body>.
+    // hand focus to the next row's delete button, else the previous one (skipping rows whose
+    // own delete is already in flight), else the list itself (and the empty state if that was
+    // the last document), never <body>.
     const handleDeleteConfirmed = useCallback((docId: string) => {
       const docs = documentsRef.current;
+      const pending = pendingRemovalIdsRef.current;
+      pending.add(docId);
       const index = docs.findIndex((doc) => doc.id === docId);
-      const neighbour = docs[index + 1] ?? docs[index - 1];
+      const isLive = (doc: DocumentEntry) => !pending.has(doc.id);
+      const neighbour = docs.slice(index + 1).find(isLive) ?? docs.slice(0, index).reverse().find(isLive);
       const listEl = listRef.current;
       pendingDeletesRef.current += 1;
       const target =
@@ -399,9 +410,11 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
           : Array.from(listEl?.querySelectorAll<HTMLElement>('[data-doc-id]') ?? [])
               .find((el) => el.dataset.docId === neighbour.id)
               ?.querySelector<HTMLElement>('[data-doc-action="delete"]');
-      if (target) {
-        target.focus();
-      } else if (listEl) {
+      target?.focus();
+      // A natively disabled control (a delete already running on that row) ignores focus():
+      // fall back to the list rather than letting focus drop to <body>.
+      if (target === undefined || document.activeElement !== target) {
+        if (listEl === null) return;
         emptyFocusPendingRef.current = neighbour === undefined;
         // Programmatic-focus target only: tabindex exists just while focus is on it,
         // so clicking plain row text never lands focus on the list.
@@ -427,6 +440,13 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     useLayoutEffect(() => {
       const previous = previousLengthRef.current;
       previousLengthRef.current = documents.length;
+      const pendingRemovals = pendingRemovalIdsRef.current;
+      if (pendingRemovals.size > 0) {
+        const present = new Set(documents.map((doc) => doc.id));
+        pendingRemovals.forEach((id) => {
+          if (!present.has(id)) pendingRemovals.delete(id);
+        });
+      }
       if (pendingDeletesRef.current === 0) return;
       // Pending deletes outlive a failed delete; a growing list proves this change is not
       // ours (and that anything still pending is stale).

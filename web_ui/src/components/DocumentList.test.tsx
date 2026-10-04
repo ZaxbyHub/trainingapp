@@ -362,6 +362,75 @@ describe('DocumentList', () => {
         rerender(<DocumentList documents={[]} onDelete={vi.fn()} deletingId={null} />);
         expect(document.activeElement).toBe(document.body);
       });
+
+      // Critic C-1: the page tracks ONE deletingId, and a delete takes a while to land. A
+      // second quick delete from the bottom of the list must not hand focus to the row whose
+      // own delete is still in flight (its trash is disabled and the row is about to go).
+      describe('quick deletes that start before the previous one landed (critic C-1)', () => {
+        const api = { land: (_id: string) => {}, upload: (_doc: DocumentEntry) => {} };
+        const fourDocs = () => [
+          createDocument({ id: 'a', fileName: 'a.pdf' }),
+          createDocument({ id: 'b', fileName: 'b.pdf' }),
+          createDocument({ id: 'c', fileName: 'c.pdf' }),
+          createDocument({ id: 'd', fileName: 'd.pdf' }),
+        ];
+        // Mirrors DocumentsPage: onDelete takes the single deletingId slot; nothing is removed
+        // until the test lands it (api.land), like the page's async handleDelete.
+        const Host = ({ initial }: { initial: DocumentEntry[] }) => {
+          const [documents, setDocuments] = React.useState(initial);
+          const [deletingId, setDeletingId] = React.useState<string | null>(null);
+          api.upload = (doc) => setDocuments((current) => [doc, ...current]);
+          api.land = (id) => {
+            setDocuments((current) => current.filter((doc) => doc.id !== id));
+            setDeletingId((current) => (current === id ? null : current));
+          };
+          return <DocumentList documents={documents} onDelete={setDeletingId} deletingId={deletingId} />;
+        };
+        const confirm = (name: string) => {
+          arm(name);
+          fireEvent.click(screen.getByRole('button', { name: `Confirm delete ${name}` }));
+        };
+        const delButton = (name: string) => screen.getByRole('button', { name: `Delete ${name}` });
+
+        it('bottom-up: confirming c while d is still deleting focuses b, not <body>', () => {
+          render(<Host initial={fourDocs()} />);
+          confirm('d.pdf');
+          expect(document.activeElement).toBe(delButton('c.pdf'));
+          confirm('c.pdf');
+          expect(document.activeElement).toBe(delButton('b.pdf'));
+          act(() => api.land('d'));
+          expect(document.activeElement).toBe(delButton('b.pdf'));
+          act(() => api.land('c'));
+          expect(document.activeElement).toBe(delButton('b.pdf'));
+        });
+
+        it('forward: confirming b then c still walks down the list', () => {
+          render(<Host initial={fourDocs()} />);
+          confirm('b.pdf');
+          expect(document.activeElement).toBe(delButton('c.pdf'));
+          confirm('c.pdf');
+          expect(document.activeElement).toBe(delButton('d.pdf'));
+        });
+
+        it('an upload landing mid-delete does not make the in-flight row a target again', () => {
+          render(<Host initial={fourDocs()} />);
+          confirm('d.pdf');
+          // An upload lands while d is still deleting: the list grows (new row on top).
+          act(() => api.upload(createDocument({ id: 'e', fileName: 'e.pdf' })));
+          confirm('c.pdf');
+          expect(document.activeElement).toBe(delButton('b.pdf'));
+        });
+
+        it('falls back to the list when the neighbour is natively disabled by a delete this list did not start', () => {
+          const docs = [createDocument({ id: 'a', fileName: 'a.pdf' }), createDocument({ id: 'b', fileName: 'b.pdf' })];
+          render(<DocumentList documents={docs} onDelete={vi.fn()} deletingId="b" />);
+          arm('a.pdf');
+          fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+          const list = screen.getByRole('list', { name: 'Uploaded documents' });
+          expect(document.activeElement).not.toBe(document.body);
+          expect(document.activeElement).toBe(list);
+        });
+      });
     });
 
     // Review NIT-1: pinned rows make the exposed list non-contiguous.
