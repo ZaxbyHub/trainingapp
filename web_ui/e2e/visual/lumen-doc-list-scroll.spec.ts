@@ -230,7 +230,8 @@ const visibleInRegion = (page: Page, label: string): Promise<boolean> =>
     const el = document.querySelector<HTMLElement>(`[aria-label="${text}"]`);
     if (!el) return false;
     const box = el.getBoundingClientRect();
-    return box.width > 0 && box.height > 0 && box.top >= region.top && box.bottom <= region.bottom;
+    // scrollTop is whole pixels, so a scrolled-into-view control can sit up to a pixel off the edge.
+    return box.width > 0 && box.height > 0 && box.top >= region.top - 1 && box.bottom <= region.bottom + 1;
   }, label);
 
 test('arm -> Cancel keeps focus on the controls; Confirm hands focus to the next row, never <body>', async ({ page }) => {
