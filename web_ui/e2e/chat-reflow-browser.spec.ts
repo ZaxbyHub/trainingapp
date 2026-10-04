@@ -41,8 +41,8 @@ async function boot(page: Page, baseURL: string): Promise<void> {
 }
 
 /** One conversation whose answer carries two structured citations, then reload. */
-async function seedCitedConversation(page: Page): Promise<void> {
-  await page.evaluate(async (now) => {
+async function seedCitedConversation(page: Page, longNames = false): Promise<void> {
+  await page.evaluate(async ({ now, longNames }) => {
     const db = await new Promise<IDBDatabase>((res, rej) => {
       const r = indexedDB.open('docqa_conversations');
       r.onsuccess = () => res(r.result);
@@ -66,8 +66,8 @@ async function seedCitedConversation(page: Page): Promise<void> {
             timestamp: now,
             grounding: 'grounded',
             citations: [
-              { docId: 'd1', chunkIndex: 0, source: 'Employee-Handbook.pdf', page: 4, text: 'New hires receive 15 days.' },
-              { docId: 'd2', chunkIndex: 0, source: 'Benefits-Overview.pdf', page: 2, text: 'Carry-over is capped.' },
+              { docId: 'd1', chunkIndex: 0, source: longNames ? 'A-very-long-employee-handbook-document-name-number-1.pdf' : 'Employee-Handbook.pdf', page: 4, text: 'New hires receive 15 days.' },
+              { docId: 'd2', chunkIndex: 0, source: longNames ? 'A-very-long-employee-handbook-document-name-number-2.pdf' : 'Benefits-Overview.pdf', page: 2, text: longNames ? 'Carry-over is capped. '.repeat(40) : 'Carry-over is capped.' },
             ],
           },
         ],
@@ -76,7 +76,7 @@ async function seedCitedConversation(page: Page): Promise<void> {
       t.onerror = () => rej(t.error);
     });
     db.close();
-  }, NOW);
+  }, { now: NOW, longNames });
   await page.reload();
   await expect(page.getByText('Initializing search services', { exact: false })).toHaveCount(0, { timeout: 60_000 });
   await expect(page.getByText('Fifteen days', { exact: false })).toBeVisible({ timeout: 15_000 });
@@ -123,6 +123,23 @@ test.describe('chat reflow (Lumen phase 5)', () => {
     await expect(countChip).toHaveCount(1);
     await expect(countChip).toHaveText('2 sources');
     await expect(countChip).toBeHidden();
+  });
+
+  test('PRE-4: an opened source popover stays inside the viewport and adds no horizontal scroll', async ({ page, baseURL }) => {
+    // 600px: chips are visible (> 500px) and the second long-named chip starts far enough
+    // right that a pill-anchored 60vw popover used to overflow the chat log.
+    await page.setViewportSize({ width: 600, height: 900 });
+    await boot(page, baseURL!);
+    await seedCitedConversation(page, true);
+
+    await page.getByRole('button', { name: /^Source 2:/ }).click();
+    const popover = page.locator('.chat-cite__popover');
+    await expect(popover).toBeVisible();
+    const box = (await popover.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(600);
+    const overflow = await page.locator('.chat-log').evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBe(0);
   });
 
   test('the composer status row collapses when idle and shows while generating', async ({ page, baseURL }) => {

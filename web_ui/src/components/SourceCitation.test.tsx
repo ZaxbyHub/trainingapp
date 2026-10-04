@@ -123,6 +123,39 @@ describe('SourceCitation', () => {
       expect(pill.getAttribute('aria-expanded')).toBe('true');
     });
 
+    it('PRE-4: an expanded pill points aria-controls at the popover it opened (and only while open)', () => {
+      render(<SourceCitation sources={['/path/to/document.pdf']} />);
+
+      const pill = screen.getByText('document.pdf').closest('[role="button"]')!;
+      expect(pill.hasAttribute('aria-controls')).toBe(false);
+
+      fireEvent.click(pill);
+      const id = pill.getAttribute('aria-controls');
+      expect(id).toBeTruthy();
+      const popover = document.getElementById(id!);
+      expect(popover).not.toBeNull();
+      expect(popover).toHaveTextContent('/path/to/document.pdf');
+
+      fireEvent.click(pill);
+      expect(pill.hasAttribute('aria-controls')).toBe(false);
+    });
+
+    it('PRE-4: structured citations link each open pill to its own popover', () => {
+      render(
+        <SourceCitation
+          citations={[
+            { docId: 'd1', chunkIndex: 0, source: 'a.pdf', text: 'first chunk' },
+            { docId: 'd2', chunkIndex: 0, source: 'b.pdf', text: 'second chunk' },
+          ]}
+        />
+      );
+      const pill2 = screen.getByRole('button', { name: /^Source 2:/ });
+      fireEvent.click(pill2);
+      const popover = document.getElementById(pill2.getAttribute('aria-controls')!);
+      expect(popover).toHaveTextContent('second chunk');
+      expect(screen.getByRole('button', { name: /^Source 1:/ }).hasAttribute('aria-controls')).toBe(false);
+    });
+
     it('closes the popover on Escape', async () => {
       render(<SourceCitation sources={['/path/to/document.pdf']} />);
 

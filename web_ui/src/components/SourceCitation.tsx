@@ -117,6 +117,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
             cite.packId && cite.packVersion ? ` — ${cite.packId} v${cite.packVersion}` : '';
           const isExpanded = expandedKey === key;
           const isCopied = copiedKey === key;
+          const popoverId = `${listId}-pop-${index}`;
 
           // The pill and its Copy button are SIBLINGS inside the chip (a button
           // nested in a role="button" is an axe nested-interactive violation).
@@ -126,6 +127,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
                 role="button"
                 tabIndex={0}
                 aria-expanded={isExpanded}
+                aria-controls={isExpanded && cite.text ? popoverId : undefined}
                 aria-label={`Source ${index + 1}: ${label}${pageSuffix}${packSuffix}`}
                 className="chat-cite__pill ui-focusable"
                 onClick={() => handleToggleExpand(key)}
@@ -149,7 +151,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
                 </button>
               )}
               {isExpanded && cite.text && (
-                <div className="chat-cite__popover" onClick={(e) => e.stopPropagation()}>
+                <div id={popoverId} className="chat-cite__popover" onClick={(e) => e.stopPropagation()}>
                   {cite.text}
                 </div>
               )}
@@ -172,6 +174,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
         const key = `source-${index}-${source}`;
         const isExpanded = expandedKey === key;
         const isCopied = copiedKey === key;
+        const popoverId = `${listId}-pop-${index}`;
 
         return (
           <div key={key} className="chat-cite chat-cite--legacy" data-expanded={isExpanded || undefined}>
@@ -179,6 +182,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
               role="button"
               tabIndex={0}
               aria-expanded={isExpanded}
+              aria-controls={isExpanded ? popoverId : undefined}
               aria-label={`Source ${index + 1}: ${filename}`}
               className="chat-cite__pill ui-focusable"
               onClick={() => handleToggleExpand(key)}
@@ -197,7 +201,7 @@ export const SourceCitation: React.FC<SourceCitationProps> = React.memo(({ sourc
               {isCopied ? '✓' : 'Copy'}
             </button>
             {isExpanded && (
-              <div className="chat-cite__popover chat-cite__popover--path" onClick={(e) => e.stopPropagation()}>
+              <div id={popoverId} className="chat-cite__popover chat-cite__popover--path" onClick={(e) => e.stopPropagation()}>
                 {source}
               </div>
             )}
