@@ -154,31 +154,56 @@ const DocumentItem = React.memo<{
   onDelete?: (docId: string) => void;
   isDeleting: boolean;
   onCancelIndexing?: (docId: string) => void;
-}>(({ doc, onDelete, isDeleting, onCancelIndexing }) => {
+  /** Fired right after Confirm calls onDelete, so the list can move focus off this
+   *  row (its Confirm button is about to be replaced) before the row goes away. */
+  onDeleteConfirmed?: (docId: string) => void;
+}>(({ doc, onDelete, isDeleting, onCancelIndexing, onDeleteConfirmed }) => {
   // U5: two-step delete confirmation. First click of the trash icon arms the
   // inline confirm (reusing the SidebarConversationItem idiom); Confirm fires
   // onDelete, Cancel reverts. Keeps the virtualized 60px row height by showing
   // the confirm controls in place of the status badge + delete button.
   const [isConfirming, setIsConfirming] = useState(false);
+  // Focus management for the swap between the trash button and the Confirm/Cancel
+  // pair (review LOW-A/LOW-B). Each step removes the control that has focus, and a
+  // removed element drops focus to <body> without a blur event, so the next control
+  // is focused explicitly once the swapped markup has committed:
+  //   arm     -> Cancel (the safe default; Confirm is one Tab away)
+  //   cancel  -> back on this row's trash button
+  //   confirm -> handled by the list (onDeleteConfirmed moves it to a neighbour)
+  const rootRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef<'cancel' | 'trash' | null>(null);
+
+  useLayoutEffect(() => {
+    const target = pendingFocusRef.current;
+    if (target === null) return;
+    pendingFocusRef.current = null;
+    rootRef.current
+      ?.querySelector<HTMLElement>(`[data-doc-action="${target === 'cancel' ? 'cancel-delete' : 'delete'}"]`)
+      ?.focus();
+  }, [isConfirming]);
 
   const handleDelete = useCallback(() => {
     if (!isDeleting) {
+      pendingFocusRef.current = 'cancel';
       setIsConfirming(true);
     }
   }, [isDeleting]);
 
   const handleConfirmDelete = useCallback(() => {
+    pendingFocusRef.current = null;
     setIsConfirming(false);
     onDelete?.(doc.id);
-  }, [doc.id, onDelete]);
+    onDeleteConfirmed?.(doc.id);
+  }, [doc.id, onDelete, onDeleteConfirmed]);
 
   const handleCancelDelete = useCallback(() => {
+    pendingFocusRef.current = 'trash';
     setIsConfirming(false);
   }, []);
 
   const kind = documentKind(doc.fileName);
   return (
-    <div className={cx('app-doc', isDeleting && 'app-doc--deleting')}>
+    <div ref={rootRef} className={cx('app-doc', isDeleting && 'app-doc--deleting')}>
       {/* Table cells (Lumen phase 6): one cell per value, placed by CSS grid areas
           (pages/documents.css), so narrow widths reflow them instead of duplicating. */}
       <div className={`app-doc__icon app-doc__icon--${kind}`} data-kind={kind}>
@@ -264,6 +289,7 @@ const DocumentItem = React.memo<{
             disabled={isDeleting}
             aria-disabled={isDeleting || undefined}
             aria-label={`Cancel delete ${doc.fileName}`}
+            data-doc-action="cancel-delete"
           >
             Cancel
           </Button>
@@ -281,6 +307,7 @@ const DocumentItem = React.memo<{
               disabled={isDeleting}
               aria-disabled={isDeleting || undefined}
               aria-label={`Delete ${doc.fileName}`}
+              data-doc-action="delete"
             />
           ) : null}
         </div>
@@ -310,6 +337,59 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     // The document whose row holds keyboard focus. Keyed by id (not index) so it
     // survives a layout switch; that row is always kept mounted (see below).
     const [focusedId, setFocusedId] = useState<string | null>(null);
+    // Kept current so handleDeleteConfirmed can stay referentially stable (the memoized
+    // rows must not re-render on every list update).
+    const documentsRef = useRef(documents);
+    documentsRef.current = documents;
+    const emptyRef = useRef<HTMLDivElement>(null);
+    const emptyFocusPendingRef = useRef(false);
+
+    const findRow = (id: string): HTMLElement | undefined =>
+      Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-doc-id]') ?? []).find(
+        (el) => el.dataset.docId === id
+      );
+
+    // Confirm removes the focused Confirm button (and, once the delete lands, the row):
+    // hand focus to the next row's delete button, else the previous one, else the list
+    // itself (and the empty state if that was the last document), never <body>.
+    const handleDeleteConfirmed = useCallback((docId: string) => {
+      const docs = documentsRef.current;
+      const index = docs.findIndex((doc) => doc.id === docId);
+      const neighbour = docs[index + 1] ?? docs[index - 1];
+      const listEl = listRef.current;
+      const target =
+        neighbour === undefined
+          ? undefined
+          : Array.from(listEl?.querySelectorAll<HTMLElement>('[data-doc-id]') ?? [])
+              .find((el) => el.dataset.docId === neighbour.id)
+              ?.querySelector<HTMLElement>('[data-doc-action="delete"]');
+      if (target) {
+        target.focus();
+      } else if (listEl) {
+        emptyFocusPendingRef.current = neighbour === undefined;
+        listEl.focus();
+      }
+    }, []);
+
+    // After the last document is gone the list is replaced by the empty state: carry
+    // the pending focus over to it.
+    useLayoutEffect(() => {
+      if (documents.length === 0 && emptyFocusPendingRef.current) {
+        emptyFocusPendingRef.current = false;
+        emptyRef.current?.focus();
+      }
+    }, [documents.length]);
+
+    // A pin must never outlive the focus it protects. A removed focused element fires
+    // no blur (an armed row's Confirm/Cancel swap, a deleted document), so onBlur alone
+    // can leave `focusedId` set and keep that row and its neighbours mounted forever.
+    // Verified on every commit: if the pinned row is gone or no longer contains the
+    // active element, drop the pin (review LOW-A, NIT-2).
+    useLayoutEffect(() => {
+      if (focusedId === null) return;
+      const row = findRow(focusedId);
+      if (row === undefined || !row.contains(document.activeElement)) setFocusedId(null);
+    });
     // A layout switch changes the row height: keep the same ROW at the top of the
     // list (scroll position by item index, not by pixels). The list does not start
     // at the scroller's top (the wide layout shows a table head above it), so the
@@ -404,7 +484,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       // ui-empty layout with a <p> title: a heading here would collide with the
       // page's "Documents" heading.
       return (
-        <div className="ui-empty app-doc-list__empty">
+        <div ref={emptyRef} tabIndex={-1} className="ui-empty app-doc-list__empty">
           <Icon name="file-text" size={32} className="ui-empty__icon" />
           <p className="app-doc-list__empty-title">No documents uploaded yet</p>
         </div>
@@ -448,7 +528,16 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
           <span data-label="Status" />
           <span />
         </div>
-      <div ref={listRef} role="list" aria-label="Uploaded documents" className="app-doc-list">
+      <div
+        ref={listRef}
+        role="list"
+        aria-label="Uploaded documents"
+        className="app-doc-list"
+        tabIndex={-1}
+        onBlur={(event) => {
+          if (event.target === event.currentTarget) emptyFocusPendingRef.current = false;
+        }}
+      >
         {/* Placeholder div maintains the full scroll height for the scrollbar.
             Positional inline styles only: virtualization computes them per render. */}
         <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
@@ -458,6 +547,10 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
               <div
                 key={doc.id}
                 role="listitem"
+                // Pinned rows make the mounted set non-contiguous: say where each sits.
+                aria-setsize={totalItems}
+                aria-posinset={index + 1}
+                data-doc-id={doc.id}
                 className="app-doc-list__item"
                 onFocus={() => setFocusedId(doc.id)}
                 onBlur={(event) => {
@@ -479,6 +572,7 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
                   onDelete={onDelete}
                   isDeleting={deletingId === doc.id}
                   onCancelIndexing={onCancelIndexing}
+                  onDeleteConfirmed={handleDeleteConfirmed}
                 />
               </div>
             );

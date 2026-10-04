@@ -286,6 +286,83 @@ describe('DocumentList', () => {
       expect(deleteButtonAgain).toBeInTheDocument();
     });
 
+    // Review LOW-A / LOW-B: every step of arm -> cancel/confirm removes the focused
+    // control, which drops focus to <body> unless it is moved on purpose.
+    describe('focus management', () => {
+      const threeDocs = () => [
+        createDocument({ id: 'a', fileName: 'a.pdf' }),
+        createDocument({ id: 'b', fileName: 'b.pdf' }),
+        createDocument({ id: 'c', fileName: 'c.pdf' }),
+      ];
+      const arm = (name: string) => {
+        const trash = screen.getByRole('button', { name: `Delete ${name}` });
+        trash.focus();
+        fireEvent.click(trash);
+      };
+
+      it('arming the confirm moves focus to Cancel (the safe default), not <body>', () => {
+        render(<DocumentList documents={threeDocs()} onDelete={vi.fn()} deletingId={null} />);
+        arm('b.pdf');
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel delete b.pdf' }));
+      });
+
+      it('cancelling returns focus to that row\'s trash button', () => {
+        render(<DocumentList documents={threeDocs()} onDelete={vi.fn()} deletingId={null} />);
+        arm('b.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel delete b.pdf' }));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete b.pdf' }));
+      });
+
+      it('confirming moves focus to the next row\'s delete button', () => {
+        render(<DocumentList documents={threeDocs()} onDelete={vi.fn()} deletingId={null} />);
+        arm('a.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete b.pdf' }));
+      });
+
+      it('confirming the last row moves focus to the previous row\'s delete button', () => {
+        render(<DocumentList documents={threeDocs()} onDelete={vi.fn()} deletingId={null} />);
+        arm('c.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete c.pdf' }));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete b.pdf' }));
+      });
+
+      it('confirming the only row focuses the list, then the empty state once it is gone', () => {
+        const only = [createDocument({ id: 'a', fileName: 'a.pdf' })];
+        const { rerender } = render(<DocumentList documents={only} onDelete={vi.fn()} deletingId={null} />);
+        arm('a.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+        expect(document.activeElement).toBe(screen.getByRole('list', { name: 'Uploaded documents' }));
+        rerender(<DocumentList documents={[]} onDelete={vi.fn()} deletingId={null} />);
+        expect(document.activeElement).not.toBe(document.body);
+        expect(document.activeElement?.className).toContain('app-doc-list__empty');
+      });
+
+      it('a failed delete that leaves the list alone does not hijack focus later', () => {
+        const only = [createDocument({ id: 'a', fileName: 'a.pdf' })];
+        const { rerender } = render(<DocumentList documents={only} onDelete={vi.fn()} deletingId={null} />);
+        arm('a.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+        // The user moves on (focus leaves the list), the delete never lands.
+        act(() => (document.activeElement as HTMLElement).blur());
+        rerender(<DocumentList documents={[]} onDelete={vi.fn()} deletingId={null} />);
+        expect(document.activeElement).toBe(document.body);
+      });
+    });
+
+    // Review NIT-1: pinned rows make the exposed list non-contiguous.
+    it('exposes each row\'s position in the full list (aria-posinset / aria-setsize)', () => {
+      const documents = [
+        createDocument({ id: 'a', fileName: 'a.pdf' }),
+        createDocument({ id: 'b', fileName: 'b.pdf' }),
+        createDocument({ id: 'c', fileName: 'c.pdf' }),
+      ];
+      render(<DocumentList documents={documents} onDelete={vi.fn()} deletingId={null} />);
+      const rows = screen.getAllByRole('listitem');
+      expect(rows.map((row) => row.getAttribute('aria-posinset'))).toEqual(['1', '2', '3']);
+      expect(rows.map((row) => row.getAttribute('aria-setsize'))).toEqual(['3', '3', '3']);
+    });
+
     it('disables delete button when document is being deleted', () => {
       const mockOnDelete = vi.fn();
       const documents = [
@@ -544,6 +621,102 @@ describe('DocumentList', () => {
         // Once focus leaves the list, the row is virtualized away again.
         act(() => trigger.blur());
         expect(deleteLabels(container)).not.toContain('Delete Doc-070.pdf');
+      });
+
+      // Review LOW-A. An armed row keeps focus (on Cancel), so it stays pinned and mounted
+      // while it is scrolled out of sight: a focused control must not vanish (WCAG 2.4.3).
+      // That is intentional. What must not happen is the pin outliving the focus: the moment
+      // focus leaves, the row (and its neighbours) is virtualized away and its armed state
+      // goes with it, so an armed "Delete X?" never lingers un-focused off screen.
+      it('keeps an armed row pinned only while it holds focus, then drops it and its armed state', () => {
+        const { scroller, container } = setup(700);
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        const trash = screen.getByRole('button', { name: 'Delete Doc-070.pdf' });
+        trash.focus();
+        fireEvent.click(trash);
+        const cancel = screen.getByRole('button', { name: 'Cancel delete Doc-070.pdf' });
+        expect(document.activeElement).toBe(cancel);
+
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        expect(screen.getByRole('button', { name: 'Cancel delete Doc-070.pdf' })).toBe(cancel);
+        expect(document.activeElement).toBe(cancel);
+        expect(deleteLabels(container)).toContain('Delete Doc-069.pdf');
+
+        act(() => cancel.blur());
+        expect(screen.queryByRole('button', { name: 'Cancel delete Doc-070.pdf' })).toBeNull();
+        expect(deleteLabels(container)).not.toContain('Delete Doc-069.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-071.pdf');
+
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        expect(screen.getByRole('button', { name: 'Delete Doc-070.pdf' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Cancel delete Doc-070.pdf' })).toBeNull();
+      });
+
+      // Review NIT-2 (and the LOW-A mechanism): removing a focused element fires no blur,
+      // so a deleted document used to leave focusedId set and its neighbours pinned.
+      it('clears the pin when the focused document is removed from the list', () => {
+        const documents = names.map((fileName, i) => createDocument({ id: `d${i}`, fileName }));
+        const { scroller, container, rerender } = setup(700);
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        screen.getByRole('button', { name: 'Delete Doc-070.pdf' }).focus();
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        expect(deleteLabels(container)).toContain('Delete Doc-069.pdf');
+
+        rerender(
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList
+              documents={documents.filter((doc) => doc.id !== 'd70')}
+              onDelete={vi.fn()}
+              deletingId={null}
+            />
+          </div>
+        );
+        expect(deleteLabels(container)).not.toContain('Delete Doc-069.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-071.pdf');
+
+        // The stale id must be gone, not just harmless while the document is absent: if the
+        // same document comes back (re-upload, failed delete refresh) it must not re-pin.
+        rerender(
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents} onDelete={vi.fn()} deletingId={null} />
+          </div>
+        );
+        expect(deleteLabels(container)).not.toContain('Delete Doc-069.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-070.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-071.pdf');
+      });
+
+      // Review LOW-A mechanism: a focused control that is REMOVED (here the processing
+      // row's "Cancel indexing" button, gone once indexing finishes) fires no blur, so
+      // onBlur alone left the row and its neighbours pinned for good.
+      it('clears the pin when the focused control disappears without a blur', () => {
+        const documents = (status: 'processing' | 'ready') =>
+          names.map((fileName, i) => createDocument({ id: `d${i}`, fileName, status: i === 70 ? status : 'ready' }));
+        const tree = (status: 'processing' | 'ready') => (
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents(status)} onDelete={vi.fn()} onCancelIndexing={vi.fn()} deletingId={null} />
+          </div>
+        );
+        const { scroller, container, rerender } = setup(700);
+        rerender(tree('processing'));
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        const cancelIndexing = screen.getByRole('button', { name: 'Cancel indexing Doc-070.pdf' });
+        cancelIndexing.focus();
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        expect(deleteLabels(container)).toContain('Delete Doc-069.pdf');
+
+        rerender(tree('ready'));
+        expect(document.activeElement).toBe(document.body);
+        expect(deleteLabels(container)).not.toContain('Delete Doc-069.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-070.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-071.pdf');
       });
 
       // Review LOW-3: the wide layout's table head is above the list, so converting the
