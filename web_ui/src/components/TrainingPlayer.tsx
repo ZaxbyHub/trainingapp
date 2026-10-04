@@ -176,6 +176,14 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
     };
 
     useEffect(() => {
+      // PRR-215: this effect re-runs when the course changes while the component
+      // stays mounted, so the previous course's last slide, readout and change log
+      // must not carry over (a same-id first slide of the new course would be
+      // swallowed by the dedupe, and the log would mix two courses).
+      lastEmittedSlideRef.current = null;
+      setCurrent(null);
+      setChangeLog((log) => (log.length === 0 ? log : []));
+      let live = true;
       ensureBridge();
       // Read once at mount, then keep the 1000 ms cadence: a fresh frame may
       // already be mid-course (resume), so the first state can precede the
@@ -184,7 +192,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
         const bridge = ensureBridge();
         if (bridge === null) return;
         void bridge.readState().then((state) => {
-          if (state === null) return;
+          if (!live || state === null) return;
           setCurrent(state);
           if (state.slideId !== lastEmittedSlideRef.current) {
             lastEmittedSlideRef.current = state.slideId;
@@ -196,6 +204,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
       poll();
       const interval = window.setInterval(poll, POLL_INTERVAL_MS);
       return () => {
+        live = false;
         window.clearInterval(interval);
         bridgeRef.current?.destroy?.();
         bridgeRef.current = null;
