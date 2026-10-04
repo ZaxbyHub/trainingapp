@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, cleanup, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, cleanup, act, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { ChatMessageList } from './ChatMessageList';
 import type { ChatMessage } from '../types/chat';
@@ -48,13 +48,13 @@ describe('ChatMessageList', () => {
       expect(emptyState).toBeInTheDocument();
     });
 
-    it('marks the log as empty (welcome layout) when there are no messages', () => {
+    it('shows the welcome region (and no message list or jump button) inside the log when there are no messages', () => {
       render(<ChatMessageList messages={[]} isStreaming={false} />);
 
-      // Lumen phase 5: the empty layout is a state on the log, styled in pages/chat.css.
       const log = screen.getByRole('log');
-      expect(log).toHaveAttribute('data-state', 'empty');
-      expect(log).toHaveClass('chat-log--empty');
+      expect(within(log).getByRole('region', { name: /How can I help/i })).toBeInTheDocument();
+      expect(log.querySelector('.chat-msg')).toBeNull();
+      expect(within(log).queryByRole('button', { name: /jump to latest/i })).toBeNull();
     });
   });
 
@@ -131,7 +131,7 @@ describe('ChatMessageList', () => {
       expect(screen.getByText('Message 3')).toBeInTheDocument();
     });
 
-    it('marks the log as populated when messages exist', () => {
+    it('replaces the welcome region with the messages when messages exist', () => {
       const messages: ChatMessage[] = [
         { id: 'msg-1', role: 'user', content: 'Test', timestamp: Date.now() },
       ];
@@ -139,8 +139,9 @@ describe('ChatMessageList', () => {
       render(<ChatMessageList messages={messages} isStreaming={false} />);
 
       const log = screen.getByRole('log');
-      expect(log).toHaveAttribute('data-state', 'populated');
-      expect(log).not.toHaveClass('chat-log--empty');
+      expect(within(log).queryByRole('region', { name: /How can I help/i })).toBeNull();
+      expect(within(log).queryByText('Suggested prompts')).toBeNull();
+      expect(within(log).getByText('Test')).toBeInTheDocument();
     });
   });
 

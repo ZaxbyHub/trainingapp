@@ -138,12 +138,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = React.memo(({
   const isEmpty = messages.length === 0;
 
   return (
-    <div
-      ref={containerRef}
-      className={isEmpty ? 'chat-log chat-log--empty' : 'chat-log'}
-      data-state={isEmpty ? 'empty' : 'populated'}
-      role="log"
-    >
+    <div ref={containerRef} className="chat-log" role="log">
       <div className="chat-log__column">
         {/* Visually-hidden completion announcement. The log container announces
             streamed content mutations, but not the generation-complete
