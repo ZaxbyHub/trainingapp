@@ -289,13 +289,15 @@ function hardwareValueMasks(page: Page): Locator[] {
 
 /**
  * The re-index notice banner's rounded bottom-left corner rasterizes in one of two
- * ways at dark @ 1024 (a 6px anti-aliasing wobble at x 89-92, y 158-160): measured 2
- * passes in 6 runs against a freshly regenerated baseline, so the committed PNG failed
- * most runs. Masked in that one image only; the same banner stays in the baseline at
- * every other theme and width, where it is stable.
+ * ways at dark @ 1024 (an anti-aliasing wobble at x 89-92, y 158-160). Measured against
+ * an unmasked, freshly regenerated baseline the diff is 0-1px, so that one image allows
+ * 6 differing pixels instead of masking the banner (a mask would hide a real banner
+ * regression). Every other image keeps the config's zero tolerance. Playwright takes the
+ * stricter of maxDiffPixels and maxDiffPixelRatio, and the config pins the ratio to 0, so
+ * the ratio is relaxed here too (0.0001 of the image is well above 6px; maxDiffPixels binds).
  */
-const flakyBannerMask = (page: Page, state: string, theme: string, width: number): Locator[] =>
-  state === 'documents-populated' && theme === 'dark' && width === 1024 ? [page.locator('.ui-banner--info')] : [];
+const bannerCornerTolerance = (state: string, theme: string, width: number): { maxDiffPixels: number; maxDiffPixelRatio: number } | Record<string, never> =>
+  state === 'documents-populated' && theme === 'dark' && width === 1024 ? { maxDiffPixels: 6, maxDiffPixelRatio: 0.0001 } : {};
 
 /** Dynamic, machine-derived regions that must not enter a baseline. */
 function dynamicMasks(page: Page): Locator[] {
@@ -344,8 +346,9 @@ for (const theme of THEMES) {
           if (state.act) await state.act(page);
           await fitViewportToContent(page, width);
           await expect(page).toHaveScreenshot(`${state.id}-${theme}-${width}.png`, {
-            mask: [...dynamicMasks(page), ...flakyBannerMask(page, state.id, theme, width)],
+            mask: dynamicMasks(page),
             ...railGearTolerance(state.id, theme, width),
+            ...bannerCornerTolerance(state.id, theme, width),
           });
         });
       }
