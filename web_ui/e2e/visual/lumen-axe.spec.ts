@@ -14,6 +14,9 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
+// Waits below allow up to 60s; the 30s default test timeout would cut them short.
+test.describe.configure({ timeout: 180_000 });
+
 const WIDTHS = [1440, 500] as const;
 const THEMES = ['light', 'dark'] as const;
 const HEIGHT = 900;
