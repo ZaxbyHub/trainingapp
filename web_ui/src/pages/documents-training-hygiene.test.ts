@@ -74,4 +74,12 @@ describe('Documents & Training token hygiene (phase 6)', () => {
       }
     });
   }
+
+  // Review PRR-210 (WCAG 2.4.3): a flex/grid `order` makes the visual order differ from the DOM
+  // (tab) order. These surfaces keep the two identical, at every width.
+  for (const rel of ['pages/documents.css', 'pages/training.css']) {
+    it(`${rel}: no \`order\` declaration (visual order equals tab order)`, () => {
+      expect(source(rel).match(/(?<![\w-])order\s*:/)?.[0]).toBeUndefined();
+    });
+  }
 });

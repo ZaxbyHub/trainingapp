@@ -58,8 +58,9 @@
   .app-training { padding: var(--space-3) var(--space-4) var(--space-4); }
   .app-training__select { min-width: 0; flex: 1 1 100%; }
   .app-training__grid { grid-template-columns: minmax(0, 1fr); }
-  .app-training__title-select { flex: 1 1 100%; order: 1; }
-  .app-training__slidepos { order: 2; flex-basis: 100%; }
+  /* No `order`: the player bar's visual order must be its DOM (tab) order, WCAG 2.4.3.
+     The picker takes its own line; the version badge, slide position and Pin follow it. */
+  .app-training__title-select { flex: 1 1 100%; }
 }
 
 /* Course-card progress: bar + "k of n slides" (only when the slide count is known). */
