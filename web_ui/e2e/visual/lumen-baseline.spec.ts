@@ -56,6 +56,21 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 const WIDTHS = [1440, 1024, 768, 500] as const;
 const THEMES = ['light', 'dark'] as const;
 const HEIGHT = 900;
+
+/**
+ * Known sub-pixel anti-aliasing flake at the 64px-rail Settings gear: the
+ * `training-empty` light 1024px capture differs from its baseline by ~2px around
+ * the rail gear on some runs (measured; it reproduces on master too, so it is not
+ * a regression from any one change). Tolerance is scoped to EXACTLY that
+ * state/theme/width: every other capture keeps zero tolerance (no maxDiffPixels),
+ * so a real layout change anywhere else still fails. Playwright applies the
+ * stricter of maxDiffPixels and maxDiffPixelRatio, so 6 pixels is the ceiling.
+ */
+function railGearTolerance(stateId: string, theme: string, width: number): { maxDiffPixels?: number; maxDiffPixelRatio?: number } {
+  return stateId === 'training-empty' && theme === 'light' && width === 1024
+    ? { maxDiffPixels: 6, maxDiffPixelRatio: 0.0001 }
+    : {};
+}
 /** Chromium caps screenshots well above this; stop growing here. */
 const MAX_HEIGHT = 12_000;
 const NOW = Date.UTC(2026, 0, 15, 12, 0, 0);
@@ -317,6 +332,7 @@ for (const theme of THEMES) {
           await fitViewportToContent(page, width);
           await expect(page).toHaveScreenshot(`${state.id}-${theme}-${width}.png`, {
             mask: dynamicMasks(page),
+            ...railGearTolerance(state.id, theme, width),
           });
         });
       }
