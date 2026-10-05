@@ -20,7 +20,7 @@ const declared = (css: string): Set<string> =>
   new Set([...stripComments(css).matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 const LUMEN = declared(readFileSync(resolve(SRC, 'styles/lumen-tokens.css'), 'utf8'));
 const LEGACY_NAMES = [...declared(readFileSync(resolve(SRC, 'styles/tokens.css'), 'utf8'))].filter((n) => !LUMEN.has(n));
-const LEGACY = new RegExp('(' + LEGACY_NAMES.join('|') + ')(?![\w-])');
+const LEGACY = new RegExp('(' + LEGACY_NAMES.join('|') + ')(?![\\w-])');
 const FALLBACK = /var\(\s*--[\w-]+\s*,/;
 const USED_VAR = /var\(\s*(--[\w-]+)/g;
 const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
