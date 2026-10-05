@@ -307,20 +307,6 @@ function hardwareValueMasks(page: Page): Locator[] {
 const bannerCornerTolerance = (state: string, theme: string, width: number): { maxDiffPixels: number; maxDiffPixelRatio: number } | Record<string, never> =>
   state === 'documents-populated' && theme === 'dark' && width === 1024 ? { maxDiffPixels: 6, maxDiffPixelRatio: 0.0001 } : {};
 
-/**
- * Known sub-pixel flake at the chat composer's rounded corners under the model-gate's
- * translucent scrim, dark 500px only. Measured (Lumen phase 7, clean archive builds, 8 runs
- * each of this one test): master 7b74534 passed 8/8; this branch failed 7/8 with EXACTLY 4
- * differing pixels, each off by 1/255 in one channel, at the card's corner pixels (bbox
- * x16-484, y806-888); light 500 and every other width passed 3/3 or better. Colour-blend
- * rounding of the 70% scrim over the antialiased card edge, not a layout change. Tolerance is
- * scoped to exactly this state/theme/width (every other capture keeps zero tolerance); 8
- * pixels is the ceiling (Playwright applies the stricter of maxDiffPixels and the ratio, and
- * the config pins the ratio to 0, so it is relaxed here too).
- */
-const gateScrimCornerTolerance = (state: string, theme: string, width: number): { maxDiffPixels: number; maxDiffPixelRatio: number } | Record<string, never> =>
-  state === 'overlay-model-not-ready' && theme === 'dark' && width === 500 ? { maxDiffPixels: 8, maxDiffPixelRatio: 0.0001 } : {};
-
 /** Dynamic, machine-derived regions that must not enter a baseline. */
 function dynamicMasks(page: Page): Locator[] {
   return [
@@ -350,9 +336,15 @@ for (const theme of THEMES) {
         }
         // Absent gate = regression or a staged-weights build: fail unless explicitly opted out.
         expect(shown, 'model-gate overlay must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for builds with staged weights').toBe(true);
+        // The composer grows once the web font lands (its auto-resize re-measures on
+        // fonts.ready); capturing mid-growth gave two renders across fresh loads that
+        // differed by 1/255 at the card corners. Settle fonts and two frames first.
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        });
         await expect(page).toHaveScreenshot(`overlay-model-not-ready-${theme}-${width}.png`, {
           mask: dynamicMasks(page),
-          ...gateScrimCornerTolerance('overlay-model-not-ready', theme, width),
         });
       });
 
