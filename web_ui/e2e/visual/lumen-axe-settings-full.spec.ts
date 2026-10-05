@@ -15,6 +15,7 @@
 
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
+import { hideModelGate } from '../model-gate';
 
 // 1440: side nav; 1024: wrapped-row nav; 500: "Jump to section" select.
 const WIDTHS = [1440, 1024, 500] as const;
@@ -44,13 +45,9 @@ async function openSettings(page: Page, theme: string): Promise<void> {
     timeout: 60_000,
   });
   await page.evaluate(() => document.fonts.ready);
-  // Scan Settings itself, not the model-gate overlay stacked on it (as lumen-axe.spec.ts).
-  await page.evaluate(() => {
-    document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
-    });
-  });
-  await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
+  // Scan Settings itself, not the model-gate overlay stacked on it (shared helper,
+  // e2e/model-gate.ts; tolerant: this spec does not depend on the gate being up).
+  await hideModelGate(page, { expectGate: false });
   const menu = page.getByRole('button', { name: 'Open navigation' });
   if (await menu.isVisible()) await menu.click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click({ force: true });

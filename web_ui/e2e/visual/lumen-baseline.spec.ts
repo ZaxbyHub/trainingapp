@@ -42,8 +42,15 @@
  * Determinism: theme is forced via the persisted `theme-preference` key (and
  * emulated colorScheme); animations are disabled by the config and reduced
  * motion is requested; fonts are awaited; all cross-origin traffic is
- * aborted; hardware/quota-derived text is masked (the Hardware Capability
- * section is masked per value cell, not as a whole).
+ * aborted; hardware/quota-derived VALUES in Settings are masked (the Hardware
+ * Capability section is masked per value cell, not as a whole). The model gate's
+ * readiness TEXT is hardware-derived too and is not masked (it is the content under
+ * test), so the hardware it reads is pinned instead (PR #151 review PRR-151-036):
+ * stubHardware() reports navigator.deviceMemory = 8 (Chromium's cap: enough memory
+ * for the packaged model, so no "Insufficient memory" failure) and a WebGPU API with
+ * no adapter ("WebGPU is unavailable, but the wllama engine runs on the CPU"). That
+ * is exactly what the committed overlay-model-not-ready-*.png baselines show, so a
+ * regeneration on a 4 GB or WebGPU-capable box renders the same text.
  *
  * Viewport note: each capture grows the viewport to the full content height, so
  * height-dependent layout (100vh regions, the pinned composer, the sidebar footer)
@@ -52,6 +59,16 @@
  */
 
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import {
+  assertOverlayOptOutAllowed,
+  expectModelGateHidden,
+  hideModelGate,
+  requireModelGate,
+  settleFontsAndFrames,
+} from '../model-gate';
+
+// PRR-151-054: the LUMEN_ALLOW_NO_OVERLAY opt-out is refused under CI.
+assertOverlayOptOutAllowed();
 
 // Waits below allow up to 60s; the 30s default test timeout would cut them short.
 test.describe.configure({ timeout: 180_000 });
@@ -142,8 +159,23 @@ async function waitReady(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
 }
 
+/**
+ * Pin the hardware the readiness gate reads (see the header, PRR-151-036):
+ * model-readiness.ts derives its memory failure from navigator.deviceMemory
+ * (memory-aware.ts getMemoryBudget) and its WebGPU text from
+ * navigator.gpu.requestAdapter(). Defined on the prototype before any app script runs.
+ */
+async function stubHardware(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, get: () => 8 });
+    const gpu = { requestAdapter: async () => null };
+    Object.defineProperty(Navigator.prototype, 'gpu', { configurable: true, get: () => gpu });
+  });
+}
+
 async function boot(page: Page, theme: 'light' | 'dark'): Promise<void> {
   await blockExternalNetwork(page);
+  await stubHardware(page);
   await page.clock.setFixedTime(new Date(NOW + 24 * 3600 * 1000));
   await page.addInitScript((t) => {
     try {
@@ -238,22 +270,6 @@ async function seedPopulated(page: Page): Promise<void> {
 }
 
 /**
- * Hide the model-gate scrim (the Dialog backdrop, found by its stable test id) so the surface
- * underneath renders, and lift the gate's inert on the chat content so it can be interacted with.
- */
-async function hideModelGate(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
-    });
-    // The gate makes the chat content inert (axe skips inert subtrees, Playwright refuses to
-    // click them). The surface underneath is what these specs capture/scan, so lift it too.
-    document.querySelectorAll('.chat-page__content[inert]').forEach((el) => el.removeAttribute('inert'));
-  });
-  await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
-}
-
-/**
  * Grow the viewport until nothing scrolls vertically, so one screenshot holds
  * the whole surface (the scroller is <main>, so `fullPage` alone does not work).
  */
@@ -330,19 +346,12 @@ for (const theme of THEMES) {
 
       test('overlay-model-not-ready', async ({ page }) => {
         await boot(page, theme);
-        const shown = (await page.getByRole('alertdialog').count()) > 0;
-        if (!shown && process.env.LUMEN_ALLOW_NO_OVERLAY === '1') {
-          test.skip(true, 'overlay opt-out (LUMEN_ALLOW_NO_OVERLAY=1)');
-        }
         // Absent gate = regression or a staged-weights build: fail unless explicitly opted out.
-        expect(shown, 'model-gate overlay must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for builds with staged weights').toBe(true);
+        await requireModelGate(page);
         // The composer grows once the web font lands (its auto-resize re-measures on
         // fonts.ready); capturing mid-growth gave two renders across fresh loads that
         // differed by 1/255 at the card corners. Settle fonts and two frames first.
-        await page.evaluate(async () => {
-          await document.fonts.ready;
-          await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-        });
+        await settleFontsAndFrames(page);
         await expect(page).toHaveScreenshot(`overlay-model-not-ready-${theme}-${width}.png`, {
           mask: dynamicMasks(page),
         });
@@ -352,7 +361,8 @@ for (const theme of THEMES) {
         test(state.id, async ({ page }) => {
           await boot(page, theme);
           if (state.seed) await seedPopulated(page);
-          if ((await page.getByRole('alertdialog').count()) > 0) await hideModelGate(page);
+          // Every state starts on the chat page with the gate up (no staged weights).
+          await hideModelGate(page, { expectGate: true });
           if (state.nav) {
             await clickNav(page, state.nav);
           }
@@ -360,6 +370,8 @@ for (const theme of THEMES) {
           await page.waitForTimeout(500);
           if (state.act) await state.act(page);
           await fitViewportToContent(page, width);
+          // Re-checked right before the capture: no gate in the PNG, no inert content.
+          await expectModelGateHidden(page);
           await expect(page).toHaveScreenshot(`${state.id}-${theme}-${width}.png`, {
             mask: dynamicMasks(page),
             ...railGearTolerance(state.id, theme, width),
