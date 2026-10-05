@@ -187,4 +187,75 @@ describe('ModelBlockedOverlay (issue #25 F14)', () => {
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
     expect(onOpenSettings.mock.calls[0]).toEqual([]);
   });
+
+  describe('status changes are announced (PR #151 review PRR-151-005)', () => {
+    const preparing: ReadinessResult = { ...readyResult, failures: [], recommendations: [] };
+    const props = (readinessResult: ReadinessResult | null) => ({
+      readinessResult,
+      browserEngine: 'wllama' as const,
+      modelLoadingProgress: 0,
+      onRetry: () => {},
+      onOpenSettings: () => {},
+    });
+
+    it('mounts both live regions EMPTY (the alertdialog itself is announced on appearance; no double read)', () => {
+      render(<ModelBlockedOverlay {...props(readyResult)} />);
+      const polite = screen.getByTestId('model-gate-status');
+      const assertive = screen.getByTestId('model-gate-alert');
+      expect(polite).toHaveAttribute('aria-live', 'polite');
+      expect(assertive).toHaveAttribute('aria-live', 'assertive');
+      expect(polite).toHaveClass('ui-visually-hidden');
+      expect(polite).toBeEmptyDOMElement();
+      expect(assertive).toBeEmptyDOMElement();
+      // Inside the dialog, so the announcement is tied to the gate.
+      expect(screen.getByRole('alertdialog', { name: 'Model not ready' })).toContainElement(assertive);
+    });
+
+    it('preparing -> failures: the failure text lands in the assertive region that existed BEFORE the change', () => {
+      const { rerender } = render(<ModelBlockedOverlay {...props(null)} />);
+      const assertive = screen.getByTestId('model-gate-alert');
+      const polite = screen.getByTestId('model-gate-status');
+      expect(assertive).toBeEmptyDOMElement();
+
+      rerender(<ModelBlockedOverlay {...props(readyResult)} />);
+
+      // Same node (a region inserted together with its text is not reliably announced).
+      expect(screen.getByTestId('model-gate-alert')).toBe(assertive);
+      expect(assertive).toHaveTextContent(
+        'Model not ready. This build is missing the packaged model. See the Packaging guide or contact your administrator. Model not downloaded'
+      );
+      expect(polite).toBeEmptyDOMElement();
+    });
+
+    it('failures -> preparing (a Retry is running): announced politely, the stale failure is cleared', () => {
+      const { rerender } = render(<ModelBlockedOverlay {...props(readyResult)} />);
+      rerender(<ModelBlockedOverlay {...props(null)} />);
+      expect(screen.getByTestId('model-gate-status')).toHaveTextContent('Model not ready. Preparing the model…');
+      expect(screen.getByTestId('model-gate-alert')).toBeEmptyDOMElement();
+      // And the next failure is announced again, assertively.
+      rerender(<ModelBlockedOverlay {...props(readyResult)} />);
+      expect(screen.getByTestId('model-gate-alert')).toHaveTextContent(/Model not downloaded/);
+      expect(screen.getByTestId('model-gate-status')).toBeEmptyDOMElement();
+    });
+
+    it('a re-render with the SAME state announces nothing new', () => {
+      const { rerender } = render(<ModelBlockedOverlay {...props(preparing)} />);
+      rerender(<ModelBlockedOverlay {...props({ ...preparing })} />);
+      expect(screen.getByTestId('model-gate-status')).toBeEmptyDOMElement();
+      expect(screen.getByTestId('model-gate-alert')).toBeEmptyDOMElement();
+    });
+  });
+
+  it('PRR-151-015: while a Retry runs, Retry is busy, ignores presses and KEEPS focus (aria-disabled, not disabled)', () => {
+    const onRetry = vi.fn();
+    renderOverlay({ onRetry, retrying: true });
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry).toHaveFocus();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    expect(retry).toHaveAttribute('aria-disabled', 'true');
+    expect(retry).not.toBeDisabled();
+    fireEvent.click(retry);
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(retry).toHaveFocus();
+  });
 });

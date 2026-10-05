@@ -92,14 +92,25 @@ describe('ChatPage desktop first-run model gate (AC5 UI)', () => {
   it('BLOCKS with an informative alertdialog when a real engine has no models', async () => {
     renderGate(status({}));
     const dialog = await waitFor(() => {
-      // Scoped by accessible name: the browser-local ModelBlockedOverlay is a
-      // DIFFERENT alertdialog that may legitimately render in this harness.
       const el = screen.queryByRole('alertdialog', { name: /AI models are not installed yet/i });
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
     expect(dialog).toHaveAccessibleName(/AI models are not installed yet/i);
     expect(dialog).toHaveAccessibleDescription(/Neither the Quality nor the Fast language model/);
+  });
+
+  it('PRR-151-017: exactly ONE gate renders when both apply (browser-local selected, no local model, real engine without models): the desktop gate wins', async () => {
+    // Inside Electron with "In this window" (browser-local) selected and no browser
+    // model ready, the browser gate's condition holds too. Before PRR-151-017 both
+    // alertdialogs rendered, stacked, both Tab-reachable.
+    (window as unknown as { desktopApi: unknown }).desktopApi = {};
+    renderGate(status({}));
+    await screen.findByRole('alertdialog', { name: /AI models are not installed yet/i });
+    expect(screen.getAllByRole('alertdialog')).toHaveLength(1);
+    expect(screen.queryByRole('alertdialog', { name: /model not ready/i })).toBeNull();
+    // The desktop gate is the one that binds: handleSend returns early on it in every mode.
+    expect(screen.getByLabelText('Message input', { selector: 'textarea' }).closest('[inert]')).not.toBeNull();
   });
 
   it('the covered chat content is inert while the gate is up; the gate itself is not', async () => {
@@ -137,15 +148,33 @@ describe('ChatPage desktop first-run model gate (AC5 UI)', () => {
     });
   });
 
-  it('does NOT block the CI/dev stub engine (it answers /ask without weights)', () => {
-    renderGate(status({ engine: 'stub', profile: 'auto' }));
-    expect(screen.queryByText(/AI models are not installed yet/i)).toBeNull();
+  // PRR-151-032: positive anchors, so a ChatPage that never renders (or a gate that
+  // renders under different copy) cannot pass these vacuously. Inference mode is
+  // seeded to api (as above) so the BROWSER gate cannot be up either: with no gate
+  // at all, the composer is rendered, reachable (content not inert) and no
+  // alertdialog of any name exists.
+  async function expectUngated(container: HTMLElement): Promise<void> {
+    const input = await screen.findByLabelText('Message input');
+    const content = container.querySelector('.chat-page__content') as HTMLElement;
+    expect(content).toContainElement(input);
+    expect(content).not.toHaveAttribute('inert');
+    expect(input.closest('[aria-hidden="true"]')).toBeNull();
+    expect(screen.queryAllByRole('alertdialog')).toHaveLength(0);
+  }
+
+  it('does NOT block the CI/dev stub engine (it answers /ask without weights)', async () => {
+    (window as unknown as { desktopApi: unknown }).desktopApi = {};
+    seedInferenceModeForDesktop('http://127.0.0.1:4567');
+    const { container } = renderGate(status({ engine: 'stub', profile: 'auto' }));
+    await expectUngated(container);
   });
 
-  it('does NOT block when either profile is present', () => {
-    renderGate(
+  it('does NOT block when either profile is present', async () => {
+    (window as unknown as { desktopApi: unknown }).desktopApi = {};
+    seedInferenceModeForDesktop('http://127.0.0.1:4567');
+    const { container } = renderGate(
       status({ models: { quality: { present: true }, fast: { present: false } } }),
     );
-    expect(screen.queryByText(/AI models are not installed yet/i)).toBeNull();
+    await expectUngated(container);
   });
 });
