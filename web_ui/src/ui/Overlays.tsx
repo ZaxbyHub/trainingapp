@@ -100,10 +100,10 @@ export type DialogProps = DialogBaseProps &
   );
 
 /**
- * role="dialog" + aria-modal. On open it moves focus into the dialog (first
+ * role="dialog" (+ aria-modal unless `modal` is false). On open it moves focus into the dialog (first
  * focusable control, else the dialog itself), traps Tab / Shift+Tab (modal only), closes on
  * Escape or backdrop click (unless `dismissible` is false), and returns focus to
- * the previously focused element on close. Rendered in a portal on document.body
+ * the previously focused element on close (unless focus has since moved outside the dialog). Rendered in a portal on document.body
  * unless `contained`.
  */
 export function Dialog({
@@ -141,7 +141,13 @@ export function Dialog({
         : (wanted !== 'first' ? wanted.current : null) ?? panel?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel)?.focus();
     return () => {
-      returnRef.current?.focus();
+      // Return focus to the opener only if focus is still the dialog's to give back: on
+      // body/nothing, or inside the panel. A non-modal dialog lets the user Tab into the
+      // rest of the page (the shell nav); if focus is already there (or moved by the
+      // action that closed the dialog) it must not be yanked back to the opener.
+      const active = document.activeElement;
+      const ours = active === null || active === document.body || (panel?.contains(active) ?? false);
+      if (ours) returnRef.current?.focus();
       returnRef.current = null;
     };
   }, [open]);

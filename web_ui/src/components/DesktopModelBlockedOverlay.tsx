@@ -16,7 +16,8 @@
  * ModelBlockedOverlay for the rationale).
  *
  * A11y parity with ModelBlockedOverlay (PR-review F8): Dialog remembers and
- * restores the previously focused element and traps Tab within the dialog. It
+ * restores the previously focused element (unless focus has moved on) and, being
+ * non-modal, does not trap Tab. It
  * does NOT close on Escape: it is a blocking state with no dismiss path (no
  * onClose), so Escape is swallowed (Dialog `dismissible={false}`) and the
  * overlay stays until the backend reports staged models or an external engine.

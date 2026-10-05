@@ -190,6 +190,42 @@ describe('Dialog (blocking-overlay options)', () => {
     expect(opener).toHaveFocus();
   });
 
+  describe('focus return on close', () => {
+    function Host({ modal }: { modal: boolean }) {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <Button onClick={() => setOpen(true)}>Opener</Button>
+          <Button>Elsewhere</Button>
+          <Button onClick={() => setOpen(false)}>Lift</Button>
+          <Dialog open={open} modal={modal} dismissible={false} title="G" footer={<Button>Inside</Button>} />
+        </>
+      );
+    }
+
+    it('focus inside the dialog when it closes returns to the opener', async () => {
+      render(<Host modal={false} />);
+      const opener = screen.getByRole('button', { name: 'Opener' });
+      await userEvent.click(opener);
+      expect(screen.getByRole('button', { name: 'Inside' })).toHaveFocus();
+      // Close programmatically while focus is still inside the panel.
+      fireEvent.click(screen.getByRole('button', { name: 'Lift' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(opener).toHaveFocus();
+    });
+
+    it('non-modal: focus the user moved outside the dialog is NOT yanked back to the opener', async () => {
+      render(<Host modal={false} />);
+      await userEvent.click(screen.getByRole('button', { name: 'Opener' }));
+      const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
+      elsewhere.focus();
+      fireEvent.click(screen.getByRole('button', { name: 'Lift' }));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Opener' }));
+      expect(elsewhere).toHaveFocus(); // stays where the user put it
+    });
+  });
+
   it('modal=false omits aria-modal; the default keeps aria-modal="true"', () => {
     const { rerender } = render(<Dialog open modal={false} dismissible={false} title="Partial" />);
     expect(screen.getByRole('dialog', { name: 'Partial' })).not.toHaveAttribute('aria-modal');

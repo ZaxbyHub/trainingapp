@@ -1209,8 +1209,9 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           instead of a generic "please wait for download" message (which is
           actively wrong for wllama, where there is no download step — the real
           cause is usually missing packaged weights). Offers Retry and Open
-          Settings actions. Extracted into ModelBlockedOverlay (issue #25) which
-          adds aria-modal + a focus trap. (originally issue #21 F10) */}
+          Settings actions. Extracted into ModelBlockedOverlay (issue #25), now a
+          contained, non-modal Dialog (Lumen phase 7; the chat content is inert
+          while it is up). (originally issue #21 F10) */}
       {/* B9 (issue #67): desktop first-run gate — real engine, no staged
           models. Blocks send with an informative state instead of a doomed
           /ask (AC5). Extracted component per the shared-file convention. */}

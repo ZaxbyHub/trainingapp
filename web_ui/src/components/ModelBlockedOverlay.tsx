@@ -1,8 +1,7 @@
 /**
  * ModelBlockedOverlay — the chat page's blocking "model not ready" state, built
- * from the design-system primitives (design-language.md section 5: all blocking
- * states use Dialog + Banner): ui/Dialog (role="alertdialog", non-dismissible,
- * focus trap, focus return), ui/Banner for the readiness failures and
+ * from the design-system primitives (design-language.md section 5): ui/Dialog
+ * (role="alertdialog", non-dismissible, non-modal, focus return), ui/Banner for the readiness failures and
  * recommendations, ui/ProgressBar for the load, ui/Button for the actions.
  *
  * Scope (Lumen phase 7): it blocks the CHAT PAGE only. ChatPage renders it as a
@@ -14,8 +13,9 @@
  * aria-modal="true" asserts everything outside the dialog is inert, which would
  * hide the navigation from assistive tech while it is still reachable (WAI-ARIA
  * 1.2 dialog pattern). The covered chat content is made inert by ChatPage
- * instead, which is the part that is actually true. The Tab trap, initial focus
- * and focus return are Dialog's. Escape and backdrop presses do nothing.
+ * instead, which is the part that is actually true. Dialog does not trap Tab for a
+ * non-modal dialog (the navigation is reachable by keyboard); initial focus and focus
+ * return are Dialog's. Escape and backdrop presses do nothing.
  *
  * (issue #21 F10 originally mounted the overlay as an inline IIFE; #25 lifts it
  * into its own component and adds the a11y guarantees.)

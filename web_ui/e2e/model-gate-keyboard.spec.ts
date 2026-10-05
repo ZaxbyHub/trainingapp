@@ -3,7 +3,8 @@
  * only. Real-browser keyboard contract (jsdom ignores `inert` and Tab order):
  *  - Shift+Tab from the gate's first button reaches the shell navigation (no trap);
  *  - Tab from the gate's last button never lands in the covered chat content, which is inert.
- * Needs a build without staged weights (the gate must be up); skipped otherwise.
+ * Needs a build without staged weights (the gate must be up): it FAILS without a gate
+ * unless LUMEN_ALLOW_NO_OVERLAY=1 (local builds with staged weights). CI never stages them.
  */
 import { expect, test, type Page } from '@playwright/test';
 
