@@ -1,0 +1,48 @@
+/* Toasts (Lumen phase 7, docs/design/design-language.md section 4). Lumen tokens only
+   (enforced by ui-token-hygiene.test.ts); the toast body is a ui Banner, so tone colours
+   and its forced-colors border come from ui.css. Kept out of ui.css so this stylesheet
+   carries its own reduced-motion / forced-colors rules (parsed by toast.test.tsx). */
+
+/* Click-through viewport; only the toasts themselves take pointer events. Both live
+   regions are always mounted and, while empty, have no box. */
+.ui-toast-viewport {
+  position: fixed;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(360px, calc(100vw - 2 * var(--space-4)));
+  pointer-events: none;
+}
+.ui-toast-region { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; }
+.ui-toast-region:empty { display: none; }
+
+.ui-toast {
+  pointer-events: auto;
+  background: var(--bg-raised);
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-3);
+  animation: ui-toast-in var(--dur-base) var(--ease-standard);
+}
+.ui-toast--leaving {
+  opacity: 0;
+  transform: translateY(var(--space-2));
+  transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-base) var(--ease-standard);
+}
+.ui-toast__message { overflow-wrap: anywhere; }
+
+@keyframes ui-toast-in {
+  from { opacity: 0; transform: translateY(var(--space-3)); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-toast { animation: none; }
+  .ui-toast--leaving { transition: none; }
+}
+
+@media (forced-colors: active) {
+  .ui-toast { border: 1px solid CanvasText; box-shadow: none; }
+}
