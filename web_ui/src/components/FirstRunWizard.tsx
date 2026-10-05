@@ -154,6 +154,12 @@ export function FirstRunWizard({
   const completeEnabled =
     selectedProfile !== null && acknowledged && !manifestBlocking && packsSatisfied;
 
+  // Dialog focuses the first enabled control, which is "Skip for now" (Back is disabled on
+  // step 0): Enter at launch would dismiss setup. Start on the primary action instead.
+  useEffect(() => {
+    rootRef.current?.querySelector<HTMLElement>('[data-testid="wizard-next"]')?.focus();
+  }, []);
+
   // A control that unmounts while focused (Complete -> Finish, the activate button once
   // packs are satisfied) or goes natively disabled (Back on step 0) would drop focus to
   // <body>, outside the dialog's key handler: Escape and the Tab trap would stop working.

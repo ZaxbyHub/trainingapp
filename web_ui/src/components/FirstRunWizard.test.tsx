@@ -67,6 +67,11 @@ describe('FirstRunWizard keyboard behavior (PRR-003)', () => {
     expect(completeFirstRunMock).not.toHaveBeenCalled();
   });
 
+  it('opens with focus on Next (not on Skip for now, so Enter at launch does not dismiss setup)', () => {
+    const { getByTestId } = mount();
+    expect(document.activeElement).toBe(getByTestId('wizard-next'));
+  });
+
   it('Skip for now calls onClose without completing', () => {
     const onClose = vi.fn();
     const { getByTestId } = mount(stubStatus(), onClose);
