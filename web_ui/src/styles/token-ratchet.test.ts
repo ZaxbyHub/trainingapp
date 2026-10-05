@@ -4,12 +4,15 @@
  * enforces, with comments stripped first:
  *
  *   1. no retired (pre-Lumen) token anywhere             (styles/retired-tokens.ts)
- *   2. no hex / rgb / rgba / hsl / hsla literal outside lumen-tokens.css
+ *   2. no color literal outside lumen-tokens.css: hex, any color function (rgb/hsl/hwb/lab/lch/oklab/oklch/color),
+ *      and, in CSS color-bearing declarations, CSS named colors (styles/color-literals.ts)
  *   3. every var(--x) resolves to a Lumen token, a runtime property published via
  *      setProperty (--ui-tooltip-shift, --settings-nav-h), or a custom property declared in the same file
  *   4. `outline: none|0` only when a paired :focus-visible rule for the same selector
  *      supplies a replacement, or via the explicit OUTLINE_ALLOW list below (with reasons)
  *   5. inline `style={...}` carries geometry keys only (no color / spacing / border / font)
+ *   6. `var(--x, fallback)` only for the exact sanctioned pairs in SANCTIONED_FALLBACKS (a fallback
+ *      masks an UNDEFINED token); a stale allow-list entry fails
  *
  * Each rule is a pure function with a self-test that feeds it a violating fixture, so a rule
  * that silently stops matching fails here rather than passing vacuously. The per-surface
@@ -18,6 +21,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { COLOR_LITERAL_RE, findNamedColors } from './color-literals';
 import { RETIRED_TOKEN_RE } from './retired-tokens';
 
 const SRC = resolve(__dirname, '..');
@@ -36,6 +40,18 @@ const DATA_MODULES = new Set(['styles/retired-tokens.ts', 'styles/token-remap.ts
 const OUTLINE_ALLOW: Record<string, string> = {
   'ui/ui.css|.ui-shell__main:focus':
     'programmatic focus target (tabIndex -1) after drawer navigation; a ring around the whole content region is noise, not a keyboard affordance',
+};
+
+/**
+ * The ONLY `var(--x, fallback)` uses in the app, keyed `file|--x`. Both are properties the code publishes at
+ * runtime or defaults on purpose, never Lumen tokens (a fallback on a Lumen token would hide it being undefined:
+ * the wizard once shipped var(--color-bg-surface, #1e1e1e), a dark panel in the light theme).
+ */
+const SANCTIONED_FALLBACKS: Record<string, string> = {
+  'components/settings.css|--settings-nav-h':
+    'SettingsNav publishes its measured height via setProperty; before the first measurement scroll-margin falls back to var(--space-16)',
+  'ui/ui.css|--ui-tooltip-shift':
+    'Tooltip publishes a viewport-clamp shift via setProperty only when it would overflow; 0px is the no-shift default',
 };
 
 /** Inline-style keys that are layout geometry (computed per render), never color/spacing. */
@@ -142,7 +158,7 @@ const strip = (rel: string, text: string): string => (rel.endsWith('.css') ? str
 // Rules (pure; each takes comment-stripped text)
 // ---------------------------------------------------------------------------------------------
 
-const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(/g;
+const COLOR_LITERAL = new RegExp(COLOR_LITERAL_RE.source, 'g');
 
 function findRetiredTokens(text: string): string[] {
   const re = new RegExp(RETIRED_TOKEN_RE.source, 'g');
@@ -151,6 +167,16 @@ function findRetiredTokens(text: string): string[] {
 
 function findColorLiterals(text: string): string[] {
   return [...text.matchAll(COLOR_LITERAL)].map((m) => m[0]);
+}
+
+/** Hex / color-function literals everywhere, plus named colors in CSS color-bearing declarations. */
+function findLiterals(rel: string, text: string): string[] {
+  return [...findColorLiterals(text), ...(rel.endsWith('.css') ? findNamedColors(text) : [])];
+}
+
+/** Names of every `var(--x, ...)` that carries a fallback. */
+function findVarFallbacks(text: string): string[] {
+  return [...text.matchAll(/var\(\s*(--[\w-]+)\s*,/g)].map((m) => m[1]);
 }
 
 const USED_VAR = /var\(\s*(--[\w-]+)/g;
@@ -288,7 +314,7 @@ describe('repo-wide token ratchet (web_ui/src)', () => {
   });
 
   it('2. no color literal outside lumen-tokens.css', () => {
-    expect(offenders((s) => (LITERAL_ALLOWED.has(s.rel) ? [] : findColorLiterals(s.text)))).toEqual([]);
+    expect(offenders((s) => (LITERAL_ALLOWED.has(s.rel) ? [] : findLiterals(s.rel, s.text)))).toEqual([]);
   });
 
   it('3. every var(--x) resolves to a Lumen token, a setProperty runtime property, or a same-file declaration', () => {
@@ -304,6 +330,13 @@ describe('repo-wide token ratchet (web_ui/src)', () => {
 
   it('5. inline style props carry geometry keys only', () => {
     expect(offenders((s) => (s.rel.endsWith('.tsx') ? findInlineStyleViolations(s.text) : []))).toEqual([]);
+  });
+
+  it('6. var(--x, fallback) only for the enumerated sanctioned fallbacks', () => {
+    const raw = sources.flatMap((s) => findVarFallbacks(s.text).map((n) => `${s.rel}|${n}`));
+    expect(raw.filter((k) => !(k in SANCTIONED_FALLBACKS))).toEqual([]);
+    // A stale allow-list entry (the fallback was removed) must be deleted.
+    expect(Object.keys(SANCTIONED_FALLBACKS).filter((k) => !raw.includes(k))).toEqual([]);
   });
 });
 
@@ -341,9 +374,34 @@ describe('token ratchet self-tests', () => {
     expect(findRetiredTokens('var(--font-family-mono) var(--font-mono) var(--shadow-1) var(--space-4)')).toEqual([]);
   });
 
-  it('rule 2 detects hex, rgb, rgba, hsl and hsla literals', () => {
+  it('rule 2 detects hex literals and every color function', () => {
     expect(findColorLiterals('a{color:#fff;b:#12345678;c:rgb(1,2,3);d:rgba(0,0,0,.5);e:hsl(1,2%,3%);f:hsla(1,2%,3%,.4);g:oklch(1 0 0)}')).toHaveLength(7);
+    expect(findColorLiterals('a{b:hwb(1 2% 3%);c:lab(1 2 3);d:lch(1 2 3);e:oklab(1 2 3);f:color(srgb 1 0 0)}')).toHaveLength(5);
+    // color-mix over tokens holds no literal; with literal operands each is matched on its own.
+    expect(findColorLiterals('a{b:color-mix(in srgb, var(--bg-canvas) 70%, transparent)}')).toEqual([]);
+    expect(findColorLiterals('a{b:color-mix(in srgb, #fff 50%, rgb(0 0 0))}')).toEqual(['#fff', 'rgb(']);
     expect(findColorLiterals('a { color: var(--accent); background: Highlight; border-color: CanvasText }')).toEqual([]);
+  });
+
+  it('rule 2 detects named colors in color-bearing CSS declarations and ignores keywords, tokens and strings', () => {
+    expect(findNamedColors('a { color: red; background: white url(x.png); border: 1px solid Tomato }')).toEqual(['red', 'white', 'Tomato']);
+    expect(findNamedColors('a { background: color-mix(in srgb, var(--accent) 40%, blue) } b { --mine: navy }')).toEqual(['blue', 'navy']);
+    expect(findNamedColors('a { box-shadow: 0 0 0 2px gold; outline: 2px solid var(--focus-ring, red) }')).toEqual(['gold', 'red']);
+    // Legal: system colors, transparent/currentColor, tokens, token names that contain a color word, strings, non-color properties.
+    expect(
+      findNamedColors(
+        'a { color: CanvasText; background: Highlight; border-color: transparent; fill: currentColor; stroke: var(--red-ish); content: "red"; font-family: Tan, sans-serif; grid-area: green; background-image: url(red.png) }'
+      )
+    ).toEqual([]);
+    expect(findLiterals('x.css', 'a { color: red }')).toEqual(['red']);
+    expect(findLiterals('x.tsx', "const label = 'red'; const c = 'tan';")).toEqual([]);
+  });
+
+  it('rule 6 finds a fallback on any var() and ignores nested token-only var()s', () => {
+    expect(findVarFallbacks('a { b: var(--x, #fff); c: var( --y ,1px); d: var(--z) }')).toEqual(['--x', '--y']);
+    expect(findVarFallbacks('a { b: calc(var(--settings-nav-h, var(--space-16)) + var(--space-2)) }')).toEqual(['--settings-nav-h']);
+    expect(findVarFallbacks('a { b: var(--space-3) }')).toEqual([]);
+    for (const reason of Object.values(SANCTIONED_FALLBACKS)) expect(reason.length).toBeGreaterThan(20);
   });
 
   it('rule 3 detects an unresolved var() and accepts Lumen, setProperty runtime and same-file declarations', () => {

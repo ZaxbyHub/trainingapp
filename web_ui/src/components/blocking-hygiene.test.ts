@@ -6,12 +6,14 @@
  * a fallback masks an undefined token (the desktop gate rendered a white card in
  * dark mode through `var(--color-bg-primary, #fff)`). Local custom properties
  * that are legitimately defaulted (settings.css --settings-nav-h, ui.css
- * --ui-tooltip-shift) are outside these files. Mirrors pages/chat-hygiene.test.ts.
+ * --ui-tooltip-shift) are outside these files; styles/token-ratchet.test.ts rule 6 enumerates them.
+ * Mirrors pages/chat-hygiene.test.ts.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RETIRED_TOKENS, RETIRED_TOKEN_RE } from '../styles/retired-tokens';
+import { COLOR_LITERAL_RE } from '../styles/color-literals';
 
 const SRC = resolve(__dirname, '..');
 const FILES = [
@@ -30,7 +32,7 @@ const LUMEN = declared(readFileSync(resolve(SRC, 'styles/lumen-tokens.css'), 'ut
 /** The frozen retired-token list (styles/retired-tokens.ts). */
 const LEGACY_NAMES = RETIRED_TOKENS;
 const LEGACY = RETIRED_TOKEN_RE;
-const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
+const COLOR_LITERAL = COLOR_LITERAL_RE; // shared with styles/token-ratchet.test.ts (hex + every color function)
 const INLINE_STYLE = /\bstyle=\{/;
 const VAR_FALLBACK = /var\(\s*--[\w-]+\s*,/;
 const USED_VARS = /var\(\s*(--[\w-]+)/g;
@@ -45,6 +47,11 @@ describe('blocking overlay hygiene (phase 7)', () => {
     expect(VAR_FALLBACK.test('var(--color-border, #ddd)')).toBe(true);
     expect(VAR_FALLBACK.test('var(--space-3)')).toBe(false);
     expect(INLINE_STYLE.test('<div style={{ a: 1 }} />')).toBe(true);
+    // Every color form is a literal here, not just hex / rgb / hsl (PRR-151-053).
+    for (const lit of ['#fff', 'rgba(0,0,0,.5)', 'hsl(1 2% 3%)', 'oklch(0.5 0.1 200)', 'lab(50% 1 1)', 'color(srgb 1 0 0)']) {
+      expect(COLOR_LITERAL.test(lit), lit).toBe(true);
+    }
+    expect(COLOR_LITERAL.test('color-mix(in srgb, var(--bg-canvas) 70%, transparent)')).toBe(false);
   });
 
   for (const rel of FILES) {

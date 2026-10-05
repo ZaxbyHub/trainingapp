@@ -7,6 +7,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RETIRED_TOKENS, RETIRED_TOKEN_RE } from '../styles/retired-tokens';
+import { COLOR_LITERAL_RE } from '../styles/color-literals';
 
 const UI_DIR = __dirname;
 
@@ -33,7 +34,7 @@ const LUMEN_DECLARED = declared(LUMEN_TOKENS);
 const LEGACY_NAMES = RETIRED_TOKENS;
 // Trailing (?![\w-]) keeps --font-family from matching --font-family-mono style names.
 const LEGACY = RETIRED_TOKEN_RE;
-const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
+const COLOR_LITERAL = COLOR_LITERAL_RE; // shared with styles/token-ratchet.test.ts (hex + every color function)
 const ESCAPE_HATCH = /\bcssText\b|\binsertRule\b|dangerouslySetInnerHTML|\.innerHTML\b/;
 
 describe('src/ui token hygiene', () => {
