@@ -46,15 +46,12 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  * failures list from --color-danger to --danger (5.70:1 / 5.48:1), verified with the
  * page behind the card hidden so axe could not report them as merely `incomplete`.
  * Phase 6 (Documents & Training) fixed and removed both 'documents:light:*' entries.
+ * Phase 7 (overlays) rebuilt the model gate on ui/Dialog + Banner + Button (its
+ * outlined "Open Settings" button was the last 'overlay:light:*' node) and emptied
+ * the baseline: every key is now zero-node. The map stays so a future, justified,
+ * pre-existing entry has somewhere to live; never add one for a surface a PR touches.
  */
-const KNOWN_BASELINE: Record<string, readonly string[]> = {
-  'overlay:light:1440': [
-    "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-  ],
-  'overlay:light:500': [
-    "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-  ],
-};
+const KNOWN_BASELINE: Record<string, readonly string[]> = {};
 
 /**
  * Lumen phase 3: at <= 768px the primary nav lives in the AppShell drawer, opened
