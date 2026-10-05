@@ -21,6 +21,9 @@
   max-block-size: calc(100vh - 2 * var(--space-6));
   overflow-y: auto;
 }
+@supports (height: 100dvh) {
+  .ui-toast-viewport { max-block-size: calc(100dvh - 2 * var(--space-6)); }
+}
 .ui-toast-region { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; }
 
 .ui-toast {

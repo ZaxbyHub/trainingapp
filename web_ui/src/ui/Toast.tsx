@@ -22,6 +22,8 @@ export interface Toast {
   id: string;
   message: string;
   type: ToastTone;
+  /** Bumped when an identical toast is shown again: restarts the auto-dismiss timer. */
+  nonce: number;
 }
 
 export interface ToastContextValue {
@@ -58,6 +60,9 @@ function prefersReducedMotion(): boolean {
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  // The list of record (state mirrors it): showToast must see toasts queued earlier in
+  // the same tick, and needs to know which toast the cap drops before React re-renders.
+  const toastsRef = useRef<Toast[]>([]);
   const nextId = useRef(0);
   const viewportRef = useRef<HTMLDivElement>(null);
   // Where focus was before it entered a toast, so dismissing a focused toast does not
@@ -65,11 +70,26 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const returnFocusRef = useRef<HTMLElement | null>(null);
 
   const showToast = useCallback((message: string, type: ToastTone) => {
-    const id = `toast-${nextId.current++}`;
-    setToasts((prev) => {
-      if (prev.some((t) => t.message === message && t.type === type)) return prev;
-      return [...prev, { id, message, type }].slice(-MAX_TOASTS);
-    });
+    const prev = toastsRef.current;
+    let next: Toast[];
+    if (prev.some((t) => t.message === message && t.type === type)) {
+      // A repeat stays visible for a full duration instead of vanishing on the old timer.
+      next = prev.map((t) => (t.message === message && t.type === type ? { ...t, nonce: t.nonce + 1 } : t));
+    } else {
+      next = [...prev, { id: `toast-${nextId.current++}`, message, type, nonce: 0 }];
+      const dropped = next.slice(0, -MAX_TOASTS);
+      next = next.slice(-MAX_TOASTS);
+      // A dropped toast that holds focus would strand it on <body>: hand it to a survivor.
+      for (const d of dropped) {
+        const el = viewportRef.current?.querySelector<HTMLElement>(`[data-toast-id="${d.id}"]`);
+        if (el?.contains(document.activeElement)) {
+          const survivor = viewportRef.current?.querySelector<HTMLElement>(`[data-toast-id="${next[0].id}"] button`);
+          survivor?.focus();
+        }
+      }
+    }
+    toastsRef.current = next;
+    setToasts(next);
   }, []);
 
   // Focus moving between toasts keeps the recorded target; focus arriving from outside
@@ -86,7 +106,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       returnFocusRef.current = null;
       if (target?.isConnected) target.focus();
     }
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    toastsRef.current = toastsRef.current.filter((t) => t.id !== id);
+    setToasts(toastsRef.current);
   }, []);
 
   const value = useMemo<ToastContextValue>(() => ({ showToast }), [showToast]);
@@ -171,15 +192,25 @@ function ToastItem({ toast, onRemove, onFocusEntered }: ToastItemProps) {
     start(remaining.current);
   }, [start]);
 
+  // Mount, and again whenever an identical toast is shown (nonce bump): a full duration
+  // from now, still paused while hovered or focused.
   useEffect(() => {
+    if (leavingRef.current) return;
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    dismissTimer.current = null;
+    remaining.current = TOAST_DURATION_MS;
     // A cursor already resting where the toast appears fires no mouseenter until it moves.
     if (itemRef.current?.matches(':hover')) hovered.current = true;
-    else start(TOAST_DURATION_MS);
-    return () => {
+    if (!hovered.current && !focused.current) start(TOAST_DURATION_MS);
+  }, [start, toast.nonce]);
+
+  useEffect(
+    () => () => {
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
       if (exitTimer.current) clearTimeout(exitTimer.current);
-    };
-  }, [start]);
+    },
+    []
+  );
 
   const onFocus = (e: FocusEvent<HTMLDivElement>) => {
     if (!e.currentTarget.contains(e.relatedTarget)) onFocusEntered(e.relatedTarget);
@@ -195,6 +226,7 @@ function ToastItem({ toast, onRemove, onFocusEntered }: ToastItemProps) {
   return (
     <div
       ref={itemRef}
+      data-toast-id={toast.id}
       className={cx('ui-toast', `ui-toast--${toast.type}`, leaving && 'ui-toast--leaving')}
       onMouseEnter={() => {
         hovered.current = true;

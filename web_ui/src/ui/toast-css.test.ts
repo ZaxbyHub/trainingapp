@@ -59,6 +59,10 @@ describe('toast.css', () => {
     expect(css).toMatch(/\.ui-toast-viewport\s*\{[^}]*max-block-size:[^;]+;[^}]*overflow-y:\s*auto/);
   });
 
+  it('uses the dynamic viewport height where supported (mobile browser chrome)', () => {
+    expect(css).toMatch(/@supports \(height: 100dvh\)\s*\{[^}]*\.ui-toast-viewport\s*\{[^}]*max-block-size:\s*calc\(100dvh/);
+  });
+
   it('positions the viewport with logical properties (RTL-safe), never physical right/bottom', () => {
     const rule = /\.ui-toast-viewport\s*\{([^}]*)\}/.exec(css)![1];
     expect(rule).toMatch(/inset-inline-end:/);

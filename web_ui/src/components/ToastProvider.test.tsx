@@ -387,6 +387,32 @@ describe('ToastProvider focus handling', () => {
 describe('ToastProvider bounds and placement', () => {
   timers();
 
+  it('hands focus to a surviving toast when the cap drops the toast that holds it', () => {
+    render(
+      <ToastProvider>
+        <Burst />
+      </ToastProvider>
+    );
+    for (let i = 0; i < MAX_TOASTS; i += 1) fireEvent.click(screen.getByTestId('burst'));
+    act(() => screen.getAllByRole('button', { name: /dismiss notification/i })[0].focus()); // oldest: Message 0
+    fireEvent.click(screen.getByTestId('burst')); // drops Message 0
+    expect(screen.queryByText('Message 0')).not.toBeInTheDocument();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(screen.getByText('Message 1').closest('.ui-toast')!.querySelector('button'));
+  });
+
+  it('a repeated toast restarts the auto-dismiss timer of the one already showing', () => {
+    setup();
+    show();
+    advance(4000);
+    show(); // identical: no second toast, but a fresh 5000 ms
+    expect(screen.getAllByText('Saved successfully')).toHaveLength(1);
+    advance(4999);
+    expect(toastEl('Saved successfully')).not.toHaveClass('ui-toast--leaving');
+    advance(1);
+    expect(toastEl('Saved successfully')).toHaveClass('ui-toast--leaving');
+  });
+
   it('caps visible toasts at MAX_TOASTS, dropping the oldest', () => {
     render(
       <ToastProvider>
