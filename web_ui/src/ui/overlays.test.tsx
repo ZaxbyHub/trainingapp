@@ -100,11 +100,12 @@ describe('Dialog (blocking-overlay options)', () => {
   it('dismissible=false: Escape does nothing, is default-prevented, and never reaches a parent or window listener', () => {
     const onKeyDown = vi.fn();
     const onWindowKey = vi.fn();
+    const onClose = vi.fn();
     window.addEventListener('keydown', onWindowKey);
     const { unmount } = render(
       <div onKeyDown={onKeyDown}>
         <Dialog open alert dismissible title="x" />
-        <Dialog open alert dismissible={false} title="Blocked" footer={<Button>Go</Button>} />
+        <Dialog open alert dismissible={false} onClose={onClose} title="Blocked" footer={<Button>Go</Button>} />
       </div>
     );
     // dismissible Dialog without onClose must not throw either.
@@ -113,6 +114,7 @@ describe('Dialog (blocking-overlay options)', () => {
     expect(fireEvent.keyDown(go, { key: 'Escape' })).toBe(false); // preventDefault called
     expect(onKeyDown).not.toHaveBeenCalled();
     expect(onWindowKey).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
     expect(blocked).toBeInTheDocument();
     window.removeEventListener('keydown', onWindowKey);
     unmount();
