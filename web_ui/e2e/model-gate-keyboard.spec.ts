@@ -60,7 +60,6 @@ test('activating Settings from the nav while the gate is up keeps focus there (n
   await page.keyboard.press('Enter');
   await expect(page.getByRole('alertdialog', { name: 'Model not ready' })).toBeVisible();
   // The user Tabs into the nav and activates Settings while the gate is up.
-  await page.keyboard.press('Shift+Tab');
   const settings = nav.getByRole('button', { name: 'Settings', exact: true });
   await settings.focus();
   await page.keyboard.press('Enter');

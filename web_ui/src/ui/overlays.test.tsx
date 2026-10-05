@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { createRef, useState } from 'react';
+import React, { createRef, useState } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -212,6 +212,32 @@ describe('Dialog (blocking-overlay options)', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Lift' }));
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       expect(opener).toHaveFocus();
+    });
+
+    it('StrictMode: a dialog mounted already open still returns focus to the opener on close', () => {
+      // StrictMode's simulated unmount runs the cleanup while focus is inside the (still
+      // mounted) panel; the cleanup must hand focus back so the re-run captures the real
+      // opener, not a control inside the panel.
+      function Mounted({ open }: { open: boolean }) {
+        return <Dialog open={open} dismissible={false} modal={false} title="G" footer={<Button>Inside</Button>} />;
+      }
+      const opener = document.createElement('button');
+      opener.textContent = 'Opener';
+      document.body.appendChild(opener);
+      opener.focus();
+      const { rerender } = render(
+        <React.StrictMode>
+          <Mounted open />
+        </React.StrictMode>
+      );
+      expect(screen.getByRole('button', { name: 'Inside' })).toHaveFocus();
+      rerender(
+        <React.StrictMode>
+          <Mounted open={false} />
+        </React.StrictMode>
+      );
+      expect(opener).toHaveFocus();
+      opener.remove();
     });
 
     it('non-modal: focus the user moved outside the dialog is NOT yanked back to the opener', async () => {
