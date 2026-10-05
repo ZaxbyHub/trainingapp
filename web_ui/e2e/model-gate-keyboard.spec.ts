@@ -17,7 +17,7 @@ async function boot(page: Page): Promise<void> {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   const gate = page.getByRole('alertdialog', { name: 'Model not ready' });
-  await expect(gate.or(page.getByLabel('Message input'))).toBeVisible({ timeout: 60_000 });
+  await expect(gate.or(page.getByLabel('Message input')).first()).toBeVisible({ timeout: 60_000 });
   const present = (await gate.count()) > 0;
   if (!present && process.env.LUMEN_ALLOW_NO_OVERLAY === '1') test.skip(true, 'overlay opt-out (LUMEN_ALLOW_NO_OVERLAY=1)');
   expect(present, 'model gate must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for builds with staged weights').toBe(true);
