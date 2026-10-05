@@ -14,6 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 
 vi.mock('../../lib/rag/rag-orchestrator', () => ({ RAGOrchestrator: vi.fn() }));
@@ -52,15 +53,25 @@ afterEach(() => {
 });
 
 describe('DesktopModelBlockedOverlay actions', () => {
-  it('without onOpenSettings it renders no actions and Tab stays on the heading (unchanged behavior)', () => {
+  it('without onOpenSettings it renders no actions; focus opens on the dialog', () => {
     render(<DesktopModelBlockedOverlay open />);
     const dialog = screen.getByRole('alertdialog', DIALOG);
     expect(dialog.querySelectorAll('button')).toHaveLength(0);
-    const heading = screen.getByRole('heading', DIALOG);
-    expect(heading).toHaveFocus();
-    const notPrevented = fireEvent.keyDown(heading, { key: 'Tab' });
-    expect(notPrevented).toBe(false);
-    expect(heading).toHaveFocus();
+    expect(dialog).toHaveFocus();
+
+  });
+
+  it('is a non-modal alertdialog described by its body, built from Dialog + Banner + Button (no inline styles)', () => {
+    const { container } = render(<DesktopModelBlockedOverlay open onOpenSettings={vi.fn()} />);
+    const dialog = screen.getByRole('alertdialog', DIALOG);
+    // The gate blocks the chat page only; the shell navigation stays usable, so no aria-modal claim.
+    expect(dialog).not.toHaveAttribute('aria-modal');
+    expect(dialog).toHaveAccessibleDescription(/Neither the Quality nor the Fast language model was found/);
+    expect(dialog.querySelector('.ui-banner')).not.toBeNull();
+    expect(screen.getByRole('button', EXTERNAL_ACTION)).toHaveClass('ui-button--primary');
+    expect(container.querySelectorAll('[style]')).toHaveLength(0);
+    // Contained to the chat region (not a window-wide z-9000 layer).
+    expect(screen.getByTestId('ui-dialog-backdrop')).toHaveClass('ui-dialog__backdrop--contained');
   });
 
   it('"Use a local server or cloud model" opens Settings at the Model & connection section', () => {
@@ -80,28 +91,32 @@ describe('DesktopModelBlockedOverlay actions', () => {
     expect(onOpenSettings.mock.calls[0]).toEqual([]);
   });
 
-  it('keeps focus inside the dialog: heading on open, Tab cycles the actions both ways', () => {
+  it('focus opens on the dialog; Tab moves through the actions and is not trapped (non-modal)', async () => {
+    const user = userEvent.setup();
     render(<DesktopModelBlockedOverlay open onOpenSettings={vi.fn()} />);
-    const heading = screen.getByRole('heading', DIALOG);
+    const dialog = screen.getByRole('alertdialog', DIALOG);
     const openSettings = screen.getByRole('button', { name: 'Open Settings' });
     const external = screen.getByRole('button', EXTERNAL_ACTION);
-    expect(heading).toHaveFocus();
-    fireEvent.keyDown(heading, { key: 'Tab' });
+    expect(dialog).toHaveFocus();
+    await user.tab();
     expect(openSettings).toHaveFocus();
-    external.focus();
-    fireEvent.keyDown(external, { key: 'Tab' });
-    expect(openSettings).toHaveFocus();
-    fireEvent.keyDown(openSettings, { key: 'Tab', shiftKey: true });
+    await user.tab();
     expect(external).toHaveFocus();
+    // Edge presses are not intercepted: the browser decides where focus goes next.
+    expect(fireEvent.keyDown(external, { key: 'Tab' })).toBe(true);
+    expect(fireEvent.keyDown(openSettings, { key: 'Tab', shiftKey: true })).toBe(true);
   });
 
   it('F-011: Escape is swallowed and the blocking overlay stays open (no dismiss path), as documented', () => {
     render(<DesktopModelBlockedOverlay open onOpenSettings={vi.fn()} />);
-    const heading = screen.getByRole('heading', DIALOG);
+    const dialog = screen.getByRole('alertdialog', DIALOG);
     // fireEvent returns false when the handler called preventDefault().
-    expect(fireEvent.keyDown(heading, { key: 'Escape' })).toBe(false);
+    expect(fireEvent.keyDown(dialog, { key: 'Escape' })).toBe(false);
     expect(screen.getByRole('alertdialog', DIALOG)).toBeInTheDocument();
-    expect(heading).toHaveFocus();
+    expect(dialog).toHaveFocus();
+    // A scrim press does not dismiss it either.
+    fireEvent.mouseDown(screen.getByTestId('ui-dialog-backdrop'));
+    expect(screen.getByRole('alertdialog', DIALOG)).toBeInTheDocument();
     // The docstring must describe that behavior, not claim the overlay closes.
     const source = fs.readFileSync(
       path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'DesktopModelBlockedOverlay.tsx'),

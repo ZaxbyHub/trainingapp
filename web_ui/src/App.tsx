@@ -16,6 +16,7 @@ import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
 import { AppLayout } from './layouts/AppLayout';
 import { FirstRunGate } from './components/FirstRunWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { Banner, Button, Dialog, IconButton, ProgressBar } from './ui';
 import { ChatPage } from './pages/ChatPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -30,70 +31,55 @@ import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
 import '@fontsource/inter/700.css';
 import './styles/theme.css';
+import './components/blocking.css';
 
-function LoadingOverlay({
+/**
+ * Blocking boot state (Lumen phase 7, design-language.md section 5): ui/Dialog
+ * (non-dismissible) with an indeterminate ui/ProgressBar while connecting, or a
+ * ui/Banner tone="danger" (role="alert") with the failure and, when the caller
+ * can honestly re-run the failed step, a Retry action. Nothing is mounted behind
+ * it, so there is nothing to make inert.
+ */
+export function LoadingOverlay({
   currentStep,
   initError,
+  onRetry,
 }: {
   currentStep: string;
   initError: string | null;
+  /** Re-run the failed boot step. Omitted where no honest re-run exists. */
+  onRetry?: () => void;
 }) {
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'var(--color-bubble-assistant)',
-        color: 'var(--color-text-primary)',
-        fontFamily: 'var(--font-family)',
-        gap: 'var(--spacing-xl)',
-        zIndex: 9999,
-      }}
+    <Dialog
+      open
+      dismissible={false}
+      layer="boot"
+      className="blocking-gate"
+      title={initError ? currentStep : 'Starting TrainingApp'}
+      footer={
+        initError && onRetry ? (
+          <Button variant="primary" onClick={onRetry}>
+            Retry
+          </Button>
+        ) : undefined
+      }
     >
-      <div
-        style={{
-          width: '48px',
-          height: '48px',
-          border: '3px solid var(--color-bubble-system)',
-          borderTopColor: 'var(--color-primary)',
-          borderRadius: '50%',
-          animation: 'spin 1s linear infinite',
-        }}
-      />
-      <span
-        role="status"
-        aria-live="polite"
-        style={{
-          fontSize: 'var(--font-size-body)',
-          color: 'var(--color-text-muted)',
-        }}
-      >
-        {currentStep}
-      </span>
-      {initError && (
-        <div
-          role="alert"
-          aria-live="assertive"
-          style={{
-            marginTop: 'var(--spacing-xl)',
-            padding: 'var(--spacing-lg) var(--spacing-xl)',
-            backgroundColor: 'rgba(211, 47, 47, 0.1)',
-            border: '1px solid var(--color-danger)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--color-danger)',
-            fontSize: 'var(--font-size-caption)',
-            maxWidth: '400px',
-            textAlign: 'center',
-          }}
-        >
-          {initError}
-        </div>
-      )}
-    </div>
+      <div className="blocking-gate__stack">
+        {initError ? (
+          <Banner tone="danger">{initError}</Banner>
+        ) : (
+          <>
+            {/* The step text lives in a polite status region (as before the Dialog
+                migration) so each boot step change is announced; the title is stable. */}
+            <p role="status" className="blocking-gate__lead">
+              {currentStep}
+            </p>
+            <ProgressBar label="Starting" />
+          </>
+        )}
+      </div>
+    </Dialog>
   );
 }
 
@@ -115,7 +101,11 @@ function seedInferenceModeForDesktop(baseUrl: string): void {
  * the DesktopSessionProvider. Failures render an informative blocking state
  * (never a silently broken app). Pure-browser builds never mount this gate.
  */
-function DesktopBootGate({ children }: { children: ReactNode }) {
+export function DesktopBootGate({ children }: { children: ReactNode }) {
+  // Bumped by the boot-failure Retry; initDesktopSession clears its memo on
+  // failure ("a failed launch must be retryable"), so re-running the effect is a
+  // real second attempt, not a re-render of the same error.
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<DesktopSessionState>({
     session: null,
     models: null,
@@ -152,7 +142,12 @@ function DesktopBootGate({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [attempt]);
+
+  const retryBoot = () => {
+    setState({ session: null, models: null, loading: true, error: null });
+    setAttempt((n) => n + 1);
+  };
 
   // universal-provider-settings-overhaul: toggling "Use external model" flips
   // the backend engine between llama.cpp and external — re-read model status
@@ -173,7 +168,7 @@ function DesktopBootGate({ children }: { children: ReactNode }) {
   }
   if (state.error) {
     return (
-      <LoadingOverlay currentStep="Desktop backend unavailable" initError={state.error} />
+      <LoadingOverlay currentStep="Desktop backend unavailable" initError={state.error} onRetry={retryBoot} />
     );
   }
   return <DesktopSessionProvider value={state}>{children}</DesktopSessionProvider>;
@@ -317,6 +312,10 @@ function AppContent() {
   }, [currentPage, trainingTarget]);
 
   if (!isInitialized) {
+    // No onRetry: useServiceInitialization exposes no re-init, and it reports
+    // initError together with isInitialized=true (see the init-error banner
+    // below), so this overlay is the in-progress state in practice. A Retry
+    // here would have nothing honest to call.
     return (
       <LoadingOverlay currentStep={currentStep} initError={initError} />
     );
@@ -411,63 +410,46 @@ function AppContent() {
           overlay only when a first run (or drift re-run) is needed. */}
       <FirstRunGate />
       {persistenceError && (
-        <div style={{
-          padding: 'var(--spacing-sm) var(--spacing-md)',
-          backgroundColor: 'rgba(211, 47, 47, 0.1)',
-          border: '1px solid var(--color-danger)',
-          borderRadius: 'var(--radius-sm)',
-          color: 'var(--color-danger)',
-          fontSize: 'var(--font-size-caption)',
-          margin: 'var(--spacing-sm) var(--spacing-md)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-          <span>{persistenceError}</span>
-          <button onClick={clearPersistenceError} aria-label="Dismiss error" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-body)' }}>×</button>
-        </div>
+        <Banner
+          tone="danger"
+          className="app-notice"
+          action={
+            <IconButton icon="x" size="sm" aria-label="Dismiss error" onClick={clearPersistenceError} />
+          }
+        >
+          {persistenceError}
+        </Banner>
       )}
       {/* U3a: boot init-error banner. useServiceInitialization sets both
           setInitError and setIsInitialized(true) in one synchronous block, so
           React 18 batches them and the !isInitialized-gated overlay never
           paints the error. This banner surfaces it POST-init so search/vector
           init failures are visible. Retry reloads the page (the most reliable
-          re-init, since the hook guards against re-running in-process). */}
+          re-init, since the hook guards against re-running in-process).
+          Polite status region (it is not an interruption), so the Banner's own
+          alert role is switched off (live={false}) inside it. */}
       {initError && !initErrorDismissed && (
-        <div
-          role="status"
-          style={{
-            padding: 'var(--spacing-sm) var(--spacing-md)',
-            backgroundColor: 'rgba(234, 179, 8, 0.12)',
-            border: '1px solid var(--color-warning-strong)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--color-warning-strong)',
-            fontSize: 'var(--font-size-caption)',
-            margin: 'var(--spacing-sm) var(--spacing-md)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 'var(--spacing-md)',
-          }}
-        >
-          <span>Search is degraded — answers may miss information. ({initError})</span>
-          <span style={{ display: 'flex', gap: 'var(--spacing-sm)', flexShrink: 0 }}>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              style={{ background: 'transparent', border: '1px solid currentColor', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-caption)', padding: '2px var(--spacing-sm)' }}
-            >
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={() => setInitErrorDismissed(true)}
-              aria-label="Dismiss degraded-search notice"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-body)' }}
-            >
-              ×
-            </button>
-          </span>
+        <div role="status">
+          <Banner
+            tone="warning"
+            live={false}
+            className="app-notice"
+            action={
+              <>
+                <Button size="sm" onClick={() => window.location.reload()}>
+                  Retry
+                </Button>
+                <IconButton
+                  icon="x"
+                  size="sm"
+                  aria-label="Dismiss degraded-search notice"
+                  onClick={() => setInitErrorDismissed(true)}
+                />
+              </>
+            }
+          >
+            Search is degraded — answers may miss information. ({initError})
+          </Banner>
         </div>
       )}
       {renderPage()}

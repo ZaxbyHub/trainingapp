@@ -103,7 +103,7 @@
 /* U6d: respect prefers-reduced-motion. Disable the spin/blink/shimmer loops
    for users who request reduced motion. StreamingIndicator already guards
    itself; this covers the boot overlay spinner, the streaming cursor, and
-   LoadingSkeleton's shimmer. */
+   the skeleton shimmer. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

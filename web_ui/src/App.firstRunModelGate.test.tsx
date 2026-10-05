@@ -14,6 +14,7 @@ import { ChatPage } from './pages/ChatPage';
 import { InferenceModeProvider } from './lib/inference';
 import { DesktopSessionProvider, type DesktopSession, type DesktopSessionState } from './lib/desktop-session';
 import type { ModelStatus } from './lib/api/types';
+import { seedInferenceModeForDesktop } from './lib/inference/desktop-seed';
 
 vi.mock('./lib/rag/rag-orchestrator', () => ({ RAGOrchestrator: vi.fn() }));
 vi.mock('./lib/llm/llm-factory', () => ({
@@ -74,12 +75,15 @@ function renderGate(models: ModelStatus | null, session: DesktopSession = makeSe
 
 const fetchSpy = vi.fn();
 
+
 beforeEach(() => {
   vi.stubGlobal('fetch', fetchSpy);
 });
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
+  delete (window as unknown as { desktopApi?: unknown }).desktopApi;
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
@@ -94,7 +98,28 @@ describe('ChatPage desktop first-run model gate (AC5 UI)', () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
-    expect(dialog.getAttribute('aria-labelledby')).toBe('desktop-model-gate-title');
+    expect(dialog).toHaveAccessibleName(/AI models are not installed yet/i);
+    expect(dialog).toHaveAccessibleDescription(/Neither the Quality nor the Fast language model/);
+  });
+
+  it('the covered chat content is inert while the gate is up; the gate itself is not', async () => {
+    const { container } = renderGate(status({}));
+    const dialog = await screen.findByRole('alertdialog', { name: /AI models are not installed yet/i });
+    const content = container.querySelector('.chat-page__content') as HTMLElement;
+    expect(content).toHaveAttribute('inert');
+    expect(content).toContainElement(screen.getByLabelText('Message input'));
+    expect(dialog.closest('[inert]')).toBeNull();
+  });
+
+  it('desktop gate ONLY (inference mode seeded to api, so the browser gate cannot be up): content is still inert', async () => {
+    // Inside Electron the stored 'api' mode is honoured (the browser coerces it back to browser-local).
+    (window as unknown as { desktopApi: unknown }).desktopApi = {};
+    seedInferenceModeForDesktop('http://127.0.0.1:4567');
+    const { container } = renderGate(status({}));
+    await screen.findByRole('alertdialog', { name: /AI models are not installed yet/i });
+    // The browser-local gate is absent in this mode: only the desktop gate can be driving inert.
+    expect(screen.queryByRole('alertdialog', { name: /model not ready/i })).toBeNull();
+    expect(container.querySelector('.chat-page__content')).toHaveAttribute('inert');
   });
 
   it('a send attempt while blocked issues NO fetch (no doomed /ask)', async () => {

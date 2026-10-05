@@ -6,17 +6,27 @@
  * shared-file convention (ModelBlockedOverlay extraction, PR #32): ChatPage
  * renders it as a one-liner and never grows overlay logic of its own.
  *
- * A11y parity with ModelBlockedOverlay (PR-review F8): remembers and restores
- * the previously focused element and traps Tab within the dialog. It does NOT
- * close on Escape: it is a blocking state with no dismiss path (no onClose),
- * so Escape is swallowed (preventDefault) and the overlay stays until the
- * backend reports staged models or an external engine. Documents/Settings
- * remain reachable through the nav rail and the overlay's Settings actions;
- * this overlay blocks only the chat send path, matching AC5's "informative
- * state instead of a silently failing /ask".
+ * Built from the design-system primitives (Lumen phase 7, design-language.md
+ * section 5): ui/Dialog (role="alertdialog", non-dismissible), ui/Banner and
+ * ui/Button. Scope is unchanged and now enforced: it blocks the CHAT PAGE only
+ * ("Documents and Settings remain available"). ChatPage renders it inside
+ * `.chat-page` and makes the covered chat content inert, so the Dialog is
+ * `contained` (not a window-wide z-9000 layer) and `modal={false}`: the shell
+ * navigation stays usable, so claiming aria-modal would be untruthful (see
+ * ModelBlockedOverlay for the rationale).
+ *
+ * A11y parity with ModelBlockedOverlay (PR-review F8): Dialog remembers and
+ * restores the previously focused element (unless focus has moved on) and, being
+ * non-modal, does not trap Tab. It
+ * does NOT close on Escape: it is a blocking state with no dismiss path (no
+ * onClose), so Escape is swallowed (Dialog `dismissible={false}`) and the
+ * overlay stays until the backend reports staged models or an external engine.
+ * On open, focus lands on the dialog itself (initialFocus="panel") so assistive
+ * tech reads the title and description before offering the actions.
  */
-import React, { useEffect, useRef } from 'react';
 import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
+import { Banner, Button, Dialog } from '../ui';
+import './blocking.css';
 
 export interface DesktopModelBlockedOverlayProps {
   open: boolean;
@@ -30,130 +40,42 @@ export interface DesktopModelBlockedOverlayProps {
   onOpenSettings?: (section?: string) => void;
 }
 
-const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-const secondaryButtonStyle: React.CSSProperties = {
-  backgroundColor: 'transparent',
-  color: 'var(--color-text-primary)',
-  border: '1px solid var(--color-border, #ddd)',
-  borderRadius: 'var(--radius-sm)',
-  padding: 'var(--spacing-xs) var(--spacing-sm)',
-  fontFamily: 'var(--font-family)',
-  fontSize: 'var(--font-size-caption)',
-  cursor: 'pointer',
-};
+const BODY_ID = 'desktop-model-gate-body';
 
 export function DesktopModelBlockedOverlay({ open, onOpenSettings }: DesktopModelBlockedOverlayProps) {
-  const headingRef = useRef<HTMLHeadingElement | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
-    headingRef.current?.focus();
-    return () => {
-      previouslyFocusedRef.current?.focus?.();
-    };
-  }, [open]);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-    }
-    if (e.key !== 'Tab') return;
-    // Keep Tab inside the dialog: cycle through its actions (the heading is
-    // focusable only programmatically). With no actions, Tab stays put.
-    const dialog = dialogRef.current;
-    const focusables = dialog === null ? [] : Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-    if (focusables.length === 0) {
-      e.preventDefault();
-      return;
-    }
-    const first = focusables[0] as HTMLElement;
-    const last = focusables[focusables.length - 1] as HTMLElement;
-    const active = document.activeElement;
-    const inside = active !== null && focusables.includes(active as HTMLElement);
-    if (e.shiftKey && (active === first || !inside)) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && (active === last || !inside)) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-
-  if (!open) return null;
-
   return (
-    <div
-      ref={dialogRef}
-      role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="desktop-model-gate-title"
-      aria-describedby="desktop-model-gate-body"
-      onKeyDown={handleKeyDown}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 9000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(0, 0, 0, 0.55)',
-        fontFamily: 'var(--font-family)',
-      }}
-    >
-      <div
-        style={{
-          maxWidth: 460,
-          margin: 'var(--spacing-lg)',
-          padding: 'var(--spacing-xl)',
-          backgroundColor: 'var(--color-bg-primary, #fff)',
-          color: 'var(--color-text-primary)',
-          borderRadius: 'var(--radius-md)',
-          border: '1px solid var(--color-border, #ddd)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--spacing-md)',
-        }}
-      >
-        <h2
-          id="desktop-model-gate-title"
-          ref={headingRef}
-          tabIndex={-1}
-          style={{ margin: 0, fontSize: 'var(--font-size-h3, 1.25rem)', outline: 'none' }}
-        >
-          AI models are not installed yet
-        </h2>
-        <p id="desktop-model-gate-body" style={{ margin: 0, fontSize: 'var(--font-size-body)', lineHeight: 1.5 }}>
-          Neither the Quality nor the Fast language model was found in this app&apos;s
-          model directory, so asking questions is unavailable right now. Documents and
-          Settings remain available. Re-run the app installer or add the model files to
-          the models directory, then restart the app.
-          {onOpenSettings !== undefined && ' Or connect an external model (a local server or a cloud provider) in Settings.'}
-        </p>
-        {onOpenSettings !== undefined && (
-          <div style={{ display: 'flex', gap: 'var(--spacing-sm)', flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => onOpenSettings()} style={secondaryButtonStyle}>
-              Open Settings
-            </button>
-            <button
-              type="button"
-              onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}
-              style={{
-                ...secondaryButtonStyle,
-                backgroundColor: 'var(--color-primary)',
-                color: 'var(--color-text-on-primary)',
-                border: 'none',
-              }}
-            >
+    <Dialog
+      open={open}
+      alert
+      dismissible={false}
+      modal={false}
+      contained
+      initialFocus="panel"
+      describedBy={BODY_ID}
+      className="blocking-gate"
+      title="AI models are not installed yet"
+      footer={
+        onOpenSettings !== undefined ? (
+          <>
+            <Button onClick={() => onOpenSettings()}>Open Settings</Button>
+            <Button variant="primary" onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}>
               Use a local server or cloud model
-            </button>
-          </div>
-        )}
+            </Button>
+          </>
+        ) : undefined
+      }
+    >
+      <div className="blocking-gate__stack">
+        <Banner tone="warning" live={false}>
+          <span id={BODY_ID}>
+            Neither the Quality nor the Fast language model was found in this app&apos;s
+            model directory, so asking questions is unavailable right now. Documents and
+            Settings remain available. Re-run the app installer or add the model files to
+            the models directory, then restart the app.
+            {onOpenSettings !== undefined && ' Or connect an external model (a local server or a cloud provider) in Settings.'}
+          </span>
+        </Banner>
       </div>
-    </div>
+    </Dialog>
   );
 }

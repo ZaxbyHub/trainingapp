@@ -25,12 +25,26 @@ import {
   Switch,
   Tabs,
   TextInput,
+  ToastProvider,
   Tooltip,
+  useToast,
 } from '../index';
 import './gallery.css';
 
 /** LUMEN-GALLERY-DEV-ONLY: marker string used to prove this chunk is absent from production builds. */
 export const GALLERY_MARKER = 'LUMEN-GALLERY-DEV-ONLY';
+
+/** Buttons that raise each toast tone through the real provider (rendered inside it). */
+function ToastDemo() {
+  const { showToast } = useToast();
+  return (
+    <div className="gallery__row">
+      <Button onClick={() => showToast('Settings saved', 'success')}>Success (polite)</Button>
+      <Button onClick={() => showToast('Indexing started', 'info')}>Info (polite)</Button>
+      <Button onClick={() => showToast('Upload failed: file too large', 'error')}>Error (assertive)</Button>
+    </div>
+  );
+}
 
 export function Gallery() {
   const [theme, setTheme] = useState<'light' | 'dark'>(
@@ -194,6 +208,12 @@ export function Gallery() {
         >
           This cannot be undone.
         </Dialog>
+      </Section>
+
+      <Section title="Toast">
+        <ToastProvider>
+          <ToastDemo />
+        </ToastProvider>
       </Section>
     </div>
   );

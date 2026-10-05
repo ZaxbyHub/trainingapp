@@ -162,6 +162,8 @@ export function Checkbox({ label, description, className, ...rest }: ToggleProps
 
 export interface ChoiceOption {
   value: string;
+  /** RadioCardGroup only: emitted as data-testid on the radio input. */
+  testId?: string;
   label: ReactNode;
   description?: ReactNode;
   disabled?: boolean;
@@ -228,6 +230,7 @@ export function RadioCardGroup({ legend, options, value, onChange, hideLegend, c
               checked={on}
               disabled={o.disabled}
               onChange={() => onChange(o.value)}
+              data-testid={o.testId}
               className="ui-radio-card__input ui-focusable"
             />
             <span className="ui-radio-card__text">

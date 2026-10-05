@@ -189,6 +189,9 @@ jobs:
   # renderer build via vite preview. Deliberately does NOT run prepare-models:
   # CI never stages the operator-acquired weights (see the main job above),
   # and the pack install/playback path never loads model code.
+  # NOTE: this job also runs e2e/model-gate-keyboard.spec.ts, which needs a build WITHOUT
+  # staged model weights (the in-chat model gate must render). It fails, not skips, when the
+  # gate is absent; LUMEN_ALLOW_NO_OVERLAY=1 opts out for local builds with staged weights.
   # The job `name:` below is kept byte-identical: it is a required
   # branch-protection status context (bare job name), so renaming it would
   # leave the required check pending forever.

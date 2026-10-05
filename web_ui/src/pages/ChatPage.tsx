@@ -1063,8 +1063,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
     modelReady: isModelReady,
   });
 
+  // Lumen phase 7: while either model gate is up, everything it covers (header,
+  // banners, pinned slide, message list, composer) is inert: unreachable by Tab,
+  // pointer and assistive tech. Scoped to this wrapper, NOT <main>: the shell's
+  // sidebar/top bar stay usable (PR #147 PRR-022) and AppShell owns <main>'s own
+  // inert for the nav drawer, so the two never touch the same element. Attribute
+  // (not the typed prop) because React 18 has no `inert`; the gate Dialogs are
+  // siblings of this wrapper, never inside it.
+  const modelGateUp = desktopModelBlocked || isModelBlocked;
+
   return (
     <div className="chat-page">
+      <div className="chat-page__content" {...(modelGateUp ? { inert: '' } : {})}>
       {/* Header (Lumen phase 5): model chip, desktop mode toggle, connection
           warning, then the conversation actions. */}
       <PageHeader
@@ -1117,31 +1127,6 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           which causes wllama and ORT to fall back to single-threaded WASM
           (~3-4x slower decode, minutes of TTFT on the target i5). */}
       <IsolationBanner />
-
-      {/* Model loading blocking overlay.
-          Engine-aware: shows the actual readiness failures/recommendations
-          instead of a generic "please wait for download" message (which is
-          actively wrong for wllama, where there is no download step — the real
-          cause is usually missing packaged weights). Offers Retry and Open
-          Settings actions. Extracted into ModelBlockedOverlay (issue #25) which
-          adds aria-modal + a focus trap. (originally issue #21 F10) */}
-      {/* B9 (issue #67): desktop first-run gate — real engine, no staged
-          models. Blocks send with an informative state instead of a doomed
-          /ask (AC5). Extracted component per the shared-file convention. */}
-      <DesktopModelBlockedOverlay open={desktopModelBlocked} onOpenSettings={onOpenSettings} />
-
-      {isModelBlocked && (
-        <ModelBlockedOverlay
-          readinessResult={getReadinessResultSnapshot()}
-          browserEngine={browserEngine}
-          modelLoadingProgress={modelLoadingProgress}
-          onRetry={() => {
-            resetReadinessCache();
-            void ensureReadinessGateChecked(browserEngine);
-          }}
-          onOpenSettings={onOpenSettings}
-        />
-      )}
 
       {/* D7 (issue #83): pinned "Ask about this slide" banner — shown in BOTH
           inference modes (C10); only browser-local mode injects its context
@@ -1217,6 +1202,33 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           </>
         }
       />
+      </div>
+
+      {/* Model loading blocking overlay.
+          Engine-aware: shows the actual readiness failures/recommendations
+          instead of a generic "please wait for download" message (which is
+          actively wrong for wllama, where there is no download step — the real
+          cause is usually missing packaged weights). Offers Retry and Open
+          Settings actions. Extracted into ModelBlockedOverlay (issue #25), now a
+          contained, non-modal Dialog (Lumen phase 7; the chat content is inert
+          while it is up). (originally issue #21 F10) */}
+      {/* B9 (issue #67): desktop first-run gate — real engine, no staged
+          models. Blocks send with an informative state instead of a doomed
+          /ask (AC5). Extracted component per the shared-file convention. */}
+      <DesktopModelBlockedOverlay open={desktopModelBlocked} onOpenSettings={onOpenSettings} />
+
+      {isModelBlocked && (
+        <ModelBlockedOverlay
+          readinessResult={getReadinessResultSnapshot()}
+          browserEngine={browserEngine}
+          modelLoadingProgress={modelLoadingProgress}
+          onRetry={() => {
+            resetReadinessCache();
+            void ensureReadinessGateChecked(browserEngine);
+          }}
+          onOpenSettings={onOpenSettings}
+        />
+      )}
     </div>
   );
 }

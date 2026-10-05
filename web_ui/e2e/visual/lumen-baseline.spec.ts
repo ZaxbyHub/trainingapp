@@ -237,12 +237,18 @@ async function seedPopulated(page: Page): Promise<void> {
   await page.waitForTimeout(1500);
 }
 
-/** Hide the model-gate scrim (the alertdialog's parent) so the surface underneath renders. */
+/**
+ * Hide the model-gate scrim (the Dialog backdrop, found by its stable test id) so the surface
+ * underneath renders, and lift the gate's inert on the chat content so it can be interacted with.
+ */
 async function hideModelGate(page: Page): Promise<void> {
   await page.evaluate(() => {
     document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.parentElement ?? el).setAttribute('data-lumen-hidden', '1');
+      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
     });
+    // The gate makes the chat content inert (axe skips inert subtrees, Playwright refuses to
+    // click them). The surface underneath is what these specs capture/scan, so lift it too.
+    document.querySelectorAll('.chat-page__content[inert]').forEach((el) => el.removeAttribute('inert'));
   });
   await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
 }
@@ -330,6 +336,13 @@ for (const theme of THEMES) {
         }
         // Absent gate = regression or a staged-weights build: fail unless explicitly opted out.
         expect(shown, 'model-gate overlay must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for builds with staged weights').toBe(true);
+        // The composer grows once the web font lands (its auto-resize re-measures on
+        // fonts.ready); capturing mid-growth gave two renders across fresh loads that
+        // differed by 1/255 at the card corners. Settle fonts and two frames first.
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        });
         await expect(page).toHaveScreenshot(`overlay-model-not-ready-${theme}-${width}.png`, {
           mask: dynamicMasks(page),
         });

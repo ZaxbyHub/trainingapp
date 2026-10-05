@@ -46,15 +46,12 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  * failures list from --color-danger to --danger (5.70:1 / 5.48:1), verified with the
  * page behind the card hidden so axe could not report them as merely `incomplete`.
  * Phase 6 (Documents & Training) fixed and removed both 'documents:light:*' entries.
+ * Phase 7 (overlays) rebuilt the model gate on ui/Dialog + Banner + Button (its
+ * outlined "Open Settings" button was the last 'overlay:light:*' node) and emptied
+ * the baseline: every key is now zero-node. The map stays so a future, justified,
+ * pre-existing entry has somewhere to live; never add one for a surface a PR touches.
  */
-const KNOWN_BASELINE: Record<string, readonly string[]> = {
-  'overlay:light:1440': [
-    "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-  ],
-  'overlay:light:500': [
-    "color-contrast | div[role=\"alertdialog\"] > div > button:nth-child(2)",
-  ],
-};
+const KNOWN_BASELINE: Record<string, readonly string[]> = {};
 
 /**
  * Lumen phase 3: at <= 768px the primary nav lives in the AppShell drawer, opened
@@ -144,8 +141,11 @@ async function bootWithInstalledCourse(page: Page, theme: string): Promise<void>
 async function hideModelGate(page: Page): Promise<void> {
   await page.evaluate(() => {
     document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.parentElement ?? el).setAttribute('data-lumen-hidden', '1');
+      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
     });
+    // The gate makes the chat content inert (axe skips inert subtrees, Playwright refuses to
+    // click them). The surface underneath is what these specs capture/scan, so lift it too.
+    document.querySelectorAll('.chat-page__content[inert]').forEach((el) => el.removeAttribute('inert'));
   });
   await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
 }
@@ -197,14 +197,10 @@ for (const theme of THEMES) {
               await clickNav(page, NAV[surface]);
             }
             // Scan the surface itself, not the model-gate overlay stacked on it. Hide the
-            // alertdialog's PARENT (the full-screen scrim), as lumen-baseline.spec.ts does;
-            // hiding only the dialog leaves the 70% scrim masking real contrast results.
-            await page.evaluate(() => {
-              document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-                (el.parentElement ?? el).setAttribute('data-lumen-hidden', '1');
-              });
-            });
-            await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
+            // Dialog backdrop (stable test id), as lumen-baseline.spec.ts does; hiding only the
+            // dialog leaves the 70% scrim masking real contrast results. hideModelGate also
+            // lifts the gate's inert on the chat content (axe skips inert subtrees).
+            await hideModelGate(page);
           }
           await page.waitForTimeout(500);
 

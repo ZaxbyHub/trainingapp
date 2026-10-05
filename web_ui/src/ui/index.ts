@@ -3,8 +3,8 @@
  * also loads the component stylesheet; the design tokens themselves come from
  * styles/theme.css -> lumen-tokens.css.
  *
- * Deferred (not shipped without real tests): Toast (needs a provider that replaces
- * ToastProvider). Combobox (ARIA 1.2 model picker) shipped in phase 4.
+ * Combobox (ARIA 1.2 model picker) shipped in phase 4; Toast (live-region provider,
+ * re-exported through components/ToastProvider) in phase 7.
  */
 import './ui.css';
 
@@ -55,6 +55,7 @@ export {
   type BannerProps,
   type ProgressBarProps,
 } from './Feedback';
+export { ToastProvider, useToast, type ToastContextValue, type ToastTone } from './Toast';
 export { Dialog, Tooltip, type DialogProps, type TooltipProps } from './Overlays';
 export { Tabs, type TabItem, type TabsProps } from './Tabs';
 export {

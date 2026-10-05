@@ -120,7 +120,7 @@ Plain CSS per component with namespaced classes (`ui-button`, …) so pseudo-cla
 | `SegmentedControl`, `RadioCardGroup` | `<fieldset>`/`<legend>` + native `<input type=radio>` — keeps `getByRole('radio', …)` working |
 | `Badge` / `StatusPill` | text always present (no color-only status) |
 | `Banner` | `role="status"` or `role="alert"` by severity |
-| `Dialog` | native `<dialog>` or `role="dialog"` + `aria-modal`, focus trap, return focus |
+| `Dialog` | native `<dialog>` or `role="dialog"` + `aria-modal`, focus trap, return focus. Partial-page blocking states use `modal={false}` (no `aria-modal`, no Tab trap) with the covered content `inert`; see section 5 |
 | `Toast`, `Tabs`, `Tooltip`, `EmptyState`, `Skeleton`, `ProgressBar`, `KeyValueList`, `Kbd`, `PageHeader`, `AppShell` | standard WAI-ARIA patterns |
 
 ## 5. Surface patterns
@@ -142,6 +142,13 @@ Section nav (Model & connection · Answers · Appearance · Storage & privacy ·
 
 ### Overlays & first-run
 All blocking states use `Dialog` + `Banner`; the missing-model state offers "Use a local server or cloud model" as a first-class action.
+
+Implemented in phase 7, stated precisely: blocking states use `Dialog`; error or attention content inside them uses `Banner`; loading states use `ProgressBar` (the "Preparing the model…" state and the boot loading state are `Dialog` + `ProgressBar` with no `Banner`); the top-level ErrorBoundary is by decision an in-page danger `Banner` (it replaces the page; it is not a dialog).
+
+- **Model gates (in-chat and desktop "AI models are not installed")** are `Dialog` (`alert`, not dismissible) + `Button`, with `Banner` for the failure, recommendation and attention text and `ProgressBar` while loading, **contained** to the chat page: an absolute scrim over `.chat-page`, not a window-wide layer. They are **non-modal** (`modal={false}`, no `aria-modal`): the shell sidebar and top bar stay usable (narrow windows need the top bar for Documents/Training navigation), so claiming `aria-modal` would hide navigation that is still reachable (WAI-ARIA 1.2). The covered chat content (`.chat-page__content`: header, banners, message list, composer) is `inert`; that, not `aria-modal`, is what keeps it unreachable. A non-modal `Dialog` does **not** trap Tab (Shift+Tab from the gate reaches the navigation; Tab never lands in inert content); focus still moves in on open and returns on close (unless the user has already moved focus elsewhere). "Use a local server or cloud model" is the `primary` action.
+- **Boot gate** is a non-dismissible `Dialog` on the `boot` layer; a boot failure is a danger `Banner` with a Retry only where re-running the step is honest. The **first-run wizard** is a default-layer `Dialog` that ignores backdrop presses (Escape and "Skip for now" still skip). The **ErrorBoundary** fallback is a danger `Banner` in the page, not a dialog.
+- **Layering** (z-index): contained gates 200 < shell nav drawer 300 < `Dialog` (default layer, incl. the wizard) 1000 < boot gate 1100 < toasts 1200. A window-wide `Dialog` takes `layer="boot"` only for the boot gate.
+- A dismissible `Dialog` requires `onClose` at compile time; only `dismissible={false}` may omit it.
 
 ## 6. Implementation plan (phased; each phase ships independently)
 
