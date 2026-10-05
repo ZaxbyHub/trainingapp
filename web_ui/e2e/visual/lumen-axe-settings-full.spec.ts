@@ -47,7 +47,7 @@ async function openSettings(page: Page, theme: string): Promise<void> {
   // Scan Settings itself, not the model-gate overlay stacked on it (as lumen-axe.spec.ts).
   await page.evaluate(() => {
     document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.parentElement ?? el).setAttribute('data-lumen-hidden', '1');
+      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
     });
   });
   await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });

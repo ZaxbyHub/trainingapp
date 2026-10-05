@@ -237,12 +237,18 @@ async function seedPopulated(page: Page): Promise<void> {
   await page.waitForTimeout(1500);
 }
 
-/** Hide the model-gate scrim (the alertdialog's parent) so the surface underneath renders. */
+/**
+ * Hide the model-gate scrim (the Dialog backdrop, found by its stable test id) so the surface
+ * underneath renders, and lift the gate's inert on the chat content so it can be interacted with.
+ */
 async function hideModelGate(page: Page): Promise<void> {
   await page.evaluate(() => {
     document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.parentElement ?? el).setAttribute('data-lumen-hidden', '1');
+      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
     });
+    // The gate makes the chat content inert (axe skips inert subtrees, Playwright refuses to
+    // click them). The surface underneath is what these specs capture/scan, so lift it too.
+    document.querySelectorAll('.chat-page__content[inert]').forEach((el) => el.removeAttribute('inert'));
   });
   await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
 }

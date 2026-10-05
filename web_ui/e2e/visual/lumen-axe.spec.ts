@@ -144,8 +144,11 @@ async function bootWithInstalledCourse(page: Page, theme: string): Promise<void>
 async function hideModelGate(page: Page): Promise<void> {
   await page.evaluate(() => {
     document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.parentElement ?? el).setAttribute('data-lumen-hidden', '1');
+      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
     });
+    // The gate makes the chat content inert (axe skips inert subtrees, Playwright refuses to
+    // click them). The surface underneath is what these specs capture/scan, so lift it too.
+    document.querySelectorAll('.chat-page__content[inert]').forEach((el) => el.removeAttribute('inert'));
   });
   await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
 }
@@ -197,14 +200,10 @@ for (const theme of THEMES) {
               await clickNav(page, NAV[surface]);
             }
             // Scan the surface itself, not the model-gate overlay stacked on it. Hide the
-            // alertdialog's PARENT (the full-screen scrim), as lumen-baseline.spec.ts does;
-            // hiding only the dialog leaves the 70% scrim masking real contrast results.
-            await page.evaluate(() => {
-              document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-                (el.parentElement ?? el).setAttribute('data-lumen-hidden', '1');
-              });
-            });
-            await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
+            // Dialog backdrop (stable test id), as lumen-baseline.spec.ts does; hiding only the
+            // dialog leaves the 70% scrim masking real contrast results. hideModelGate also
+            // lifts the gate's inert on the chat content (axe skips inert subtrees).
+            await hideModelGate(page);
           }
           await page.waitForTimeout(500);
 

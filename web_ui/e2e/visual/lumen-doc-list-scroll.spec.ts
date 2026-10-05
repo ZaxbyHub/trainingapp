@@ -69,7 +69,7 @@ async function boot(page: Page): Promise<void> {
   // The model-blocked overlay (when present) is irrelevant here and covers the page.
   await page.evaluate(() =>
     document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      ((el.parentElement ?? el) as HTMLElement).style.display = 'none';
+      ((el.closest('[data-testid="ui-dialog-backdrop"]') ?? el) as HTMLElement).style.display = 'none';
     })
   );
   await page.getByRole('button', { name: 'Documents', exact: true }).first().click({ force: true });
