@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { createRef, useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import {
   Button,
   Checkbox,
+  Dialog,
   Field,
   IconButton,
   PasswordInput,
@@ -75,6 +76,49 @@ describe('IconButton', () => {
     await userEvent.tab();
     expect(screen.getByRole('button', { name: 'New chat' })).toHaveFocus();
     expect(screen.getByRole('tooltip')).toHaveTextContent('New chat');
+  });
+});
+
+describe('IconButton ref (PRR-151-072)', () => {
+  it('forwards its ref to the native button, so a Dialog initialFocus ref can target it', () => {
+    const ref = createRef<HTMLButtonElement>();
+    const { unmount } = render(<IconButton ref={ref} icon="plus" aria-label="New chat" />);
+    expect(ref.current).toBe(screen.getByRole('button', { name: 'New chat' }));
+    unmount();
+    const target = createRef<HTMLButtonElement>();
+    render(
+      <Dialog
+        open
+        onClose={() => {}}
+        title="Notice"
+        initialFocus={target}
+        footer={
+          <>
+            <IconButton icon="plus" aria-label="Add" />
+            <IconButton ref={target} icon="x" aria-label="Dismiss" />
+          </>
+        }
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Dismiss' })).toHaveFocus();
+  });
+});
+
+describe('SegmentedControl testId (PRR-151-071)', () => {
+  it('emits each option testId on its radio input, like RadioCardGroup', () => {
+    render(
+      <SegmentedControl
+        legend="Theme"
+        value="light"
+        onChange={() => {}}
+        options={[
+          { value: 'light', label: 'Light', testId: 'theme-light' },
+          { value: 'dark', label: 'Dark' },
+        ]}
+      />
+    );
+    expect(screen.getByTestId('theme-light')).toBe(screen.getByRole('radio', { name: 'Light' }));
+    expect(screen.getByRole('radio', { name: 'Dark' })).not.toHaveAttribute('data-testid');
   });
 });
 
