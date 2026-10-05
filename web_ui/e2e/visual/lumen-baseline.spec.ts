@@ -361,7 +361,8 @@ for (const theme of THEMES) {
         test(state.id, async ({ page }) => {
           await boot(page, theme);
           if (state.seed) await seedPopulated(page);
-          // Every state starts on the chat page with the gate up (no staged weights).
+          // Every state starts on the chat page with the gate up (no staged weights; under the
+          // local opt-out a staged-weights build has no gate and the state is captured as is).
           await hideModelGate(page, { expectGate: true });
           if (state.nav) {
             await clickNav(page, state.nav);

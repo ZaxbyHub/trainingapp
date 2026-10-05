@@ -36,17 +36,24 @@ export function overlayOptOut(): boolean {
   return process.env.LUMEN_ALLOW_NO_OVERLAY === '1';
 }
 
-/**
- * Wait until the chat page is up (the gate or, absent a gate, the composer), then
- * require the gate. Without it the test FAILS, unless the local opt-out is on, in
- * which case it is skipped.
- */
-export async function requireModelGate(page: Page, name?: string): Promise<void> {
+const GATE_REQUIRED = 'model gate must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for local builds with staged weights';
+
+/** Wait until the chat page is up (the gate or, absent a gate, the composer); true when a gate is up. */
+async function waitForChatPage(page: Page, name?: string): Promise<boolean> {
   const gate = page.getByRole('alertdialog', name === undefined ? {} : { name });
   await expect(gate.or(page.getByLabel('Message input')).first()).toBeVisible({ timeout: 60_000 });
-  const present = (await gate.count()) > 0;
+  return (await gate.count()) > 0;
+}
+
+/**
+ * For tests whose SUBJECT is the gate (overlay scan/baseline, drawer-over-gate,
+ * keyboard): require it. Without it the test FAILS, unless the local opt-out is on,
+ * in which case the test is skipped (there is nothing to test).
+ */
+export async function requireModelGate(page: Page, name?: string): Promise<void> {
+  const present = await waitForChatPage(page, name);
   if (!present && overlayOptOut()) test.skip(true, 'overlay opt-out (LUMEN_ALLOW_NO_OVERLAY=1)');
-  expect(present, 'model gate must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for local builds with staged weights').toBe(true);
+  expect(present, GATE_REQUIRED).toBe(true);
 }
 
 /**
@@ -61,13 +68,18 @@ export async function expectModelGateHidden(page: Page): Promise<void> {
 
 /**
  * Hide the model gate so the surface underneath can be scanned/captured (see the
- * header). With `expectGate`, the gate must be up first (requireModelGate): use it
- * on the chat page. Without it the hide is tolerant (after navigating away the
- * chat page, and its gate, are unmounted). Either way the post-condition holds on
- * return.
+ * header). With `expectGate` (use it on the chat page), the gate must be up first;
+ * under the local opt-out an absent gate is accepted and the surface is used as is.
+ * The test is NOT skipped then: its subject is the surface, not the gate, so it
+ * still runs on a staged-weights build. Without `expectGate` the hide is tolerant
+ * (after navigating away, the chat page and its gate are unmounted). Either way the
+ * post-condition holds on return.
  */
 export async function hideModelGate(page: Page, { expectGate }: { expectGate: boolean }): Promise<void> {
-  if (expectGate) await requireModelGate(page);
+  if (expectGate) {
+    const present = await waitForChatPage(page);
+    if (!present && !overlayOptOut()) expect(present, GATE_REQUIRED).toBe(true);
+  }
   await page.evaluate(() => {
     document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
       (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
