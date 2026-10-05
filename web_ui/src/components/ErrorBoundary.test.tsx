@@ -44,7 +44,7 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
   });
 
-  test('Lumen phase 7: the fallback is one alert region built from EmptyState + Button, with no inline styles', () => {
+  test('Lumen phase 7: the fallback is one danger Banner (role alert) in the page holding the message and a primary Try Again', () => {
     const ThrowError = (): null => {
       throw new Error('Test error message');
     };
@@ -54,11 +54,16 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>
     );
     const alert = screen.getByRole('alert');
-    // A single announcement region (no nested role="alert").
     expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
-    expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
-    expect(alert).toContainElement(screen.getByRole('button', { name: /try again/i }));
-    expect(screen.getByRole('button', { name: /try again/i })).toHaveClass('ui-button', 'ui-button--primary');
+    expect(alert).toHaveClass('ui-banner', 'ui-banner--danger');
+    expect(alert).toContainElement(screen.getByRole('heading', { name: 'Something went wrong' }));
+    expect(alert).toHaveTextContent('Test error message');
+    const retry = screen.getByRole('button', { name: /try again/i });
+    expect(alert).toContainElement(retry);
+    expect(retry).toHaveClass('ui-button--primary');
+    // In the page, not a dialog.
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(container.querySelectorAll('[style]')).toHaveLength(0);
   });
 

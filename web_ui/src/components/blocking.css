@@ -14,7 +14,9 @@
 /* ErrorBoundary page fallback. */
 
 .error-fallback { display: flex; align-items: center; justify-content: center; min-height: 200px; padding: var(--space-8) var(--space-4); }
-.error-fallback .ui-empty__icon { color: var(--danger); }
+.error-fallback__title { margin: 0; font-size: var(--type-heading-size); line-height: var(--type-heading-line); font-weight: var(--type-heading-weight); color: var(--text-primary); }
+.error-fallback__message { margin: var(--space-1) 0 0; color: var(--text-primary); }
+.error-fallback .ui-banner__action { align-self: center; }
 
 /* App-level non-blocking notices (persistence error, degraded search): banner + its actions. */
 .app-notice { margin: var(--space-2) var(--space-4); align-items: center; }

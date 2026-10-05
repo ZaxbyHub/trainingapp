@@ -4,7 +4,7 @@
  */
 
 import { Component, ErrorInfo, ReactNode } from 'react';
-import { Button, EmptyState, Icon } from '../ui';
+import { Banner, Button, Icon } from '../ui';
 import './blocking.css';
 
 interface ErrorBoundaryProps {
@@ -48,22 +48,26 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         return this.props.fallback;
       }
 
-      // Lumen phase 7: ui/EmptyState (title as the heading) + ui/Button, inside
-      // one role="alert" region so the failure is announced once. No inline
-      // styles or JS hover handlers: the Button owns its states in CSS.
+      // Lumen phase 7 (design-language.md section 5: Banner for failures): a danger
+      // ui/Banner (role="alert", the one announcement region) in the page, holding the
+      // heading, the message and a primary "Try Again" ui/Button. Not a dialog: the
+      // rest of the app (navigation) stays usable. No inline styles or JS hover handlers.
       return (
-        <div role="alert" className="error-fallback">
-          <EmptyState
-            icon="circle-alert"
-            title="Something went wrong"
-            description={this.state.error?.message || 'An unexpected error occurred'}
+        <div className="error-fallback">
+          <Banner
+            tone="danger"
             action={
               <Button variant="primary" onClick={this.handleRetry}>
                 <Icon name="rotate-ccw" size={16} />
                 Try Again
               </Button>
             }
-          />
+          >
+            <h2 className="error-fallback__title">Something went wrong</h2>
+            <p className="error-fallback__message">
+              {this.state.error?.message || 'An unexpected error occurred'}
+            </p>
+          </Banner>
         </div>
       );
     }
