@@ -81,7 +81,11 @@ async function seedCitedConversation(page: Page, longNames = false, onlyFirst = 
     });
     db.close();
   }, { now: NOW, longNames, onlyFirst });
-  await page.reload();
+  // Not page.reload(): under the app's COOP same-origin header Playwright's Firefox never completes a
+  // same-URL navigation (reload / goto of the current URL hang until the test timeout). Leaving through
+  // about:blank is the same fresh load of the app with the same storage, in every engine.
+  await page.goto('about:blank');
+  await page.goto('/');
   await expect(page.getByText('Initializing search services', { exact: false })).toHaveCount(0, { timeout: 60_000 });
   await expect(page.getByText('Fifteen days', { exact: false })).toBeVisible({ timeout: 15_000 });
 }

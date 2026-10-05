@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RETIRED_TOKENS, RETIRED_TOKEN_RE } from '../styles/retired-tokens';
+import { COLOR_LITERAL_RE } from '../styles/color-literals';
 
 const SRC = resolve(__dirname, '..');
 const SHELL_FILES = [
@@ -29,7 +30,7 @@ const LUMEN = declared(readFileSync(resolve(SRC, 'styles/lumen-tokens.css'), 'ut
 /** The frozen retired-token list (styles/retired-tokens.ts). */
 const LEGACY_NAMES = RETIRED_TOKENS;
 const LEGACY = RETIRED_TOKEN_RE;
-const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
+const COLOR_LITERAL = COLOR_LITERAL_RE; // shared with styles/token-ratchet.test.ts (hex + every color function)
 const ESCAPE_HATCH = /\bcssText\b|\binsertRule\b|dangerouslySetInnerHTML|\.innerHTML\b/;
 const INLINE_STYLE = /\bstyle=\{/;
 

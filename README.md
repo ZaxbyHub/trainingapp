@@ -59,7 +59,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Application Shell**: Navigation rail with Chat, Documents, Settings pages and responsive flexbox layout
 - **Theme System**: Dark/light mode toggle with system preference detection and localStorage persistence
 - **Design Token Foundation (Phase 1)**: Comprehensive CSS custom property system on 8px grid with Inter font, status color tokens (info/warning/success), and radius tokens (sm/md/lg)
-- **Toast Notifications**: Non-blocking toast system with success/error/info variants and entrance animations
+- **Toast Notifications**: Non-blocking toast system with success/error/info variants, entrance and exit fades, and a 5 second auto-dismiss that pauses on hover and focus (only the dismiss button closes a toast early)
 - **Keyboard Shortcuts**: Ctrl+Enter (send), Ctrl+L (clear chat), Ctrl+, (open settings) with input/textarea focus guard
 - **Testing Framework**: vitest configured with @testing-library/react and jsdom environment
 
@@ -243,11 +243,10 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
   - **About**: Version info and app description
 - **IndexedDB Persistence**: User preferences (theme, preferredModel, serverUrl) stored in IndexedDB with automatic load/save
 - **InferenceModeProvider at Root**: Provider moved to `App.tsx` root level for shared state across all pages (Chat, Documents, Settings)
-- **Cross-Browser Compatibility** (`browser-compat.ts`): Detection for Chrome/Edge 113+ (full WebGPU), Firefox (degraded/experimental), Safari (degraded/partial); provides compatibility guidance with upgrade recommendations
+- **Cross-Browser Compatibility** (`browser-compat.ts`): Detection for Chrome/Edge 113+ (full WebGPU) and Firefox (supported; WebGPU is experimental there, so in-browser model features may be degraded); provides compatibility guidance with upgrade recommendations. Firefox is verified in CI by the Playwright browser e2e suite (it runs under both Chromium and Firefox). Safari/WebKit is not supported
 - **Reusable UI Components**:
   - `ErrorBoundary.tsx`: Class-based error boundary catching render errors with retry functionality
-  - `LoadingSkeleton.tsx`: Shimmer-animated skeleton placeholders (text, card, avatar, button variants)
-  - `EmptyState.tsx`: Contextual empty states (no-documents, no-results, no-chat-history, generic) with optional action buttons
+  - `ui/EmptyState`: Contextual empty state primitive from the Lumen component library (`src/ui/`); the earlier `LoadingSkeleton` and `components/EmptyState.tsx` were removed (Lumen phases 7-8)
 
 ### End-to-End Integration (Phase 8)
 - **Dual-Mode Streaming**: `ChatPage` now connects to `RAGOrchestrator` for browser-local inference (WebGPU) and `SSEStreamConsumer` for API server streaming, with seamless mode switching
@@ -281,8 +280,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 | `DocumentList.tsx` | `src/components/` | Paginated document list with status tracking |
 | `ModelDownloadProgress.tsx` | `src/components/` | Accessible progress bar for model download |
 | `ErrorBoundary.tsx` | `src/components/` | Error boundary with retry functionality |
-| `LoadingSkeleton.tsx` | `src/components/` | Shimmer-animated skeleton placeholders |
-| `EmptyState.tsx` | `src/components/` | Contextual empty states with optional action buttons |
+| `EmptyState` | `src/ui/` | Contextual empty state (Lumen primitive; replaces the removed `LoadingSkeleton` and `components/EmptyState.tsx`) |
 | `Sidebar.tsx` | `src/components/` | Responsive 260px sidebar with conversation history (Phase 3) |
 | `SidebarConversationItem.tsx` | `src/components/` | Conversation list item with context menu (Phase 3) |
 
@@ -946,7 +944,7 @@ the desktop app's renderer. This section documents its development flow.
 
 ### Design Token System (Lumen)
 The web UI is styled only by the Lumen design tokens in `web_ui/src/styles/lumen-tokens.css`: colors (`--bg-*`, `--text-*`, `--accent*`, status), `--type-*` typography, `--space-*` spacing, `--r-*` radii and `--shadow-1/2/3`, each with a dark-theme override. Design rules and contrast guarantees: `docs/design/design-language.md`.
-The earlier `--color-*`, `--spacing-*`, `--radius-*`, `--font-size-*` and `--shadow-sm/md/lg` tokens were retired in Lumen phase 8 (legacy to Lumen map: `web_ui/src/styles/token-remap.ts`).
+The earlier `--color-*`, `--spacing-*`, `--radius-*`, `--font-family`, `--font-size-*`, `--line-height-*` and `--shadow-sm/md/lg` tokens (59 names, frozen in `web_ui/src/styles/retired-tokens.ts`) were retired in Lumen phase 8 (legacy to Lumen map: `web_ui/src/styles/token-remap.ts`).
 
 **Font**: Inter (self-hosted via @fontsource/inter, weights 400/500/600/700) as `--font-sans`
 
