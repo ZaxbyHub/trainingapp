@@ -56,7 +56,7 @@ export function LoadingOverlay({
       dismissible={false}
       layer="boot"
       className="blocking-gate"
-      title={currentStep}
+      title={initError ? currentStep : 'Starting TrainingApp'}
       footer={
         initError && onRetry ? (
           <Button variant="primary" onClick={onRetry}>
@@ -69,7 +69,14 @@ export function LoadingOverlay({
         {initError ? (
           <Banner tone="danger">{initError}</Banner>
         ) : (
-          <ProgressBar label={currentStep} />
+          <>
+            {/* The step text lives in a polite status region (as before the Dialog
+                migration) so each boot step change is announced; the title is stable. */}
+            <p role="status" className="blocking-gate__lead">
+              {currentStep}
+            </p>
+            <ProgressBar label="Starting" />
+          </>
         )}
       </div>
     </Dialog>

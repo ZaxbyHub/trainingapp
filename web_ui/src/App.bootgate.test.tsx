@@ -59,8 +59,8 @@ describe('LoadingOverlay', () => {
         <LoadingOverlay currentStep="Connecting to the desktop backend..." initError={null} />
       </div>,
     );
-    const dialog = screen.getByRole('dialog', { name: 'Connecting to the desktop backend...' });
-    expect(dialog).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: 'Starting TrainingApp' });
+    expect(screen.getByRole('status')).toHaveTextContent('Connecting to the desktop backend...');
     expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
     expect(screen.queryByRole('alert')).toBeNull();
     expect(document.body.innerHTML).not.toMatch(/--color-/);
@@ -68,7 +68,16 @@ describe('LoadingOverlay', () => {
     expect(container.querySelectorAll('[style]')).toHaveLength(0);
     expect(fireEvent.keyDown(dialog, { key: 'Escape' })).toBe(false);
     expect(onKey).not.toHaveBeenCalled();
-    expect(screen.getByRole('dialog', { name: /Connecting/ })).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Starting TrainingApp' })).toBeInTheDocument();
+  });
+
+  it('boot step changes are announced: the step text sits in a role=status that updates in place', () => {
+    const { rerender } = render(<LoadingOverlay currentStep="Loading embeddings" initError={null} />);
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('Loading embeddings');
+    rerender(<LoadingOverlay currentStep="Building the index" initError={null} />);
+    expect(screen.getByRole('status')).toBe(status); // same live region, new text
+    expect(status).toHaveTextContent('Building the index');
   });
 
   it('failure: a danger Banner with role=alert; Retry appears only when onRetry is provided', () => {
