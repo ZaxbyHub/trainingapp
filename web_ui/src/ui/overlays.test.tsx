@@ -225,19 +225,24 @@ describe('Dialog (blocking-overlay options)', () => {
       opener.textContent = 'Opener';
       document.body.appendChild(opener);
       opener.focus();
-      const { rerender } = render(
-        <React.StrictMode>
-          <Mounted open />
-        </React.StrictMode>
-      );
-      expect(screen.getByRole('button', { name: 'Inside' })).toHaveFocus();
-      rerender(
-        <React.StrictMode>
-          <Mounted open={false} />
-        </React.StrictMode>
-      );
-      expect(opener).toHaveFocus();
-      opener.remove();
+      // The opener lives outside RTL's container, so remove it in `finally`: a failure
+      // here must not leave a stray button that breaks later tests in this file.
+      try {
+        const { rerender } = render(
+          <React.StrictMode>
+            <Mounted open />
+          </React.StrictMode>
+        );
+        expect(screen.getByRole('button', { name: 'Inside' })).toHaveFocus();
+        rerender(
+          <React.StrictMode>
+            <Mounted open={false} />
+          </React.StrictMode>
+        );
+        expect(opener).toHaveFocus();
+      } finally {
+        opener.remove();
+      }
     });
 
     it('non-modal: focus the user moved outside the dialog is NOT yanked back to the opener', async () => {
