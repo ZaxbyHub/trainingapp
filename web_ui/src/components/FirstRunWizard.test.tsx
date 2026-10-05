@@ -420,11 +420,16 @@ describe('FirstRunWizard completion flow and focus recovery', () => {
     expect(document.activeElement).not.toBe(document.body);
   });
 
-  it('a backdrop press dismisses like Skip (never completes)', () => {
+  it('a backdrop press does nothing (a stray click must not skip setup); Escape and Skip still dismiss', () => {
     const onClose = vi.fn();
-    const { baseElement } = mount(stubStatus(), onClose);
+    const { baseElement, getByTestId } = mount(stubStatus(), onClose);
     fireEvent.mouseDown(baseElement.querySelector('.ui-dialog__backdrop') as HTMLElement);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(getByTestId('first-run-wizard')).toBeInTheDocument();
+    fireEvent.keyDown(getByTestId('wizard-next'), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
+    fireEvent.click(getByTestId('first-run-skip'));
+    expect(onClose).toHaveBeenCalledTimes(2);
     expect(completeFirstRunMock).not.toHaveBeenCalled();
   });
 });

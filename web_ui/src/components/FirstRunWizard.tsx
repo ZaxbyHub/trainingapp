@@ -234,6 +234,8 @@ export function FirstRunWizard({
       // The desktop e2e suite addresses the whole dialog (title included) as `first-run-wizard`.
       testId="first-run-wizard"
       initialFocus={nextRef}
+      // A stray click outside must not skip setup (Escape and "Skip for now" still do).
+      closeOnBackdrop={false}
     >
       <div ref={rootRef} className="first-run">
         <p className="first-run__lede">
