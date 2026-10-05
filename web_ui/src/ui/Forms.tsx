@@ -162,7 +162,7 @@ export function Checkbox({ label, description, className, ...rest }: ToggleProps
 
 export interface ChoiceOption {
   value: string;
-  /** RadioCardGroup only: emitted as data-testid on the radio input. */
+  /** Emitted as data-testid on the option's radio input (RadioCardGroup and SegmentedControl). */
   testId?: string;
   label: ReactNode;
   description?: ReactNode;
@@ -197,6 +197,7 @@ export function SegmentedControl({ legend, options, value, onChange, hideLegend,
                 checked={on}
                 disabled={o.disabled}
                 onChange={() => onChange(o.value)}
+                data-testid={o.testId}
                 className="ui-segmented__input ui-focusable"
               />
               <span>{o.label}</span>
