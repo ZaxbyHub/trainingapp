@@ -18,6 +18,7 @@ const FILES = [
   'components/DesktopModelBlockedOverlay.tsx',
   'components/ErrorBoundary.tsx',
   'components/blocking.css',
+  'App.tsx',
 ];
 
 const stripComments = (text: string): string =>

@@ -16,7 +16,7 @@ import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
 import { AppLayout } from './layouts/AppLayout';
 import { FirstRunGate } from './components/FirstRunWizard';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Banner, Button, Dialog, ProgressBar } from './ui';
+import { Banner, Button, Dialog, IconButton, ProgressBar } from './ui';
 import { ChatPage } from './pages/ChatPage';
 import { DocumentsPage } from './pages/DocumentsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -403,63 +403,46 @@ function AppContent() {
           overlay only when a first run (or drift re-run) is needed. */}
       <FirstRunGate />
       {persistenceError && (
-        <div style={{
-          padding: 'var(--spacing-sm) var(--spacing-md)',
-          backgroundColor: 'rgba(211, 47, 47, 0.1)',
-          border: '1px solid var(--color-danger)',
-          borderRadius: 'var(--radius-sm)',
-          color: 'var(--color-danger)',
-          fontSize: 'var(--font-size-caption)',
-          margin: 'var(--spacing-sm) var(--spacing-md)',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}>
-          <span>{persistenceError}</span>
-          <button onClick={clearPersistenceError} aria-label="Dismiss error" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-body)' }}>×</button>
-        </div>
+        <Banner
+          tone="danger"
+          className="app-notice"
+          action={
+            <IconButton icon="x" size="sm" aria-label="Dismiss error" onClick={clearPersistenceError} />
+          }
+        >
+          {persistenceError}
+        </Banner>
       )}
       {/* U3a: boot init-error banner. useServiceInitialization sets both
           setInitError and setIsInitialized(true) in one synchronous block, so
           React 18 batches them and the !isInitialized-gated overlay never
           paints the error. This banner surfaces it POST-init so search/vector
           init failures are visible. Retry reloads the page (the most reliable
-          re-init, since the hook guards against re-running in-process). */}
+          re-init, since the hook guards against re-running in-process).
+          Polite status region (it is not an interruption), so the Banner's own
+          alert role is switched off (live={false}) inside it. */}
       {initError && !initErrorDismissed && (
-        <div
-          role="status"
-          style={{
-            padding: 'var(--spacing-sm) var(--spacing-md)',
-            backgroundColor: 'rgba(234, 179, 8, 0.12)',
-            border: '1px solid var(--color-warning-strong)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--color-warning-strong)',
-            fontSize: 'var(--font-size-caption)',
-            margin: 'var(--spacing-sm) var(--spacing-md)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 'var(--spacing-md)',
-          }}
-        >
-          <span>Search is degraded — answers may miss information. ({initError})</span>
-          <span style={{ display: 'flex', gap: 'var(--spacing-sm)', flexShrink: 0 }}>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              style={{ background: 'transparent', border: '1px solid currentColor', borderRadius: 'var(--radius-sm)', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-caption)', padding: '2px var(--spacing-sm)' }}
-            >
-              Retry
-            </button>
-            <button
-              type="button"
-              onClick={() => setInitErrorDismissed(true)}
-              aria-label="Dismiss degraded-search notice"
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 'var(--font-size-body)' }}
-            >
-              ×
-            </button>
-          </span>
+        <div role="status">
+          <Banner
+            tone="warning"
+            live={false}
+            className="app-notice"
+            action={
+              <>
+                <Button size="sm" onClick={() => window.location.reload()}>
+                  Retry
+                </Button>
+                <IconButton
+                  icon="x"
+                  size="sm"
+                  aria-label="Dismiss degraded-search notice"
+                  onClick={() => setInitErrorDismissed(true)}
+                />
+              </>
+            }
+          >
+            Search is degraded — answers may miss information. ({initError})
+          </Banner>
         </div>
       )}
       {renderPage()}

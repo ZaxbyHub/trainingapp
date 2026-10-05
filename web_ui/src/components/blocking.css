@@ -15,3 +15,7 @@
 
 .error-fallback { display: flex; align-items: center; justify-content: center; min-height: 200px; padding: var(--space-8) var(--space-4); }
 .error-fallback .ui-empty__icon { color: var(--danger); }
+
+/* App-level non-blocking notices (persistence error, degraded search): banner + its actions. */
+.app-notice { margin: var(--space-2) var(--space-4); align-items: center; }
+.app-notice .ui-banner__action { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
