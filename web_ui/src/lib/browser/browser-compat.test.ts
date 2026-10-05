@@ -79,9 +79,47 @@ describe('detectBrowser', () => {
     expect(result.version).toBe(121);
   });
 
-  test('Firefox iOS - returns firefox with fxios version', () => {
+  // PRR-151-030: every iOS/iPadOS browser is WebKit, so it classifies by engine
+  // ('safari' = WebKit), never by brand.
+  test('Firefox iOS (FxiOS) - WebKit, returns safari', () => {
     globalThis.navigator = createMockNavigator({
       userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/121 Mobile/15E148 Safari/604.1',
+    });
+
+    const result = detectBrowser();
+    expect(result.name).toBe('safari');
+    expect(result.version).toBeNull();
+  });
+
+  test('Chrome iOS (CriOS) - WebKit, returns safari', () => {
+    globalThis.navigator = createMockNavigator({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.6099.119 Mobile/15E148 Safari/604.1',
+    });
+
+    expect(detectBrowser().name).toBe('safari');
+  });
+
+  test('Edge iOS (EdgiOS) - WebKit, returns safari', () => {
+    globalThis.navigator = createMockNavigator({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 EdgiOS/120.0.2210.150 Mobile/15E148 Safari/605.1.15',
+    });
+
+    const result = detectBrowser();
+    expect(result.name).toBe('safari');
+    expect(result.version).toBe(17);
+  });
+
+  test('iPad Safari - returns safari', () => {
+    globalThis.navigator = createMockNavigator({
+      userAgent: 'Mozilla/5.0 (iPad; CPU OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
+    });
+
+    expect(detectBrowser().name).toBe('safari');
+  });
+
+  test('Firefox on Android stays firefox (Gecko, not WebKit)', () => {
+    globalThis.navigator = createMockNavigator({
+      userAgent: 'Mozilla/5.0 (Android 14; Mobile; rv:121.0) Gecko/121.0 Firefox/121.0',
     });
 
     const result = detectBrowser();
@@ -405,7 +443,7 @@ describe('getCompatMessage', () => {
     expect(result.recommendations).toContain('Update your browser to the latest version');
   });
 
-  test('Firefox 121 → degraded', () => {
+  test('Firefox 121 without WebGPU → full (supported), with a WebGPU note', () => {
     const info: BrowserInfo = {
       name: 'firefox',
       version: 121,
@@ -422,13 +460,29 @@ describe('getCompatMessage', () => {
 
     const result = getCompatMessage(info);
 
-    expect(result.level).toBe('degraded');
+    expect(result.level).toBe('full');
     expect(result.message).toContain('Firefox 121');
-    expect(result.message).toContain('experimental');
-    expect(result.recommendations).toContain('For best results, use Chrome 113+ or Edge 113+');
+    expect(result.message).toContain('supported');
+    expect(result.recommendations).toHaveLength(1);
+    expect(result.recommendations[0]).toContain('WebGPU is not available');
   });
 
-  test('Firefox null version → degraded', () => {
+  test('Firefox with full WebGPU → full, no recommendations', () => {
+    const info: BrowserInfo = {
+      name: 'firefox',
+      version: 141,
+      isSupported: true,
+      features: { webgpu: 'full', opfs: true, indexedDB: true, sharedArrayBuffer: true, wasm: true, workers: true },
+    };
+
+    const result = getCompatMessage(info);
+
+    expect(result.level).toBe('full');
+    expect(result.message).toContain('WebGPU available');
+    expect(result.recommendations).toEqual([]);
+  });
+
+  test('Firefox null version → full (supported)', () => {
     const info: BrowserInfo = {
       name: 'firefox',
       version: null,
@@ -445,11 +499,11 @@ describe('getCompatMessage', () => {
 
     const result = getCompatMessage(info);
 
-    expect(result.level).toBe('degraded');
+    expect(result.level).toBe('full');
     expect(result.message).toContain('Firefox');
   });
 
-  test('Safari 17 → degraded', () => {
+  test('Safari 17 → unsupported (PRR-151-030)', () => {
     const info: BrowserInfo = {
       name: 'safari',
       version: 17,
@@ -466,13 +520,25 @@ describe('getCompatMessage', () => {
 
     const result = getCompatMessage(info);
 
-    expect(result.level).toBe('degraded');
+    expect(result.level).toBe('unsupported');
     expect(result.message).toContain('Safari 17');
-    expect(result.message).toContain('partial');
-    expect(result.recommendations).toContain('Consider the desktop app or an external model server (Settings → Model & connection) for reliable inference');
+    expect(result.message).toContain('not supported');
+    expect(result.recommendations).toContain('Use Chrome 113+, Edge 113+ or Firefox on a desktop computer');
+    // No advice to switch to another iOS browser: they are all WebKit.
+    expect(result.recommendations.join(' ')).not.toMatch(/iOS/);
   });
 
-  test('Safari null version → degraded', () => {
+  test('Safari takes the same level as every other unsupported browser, whatever its WebGPU', () => {
+    const features = { webgpu: 'full', opfs: true, indexedDB: true, sharedArrayBuffer: true, wasm: true, workers: true } as const;
+    const safari = getCompatMessage({ name: 'safari', version: 26, isSupported: false, features });
+    const unknown = getCompatMessage({ name: 'unknown', version: null, isSupported: false, features });
+    const oldChrome = getCompatMessage({ name: 'chrome', version: 100, isSupported: false, features });
+    expect(safari.level).toBe('unsupported');
+    expect(safari.level).toBe(unknown.level);
+    expect(safari.level).toBe(oldChrome.level);
+  });
+
+  test('Safari null version → unsupported', () => {
     const info: BrowserInfo = {
       name: 'safari',
       version: null,
@@ -489,7 +555,7 @@ describe('getCompatMessage', () => {
 
     const result = getCompatMessage(info);
 
-    expect(result.level).toBe('degraded');
+    expect(result.level).toBe('unsupported');
     expect(result.message).toContain('Safari');
   });
 
@@ -512,7 +578,8 @@ describe('getCompatMessage', () => {
 
     expect(result.level).toBe('unsupported');
     expect(result.message).toContain('Unable to detect browser');
-    expect(result.recommendations).toContain('Use Chrome 113+ or Edge 113+ for full WebGPU support');
+    expect(result.message).toContain('Firefox');
+    expect(result.recommendations).toContain('Use Chrome 113+ or Edge 113+ for full WebGPU support, or Firefox');
   });
 
   test('Edge 113 exactly → full (boundary test)', () => {
@@ -592,7 +659,7 @@ describe('detectBrowserInfo', () => {
     expect(result.isSupported).toBe(true);
   });
 
-  test('Firefox with wasm → isSupported true (degraded mode)', async () => {
+  test('Firefox without WebGPU → isSupported true (supported browser)', async () => {
     globalThis.navigator = createMockNavigator({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
       gpu: undefined,
@@ -608,7 +675,7 @@ describe('detectBrowserInfo', () => {
     expect(result.features.wasm).toBe(true);
   });
 
-  test('Safari with partial webgpu → isSupported true', async () => {
+  test('Safari with partial webgpu → isSupported false (WebKit is unsupported)', async () => {
     globalThis.navigator = createMockNavigator({
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
       gpu: {
@@ -620,8 +687,22 @@ describe('detectBrowserInfo', () => {
     const result = await detectBrowserInfo();
 
     expect(result.name).toBe('safari');
-    expect(result.isSupported).toBe(true);
+    expect(result.isSupported).toBe(false);
     expect(result.features.webgpu).toBe('partial');
+  });
+
+  test('Firefox on iOS (WebKit) → isSupported false even with full WebGPU', async () => {
+    globalThis.navigator = createMockNavigator({
+      userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/121 Mobile/15E148 Safari/604.1',
+      gpu: { requestAdapter: vi.fn().mockResolvedValue({}) },
+      storage: undefined,
+    });
+
+    const result = await detectBrowserInfo();
+
+    expect(result.name).toBe('safari');
+    expect(result.isSupported).toBe(false);
+    expect(result.features.webgpu).toBe('full');
   });
 
   test('unknown browser with wasm → isSupported true (fallback)', async () => {
