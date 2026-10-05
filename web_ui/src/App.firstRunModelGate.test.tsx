@@ -75,12 +75,15 @@ function renderGate(models: ModelStatus | null, session: DesktopSession = makeSe
 
 const fetchSpy = vi.fn();
 
+
 beforeEach(() => {
   vi.stubGlobal('fetch', fetchSpy);
 });
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
+  delete (window as unknown as { desktopApi?: unknown }).desktopApi;
   vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
@@ -117,8 +120,6 @@ describe('ChatPage desktop first-run model gate (AC5 UI)', () => {
     // The browser-local gate is absent in this mode: only the desktop gate can be driving inert.
     expect(screen.queryByRole('alertdialog', { name: /model not ready/i })).toBeNull();
     expect(container.querySelector('.chat-page__content')).toHaveAttribute('inert');
-    localStorage.clear();
-    delete (window as unknown as { desktopApi?: unknown }).desktopApi;
   });
 
   it('a send attempt while blocked issues NO fetch (no doomed /ask)', async () => {

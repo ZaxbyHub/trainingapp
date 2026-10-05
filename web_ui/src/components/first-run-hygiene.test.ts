@@ -33,6 +33,9 @@ describe('first-run + toast token hygiene (phase 7)', () => {
   it('the checks are live (guards against a vacuous pass)', () => {
     expect(LEGACY_NAMES).toContain('--color-primary');
     expect(LEGACY.test('var(--color-primary)')).toBe(true);
+    // The lookahead boundary: a longer, non-legacy name must not match its legacy prefix.
+    expect(LEGACY.test('var(--color-primaryx)')).toBe(false);
+    expect(LEGACY.test('var(--color-primary-zzz)')).toBe(false);
     // The three tokens the wizard used to reference are declared nowhere: only the
     // undeclared-token check (and not the legacy list) can catch them.
     expect(unknownTokens('x: var(--color-border, #444) var(--color-bg-surface) var(--font-size-title)')).toEqual([

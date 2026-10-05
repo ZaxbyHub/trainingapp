@@ -37,6 +37,9 @@ describe('blocking overlay hygiene (phase 7)', () => {
   it('the detectors are not vacuous', () => {
     expect(LEGACY_NAMES).toContain('--color-primary');
     expect(LEGACY.test('var(--color-text-muted)')).toBe(true);
+    // The lookahead boundary: a longer, non-legacy name must not match its legacy prefix.
+    expect(LEGACY.test('var(--color-primaryx)')).toBe(false);
+    expect(LEGACY.test('var(--color-primary-zzz)')).toBe(false);
     expect(VAR_FALLBACK.test('var(--color-border, #ddd)')).toBe(true);
     expect(VAR_FALLBACK.test('var(--space-3)')).toBe(false);
     expect(INLINE_STYLE.test('<div style={{ a: 1 }} />')).toBe(true);

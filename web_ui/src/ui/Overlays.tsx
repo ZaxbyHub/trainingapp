@@ -28,12 +28,6 @@ interface DialogBaseProps {
   alert?: boolean;
   className?: string;
   /**
-   * Default true: Escape and a backdrop press call `onClose`. false is for blocking
-   * states with no dismiss path (a missing-model gate): Escape and the backdrop do
-   * nothing, and Escape is swallowed (preventDefault + stopPropagation) so it also
-   * cannot close anything layered behind. Focus return is unchanged.
-   */
-  /**
    * Default true: aria-modal="true". Pass false when the dialog blocks only part of
    * the page and the rest stays operable (the chat-page model gate leaves the shell
    * navigation usable). aria-modal="true" tells assistive tech everything outside is
@@ -86,8 +80,23 @@ interface DialogBaseProps {
  */
 export type DialogProps = DialogBaseProps &
   (
-    | { dismissible?: true; onClose: () => void }
-    | { dismissible: false; onClose?: () => void }
+    | {
+        /** Default true: Escape and a backdrop press call `onClose`. */
+        dismissible?: true;
+        /** Called on Escape / backdrop press; required for a dismissible dialog. */
+        onClose: () => void;
+      }
+    | {
+        /**
+         * false is for blocking states with no dismiss path (a missing-model gate):
+         * Escape and the backdrop do nothing, and Escape is swallowed (preventDefault +
+         * stopPropagation) so it also cannot close anything layered behind. Focus
+         * return is unchanged.
+         */
+        dismissible: false;
+        /** Never called by the dialog itself; optional. */
+        onClose?: () => void;
+      }
   );
 
 /**
