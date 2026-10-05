@@ -203,6 +203,8 @@
 
 /* ------------------------------------------------------------ Overlays */
 .ui-dialog__backdrop { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: var(--space-4); background: var(--bg-canvas); background: color-mix(in srgb, var(--bg-canvas) 70%, transparent); }
+/* contained: covers the nearest positioned ancestor instead of the window; z 200 sits above page content but below the shell drawer (300), as the chat-page model gate always did. */
+.ui-dialog__backdrop--contained { position: absolute; z-index: 200; }
 .ui-dialog { box-sizing: border-box; width: 100%; max-width: 480px; max-height: 100%; overflow: auto; padding: var(--space-6); background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--r-overlay); box-shadow: var(--shadow-3); }
 .ui-dialog__title { margin: 0 0 var(--space-3); font-size: var(--type-heading-size); line-height: var(--type-heading-line); font-weight: var(--type-heading-weight); }
 .ui-dialog__body { font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-secondary); }

@@ -19,7 +19,8 @@ const FOCUSABLE =
 
 export interface DialogProps {
   open: boolean;
-  onClose: () => void;
+  /** Required when `dismissible` (the default); a non-dismissible dialog never calls it. */
+  onClose?: () => void;
   title: ReactNode;
   children?: ReactNode;
   /** Action row (right-aligned). */
@@ -27,24 +28,74 @@ export interface DialogProps {
   /** Use role="alertdialog" for blocking confirmations. */
   alert?: boolean;
   className?: string;
+  /**
+   * Default true: Escape and a backdrop press call `onClose`. false is for blocking
+   * states with no dismiss path (a missing-model gate): Escape and the backdrop do
+   * nothing, and Escape is swallowed (preventDefault + stopPropagation) so it also
+   * cannot close anything layered behind. Focus trap and focus return are unchanged.
+   */
+  dismissible?: boolean;
+  /**
+   * Default true: aria-modal="true". Pass false when the dialog blocks only part of
+   * the page and the rest stays operable (the chat-page model gate leaves the shell
+   * navigation usable). aria-modal="true" tells assistive tech everything outside is
+   * inert, so claiming it there would hide navigation the user can still reach
+   * (WAI-ARIA 1.2 dialog pattern). The caller is then responsible for making the
+   * covered content inert. The Tab trap and focus return still apply.
+   */
+  modal?: boolean;
+  /**
+   * Default false: portal to document.body with a fixed, window-wide backdrop. true:
+   * render in place with an absolute backdrop covering the nearest positioned
+   * ancestor, so only that region is blocked. The ancestor must establish a
+   * containing block (position: relative) and the Dialog must not sit inside an
+   * element the caller makes inert.
+   */
+  contained?: boolean;
+  /**
+   * Where focus lands on open: 'first' (default) the first focusable control, or
+   * 'panel' the dialog itself (it is named by the title, so assistive tech reads the
+   * title and description) for a dialog whose content should be read before any
+   * action is offered.
+   */
+  initialFocus?: 'first' | 'panel';
+  /** id of the element inside the dialog that describes it (aria-describedby). */
+  describedBy?: string;
 }
 
 /**
  * role="dialog" + aria-modal. On open it moves focus into the dialog (first
  * focusable control, else the dialog itself), traps Tab / Shift+Tab, closes on
- * Escape or backdrop click, and returns focus to the previously focused
- * element on close. Rendered in a portal on document.body.
+ * Escape or backdrop click (unless `dismissible` is false), and returns focus to
+ * the previously focused element on close. Rendered in a portal on document.body
+ * unless `contained`.
  */
-export function Dialog({ open, onClose, title, children, footer, alert, className }: DialogProps) {
+export function Dialog({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  alert,
+  className,
+  dismissible = true,
+  modal = true,
+  contained = false,
+  initialFocus = 'first',
+  describedBy,
+}: DialogProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const returnRef = useRef<HTMLElement | null>(null);
+  // Read at open time only; changing it while open must not re-run the focus effect.
+  const initialFocusRef = useRef(initialFocus);
+  initialFocusRef.current = initialFocus;
 
   useEffect(() => {
     if (!open) return undefined;
     returnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = panelRef.current;
-    const first = panel?.querySelector<HTMLElement>(FOCUSABLE);
+    const first = initialFocusRef.current === 'panel' ? null : panel?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel)?.focus();
     return () => {
       returnRef.current?.focus();
@@ -56,7 +107,8 @@ export function Dialog({ open, onClose, title, children, footer, alert, classNam
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
-        onClose();
+        if (dismissible) onClose?.();
+        else e.preventDefault();
         return;
       }
       if (e.key !== 'Tab') return;
@@ -79,22 +131,24 @@ export function Dialog({ open, onClose, title, children, footer, alert, classNam
         firstEl.focus();
       }
     },
-    [onClose]
+    [dismissible, onClose]
   );
 
   if (!open) return null;
-  return createPortal(
+  const tree = (
     <div
-      className="ui-dialog__backdrop"
+      className={cx('ui-dialog__backdrop', contained && 'ui-dialog__backdrop--contained')}
+      data-testid="ui-dialog-backdrop"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (dismissible && e.target === e.currentTarget) onClose?.();
       }}
     >
       <div
         ref={panelRef}
         role={alert ? 'alertdialog' : 'dialog'}
-        aria-modal="true"
+        aria-modal={modal ? 'true' : undefined}
         aria-labelledby={titleId}
+        aria-describedby={describedBy}
         tabIndex={-1}
         className={cx('ui-dialog', 'ui-focusable', className)}
         onKeyDown={onKeyDown}
@@ -105,9 +159,9 @@ export function Dialog({ open, onClose, title, children, footer, alert, classNam
         <div className="ui-dialog__body">{children}</div>
         {footer ? <div className="ui-dialog__footer">{footer}</div> : null}
       </div>
-    </div>,
-    document.body
+    </div>
   );
+  return contained ? tree : createPortal(tree, document.body);
 }
 
 export interface TooltipProps {
