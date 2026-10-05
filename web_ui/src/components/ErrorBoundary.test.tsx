@@ -44,6 +44,47 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
   });
 
+  test('PRR-151-034/035: the crash fallback moves focus to its heading, which is the page h1', () => {
+    const ThrowError = (): null => {
+      throw new Error('boom');
+    };
+    render(
+      <ErrorBoundary>
+        <ThrowError />
+      </ErrorBoundary>
+    );
+    const heading = screen.getByRole('heading', { level: 1, name: 'Something went wrong' });
+    expect(heading).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(heading);
+  });
+
+  test('PRR-151-043: a boundary stuck on the fallback resets when resetKeys change (page switch) and not otherwise', () => {
+    const Bomb = ({ boom }: { boom: boolean }): React.ReactElement => {
+      if (boom) throw new Error('page one crashed');
+      return <div data-testid="page-two">page two</div>;
+    };
+    const { rerender } = render(
+      <ErrorBoundary resetKeys={['one']}>
+        <Bomb boom />
+      </ErrorBoundary>
+    );
+    expect(screen.getByText('page one crashed')).toBeInTheDocument();
+    // Same keys + healthy children: still the fallback (Try Again is the explicit reset).
+    rerender(
+      <ErrorBoundary resetKeys={['one']}>
+        <Bomb boom={false} />
+      </ErrorBoundary>
+    );
+    expect(screen.queryByTestId('page-two')).toBeNull();
+    rerender(
+      <ErrorBoundary resetKeys={['two']}>
+        <Bomb boom={false} />
+      </ErrorBoundary>
+    );
+    expect(screen.getByTestId('page-two')).toBeInTheDocument();
+    expect(screen.queryByText('Something went wrong')).toBeNull();
+  });
+
   test('Lumen phase 7: the fallback is one danger Banner (role alert) in the page holding the message and a primary Try Again', () => {
     const ThrowError = (): null => {
       throw new Error('Test error message');

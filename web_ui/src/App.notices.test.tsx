@@ -139,7 +139,12 @@ beforeEach(() => {
   state.persistenceError = null;
   state.clearPersistenceError = vi.fn();
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  // PRR-151-061: undo stubGlobal here so a failing assertion can never leak the
+  // `location` stub into the next test.
+  vi.unstubAllGlobals();
+});
 
 describe('App notices (Lumen phase 7)', () => {
   it('persistence error: a danger Banner (alert) with a Dismiss button that clears it', () => {
@@ -170,7 +175,30 @@ describe('App notices (Lumen phase 7)', () => {
     expect(reload).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss degraded-search notice' }));
     expect(screen.queryByText(/Search is degraded/)).toBeNull();
-    vi.unstubAllGlobals();
+  });
+
+  it('PRR-151-011: a dismissed degraded-search notice re-arms on a NEW distinct failure, not on the same one', () => {
+    state.initError = 'vector index failed';
+    const { rerender } = render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss degraded-search notice' }));
+    expect(screen.queryByText(/Search is degraded/)).toBeNull();
+    // Same error again: stays dismissed.
+    rerender(<App />);
+    expect(screen.queryByText(/Search is degraded/)).toBeNull();
+    // The hook appends later failures to the same string: a distinct failure re-arms.
+    state.initError = 'vector index failed; keyword index failed';
+    rerender(<App />);
+    expect(screen.getByText(/Search is degraded/)).toHaveTextContent('keyword index failed');
+  });
+
+  it('PRR-151-012: the degraded-search polite region is mounted before the notice and its text changes in place', () => {
+    const { rerender } = render(<App />);
+    const before = Array.from(document.querySelectorAll('[role="status"]'));
+    state.initError = 'vector index failed';
+    rerender(<App />);
+    const banner = screen.getByText(/Search is degraded/).closest('.ui-banner') as HTMLElement;
+    // The notice sits in a region element that already existed (inserted-with-content would be a new node).
+    expect(before).toContain(banner.parentElement);
   });
 
   it('renders neither notice when there is no error', () => {

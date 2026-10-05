@@ -51,9 +51,33 @@ export interface DesktopSession {
 
 let sessionPromise: Promise<DesktopSession> | null = null;
 
+/**
+ * Drop the memoized session so the next initDesktopSession() is a real second
+ * attempt. The boot gate calls this when ANY post-discovery boot step fails
+ * (seeding, migration): the memo only self-clears on a discovery rejection, so
+ * without this a Retry would re-resolve the same session and re-throw identically.
+ */
+export function resetDesktopSession(): void {
+  sessionPromise = null;
+}
+
 /** Reset memoized boot state (tests only). */
 export function resetDesktopSessionForTests(): void {
-  sessionPromise = null;
+  resetDesktopSession();
+}
+
+/** Upper bound on the preload-bridge discovery calls (a wedged IPC must surface as a Retry-able error). */
+export const DESKTOP_BRIDGE_TIMEOUT_MS = 15_000;
+
+function withBridgeTimeout<T>(call: Promise<T>, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new DesktopSessionError(`Timed out waiting for the desktop backend (${what}); retry or restart the app.`)),
+      DESKTOP_BRIDGE_TIMEOUT_MS,
+    );
+  });
+  return Promise.race([call, timeout]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -73,7 +97,10 @@ export function initDesktopSession(): Promise<DesktopSession> {
   const desktopApi = window.desktopApi as DesktopApiBridge;
   sessionPromise = (async () => {
     try {
-      const [backend, token] = await Promise.all([desktopApi.getBackendInfo(), desktopApi.getAuthToken()]);
+      const [backend, token] = await Promise.all([
+        withBridgeTimeout(desktopApi.getBackendInfo(), 'getBackendInfo'),
+        withBridgeTimeout(desktopApi.getAuthToken(), 'getAuthToken'),
+      ]);
       if (!backend?.url || !token) {
         throw new DesktopSessionError('Desktop backend reported no address; restart the app.');
       }
