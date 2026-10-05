@@ -208,7 +208,10 @@ export function FirstRunWizard({
   useEffect(() => {
     const root = rootRef.current;
     const dialog = root?.closest<HTMLElement>('[role="dialog"]');
-    if (!root || !dialog || dialog.contains(document.activeElement)) return;
+    // Focus parked on the dialog panel itself (Dialog re-homes there when the focused
+    // control is removed) still needs the primary action, so only a focused child counts.
+    const active = document.activeElement;
+    if (!root || !dialog || (dialog.contains(active) && active !== dialog)) return;
     root
       .querySelector<HTMLElement>(
         '[data-testid="wizard-finish"], [data-testid="wizard-complete"], [data-testid="wizard-next"]',

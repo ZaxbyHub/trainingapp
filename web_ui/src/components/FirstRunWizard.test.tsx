@@ -623,6 +623,23 @@ describe('FirstRunWizard in-flight guards (PRR-151-014)', () => {
     expect(onCompleted).toHaveBeenCalledTimes(1);
   });
 
+  it('moves focus to Finish even when focus was parked on the dialog panel as the terminal step appears', async () => {
+    const gate = deferred<{ ok: boolean }>();
+    completeFirstRunMock.mockReturnValue(gate.promise);
+    const view = mount(packsActive());
+    toComplete(view);
+    await act(async () => {
+      fireEvent.click(view.getByTestId('wizard-complete'));
+    });
+    const panel = view.getByTestId('first-run-wizard');
+    panel.focus();
+    expect(document.activeElement).toBe(panel);
+    await act(async () => {
+      gate.resolve({ ok: true });
+    });
+    expect(document.activeElement).toBe(view.getByTestId('wizard-finish'));
+  });
+
   it('a refused completion re-enables Complete so the operator can retry', async () => {
     completeFirstRunMock.mockResolvedValueOnce({ ok: false, detail: 'nope' });
     const view = mount(packsActive());
