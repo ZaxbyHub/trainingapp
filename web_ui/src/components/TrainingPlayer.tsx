@@ -298,7 +298,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
         )}
         {playerError !== null && location !== null && (
           <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-error" className={DANGER_ALERT_CLASS}>
-            Course player could not start: {playerError}. Course playback is supported in current Chrome and Edge (Safari is not
+            Course player could not start: {playerError}. Course playback is supported in current Chrome, Edge and Firefox (Safari is not
             supported).{' '}
             <button
               type="button"
