@@ -59,7 +59,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Application Shell**: Navigation rail with Chat, Documents, Settings pages and responsive flexbox layout
 - **Theme System**: Dark/light mode toggle with system preference detection and localStorage persistence
 - **Design Token Foundation (Phase 1)**: Comprehensive CSS custom property system on 8px grid with Inter font, status color tokens (info/warning/success), and radius tokens (sm/md/lg)
-- **Toast Notifications**: Non-blocking toast system with success/error/info variants, entrance and exit fades, and a 5 second auto-dismiss that pauses on hover and focus (only the dismiss button closes a toast early)
+- **Toast Notifications**: Non-blocking toast system with success/error/info variants, entrance and exit fades, and a 5 second auto-dismiss that pauses on hover and focus (only the dismiss button closes a toast early), at most 5 toasts at once (the oldest is dropped), identical messages not duplicated (the repeat restarts the timer), and a viewport portaled to `document.body`
 - **Keyboard Shortcuts**: Ctrl+Enter (send), Ctrl+L (clear chat), Ctrl+, (open settings) with input/textarea focus guard
 - **Testing Framework**: vitest configured with @testing-library/react and jsdom environment
 
