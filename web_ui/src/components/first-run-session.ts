@@ -11,7 +11,8 @@
  */
 export interface FirstRunSession {
   stepIndex: number;
-  selectedProfile: 'quality' | 'fast';
+  /** Only set once the operator explicitly picked a profile; null follows the status recommendation. */
+  pickedProfile: 'quality' | 'fast' | null;
   acknowledged: boolean;
 }
 

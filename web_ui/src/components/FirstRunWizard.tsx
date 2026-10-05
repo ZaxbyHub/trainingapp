@@ -135,9 +135,12 @@ export function FirstRunWizard({
   const [stepIndex, setStepIndex] = useState(() =>
     Math.min(Math.max(resumed?.stepIndex ?? 0, 0), WIZARD_STEPS.length - 2),
   );
-  const [selectedProfile, setSelectedProfile] = useState<'quality' | 'fast'>(
-    resumed?.selectedProfile ?? status.profile.recommended,
+  // Null until the operator picks: an untouched profile follows the current snapshot's
+  // recommendation (also on resume) instead of freezing a stale default.
+  const [pickedProfile, setPickedProfile] = useState<'quality' | 'fast' | null>(
+    resumed?.pickedProfile ?? null,
   );
+  const selectedProfile = pickedProfile ?? status.profile.recommended;
   const [acknowledged, setAcknowledged] = useState(
     resumed?.acknowledged ?? status.state.acknowledgedLicenses,
   );
@@ -162,8 +165,8 @@ export function FirstRunWizard({
     };
   }, []);
   useEffect(() => {
-    if (!completed) saveFirstRunSession({ stepIndex, selectedProfile, acknowledged });
-  }, [completed, stepIndex, selectedProfile, acknowledged]);
+    if (!completed) saveFirstRunSession({ stepIndex, pickedProfile, acknowledged });
+  }, [completed, stepIndex, pickedProfile, acknowledged]);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Modal keyboard behavior (PRR-003) comes from ui/Dialog: Escape dismisses exactly
@@ -374,7 +377,7 @@ export function FirstRunWizard({
               legend="Inference profile"
               hideLegend
               value={selectedProfile}
-              onChange={(value) => setSelectedProfile(value === 'fast' ? 'fast' : 'quality')}
+              onChange={(value) => setPickedProfile(value === 'fast' ? 'fast' : 'quality')}
               options={[
                 {
                   value: 'quality',

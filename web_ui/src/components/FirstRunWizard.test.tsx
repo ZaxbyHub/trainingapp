@@ -544,6 +544,33 @@ describe('FirstRunWizard in-session progress (PRR-151-013)', () => {
     expect(window.sessionStorage.length).toBe(0);
   });
 
+  it('an untouched profile follows the new status recommendation on reopen', () => {
+    const withRec = (r: 'quality' | 'fast'): FirstRunStatus => {
+      const s = stubStatus();
+      s.profile.recommended = r;
+      return s;
+    };
+    const first = mount(withRec('quality'));
+    next(first.getByTestId, 1);
+    fireEvent.click(first.getByTestId('first-run-skip'));
+    first.unmount();
+    const second = mount(withRec('fast'));
+    expect(second.getByTestId('wizard-announcer')).toHaveTextContent('Step 2 of 5');
+    expect(second.getByTestId('profile-fast')).toBeChecked();
+  });
+
+  it('an explicit profile pick survives a reopen even when the recommendation differs', () => {
+    const first = mount();
+    next(first.getByTestId, 1);
+    fireEvent.click(first.getByTestId('profile-fast'));
+    fireEvent.click(first.getByTestId('first-run-skip'));
+    first.unmount();
+    const s = stubStatus();
+    s.profile.recommended = 'quality';
+    const second = mount(s);
+    expect(second.getByTestId('profile-fast')).toBeChecked();
+  });
+
   it('Finish then reopen starts fresh', async () => {
     completeFirstRunMock.mockResolvedValue({ ok: true });
     const first = mount(packsActive());
