@@ -6,8 +6,11 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { TOAST_EXIT_MS } from './Toast';
 
 const css = readFileSync(resolve(__dirname, 'toast.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+
+const tokens = readFileSync(resolve(__dirname, '../styles/lumen-tokens.css'), 'utf8');
 
 /** Body of the first top-level @media block whose condition is exactly `query`. */
 function block(query: string): string {
@@ -43,6 +46,24 @@ describe('toast.css', () => {
   it('makes the viewport click-through but the toasts interactive', () => {
     expect(css).toMatch(/\.ui-toast-viewport\s*\{[^}]*pointer-events:\s*none/);
     expect(css).toMatch(/\.ui-toast\s*\{[^}]*pointer-events:\s*auto/);
+  });
+
+  it('pins the JS exit timer to the --dur-base token the leaving transition uses', () => {
+    const base = /--dur-base:\s*(\d+)ms/.exec(tokens);
+    expect(base).not.toBeNull();
+    expect(TOAST_EXIT_MS).toBe(Number(base![1]));
+    expect(css).toMatch(/\.ui-toast--leaving\s*\{[^}]*transition:\s*opacity var\(--dur-base\)[^}]*transform var\(--dur-base\)/);
+  });
+
+  it('bounds the viewport height and scrolls, so a burst keeps every dismiss reachable', () => {
+    expect(css).toMatch(/\.ui-toast-viewport\s*\{[^}]*max-block-size:[^;]+;[^}]*overflow-y:\s*auto/);
+  });
+
+  it('positions the viewport with logical properties (RTL-safe), never physical right/bottom', () => {
+    const rule = /\.ui-toast-viewport\s*\{([^}]*)\}/.exec(css)![1];
+    expect(rule).toMatch(/inset-inline-end:/);
+    expect(rule).toMatch(/inset-block-end:/);
+    expect(rule).not.toMatch(/(^|[;\s])(right|bottom|left|top):/);
   });
 
   it('never hides the live regions, so they stay in the accessibility tree while empty', () => {

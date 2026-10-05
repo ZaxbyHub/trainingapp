@@ -9,6 +9,7 @@ import {
   type FocusEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Banner } from './Feedback';
 import { Button } from './Button';
 import { Icon } from './icons';
@@ -32,6 +33,8 @@ const ToastContext = createContext<ToastContextValue | undefined>(undefined);
 export const TOAST_DURATION_MS = 5000;
 /** Matches --dur-base (lumen-tokens.css); the leaving class fades over this long. */
 export const TOAST_EXIT_MS = 200;
+/** Visible-toast cap: a burst (e.g. one failure per file) drops the oldest instead of stacking off-screen. */
+export const MAX_TOASTS = 5;
 
 const BANNER_TONE = { success: 'success', error: 'danger', info: 'info' } as const;
 
@@ -46,6 +49,12 @@ function prefersReducedMotion(): boolean {
  * those regions and carry no live role of their own (nested live roles would be
  * announced twice). aria-atomic is false so adding one toast does not re-announce the
  * ones already showing. Auto-dismiss pauses while a toast is hovered or holds focus.
+ *
+ * Order is per region (status first, then alert), not chronological: the two live
+ * regions are what make polite and assertive announcements work, so a new error always
+ * renders below older success/info toasts. At most MAX_TOASTS show at once (oldest
+ * dropped) and an identical message+type already showing is not added again. The
+ * viewport is portaled to document.body so no ancestor stacking context can bury it.
  */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -57,11 +66,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const showToast = useCallback((message: string, type: ToastTone) => {
     const id = `toast-${nextId.current++}`;
-    setToasts((prev) => [...prev, { id, message, type }]);
+    setToasts((prev) => {
+      if (prev.some((t) => t.message === message && t.type === type)) return prev;
+      return [...prev, { id, message, type }].slice(-MAX_TOASTS);
+    });
   }, []);
 
+  // Focus moving between toasts keeps the recorded target; focus arriving from outside
+  // (or from nowhere, e.g. a window refocus) replaces it, so a stale element is never
+  // restored on a later dismissal.
   const noteFocusEntered = useCallback((from: EventTarget | null) => {
-    if (from instanceof HTMLElement && !viewportRef.current?.contains(from)) returnFocusRef.current = from;
+    if (from instanceof HTMLElement && viewportRef.current?.contains(from)) return;
+    returnFocusRef.current = from instanceof HTMLElement ? from : null;
   }, []);
 
   const removeToast = useCallback((id: string, hadFocus: boolean) => {
@@ -83,6 +99,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
+      {createPortal(
       <div ref={viewportRef} className="ui-toast-viewport">
         <div role="status" aria-live="polite" aria-atomic="false" aria-relevant="additions" className="ui-toast-region">
           {polite.map(renderItem)}
@@ -90,7 +107,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         <div role="alert" aria-live="assertive" aria-atomic="false" aria-relevant="additions" className="ui-toast-region">
           {assertive.map(renderItem)}
         </div>
-      </div>
+      </div>,
+      document.body
+      )}
     </ToastContext.Provider>
   );
 }
@@ -153,7 +172,9 @@ function ToastItem({ toast, onRemove, onFocusEntered }: ToastItemProps) {
   }, [start]);
 
   useEffect(() => {
-    start(TOAST_DURATION_MS);
+    // A cursor already resting where the toast appears fires no mouseenter until it moves.
+    if (itemRef.current?.matches(':hover')) hovered.current = true;
+    else start(TOAST_DURATION_MS);
     return () => {
       if (dismissTimer.current) clearTimeout(dismissTimer.current);
       if (exitTimer.current) clearTimeout(exitTimer.current);
