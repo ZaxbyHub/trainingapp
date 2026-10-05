@@ -10,8 +10,12 @@
  * backend"-style message), the license acknowledgment cannot be skipped, and
  * "Skip for now" only dismisses — it never completes, so the wizard re-appears
  * on the next launch until the operator finishes it.
+ *
+ * Lumen phase 7: built on ui/Dialog (focus trap, Escape, focus return) and
+ * ui/Banner (role=alert errors); styles live in first-run.css.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Banner, Button, Checkbox, Dialog, Icon, RadioCardGroup } from '../ui';
 import {
   activateRequiredPacks,
   completeFirstRun,
@@ -20,6 +24,7 @@ import {
   onFirstRunRequired,
   type FirstRunStatus,
 } from '../lib/first-run';
+import './first-run.css';
 
 const WIZARD_STEPS = [
   'detect-hardware',
@@ -31,80 +36,6 @@ const WIZARD_STEPS = [
 ] as const;
 
 type Step = (typeof WIZARD_STEPS)[number];
-
-const overlayStyle: React.CSSProperties = {
-  position: 'fixed',
-  inset: 0,
-  zIndex: 10000,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  backgroundColor: 'rgba(0, 0, 0, 0.55)',
-};
-
-const panelStyle: React.CSSProperties = {
-  width: 'min(720px, 92vw)',
-  maxHeight: '86vh',
-  overflowY: 'auto',
-  backgroundColor: 'var(--color-bg-surface, #1e1e1e)',
-  color: 'var(--color-text-primary)',
-  border: '1px solid var(--color-border, #444)',
-  borderRadius: 'var(--radius-md, 8px)',
-  padding: 'var(--spacing-xl, 24px)',
-  fontFamily: 'var(--font-family)',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 'var(--spacing-lg, 16px)',
-};
-
-const stepRowStyle: React.CSSProperties = {
-  display: 'flex',
-  gap: 'var(--spacing-sm, 8px)',
-  flexWrap: 'wrap',
-};
-
-const stepChip = (state: 'done' | 'current' | 'todo'): React.CSSProperties => ({
-  padding: '2px 10px',
-  borderRadius: 999,
-  fontSize: 'var(--font-size-caption, 12px)',
-  // Single shorthand (trace external-llm-provider-settings P6): do not mix a
-  // border shorthand with a borderColor longhand in one style object — that
-  // mix is the React style-warning class fixed on SettingsPage.
-  border:
-    `1px solid ${
-      state === 'current'
-        ? 'var(--color-primary, #4a9eff)'
-        : state === 'done'
-          ? 'var(--color-success, #4caf50)'
-          : 'var(--color-border, #444)'
-    }`,
-  color:
-    state === 'current'
-      ? 'var(--color-primary, #4a9eff)'
-      : state === 'done'
-        ? 'var(--color-success, #4caf50)'
-        : 'var(--color-text-muted, #999)',
-});
-
-const buttonRowStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: 'var(--spacing-md, 12px)',
-  marginTop: 'var(--spacing-md, 12px)',
-};
-
-const failureTableStyle: React.CSSProperties = {
-  width: '100%',
-  borderCollapse: 'collapse' as const,
-  fontSize: 'var(--font-size-caption, 12px)',
-};
-
-const cellStyle: React.CSSProperties = {
-  border: '1px solid var(--color-border, #444)',
-  padding: '4px 8px',
-  textAlign: 'left' as const,
-  wordBreak: 'break-all' as const,
-};
 
 const formatBytes = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
 
@@ -187,38 +118,17 @@ export function FirstRunWizard({
   } | null>(null);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  // Modal keyboard behavior (PRR-003): Escape dismisses exactly like
-  // "Skip for now" (never completes), and Tab is trapped inside the panel.
-  useEffect(() => {
-    const handler = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        onClose();
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const panel = panelRef.current;
-      if (panel === null) return;
-      const focusables = panel.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      );
-      if (focusables.length === 0) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      const active = document.activeElement as HTMLElement | null;
-      if (active === null || !panel.contains(active) || (event.shiftKey && active === first)) {
-        event.preventDefault();
-        (event.shiftKey ? last : first).focus();
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', handler);
-    panelRef.current?.focus();
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
+  // Modal keyboard behavior (PRR-003) comes from ui/Dialog: Escape dismisses exactly
+  // like "Skip for now" (never completes), Tab is trapped inside the panel, and focus
+  // returns to the opener when the wizard unmounts.
+
+  // The desktop e2e suite addresses the whole dialog (title included) as
+  // `first-run-wizard`. Dialog has no test-id pass-through, so tag its panel here.
+  useLayoutEffect(() => {
+    rootRef.current?.closest('[role="dialog"]')?.setAttribute('data-testid', 'first-run-wizard');
+  }, []);
 
   const step: Step = completed ? 'complete' : WIZARD_STEPS[stepIndex];
   const manifestBlocking =
@@ -243,6 +153,22 @@ export function FirstRunWizard({
   const packsSatisfied = inactivePacks.length === 0;
   const completeEnabled =
     selectedProfile !== null && acknowledged && !manifestBlocking && packsSatisfied;
+
+  // A control that unmounts while focused (Complete -> Finish, the activate button once
+  // packs are satisfied) or goes natively disabled (Back on step 0) would drop focus to
+  // <body>, outside the dialog's key handler: Escape and the Tab trap would stop working.
+  // Re-home focus onto the step's primary action (else the dialog itself).
+  useEffect(() => {
+    const root = rootRef.current;
+    const dialog = root?.closest<HTMLElement>('[role="dialog"]');
+    if (!root || !dialog || dialog.contains(document.activeElement)) return;
+    root
+      .querySelector<HTMLElement>(
+        '[data-testid="wizard-finish"], [data-testid="wizard-complete"], [data-testid="wizard-next"]',
+      )
+      ?.focus();
+    if (!dialog.contains(document.activeElement)) dialog.focus();
+  }, [stepIndex, completed, packsSatisfied]);
 
   // #133 (AC4): a disabled Complete must NAME its gates — the same
   // WizardBlockerReason vocabulary assertCanComplete returns over IPC, so the
@@ -294,32 +220,47 @@ export function FirstRunWizard({
     }
   };
 
-  return (
-    <div style={overlayStyle} data-testid="first-run-wizard" role="dialog" aria-modal="true" aria-label="First-run setup">
-      <div ref={panelRef} style={panelStyle} tabIndex={-1}>
-        <div>
-          <h2 style={{ margin: 0, fontSize: 'var(--font-size-title, 20px)' }}>
-            {status.rerun ? 'Re-run setup' : 'Welcome to TrainingApp'}
-          </h2>
-          <p style={{ margin: '4px 0 0', color: 'var(--color-text-muted, #999)', fontSize: 'var(--font-size-caption, 12px)' }}>
-            {status.rerun && status.reason === 'drift'
-              ? 'A packaged file changed since setup last ran — verify your installation.'
-              : 'A short, deterministic setup: hardware check, profile choice, file integrity, packs, and licenses.'}
-          </p>
-        </div>
+  const stepState = (index: number): 'done' | 'current' | 'todo' =>
+    completed || index < stepIndex ? 'done' : index === stepIndex ? 'current' : 'todo';
 
-        <div style={stepRowStyle} data-testid="wizard-steps">
-          {WIZARD_STEPS.map((name, index) => (
-            <span key={name} style={stepChip(completed || index < stepIndex ? 'done' : index === stepIndex ? 'current' : 'todo')}>
-              {name}
-            </span>
-          ))}
-        </div>
+  // Native `disabled` (what the e2e suite and tests assert) plus aria-disabled, which is
+  // what gives ui/Button its disabled look.
+  const off = (disabled: boolean) => (disabled ? { disabled: true, 'aria-disabled': true as const } : {});
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={status.rerun ? 'Re-run setup' : 'Welcome to TrainingApp'}
+      className="first-run-dialog"
+    >
+      <div ref={rootRef} className="first-run">
+        <p className="first-run__lede">
+          {status.rerun && status.reason === 'drift'
+            ? 'A packaged file changed since setup last ran — verify your installation.'
+            : 'A short, deterministic setup: hardware check, profile choice, file integrity, packs, and licenses.'}
+        </p>
+
+        <ol className="first-run__steps" data-testid="wizard-steps" aria-label="Setup steps">
+          {WIZARD_STEPS.map((name, index) => {
+            const state = stepState(index);
+            return (
+              <li
+                key={name}
+                className={`first-run__step first-run__step--${state}`}
+                aria-current={state === 'current' ? 'step' : undefined}
+              >
+                {name}
+                {state === 'done' ? <span className="ui-visually-hidden"> (done)</span> : null}
+              </li>
+            );
+          })}
+        </ol>
 
         {step === 'detect-hardware' && (
-          <section data-testid="step-detect-hardware">
-            <h3 style={{ margin: '0 0 8px' }}>Hardware</h3>
-            <p style={{ margin: 0 }}>
+          <section className="first-run__section" data-testid="step-detect-hardware">
+            <h3 className="first-run__heading">Hardware</h3>
+            <p className="first-run__text">
               Free RAM measured: <strong>{formatGiB(status.hardware.freeBytes)}</strong>
               {status.profile.models.quality !== null && (
                 <>
@@ -336,102 +277,98 @@ export function FirstRunWizard({
         )}
 
         {step === 'select-profile' && (
-          <section data-testid="step-select-profile">
-            <h3 style={{ margin: '0 0 8px' }}>Choose an inference profile</h3>
+          <section className="first-run__section" data-testid="step-select-profile">
+            <h3 className="first-run__heading">Choose an inference profile</h3>
             {status.profile.warning !== null && (
-              <p role="alert" data-testid="profile-warning" style={{ margin: '0 0 8px', color: 'var(--color-warning-strong, #eab308)' }}>
-                {status.profile.warning.detail}
-              </p>
+              <div data-testid="profile-warning">
+                <Banner tone="warning">{status.profile.warning.detail}</Banner>
+              </div>
             )}
-            <label style={{ display: 'block', margin: '4px 0' }}>
-              <input
-                type="radio"
-                name="first-run-profile"
-                checked={selectedProfile === 'quality'}
-                onChange={() => setSelectedProfile('quality')}
-                data-testid="profile-quality"
-              />{' '}
-              Quality {status.profile.warning !== null ? '(override — may not fit in free RAM)' : '(recommended)'}
-            </label>
-            <label style={{ display: 'block', margin: '4px 0' }}>
-              <input
-                type="radio"
-                name="first-run-profile"
-                checked={selectedProfile === 'fast'}
-                onChange={() => setSelectedProfile('fast')}
-                data-testid="profile-fast"
-              />{' '}
-              Fast
-            </label>
-            <p style={{ margin: '8px 0 0', color: 'var(--color-text-muted, #999)', fontSize: 'var(--font-size-caption, 12px)' }}>
+            <RadioCardGroup
+              legend="Inference profile"
+              hideLegend
+              value={selectedProfile}
+              onChange={(value) => setSelectedProfile(value === 'fast' ? 'fast' : 'quality')}
+              options={[
+                {
+                  value: 'quality',
+                  label: `Quality ${status.profile.warning !== null ? '(override — may not fit in free RAM)' : '(recommended)'}`,
+                  testId: 'profile-quality',
+                },
+                { value: 'fast', label: 'Fast', testId: 'profile-fast' },
+              ]}
+            />
+            <p className="first-run__hint">
               Context size {status.profile.contextSize}. Estimates use the measured model size + KV cache + load overhead.
             </p>
           </section>
         )}
 
         {step === 'verify-manifest' && (
-          <section data-testid="step-verify-manifest">
-            <h3 style={{ margin: '0 0 8px' }}>File integrity</h3>
+          <section className="first-run__section" data-testid="step-verify-manifest">
+            <h3 className="first-run__heading">File integrity</h3>
             {!status.manifest.staged && !status.manifest.packaged && (
-              <p style={{ margin: 0 }}>
+              <p className="first-run__text">
                 No integrity manifest is staged in this development tree — verification is not applicable here.
               </p>
             )}
             {!status.manifest.staged && status.manifest.packaged && (
-              <p role="alert" style={{ margin: 0, color: 'var(--color-danger, #d32f2f)' }}>
+              <Banner tone="danger">
                 This packaged installation is missing its integrity manifest (resources/manifest.json). Reinstall the app.
-              </p>
+              </Banner>
             )}
             {status.manifest.staged && status.manifest.failures.length === 0 && (
-              <p style={{ margin: 0 }}>
+              <p className="first-run__text">
                 All {status.manifest.verifiedCount} required file(s) verified against sha256.
               </p>
             )}
             {status.manifest.failures.length > 0 && (
               <>
-                <p role="alert" style={{ margin: '0 0 8px', color: 'var(--color-danger, #d32f2f)' }}>
+                <Banner tone="danger">
                   Integrity verification failed for {status.manifest.failures.length} file(s):
-                </p>
-                <table style={failureTableStyle} data-testid="manifest-failures">
-                  <thead>
-                    <tr>
-                      <th style={cellStyle}>File</th>
-                      <th style={cellStyle}>Reason</th>
-                      <th style={cellStyle}>Expected</th>
-                      <th style={cellStyle}>Actual</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {status.manifest.failures.map((failure) => (
-                      <tr key={`${failure.path}:${failure.reason}`}>
-                        <td style={cellStyle}>{failure.path}</td>
-                        <td style={cellStyle}>{failure.reason}</td>
-                        <td style={cellStyle}>{failure.expected}</td>
-                        <td style={cellStyle}>{failure.actual}</td>
+                </Banner>
+                <div className="first-run__table-wrap">
+                  <table className="first-run__table" data-testid="manifest-failures">
+                    <thead>
+                      <tr>
+                        <th scope="col">File</th>
+                        <th scope="col">Reason</th>
+                        <th scope="col">Expected</th>
+                        <th scope="col">Actual</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {status.manifest.failures.map((failure) => (
+                        <tr key={`${failure.path}:${failure.reason}`}>
+                          <td>{failure.path}</td>
+                          <td>{failure.reason}</td>
+                          <td>{failure.expected}</td>
+                          <td>{failure.actual}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </>
             )}
           </section>
         )}
 
         {step === 'activate-packs' && (
-          <section data-testid="step-activate-packs">
-            <h3 style={{ margin: '0 0 8px' }}>Knowledge packs</h3>
+          <section className="first-run__section" data-testid="step-activate-packs">
+            <h3 className="first-run__heading">Knowledge packs</h3>
             {!status.packs.toolsAvailable && (
-              <p role="alert" style={{ margin: 0 }}>
+              <Banner tone="danger">
                 Pack lifecycle is unavailable in this session ({status.packs.unavailableReason ?? 'unknown reason'}) —
                 completion requires the knowledge packs. Reinstall the application or check the logs if this persists.
-              </p>
+              </Banner>
             )}
             {status.packs.toolsAvailable && status.packs.required.length === 0 && (
-              <p style={{ margin: 0 }}>No packs are required by the manifest.</p>
+              <p className="first-run__text">No packs are required by the manifest.</p>
             )}
             {status.packs.toolsAvailable && status.packs.required.length > 0 && (
               <>
-                <ul style={{ margin: '0 0 8px', paddingLeft: 20 }}>
+                <ul className="first-run__list">
                   {status.packs.required.map((entry) => {
                     const installedRow = status.packs.installed.find((r) => r.id === entry.id && r.active);
                     // Round-8 semantics: the backend's satisfied verdict accepts a
@@ -459,19 +396,31 @@ export function FirstRunWizard({
                   })}
                 </ul>
                 {packsSatisfied ? (
-                  <p style={{ margin: 0 }}>All required packs are active.</p>
+                  <p className="first-run__text">All required packs are active.</p>
                 ) : (
-                  <button type="button" onClick={() => void runActivation()} data-testid="activate-packs-button">
-                    Install and activate required packs
-                  </button>
+                  <div>
+                    <Button variant="primary" onClick={() => void runActivation()} data-testid="activate-packs-button">
+                      Install and activate required packs
+                    </Button>
+                  </div>
                 )}
                 {activation !== null && activation.results.length > 0 && (
-                  <ul style={{ margin: '8px 0 0', paddingLeft: 20, fontSize: 'var(--font-size-caption, 12px)' }}>
-                    {activation.results.map((result) => (
-                      <li key={result.id} style={{ color: result.ok ? 'inherit' : 'var(--color-danger, #d32f2f)' }}>
-                        {result.id}: {result.detail}
-                      </li>
-                    ))}
+                  <ul className="first-run__list">
+                    {activation.results.map((result) =>
+                      result.ok ? (
+                        <li key={result.id}>
+                          {result.id}: {result.detail}
+                        </li>
+                      ) : (
+                        <li key={result.id} className="first-run__result--failed">
+                          <Icon name="circle-alert" size={14} className="first-run__result-icon" />
+                          <span>
+                            <span className="ui-visually-hidden">Failed: </span>
+                            {result.id}: {result.detail}
+                          </span>
+                        </li>
+                      ),
+                    )}
                   </ul>
                 )}
               </>
@@ -480,43 +429,31 @@ export function FirstRunWizard({
         )}
 
         {step === 'licensing-notices' && (
-          <section data-testid="step-licensing-notices">
-            <h3 style={{ margin: '0 0 8px' }}>Licensing notices</h3>
+          <section className="first-run__section" data-testid="step-licensing-notices">
+            <h3 className="first-run__heading">Licensing notices</h3>
             {status.licenses.available ? (
-              <pre
-                style={{
-                  maxHeight: 180,
-                  overflowY: 'auto',
-                  border: '1px solid var(--color-border, #444)',
-                  padding: 8,
-                  whiteSpace: 'pre-wrap',
-                  fontSize: 'var(--font-size-caption, 12px)',
-                }}
-              >
+              <pre className="first-run__license" tabIndex={0} aria-label="Licensing notices text">
                 {status.licenses.content}
               </pre>
             ) : (
-              <p style={{ margin: '0 0 8px' }}>
+              <p className="first-run__text">
                 Model and pack licenses ship with the installer (docs/licenses.md). By continuing you
                 acknowledge the license terms of every bundled model and knowledge pack.
               </p>
             )}
-            <label style={{ display: 'block' }}>
-              <input
-                type="checkbox"
-                checked={acknowledged}
-                onChange={(event) => setAcknowledged(event.target.checked)}
-                data-testid="license-ack"
-              />{' '}
-              I have read and acknowledge the licensing notices
-            </label>
+            <Checkbox
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+              data-testid="license-ack"
+              label="I have read and acknowledge the licensing notices"
+            />
           </section>
         )}
 
         {step === 'complete' && (
-          <section data-testid="step-complete">
-            <h3 style={{ margin: '0 0 8px' }}>Setup complete</h3>
-            <p style={{ margin: 0 }}>
+          <section className="first-run__section" data-testid="step-complete">
+            <h3 className="first-run__heading">Setup complete</h3>
+            <p className="first-run__text">
               Profile <strong>{selectedProfile}</strong> selected; licensing acknowledged
               {status.manifest.staged ? `; ${status.manifest.verifiedCount} file(s) verified` : ''}.
             </p>
@@ -524,67 +461,66 @@ export function FirstRunWizard({
         )}
 
         {completeError !== null && (
-          <p role="alert" style={{ margin: 0, color: 'var(--color-danger, #d32f2f)' }} data-testid="complete-error">
-            {completeError}
-          </p>
-        )}
-
-        {completeBlockedReasons.length > 0 && (
-          <div role="alert" id="wizard-complete-blocked-reasons" data-testid="complete-blocked-reasons" style={{ margin: 0 }}>
-            <p style={{ margin: '0 0 4px', color: 'var(--color-warning-strong, #eab308)', fontSize: 'var(--font-size-caption, 12px)' }}>
-              Setup cannot complete yet — resolve the named gates:
-            </p>
-            <ul style={{ margin: 0, paddingLeft: 20, color: 'var(--color-warning-strong, #eab308)', fontSize: 'var(--font-size-caption, 12px)' }}>
-              {completeBlockedReasons.map((reason) => (
-                <li key={reason}>{reason}</li>
-              ))}
-            </ul>
+          <div data-testid="complete-error">
+            <Banner tone="danger">{completeError}</Banner>
           </div>
         )}
 
-        <div style={buttonRowStyle}>
+        {completeBlockedReasons.length > 0 && (
+          <div id="wizard-complete-blocked-reasons" data-testid="complete-blocked-reasons">
+            <Banner tone="warning" title="Setup cannot complete yet — resolve the named gates:">
+              <ul className="first-run__gates">
+                {completeBlockedReasons.map((reason) => (
+                  <li key={reason}>{reason}</li>
+                ))}
+              </ul>
+            </Banner>
+          </div>
+        )}
+
+        <div className="first-run__actions">
           {completed ? (
             <span />
           ) : (
-            <button type="button" onClick={goBack} disabled={stepIndex === 0}>
+            <Button onClick={goBack} {...off(stepIndex === 0)}>
               Back
-            </button>
+            </Button>
           )}
-          <span style={{ display: 'flex', gap: 8 }}>
+          <span className="first-run__actions-end">
             {!completed && (
-              <button type="button" onClick={onClose} data-testid="first-run-skip">
+              <Button onClick={onClose} data-testid="first-run-skip">
                 Skip for now
-              </button>
+              </Button>
             )}
             {!completed && stepIndex < WIZARD_STEPS.length - 2 && (
-              <button type="button" onClick={goNext} data-testid="wizard-next">
+              <Button variant="primary" onClick={goNext} data-testid="wizard-next">
                 Next
-              </button>
+              </Button>
             )}
             {!completed && stepIndex === WIZARD_STEPS.length - 2 && (
-              <button
-                type="button"
+              <Button
+                variant="primary"
                 onClick={() => void runComplete()}
-                disabled={!completeEnabled}
+                {...off(!completeEnabled)}
                 data-testid="wizard-complete"
                 aria-describedby={completeEnabled ? undefined : 'wizard-complete-blocked-reasons'}
               >
                 Complete setup
-              </button>
+              </Button>
             )}
             {completed && (
-              <button type="button" onClick={onClose} data-testid="wizard-finish">
+              <Button variant="primary" onClick={onClose} data-testid="wizard-finish">
                 Finish
-              </button>
+              </Button>
             )}
           </span>
         </div>
         {!completed && (
-          <p style={{ margin: 0, color: 'var(--color-text-muted, #999)', fontSize: 'var(--font-size-caption, 12px)' }}>
+          <p className="first-run__hint">
             Skipping only closes the wizard — nothing is completed, and setup will open again on the next launch.
           </p>
         )}
       </div>
-    </div>
+    </Dialog>
   );
 }

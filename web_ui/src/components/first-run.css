@@ -1,0 +1,67 @@
+/* First-run wizard (Lumen phase 7, docs/design/design-language.md sections 4 and 5).
+   Lumen tokens only (no legacy token families, no fallback values, no color literals);
+   enforced by components/first-run-hygiene.test.ts. Dialog / Banner / Button / Checkbox /
+   RadioCardGroup looks come from ui/ui.css; this file only lays the wizard out. */
+
+/* The wizard is wider than the default 480px dialog. (Stacking: Dialog backdrops share
+   z-index 1000 and the wizard portals in after launch, so it sits above a dialog that was
+   already open. Do not raise it with a :has() rule on the backdrop - jsdom's selector
+   engine throws on it whenever a test calls getComputedStyle / getByRole.) */
+.ui-dialog.first-run-dialog { max-width: 720px; }
+
+.first-run { display: flex; flex-direction: column; gap: var(--space-4); }
+.first-run__lede { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+
+/* Step progress */
+.first-run__steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.first-run__step {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-control);
+  border-radius: var(--r-pill);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
+  color: var(--text-secondary);
+}
+.first-run__step--current { border-color: var(--accent); color: var(--text-primary); font-weight: 600; }
+.first-run__step--done { border-color: var(--success-border); color: var(--success); }
+
+/* Step bodies */
+.first-run__section { display: flex; flex-direction: column; gap: var(--space-3); }
+.first-run__heading { margin: 0; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: 600; color: var(--text-primary); }
+.first-run__text { margin: 0; color: var(--text-primary); }
+.first-run__hint { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.first-run__list { margin: 0; padding-inline-start: var(--space-5); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+.first-run__result--failed { display: flex; align-items: flex-start; gap: var(--space-2); list-style: none; margin-inline-start: calc(-1 * var(--space-5)); color: var(--danger); }
+.first-run__result-icon { margin-top: 2px; }
+.first-run__license {
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-control);
+  background: var(--bg-sunken);
+  white-space: pre-wrap;
+  font-family: var(--font-mono);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
+}
+
+/* Integrity failures table */
+.first-run__table-wrap { overflow-x: auto; }
+.first-run__table { width: 100%; border-collapse: collapse; font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+.first-run__table th, .first-run__table td { padding: var(--space-1) var(--space-2); border: 1px solid var(--border-subtle); text-align: start; overflow-wrap: anywhere; }
+.first-run__table th { background: var(--bg-sunken); font-weight: 600; }
+
+/* Gate list inside the warning banner */
+.first-run__gates { margin: var(--space-1) 0 0; padding-inline-start: var(--space-5); }
+
+/* Actions: Back on the start side, Skip / Next / Complete / Finish on the end side. */
+.first-run__actions { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); margin-top: var(--space-2); }
+.first-run__actions-end { display: flex; gap: var(--space-2); }
+
+@media (forced-colors: active) {
+  .first-run__step--current { border-color: Highlight; }
+  .first-run__step { border-color: CanvasText; }
+  .first-run__table th, .first-run__table td, .first-run__license { border-color: CanvasText; }
+}
