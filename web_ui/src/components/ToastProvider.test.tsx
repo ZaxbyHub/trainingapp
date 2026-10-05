@@ -401,6 +401,17 @@ describe('ToastProvider bounds and placement', () => {
     expect(document.activeElement).toBe(screen.getByText('Message 1').closest('.ui-toast')!.querySelector('button'));
   });
 
+  it('a repeat that arrives while the first is fading out shows as a new toast', () => {
+    setup();
+    show();
+    fireEvent.click(dismissBtn());
+    expect(toastEl('Saved successfully')).toHaveClass('ui-toast--leaving');
+    show(); // same message and type, mid-fade
+    advance(TOAST_EXIT_MS); // the first is removed
+    expect(screen.getAllByText('Saved successfully')).toHaveLength(1);
+    expect(toastEl('Saved successfully')).not.toHaveClass('ui-toast--leaving');
+  });
+
   it('a repeated toast restarts the auto-dismiss timer of the one already showing', () => {
     setup();
     show();

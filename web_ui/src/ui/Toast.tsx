@@ -24,6 +24,8 @@ export interface Toast {
   type: ToastTone;
   /** Bumped when an identical toast is shown again: restarts the auto-dismiss timer. */
   nonce: number;
+  /** Set once the toast is fading out: it no longer counts as a duplicate. */
+  exiting?: boolean;
 }
 
 export interface ToastContextValue {
@@ -72,9 +74,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const showToast = useCallback((message: string, type: ToastTone) => {
     const prev = toastsRef.current;
     let next: Toast[];
-    if (prev.some((t) => t.message === message && t.type === type)) {
+    const same = (t: Toast) => !t.exiting && t.message === message && t.type === type;
+    if (prev.some(same)) {
       // A repeat stays visible for a full duration instead of vanishing on the old timer.
-      next = prev.map((t) => (t.message === message && t.type === type ? { ...t, nonce: t.nonce + 1 } : t));
+      next = prev.map((t) => (same(t) ? { ...t, nonce: t.nonce + 1 } : t));
     } else {
       next = [...prev, { id: `toast-${nextId.current++}`, message, type, nonce: 0 }];
       const dropped = next.slice(0, -MAX_TOASTS);
@@ -100,6 +103,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     returnFocusRef.current = from instanceof HTMLElement ? from : null;
   }, []);
 
+  // Bookkeeping only (the item renders its own fade), so no re-render is needed.
+  const markExiting = useCallback((id: string) => {
+    toastsRef.current = toastsRef.current.map((t) => (t.id === id ? { ...t, exiting: true } : t));
+  }, []);
+
   const removeToast = useCallback((id: string, hadFocus: boolean) => {
     if (hadFocus) {
       const target = returnFocusRef.current;
@@ -114,7 +122,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const polite = toasts.filter((t) => t.type !== 'error');
   const assertive = toasts.filter((t) => t.type === 'error');
   const renderItem = (t: Toast) => (
-    <ToastItem key={t.id} toast={t} onRemove={removeToast} onFocusEntered={noteFocusEntered} />
+    <ToastItem key={t.id} toast={t} onRemove={removeToast} onExiting={markExiting} onFocusEntered={noteFocusEntered} />
   );
 
   return (
@@ -138,10 +146,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 interface ToastItemProps {
   toast: Toast;
   onRemove: (id: string, hadFocus: boolean) => void;
+  onExiting: (id: string) => void;
   onFocusEntered: (from: EventTarget | null) => void;
 }
 
-function ToastItem({ toast, onRemove, onFocusEntered }: ToastItemProps) {
+function ToastItem({ toast, onRemove, onExiting, onFocusEntered }: ToastItemProps) {
   const itemRef = useRef<HTMLDivElement>(null);
   const [leaving, setLeaving] = useState(false);
   const leavingRef = useRef(false);
@@ -167,9 +176,10 @@ function ToastItem({ toast, onRemove, onFocusEntered }: ToastItemProps) {
       finish();
       return;
     }
+    onExiting(toast.id);
     setLeaving(true);
     exitTimer.current = setTimeout(finish, TOAST_EXIT_MS);
-  }, [finish]);
+  }, [finish, onExiting, toast.id]);
 
   const start = useCallback(
     (ms: number) => {
