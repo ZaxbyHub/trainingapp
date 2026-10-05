@@ -66,20 +66,16 @@ export interface IconButtonProps
   iconSize?: number;
 }
 
-export function IconButton({
-  icon,
-  className,
-  size = 'md',
-  variant = 'ghost',
-  tooltipPlacement,
-  iconSize,
-  ...rest
-}: IconButtonProps) {
+/** Forwards its ref to the native <button> (e.g. a Dialog `initialFocus` ref, focus restore). */
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
+  { icon, className, size = 'md', variant = 'ghost', tooltipPlacement, iconSize, ...rest },
+  ref
+) {
   return (
     <Tooltip content={rest.title ?? rest['aria-label']} placement={tooltipPlacement}>
-      <Button {...rest} size={size} variant={variant} className={cx('ui-icon-button', className)}>
+      <Button ref={ref} {...rest} size={size} variant={variant} className={cx('ui-icon-button', className)}>
         <Icon name={icon} size={iconSize} />
       </Button>
     </Tooltip>
   );
-}
+});
