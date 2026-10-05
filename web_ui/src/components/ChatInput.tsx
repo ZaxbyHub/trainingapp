@@ -69,6 +69,21 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
     adjustHeight();
   }, [value, adjustHeight]);
 
+  // The auto-resize measures the (placeholder) text, so it must re-measure once the
+  // web font is in: measured against the fallback font the placeholder fits on one
+  // line, and at narrow widths the composer stays one line tall with the real
+  // font's second line clipped. (Which weights are already loaded when the chat
+  // mounts depends on what the boot screen rendered, so this is a latent race.)
+  useEffect(() => {
+    let cancelled = false;
+    void document.fonts?.ready.then(() => {
+      if (!cancelled) adjustHeight();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [adjustHeight]);
+
   // Focus restoration: sending a message disables the textarea (isLoading),
   // which drops focus to <body>. When generation ends and the textarea
   // re-enables, move focus back so keyboard users aren't stranded on body.
