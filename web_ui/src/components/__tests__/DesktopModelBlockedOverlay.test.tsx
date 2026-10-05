@@ -53,12 +53,16 @@ afterEach(() => {
 });
 
 describe('DesktopModelBlockedOverlay actions', () => {
-  it('without onOpenSettings it renders no actions; focus opens on the dialog', () => {
-    render(<DesktopModelBlockedOverlay open />);
+  it('PRR-151-049: onOpenSettings is required, so the non-dismissible gate can never render actionless', () => {
+    // Compile-time pin (tsc -p tsconfig.test.json): making the prop optional again
+    // turns this expect-error into an unused directive, which fails the typecheck.
+    // @ts-expect-error onOpenSettings is required
+    const actionless = <DesktopModelBlockedOverlay open />;
+    expect(actionless.props.open).toBe(true);
+    render(<DesktopModelBlockedOverlay open onOpenSettings={vi.fn()} />);
     const dialog = screen.getByRole('alertdialog', DIALOG);
-    expect(dialog.querySelectorAll('button')).toHaveLength(0);
-    expect(dialog).toHaveFocus();
-
+    expect(dialog.querySelectorAll('button')).toHaveLength(2);
+    expect(dialog).toHaveAccessibleDescription(/Or connect an external model \(a local server or a cloud provider\) in Settings\./);
   });
 
   it('is a non-modal alertdialog described by its body, built from Dialog + Banner + Button (no inline styles)', () => {
