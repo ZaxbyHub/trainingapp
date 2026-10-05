@@ -32,12 +32,13 @@ export interface DesktopModelBlockedOverlayProps {
   open: boolean;
   /**
    * Open Settings; with a section id, Settings scrolls to and focuses it
-   * (the same section-aware seam ModelBlockedOverlay uses). When provided,
-   * the overlay offers "Open Settings" and "Use a local server or cloud
-   * model" (universal-provider-settings-overhaul: parity with the browser
-   * overlay — an external model needs no staged GGUF).
+   * (the same section-aware seam ModelBlockedOverlay uses). Backs "Open
+   * Settings" and "Use a local server or cloud model"
+   * (universal-provider-settings-overhaul: parity with the browser overlay — an
+   * external model needs no staged GGUF). Required (PR #151 review PRR-151-049):
+   * without it this non-dismissible gate would render with no action at all.
    */
-  onOpenSettings?: (section?: string) => void;
+  onOpenSettings: (section?: string) => void;
 }
 
 const BODY_ID = 'desktop-model-gate-body';
@@ -55,14 +56,12 @@ export function DesktopModelBlockedOverlay({ open, onOpenSettings }: DesktopMode
       className="blocking-gate"
       title="AI models are not installed yet"
       footer={
-        onOpenSettings !== undefined ? (
-          <>
-            <Button onClick={() => onOpenSettings()}>Open Settings</Button>
-            <Button variant="primary" onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}>
-              Use a local server or cloud model
-            </Button>
-          </>
-        ) : undefined
+        <>
+          <Button onClick={() => onOpenSettings()}>Open Settings</Button>
+          <Button variant="primary" onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}>
+            Use a local server or cloud model
+          </Button>
+        </>
       }
     >
       <div className="blocking-gate__stack">
@@ -71,8 +70,8 @@ export function DesktopModelBlockedOverlay({ open, onOpenSettings }: DesktopMode
             Neither the Quality nor the Fast language model was found in this app&apos;s
             model directory, so asking questions is unavailable right now. Documents and
             Settings remain available. Re-run the app installer or add the model files to
-            the models directory, then restart the app.
-            {onOpenSettings !== undefined && ' Or connect an external model (a local server or a cloud provider) in Settings.'}
+            the models directory, then restart the app. Or connect an external model (a local
+            server or a cloud provider) in Settings.
           </span>
         </Banner>
       </div>
