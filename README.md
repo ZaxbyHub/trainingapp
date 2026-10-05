@@ -70,7 +70,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Assistant Message Styling**: Full-width prose layout (no bubble background/radius) for improved readability
 - **User Message Styling**: 75% width bubbles aligned right, maintaining visual distinction
 - **Action Row Copy Button**: Copy button relocated below message content in a dedicated action row
-- **Composer Redesign**: Raised card input with 20px radius (`--radius-lg`), enhanced focus feedback (border color + shadow), elevation shadow, and 12px radius buttons (`--radius-md`)
+- **Composer Redesign**: Raised card input with 20px radius, enhanced focus feedback (border color + shadow), elevation shadow, and 12px radius buttons
 
 ### Core Capabilities
 - **Offline-First Design**: No internet required after initial setup
@@ -146,7 +146,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Controlled ChatPage**: Refactored with `messages`, `onMessagesChange`, and `onSaveConversation` props for explicit state management
 - **App Wiring**: `useConversations` hook connects AppLayout and ChatPage for automatic conversation loading and saving
 - **Simplified Header**: Compact padding, right-aligned controls, removed title text
-- **Elevation Tokens**: New shadow hierarchy (`--shadow-sm/md/lg`) and surface colors (`--color-bg/surface/raised`) for consistent depth
+- **Elevation Tokens**: A shadow hierarchy and surface colors (since replaced by the Lumen `--shadow-*` and `--bg-*` tokens) for consistent depth
 - **Relative Timestamps**: `relativeTime.ts` utility formats conversation timestamps as "2m ago", "Yesterday", etc.
 
 ### Interactive Source Pills (Phase 4)
@@ -944,18 +944,11 @@ the desktop app's renderer. This section documents its development flow.
 - Pure CSS design token system (no Tailwind)
 - vitest + @testing-library/react for testing
 
-### Design Token System (Phase 1 — Updated)
-Translates Python theme.py (ColorTokens, TypeScale, Spacing) to CSS custom properties:
+### Design Token System (Lumen)
+The web UI is styled only by the Lumen design tokens in `web_ui/src/styles/lumen-tokens.css`: colors (`--bg-*`, `--text-*`, `--accent*`, status), `--type-*` typography, `--space-*` spacing, `--r-*` radii and `--shadow-1/2/3`, each with a dark-theme override. Design rules and contrast guarantees: `docs/design/design-language.md`.
+The earlier `--color-*`, `--spacing-*`, `--radius-*`, `--font-size-*` and `--shadow-sm/md/lg` tokens were retired in Lumen phase 8 (legacy to Lumen map: `web_ui/src/styles/token-remap.ts`).
 
-| Token Category | Examples |
-|---------------|----------|
-| Colors | `--color-primary`, `--color-info`, `--color-warning`, `--color-success`, `--color-bubble-user`, `--color-text-muted`, `--color-text-primary` |
-| Typography | `--font-family` (Inter first), `--font-size-display` (32px), `--font-size-h1` (24px), `--font-size-h2` (20px), `--font-size-h3` (17px), `--font-size-body` (15px), `--font-size-caption` (13px), `--font-size-small` (11px) |
-| Line Height | `--line-height-body` (1.6), `--line-height-heading` (1.3), `--line-height-tight` (1.2) |
-| Spacing | `--spacing-xs` (4px) through `--spacing-xxxl` (64px) on 8px grid |
-| Radius | `--radius-sm` (6px), `--radius-md` (12px), `--radius-lg` (20px) |
-
-**Font**: Inter (self-hosted via @fontsource/inter, weights 400/500/600/700)
+**Font**: Inter (self-hosted via @fontsource/inter, weights 400/500/600/700) as `--font-sans`
 
 Dark mode overrides via `[data-theme="dark"]` attribute on `<html>`.
 

@@ -43,11 +43,16 @@
 /* Failure notices: banner look on the original <p role="alert"> (it keeps its ref,
    tabIndex=-1 and testid). Programmatic focus target only, like before. */
 .app-player__alert { flex: none; display: block; margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); }
-.app-player__alert:focus { outline: none; }
+/* Programmatic focus target: no ring after a pointer action, the standard ring when the
+   user arrived by keyboard (same pattern as .settings-focus-target). */
+.app-player__alert:focus:not(:focus-visible) { outline: none; }
+.app-player__alert:focus-visible { outline: var(--focus-outline-width) solid var(--focus-ring); outline-offset: var(--focus-outline-offset); }
+/* The course <iframe> itself: container chrome only (the course paints its own content). */
+.app-player__frame { flex: 1; width: 100%; min-height: 0; border: 1px solid var(--border-subtle); border-radius: var(--r-control); background-color: var(--bg-surface); }
 .app-player__alert .ui-button { margin-left: var(--space-2); vertical-align: middle; }
 
 @media (forced-colors: active) {
-  .app-course, .app-training__playerbar { border-color: CanvasText; }
+  .app-course, .app-training__playerbar, .app-player__frame { border-color: CanvasText; }
 }
 
 @media (max-width: 768px) {

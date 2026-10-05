@@ -316,14 +316,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
           src={location?.src ?? 'about:blank'}
           onLoad={handleFrameLoad}
           title={`Training player (${packId})`}
-          style={{
-            flex: 1,
-            width: '100%',
-            minHeight: 0,
-            border: '1px solid var(--color-secondary)',
-            borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'var(--color-surface)',
-          }}
+          className="app-player__frame"
         />
         <div data-testid="training-player-slidechange" className="ui-visually-hidden" aria-hidden="true">
           {changeLog.map((entry, index) => (

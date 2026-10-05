@@ -10,12 +10,11 @@ import './ui.css';
 
 export { Icon, ICON_NAMES, type IconName, type IconProps } from './icons';
 export { Button, IconButton, type ButtonProps, type IconButtonProps, type ButtonVariant, type ButtonSize } from './Button';
-// NOTE: `ProgressBar` (Feedback) and `EmptyState` (Layout) are NOT interchangeable with
-// components/SettingsMetrics (ProgressBar) and components/EmptyState. Since phase 4 the
-// SettingsMetrics ProgressBar is a labelled meter (visible label + percentage, tone class)
-// built on this module's `ui-progress` classes; components/EmptyState (no non-test
-// consumers today) is removed when the first surface adopts the ui/ EmptyState. Do not
-// alias or swap them.
+// NOTE: `ProgressBar` (Feedback) is NOT interchangeable with components/SettingsMetrics'
+// ProgressBar. Since phase 4 the SettingsMetrics ProgressBar is a labelled meter (visible
+// label + percentage, tone class) built on this module's `ui-progress` classes. Do not
+// alias or swap them. (The legacy components/EmptyState was deleted in phase 8; `EmptyState`
+// (Layout) is the only empty-state component.)
 export {
   Card,
   Section,

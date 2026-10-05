@@ -8,6 +8,8 @@ Revision: v1.2 adjusts token values so every listed pair passes the computed WCA
 
 Evidence: live review of the Vite dev build (dark + light, 1440×900) on 2026-09-30 in the in-app browser, plus a code inventory of `web_ui/src` independently re-verified by the critic.
 
+> Historical: this section records the pre-Lumen state. The legacy token names quoted in it (`--color-*` and friends) were retired in phase 8 (section 6) and no longer exist.
+
 | # | Finding | Evidence |
 |---|---|---|
 | V1 | Two competing palettes: navy page (`#1a1a2e`) with neutral-grey cards (`#2d2d2d`) in dark mode. | `tokens.css:92-93` |
@@ -70,7 +72,7 @@ Layered: **primitives** → **semantic** (the only layer components use). All va
 Dark mode communicates elevation by surface lightening plus borders, not shadows.
 
 ### 3.3 Typography
-Inter (already bundled via `@fontsource/inter` 400–700, airgap-safe). Monospace: a system stack `"Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace` as `--font-mono` (no new dependency; an optional bundled `@fontsource/jetbrains-mono` is a separate decision). Type tokens use the `--type-*` prefix so they cannot be confused with text colors.
+Inter (already bundled via `@fontsource/inter` 400–700, airgap-safe) as `--font-sans`, whose stack is `"Inter", "Segoe UI", system-ui, -apple-system, sans-serif` (identical to the retired `--font-family`, so the phase-8 swap changed no rendering). Monospace: a system stack `"Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace` as `--font-mono` (no new dependency; an optional bundled `@fontsource/jetbrains-mono` is a separate decision). Type tokens use the `--type-*` prefix so they cannot be confused with text colors.
 | Token | Size/line | Weight | Use |
 |---|---|---|---|
 | `--type-display` | 30/36 | 600 | empty-state hero |
@@ -160,7 +162,7 @@ Implemented in phase 7, stated precisely: blocking states use `Dialog`; error or
 5. **Chat** — composer, messages, header, model chip.
 6. **Documents & Training** — together with trace T3 (browser training parity).
 7. **Overlays, wizard, toasts** — remove undefined-token fallbacks.
-8. **Retire old tokens** — an explicit pairwise remap table (every fill token with its foreground, e.g. `--color-primary` + `--color-text-on-primary` → `--accent` + `--accent-fg`; `--color-danger` + white → `--danger` + `--danger-fg-on-fill`; `--color-primary-rgb` consumers rewritten, since an RGB triple cannot alias a hex token), covered by the contrast test; then delete old tokens. Guardrails: lint ratchet on hex/rgb literals in `.tsx`, on `outline: none` without replacement, and on color/spacing inline styles in migrated files.
+8. **Retire old tokens** — an explicit pairwise remap table (every fill token with its foreground, e.g. `--color-primary` + `--color-text-on-primary` → `--accent` + `--accent-fg`; `--color-danger` + white → `--danger` + `--danger-fg-on-fill`; `--color-primary-rgb` consumers rewritten, since an RGB triple cannot alias a hex token), covered by the contrast test; then delete old tokens. Guardrails: lint ratchet on hex/rgb literals in `.tsx`, on `outline: none` without replacement, and on color/spacing inline styles in migrated files. **Done (phase 8):** the pairwise remap is data in `web_ui/src/styles/token-remap.ts` (every legacy fill with its foreground; `--color-primary-rgb` had no consumers, so there was nothing to rewrite and it was deleted), and `lumen-tokens.contrast.test.ts` asserts every Lumen pair in it at 4.5:1 in both themes. The legacy blocks in `tokens.css` and `theme.css` were deleted (`tokens.css` removed; the global `prefers-reduced-motion` rule moved to `theme.css` unchanged; the unused `blink` and `spin` keyframes dropped). The retired names are frozen in `web_ui/src/styles/retired-tokens.ts`. `body` now uses `--bg-canvas` / `--text-primary` / `--font-sans` / `--type-body-size`; the training-course `<iframe>` chrome moved from an inline style to the `.app-player__frame` class (`--border-subtle`, `--bg-surface`, `--r-control`) with its sandbox and `src` untouched; the dead `components/EmptyState.tsx` was deleted in favour of `ui/EmptyState`. The guardrails are `web_ui/src/styles/token-ratchet.test.ts` (no retired token, no color literal outside `lumen-tokens.css`, every `var()` resolves, `outline: none` only with a paired `:focus-visible` replacement or an allow-listed programmatic focus target, inline `style` limited to geometry), each with a mutation self-test.
 
 Test budget: existing tests that assert inline style strings (`ToastProvider.test.tsx:117,129`, `LoadingSkeleton.test.tsx:61-109`, `SidebarConversationItem.test.tsx:78-79`, `ChatInput.test.tsx:270`, `SettingsMetrics.test.tsx:61`) are rewritten to role/state assertions in the phase that migrates their component; label changes (e.g. "Browser-local", "API Server") update `SettingsPage.test.tsx` queries in phase 4. New acceptance checks in traces T1–T3 assert roles and labels only.
 

@@ -6,14 +6,16 @@
  * `style` props may carry only POSITIONAL properties (DocumentList's
  * virtualization computes row offsets and the scroll height per render).
  *
- * One deliberate exception: the TrainingPlayer <iframe> element is excluded and
- * must stay exactly one element. It is the security-critical isolation surface
- * (sandbox, src computation) and is left byte-identical, including its legacy
- * inline style, rather than restyled.
+ * The TrainingPlayer <iframe> is scanned like everything else (phase 8 moved its
+ * legacy inline style to the .app-player__frame class in training.css). It is the
+ * security-critical isolation surface, so a test below pins that there is exactly
+ * one, that it carries that class and no `style`, and that sandbox/src/onLoad/ref
+ * are still present.
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { RETIRED_TOKENS, RETIRED_TOKEN_RE } from '../styles/retired-tokens';
 
 const SRC = resolve(__dirname, '..');
 const FILES = [
@@ -35,25 +37,43 @@ function stripComments(text: string): string {
 const declared = (css: string): Set<string> =>
   new Set([...stripComments(css).matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 const LUMEN = declared(readFileSync(resolve(SRC, 'styles/lumen-tokens.css'), 'utf8'));
-const LEGACY_NAMES = [...declared(readFileSync(resolve(SRC, 'styles/tokens.css'), 'utf8'))].filter((n) => !LUMEN.has(n));
-const LEGACY = new RegExp(`(${LEGACY_NAMES.join('|')})(?![\\w-])`);
+/** The frozen retired-token list (styles/retired-tokens.ts). */
+const LEGACY_NAMES = RETIRED_TOKENS;
+const LEGACY = RETIRED_TOKEN_RE;
 const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
 const ESCAPE_HATCH = /\bcssText\b|\binsertRule\b|dangerouslySetInnerHTML|\.innerHTML\b/;
 const IFRAME = /<iframe\b[\s\S]*?\/>/g;
+const PLAYER_FRAME_RULE = /\.app-player__frame\s*\{([^}]*)\}/;
 const STYLE_OBJECT = /style=\{\{([\s\S]*?)\}\}/g;
 const POSITIONAL = new Set(['position', 'top', 'left', 'right', 'bottom', 'height', 'width']);
 
 function source(rel: string): string {
-  return stripComments(readFileSync(resolve(SRC, rel), 'utf8')).replace(IFRAME, '');
+  return stripComments(readFileSync(resolve(SRC, rel), 'utf8'));
 }
 
 describe('Documents & Training token hygiene (phase 6)', () => {
-  it('the legacy token list is derived and the iframe exclusion is exact (guards against a vacuous pass)', () => {
+  it('the retired token list is live (guards against a vacuous pass)', () => {
     expect(LEGACY_NAMES).toContain('--color-primary');
     expect(LEGACY.test('var(--color-bubble-system)')).toBe(true);
-    const player = stripComments(readFileSync(resolve(SRC, 'components/TrainingPlayer.tsx'), 'utf8'));
-    expect(player.match(IFRAME)).toHaveLength(1);
     expect([...source('components/DocumentList.tsx').matchAll(STYLE_OBJECT)].length).toBeGreaterThan(0);
+  });
+
+  it('the TrainingPlayer iframe is exactly one element, styled by the .app-player__frame class (no inline style)', () => {
+    const player = source('components/TrainingPlayer.tsx');
+    const frames = player.match(IFRAME) ?? [];
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toContain('className="app-player__frame"');
+    expect(frames[0]).not.toMatch(/\bstyle=/);
+    // The isolation attributes are untouched by the restyle.
+    for (const attr of ['sandbox={TRAINING_FRAME_SANDBOX}', "src={location?.src ?? 'about:blank'}", 'onLoad={handleFrameLoad}', 'ref={frameRef}']) {
+      expect(frames[0]).toContain(attr);
+    }
+    // Frame chrome comes from Lumen tokens (what the retired --color-secondary / --radius-sm /
+    // --color-surface inline style mapped to; see styles/token-remap.ts).
+    const rule = readFileSync(resolve(SRC, 'pages/training.css'), 'utf8').match(PLAYER_FRAME_RULE)?.[1] ?? '';
+    expect(rule).toMatch(/border:\s*1px solid var\(--border-subtle\)/);
+    expect(rule).toMatch(/border-radius:\s*var\(--r-control\)/);
+    expect(rule).toMatch(/background-color:\s*var\(--bg-surface\)/);
   });
 
   for (const rel of FILES) {
