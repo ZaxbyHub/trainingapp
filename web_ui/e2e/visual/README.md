@@ -6,7 +6,7 @@ default `npm run test:e2e` config ignores this folder). Design context:
 
 | Spec | What it checks | Runs in CI |
 | --- | --- | --- |
-| `lumen-axe.spec.ts` | axe-core serious/critical nodes per surface, theme, width; plus the populated Training surfaces with a fixture course installed through the Packs panel (Documents > Training packs tab, Training library, player page host chrome with the course iframe excluded), which allow zero nodes and no baseline | yes |
+| `lumen-axe.spec.ts` | axe-core serious/critical nodes per surface, theme, width: zero allowed on every key, no baseline (fonts and two animation frames settle before each scan); plus the populated Training surfaces with a fixture course installed through the Packs panel (Documents > Training packs tab, Training library, player page host chrome with the course iframe excluded), which allow zero nodes and no baseline | yes |
 | `lumen-axe-settings-full.spec.ts` | axe-core on the WHOLE Settings page (viewport grown to the content; no baseline), default and External-model-configured states, light/dark at 1440 / 1024 / 500 | yes |
 | `lumen-tooltip-overflow.spec.ts` | tooltip stays inside a 500px viewport | yes |
 | `lumen-doc-row-reflow.spec.ts` | document rows reflow (container query on the table), never clip Delete/Cancel/Confirm, at 320-1440px with the 64px rail or 260px sidebar; dates in several locales (en-US, de-DE, fi-FI and a worst-case string) never overflow the row; sidebar, drawer and spacing geometry is read from source, so a CSS change cannot silently drift the test | yes |
@@ -39,10 +39,13 @@ Delete those generated folders and never commit them. Regenerate on Windows only
 
 1. Remove any `web_ui/.env.production` (written by `prepare-models`; it changes
    the model-blocked overlay pixels).
-   The overlay baselines also embed machine-derived text: the model-gate Banner shows "Insufficient memory: N GB available"
-   (from `navigator.deviceMemory`) and WebGPU-presence copy. Regenerate on a machine whose profile matches the committed
-   baselines, state its RAM and WebGPU availability in the PR, and treat an overlay diff that is only that text as a machine
-   difference, not a UI regression.
+   The overlay baselines embed hardware-derived text (the model-gate readiness copy reads `navigator.deviceMemory` and
+   WebGPU presence), so `lumen-baseline.spec.ts` pins the hardware instead of depending on the regenerating box:
+   `stubHardware()` reports `navigator.deviceMemory` = 8 and a WebGPU API with no adapter (`requestAdapter()` resolves
+   `null`), which is what the committed `overlay-model-not-ready-*.png` baselines show. A regeneration on a 4 GB or
+   WebGPU-capable machine renders the same text; an overlay diff is therefore a real change, not a machine difference.
+   The model-gate opt-out `LUMEN_ALLOW_NO_OVERLAY=1` (a local build with staged weights, no gate) is refused when `CI`
+   is set: the spec fails to load rather than silently skipping a gate regression.
 2. `npm run build` from a clean state.
 3. `npx playwright test --config playwright.visual.config.ts --update-snapshots`
 4. Review every changed PNG and include before/after images of the changed
@@ -50,17 +53,27 @@ Delete those generated folders and never commit them. Regenerate on Windows only
 
 ## Axe baseline regeneration
 
-`KNOWN_BASELINE` in `lumen-axe.spec.ts` lists pre-existing serious/critical
-nodes per `surface:theme:width` key. New nodes fail, and so do stale entries
-(fixed violations must be removed).
+There is no axe baseline. `lumen-axe.spec.ts` allows zero serious/critical nodes on every
+`surface:theme:width` key; `KNOWN_BASELINE` is intentionally empty and the spec fails any key
+that has an entry, so a violation cannot be baselined, only fixed.
 
-Caveat: entries are rule id plus a positional (`nth-child`) selector, so a different element
-violating the same rule at the same selector is indistinguishable from the baselined node;
-reviewers should re-inspect baseline entries whenever DOM order changes.
+To diagnose a failure:
 
 1. `npm run build`
 2. `LUMEN_AXE_INVENTORY=1 npx playwright test --config playwright.visual.config.ts lumen-axe`
    (on Windows Git Bash the inline variable works; in PowerShell set `$env:LUMEN_AXE_INVENTORY=1` first).
-3. Copy each `AXE <key> [...]` console line's array into the matching
-   `KNOWN_BASELINE['<key>']` entry (delete the key when the array is empty).
-4. Re-run without the variable and confirm green.
+   Each `AXE <key> [...]` console line lists that key's nodes (rule id plus a positional `nth-child` selector).
+3. Fix the violation, then re-run without the variable and confirm green.
+
+## The model gate during scans and captures
+
+Surfaces other than `overlay` and `drawer` are scanned or captured with the model gate hidden. `hideModelGate`
+(`e2e/model-gate.ts`) hides every gate backdrop and removes the chat content's `inert`, for the rest of that page
+(it is not restored; the page is discarded with the test), and re-checks that post-condition before each scan.
+The gated state itself (gate up, content inert) is covered by the `overlay` axe pass, the `overlay-model-not-ready`
+baselines and `e2e/model-gate-keyboard.spec.ts` (the in-chat gate, in the browser build).
+
+The desktop model gate has no e2e coverage: it is covered by unit tests only
+(`DesktopModelBlockedOverlay.test.tsx`, `App.firstRunModelGate.test.tsx`, `ChatPage.overlay.test.tsx`), because
+every desktop e2e spec runs the stub engine. The desktop e2e suite covers the first-run wizard only
+(`desktop/e2e/first-run-wizard.spec.ts`).

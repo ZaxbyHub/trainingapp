@@ -394,7 +394,7 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
 |---|---|
 | Chrome / Edge (Chromium) | Supported. Course playback, Range media, storage isolation and exact-origin messaging measured on Chromium 153 (plan critic rounds 2-4) and exercised by `web_ui/e2e/packs-browser.spec.ts`. |
 | Chrome with the `BlockThirdPartyCookies` policy, Edge strict tracking prevention | Not measured in this trace (the player origin is third-party to the app page, so partitioned third-party service workers are required). |
-| Firefox | Untested. |
+| Firefox | Supported (decided after this ADR; PR #151 review, PRR-151-030). The browser e2e suite runs under both Chromium and Firefox in the required `web-ui e2e` CI job. Playwright's Firefox cannot attach to iframes under the COOP/COEP headers, so the specs that read inside the course or boot frames skip there with a recorded reason (`web_ui/e2e/isolation-browser.spec.ts`); Chromium keeps the full assertion. |
 | Safari | Not supported for packs or course playback; the UI says so. |
 
 ### Divergences from desktop (disclosed)
@@ -430,5 +430,5 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
 - A future packtool bridge injection, a per-pack player origin, or signing player assets would
   each need their own decision record.
 - Manual measurements the plan called for (the real 292 MB publish in Chrome and Edge, the
-  enterprise-policy and strict-tracking variants, a Firefox smoke check) were not performed in
+  enterprise-policy and strict-tracking variants, a Firefox smoke check; Firefox is now covered by the CI e2e suite, see Browser support) were not performed in
   this trace and remain open.
