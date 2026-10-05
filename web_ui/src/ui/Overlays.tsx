@@ -39,14 +39,6 @@ interface DialogBaseProps {
    */
   modal?: boolean;
   /**
-   * Default false: portal to document.body with a fixed, window-wide backdrop. true:
-   * render in place with an absolute backdrop covering the nearest positioned
-   * ancestor, so only that region is blocked. The ancestor must establish a
-   * containing block (position: relative) and the Dialog must not sit inside an
-   * element the caller makes inert.
-   */
-  contained?: boolean;
-  /**
    * Where focus lands on open: 'first' (default) the first focusable control; 'panel'
    * the dialog itself (it is named by the title, so assistive tech reads the title and
    * description) for a dialog whose content should be read before any action is
@@ -55,13 +47,10 @@ interface DialogBaseProps {
    */
   initialFocus?: 'first' | 'panel' | RefObject<HTMLElement | null>;
   /**
-   * Stacking layer of a window-wide dialog. Order, lowest to highest (see ui.css):
-   * contained gates 200 < shell nav drawer 300 < 'default' dialogs 1000 (first-run
-   * wizard, confirmations) < 'boot' 1100 (the boot gate: nothing else is usable
-   * behind it) < toasts 1200. A desktop model gate is `contained` to the chat page, so
-   * it never covers the first-run wizard that fixes it. Ignored when `contained`.
+   * Heading level of the title: 2 (default) inside a page that already has an h1; 1 for
+   * a dialog that IS the whole window (the boot gate: nothing else is rendered).
    */
-  layer?: 'default' | 'boot';
+  headingLevel?: 1 | 2;
   /** data-testid for the dialog panel (the backdrop is always "ui-dialog-backdrop"). */
   testId?: string;
   /** id of the element inside the dialog that describes it (aria-describedby). */
@@ -75,29 +64,58 @@ interface DialogBaseProps {
 }
 
 /**
- * A dismissible dialog (the default) must say what dismissing does: `onClose` is
- * required at compile time. Only `dismissible={false}` may omit it.
+ * Where the dialog renders. Default: portal to document.body with a fixed, window-wide
+ * backdrop on `layer`. `contained`: render in place with an absolute backdrop covering
+ * the nearest positioned ancestor, so only that region is blocked; the ancestor must
+ * establish a containing block (position: relative) and the Dialog must not sit inside
+ * an element the caller makes inert. A contained dialog always stacks at the contained
+ * level (200), so `layer` is rejected at compile time rather than silently ignored.
  */
-export type DialogProps = DialogBaseProps &
-  (
-    | {
-        /** Default true: Escape and a backdrop press call `onClose`. */
-        dismissible?: true;
-        /** Called on Escape / backdrop press; required for a dismissible dialog. */
-        onClose: () => void;
-      }
-    | {
-        /**
-         * false is for blocking states with no dismiss path (a missing-model gate):
-         * Escape and the backdrop do nothing, and Escape is swallowed (preventDefault +
-         * stopPropagation) so it also cannot close anything layered behind. Focus
-         * return is unchanged.
-         */
-        dismissible: false;
-        /** Never called by the dialog itself; optional. */
-        onClose?: () => void;
-      }
-  );
+type DialogPlacementProps =
+  | {
+      contained?: false;
+      /**
+       * Stacking layer of a window-wide dialog. Order, lowest to highest (see ui.css):
+       * contained gates 200 < shell nav drawer 300 < 'default' dialogs 1000 (first-run
+       * wizard, confirmations) < 'boot' 1100 (the boot gate: nothing else is usable
+       * behind it) < toasts 1200. A desktop model gate is `contained` to the chat page,
+       * so it never covers the first-run wizard that fixes it.
+       */
+      layer?: 'default' | 'boot';
+    }
+  | {
+      contained: true;
+      layer?: never;
+    };
+
+/**
+ * Dismissal. `D` is inferred from the `dismissible` prop (true when omitted):
+ * - omitted / `true` / a dynamic boolean: `onClose` is required (the dialog must say
+ *   what dismissing does, and a dynamic flag can become true);
+ * - a literal `false`: `onClose` is rejected (it could never be called).
+ */
+type DialogDismissProps<D extends boolean> = {
+  /**
+   * Default true: Escape and a backdrop press call `onClose`. false is for blocking states
+   * with no dismiss path (a missing-model gate): Escape and the backdrop do nothing, and
+   * Escape is swallowed (preventDefault + stopPropagation) so it also cannot close
+   * anything layered behind. Focus return is unchanged.
+   */
+  dismissible?: D;
+} & ([D] extends [false]
+  ? { onClose?: never }
+  : {
+      /** Called on Escape / backdrop press while dismissible. */
+      onClose: () => void;
+    });
+
+export type DialogProps<D extends boolean = true> = DialogBaseProps & DialogPlacementProps & DialogDismissProps<D>;
+
+/** Each open dialog panel's opener, so a dialog opened from inside another can fall back to it. */
+const dialogOpeners = new WeakMap<Element, HTMLElement | null>();
+
+/** Popup widgets that own Escape while open (Escape closes the popup, not the dialog). */
+const ESCAPE_OWNER = '[role="combobox"][aria-expanded="true"], [aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]';
 
 /**
  * role="dialog" (+ aria-modal unless `modal` is false). On open it moves focus into the dialog (first
@@ -105,59 +123,123 @@ export type DialogProps = DialogBaseProps &
  * Escape or backdrop click (unless `dismissible` is false), and returns focus to
  * the previously focused element on close (unless focus has since moved outside the dialog). Rendered in a portal on document.body
  * unless `contained`.
+ *
+ * Focus stays live while a modal dialog is open: a press on the backdrop never blurs the
+ * focused control, and if the focused control inside the panel is removed (a Retry
+ * button replaced by a progress panel) focus is re-homed onto the panel, so the Tab trap
+ * and Escape keep working.
  */
-export function Dialog({
-  open,
-  onClose,
-  title,
-  children,
-  footer,
-  alert,
-  className,
-  dismissible = true,
-  modal = true,
-  contained = false,
-  initialFocus = 'first',
-  layer = 'default',
-  testId,
-  describedBy,
-  closeOnBackdrop = true,
-}: DialogProps) {
+export function Dialog<D extends boolean = true>(props: DialogProps<D>) {
+  const {
+    open,
+    onClose,
+    title,
+    children,
+    footer,
+    alert,
+    className,
+    modal = true,
+    contained = false,
+    initialFocus = 'first',
+    layer = 'default',
+    headingLevel = 2,
+    testId,
+    describedBy,
+    closeOnBackdrop = true,
+  } = props;
+  const dismissible: boolean = props.dismissible ?? true;
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const returnRef = useRef<HTMLElement | null>(null);
   // Read at open time only; changing it while open must not re-run the focus effect.
   const initialFocusRef = useRef(initialFocus);
   initialFocusRef.current = initialFocus;
+  const modalRef = useRef(modal);
+  modalRef.current = modal;
 
   useEffect(() => {
     if (!open) return undefined;
     returnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = panelRef.current;
+    if (panel) dialogOpeners.set(panel, returnRef.current);
     const wanted = initialFocusRef.current;
     const first =
       wanted === 'panel'
         ? null
         : (wanted !== 'first' ? wanted.current : null) ?? panel?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel)?.focus();
+
+    // Re-home focus when the focused control inside a modal panel is removed: browsers
+    // (and jsdom) drop focus to <body> without a blur event, which would leave the Tab
+    // trap and the panel-scoped Escape handler dead while the dialog stays open. The
+    // re-home is deferred one task so a consumer's own re-home effect (the first-run
+    // wizard focuses its next primary action) runs first and wins.
+    let lastInside: Element | null = panel?.contains(document.activeElement) ? document.activeElement : null;
+    let rehomeTimer: ReturnType<typeof setTimeout> | undefined;
+    const focusLost = () => {
+      const active = document.activeElement;
+      return (active === null || active === document.body) && lastInside !== null && !lastInside.isConnected;
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      lastInside = e.target instanceof Element ? e.target : null;
+    };
+    const observer = new MutationObserver(() => {
+      if (!modalRef.current || rehomeTimer !== undefined || !focusLost()) return;
+      rehomeTimer = setTimeout(() => {
+        rehomeTimer = undefined;
+        if (modalRef.current && focusLost() && panel?.isConnected) panel.focus();
+      }, 0);
+    });
+    if (panel) {
+      panel.addEventListener('focusin', onFocusIn);
+      observer.observe(panel, { childList: true, subtree: true });
+    }
     return () => {
+      observer.disconnect();
+      panel?.removeEventListener('focusin', onFocusIn);
+      if (rehomeTimer !== undefined) clearTimeout(rehomeTimer);
       // Return focus to the opener only if focus is still the dialog's to give back: on
       // body/nothing, or inside the panel. A non-modal dialog lets the user Tab into the
       // rest of the page (the shell nav); if focus is already there (or moved by the
       // action that closed the dialog) it must not be yanked back to the opener.
       const active = document.activeElement;
       const ours = active === null || active === document.body || (panel?.contains(active) ?? false);
-      if (ours) returnRef.current?.focus();
+      let target = returnRef.current;
       returnRef.current = null;
+      if (!ours) return;
+      // An opener inside a dialog that has since closed is detached: follow that dialog's
+      // own opener instead (stacked dialogs closed bottom-first), up to a few levels.
+      for (let hops = 0; target && !target.isConnected && hops < 8; hops += 1) {
+        const host = target.closest('.ui-dialog');
+        target = host ? dialogOpeners.get(host) ?? null : null;
+      }
+      if (target?.isConnected) {
+        target.focus();
+        return;
+      }
+      // No live opener (its row was removed): hand focus to the topmost dialog still open
+      // rather than leave it on <body>, outside every dialog's key handling.
+      const remaining = Array.from(document.querySelectorAll<HTMLElement>('.ui-dialog')).filter((el) => el !== panel);
+      remaining[remaining.length - 1]?.focus();
     };
   }, [open]);
 
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
       if (e.key === 'Escape') {
+        // Never let Escape reach anything layered behind the dialog.
         e.stopPropagation();
-        if (dismissible) onClose?.();
-        else e.preventDefault();
+        if (!dismissible) {
+          e.preventDefault();
+          return;
+        }
+        // Escape that a control inside already consumed (a combobox closing its list, an
+        // IME cancelling a composition, an open popup menu) must not also close the dialog.
+        const target = e.target instanceof Element ? e.target : null;
+        if (e.defaultPrevented || e.nativeEvent.defaultPrevented || e.nativeEvent.isComposing || target?.closest(ESCAPE_OWNER)) {
+          return;
+        }
+        onClose?.();
         return;
       }
       // Non-modal: no trap; Tab flows to the rest of the page (inert content is skipped).
@@ -185,6 +267,7 @@ export function Dialog({
   );
 
   if (!open) return null;
+  const Heading = headingLevel === 1 ? 'h1' : 'h2';
   const tree = (
     <div
       className={cx(
@@ -194,7 +277,17 @@ export function Dialog({
       )}
       data-testid="ui-dialog-backdrop"
       onMouseDown={(e) => {
-        if (dismissible && closeOnBackdrop && e.target === e.currentTarget) onClose?.();
+        if (e.target !== e.currentTarget) return;
+        // The backdrop is never a focus target: without this the press blurs the focused
+        // control to <body>, outside the panel, and the Tab trap and Escape go dead while
+        // the dialog stays open (closeOnBackdrop={false}, or not dismissible).
+        e.preventDefault();
+        if (dismissible && closeOnBackdrop) {
+          onClose?.();
+          return;
+        }
+        const panel = panelRef.current;
+        if (modal && panel && !panel.contains(document.activeElement)) panel.focus();
       }}
     >
       <div
@@ -208,9 +301,9 @@ export function Dialog({
         className={cx('ui-dialog', 'ui-focusable', className)}
         onKeyDown={onKeyDown}
       >
-        <h2 id={titleId} className="ui-dialog__title">
+        <Heading id={titleId} className="ui-dialog__title">
           {title}
-        </h2>
+        </Heading>
         <div className="ui-dialog__body">{children}</div>
         {footer ? <div className="ui-dialog__footer">{footer}</div> : null}
       </div>
