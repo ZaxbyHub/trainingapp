@@ -13,6 +13,11 @@
  *   5. inline `style={...}` carries geometry keys only (no color / spacing / border / font)
  *   6. `var(--x, fallback)` only for the exact sanctioned pairs in SANCTIONED_FALLBACKS (a fallback
  *      masks an UNDEFINED token); a stale allow-list entry fails
+ *   7. no imperative style writes in .ts/.tsx (`el.style.color = ...`, `style.setProperty('color', ...)`,
+ *      cssText, insertRule, setAttribute('style'), ...) beyond geometry and the enumerated allow-list
+ *
+ * Known limit of the comment stripper: a `//` preceded by whitespace inside JSX *text* is read as a line
+ * comment (JSX text cannot be told apart from code without a parser); `http://x` is handled.
  *
  * Each rule is a pure function with a self-test that feeds it a violating fixture, so a rule
  * that silently stops matching fails here rather than passing vacuously. The per-surface
@@ -52,6 +57,15 @@ const SANCTIONED_FALLBACKS: Record<string, string> = {
     'SettingsNav publishes its measured height via setProperty; before the first measurement scroll-margin falls back to var(--space-16)',
   'ui/ui.css|--ui-tooltip-shift':
     'Tooltip publishes a viewport-clamp shift via setProperty only when it would overflow; 0px is the no-shift default',
+};
+
+/** The only custom properties code may publish at runtime (pinned: a new one is a deliberate, reviewed edit). */
+const RUNTIME_PROP_NAMES = ['--settings-nav-h', '--ui-tooltip-shift'];
+
+/** Imperative `el.style.<prop> =` writes that are not geometry, keyed `file|prop`, each with a reason. */
+const STYLE_WRITE_ALLOW: Record<string, string> = {
+  'lib/packs/training-player-host.ts|display':
+    'hides the course iframe while no course is open (visibility toggle, not a color/spacing decision)',
 };
 
 /** Inline-style keys that are layout geometry (computed per render), never color/spacing. */
@@ -122,6 +136,10 @@ function stripTsComments(t: string): string {
       const j = skipString(t, i);
       out += t.slice(i, j);
       i = j;
+    } else if (c === '/' && t[i + 1] === '/' && t[i - 1] === ':' && !/\s/.test(t[i + 2] ?? ' ')) {
+      // `http://x` in JSX text: a URL scheme, not a line comment (a real `key: // note` has a space after the slashes).
+      out += '//';
+      i += 2;
     } else if (c === '/' && t[i + 1] === '/') {
       while (i < t.length && t[i] !== '\n') i++;
     } else if (c === '/' && t[i + 1] === '*') {
@@ -150,7 +168,34 @@ function stripTsComments(t: string): string {
   return out;
 }
 
-const stripCssComments = (t: string): string => t.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+/** Strips block comments from CSS; quoted strings are copied through (a `"/*"` in `content:` is not a comment). */
+function stripCssComments(t: string): string {
+  let out = '';
+  let i = 0;
+  while (i < t.length) {
+    const c = t[i];
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < t.length) {
+        if (t[j] === '\\') { j += 2; continue; }
+        if (t[j] === c) { j++; break; }
+        if (t[j] === '\n') break; // unterminated string: recover at end of line
+        j++;
+      }
+      out += t.slice(i, j);
+      i = j;
+    } else if (c === '/' && t[i + 1] === '*') {
+      const e = t.indexOf('*/', i + 2);
+      const end = e < 0 ? t.length : e + 2;
+      out += t.slice(i, end).replace(/[^\n]/g, ' ');
+      i = end;
+    } else {
+      out += c;
+      i++;
+    }
+  }
+  return out;
+}
 
 const strip = (rel: string, text: string): string => (rel.endsWith('.css') ? stripCssComments(text) : stripTsComments(text));
 
@@ -194,8 +239,9 @@ function findUnresolvedVars(text: string, lumen: Set<string>, runtime: Set<strin
   return [...text.matchAll(USED_VAR)].map((m) => m[1]).filter((n) => !lumen.has(n) && !runtime.has(n) && !local.has(n));
 }
 
-const OUTLINE_OFF = /(?:^|[;\s])(?:outline(?:-style)?\s*:\s*(?:none|0)\b|outline-width\s*:\s*0\b)/;
-const REPLACEMENT = /(?:^|[;\s])(?:outline|box-shadow)\s*:\s*(?!\s|none\b|0\b)/;
+const OUTLINE_OFF =
+  /(?:^|[;\s])(?:outline(?:-style)?\s*:\s*(?:none|0)\b|outline-width\s*:\s*0\b|outline(?:-color)?\s*:\s*transparent\b)/;
+const REPLACEMENT = /(?:^|[;\s])(?:outline|box-shadow)\s*:\s*(?!\s|none\b|0\b|transparent\b)/;
 
 interface Block { selector: string; body: string }
 
@@ -215,7 +261,12 @@ function findUnpairedOutlineOff(css: string, file: string): string[] {
     for (const part of b.selector.split(',').map((s) => s.trim())) {
       const root = focusRoot(part);
       const paired = blocks.some(
-        (o) => o !== b && o.selector.includes(`${root}:focus-visible`) && REPLACEMENT.test(o.body)
+        // The replacement selector must START with `root:focus-visible` (the sibling-ring form
+        // `root:focus-visible + .ring` qualifies); a substring match let `.elsewhere root:focus-visible` pair.
+        (o) =>
+          o !== b &&
+          o.selector.split(',').some((s) => s.trim().startsWith(`${root}:focus-visible`)) &&
+          REPLACEMENT.test(o.body)
       );
       if (!paired) out.push(`${file}|${part}`);
     }
@@ -277,6 +328,21 @@ function findInlineStyleViolations(text: string): string[] {
   return out;
 }
 
+/** Imperative style writes in one comment-stripped TS/TSX text (rule 7). Geometry properties are legal. */
+function findImperativeStyleWrites(text: string): string[] {
+  const out: string[] = [];
+  for (const m of text.matchAll(/\.style\.(\w+)\s*(?:=(?!=)|\+=)/g)) if (!GEOMETRY_KEYS.has(m[1])) out.push(m[1]);
+  for (const m of text.matchAll(/\bstyle\.setProperty\(\s*(?:(['"`])([^'"`]*)\1|([^'"`\s)][^,)]*))/g)) {
+    const name = m[2] ?? '<dynamic>';
+    if (!RUNTIME_PROP_NAMES.includes(name)) out.push(`setProperty(${name})`);
+  }
+  if (/\.style\[/.test(text)) out.push('style[...]');
+  if (/\binsertRule\b|\badoptedStyleSheets\b/.test(text)) out.push('insertRule/adoptedStyleSheets');
+  if (/setAttribute\(\s*['"`]style['"`]/.test(text)) out.push("setAttribute('style')");
+  if (/Object\.assign\([^;]*\.style\b/.test(text)) out.push('Object.assign(...style)');
+  return out;
+}
+
 // ---------------------------------------------------------------------------------------------
 // The scan
 // ---------------------------------------------------------------------------------------------
@@ -317,6 +383,10 @@ describe('repo-wide token ratchet (web_ui/src)', () => {
     expect(offenders((s) => (LITERAL_ALLOWED.has(s.rel) ? [] : findLiterals(s.rel, s.text)))).toEqual([]);
   });
 
+  it('the runtime-published custom properties are exactly the pinned pair (a new one needs a deliberate edit here)', () => {
+    expect([...RUNTIME_PROPS].sort()).toEqual([...RUNTIME_PROP_NAMES].sort());
+  });
+
   it('3. every var(--x) resolves to a Lumen token, a setProperty runtime property, or a same-file declaration', () => {
     expect(offenders((s) => findUnresolvedVars(s.text, LUMEN, RUNTIME_PROPS))).toEqual([]);
   });
@@ -330,6 +400,14 @@ describe('repo-wide token ratchet (web_ui/src)', () => {
 
   it('5. inline style props carry geometry keys only', () => {
     expect(offenders((s) => (s.rel.endsWith('.tsx') ? findInlineStyleViolations(s.text) : []))).toEqual([]);
+  });
+
+  it('7. no imperative style writes in ts/tsx beyond geometry and the enumerated allow-list', () => {
+    const raw = sources
+      .filter((s) => /\.tsx?$/.test(s.rel))
+      .flatMap((s) => findImperativeStyleWrites(s.text).map((k) => `${s.rel}|${k}`));
+    expect(raw.filter((k) => !(k in STYLE_WRITE_ALLOW))).toEqual([]);
+    expect(Object.keys(STYLE_WRITE_ALLOW).filter((k) => !raw.includes(k))).toEqual([]);
   });
 
   it('6. var(--x, fallback) only for the enumerated sanctioned fallbacks', () => {
@@ -360,6 +438,19 @@ describe('token ratchet self-tests', () => {
     expect(out).toContain('"//"');
     expect(findColorLiterals(out)).toEqual(['#fade', '#00f']);
     expect(findColorLiterals(stripCssComments('/* #123 */ a { color: #fff; }'))).toEqual(['#fff']);
+  });
+
+  it('comment stripping never erases live code after a "/*" in a CSS string or a "//" URL in JSX text or a string (P8-M1)', () => {
+    const css = '.p::before{content:"/*"} .q{color:#00ff00} .r::after{content:"*/"} .s{content:\'/*\'} .t{color:#abcdef}';
+    expect(findColorLiterals(stripCssComments(css))).toEqual(['#00ff00', '#abcdef']);
+    expect(findColorLiterals(stripCssComments('.a{color:#111} /* #222 */ .b{content:"x"} /* "#333" */ .c{color:#444}'))).toEqual(['#111', '#444']);
+    const jsx = "<p>see http://example.com</p>; const c = '#123456'; const r = 'var(--color-primary)';";
+    expect(findColorLiterals(stripTsComments(jsx))).toEqual(['#123456']);
+    expect(findRetiredTokens(stripTsComments(jsx))).toEqual(['--color-primary']);
+    const str = "const u = 'http://example.com'; const c = '#654321';";
+    expect(findColorLiterals(stripTsComments(str))).toEqual(['#654321']);
+    // A real comment after a colon (note the space) and an ordinary line comment are still stripped.
+    expect(findColorLiterals(stripTsComments('const o = { a: // #aaa\n 1 }; // #bbb\nconst c = \'#ccc\';'))).toEqual(['#ccc']);
   });
 
   it('comment stripping survives a JSX apostrophe and a template literal with nested braces', () => {
@@ -433,6 +524,13 @@ describe('token ratchet self-tests', () => {
         'f.css'
       )
     ).toEqual([]);
+    // P8-M2: a :focus-visible rule under a DIFFERENT ancestor is not the replacement; outline-color: transparent is a removal.
+    expect(findUnpairedOutlineOff('.z:focus { outline: none } .nonexistent .z:focus-visible { outline: 2px solid red }', 'f.css')).toEqual(['f.css|.z:focus']);
+    expect(findUnpairedOutlineOff('.y:focus { outline-color: transparent }', 'f.css')).toEqual(['f.css|.y:focus']);
+    expect(findUnpairedOutlineOff('.y:focus { outline: transparent }', 'f.css')).toEqual(['f.css|.y:focus']);
+    expect(findUnpairedOutlineOff('.y:focus { outline-color: transparent } .y:focus-visible { outline: 2px solid red }', 'f.css')).toEqual([]);
+    expect(findUnpairedOutlineOff('.y:focus { outline: none } .y:focus-visible { outline: transparent }', 'f.css')).toEqual(['f.css|.y:focus', 'f.css|.y:focus-visible']);
+    expect(findUnpairedOutlineOff('.y:focus { outline: none } .a, .y:focus-visible { outline: 2px solid red }', 'f.css')).toEqual([]);
     // Inside @media the block is still found.
     expect(findUnpairedOutlineOff('@media (min-width: 1px) { .m:focus { outline: none; } }', 'f.css')).toEqual(['f.css|.m:focus']);
   });
@@ -442,6 +540,21 @@ describe('token ratchet self-tests', () => {
       expect(reason.length).toBeGreaterThan(20);
       expect(key).toMatch(/\.css\|/);
     }
+  });
+
+  it('rule 7 detects imperative style writes and accepts geometry and the pinned runtime properties (P8-L1)', () => {
+    expect(findImperativeStyleWrites("el.style.color = 'red'; el.style.padding = '3px'; el.style.backgroundColor = x;")).toEqual(['color', 'padding', 'backgroundColor']);
+    expect(findImperativeStyleWrites("el.style.height = 'auto'; el.style.width = `${w}px`; el.style.transform += 'x'; if (el.style.height == 'a') {}")).toEqual([]);
+    expect(findImperativeStyleWrites("el.style.cssText = 'color:red'; el.style.display = 'none';")).toEqual(['cssText', 'display']);
+    expect(findImperativeStyleWrites("host.style.setProperty('--settings-nav-h', '1px'); tip.style.setProperty(\"--ui-tooltip-shift\", '0px');")).toEqual([]);
+    expect(findImperativeStyleWrites("el.style.setProperty('color', 'red'); el.style.setProperty('--made-up', '1'); el.style.setProperty(name, v);")).toEqual(['setProperty(color)', 'setProperty(--made-up)', 'setProperty(<dynamic>)']);
+    expect(findImperativeStyleWrites("el.style['color'] = 'red';")).toEqual(['style[...]']);
+    expect(findImperativeStyleWrites("sheet.insertRule('a{}'); el.setAttribute('style', 'x'); Object.assign(el.style, { color: 'red' });")).toEqual([
+      'insertRule/adoptedStyleSheets',
+      "setAttribute('style')",
+      'Object.assign(...style)',
+    ]);
+    for (const reason of Object.values(STYLE_WRITE_ALLOW)) expect(reason.length).toBeGreaterThan(20);
   });
 
   it('rule 5 detects non-geometry inline-style keys, spreads, computed keys and non-literal style values', () => {
