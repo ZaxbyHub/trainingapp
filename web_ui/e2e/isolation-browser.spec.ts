@@ -223,9 +223,14 @@ function workerEscapeStoryHtml(appOrigin: string, assets: { classic: string; mod
   } catch (e) { shared = 'threw:' + name(e); }
   await wait(1500);
   r.attempts.appShared = shared;
+  // Bounded: a registration that never settles still yields a report ('pending').
   async function tryRegister(label, url, scope) {
-    try { await navigator.serviceWorker.register(url, { scope: scope }); r.register[label] = 'registered'; }
-    catch (e) { r.register[label] = 'rejected:' + name(e); }
+    r.register[label] = 'pending';
+    var attempt = navigator.serviceWorker.register(url, { scope: scope }).then(
+      function () { r.register[label] = 'registered'; },
+      function (e) { r.register[label] = 'rejected:' + name(e); }
+    );
+    await Promise.race([attempt, wait(5000)]);
   }
   await tryRegister('appAsset', ${JSON.stringify(assets.classic)}, '/assets/');
   await tryRegister('packPath', '/training/${WORKER_PACK}/probe-sw.js', '/training/${WORKER_PACK}/');
