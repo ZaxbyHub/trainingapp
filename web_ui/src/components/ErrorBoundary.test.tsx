@@ -44,6 +44,36 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('Something went wrong')).toBeInTheDocument();
   });
 
+  test('Lumen phase 7: the fallback is one alert region built from EmptyState + Button, with no inline styles', () => {
+    const ThrowError = (): null => {
+      throw new Error('Test error message');
+    };
+    const { container } = render(
+      <ErrorBoundary>
+        <ThrowError />
+      </ErrorBoundary>
+    );
+    const alert = screen.getByRole('alert');
+    // A single announcement region (no nested role="alert").
+    expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1);
+    expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument();
+    expect(alert).toContainElement(screen.getByRole('button', { name: /try again/i }));
+    expect(screen.getByRole('button', { name: /try again/i })).toHaveClass('ui-button', 'ui-button--primary');
+    expect(container.querySelectorAll('[style]')).toHaveLength(0);
+  });
+
+  test('falls back to a generic message when the error has none', () => {
+    const ThrowError = (): null => {
+      throw new Error('');
+    };
+    render(
+      <ErrorBoundary>
+        <ThrowError />
+      </ErrorBoundary>
+    );
+    expect(screen.getByText('An unexpected error occurred')).toBeInTheDocument();
+  });
+
   test('Custom fallback is rendered when provided', () => {
     const ThrowError = (): null => {
       throw new Error('Custom error');

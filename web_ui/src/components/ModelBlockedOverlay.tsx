@@ -1,17 +1,32 @@
 /**
- * ModelBlockedOverlay — full-blocking modal shown when the browser model is not
- * ready. Extracted from ChatPage (issue #25) so the shared ChatPage.tsx file
- * stays a thin caller, and so the overlay can carry proper dialog semantics:
- * role="alertdialog", aria-modal="true", a focus trap, and focus restoration.
+ * ModelBlockedOverlay — the chat page's blocking "model not ready" state, built
+ * from the design-system primitives (design-language.md section 5: all blocking
+ * states use Dialog + Banner): ui/Dialog (role="alertdialog", non-dismissible,
+ * focus trap, focus return), ui/Banner for the readiness failures and
+ * recommendations, ui/ProgressBar for the load, ui/Button for the actions.
  *
- * (issue #21 F10 originally mounted the overlay as an inline IIFE; #25 lifts
- * it into its own component and adds the a11y guarantees.)
+ * Scope (Lumen phase 7): it blocks the CHAT PAGE only. ChatPage renders it as a
+ * sibling of the (inert) chat content inside `.chat-page`, so the dialog is
+ * `contained` (absolute backdrop over the chat region, not a body portal) and
+ * the app shell's sidebar and top bar stay usable (PR #147 PRR-022: narrow
+ * windows need the top bar for Documents/Training navigation). Because the rest
+ * of the page remains operable it declares `aria-modal` false (`modal={false}`):
+ * aria-modal="true" asserts everything outside the dialog is inert, which would
+ * hide the navigation from assistive tech while it is still reachable (WAI-ARIA
+ * 1.2 dialog pattern). The covered chat content is made inert by ChatPage
+ * instead, which is the part that is actually true. The Tab trap, initial focus
+ * and focus return are Dialog's. Escape and backdrop presses do nothing.
+ *
+ * (issue #21 F10 originally mounted the overlay as an inline IIFE; #25 lifts it
+ * into its own component and adds the a11y guarantees.)
  */
 
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import type { ReadinessResult } from '../lib/llm/model-readiness';
 import type { BrowserEngine } from '../types/llm';
 import { MODEL_CONNECTION_SECTION_ID } from '../lib/settings-sections';
+import { Banner, Button, Dialog, ProgressBar } from '../ui';
+import './blocking.css';
 
 interface ModelBlockedOverlayProps {
   readinessResult: ReadinessResult | null;
@@ -22,8 +37,7 @@ interface ModelBlockedOverlayProps {
   onOpenSettings: (section?: string) => void;
 }
 
-const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+const HEADLINE_ID = 'model-blocked-headline';
 
 export function ModelBlockedOverlay({
   readinessResult,
@@ -32,46 +46,6 @@ export function ModelBlockedOverlay({
   onRetry,
   onOpenSettings,
 }: ModelBlockedOverlayProps): React.ReactElement {
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const retryRef = useRef<HTMLButtonElement>(null);
-  // Remember the element that had focus before the overlay opened so we can
-  // restore it when the overlay unmounts.
-  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
-
-  useEffect(() => {
-    previouslyFocusedRef.current = document.activeElement as HTMLElement | null;
-    // Move focus into the dialog on open.
-    retryRef.current?.focus();
-    return () => {
-      // Restore focus to the trigger on close.
-      previouslyFocusedRef.current?.focus?.();
-    };
-  }, []);
-
-  // Focus trap, scoped to the dialog (Lumen phase-3 review F1): it acts only on
-  // Tab presses that start INSIDE the overlay. It used to be a document-level
-  // listener, which also caught Shift+Tab inside the AppShell's nav drawer (a
-  // separate aria-modal dialog above this one at <= 768px) and pulled focus
-  // under the drawer's scrim. Same pattern as DesktopModelBlockedOverlay.
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== 'Tab') return;
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-    const focusables = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-    if (focusables.length === 0) return;
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    if (e.shiftKey) {
-      if (document.activeElement === first) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (document.activeElement === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-
   const failures = readinessResult?.failures ?? [];
   const recommendations = readinessResult?.recommendations ?? [];
   const hasRealFailure = failures.length > 0;
@@ -82,172 +56,59 @@ export function ModelBlockedOverlay({
     : 'Preparing the model…';
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        // Stacks above the Chat page's own content (including its PageHeader
-        // controls, which carry no z-index) inside ChatPage's position:relative
-        // root; it covers <main> only, never the app shell's navigation.
-        zIndex: 200,
-      }}
+    <Dialog
+      open
+      alert
+      dismissible={false}
+      modal={false}
+      contained
+      describedBy={HEADLINE_ID}
+      className="blocking-gate"
+      title="Model not ready"
+      footer={
+        <>
+          {/* First focusable control, so Dialog's default initial focus lands on Retry. */}
+          <Button onClick={onRetry}>Retry</Button>
+          <Button onClick={() => onOpenSettings()}>Open Settings</Button>
+          {/* settings-wiring-honesty (AC10): the missing-model state has a way
+              forward that needs no packaged weights: an external
+              OpenAI-compatible model (local server or cloud). First-class
+              (primary) action; opens Settings at the section hosting those
+              controls. */}
+          <Button variant="primary" onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}>
+            Use a local server or cloud model
+          </Button>
+        </>
+      }
     >
-      <div
-        ref={dialogRef}
-        role="alertdialog"
-        onKeyDown={handleKeyDown}
-        aria-modal="true"
-        aria-label="Model not ready"
-        style={{
-          backgroundColor: 'var(--color-surface)',
-          padding: 'var(--spacing-xl)',
-          borderRadius: '8px',
-          textAlign: 'center',
-          maxWidth: '460px',
-        }}
-      >
-        <p
-          style={{
-            fontSize: 'var(--font-size-body)',
-            color: 'var(--color-text-on-bubble-assistant)',
-            fontFamily: 'var(--font-family)',
-            marginBottom: 'var(--spacing-md)',
-          }}
-        >
+      <div className="blocking-gate__stack">
+        <p id={HEADLINE_ID} className="blocking-gate__lead">
           {headline}
         </p>
         {!hasRealFailure && modelLoadingProgress > 0 && (
           <>
-            <div
-              role="progressbar"
-              aria-valuenow={modelLoadingProgress}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label="Model loading progress"
-              style={{
-                width: '100%',
-                height: '8px',
-                backgroundColor: 'var(--color-bubble-system)',
-                borderRadius: 'var(--radius-sm)',
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  width: `${modelLoadingProgress}%`,
-                  height: '100%',
-                  backgroundColor: 'var(--color-success-strong)',
-                  transition: 'width 0.3s ease',
-                }}
-              />
-            </div>
-            <p
-              style={{
-                fontSize: 'var(--font-size-caption)',
-                color: 'var(--color-text-muted)',
-                fontFamily: 'var(--font-family)',
-                marginTop: 'var(--spacing-sm)',
-              }}
-            >
-              {modelLoadingProgress}%
-            </p>
+            <ProgressBar label="Model loading progress" value={modelLoadingProgress} />
+            <p className="blocking-gate__percent">{modelLoadingProgress}%</p>
           </>
         )}
-        {failures.length > 0 && (
-          <ul
-            style={{
-              textAlign: 'left',
-              // Lumen phase 5: legacy --color-danger failed AA on the card (unmasked axe).
-              color: 'var(--danger)',
-              fontSize: 'var(--font-size-caption)',
-              fontFamily: 'var(--font-family)',
-              margin: 'var(--spacing-sm) 0',
-              padding: '0 var(--spacing-md)',
-            }}
-          >
-            {failures.map((f, i) => <li key={i}>{f}</li>)}
-          </ul>
+        {/* live={false}: the alertdialog itself is the live announcement; a
+            role="alert"/"status" Banner inside it would be read a second time. */}
+        {hasRealFailure && (
+          <Banner tone="danger" live={false}>
+            <ul className="blocking-gate__list">
+              {failures.map((f, i) => <li key={i}>{f}</li>)}
+            </ul>
+          </Banner>
         )}
         {recommendations.length > 0 && (
-          <ul
-            style={{
-              textAlign: 'left',
-              // Lumen phase 5: legacy --color-text-muted was 4.18:1 on the card.
-              color: 'var(--text-secondary)',
-              fontSize: 'var(--font-size-caption)',
-              fontFamily: 'var(--font-family)',
-              margin: 'var(--spacing-sm) 0',
-              padding: '0 var(--spacing-md)',
-            }}
-          >
-            {recommendations.map((r, i) => <li key={i}>{r}</li>)}
-          </ul>
+          <Banner tone="info" live={false}>
+            <ul className="blocking-gate__list">
+              {recommendations.map((r, i) => <li key={i}>{r}</li>)}
+            </ul>
+          </Banner>
         )}
-        <div style={{ display: 'flex', gap: 'var(--spacing-sm)', justifyContent: 'center', marginTop: 'var(--spacing-md)' }}>
-          <button
-            ref={retryRef}
-            type="button"
-            onClick={onRetry}
-            style={{
-              backgroundColor: 'var(--color-primary)',
-              color: 'var(--color-text-on-primary)',
-              border: 'none',
-              borderRadius: 'var(--radius-sm)',
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              fontFamily: 'var(--font-family)',
-              fontSize: 'var(--font-size-caption)',
-              cursor: 'pointer',
-            }}
-          >
-            Retry
-          </button>
-          <button
-            type="button"
-            onClick={() => onOpenSettings()}
-            style={{
-              backgroundColor: 'transparent',
-              color: 'var(--color-text-muted)',
-              border: '1px solid var(--color-text-muted)',
-              borderRadius: 'var(--radius-sm)',
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              fontFamily: 'var(--font-family)',
-              fontSize: 'var(--font-size-caption)',
-              cursor: 'pointer',
-            }}
-          >
-            Open Settings
-          </button>
-          {/* settings-wiring-honesty (AC10): the missing-model state has a way
-              forward that needs no packaged weights — an external
-              OpenAI-compatible model (local server or cloud). Opens Settings
-              at the section hosting those controls. */}
-          <button
-            type="button"
-            onClick={() => onOpenSettings(MODEL_CONNECTION_SECTION_ID)}
-            style={{
-              backgroundColor: 'transparent',
-              color: 'var(--color-text-primary)',
-              border: '1px solid var(--color-text-muted)',
-              borderRadius: 'var(--radius-sm)',
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              fontFamily: 'var(--font-family)',
-              fontSize: 'var(--font-size-caption)',
-              cursor: 'pointer',
-            }}
-          >
-            Use a local server or cloud model
-          </button>
-        </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
 

@@ -94,7 +94,17 @@ describe('ChatPage desktop first-run model gate (AC5 UI)', () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
-    expect(dialog.getAttribute('aria-labelledby')).toBe('desktop-model-gate-title');
+    expect(dialog).toHaveAccessibleName(/AI models are not installed yet/i);
+    expect(dialog).toHaveAccessibleDescription(/Neither the Quality nor the Fast language model/);
+  });
+
+  it('the covered chat content is inert while the gate is up; the gate itself is not', async () => {
+    const { container } = renderGate(status({}));
+    const dialog = await screen.findByRole('alertdialog', { name: /AI models are not installed yet/i });
+    const content = container.querySelector('.chat-page__content') as HTMLElement;
+    expect(content).toHaveAttribute('inert');
+    expect(content).toContainElement(screen.getByLabelText('Message input'));
+    expect(dialog.closest('[inert]')).toBeNull();
   });
 
   it('a send attempt while blocked issues NO fetch (no doomed /ask)', async () => {

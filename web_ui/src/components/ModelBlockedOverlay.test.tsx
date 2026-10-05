@@ -1,6 +1,7 @@
 /**
  * Tests for ModelBlockedOverlay (issue #25 F14):
- *  - role="alertdialog" + aria-modal="true"
+ *  - role="alertdialog", named by its title; aria-modal is NOT claimed (Lumen
+ *    phase 7: the gate covers the chat page only, the shell nav stays usable)
  *  - focus moves into the dialog on mount, restored on unmount
  *  - focus trap cycles Tab/Shift+Tab within the dialog
  */
@@ -44,11 +45,55 @@ describe('ModelBlockedOverlay (issue #25 F14)', () => {
     cleanup();
   });
 
-  it('renders as an alertdialog with aria-modal', () => {
+  it('renders as a non-modal alertdialog named "Model not ready" and described by the headline', () => {
     renderOverlay();
-    const dialog = screen.getByRole('alertdialog');
-    expect(dialog).toHaveAttribute('aria-modal', 'true');
-    expect(dialog).toHaveAttribute('aria-label', 'Model not ready');
+    const dialog = screen.getByRole('alertdialog', { name: 'Model not ready' });
+    // aria-modal="true" would tell assistive tech the shell navigation is inert; it is not.
+    expect(dialog).not.toHaveAttribute('aria-modal');
+    expect(dialog).toHaveAccessibleDescription(/browser model is not available/i);
+  });
+
+  it('is a blocking state: Escape and a scrim press do nothing, and Escape is swallowed', () => {
+    const onKeyDown = vi.fn();
+    render(
+      <div onKeyDown={onKeyDown}>
+        <ModelBlockedOverlay
+          readinessResult={readyResult}
+          browserEngine="webllm"
+          modelLoadingProgress={0}
+          onRetry={vi.fn()}
+          onOpenSettings={vi.fn()}
+        />
+      </div>
+    );
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(fireEvent.keyDown(retry, { key: 'Escape' })).toBe(false);
+    fireEvent.mouseDown(screen.getByTestId('ui-dialog-backdrop'));
+    expect(onKeyDown).not.toHaveBeenCalled();
+    expect(screen.getByRole('alertdialog', { name: 'Model not ready' })).toBeInTheDocument();
+  });
+
+  it('renders in place (contained scrim), not in a body portal', () => {
+    const { container } = renderOverlay();
+    expect(container).toContainElement(screen.getByTestId('ui-dialog-backdrop'));
+    expect(screen.getByTestId('ui-dialog-backdrop')).toHaveClass('ui-dialog__backdrop--contained');
+  });
+
+  it('failures use a danger Banner and recommendations an info Banner (no inline styles)', () => {
+    const { container } = renderOverlay();
+    const failure = screen.getByText('Model not downloaded').closest('.ui-banner');
+    const recommendation = screen.getByText('Download the model in Settings').closest('.ui-banner');
+    expect(failure).toHaveClass('ui-banner--danger');
+    expect(recommendation).toHaveClass('ui-banner--info');
+    // The alertdialog is the live announcement; the banners inside must not re-announce.
+    expect(failure).not.toHaveAttribute('role');
+    expect(recommendation).not.toHaveAttribute('role');
+    expect(container.querySelectorAll('[style]')).toHaveLength(0);
+  });
+
+  it('offers "Use a local server or cloud model" as the primary (first-class) action', () => {
+    renderOverlay();
+    expect(screen.getByRole('button', { name: 'Use a local server or cloud model' })).toHaveClass('ui-button--primary');
   });
 
   it('moves focus to the Retry button on mount', () => {
@@ -99,8 +144,9 @@ describe('ModelBlockedOverlay (issue #25 F14)', () => {
       recommendations: [],
     };
     renderOverlay({ readinessResult: noFailure, modelLoadingProgress: 42 });
-    const bar = screen.getByRole('progressbar');
+    const bar = screen.getByRole('progressbar', { name: 'Model loading progress' });
     expect(bar).toHaveAttribute('aria-valuenow', '42');
+    expect(screen.getByText('42%')).toBeInTheDocument();
   });
 
   it('traps Tab focus within the dialog (wraps from last to first)', () => {

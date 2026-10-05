@@ -17,7 +17,9 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { AppShell, DRAWER_MEDIA_QUERY, SideNav } from '../ui';
 import { ChatPage } from './ChatPage';
 import type { ReadinessResult } from '../lib/llm/model-readiness';
 import type { BrowserEngine } from '../types/llm';
@@ -259,5 +261,167 @@ describe('ChatPage — model-blocked overlay (F-AC7)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open Settings' }));
 
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ChatPage — model gate scope (Lumen phase 7)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    cleanup();
+    inferenceState = {
+      mode: 'browser-local',
+      browserEngine: 'wllama',
+      ragPreset: 'balanced',
+      isModelReady: false,
+      isServerConnected: true,
+      modelLoadingProgress: 0,
+      serverUrl: '',
+      modeError: null,
+    };
+    currentReadinessResult = makeReadinessResult({ failures: ['No weights.'] });
+  });
+  afterEach(() => cleanup());
+
+  it('makes the covered chat content inert while the gate is up (and only that content)', () => {
+    const { container } = renderChatPage();
+    const content = container.querySelector('.chat-page__content') as HTMLElement;
+    expect(content).toHaveAttribute('inert');
+    // Header, composer are inside the inert region; the gate dialog is not.
+    expect(content).toContainElement(screen.getByRole('heading', { name: 'Chat' }));
+    expect(content).toContainElement(screen.getByLabelText('Message input'));
+    const dialog = screen.getByRole('alertdialog', { name: /model not ready/i });
+    expect(content).not.toContainElement(dialog);
+    expect(dialog.closest('[inert]')).toBeNull();
+    // The page root itself is never inert (the gate lives inside it).
+    expect(container.querySelector('.chat-page')).not.toHaveAttribute('inert');
+  });
+
+  it('lifts inert when the gate lifts (model becomes ready)', () => {
+    const { container, rerender } = renderChatPage();
+    expect(container.querySelector('.chat-page__content')).toHaveAttribute('inert');
+    inferenceState = { ...inferenceState, isModelReady: true };
+    rerender(
+      <ChatPage
+        messages={[]}
+        onMessagesChange={() => {}}
+        onSaveConversation={() => {}}
+        onNewChat={() => {}}
+        currentConversationId={undefined}
+        setCurrentConversationId={() => {}}
+        onOpenSettings={() => {}}
+        onNavigateToDocuments={() => {}}
+      />
+    );
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(container.querySelector('.chat-page__content')).not.toHaveAttribute('inert');
+  });
+
+  it('the gate is non-dismissible: Escape in the dialog leaves it up and the content inert', () => {
+    const { container } = renderChatPage();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Retry' }), { key: 'Escape' });
+    expect(screen.getByRole('alertdialog', { name: /model not ready/i })).toBeInTheDocument();
+    expect(container.querySelector('.chat-page__content')).toHaveAttribute('inert');
+  });
+
+  it('Ctrl+, still opens Settings while the gate is up (keyboard route out of the gate)', () => {
+    const onOpenSettings = vi.fn();
+    renderChatPage(onOpenSettings);
+    expect(screen.getByRole('alertdialog', { name: /model not ready/i })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: ',', ctrlKey: true });
+    expect(onOpenSettings).toHaveBeenCalled();
+  });
+
+  it('the shell nav stays usable: a sibling nav button is not inert and receives clicks', async () => {
+    const onNavigate = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <>
+        <nav aria-label="Shell">
+          <button type="button" onClick={() => onNavigate('documents')}>
+            Documents
+          </button>
+        </nav>
+        <main>
+          <ChatPage
+            messages={[]}
+            onMessagesChange={() => {}}
+            onSaveConversation={() => {}}
+            onNewChat={() => {}}
+            currentConversationId={undefined}
+            setCurrentConversationId={() => {}}
+            onOpenSettings={() => {}}
+            onNavigateToDocuments={() => {}}
+          />
+        </main>
+      </>
+    );
+    const nav = screen.getByRole('button', { name: 'Documents' });
+    expect(nav.closest('[inert]')).toBeNull();
+    await user.click(nav);
+    expect(onNavigate).toHaveBeenCalledWith('documents');
+  });
+
+  describe('with the AppShell nav drawer (inert on <main>)', () => {
+    const original = window.matchMedia;
+    afterEach(() => {
+      window.matchMedia = original;
+    });
+
+    it('chat-content inert persists across drawer open and close; the drawer clears only <main>', async () => {
+      window.matchMedia = ((query: string) => ({
+        matches: query === DRAWER_MEDIA_QUERY,
+        media: query,
+        onchange: null,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        dispatchEvent: () => false,
+      })) as unknown as typeof window.matchMedia;
+      const user = userEvent.setup();
+      const { container } = render(
+        <AppShell
+          productName="TrainingApp"
+          collapsed={false}
+          onToggleCollapsed={() => {}}
+          sidebar={
+            <SideNav
+              label="Main navigation"
+              items={[
+                { id: 'chat', label: 'Chat', icon: 'message-square' },
+                { id: 'documents', label: 'Documents', icon: 'file-text' },
+              ]}
+              activeId="chat"
+              onNavigate={() => {}}
+            />
+          }
+        >
+          <ChatPage
+            messages={[]}
+            onMessagesChange={() => {}}
+            onSaveConversation={() => {}}
+            onNewChat={() => {}}
+            currentConversationId={undefined}
+            setCurrentConversationId={() => {}}
+            onOpenSettings={() => {}}
+            onNavigateToDocuments={() => {}}
+          />
+        </AppShell>
+      );
+      const main = container.querySelector('main') as HTMLElement;
+      const content = () => container.querySelector('.chat-page__content') as HTMLElement;
+      expect(main).not.toHaveAttribute('inert');
+      expect(content()).toHaveAttribute('inert');
+
+      await user.click(screen.getByRole('button', { name: 'Open navigation' }));
+      expect(main).toHaveAttribute('inert');
+      expect(content()).toHaveAttribute('inert');
+
+      const drawer = screen.getByRole('dialog', { name: 'Navigation' });
+      await user.click(within(drawer).getByRole('button', { name: 'Close navigation' }));
+      expect(main).not.toHaveAttribute('inert'); // AppShell cleared <main> ...
+      expect(content()).toHaveAttribute('inert'); // ... but the gate's own inert persists
+      expect(screen.getByRole('alertdialog', { name: /model not ready/i }).closest('[inert]')).toBeNull();
+    });
   });
 });

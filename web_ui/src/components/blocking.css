@@ -1,0 +1,17 @@
+/* Blocking states (Lumen phase 7, docs/design/design-language.md section 5
+   "Overlays & first-run"): the chat-page model gates, the desktop boot gate and
+   the ErrorBoundary fallback. Lumen tokens only (no legacy --color-*, no color
+   literals, no var() fallbacks); enforced by components/blocking-hygiene.test.ts.
+   Primitives (Dialog, Banner, Button, ProgressBar, EmptyState) come from ui/ui.css;
+   this file holds only the stacking/spacing of their content. */
+
+.blocking-gate .ui-dialog__footer { flex-wrap: wrap; justify-content: flex-start; }
+.blocking-gate__stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.blocking-gate__lead { margin: 0; color: var(--text-primary); }
+.blocking-gate__list { margin: 0; padding-inline-start: var(--space-5); }
+.blocking-gate__percent { margin: 0; text-align: center; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+
+/* ErrorBoundary page fallback. */
+
+.error-fallback { display: flex; align-items: center; justify-content: center; min-height: 200px; padding: var(--space-8) var(--space-4); }
+.error-fallback .ui-empty__icon { color: var(--danger); }
