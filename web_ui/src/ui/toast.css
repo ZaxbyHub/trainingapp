@@ -1,10 +1,12 @@
 /* Toasts (Lumen phase 7, docs/design/design-language.md section 4). Lumen tokens only
    (enforced by ui-token-hygiene.test.ts); the toast body is a ui Banner, so tone colours
    and its forced-colors border come from ui.css. Kept out of ui.css so this stylesheet
-   carries its own reduced-motion / forced-colors rules (parsed by toast.test.tsx). */
+   carries its own reduced-motion / forced-colors rules (parsed by toast-css.test.ts). */
 
 /* Click-through viewport; only the toasts themselves take pointer events. Both live
-   regions are always mounted and, while empty, have no box. */
+   regions are always mounted, and while empty they stay in the accessibility tree with
+   zero height (never display:none / visibility:hidden: a region that only becomes
+   visible together with its first message is not reliably announced). */
 .ui-toast-viewport {
   position: fixed;
   right: var(--space-6);
@@ -17,7 +19,6 @@
   pointer-events: none;
 }
 .ui-toast-region { display: flex; flex-direction: column; gap: var(--space-3); margin: 0; padding: 0; }
-.ui-toast-region:empty { display: none; }
 
 .ui-toast {
   pointer-events: auto;

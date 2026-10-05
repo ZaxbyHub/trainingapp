@@ -63,6 +63,13 @@ describe('ToastProvider live regions (WAI-ARIA)', () => {
     expect(assertive()).toBeEmptyDOMElement();
   });
 
+  it('exposes both regions in the accessibility tree while empty (not display:none)', () => {
+    setup();
+    // getByRole skips inaccessible (hidden) elements, so this fails if a stylesheet hides an empty region.
+    expect(screen.getByRole('status')).toBe(polite());
+    expect(screen.getByRole('alert')).toBe(assertive());
+  });
+
   it('keeps the same region elements when toasts arrive and leave (never remounted)', () => {
     setup();
     const before = [polite(), assertive()];

@@ -40,9 +40,13 @@ describe('toast.css', () => {
     expect(css).not.toMatch(/\binfinite\b/);
   });
 
-  it('makes the viewport click-through but the toasts interactive, and hides empty regions', () => {
+  it('makes the viewport click-through but the toasts interactive', () => {
     expect(css).toMatch(/\.ui-toast-viewport\s*\{[^}]*pointer-events:\s*none/);
     expect(css).toMatch(/\.ui-toast\s*\{[^}]*pointer-events:\s*auto/);
-    expect(css).toMatch(/\.ui-toast-region:empty\s*\{\s*display:\s*none/);
+  });
+
+  it('never hides the live regions, so they stay in the accessibility tree while empty', () => {
+    expect(css).not.toMatch(/\.ui-toast-region[^{]*\{[^}]*(display:\s*none|visibility:\s*hidden|hidden)/);
+    expect(css).not.toMatch(/:empty/);
   });
 });
