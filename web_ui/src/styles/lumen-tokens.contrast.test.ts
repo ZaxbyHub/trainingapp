@@ -12,6 +12,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { PAIR_REMAP } from './token-remap';
 
 type Theme = 'light' | 'dark';
 type RGB = { r: number; g: number; b: number; a: number };
@@ -98,6 +99,15 @@ const INTERACTIVE_SURFACES = [...SURFACES, '--bg-hover', '--bg-hover-raised', '-
 const STATUSES = ['success', 'warning', 'danger', 'info'] as const;
 const THEMES: Theme[] = ['light', 'dark'];
 
+/** Distinct [lumenFill, lumenFg] pairs of the phase-8 remap table (deleted tokens have none). */
+const remapPairs: [string, string][] = [
+  ...new Map(
+    PAIR_REMAP.flatMap((p): [string, [string, string]][] =>
+      p.lumenFill && p.lumenFg ? [[`${p.lumenFill}|${p.lumenFg}`, [p.lumenFill, p.lumenFg]]] : []
+    )
+  ).values(),
+];
+
 
 /** Every listed pair must pass its threshold in both themes (no recorded deviations). */
 function check(theme: Theme, title: string, fn: () => void): void {
@@ -105,6 +115,14 @@ function check(theme: Theme, title: string, fn: () => void): void {
 }
 
 describe('lumen token contrast (WCAG 2.x relative luminance)', () => {
+  it('the remap table contributes pairs (guards against a vacuous loop)', () => {
+    expect(remapPairs.length).toBeGreaterThanOrEqual(10);
+    expect(remapPairs).toContainEqual(['--accent', '--accent-fg']);
+    expect(remapPairs).toContainEqual(['--danger', '--danger-fg-on-fill']);
+    expect(remapPairs).toContainEqual(['--bg-canvas', '--text-primary']);
+    expect(remapPairs).toContainEqual(['--bubble-user', '--text-primary']);
+  });
+
   it('sanity: black on white is 21:1 and the parser sees both themes', () => {
     expect(ratio({ r: 0, g: 0, b: 0, a: 1 }, { r: 255, g: 255, b: 255, a: 1 })).toBeCloseTo(21, 5);
     expect(resolveValue('light', '--accent')).toBe('#4a55f0');
@@ -190,6 +208,17 @@ describe('lumen token contrast (WCAG 2.x relative luminance)', () => {
           expect(contrast(theme, '--border-control', bg)).toBeGreaterThanOrEqual(3);
         }
       });
+
+      // Phase 8: every Lumen pair in the pairwise remap table (token-remap.ts) is a text
+      // pair >= 4.5:1. Translucent fills (--bubble-user in dark) are composited over both
+      // page surfaces they can sit on.
+      for (const [fill, fg] of remapPairs) {
+        for (const base of ['--bg-surface', '--bg-canvas']) {
+          check(theme, `remap pair ${fg} on ${fill} (over ${base}) >= 4.5`, () => {
+            expect(contrast(theme, fg, fill, base)).toBeGreaterThanOrEqual(4.5);
+          });
+        }
+      }
     });
   }
 });

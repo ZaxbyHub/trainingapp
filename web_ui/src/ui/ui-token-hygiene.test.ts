@@ -6,6 +6,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { RETIRED_TOKENS, RETIRED_TOKEN_RE } from '../styles/retired-tokens';
 
 const UI_DIR = __dirname;
 
@@ -28,12 +29,10 @@ const LUMEN_TOKENS = readFileSync(resolve(UI_DIR, '../styles/lumen-tokens.css'),
 const declared = (css: string): Set<string> =>
   new Set([...stripComments(css).matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 const LUMEN_DECLARED = declared(LUMEN_TOKENS);
-/** Every token the legacy tokens.css declares that Lumen does not redefine. */
-const LEGACY_NAMES = [...declared(readFileSync(resolve(UI_DIR, '../styles/tokens.css'), 'utf8'))].filter(
-  (n) => !LUMEN_DECLARED.has(n)
-);
+/** The frozen retired-token list (styles/retired-tokens.ts). */
+const LEGACY_NAMES = RETIRED_TOKENS;
 // Trailing (?![\w-]) keeps --font-family from matching --font-family-mono style names.
-const LEGACY = new RegExp(`(${LEGACY_NAMES.join('|')})(?![\\w-])`);
+const LEGACY = RETIRED_TOKEN_RE;
 const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
 const ESCAPE_HATCH = /\bcssText\b|\binsertRule\b|dangerouslySetInnerHTML|\.innerHTML\b/;
 
@@ -53,7 +52,7 @@ describe('src/ui token hygiene', () => {
     });
   }
 
-  it('derives the legacy token list from tokens.css (includes --font-family, excludes Lumen names)', () => {
+  it('uses the frozen retired token list (includes --font-family, excludes Lumen names)', () => {
     expect(LEGACY_NAMES).toContain('--font-family');
     expect(LEGACY_NAMES).toContain('--color-primary');
     expect(LEGACY_NAMES.filter((n) => LUMEN_DECLARED.has(n))).toEqual([]);
