@@ -336,24 +336,31 @@ describe('Dialog (blocking-overlay options)', () => {
     expect(screen.getByTestId('ui-dialog-backdrop')).not.toHaveClass('ui-dialog__backdrop--boot');
   });
 
-  it('stacking order is deterministic: contained < drawer < default dialog < boot (< toasts 1200)', () => {
+  it('stacking ladder: every z-index in ui.css and toast.css is pinned, strictly ordered, with no ties (PRR-151-019)', () => {
     const css = readFileSync(resolve(__dirname, 'ui.css'), 'utf8');
     const toastCss = readFileSync(resolve(__dirname, 'toast.css'), 'utf8');
-    const z = (selector: string): number => {
-      const m = new RegExp(selector.replace(/[.]/g, String.raw`\.`) + String.raw`\s*\{[^}]*z-index:\s*(\d+)`).exec(css);
+    const z = (source: string, selector: string): number => {
+      const m = new RegExp(selector.replace(/[.]/g, String.raw`\.`) + String.raw`\s*\{[^}]*z-index:\s*(\d+)`).exec(source);
       if (!m) throw new Error('no z-index for ' + selector);
       return Number(m[1]);
     };
-    const contained = z('.ui-dialog__backdrop--contained');
-    const drawer = z('.ui-shell--drawer .ui-shell__sidebar');
-    const dflt = z('.ui-dialog__backdrop');
-    const boot = z('.ui-dialog__backdrop--boot');
-    expect(contained).toBeLessThan(drawer);
-    expect(drawer).toBeLessThan(dflt);
-    expect(dflt).toBeLessThan(boot);
-    const toast = Number(/z-index:\s*(\d+)/.exec(toastCss)?.[1]);
-    expect(boot).toBeLessThan(toast);
-    expect(toast).toBeGreaterThan(dflt); // the wizard (default layer) never covers a toast
+    const ladder = {
+      contained: z(css, '.ui-dialog__backdrop--contained'),
+      scrim: z(css, '.ui-shell__scrim'),
+      drawer: z(css, '.ui-shell--drawer .ui-shell__sidebar'),
+      dialog: z(css, '.ui-dialog__backdrop'),
+      combobox: z(css, '.ui-combobox__list'),
+      tooltip: z(css, '.ui-tooltip'),
+      boot: z(css, '.ui-dialog__backdrop--boot'),
+      toast: z(toastCss, '.ui-toast-viewport'),
+    };
+    expect(ladder).toEqual({ contained: 200, scrim: 299, drawer: 300, dialog: 1000, combobox: 1050, tooltip: 1090, boot: 1100, toast: 1200 });
+    // Strictly increasing in the order above: no two layers tie (a tie falls back to DOM order).
+    const values = Object.values(ladder);
+    values.slice(1).forEach((v, i) => expect(v).toBeGreaterThan(values[i]));
+    // Nothing else in these stylesheets declares a z-index, so a new layer cannot slip in unpinned.
+    expect(css.match(/z-index\s*:/g)).toHaveLength(7);
+    expect(toastCss.match(/z-index\s*:/g)).toHaveLength(1);
   });
 
   it('describedBy sets aria-describedby and the description is exposed', () => {
