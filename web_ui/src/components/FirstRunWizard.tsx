@@ -14,7 +14,7 @@
  * Lumen phase 7: built on ui/Dialog (focus trap, Escape, focus return) and
  * ui/Banner (role=alert errors); styles live in first-run.css.
  */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Banner, Button, Checkbox, Dialog, Icon, RadioCardGroup } from '../ui';
 import {
   activateRequiredPacks,
@@ -124,11 +124,9 @@ export function FirstRunWizard({
   // like "Skip for now" (never completes), Tab is trapped inside the panel, and focus
   // returns to the opener when the wizard unmounts.
 
-  // The desktop e2e suite addresses the whole dialog (title included) as
-  // `first-run-wizard`. Dialog has no test-id pass-through, so tag its panel here.
-  useLayoutEffect(() => {
-    rootRef.current?.closest('[role="dialog"]')?.setAttribute('data-testid', 'first-run-wizard');
-  }, []);
+  // Dialog's first enabled control is "Skip for now" (Back is disabled on step 0):
+  // Enter at launch would dismiss setup. Open on the primary action instead.
+  const nextRef = useRef<HTMLButtonElement>(null);
 
   const step: Step = completed ? 'complete' : WIZARD_STEPS[stepIndex];
   const manifestBlocking =
@@ -153,12 +151,6 @@ export function FirstRunWizard({
   const packsSatisfied = inactivePacks.length === 0;
   const completeEnabled =
     selectedProfile !== null && acknowledged && !manifestBlocking && packsSatisfied;
-
-  // Dialog focuses the first enabled control, which is "Skip for now" (Back is disabled on
-  // step 0): Enter at launch would dismiss setup. Start on the primary action instead.
-  useEffect(() => {
-    rootRef.current?.querySelector<HTMLElement>('[data-testid="wizard-next"]')?.focus();
-  }, []);
 
   // A control that unmounts while focused (Complete -> Finish, the activate button once
   // packs are satisfied) or goes natively disabled (Back on step 0) would drop focus to
@@ -239,6 +231,9 @@ export function FirstRunWizard({
       onClose={onClose}
       title={status.rerun ? 'Re-run setup' : 'Welcome to TrainingApp'}
       className="first-run-dialog"
+      // The desktop e2e suite addresses the whole dialog (title included) as `first-run-wizard`.
+      testId="first-run-wizard"
+      initialFocus={nextRef}
     >
       <div ref={rootRef} className="first-run">
         <p className="first-run__lede">
@@ -499,7 +494,7 @@ export function FirstRunWizard({
               </Button>
             )}
             {!completed && stepIndex < WIZARD_STEPS.length - 2 && (
-              <Button variant="primary" onClick={goNext} data-testid="wizard-next">
+              <Button ref={nextRef} variant="primary" onClick={goNext} data-testid="wizard-next">
                 Next
               </Button>
             )}

@@ -239,6 +239,7 @@ describe('Dialog (blocking-overlay options)', () => {
 
   it('stacking order is deterministic: contained < drawer < default dialog < boot (< toasts 1200)', () => {
     const css = readFileSync(resolve(__dirname, 'ui.css'), 'utf8');
+    const toastCss = readFileSync(resolve(__dirname, 'toast.css'), 'utf8');
     const z = (selector: string): number => {
       const m = new RegExp(selector.replace(/[.]/g, String.raw`\.`) + String.raw`\s*\{[^}]*z-index:\s*(\d+)`).exec(css);
       if (!m) throw new Error('no z-index for ' + selector);
@@ -251,7 +252,9 @@ describe('Dialog (blocking-overlay options)', () => {
     expect(contained).toBeLessThan(drawer);
     expect(drawer).toBeLessThan(dflt);
     expect(dflt).toBeLessThan(boot);
-    expect(boot).toBeLessThan(1200);
+    const toast = Number(/z-index:\s*(\d+)/.exec(toastCss)?.[1]);
+    expect(boot).toBeLessThan(toast);
+    expect(toast).toBeGreaterThan(dflt); // the wizard (default layer) never covers a toast
   });
 
   it('describedBy sets aria-describedby and the description is exposed', () => {

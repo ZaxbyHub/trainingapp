@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, MouseEvent } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type MouseEvent } from 'react';
 import { Icon, type IconName } from './icons';
 import { cx } from './cx';
 import { Tooltip, type TooltipProps } from './Overlays';
@@ -18,7 +18,8 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
  * focusable and announced) and activation is suppressed; `disabled` itself is
  * left to callers that truly want the native behavior.
  */
-export function Button({
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
   variant = 'secondary',
   size = 'md',
   loading = false,
@@ -27,7 +28,9 @@ export function Button({
   onClick,
   type = 'button',
   ...rest
-}: ButtonProps) {
+  },
+  ref
+) {
   const inert = loading || rest['aria-disabled'] === true || rest['aria-disabled'] === 'true';
   const handleClick = (e: MouseEvent<HTMLButtonElement>) => {
     if (inert) {
@@ -38,6 +41,7 @@ export function Button({
   };
   return (
     <button
+      ref={ref}
       type={type}
       {...rest}
       className={cx('ui-button', `ui-button--${variant}`, `ui-button--${size}`, 'ui-focusable', className)}
@@ -49,7 +53,7 @@ export function Button({
       {children}
     </button>
   );
-}
+});
 
 export interface IconButtonProps
   extends Omit<ButtonProps, 'children' | 'aria-label'> {
