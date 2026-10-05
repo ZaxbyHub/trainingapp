@@ -32,20 +32,25 @@ function setup() {
 }
 
 describe('ChatInput font-ready re-measure', () => {
-  it('re-measures the textarea height when document.fonts.ready resolves', async () => {
+  it('re-measures only when document.fonts.ready resolves (not on its own)', async () => {
     const ctl = setup();
-    render(<ChatInput onSend={() => {}} isLoading={false} onCancel={() => {}} />);
+    const { rerender } = render(<ChatInput onSend={() => {}} isLoading={false} onCancel={() => {}} />);
     const textarea = screen.getByLabelText('Message input') as HTMLTextAreaElement;
     expect(textarea.style.height).toBe('40px'); // measured with the fallback font
     ctl.setScrollHeight(64); // the real font wraps the placeholder to two lines
+    rerender(<ChatInput onSend={() => {}} isLoading={false} onCancel={() => {}} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(textarea.style.height).toBe('40px'); // nothing else re-measures
     await act(async () => {
       ctl.resolveFonts();
       await Promise.resolve();
     });
-    expect(textarea.style.height).toBe('64px');
+    expect(textarea.style.height).toBe('64px'); // fonts.ready did
   });
 
-  it('does not touch the textarea after unmount when fonts resolve late', async () => {
+  it('a fonts.ready that resolves after unmount is harmless (the measure is a no-op without the textarea)', async () => {
     const ctl = setup();
     const { unmount } = render(<ChatInput onSend={() => {}} isLoading={false} onCancel={() => {}} />);
     const textarea = screen.getByLabelText('Message input') as HTMLTextAreaElement;
@@ -55,7 +60,7 @@ describe('ChatInput font-ready re-measure', () => {
       ctl.resolveFonts();
       await Promise.resolve();
     });
-    expect(textarea.style.height).toBe('40px');
+    expect(textarea.style.height).toBe('40px'); // the detached node was never re-measured
   });
 
   it('is a no-op where document.fonts is unavailable (jsdom, older engines)', () => {

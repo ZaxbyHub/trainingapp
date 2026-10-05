@@ -75,13 +75,9 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   // font's second line clipped. (Which weights are already loaded when the chat
   // mounts depends on what the boot screen rendered, so this is a latent race.)
   useEffect(() => {
-    let cancelled = false;
-    void document.fonts?.ready.then(() => {
-      if (!cancelled) adjustHeight();
-    });
-    return () => {
-      cancelled = true;
-    };
+    // adjustHeight is a no-op once the textarea ref is cleared, so a late-resolving
+    // promise after unmount needs no cancel flag.
+    void document.fonts?.ready.then(adjustHeight);
   }, [adjustHeight]);
 
   // Focus restoration: sending a message disables the textarea (isLoading),
