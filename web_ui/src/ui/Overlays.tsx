@@ -18,10 +18,8 @@ import { computeTooltipShift } from './tooltip-position';
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export interface DialogProps {
+interface DialogBaseProps {
   open: boolean;
-  /** Required when `dismissible` (the default); a non-dismissible dialog never calls it. */
-  onClose?: () => void;
   title: ReactNode;
   children?: ReactNode;
   /** Action row (right-aligned). */
@@ -33,16 +31,17 @@ export interface DialogProps {
    * Default true: Escape and a backdrop press call `onClose`. false is for blocking
    * states with no dismiss path (a missing-model gate): Escape and the backdrop do
    * nothing, and Escape is swallowed (preventDefault + stopPropagation) so it also
-   * cannot close anything layered behind. Focus trap and focus return are unchanged.
+   * cannot close anything layered behind. Focus return is unchanged.
    */
-  dismissible?: boolean;
   /**
    * Default true: aria-modal="true". Pass false when the dialog blocks only part of
    * the page and the rest stays operable (the chat-page model gate leaves the shell
    * navigation usable). aria-modal="true" tells assistive tech everything outside is
    * inert, so claiming it there would hide navigation the user can still reach
    * (WAI-ARIA 1.2 dialog pattern). The caller is then responsible for making the
-   * covered content inert. The Tab trap and focus return still apply.
+   * covered content inert, and Tab is NOT trapped (a non-modal dialog must let
+   * keyboard users reach the rest of the page, here the shell navigation); focus
+   * return still applies. modal (default) traps Tab and Shift+Tab at the panel edges.
    */
   modal?: boolean;
   /**
@@ -73,11 +72,27 @@ export interface DialogProps {
   testId?: string;
   /** id of the element inside the dialog that describes it (aria-describedby). */
   describedBy?: string;
+  /**
+   * Default true: a press on the backdrop calls `onClose` (when dismissible). false keeps
+   * Escape / explicit actions as the only ways out (the first-run wizard: a stray click
+   * outside must not skip setup).
+   */
+  closeOnBackdrop?: boolean;
 }
 
 /**
+ * A dismissible dialog (the default) must say what dismissing does: `onClose` is
+ * required at compile time. Only `dismissible={false}` may omit it.
+ */
+export type DialogProps = DialogBaseProps &
+  (
+    | { dismissible?: true; onClose: () => void }
+    | { dismissible: false; onClose?: () => void }
+  );
+
+/**
  * role="dialog" + aria-modal. On open it moves focus into the dialog (first
- * focusable control, else the dialog itself), traps Tab / Shift+Tab, closes on
+ * focusable control, else the dialog itself), traps Tab / Shift+Tab (modal only), closes on
  * Escape or backdrop click (unless `dismissible` is false), and returns focus to
  * the previously focused element on close. Rendered in a portal on document.body
  * unless `contained`.
@@ -97,6 +112,7 @@ export function Dialog({
   layer = 'default',
   testId,
   describedBy,
+  closeOnBackdrop = true,
 }: DialogProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -129,7 +145,8 @@ export function Dialog({
         else e.preventDefault();
         return;
       }
-      if (e.key !== 'Tab') return;
+      // Non-modal: no trap; Tab flows to the rest of the page (inert content is skipped).
+      if (e.key !== 'Tab' || !modal) return;
       const panel = panelRef.current;
       if (!panel) return;
       const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
@@ -149,7 +166,7 @@ export function Dialog({
         firstEl.focus();
       }
     },
-    [dismissible, onClose]
+    [dismissible, onClose, modal]
   );
 
   if (!open) return null;
@@ -162,7 +179,7 @@ export function Dialog({
       )}
       data-testid="ui-dialog-backdrop"
       onMouseDown={(e) => {
-        if (dismissible && e.target === e.currentTarget) onClose?.();
+        if (dismissible && closeOnBackdrop && e.target === e.currentTarget) onClose?.();
       }}
     >
       <div

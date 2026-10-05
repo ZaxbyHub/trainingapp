@@ -149,23 +149,17 @@ describe('ModelBlockedOverlay (issue #25 F14)', () => {
     expect(screen.getByText('42%')).toBeInTheDocument();
   });
 
-  it('traps Tab focus within the dialog (wraps from last to first)', () => {
+  it('does not trap Tab (non-modal): edge presses are left to the browser so the shell nav stays reachable', () => {
     renderOverlay();
     const retry = screen.getByRole('button', { name: 'Retry' });
-    // settings-wiring-honesty (AC10): the external-model action is now the
-    // last focusable control.
     const last = screen.getByRole('button', { name: 'Use a local server or cloud model' });
-
-    // Focus starts on Retry (first focusable).
     expect(retry).toHaveFocus();
-    // Shift+Tab from the first focusable wraps to the last. The trap is scoped
-    // to the dialog (phase-3 review F1), so key events start on the focused control.
-    fireEvent.keyDown(retry, { key: 'Tab', shiftKey: true });
-    expect(document.activeElement).toBe(last);
-    // After Tab from the last focusable, wrap to first (Retry).
-    fireEvent.keyDown(last, { key: 'Tab' });
-    // The wrap should land focus back on the first element.
-    expect(document.activeElement).toBe(retry);
+    // Not default-prevented, and Dialog moves no focus itself.
+    expect(fireEvent.keyDown(retry, { key: 'Tab', shiftKey: true })).toBe(true);
+    expect(retry).toHaveFocus();
+    last.focus();
+    expect(fireEvent.keyDown(last, { key: 'Tab' })).toBe(true);
+    expect(last).toHaveFocus();
   });
 
   it('does not hijack Tab/Shift+Tab that start outside the dialog (phase-3 review F1)', () => {

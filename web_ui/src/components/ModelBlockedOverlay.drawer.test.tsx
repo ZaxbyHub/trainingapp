@@ -5,7 +5,7 @@
  * presses that start INSIDE the overlay; a Shift+Tab inside the open drawer
  * must stay in the drawer, never jump to the overlay under the drawer's scrim.
  */
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppShell, DRAWER_MEDIA_QUERY, SideNav } from '../ui';
@@ -101,21 +101,14 @@ describe('model-gate overlay + open nav drawer (phase 3 review F1)', () => {
     expect(chat).toHaveFocus();
   });
 
-  it("the overlay's own trap still cycles Tab and Shift+Tab inside the overlay", async () => {
-    const user = userEvent.setup();
+  it('the gate does not trap Tab or Shift+Tab (the drawer / shell nav stay reachable)', () => {
     drawerWidth();
     renderShellWithGate();
     const overlay = screen.getByRole('alertdialog');
     const buttons = within(overlay).getAllByRole('button');
     const first = buttons[0];
     const last = buttons[buttons.length - 1];
-    expect(first).toHaveFocus();
-    await user.tab({ shift: true });
-    expect(last).toHaveFocus();
-    await user.tab();
-    expect(first).toHaveFocus();
-    act(() => last.focus());
-    await user.tab();
-    expect(first).toHaveFocus();
+    expect(fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })).toBe(true);
+    expect(fireEvent.keyDown(last, { key: 'Tab' })).toBe(true);
   });
 });

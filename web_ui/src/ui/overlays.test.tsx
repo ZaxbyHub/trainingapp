@@ -104,7 +104,7 @@ describe('Dialog (blocking-overlay options)', () => {
     window.addEventListener('keydown', onWindowKey);
     const { unmount } = render(
       <div onKeyDown={onKeyDown}>
-        <Dialog open alert dismissible title="x" />
+        <Dialog open alert onClose={() => {}} title="x" />
         <Dialog open alert dismissible={false} onClose={onClose} title="Blocked" footer={<Button>Go</Button>} />
       </div>
     );
@@ -128,11 +128,38 @@ describe('Dialog (blocking-overlay options)', () => {
     expect(screen.getByRole('dialog', { name: 'Blocked' })).toBeInTheDocument();
   });
 
-  it('dismissible (default) without onClose: Escape and backdrop press are safe no-ops', () => {
+  it('a dismissible dialog must be given onClose (compile-time); without it Escape/backdrop are still safe no-ops', () => {
+    // @ts-expect-error onClose is required unless dismissible={false}
     render(<Dialog open title="No handler" footer={<Button>Go</Button>} />);
     fireEvent.keyDown(screen.getByRole('button', { name: 'Go' }), { key: 'Escape' });
     fireEvent.mouseDown(screen.getByTestId('ui-dialog-backdrop'));
     expect(screen.getByRole('dialog', { name: 'No handler' })).toBeInTheDocument();
+  });
+
+  it('closeOnBackdrop=false: a backdrop press does not close, Escape still does', () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<Dialog open closeOnBackdrop={false} onClose={onClose} title="W" footer={<Button>Go</Button>} />);
+    fireEvent.mouseDown(screen.getByTestId('ui-dialog-backdrop'));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Go' }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    rerender(<Dialog open onClose={onClose} title="W" footer={<Button>Go</Button>} />);
+    fireEvent.mouseDown(screen.getByTestId('ui-dialog-backdrop'));
+    expect(onClose).toHaveBeenCalledTimes(2); // default still closes on backdrop
+  });
+
+  it('modal=false does not trap Tab (edge presses are not default-prevented); modal does', () => {
+    const { rerender } = render(
+      <Dialog open modal={false} dismissible={false} title="P" footer={<><Button>A</Button><Button>B</Button></>} />
+    );
+    const a = screen.getByRole('button', { name: 'A' });
+    const b = screen.getByRole('button', { name: 'B' });
+    expect(fireEvent.keyDown(a, { key: 'Tab', shiftKey: true })).toBe(true);
+    expect(fireEvent.keyDown(b, { key: 'Tab' })).toBe(true);
+    expect(a).toHaveFocus(); // untouched: the browser, not Dialog, moves focus
+    rerender(<Dialog open dismissible={false} title="P" footer={<><Button>A</Button><Button>B</Button></>} />);
+    expect(fireEvent.keyDown(screen.getByRole('button', { name: 'A' }), { key: 'Tab', shiftKey: true })).toBe(false);
+    expect(fireEvent.keyDown(screen.getByRole('button', { name: 'B' }), { key: 'Tab' })).toBe(false);
   });
 
   it('dismissible=false keeps the focus trap and returns focus on unmount', async () => {
@@ -164,16 +191,16 @@ describe('Dialog (blocking-overlay options)', () => {
   });
 
   it('modal=false omits aria-modal; the default keeps aria-modal="true"', () => {
-    const { rerender } = render(<Dialog open modal={false} title="Partial" />);
+    const { rerender } = render(<Dialog open modal={false} dismissible={false} title="Partial" />);
     expect(screen.getByRole('dialog', { name: 'Partial' })).not.toHaveAttribute('aria-modal');
-    rerender(<Dialog open title="Partial" />);
+    rerender(<Dialog open onClose={() => {}} title="Partial" />);
     expect(screen.getByRole('dialog', { name: 'Partial' })).toHaveAttribute('aria-modal', 'true');
   });
 
   it('contained renders in place (not in a body portal) with the contained backdrop; default portals to body', () => {
     const { container, rerender } = render(
       <div data-testid="region">
-        <Dialog open contained title="Here" />
+        <Dialog onClose={() => {}} open contained title="Here" />
       </div>
     );
     const region = screen.getByTestId('region');
@@ -183,7 +210,7 @@ describe('Dialog (blocking-overlay options)', () => {
     expect(backdrop).toHaveClass('ui-dialog__backdrop--contained');
     rerender(
       <div data-testid="region">
-        <Dialog open title="Here" />
+        <Dialog onClose={() => {}} open title="Here" />
       </div>
     );
     const portaled = screen.getByTestId('ui-dialog-backdrop');
@@ -193,10 +220,10 @@ describe('Dialog (blocking-overlay options)', () => {
   });
 
   it("initialFocus: 'first' (default) focuses the first control; 'panel' focuses the dialog itself", () => {
-    const { rerender } = render(<Dialog open title="T" footer={<Button>First</Button>} />);
+    const { rerender } = render(<Dialog onClose={() => {}} open title="T" footer={<Button>First</Button>} />);
     expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
-    rerender(<Dialog open={false} title="T" />);
-    rerender(<Dialog open initialFocus="panel" title="T" footer={<Button>First</Button>} />);
+    rerender(<Dialog onClose={() => {}} open={false} title="T" />);
+    rerender(<Dialog onClose={() => {}} open initialFocus="panel" title="T" footer={<Button>First</Button>} />);
     expect(screen.getByRole('dialog', { name: 'T' })).toHaveFocus();
   });
 
@@ -204,6 +231,7 @@ describe('Dialog (blocking-overlay options)', () => {
     const ref = createRef<HTMLButtonElement>();
     const { rerender } = render(
       <Dialog
+        onClose={() => {}}
         open
         initialFocus={ref}
         title="T"
@@ -218,22 +246,22 @@ describe('Dialog (blocking-overlay options)', () => {
       />
     );
     expect(screen.getByRole('button', { name: 'Target' })).toHaveFocus();
-    rerender(<Dialog open={false} title="T" />);
-    rerender(<Dialog open initialFocus={createRef<HTMLElement>()} title="T" footer={<Button>First</Button>} />);
+    rerender(<Dialog onClose={() => {}} open={false} title="T" />);
+    rerender(<Dialog onClose={() => {}} open initialFocus={createRef<HTMLElement>()} title="T" footer={<Button>First</Button>} />);
     expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
   });
 
   it('testId is set on the panel', () => {
-    render(<Dialog open testId="my-panel" title="T" />);
+    render(<Dialog onClose={() => {}} open testId="my-panel" title="T" />);
     expect(screen.getByTestId('my-panel')).toHaveAttribute('role', 'dialog');
   });
 
   it('layer: boot adds the boot modifier; default and contained do not', () => {
-    const { rerender } = render(<Dialog open layer="boot" title="T" />);
+    const { rerender } = render(<Dialog onClose={() => {}} open layer="boot" title="T" />);
     expect(screen.getByTestId('ui-dialog-backdrop')).toHaveClass('ui-dialog__backdrop--boot');
-    rerender(<Dialog open title="T" />);
+    rerender(<Dialog onClose={() => {}} open title="T" />);
     expect(screen.getByTestId('ui-dialog-backdrop')).not.toHaveClass('ui-dialog__backdrop--boot');
-    rerender(<Dialog open contained layer="boot" title="T" />);
+    rerender(<Dialog onClose={() => {}} open contained layer="boot" title="T" />);
     expect(screen.getByTestId('ui-dialog-backdrop')).not.toHaveClass('ui-dialog__backdrop--boot');
   });
 
@@ -259,7 +287,7 @@ describe('Dialog (blocking-overlay options)', () => {
 
   it('describedBy sets aria-describedby and the description is exposed', () => {
     render(
-      <Dialog open describedBy="why" title="Titled">
+      <Dialog onClose={() => {}} open describedBy="why" title="Titled">
         <p id="why">Because.</p>
       </Dialog>
     );

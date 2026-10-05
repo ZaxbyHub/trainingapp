@@ -53,14 +53,12 @@ afterEach(() => {
 });
 
 describe('DesktopModelBlockedOverlay actions', () => {
-  it('without onOpenSettings it renders no actions and Tab stays on the dialog (unchanged behavior)', () => {
+  it('without onOpenSettings it renders no actions; focus opens on the dialog', () => {
     render(<DesktopModelBlockedOverlay open />);
     const dialog = screen.getByRole('alertdialog', DIALOG);
     expect(dialog.querySelectorAll('button')).toHaveLength(0);
     expect(dialog).toHaveFocus();
-    const notPrevented = fireEvent.keyDown(dialog, { key: 'Tab' });
-    expect(notPrevented).toBe(false);
-    expect(dialog).toHaveFocus();
+
   });
 
   it('is a non-modal alertdialog described by its body, built from Dialog + Banner + Button (no inline styles)', () => {
@@ -93,7 +91,7 @@ describe('DesktopModelBlockedOverlay actions', () => {
     expect(onOpenSettings.mock.calls[0]).toEqual([]);
   });
 
-  it('keeps focus inside the dialog: the dialog on open, Tab cycles the actions both ways', async () => {
+  it('focus opens on the dialog; Tab moves through the actions and is not trapped (non-modal)', async () => {
     const user = userEvent.setup();
     render(<DesktopModelBlockedOverlay open onOpenSettings={vi.fn()} />);
     const dialog = screen.getByRole('alertdialog', DIALOG);
@@ -104,10 +102,9 @@ describe('DesktopModelBlockedOverlay actions', () => {
     expect(openSettings).toHaveFocus();
     await user.tab();
     expect(external).toHaveFocus();
-    await user.tab(); // wraps instead of escaping the dialog
-    expect(openSettings).toHaveFocus();
-    await user.tab({ shift: true });
-    expect(external).toHaveFocus();
+    // Edge presses are not intercepted: the browser decides where focus goes next.
+    expect(fireEvent.keyDown(external, { key: 'Tab' })).toBe(true);
+    expect(fireEvent.keyDown(openSettings, { key: 'Tab', shiftKey: true })).toBe(true);
   });
 
   it('F-011: Escape is swallowed and the blocking overlay stays open (no dismiss path), as documented', () => {
