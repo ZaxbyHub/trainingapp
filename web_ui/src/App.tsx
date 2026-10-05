@@ -63,6 +63,7 @@ export function LoadingOverlay({
       open
       dismissible={false}
       layer="boot"
+      headingLevel={1}
       className="blocking-gate"
       title={initError ? currentStep : 'Starting TrainingApp'}
       footer={

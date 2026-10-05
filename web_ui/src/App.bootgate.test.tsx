@@ -81,6 +81,14 @@ describe('LoadingOverlay', () => {
     expect(status).toHaveTextContent('Building the index');
   });
 
+  it('PRR-151-035: the boot surface title is the document h1 (loading and failure)', () => {
+    const { rerender } = render(<LoadingOverlay currentStep="Connecting..." initError={null} />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Starting TrainingApp' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
+    rerender(<LoadingOverlay currentStep="Desktop backend unavailable" initError="down" />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Desktop backend unavailable' })).toBeInTheDocument();
+  });
+
   it('PRR-151-041: the status region exists (empty) before its first text lands, so the first step is a content change', () => {
     const observer = new MutationObserver(() => undefined);
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
