@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { createRef, useState } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -194,6 +196,60 @@ describe('Dialog (blocking-overlay options)', () => {
     rerender(<Dialog open={false} title="T" />);
     rerender(<Dialog open initialFocus="panel" title="T" footer={<Button>First</Button>} />);
     expect(screen.getByRole('dialog', { name: 'T' })).toHaveFocus();
+  });
+
+  it('initialFocus ref: focuses the referenced control; an unset ref falls back to the first control', () => {
+    const ref = createRef<HTMLButtonElement>();
+    const { rerender } = render(
+      <Dialog
+        open
+        initialFocus={ref}
+        title="T"
+        footer={
+          <>
+            <Button>First</Button>
+            <button type="button" ref={ref}>
+              Target
+            </button>
+          </>
+        }
+      />
+    );
+    expect(screen.getByRole('button', { name: 'Target' })).toHaveFocus();
+    rerender(<Dialog open={false} title="T" />);
+    rerender(<Dialog open initialFocus={createRef<HTMLElement>()} title="T" footer={<Button>First</Button>} />);
+    expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
+  });
+
+  it('testId is set on the panel', () => {
+    render(<Dialog open testId="my-panel" title="T" />);
+    expect(screen.getByTestId('my-panel')).toHaveAttribute('role', 'dialog');
+  });
+
+  it('layer: boot adds the boot modifier; default and contained do not', () => {
+    const { rerender } = render(<Dialog open layer="boot" title="T" />);
+    expect(screen.getByTestId('ui-dialog-backdrop')).toHaveClass('ui-dialog__backdrop--boot');
+    rerender(<Dialog open title="T" />);
+    expect(screen.getByTestId('ui-dialog-backdrop')).not.toHaveClass('ui-dialog__backdrop--boot');
+    rerender(<Dialog open contained layer="boot" title="T" />);
+    expect(screen.getByTestId('ui-dialog-backdrop')).not.toHaveClass('ui-dialog__backdrop--boot');
+  });
+
+  it('stacking order is deterministic: contained < drawer < default dialog < boot (< toasts 1200)', () => {
+    const css = readFileSync(resolve(__dirname, 'ui.css'), 'utf8');
+    const z = (selector: string): number => {
+      const m = new RegExp(selector.replace(/[.]/g, String.raw`\.`) + String.raw`\s*\{[^}]*z-index:\s*(\d+)`).exec(css);
+      if (!m) throw new Error('no z-index for ' + selector);
+      return Number(m[1]);
+    };
+    const contained = z('.ui-dialog__backdrop--contained');
+    const drawer = z('.ui-shell--drawer .ui-shell__sidebar');
+    const dflt = z('.ui-dialog__backdrop');
+    const boot = z('.ui-dialog__backdrop--boot');
+    expect(contained).toBeLessThan(drawer);
+    expect(drawer).toBeLessThan(dflt);
+    expect(dflt).toBeLessThan(boot);
+    expect(boot).toBeLessThan(1200);
   });
 
   it('describedBy sets aria-describedby and the description is exposed', () => {

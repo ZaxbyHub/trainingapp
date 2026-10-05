@@ -9,6 +9,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
   type ReactNode,
+  type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
 import { cx, mergeIds } from './cx';
@@ -53,12 +54,23 @@ export interface DialogProps {
    */
   contained?: boolean;
   /**
-   * Where focus lands on open: 'first' (default) the first focusable control, or
-   * 'panel' the dialog itself (it is named by the title, so assistive tech reads the
-   * title and description) for a dialog whose content should be read before any
-   * action is offered.
+   * Where focus lands on open: 'first' (default) the first focusable control; 'panel'
+   * the dialog itself (it is named by the title, so assistive tech reads the title and
+   * description) for a dialog whose content should be read before any action is
+   * offered; or a ref to a specific control (falls back to the first focusable control
+   * while the ref is unset).
    */
-  initialFocus?: 'first' | 'panel';
+  initialFocus?: 'first' | 'panel' | RefObject<HTMLElement | null>;
+  /**
+   * Stacking layer of a window-wide dialog. Order, lowest to highest (see ui.css):
+   * contained gates 200 < shell nav drawer 300 < 'default' dialogs 1000 (first-run
+   * wizard, confirmations) < 'boot' 1100 (the boot gate: nothing else is usable
+   * behind it) < toasts 1200. A desktop model gate is `contained` to the chat page, so
+   * it never covers the first-run wizard that fixes it. Ignored when `contained`.
+   */
+  layer?: 'default' | 'boot';
+  /** data-testid for the dialog panel (the backdrop is always "ui-dialog-backdrop"). */
+  testId?: string;
   /** id of the element inside the dialog that describes it (aria-describedby). */
   describedBy?: string;
 }
@@ -82,6 +94,8 @@ export function Dialog({
   modal = true,
   contained = false,
   initialFocus = 'first',
+  layer = 'default',
+  testId,
   describedBy,
 }: DialogProps) {
   const titleId = useId();
@@ -95,7 +109,11 @@ export function Dialog({
     if (!open) return undefined;
     returnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = panelRef.current;
-    const first = initialFocusRef.current === 'panel' ? null : panel?.querySelector<HTMLElement>(FOCUSABLE);
+    const wanted = initialFocusRef.current;
+    const first =
+      wanted === 'panel'
+        ? null
+        : (wanted !== 'first' ? wanted.current : null) ?? panel?.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? panel)?.focus();
     return () => {
       returnRef.current?.focus();
@@ -137,7 +155,11 @@ export function Dialog({
   if (!open) return null;
   const tree = (
     <div
-      className={cx('ui-dialog__backdrop', contained && 'ui-dialog__backdrop--contained')}
+      className={cx(
+        'ui-dialog__backdrop',
+        contained && 'ui-dialog__backdrop--contained',
+        !contained && layer === 'boot' && 'ui-dialog__backdrop--boot'
+      )}
       data-testid="ui-dialog-backdrop"
       onMouseDown={(e) => {
         if (dismissible && e.target === e.currentTarget) onClose?.();
@@ -149,6 +171,7 @@ export function Dialog({
         aria-modal={modal ? 'true' : undefined}
         aria-labelledby={titleId}
         aria-describedby={describedBy}
+        data-testid={testId}
         tabIndex={-1}
         className={cx('ui-dialog', 'ui-focusable', className)}
         onKeyDown={onKeyDown}

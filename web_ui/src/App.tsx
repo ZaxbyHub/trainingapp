@@ -54,6 +54,7 @@ export function LoadingOverlay({
     <Dialog
       open
       dismissible={false}
+      layer="boot"
       className="blocking-gate"
       title={currentStep}
       footer={
