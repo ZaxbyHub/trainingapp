@@ -557,6 +557,8 @@ test('course content cannot reach app storage, app windows, other packs, popups 
 });
 
 test('course content cannot escape its CSP through a same-origin player-origin document (FC6)', async ({ page, browserName }) => {
+  // The course probe alone waits up to 90 s for its report; the default 30 s budget would cut it short.
+  test.setTimeout(150_000);
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
   await installReportCollector(page);
@@ -784,6 +786,8 @@ test('a course cannot steer a child iframe it created off-origin (grandchild nav
 });
 
 test('course content cannot run a same-origin app asset as an unconfined worker (review round 4 F1)', async ({ page, browserName }) => {
+  // The course probe alone waits up to 90 s for its report; the default 30 s budget would cut it short.
+  test.setTimeout(150_000);
   const assets = builtWorkerAssets();
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
