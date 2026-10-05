@@ -49,3 +49,22 @@ test('Tab from the gate leaves it (no trap) and never lands in the inert chat co
     expect(await activeIn(page, '.chat-page__content'), `Tab #${i + 2}`).toBe(false);
   }
 });
+
+test('activating Settings from the nav while the gate is up keeps focus there (not yanked back to the opener)', async ({ page }) => {
+  await boot(page);
+  const nav = page.locator('.ui-shell__sidebar');
+  // Make the opener the Chat nav item: leave the gate's page, then come back with the keyboard.
+  await nav.getByRole('button', { name: 'Documents', exact: true }).click();
+  const chat = nav.getByRole('button', { name: 'Chat', exact: true });
+  await chat.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('alertdialog', { name: 'Model not ready' })).toBeVisible();
+  // The user Tabs into the nav and activates Settings while the gate is up.
+  await page.keyboard.press('Shift+Tab');
+  const settings = nav.getByRole('button', { name: 'Settings', exact: true });
+  await settings.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('alertdialog', { name: 'Model not ready' })).toHaveCount(0);
+  await expect(settings).toBeFocused();
+  expect(await page.evaluate(() => document.activeElement?.textContent?.trim())).not.toBe('Chat');
+});
