@@ -3,7 +3,10 @@
  * Supports clicking to open file picker as well.
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Icon } from '../ui';
+import { cx } from '../ui/cx';
+import '../pages/documents.css';
 
 interface DropZoneProps {
   onFilesSelected: (files: File[]) => void;
@@ -19,6 +22,12 @@ interface DropZoneProps {
    * derive display names via `file.name`.
    */
   onFilesRejected?: (files: File[]) => void;
+  /**
+   * Lumen phase 6: receives this zone's "open the file picker" action, so another
+   * control (the Documents page header's Upload button) opens THIS zone's input
+   * instead of adding a second document file input.
+   */
+  openPickerRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 /**
@@ -55,7 +64,7 @@ export function matchesAccept(file: File, accept?: string): boolean {
 }
 
 export const DropZone: React.FC<DropZoneProps> = React.memo(
-  ({ onFilesSelected, accept, disabled = false, onFilesRejected }) => {
+  ({ onFilesSelected, accept, disabled = false, onFilesRejected, openPickerRef }) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const [isDragOver, setIsDragOver] = useState(false);
 
@@ -112,6 +121,14 @@ export const DropZone: React.FC<DropZoneProps> = React.memo(
       }
     }, [disabled]);
 
+    useEffect(() => {
+      if (openPickerRef === undefined) return undefined;
+      openPickerRef.current = handleClick;
+      return () => {
+        if (openPickerRef.current === handleClick) openPickerRef.current = null;
+      };
+    }, [openPickerRef, handleClick]);
+
     const handleInputChange = useCallback(
       (e: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(e.target.files || []);
@@ -140,29 +157,15 @@ export const DropZone: React.FC<DropZoneProps> = React.memo(
             handleClick();
           }
         }}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 'var(--spacing-xxl)',
-          border: `2px dashed ${
-            isDragOver
-              ? 'var(--color-primary)'
-              : disabled
-              ? 'var(--color-text-muted)'
-              : 'var(--color-bubble-system)'
-          }`,
-          borderRadius: '12px',
-          backgroundColor: isDragOver
-            ? 'rgba(var(--color-primary-rgb), 0.1)'
-            : 'transparent',
-          cursor: disabled ? 'not-allowed' : 'pointer',
-          opacity: disabled ? 0.5 : 1,
-          transition: 'all 0.2s ease',
-          minHeight: '200px',
-        }}
+        className={cx(
+          'app-dropzone',
+          'ui-focusable',
+          isDragOver && 'app-dropzone--active',
+          disabled && 'app-dropzone--disabled'
+        )}
       >
+        {/* Hidden (display:none via the hidden attribute, as before): never
+            visually-hidden, which would leave an aria-hidden focusable input. */}
         <input
           ref={inputRef}
           type="file"
@@ -170,50 +173,19 @@ export const DropZone: React.FC<DropZoneProps> = React.memo(
           multiple
           onChange={handleInputChange}
           disabled={disabled}
-          style={{ display: 'none' }}
+          hidden
           aria-hidden="true"
         />
 
-        <svg
-          width="48"
-          height="48"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke={disabled ? 'var(--color-text-muted)' : 'var(--color-primary)'}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          style={{ marginBottom: 'var(--spacing-md)' }}
-        >
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="17 8 12 3 7 8" />
-          <line x1="12" y1="3" x2="12" y2="15" />
-        </svg>
+        <Icon name="upload" size={32} className="app-dropzone__icon" />
 
-        <p
-          style={{
-            fontSize: 'var(--font-size-body)',
-            fontFamily: 'var(--font-family)',
-            color: disabled ? 'var(--color-text-muted)' : 'var(--color-text-primary)',
-            marginBottom: 'var(--spacing-xs)',
-            textAlign: 'center',
-          }}
-        >
+        <p className="app-dropzone__title">
           {isDragOver
             ? 'Drop files here'
             : 'Drag and drop files here, or click to select'}
         </p>
 
-        <p
-          style={{
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-            color: 'var(--color-text-muted)',
-            textAlign: 'center',
-          }}
-        >
-          Supports PDF, DOCX, XLSX, PPTX, TXT, MD
-        </p>
+        <p className="app-dropzone__hint">Supports PDF, DOCX, XLSX, PPTX, TXT, MD</p>
       </div>
     );
   }

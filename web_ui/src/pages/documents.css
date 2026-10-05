@@ -1,0 +1,131 @@
+/* Lumen phase 6: the Documents surface (DocumentsPage, PacksPanel, DropZone,
+   DocumentList). Lumen tokens only (no legacy --color-* / --spacing-*, no color
+   literals); enforced by pages/documents-training-hygiene.test.ts. Primitive
+   styles (Button, Badge, Banner, ProgressBar, Skeleton, Tabs) live in ui/ui.css. */
+
+/* ---- Page body ---- */
+/* Height chain: page body -> Tabs -> active panel -> list region. The document
+   list owns its own scroll region because its virtualization assumes it starts
+   near the top of its scroller (a scroller further up would blank rows). */
+.app-docs { box-sizing: border-box; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); width: 100%; max-width: var(--w-wide); margin: 0 auto; padding: var(--space-4) var(--space-6) var(--space-6); overflow: hidden; }
+.app-docs__fixed { flex: none; }
+.app-docs__tabs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.app-docs__tabs > .ui-tabs__list { flex: none; }
+.app-docs__tabs > .ui-tabs__panel:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); padding-bottom: 0; }
+/* No pack client (packs unavailable): the documents body without tabs. */
+.app-docs__single { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: var(--space-4); }
+.app-docs__panel-fixed { flex: none; }
+/* The virtualized DocumentList owns its scroll position across a stack/wide switch.
+   overflow-anchor: none is load-bearing: with scroll anchoring on, the browser shifts
+   scrollTop by the table head (shown only in the wide layout) and by the row-height
+   change before the list's layout effect can read the position, so the row kept at the
+   top would drift. Accepted tradeoff: with anchoring off, an async delete of a row ABOVE
+   the viewport shifts the visible rows by one row (nothing re-anchors the scroll). */
+.app-docs__list-region { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; }
+.app-docs__training { flex: 1; min-height: 0; overflow: auto; }
+.app-docs__loading { box-sizing: border-box; display: flex; flex-direction: column; gap: var(--space-2); width: 100%; max-width: var(--w-wide); margin: 0 auto; padding: var(--space-6); }
+.app-docs__loading .ui-skeleton { display: block; width: 100%; }
+
+/* Natively disabled Lumen buttons on this surface. ui.css styles only aria-disabled;
+   these controls stay natively disabled (test contract), which also removes them
+   from the tab order, so they carry both attributes and get the same look here. */
+.app-docs .ui-button:disabled { background: var(--bg-sunken); color: var(--text-disabled); border-color: var(--border-subtle); cursor: not-allowed; filter: none; }
+
+/* ---- Knowledge / training packs panels ---- */
+.app-packs__head { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+.app-packs__title { flex: 1; min-width: 0; margin: 0; font-size: var(--type-heading-size); line-height: var(--type-heading-line); font-weight: var(--type-heading-weight); color: var(--text-primary); }
+.app-packs__note { display: flex; align-items: flex-start; gap: var(--space-2); margin: var(--space-2) 0 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-secondary); }
+.app-packs__note .ui-icon { margin-top: 1px; }
+.app-packs__note--warning { color: var(--warning); }
+.app-packs__empty { margin: var(--space-3) 0 0; font-size: var(--type-body-size); line-height: var(--type-body-line); color: var(--text-secondary); }
+.app-packs__list { list-style: none; margin: var(--space-3) 0 0; padding: 0; border-top: 1px solid var(--border-subtle); }
+.app-packs__row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-3) 0; border-bottom: 1px solid var(--border-subtle); }
+.app-packs__row:last-child { border-bottom: 0; padding-bottom: 0; }
+.app-packs__ident { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; font-size: var(--type-label-size); line-height: var(--type-label-line); color: var(--text-primary); }
+.app-packs__name { font-weight: 600; }
+.app-packs__meta { color: var(--text-secondary); }
+
+/* ---- Dropzone (dashed sunken well) ---- */
+.app-dropzone { box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); min-height: 152px; padding: var(--space-6) var(--space-4); background: var(--bg-sunken); color: var(--text-primary); border: 2px dashed var(--border-control); border-radius: var(--r-card); text-align: center; cursor: pointer; transition: background-color var(--dur-fast) var(--ease-standard), border-color var(--dur-fast) var(--ease-standard); }
+.app-dropzone:hover { border-color: var(--accent); }
+.app-dropzone--active { background: var(--bg-selected); border-color: var(--accent); border-style: solid; }
+.app-dropzone--disabled, .app-dropzone--disabled:hover { color: var(--text-disabled); border-color: var(--border-subtle); cursor: not-allowed; }
+.app-dropzone__icon { margin-bottom: var(--space-2); color: var(--accent); }
+.app-dropzone--disabled .app-dropzone__icon { color: var(--text-disabled); }
+.app-dropzone__title { margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); font-weight: var(--type-label-weight); }
+.app-dropzone__hint { margin: 0; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
+.app-dropzone--disabled .app-dropzone__hint { color: var(--text-disabled); }
+
+/* ---- Document table: role=list rows laid out as a CSS-grid table ---- */
+.app-doc-table { container-type: inline-size; overflow: hidden; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-card); box-shadow: var(--shadow-1); }
+.app-doc-table__head,
+/* Fixed tracks: every row is its own grid, so only fixed widths line the columns up
+   (the status track fits pill + progress + Cancel; longer error text ellipsizes). */
+.app-doc { display: grid; grid-template-columns: 36px minmax(0, 1fr) 88px 96px 288px 32px; column-gap: var(--space-3); padding: 0 var(--space-4); }
+.app-doc-table__head { grid-template-areas: "icon name size chunks status actions"; align-items: center; min-height: 36px; background: var(--bg-sunken); border-bottom: 1px solid var(--border-subtle); font-size: var(--type-micro-size); line-height: var(--type-micro-line); font-weight: 600; color: var(--text-secondary); }
+/* Decorative column labels: generated content, so they add no text to the DOM. */
+.app-doc-table__head [data-label]::before { content: attr(data-label); }
+.app-doc-list__item:last-child .app-doc { border-bottom-color: transparent; }
+/* Row height is fixed (DocumentList ITEM_HEIGHT = 60): the list is virtualized. */
+.app-doc { box-sizing: border-box; grid-template-areas: "icon name size chunks status actions" "icon date size chunks status actions"; grid-template-rows: auto auto; align-content: center; align-items: center; height: 60px; background: var(--bg-surface); border-bottom: 1px solid var(--border-subtle); transition: opacity var(--dur-base) var(--ease-standard); }
+.app-doc--deleting { opacity: 0.5; }
+.app-doc__icon { grid-area: icon; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--r-control); background: var(--bg-selected); color: var(--accent); }
+/* Per-type tile (section 5 "type icon"): shape AND tint differ per type; the
+   icon is decorative because the file name beside it carries the extension. */
+.app-doc__icon--pdf { background: var(--danger-subtle); color: var(--danger); }
+.app-doc__icon--doc { background: var(--info-subtle); color: var(--info); }
+.app-doc__icon--sheet { background: var(--success-subtle); color: var(--success); }
+.app-doc__icon--slides { background: var(--warning-subtle); color: var(--warning); }
+.app-doc__icon--other { background: var(--bg-sunken); color: var(--text-secondary); }
+.app-doc__name { grid-area: name; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-label-size); line-height: var(--type-label-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+.app-doc__date, .app-doc__size, .app-doc__chunks { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-tertiary); }
+/* Wide layouts: the meta wrapper vanishes so date / size / chunks keep their own grid cells. */
+.app-doc__meta { display: contents; }
+.app-doc__date { grid-area: date; }
+.app-doc__size { grid-area: size; color: var(--text-secondary); }
+.app-doc__chunks { grid-area: chunks; color: var(--text-secondary); }
+.app-doc__status { grid-area: status; display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.app-doc__progress { flex: none; width: 80px; }
+.app-doc__error { min-width: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--danger); }
+.app-doc__actions { grid-area: actions; display: flex; justify-content: flex-end; }
+/* The inline delete confirmation takes the status + actions cells. */
+.app-doc__confirm { grid-column: status-start / actions-end; grid-row: 1 / -1; display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); min-width: 0; }
+.app-doc__confirm-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--type-caption-size); line-height: var(--type-caption-line); color: var(--text-primary); }
+.app-doc__delete { color: var(--text-secondary); }
+.app-doc__delete:hover:not(:disabled) { background: var(--danger-subtle); color: var(--danger); }
+
+/* ---- Empty list (ui-empty layout, but the title is a <p>: a heading here would
+   collide with the page's "Documents" heading queries) ---- */
+.app-doc-list__empty { padding: var(--space-10) var(--space-4); }
+.app-doc-list__empty-title { margin: 0; font-size: var(--type-body-size); line-height: var(--type-body-line); font-weight: var(--type-label-weight); color: var(--text-primary); }
+
+@media (forced-colors: active) {
+  .app-dropzone, .app-doc-table { border-color: CanvasText; }
+  .app-dropzone--active { border-color: Highlight; }
+}
+
+/* Table -> stacked rows (design-language.md section 3.5, "must reflow at 320 CSS
+   px", WCAG 1.4.10). The switch follows the width of the TABLE (a size container),
+   not the viewport: the sidebar takes 64px (rail) or 260px (expanded) of it. At or
+   below the breakpoint the name takes its own line (shrinks, ellipsizes), meta wraps
+   and the status + actions take a last line; above it the 632px of fixed tracks plus
+   a ~165px name fit, so Cancel / Delete / Confirm stay inside the table in every
+   state. The delete-confirm text shrinks (ellipsis) so it never pushes Confirm or
+   Cancel out. The meta block (date, size, chunks) is capped at two lines: the fixed row height
+   has no room for a third, whatever the locale's date length or the table width. Row height is fixed for virtualization: the breakpoint and both heights
+   are exported from components/documentRowLayout.ts, pinned by documentRowLayout.test.ts. */
+@container (max-width: 800px) {
+  .app-doc-table__head { display: none; }
+  .app-doc { grid-template-columns: 36px minmax(0, 1fr) max-content; grid-template-rows: auto auto auto; grid-template-areas: "icon name name" "icon meta meta" "status status actions"; row-gap: var(--space-1); column-gap: var(--space-2); height: 112px; padding: var(--space-2) var(--space-3); }
+  .app-doc__icon { align-self: start; }
+  .app-doc__meta { grid-area: meta; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: var(--space-2); min-width: 0; max-height: calc(2 * var(--type-caption-line)); overflow: hidden; }
+  .app-doc__size::before, .app-doc__chunks:not(:empty)::before { content: "•"; margin-right: var(--space-2); }
+  .app-doc__status { min-width: 0; }
+  .app-doc__progress { flex: 1 1 40px; min-width: 32px; max-width: 80px; }
+  .app-doc__error { flex: 1 1 0; max-width: none; }
+  .app-doc__confirm { grid-column: 1 / -1; grid-row: 3; }
+}
+
+@media (max-width: 500px) {
+  .app-docs, .app-docs__loading { padding: var(--space-3) var(--space-4) var(--space-4); }
+}

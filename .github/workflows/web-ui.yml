@@ -227,7 +227,8 @@ jobs:
       - name: Run browser pack e2e
         run: npm run test:e2e
 
-      # Lumen a11y subset (axe + tooltip overflow) of the visual harness. Reuses the
+      # Lumen a11y subset (axe, tooltip overflow, document-row reflow and document-list
+      # scroll specs; the list is in web_ui/package.json) of the visual harness. Reuses the
       # dist/ built by the step above; the pixel-baseline spec is Windows-only and
       # is deliberately not run here (see web_ui/e2e/visual/README.md).
       - name: Run Lumen a11y visual subset

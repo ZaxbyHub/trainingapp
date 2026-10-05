@@ -92,10 +92,12 @@ Inter (already bundled via `@fontsource/inter` 400–700, airgap-safe). Monospac
 | Width | Shell | Settings | Chat | Documents / Training |
 |---|---|---|---|---|
 | > 1024 | sidebar 260px, collapsible to 64 | section nav + form | reading column | table / grid (3–4 cols) |
-| 769–1024 | sidebar collapsed to 64 by default (matches `useSidebarState.ts:14`) | section nav collapses into a top row of in-page links (`aria-current`, not `Tabs`: it navigates within the page, it does not switch panels) | reading column fills | grid 2–3 cols |
+| 769–1024 | sidebar collapsed to 64 by default (matches `useSidebarState.ts:14`) | section nav collapses into a top row of in-page links (`aria-current`, not `Tabs`: it navigates within the page, it does not switch panels) | reading column fills | table while its container is wider than 800px, else stacked rows (see note); grid 2–3 cols |
 | 501–768 | sidebar becomes an overlay drawer | single column, section select | full width, 16px gutter | table → list rows; grid 2 cols |
 | ≤ 500 ("EHR side-panel / split-screen", `theme.css:68-74`) | drawer; header actions wrap | single column | composer controls wrap; citations collapse into a count chip | list rows; grid 1 col |
 Must reflow without horizontal scroll at 320 CSS px (200%/400% zoom).
+
+Document rows do not follow the viewport columns above. They stack (name, meta and status on separate lines, 112px rows) based on the table's container width, via `@container (max-width: 800px)` on the table (`pages/documents.css`, `components/documentRowLayout.ts`). The room a table has is the viewport minus the sidebar (64px rail or 260px expanded) and the page padding, so with the rail rows stay stacked up to about a 914px viewport, and with the expanded sidebar up to roughly 1100px. The 769–1024 and 501–768 table cells above are therefore a guide, not the rule.
 
 ### 3.6 States
 Every interactive primitive defines: rest, hover, active, focus-visible (outline), selected/checked (color + non-color cue), disabled (`aria-disabled`, `--text-disabled`, no hover), loading (spinner + `aria-busy`), error (`--danger` text + `aria-invalid` + `aria-describedby` message), empty (EmptyState).

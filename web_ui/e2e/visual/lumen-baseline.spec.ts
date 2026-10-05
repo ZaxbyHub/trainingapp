@@ -287,6 +287,20 @@ function hardwareValueMasks(page: Page): Locator[] {
   ];
 }
 
+/**
+ * The re-index notice banner's rounded bottom-left corner rasterizes in one of two
+ * ways at dark @ 1024 (an anti-aliasing wobble at x 89-92, y 158-160). The committed
+ * baseline is the MINORITY rasterization: with zero tolerance it fails about 9 runs in 10,
+ * at exactly 1px. The 6px allowance therefore absorbs a frequent 1px difference (measured
+ * 0-1px against an unmasked, freshly regenerated baseline) instead of masking the banner
+ * (a mask would hide a real banner regression). Every other image keeps the config's
+ * zero tolerance. Playwright takes the
+ * stricter of maxDiffPixels and maxDiffPixelRatio, and the config pins the ratio to 0, so
+ * the ratio is relaxed here too (0.0001 of the image is well above 6px; maxDiffPixels binds).
+ */
+const bannerCornerTolerance = (state: string, theme: string, width: number): { maxDiffPixels: number; maxDiffPixelRatio: number } | Record<string, never> =>
+  state === 'documents-populated' && theme === 'dark' && width === 1024 ? { maxDiffPixels: 6, maxDiffPixelRatio: 0.0001 } : {};
+
 /** Dynamic, machine-derived regions that must not enter a baseline. */
 function dynamicMasks(page: Page): Locator[] {
   return [
@@ -336,6 +350,7 @@ for (const theme of THEMES) {
           await expect(page).toHaveScreenshot(`${state.id}-${theme}-${width}.png`, {
             mask: dynamicMasks(page),
             ...railGearTolerance(state.id, theme, width),
+            ...bannerCornerTolerance(state.id, theme, width),
           });
         });
       }

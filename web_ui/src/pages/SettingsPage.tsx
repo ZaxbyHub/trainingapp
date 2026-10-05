@@ -403,7 +403,7 @@ function deleteEdgeVecBlob(prefix: string): Promise<void> {
 
 /** The browser-stored user settings Clear Cache removes (persisted-keys.ts USER_SETTING_KEYS). */
 const CLEARED_SETTINGS_COPY =
-  'inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course and the pack update setting';
+  'inference mode, browser engine and response-quality choices, theme, external model connection and API key, sidebar state, last-opened course, course progress and the pack update setting';
 
 /**
  * Delay between the final Clear Cache status and the reload (PR #140 review

@@ -6,14 +6,16 @@ default `npm run test:e2e` config ignores this folder). Design context:
 
 | Spec | What it checks | Runs in CI |
 | --- | --- | --- |
-| `lumen-axe.spec.ts` | axe-core serious/critical nodes per surface, theme, width | yes |
+| `lumen-axe.spec.ts` | axe-core serious/critical nodes per surface, theme, width; plus the populated Training surfaces with a fixture course installed through the Packs panel (Documents > Training packs tab, Training library, player page host chrome with the course iframe excluded), which allow zero nodes and no baseline | yes |
 | `lumen-axe-settings-full.spec.ts` | axe-core on the WHOLE Settings page (viewport grown to the content; no baseline), default and External-model-configured states, light/dark at 1440 / 1024 / 500 | yes |
 | `lumen-tooltip-overflow.spec.ts` | tooltip stays inside a 500px viewport | yes |
+| `lumen-doc-row-reflow.spec.ts` | document rows reflow (container query on the table), never clip Delete/Cancel/Confirm, at 320-1440px with the 64px rail or 260px sidebar; dates in several locales (en-US, de-DE, fi-FI and a worst-case string) never overflow the row; sidebar, drawer and spacing geometry is read from source, so a CSS change cannot silently drift the test | yes |
+| `lumen-doc-list-scroll.spec.ts` | the real DocumentList (80 docs): keeps the same row at the top and focus on its control across the 800px stack/wide switch; inline row height equals rendered height on both sides of the boundary; delete-confirm hands focus to the neighbouring row (never `<body>`) and keeps it inside the scroll region, including two quick deletes; a focus-pinned row stays pinned only while it holds focus; adding a document does not scroll the user away; bottom-up quick deletes (first delete held in IndexedDB) never focus a row whose own delete is in flight; header Upload keeps focus around the file chooser | yes |
 | `lumen-baseline.spec.ts` | `toHaveScreenshot` pixel baselines | no (Windows only) |
 
-CI runs only the a11y subset (`npm run test:visual:a11y:ci`, reusing the
-`web-ui-e2e` job's `dist/`). Locally, `npm run test:visual:a11y` builds first and
-runs the same two specs; `npm run test:visual` runs everything including pixels.
+CI runs only the a11y subset (`npm run test:visual:a11y:ci`: every spec above
+marked "yes", reusing the `web-ui-e2e` job's `dist/`). Locally,
+`npm run test:visual:a11y` builds first and runs the same specs; `npm run test:visual` runs everything including pixels.
 
 ## Who re-baselines, and when
 

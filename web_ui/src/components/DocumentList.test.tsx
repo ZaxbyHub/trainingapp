@@ -4,9 +4,10 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
-import { DocumentList } from './DocumentList';
+import { DocumentList, documentKind } from './DocumentList';
+import { ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from './documentRowLayout';
 import type { DocumentEntry } from '../types/document';
 
 describe('DocumentList', () => {
@@ -108,6 +109,17 @@ describe('DocumentList', () => {
       const documentElement = screen.getByText('dated.pdf').closest('div');
       expect(documentElement).toBeInTheDocument();
     });
+
+    // Review PRR-211: the date ellipsizes when the stacked row is narrow; the full text stays available.
+    it('carries the full date as the title of the (possibly ellipsized) date cell', () => {
+      const uploadedAt = new Date('2024-01-15T10:30:00').getTime();
+      const { container } = render(
+        <DocumentList documents={[createDocument({ id: 'doc-1', uploadedAt })]} onDelete={vi.fn()} deletingId={null} />
+      );
+      const cell = container.querySelector('.app-doc__date');
+      expect(cell?.textContent).toBeTruthy();
+      expect(cell?.getAttribute('title')).toBe(cell?.textContent);
+    });
   });
 
   describe('Status Badges', () => {
@@ -170,8 +182,9 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
-      const progressBar = document.querySelector('div[style*="80px"]');
-      expect(progressBar).toBeInTheDocument();
+      // Lumen phase 6: role/value assertions (was an inline width-style string).
+      const progressBar = screen.getByRole('progressbar');
+      expect(progressBar).toHaveAttribute('aria-valuenow', String(documents[0].progress));
     });
 
     it('displays progress bar for processing documents', () => {
@@ -181,8 +194,9 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
-      const progressBar = document.querySelector('div[style*="80px"]');
-      expect(progressBar).toBeInTheDocument();
+      // Lumen phase 6: role/value assertions (was an inline width-style string).
+      const progressBar = screen.getByRole('progressbar');
+      expect(progressBar).toHaveAttribute('aria-valuenow', String(documents[0].progress));
     });
 
     it('hides progress bar for ready documents', () => {
@@ -192,9 +206,7 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
-      // Progress bar divs are 80px wide, ready status should not have them
-      const progressBars = document.querySelectorAll('div[style*="80px"]');
-      expect(progressBars).toHaveLength(0);
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
     it('hides progress bar for error documents', () => {
@@ -204,8 +216,7 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId={null} />);
 
-      const progressBars = document.querySelectorAll('div[style*="80px"]');
-      expect(progressBars).toHaveLength(0);
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
     });
 
     it('displays chunk count when available', () => {
@@ -286,6 +297,166 @@ describe('DocumentList', () => {
       expect(deleteButtonAgain).toBeInTheDocument();
     });
 
+    // Review LOW-A / LOW-B: every step of arm -> cancel/confirm removes the focused
+    // control, which drops focus to <body> unless it is moved on purpose.
+    describe('focus management', () => {
+      const threeDocs = () => [
+        createDocument({ id: 'a', fileName: 'a.pdf' }),
+        createDocument({ id: 'b', fileName: 'b.pdf' }),
+        createDocument({ id: 'c', fileName: 'c.pdf' }),
+      ];
+      const arm = (name: string) => {
+        const trash = screen.getByRole('button', { name: `Delete ${name}` });
+        trash.focus();
+        fireEvent.click(trash);
+      };
+
+      it('arming the confirm moves focus to Cancel (the safe default), not <body>', () => {
+        render(<DocumentList documents={threeDocs()} onDelete={vi.fn()} deletingId={null} />);
+        arm('b.pdf');
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel delete b.pdf' }));
+      });
+
+      it('cancelling returns focus to that row\'s trash button', () => {
+        render(<DocumentList documents={threeDocs()} onDelete={vi.fn()} deletingId={null} />);
+        arm('b.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel delete b.pdf' }));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete b.pdf' }));
+      });
+
+      it('confirming moves focus to the next row\'s delete button', () => {
+        render(<DocumentList documents={threeDocs()} onDelete={vi.fn()} deletingId={null} />);
+        arm('a.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete b.pdf' }));
+      });
+
+      it('confirming the last row moves focus to the previous row\'s delete button', () => {
+        render(<DocumentList documents={threeDocs()} onDelete={vi.fn()} deletingId={null} />);
+        arm('c.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete c.pdf' }));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete b.pdf' }));
+      });
+
+      it('confirming the only row focuses the list, then the empty state once it is gone', () => {
+        const only = [createDocument({ id: 'a', fileName: 'a.pdf' })];
+        const { rerender } = render(<DocumentList documents={only} onDelete={vi.fn()} deletingId={null} />);
+        arm('a.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+        expect(document.activeElement).toBe(screen.getByRole('list', { name: 'Uploaded documents' }));
+        rerender(<DocumentList documents={[]} onDelete={vi.fn()} deletingId={null} />);
+        expect(document.activeElement).not.toBe(document.body);
+        expect(document.activeElement?.className).toContain('app-doc-list__empty');
+      });
+
+      // Review NIT-2: clicking plain row text must not land focus on the list.
+      it('gives the list a tabindex only while focus has to land on it', () => {
+        const only = [createDocument({ id: 'a', fileName: 'a.pdf' })];
+        render(<DocumentList documents={only} onDelete={vi.fn()} deletingId={null} />);
+        const list = screen.getByRole('list', { name: 'Uploaded documents' });
+        expect(list.hasAttribute('tabindex')).toBe(false);
+        arm('a.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+        expect(document.activeElement).toBe(list);
+        expect(list.getAttribute('tabindex')).toBe('-1');
+        act(() => list.blur());
+        expect(list.hasAttribute('tabindex')).toBe(false);
+      });
+
+      it('a failed delete that leaves the list alone does not hijack focus later', () => {
+        const only = [createDocument({ id: 'a', fileName: 'a.pdf' })];
+        const { rerender } = render(<DocumentList documents={only} onDelete={vi.fn()} deletingId={null} />);
+        arm('a.pdf');
+        fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+        // The user moves on (focus leaves the list), the delete never lands.
+        act(() => (document.activeElement as HTMLElement).blur());
+        rerender(<DocumentList documents={[]} onDelete={vi.fn()} deletingId={null} />);
+        expect(document.activeElement).toBe(document.body);
+      });
+
+      // Critic C-1: the page tracks ONE deletingId, and a delete takes a while to land. A
+      // second quick delete from the bottom of the list must not hand focus to the row whose
+      // own delete is still in flight (its trash is disabled and the row is about to go).
+      describe('quick deletes that start before the previous one landed (critic C-1)', () => {
+        const api = { land: (_id: string) => {}, upload: (_doc: DocumentEntry) => {} };
+        const fourDocs = () => [
+          createDocument({ id: 'a', fileName: 'a.pdf' }),
+          createDocument({ id: 'b', fileName: 'b.pdf' }),
+          createDocument({ id: 'c', fileName: 'c.pdf' }),
+          createDocument({ id: 'd', fileName: 'd.pdf' }),
+        ];
+        // Mirrors DocumentsPage: onDelete takes the single deletingId slot; nothing is removed
+        // until the test lands it (api.land), like the page's async handleDelete.
+        const Host = ({ initial }: { initial: DocumentEntry[] }) => {
+          const [documents, setDocuments] = React.useState(initial);
+          const [deletingId, setDeletingId] = React.useState<string | null>(null);
+          api.upload = (doc) => setDocuments((current) => [doc, ...current]);
+          api.land = (id) => {
+            setDocuments((current) => current.filter((doc) => doc.id !== id));
+            setDeletingId((current) => (current === id ? null : current));
+          };
+          return <DocumentList documents={documents} onDelete={setDeletingId} deletingId={deletingId} />;
+        };
+        const confirm = (name: string) => {
+          arm(name);
+          fireEvent.click(screen.getByRole('button', { name: `Confirm delete ${name}` }));
+        };
+        const delButton = (name: string) => screen.getByRole('button', { name: `Delete ${name}` });
+
+        it('bottom-up: confirming c while d is still deleting focuses b, not <body>', () => {
+          render(<Host initial={fourDocs()} />);
+          confirm('d.pdf');
+          expect(document.activeElement).toBe(delButton('c.pdf'));
+          confirm('c.pdf');
+          expect(document.activeElement).toBe(delButton('b.pdf'));
+          act(() => api.land('d'));
+          expect(document.activeElement).toBe(delButton('b.pdf'));
+          act(() => api.land('c'));
+          expect(document.activeElement).toBe(delButton('b.pdf'));
+        });
+
+        it('forward: confirming b then c still walks down the list', () => {
+          render(<Host initial={fourDocs()} />);
+          confirm('b.pdf');
+          expect(document.activeElement).toBe(delButton('c.pdf'));
+          confirm('c.pdf');
+          expect(document.activeElement).toBe(delButton('d.pdf'));
+        });
+
+        it('an upload landing mid-delete does not make the in-flight row a target again', () => {
+          render(<Host initial={fourDocs()} />);
+          confirm('d.pdf');
+          // An upload lands while d is still deleting: the list grows (new row on top).
+          act(() => api.upload(createDocument({ id: 'e', fileName: 'e.pdf' })));
+          confirm('c.pdf');
+          expect(document.activeElement).toBe(delButton('b.pdf'));
+        });
+
+        it('falls back to the list when the neighbour is natively disabled by a delete this list did not start', () => {
+          const docs = [createDocument({ id: 'a', fileName: 'a.pdf' }), createDocument({ id: 'b', fileName: 'b.pdf' })];
+          render(<DocumentList documents={docs} onDelete={vi.fn()} deletingId="b" />);
+          arm('a.pdf');
+          fireEvent.click(screen.getByRole('button', { name: 'Confirm delete a.pdf' }));
+          const list = screen.getByRole('list', { name: 'Uploaded documents' });
+          expect(document.activeElement).not.toBe(document.body);
+          expect(document.activeElement).toBe(list);
+        });
+      });
+    });
+
+    // Review NIT-1: pinned rows make the exposed list non-contiguous.
+    it('exposes each row\'s position in the full list (aria-posinset / aria-setsize)', () => {
+      const documents = [
+        createDocument({ id: 'a', fileName: 'a.pdf' }),
+        createDocument({ id: 'b', fileName: 'b.pdf' }),
+        createDocument({ id: 'c', fileName: 'c.pdf' }),
+      ];
+      render(<DocumentList documents={documents} onDelete={vi.fn()} deletingId={null} />);
+      const rows = screen.getAllByRole('listitem');
+      expect(rows.map((row) => row.getAttribute('aria-posinset'))).toEqual(['1', '2', '3']);
+      expect(rows.map((row) => row.getAttribute('aria-setsize'))).toEqual(['3', '3', '3']);
+    });
+
     it('disables delete button when document is being deleted', () => {
       const mockOnDelete = vi.fn();
       const documents = [
@@ -304,11 +475,11 @@ describe('DocumentList', () => {
       ];
       render(<DocumentList documents={documents} onDelete={mockOnDelete} deletingId="doc-123" />);
 
-      // The document item should have opacity 0.5 when deleting
-      // We can verify by checking the parent element of the delete button
+      // Lumen phase 6: the dimmed state is the row's deleting modifier class
+      // (pages/documents.css sets its opacity), not an inline style string.
       const deleteButton = screen.getByRole('button', { name: /delete deleting\.pdf/i });
-      const parentWithOpacity = deleteButton.closest('div[style*="opacity"]');
-      expect(parentWithOpacity).toBeInTheDocument();
+      expect(deleteButton.closest('.app-doc')).toHaveClass('app-doc--deleting');
+      expect(deleteButton).toBeDisabled();
     });
   });
 
@@ -356,6 +527,542 @@ describe('DocumentList', () => {
       // Only the visible documents' filenames should be present in the DOM
       const renderedDocNames = screen.queryAllByText(/doc\d+\.pdf/);
       expect(renderedDocNames.length).toBeLessThan(50);
+    });
+  });
+
+  // Lumen phase 6 review B1: stacked rows are taller, and the virtualization offsets
+  // must follow the layout the CSS has active. That layout is an `@container` query
+  // on the table, so the height follows the TABLE's width (ResizeObserver), not the
+  // viewport (documentRowLayout.test.ts pins the CSS threshold to the same constant).
+  describe('Stacked row height follows the table container (critic B1)', () => {
+    let width = 1000;
+    let observerCallback: ResizeObserverCallback | null = null;
+    let rectSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      observerCallback = null;
+      rectSpy = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          const w = this.classList.contains('app-doc-table') ? width : 0; // jsdom loads no CSS: no borders to subtract
+          return { width: w, height: 0, top: 0, left: 0, right: w, bottom: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+        });
+      vi.stubGlobal(
+        'ResizeObserver',
+        class {
+          constructor(cb: ResizeObserverCallback) {
+            observerCallback = cb;
+          }
+          observe() {}
+          disconnect() {}
+          unobserve() {}
+        }
+      );
+    });
+    afterEach(() => {
+      rectSpy.mockRestore();
+      vi.unstubAllGlobals();
+    });
+
+    const resizeTo = (next: number) => {
+      width = next;
+      act(() => {
+        observerCallback?.([{ contentRect: { width: next } } as ResizeObserverEntry], {} as ResizeObserver);
+      });
+    };
+    const ids = ['a', 'b'];
+    const renderList = (n = 2) =>
+      render(
+        <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+          <DocumentList
+            documents={Array.from({ length: n }, (_, i) => createDocument({ id: ids[i] ?? `d${i}` }))}
+            onDelete={vi.fn()}
+            deletingId={null}
+          />
+        </div>
+      );
+    const tops = (container: HTMLElement): string[] =>
+      Array.from(container.querySelectorAll<HTMLElement>('[role="listitem"]')).map(
+        (el) => el.style.top + '/' + el.style.height
+      );
+
+    it('exports the shared constants the CSS rule is pinned to', () => {
+      expect(STACKED_MAX_WIDTH).toBe(800);
+      expect(ITEM_HEIGHT).toBe(60);
+      expect(STACKED_ITEM_HEIGHT).toBe(112);
+    });
+
+    it('uses 60px rows above the breakpoint and 112px at or below it', () => {
+      width = STACKED_MAX_WIDTH + 1;
+      const wide = renderList();
+      expect(tops(wide.container)).toEqual(['0px/60px', '60px/60px']);
+      wide.unmount();
+      width = STACKED_MAX_WIDTH;
+      const narrow = renderList();
+      expect(tops(narrow.container)).toEqual(['0px/112px', '112px/112px']);
+    });
+
+    it('an unmeasured container (0px, e.g. jsdom) keeps the wide height', () => {
+      width = 0;
+      const { container } = renderList();
+      expect(tops(container)).toEqual(['0px/60px', '60px/60px']);
+    });
+
+    it('re-evaluates when the container resizes (sidebar toggled, window resized)', () => {
+      width = 1000;
+      const { container } = renderList();
+      expect(tops(container)[1]).toBe('60px/60px');
+      resizeTo(700);
+      expect(tops(container)[1]).toBe('112px/112px');
+      resizeTo(STACKED_MAX_WIDTH + 1);
+      expect(tops(container)[1]).toBe('60px/60px');
+    });
+
+    // Review B-1. A real browser clamps scrollTop to scrollHeight - clientHeight the
+    // moment the placeholder shrinks, so a layout effect that reads scrollTop after
+    // the commit has already lost the position. This models that clamp, a 37px table
+    // head that exists only in the wide layout, and a focused row control.
+    describe('scroll position survives the browser clamp (review B-1)', () => {
+      const HEAD = 37;
+      const CLIENT_HEIGHT = 300;
+      const names = Array.from({ length: 80 }, (_, i) => `Doc-${String(i).padStart(3, '0')}.pdf`);
+
+      const setup = (initialWidth: number) => {
+        width = initialWidth;
+        let raw = 0;
+        const view = render(
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList
+              documents={names.map((fileName, i) => createDocument({ id: `d${i}`, fileName }))}
+              onDelete={vi.fn()}
+              deletingId={null}
+            />
+          </div>
+        );
+        const scroller = view.getByTestId('scroller');
+        const head = () => (width > STACKED_MAX_WIDTH ? HEAD : 0);
+        const maxScroll = () => {
+          const placeholder = scroller.querySelector<HTMLElement>('[role="list"] > div');
+          return head() + parseFloat(placeholder?.style.height ?? '0') - CLIENT_HEIGHT;
+        };
+        Object.defineProperty(scroller, 'clientHeight', { configurable: true, get: () => CLIENT_HEIGHT });
+        Object.defineProperty(scroller, 'scrollTop', {
+          configurable: true,
+          // The clamp is applied on every read, like a browser does at layout.
+          get: () => Math.min(Math.max(raw, 0), Math.max(maxScroll(), 0)),
+          set: (value: number) => {
+            raw = value;
+          },
+        });
+        rectSpy.mockImplementation(function (this: HTMLElement) {
+          const w = this.classList.contains('app-doc-table') ? width : 0;
+          const top = this.getAttribute('role') === 'list' ? head() - scroller.scrollTop : 0;
+          return { width: w, height: 0, top, left: 0, right: w, bottom: top, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
+        });
+        return { ...view, scroller };
+      };
+      const deleteLabels = (container: HTMLElement): string[] =>
+        Array.from(container.querySelectorAll('[role="listitem"] [aria-label^="Delete "]')).map(
+          (el) => el.getAttribute('aria-label') ?? ''
+        );
+
+      it('keeps row 60 of 80 at the top across stacked -> wide -> stacked', () => {
+        const { container, scroller } = setup(700);
+        scroller.scrollTop = 60 * STACKED_ITEM_HEIGHT; // 6720, past the wide-layout maximum
+        fireEvent.scroll(scroller);
+        resizeTo(1000);
+        expect(scroller.scrollTop).toBe(HEAD + 60 * ITEM_HEIGHT);
+        resizeTo(700);
+        expect(scroller.scrollTop).toBe(60 * STACKED_ITEM_HEIGHT);
+        expect(deleteLabels(container)).toContain('Delete Doc-060.pdf');
+      });
+
+      it('keeps keyboard focus on the same row control across the switch', () => {
+        const { scroller } = setup(700);
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        const trigger = screen.getByRole('button', { name: 'Delete Doc-070.pdf' });
+        trigger.focus();
+        expect(document.activeElement).toBe(trigger);
+        resizeTo(1000);
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-070.pdf' }));
+        resizeTo(700);
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-070.pdf' }));
+      });
+
+      // Review (focus blocker): the window follows the scroll position, so a focused
+      // row far outside it used to unmount and drop focus to <body>.
+      it('keeps the focused row (and its neighbours) rendered when the window moves away', () => {
+        const { scroller, container } = setup(700);
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        const trigger = screen.getByRole('button', { name: 'Delete Doc-070.pdf' });
+        trigger.focus();
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        expect(screen.getByRole('button', { name: 'Delete Doc-070.pdf' })).toBe(trigger);
+        expect(document.activeElement).toBe(trigger);
+        // Tab / Shift+Tab can still reach the next and previous rows, in index order.
+        const labels = deleteLabels(container);
+        expect(labels).toContain('Delete Doc-069.pdf');
+        expect(labels).toContain('Delete Doc-071.pdf');
+        expect(labels).not.toContain('Delete Doc-072.pdf');
+        expect(labels).toEqual([...labels].sort());
+        const pinned = Array.from(container.querySelectorAll<HTMLElement>('[role="listitem"]')).find((el) =>
+          el.contains(trigger)
+        );
+        expect(pinned?.style.top).toBe(`${70 * STACKED_ITEM_HEIGHT}px`);
+        // Once focus leaves the list, the row is virtualized away again.
+        act(() => trigger.blur());
+        expect(deleteLabels(container)).not.toContain('Delete Doc-070.pdf');
+      });
+
+      // Review LOW-A. An armed row keeps focus (on Cancel), so it stays pinned and mounted
+      // while it is scrolled out of sight: a focused control must not vanish (WCAG 2.4.3).
+      // That is intentional. What must not happen is the pin outliving the focus: the moment
+      // focus leaves, the row (and its neighbours) is virtualized away and its armed state
+      // goes with it, so an armed "Delete X?" never lingers un-focused off screen.
+      it('keeps an armed row pinned only while it holds focus, then drops it and its armed state', () => {
+        const { scroller, container } = setup(700);
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        const trash = screen.getByRole('button', { name: 'Delete Doc-070.pdf' });
+        trash.focus();
+        fireEvent.click(trash);
+        const cancel = screen.getByRole('button', { name: 'Cancel delete Doc-070.pdf' });
+        expect(document.activeElement).toBe(cancel);
+
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        expect(screen.getByRole('button', { name: 'Cancel delete Doc-070.pdf' })).toBe(cancel);
+        expect(document.activeElement).toBe(cancel);
+        expect(deleteLabels(container)).toContain('Delete Doc-069.pdf');
+
+        act(() => cancel.blur());
+        expect(screen.queryByRole('button', { name: 'Cancel delete Doc-070.pdf' })).toBeNull();
+        expect(deleteLabels(container)).not.toContain('Delete Doc-069.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-071.pdf');
+
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        expect(screen.getByRole('button', { name: 'Delete Doc-070.pdf' })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Cancel delete Doc-070.pdf' })).toBeNull();
+      });
+
+      // Review NIT-2 (and the LOW-A mechanism): removing a focused element fires no blur,
+      // so a deleted document used to leave focusedId set and its neighbours pinned.
+      it('clears the pin when the focused document is removed from the list', () => {
+        const documents = names.map((fileName, i) => createDocument({ id: `d${i}`, fileName }));
+        const { scroller, container, rerender } = setup(700);
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        screen.getByRole('button', { name: 'Delete Doc-070.pdf' }).focus();
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        expect(deleteLabels(container)).toContain('Delete Doc-069.pdf');
+
+        rerender(
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList
+              documents={documents.filter((doc) => doc.id !== 'd70')}
+              onDelete={vi.fn()}
+              deletingId={null}
+            />
+          </div>
+        );
+        expect(deleteLabels(container)).not.toContain('Delete Doc-069.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-071.pdf');
+
+        // The stale id must be gone, not just harmless while the document is absent: if the
+        // same document comes back (re-upload, failed delete refresh) it must not re-pin.
+        rerender(
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents} onDelete={vi.fn()} deletingId={null} />
+          </div>
+        );
+        expect(deleteLabels(container)).not.toContain('Delete Doc-069.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-070.pdf');
+        expect(deleteLabels(container)).not.toContain('Delete Doc-071.pdf');
+      });
+
+      // Review LOW-A mechanism: a focused control that is REMOVED (here the processing
+      // row's "Cancel indexing" button, gone once indexing finishes) fires no blur, so
+      // onBlur alone left the row and its neighbours pinned for good.
+      // (No onDelete here: the host exposes no per-document delete, so there is no control to
+      // hand focus to and it really is lost.)
+      const rowNames = (container: HTMLElement): string[] =>
+        Array.from(container.querySelectorAll('.app-doc__name')).map((el) => el.textContent ?? '');
+      it('clears the pin when the focused control disappears without a blur', () => {
+        const documents = (status: 'processing' | 'ready') =>
+          names.map((fileName, i) => createDocument({ id: `d${i}`, fileName, status: i === 70 ? status : 'ready' }));
+        const tree = (status: 'processing' | 'ready') => (
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents(status)} onCancelIndexing={vi.fn()} deletingId={null} />
+          </div>
+        );
+        const { scroller, container, rerender } = setup(700);
+        rerender(tree('processing'));
+        scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+        fireEvent.scroll(scroller);
+        const cancelIndexing = screen.getByRole('button', { name: 'Cancel indexing Doc-070.pdf' });
+        cancelIndexing.focus();
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        expect(rowNames(container)).toContain('Doc-069.pdf');
+
+        rerender(tree('ready'));
+        expect(document.activeElement).toBe(document.body);
+        expect(rowNames(container)).not.toContain('Doc-069.pdf');
+        expect(rowNames(container)).not.toContain('Doc-070.pdf');
+        expect(rowNames(container)).not.toContain('Doc-071.pdf');
+      });
+
+      // Review NIT-1: when indexing finishes the focused "Cancel indexing" button is removed;
+      // focus goes to that row's delete button rather than <body>.
+      it('moves focus to the row delete button when the focused Cancel indexing control goes away', () => {
+        const documents = (status: 'processing' | 'ready') =>
+          names.map((fileName, i) => createDocument({ id: `d${i}`, fileName, status: i === 3 ? status : 'ready' }));
+        const tree = (status: 'processing' | 'ready') => (
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents(status)} onDelete={vi.fn()} onCancelIndexing={vi.fn()} deletingId={null} />
+          </div>
+        );
+        const { rerender } = setup(700);
+        rerender(tree('processing'));
+        screen.getByRole('button', { name: 'Cancel indexing Doc-003.pdf' }).focus();
+        rerender(tree('ready'));
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-003.pdf' }));
+      });
+
+      it('leaves focus alone when the user already moved off Cancel indexing before it finished', () => {
+        const documents = (status: 'processing' | 'ready') =>
+          names.map((fileName, i) => createDocument({ id: `d${i}`, fileName, status: i === 3 ? status : 'ready' }));
+        const tree = (status: 'processing' | 'ready') => (
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents(status)} onDelete={vi.fn()} onCancelIndexing={vi.fn()} deletingId={null} />
+          </div>
+        );
+        const { rerender } = setup(700);
+        rerender(tree('processing'));
+        screen.getByRole('button', { name: 'Cancel indexing Doc-003.pdf' }).focus();
+        const other = screen.getByRole('button', { name: 'Delete Doc-004.pdf' });
+        other.focus();
+        rerender(tree('ready'));
+        expect(document.activeElement).toBe(other);
+      });
+
+      // Review LOW-3: the wide layout's table head is above the list, so converting the
+      // top of the list must land on scrollTop 0, not on the head offset.
+      it('shows the table head when switching stacked -> wide at the very top', () => {
+        const { scroller } = setup(700);
+        scroller.scrollTop = 0;
+        fireEvent.scroll(scroller);
+        resizeTo(1000);
+        expect(scroller.scrollTop).toBe(0);
+        resizeTo(700);
+        expect(scroller.scrollTop).toBe(0);
+      });
+
+      it('rounds (not truncates) the converted scrollTop', () => {
+        const { scroller } = setup(700);
+        scroller.scrollTop = 3380; // row 30.18 of 112px rows
+        fireEvent.scroll(scroller);
+        resizeTo(1000);
+        // 37 + 30.18 * 60 = 1847.71: truncating would land on 1847.
+        expect(scroller.scrollTop).toBe(1848);
+      });
+
+      // Review LOW-2 (WCAG 2.4.11): a focused control left outside the scroll area by
+      // the conversion is scrolled back into view, minimally.
+      describe('focused control visibility after a layout switch', () => {
+        const scrollIntoView = vi.fn();
+        beforeEach(() => {
+          scrollIntoView.mockClear();
+          Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+        });
+        afterEach(() => {
+          delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+        });
+        const placeControl = (top: number) => {
+          const base = rectSpy.getMockImplementation()!;
+          rectSpy.mockImplementation(function (this: HTMLElement) {
+            const rect = (t: number, b: number) =>
+              ({ width: 0, height: b - t, top: t, left: 0, right: 0, bottom: b, x: 0, y: t, toJSON: () => ({}) }) as DOMRect;
+            if (this.getAttribute('aria-label') === 'Delete Doc-070.pdf') return rect(top, top + 28);
+            if (this.dataset.testid === 'scroller') return rect(0, CLIENT_HEIGHT);
+            return base.call(this);
+          });
+        };
+
+        it('scrolls a focused control that ended up below the scroll area into view (block: nearest)', () => {
+          const { scroller } = setup(1000);
+          scroller.scrollTop = HEAD + 70 * ITEM_HEIGHT;
+          fireEvent.scroll(scroller);
+          screen.getByRole('button', { name: 'Delete Doc-070.pdf' }).focus();
+          placeControl(CLIENT_HEIGHT + 100);
+          resizeTo(700);
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+          expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+        });
+
+        it('leaves the scroll position alone when the focused control is already visible', () => {
+          const { scroller } = setup(1000);
+          scroller.scrollTop = HEAD + 70 * ITEM_HEIGHT;
+          fireEvent.scroll(scroller);
+          screen.getByRole('button', { name: 'Delete Doc-070.pdf' }).focus();
+          placeControl(100);
+          resizeTo(700);
+          expect(scrollIntoView).not.toHaveBeenCalled();
+        });
+      });
+
+      // Review LOW-1/LOW-2/LOW-3: after a confirmed delete the focused neighbour is re-checked
+      // against the scroll area when the row removal lands, once per removed row, and never
+      // for a count change that is not ours.
+      describe('re-check after a confirmed delete', () => {
+        const scrollIntoView = vi.fn();
+        beforeEach(() => {
+          scrollIntoView.mockClear();
+          Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+        });
+        afterEach(() => {
+          delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+        });
+        const all = () => names.map((fileName, i) => createDocument({ id: `d${i}`, fileName }));
+        const view = (documents: ReturnType<typeof all>) => (
+          <div style={{ height: '300px', overflow: 'auto' }} data-testid="scroller">
+            <DocumentList documents={documents} onDelete={vi.fn()} deletingId={null} />
+          </div>
+        );
+        // Confirm the delete of Doc-070 with the focused neighbour (Doc-071) clipped.
+        const confirmWithClippedNeighbour = () => {
+          const ctx = setup(700);
+          ctx.scroller.scrollTop = 70 * STACKED_ITEM_HEIGHT;
+          fireEvent.scroll(ctx.scroller);
+          const base = rectSpy.getMockImplementation()!;
+          rectSpy.mockImplementation(function (this: HTMLElement) {
+            const rect = (t: number, bt: number) =>
+              ({ width: 0, height: bt - t, top: t, left: 0, right: 0, bottom: bt, x: 0, y: t, toJSON: () => ({}) }) as DOMRect;
+            if (this.getAttribute('aria-label')?.startsWith('Delete ')) return rect(CLIENT_HEIGHT + 100, CLIENT_HEIGHT + 128);
+            if (this.dataset.testid === 'scroller') return rect(0, CLIENT_HEIGHT);
+            return base.call(this);
+          });
+          fireEvent.click(screen.getByRole('button', { name: 'Delete Doc-070.pdf' }));
+          fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Doc-070.pdf' }));
+          expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Delete Doc-071.pdf' }));
+          return ctx;
+        };
+
+        it('re-checks when the removal lands and consumes the pending delete', () => {
+          const { rerender } = confirmWithClippedNeighbour();
+          expect(scrollIntoView).not.toHaveBeenCalled();
+          rerender(view(all().filter((doc) => doc.id !== 'd70')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+          // A later removal that was not confirmed here must not scroll.
+          rerender(view(all().filter((doc) => doc.id !== 'd70' && doc.id !== 'd10')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        });
+
+        // What this proves: a re-render that leaves the row count alone (a status or progress
+        // tick) neither scrolls nor uses up the pending delete, so the removal that lands later
+        // is still re-checked. It cannot fail through the effect's `documents.length >= previous`
+        // equality branch: the effect is keyed on [documents.length] and never runs on a
+        // same-length render, so that guarantee is the dependency array itself.
+        it('a same-length re-render neither scrolls nor consumes the pending delete', () => {
+          const { rerender } = confirmWithClippedNeighbour();
+          rerender(view(all().map((doc) => ({ ...doc }))));
+          expect(scrollIntoView).not.toHaveBeenCalled();
+          rerender(view(all().filter((doc) => doc.id !== 'd70')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+        });
+
+        it('clears the pending delete when the list grows (no yank on a later upload or removal)', () => {
+          const { rerender } = confirmWithClippedNeighbour();
+          rerender(view([...all(), createDocument({ id: 'new', fileName: 'New.pdf' })]));
+          expect(scrollIntoView).not.toHaveBeenCalled();
+          rerender(view(all().filter((doc) => doc.id !== 'd70')));
+          expect(scrollIntoView).not.toHaveBeenCalled();
+        });
+
+        it('two quick confirms need two re-checks (a counter, not a flag)', () => {
+          const { rerender } = confirmWithClippedNeighbour();
+          // Second confirm on the neighbour that just received focus, before the first lands.
+          fireEvent.click(screen.getByRole('button', { name: 'Delete Doc-071.pdf' }));
+          fireEvent.click(screen.getByRole('button', { name: 'Confirm delete Doc-071.pdf' }));
+          rerender(view(all().filter((doc) => doc.id !== 'd70')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(1);
+          rerender(view(all().filter((doc) => doc.id !== 'd70' && doc.id !== 'd71')));
+          expect(scrollIntoView).toHaveBeenCalledTimes(2);
+        });
+      });
+    });
+  });
+
+  // Lumen phase 6 review L6/L7: per-type icons and labelled table cells.
+  describe('Type icons and cell labels (review L6/L7)', () => {
+    it('maps the file extension to a document kind (case-insensitive, unknown = other)', () => {
+      expect(documentKind('Handbook.PDF')).toBe('pdf');
+      expect(documentKind('memo.docx')).toBe('doc');
+      expect(documentKind('budget.xlsx')).toBe('sheet');
+      expect(documentKind('deck.pptx')).toBe('slides');
+      expect(documentKind('notes.md')).toBe('text');
+      expect(documentKind('readme.txt')).toBe('text');
+      expect(documentKind('archive.tar.gz')).toBe('other');
+      expect(documentKind('no-extension')).toBe('other');
+    });
+
+    // Review PRR-201: the extension comes from a user-chosen file name.
+    it.each(['x.constructor', 'x.__proto__', 'x.toString', 'x.hasOwnProperty', 'x.valueOf'])(
+      'treats %s as an unknown type instead of an inherited object member',
+      (fileName) => {
+        expect(documentKind(fileName)).toBe('other');
+        const { container } = render(
+          <DocumentList documents={[createDocument({ id: 'a', fileName })]} onDelete={vi.fn()} deletingId={null} />
+        );
+        expect(container.querySelector('.app-doc__icon')?.getAttribute('data-kind')).toBe('other');
+        expect(screen.getByText(fileName)).toBeInTheDocument();
+      }
+    );
+
+    it('renders a different type icon per kind in each row', () => {
+      const documents = [
+        createDocument({ id: 'a', fileName: 'a.pdf' }),
+        createDocument({ id: 'b', fileName: 'b.docx' }),
+        createDocument({ id: 'c', fileName: 'c.xlsx' }),
+        createDocument({ id: 'd', fileName: 'd.txt' }),
+        createDocument({ id: 'e', fileName: 'e.bin' }),
+      ];
+      const { container } = render(<DocumentList documents={documents} onDelete={vi.fn()} deletingId={null} />);
+      const kinds = Array.from(container.querySelectorAll('.app-doc__icon')).map((el) => el.getAttribute('data-kind'));
+      expect(kinds).toEqual(['pdf', 'doc', 'sheet', 'text', 'other']);
+      const shapes = new Set(Array.from(container.querySelectorAll('.app-doc__icon svg')).map((svg) => svg.innerHTML));
+      expect(shapes.size).toBe(5);
+    });
+
+    it('labels the size, chunks and status cells for screen readers, keeping role=list', () => {
+      render(
+        <DocumentList
+          documents={[createDocument({ id: 'a', fileName: 'a.pdf', status: 'ready', chunkCount: 42 })]}
+          onDelete={vi.fn()}
+          deletingId={null}
+        />
+      );
+      expect(screen.getByRole('list')).toBeInTheDocument();
+      const item = screen.getByRole('listitem');
+      expect(item).toHaveTextContent(/Size:\s*\S+/);
+      expect(item).toHaveTextContent('Chunks: 42 chunks');
+      expect(item).toHaveTextContent('Status: Ready');
+    });
+
+    it('adds no "Chunks:" label when there is no chunk count', () => {
+      render(
+        <DocumentList
+          documents={[createDocument({ id: 'a', fileName: 'a.pdf', status: 'error', chunkCount: 0 })]}
+          onDelete={vi.fn()}
+          deletingId={null}
+        />
+      );
+      expect(screen.queryByText(/chunks/i)).not.toBeInTheDocument();
     });
   });
 });

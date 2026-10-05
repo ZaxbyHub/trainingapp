@@ -314,6 +314,45 @@ describe('browser mode: mixed and repeated selections', () => {
   });
 });
 
+// Review PRR-218: inside Electron, before the desktop session exists, there is no pack client,
+// yet the dropzone advertises .zip. A zip arriving then must say why nothing happened.
+describe('Electron before its desktop session: a pack zip is refused out loud (review PRR-218)', () => {
+  const NOT_READY = /Could not install pack-early\.zip: knowledge packs are not available right now .*restart the app/;
+  const early = () => fileFromBytes(new Uint8Array([80, 75, 3, 4]), 'pack-early.zip');
+
+  it('a dropped zip shows an error and reaches neither the pack API nor the document pipeline', async () => {
+    installDesktopBridge();
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+    await dropOnDropZone([early()]);
+    expect(await screen.findByText(NOT_READY)).toBeInTheDocument();
+    expect(installPack).not.toHaveBeenCalled();
+    expect(browserManager.installPack).not.toHaveBeenCalled();
+    expect(extractDocument).not.toHaveBeenCalled();
+  });
+
+  it('a zip picked through the file input (All files) is refused the same way', async () => {
+    installDesktopBridge();
+    render(
+      <ToastProvider>
+        <DocumentsPage />
+      </ToastProvider>
+    );
+    const input = (await waitFor(() => {
+      const el = document.querySelector(DOCUMENT_FILE_INPUT);
+      expect(el).toBeTruthy();
+      return el as HTMLInputElement;
+    })) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [early()] } });
+    expect(await screen.findByText(NOT_READY)).toBeInTheDocument();
+    expect(installPack).not.toHaveBeenCalled();
+    expect(extractDocument).not.toHaveBeenCalled();
+  });
+});
+
 describe('picker path (selected, not dropped)', () => {
   it('a pack zip selected via the DropZone file input installs in the browser and writes nothing to the document pipeline', async () => {
     render(

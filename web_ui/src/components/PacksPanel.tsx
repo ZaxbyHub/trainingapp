@@ -38,17 +38,42 @@
  *   data-testid="packs-storage"                     browser storage report
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { DragEvent, ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import type { ApiClient, PackInfo } from '../lib/api';
 import type { StorageReport } from '../lib/packs/browser-pack-manager';
 import { desktopPackClient, type PackClient } from '../lib/packs/pack-client';
 import type { UpdateStatus } from '../types/desktop';
 import { useToast } from './ToastProvider';
+import { Badge, Button, Icon } from '../ui';
+import { cx } from '../ui/cx';
+import '../pages/documents.css';
 
 interface PacksPanelProps {
   /** The pack seam (desktop or browser). */
   client?: PackClient;
   /** Desktop shorthand: wraps the loopback ApiClient in a desktop PackClient. */
   apiClient?: ApiClient;
+  /**
+   * Lumen phase 6 ("Documents | Training packs" tabs). Omitted (standalone): one
+   * panel with every row inline, as before. Given: this ALWAYS-MOUNTED instance
+   * keeps all state, toasts and the single `pack-install-input`, and portals the
+   * knowledge section (testid packs-panel) into `knowledge` and the training-class
+   * rows into `training`, whichever of the two slots is currently mounted (null =
+   * that tab is not showing).
+   */
+  slots?: { knowledge: HTMLElement | null; training: HTMLElement | null };
+  /** Called when a training-class row APPEARS after the first load (never on it). */
+  onTrainingPackAdded?: () => void;
+  /**
+   * Change to drop a pending "a training pack was added, announce the switch"
+   * signal. The page bumps it whenever it supersedes its own deferred tab switch
+   * (a manual tab change), so a later manual visit to Training packs does not
+   * announce a switch that never happened. Changing it has no other effect.
+   */
+  switchSignalResetKey?: number;
+  /** Bump to re-list (installs the page made itself; the desktop client has no subscribe). */
+  refreshToken?: number;
 }
 
 function formatBytes(bytes: number): string {
@@ -81,7 +106,16 @@ function formatDate(value: string | null): string {
     : date.toLocaleDateString(undefined, { timeZone: 'UTC' });
 }
 
-export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
+const isTrainingPack = (pack: PackInfo): boolean => pack.sourceClass === 'training';
+
+export function PacksPanel({
+  client: clientProp,
+  apiClient,
+  slots,
+  onTrainingPackAdded,
+  switchSignalResetKey,
+  refreshToken,
+}: PacksPanelProps) {
   const { showToast } = useToast();
   const client = useMemo<PackClient>(() => {
     if (clientProp !== undefined) return clientProp;
@@ -162,13 +196,79 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
     }
   }, [client]);
 
+  // Row keys seen by the last successful list (null until the first load), so a
+  // training pack that APPEARS later can be announced without firing on load.
+  const knownRowsRef = useRef<Set<string> | null>(null);
+  const onTrainingPackAddedRef = useRef(onTrainingPackAdded);
+  onTrainingPackAddedRef.current = onTrainingPackAdded;
+  // Set when a training pack appeared while the Training packs tab was not
+  // showing; consumed when that tab mounts (the page may defer the switch).
+  const switchSignaledRef = useRef(false);
+  // Latest slots, read inside `refresh` (stable callback) to tell whether the
+  // Training packs tab is already showing when a training pack appears.
+  const slotsRef = useRef(slots);
+  slotsRef.current = slots;
+  // Polite announcement for the switch, in an always-mounted live region.
+  const [announcement, setAnnouncement] = useState('');
+  // Out-of-order guard: concurrent refreshes (install, store notification,
+  // refreshToken) may resolve out of order; only the newest response applies,
+  // so a stale list can neither roll the rows back nor re-fire the signal.
+  const requestSeqRef = useRef(0);
+  const appliedSeqRef = useRef(0);
+
   const refresh = useCallback(async (): Promise<PackInfo[]> => {
+    const seq = ++requestSeqRef.current;
     const list = await client.listPacks();
+    if (seq < appliedSeqRef.current) return list; // a newer response already applied
+    appliedSeqRef.current = seq;
     setPacks(list);
     setLoading(false);
+    const known = knownRowsRef.current;
+    knownRowsRef.current = new Set(list.map(rowId));
+    if (known !== null && list.some((pack) => isTrainingPack(pack) && !known.has(rowId(pack)))) {
+      // Only flag a pending switch when the Training packs tab is NOT showing;
+      // otherwise the flag would survive until a later manual round-trip and
+      // announce a switch that never happened.
+      if (slotsRef.current?.training == null) switchSignaledRef.current = true;
+      onTrainingPackAddedRef.current?.();
+    }
     void refreshStorage();
     return list;
   }, [client, refreshStorage]);
+
+  // Declared BEFORE the tab-mount effect below so a reset and a tab mount in the
+  // same commit resolve reset-first. Skips the mount value.
+  const initialResetKey = useRef(switchSignalResetKey);
+  useEffect(() => {
+    if (switchSignalResetKey !== initialResetKey.current) switchSignaledRef.current = false;
+  }, [switchSignalResetKey]);
+
+  // WCAG 2.4.3 / 4.1.3: when the Training packs tab mounts after a signal, the
+  // Documents panel (and anything focused in it) is gone. If focus was lost with
+  // it, move focus to the Training packs heading; if the user is focused
+  // elsewhere, leave focus alone and announce the switch politely instead.
+  const trainingSlotElement = slots?.training ?? null;
+  useEffect(() => {
+    if (trainingSlotElement === null || !switchSignaledRef.current) {
+      // Any tab change without a pending signal drops a stale announcement so
+      // the next real one is a fresh live-region change.
+      setAnnouncement('');
+      return;
+    }
+    switchSignaledRef.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body) {
+      document.getElementById('training-packs-heading')?.focus();
+      return;
+    }
+    setAnnouncement('A new training pack was added. Showing the Training packs tab.');
+  }, [trainingSlotElement]);
+
+  const initialRefreshToken = useRef(refreshToken);
+  useEffect(() => {
+    if (refreshToken === undefined || refreshToken === initialRefreshToken.current) return;
+    void refresh().catch(() => undefined);
+  }, [refreshToken, refresh]);
 
   // Installs/removals made elsewhere in this tab (e.g. an update applied from
   // the Settings page) refresh the list.
@@ -286,179 +386,258 @@ export function PacksPanel({ client: clientProp, apiClient }: PacksPanelProps) {
   // intermediate state.
   if (loading) return null;
 
-  return (
-    <section
-      data-testid="packs-panel"
-      aria-labelledby="packs-panel-heading"
-      style={{ marginBottom: 'var(--spacing-lg, 16px)' }}
-      onDragOver={(e) => {
-        e.preventDefault();
+  const capabilityIssue = client.capabilityIssue?.() ?? null;
+  const split = slots !== undefined;
+  const mainRows = split ? sorted.filter((pack) => !isTrainingPack(pack)) : sorted;
+  const trainingRows = split ? sorted.filter(isTrainingPack) : [];
+
+  const renderRow = (pack: PackInfo) => {
+    const key = { packId: pack.packId, version: pack.version };
+    const confirming =
+      confirmingRemove !== null &&
+      confirmingRemove.packId === pack.packId &&
+      confirmingRemove.version === pack.version;
+    const published = formatDate(pack.publishedAt);
+    return (
+      <li
+        key={rowId(pack)}
+        role="listitem"
+        data-testid={`pack-row-${rowId(pack)}`}
+        className="app-packs__row"
+      >
+        <span className="app-packs__ident">
+          <strong className="app-packs__name">{pack.name ?? pack.packId}</strong>{' '}
+          <span>v{pack.version}</span>
+          {pack.sourceClass && (
+            <span className="app-packs__meta">
+              {' '}
+              · {pack.sourceClass}
+            </span>
+          )}
+          {published && <span className="app-packs__meta"> · {published}</span>}
+        </span>
+        <Badge data-testid={`pack-status-${rowId(pack)}`} tone={pack.active ? 'success' : 'neutral'}>
+          {pack.active ? 'active' : 'superseded'}
+        </Badge>
+        {pack.active && updateByPack[pack.packId] !== undefined && (
+          <>
+            <Badge data-testid={`pack-update-${rowId(pack)}`} tone="accent">
+              Update available: v{updateByPack[pack.packId]}
+            </Badge>
+            <Button
+              size="sm"
+              variant="primary"
+              data-testid={`pack-apply-${rowId(pack)}`}
+              aria-label={`Update ${pack.packId} to ${updateByPack[pack.packId]}`}
+              disabled={working || applying !== null}
+              aria-disabled={working || applying !== null || undefined}
+              onClick={() => void handleApplyUpdate(pack.packId)}
+            >
+              {applying === pack.packId ? 'Updating…' : 'Update'}
+            </Button>
+          </>
+        )}
+        {!pack.active && (
+          <Button
+            size="sm"
+            variant="secondary"
+            data-testid={`pack-rollback-${rowId(pack)}`}
+            aria-label={`Rollback ${pack.packId} to ${pack.version}`}
+            disabled={working}
+            aria-disabled={working || undefined}
+            onClick={() => void handleRollback(key)}
+          >
+            Rollback
+          </Button>
+        )}
+        {confirming ? (
+          <>
+            <Button
+              size="sm"
+              variant="danger"
+              data-testid="pack-remove-confirm"
+              disabled={working}
+              aria-disabled={working || undefined}
+              onClick={() => void handleRemove(key)}
+            >
+              Confirm
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              data-testid="pack-remove-cancel"
+              onClick={() => {
+                setConfirmingRemove(null);
+                focusRemoveControl(key);
+              }}
+            >
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <Button
+            size="sm"
+            variant="ghost"
+            data-testid={`pack-remove-${rowId(pack)}`}
+            aria-label={`Remove ${pack.packId} ${pack.version}`}
+            disabled={working}
+            aria-disabled={working || undefined}
+            onClick={() => setConfirmingRemove(key)}
+          >
+            Remove
+          </Button>
+        )}
+      </li>
+    );
+  };
+
+  const onDropInstall = (e: DragEvent<HTMLElement>): void => {
+    e.preventDefault();
+    // Sequential on purpose: parallel installs interleave refresh() and
+    // race the shared installing/working flags.
+    void (async () => {
+      for (const file of Array.from(e.dataTransfer.files)) {
+        await installFile(file);
+      }
+    })();
+  };
+
+  const installInput = (
+    <input
+      ref={inputRef}
+      type="file"
+      accept=".zip"
+      data-testid="pack-install-input"
+      hidden
+      onChange={(e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file) void installFile(file);
       }}
-      onDrop={(e) => {
-        e.preventDefault();
-        // Sequential on purpose: parallel installs interleave refresh() and
-        // race the shared installing/working flags.
-        void (async () => {
-          for (const file of Array.from(e.dataTransfer.files)) {
-            await installFile(file);
-          }
-        })();
-      }}
+    />
+  );
+
+  const installButton = (label: string) => (
+    <Button
+      size="sm"
+      variant="secondary"
+      onClick={() => inputRef.current?.click()}
+      disabled={working}
+      aria-disabled={working || undefined}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm, 8px)' }}>
-        <h3 id="packs-panel-heading" style={{ margin: 0, flex: 1 }}>
-          Knowledge Packs
-        </h3>
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          disabled={working}
-        >
-          {installing ? 'Installing…' : 'Install pack .zip'}
-        </button>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".zip"
-          data-testid="pack-install-input"
-          style={{ display: 'none' }}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = '';
-            if (file) void installFile(file);
-          }}
-        />
-      </div>
-      {client.capabilityIssue?.() != null && (
-        <p role="status" data-testid="packs-capability" style={{ color: 'var(--color-text-primary)', margin: 'var(--spacing-xs, 4px) 0' }}>
-          {client.capabilityIssue?.()}
-        </p>
-      )}
-      {storage !== null && (
-        <p data-testid="packs-storage" style={{ color: 'var(--color-text-primary)', margin: 'var(--spacing-xs, 4px) 0' }}>
+      <Icon name="upload" size={16} />
+      {installing ? 'Installing…' : label}
+    </Button>
+  );
+
+  const storageNote = (withTestId: boolean) =>
+    storage !== null ? (
+      <p
+        data-testid={withTestId ? 'packs-storage' : undefined}
+        className={cx('app-packs__note', storage.persisted === false && 'app-packs__note--warning')}
+      >
+        <Icon name={storage.persisted === false ? 'triangle-alert' : 'info'} size={16} />
+        <span>
           Browser storage: {formatBytes(storage.usage)} used, {formatBytes(storage.available)} available
           {storage.persisted === true
             ? ' (persistent: the browser will not evict installed packs)'
             : storage.persisted === false
               ? ' (not persistent: the browser may evict installed packs under storage pressure)'
               : ''}
+        </span>
+      </p>
+    ) : null;
+
+  // Lumen phase 6: a Card with an h2 (h1 is the page title). Every control keeps
+  // its native `disabled` (tests and keyboard order rely on it) and also carries
+  // aria-disabled so the Lumen Button renders its disabled look.
+  const knowledgeSection = (input: ReactNode) => (
+    <section
+      data-testid="packs-panel"
+      aria-labelledby="packs-panel-heading"
+      className="ui-card app-packs"
+      onDragOver={(e) => {
+        e.preventDefault();
+      }}
+      onDrop={onDropInstall}
+    >
+      <div className="app-packs__head">
+        <h2 id="packs-panel-heading" className="app-packs__title">
+          Knowledge Packs
+        </h2>
+        {installButton('Install pack .zip')}
+        {input}
+      </div>
+      {capabilityIssue != null && (
+        <p role="status" data-testid="packs-capability" className="app-packs__note app-packs__note--warning">
+          <Icon name="triangle-alert" size={16} />
+          <span>{capabilityIssue}</span>
         </p>
       )}
-      {sorted.length === 0 ? (
-        <p style={{ color: 'var(--color-text-primary)' }}>
+      {storageNote(true)}
+      {mainRows.length === 0 ? (
+        <p className="app-packs__empty">
           No knowledge packs installed. Drop a .zip pack here or use the install button.
         </p>
       ) : (
-        <ul role="list" style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-          {sorted.map((pack) => {
-            const key = { packId: pack.packId, version: pack.version };
-            const confirming =
-              confirmingRemove !== null &&
-              confirmingRemove.packId === pack.packId &&
-              confirmingRemove.version === pack.version;
-            const published = formatDate(pack.publishedAt);
-            return (
-              <li
-                key={rowId(pack)}
-                role="listitem"
-                data-testid={`pack-row-${rowId(pack)}`}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 'var(--spacing-sm, 8px)',
-                  padding: 'var(--spacing-xs, 4px) 0',
-                  borderBottom: '1px solid var(--color-border, #ddd)',
-                }}
-              >
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <strong>{pack.name ?? pack.packId}</strong>{' '}
-                  <span>v{pack.version}</span>
-                  {pack.sourceClass && (
-                    <span style={{ color: 'var(--color-text-primary)' }}>
-                      {' '}
-                      · {pack.sourceClass}
-                    </span>
-                  )}
-                  {published && (
-                    <span style={{ color: 'var(--color-text-primary)' }}> · {published}</span>
-                  )}
-                </span>
-                <span
-                  data-testid={`pack-status-${rowId(pack)}`}
-                  style={{
-                    color: 'var(--color-text-primary)',
-                    fontWeight: pack.active ? 700 : 400,
-                  }}
-                >
-                  {pack.active ? 'active' : 'superseded'}
-                </span>
-                {pack.active && updateByPack[pack.packId] !== undefined && (
-                  <>
-                    <span
-                      data-testid={`pack-update-${rowId(pack)}`}
-                      style={{ color: 'var(--color-accent, #06c)', fontWeight: 600 }}
-                    >
-                      Update available: v{updateByPack[pack.packId]}
-                    </span>
-                    <button
-                      type="button"
-                      data-testid={`pack-apply-${rowId(pack)}`}
-                      aria-label={`Update ${pack.packId} to ${updateByPack[pack.packId]}`}
-                      disabled={working || applying !== null}
-                      onClick={() => void handleApplyUpdate(pack.packId)}
-                    >
-                      {applying === pack.packId ? 'Updating…' : 'Update'}
-                    </button>
-                  </>
-                )}
-                {!pack.active && (
-                  <button
-                    type="button"
-                    data-testid={`pack-rollback-${rowId(pack)}`}
-                    aria-label={`Rollback ${pack.packId} to ${pack.version}`}
-                    disabled={working}
-                    onClick={() => void handleRollback(key)}
-                  >
-                    Rollback
-                  </button>
-                )}
-                {confirming ? (
-                  <>
-                    <button
-                      type="button"
-                      data-testid="pack-remove-confirm"
-                      disabled={working}
-                      onClick={() => void handleRemove(key)}
-                    >
-                      Confirm
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="pack-remove-cancel"
-                      onClick={() => {
-                        setConfirmingRemove(null);
-                        focusRemoveControl(key);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    data-testid={`pack-remove-${rowId(pack)}`}
-                    aria-label={`Remove ${pack.packId} ${pack.version}`}
-                    disabled={working}
-                    onClick={() => setConfirmingRemove(key)}
-                  >
-                    Remove
-                  </button>
-                )}
-              </li>
-            );
-          })}
+        <ul role="list" className="app-packs__list">
+          {mainRows.map(renderRow)}
         </ul>
       )}
     </section>
+  );
+
+  // Standalone: one panel, every row inline (unchanged behaviour).
+  if (slots === undefined) return knowledgeSection(installInput);
+
+  // Tabbed page: this always-mounted instance renders only the hidden install
+  // input in place; each section portals into its tab's slot while that tab is
+  // mounted (the Tabs primitive mounts only the active panel's content).
+  return (
+    <>
+      {installInput}
+      <p role="status" className="ui-visually-hidden">
+        {announcement}
+      </p>
+      {slots.knowledge ? createPortal(knowledgeSection(null), slots.knowledge) : null}
+      {slots.training
+        ? createPortal(
+            <section
+              data-testid="training-packs"
+              aria-labelledby="training-packs-heading"
+              className="ui-card app-packs"
+              onDragOver={(e) => {
+                e.preventDefault();
+              }}
+              onDrop={onDropInstall}
+            >
+              <div className="app-packs__head">
+                <h2 id="training-packs-heading" className="app-packs__title ui-focusable" tabIndex={-1}>
+                  Training packs
+                </h2>
+                {installButton('Install course pack .zip')}
+              </div>
+              {capabilityIssue != null && (
+                <p role="status" className="app-packs__note app-packs__note--warning">
+                  <Icon name="triangle-alert" size={16} />
+                  <span>{capabilityIssue}</span>
+                </p>
+              )}
+              {storageNote(false)}
+              {trainingRows.length === 0 ? (
+                <p className="app-packs__empty">
+                  No training packs installed. Install a Storyline course pack (.zip) here; its course then plays
+                  on the Training page.
+                </p>
+              ) : (
+                <ul role="list" className="app-packs__list">
+                  {trainingRows.map(renderRow)}
+                </ul>
+              )}
+            </section>,
+            slots.training
+          )
+        : null}
+    </>
   );
 }

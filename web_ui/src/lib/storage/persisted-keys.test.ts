@@ -437,6 +437,29 @@ describe('clearUserSettings (Clear Cache, AC5)', () => {
   });
 });
 
+// PRR-220 (PR 150 review): the Clear Cache copy (SettingsPage) promises that "last-opened
+// course" and "course progress" are removed; the generic loops above only check whatever
+// IS registered, so dropping either key from USER_SETTING_KEYS would keep every test green
+// while the copy lied. Pin the two Training keys explicitly.
+describe('Training keys are cleared by Clear Cache (PRR-220)', () => {
+  it('TRAINING_PROGRESS_KEY and LAST_PACK_KEY are registered user settings, not internal keys', () => {
+    expect(registry.USER_SETTING_KEYS).toContain(registry.TRAINING_PROGRESS_KEY);
+    expect(registry.USER_SETTING_KEYS).toContain(registry.LAST_PACK_KEY);
+    expect(registry.INTERNAL_KEYS).not.toContain(registry.TRAINING_PROGRESS_KEY);
+    expect(registry.INTERNAL_KEYS).not.toContain(registry.LAST_PACK_KEY);
+  });
+
+  it('clearUserSettings removes the stored course progress and last-opened course', () => {
+    localStorage.clear();
+    localStorage.setItem(registry.TRAINING_PROGRESS_KEY, '{"course-a":3}');
+    localStorage.setItem(registry.LAST_PACK_KEY, 'course-a/1.0.0');
+    const removed = registry.clearUserSettings();
+    expect(removed).toEqual(expect.arrayContaining([registry.TRAINING_PROGRESS_KEY, registry.LAST_PACK_KEY]));
+    expect(localStorage.getItem(registry.TRAINING_PROGRESS_KEY)).toBeNull();
+    expect(localStorage.getItem(registry.LAST_PACK_KEY)).toBeNull();
+  });
+});
+
 // Review round 2 (R2-F3): the sessionStorage leg of Clear Cache. A session-only
 // (Remember off) external API key and its bound origin are written to
 // sessionStorage; every entry written there must be registered in

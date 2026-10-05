@@ -1,9 +1,18 @@
 /**
  * DocumentList component displays uploaded documents with status and actions.
+ *
+ * Lumen phase 6: rows are built from the Lumen primitives (StatusPill,
+ * ProgressBar, Button, IconButton) and styled by pages/documents.css. The only
+ * inline styles left are the virtualization's positional ones (row offsets and
+ * the full scroll height), which are computed per render.
  */
 
 import React, { useCallback, useState, useRef, useLayoutEffect } from 'react';
 import type { DocumentEntry } from '../types/document';
+import { Button, Icon, IconButton, ProgressBar, StatusPill, type IconName } from '../ui';
+import { cx } from '../ui/cx';
+import { DOC_DATE_FORMAT_OPTIONS, ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from './documentRowLayout';
+import '../pages/documents.css';
 
 interface DocumentListProps {
   documents: DocumentEntry[];
@@ -30,30 +39,18 @@ function formatFileSize(bytes: number): string {
 }
 
 function formatDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return new Date(timestamp).toLocaleDateString(undefined, DOC_DATE_FORMAT_OPTIONS);
 }
 
-// U6a: status labels render at --font-size-small (11px) on the light bubble
-// surface and must meet WCAG AA. The base info/warning/success tokens are
-// borderline AA at small sizes, so use the *-strong variants here.
-function getStatusColor(status: DocumentEntry['status']): string {
+/** Lumen phase 6: status is a StatusPill (icon + text, never color alone). */
+function getStatusTone(status: DocumentEntry['status']): 'info' | 'success' | 'danger' {
   switch (status) {
-    case 'uploading':
-      return 'var(--color-info-strong)';
-    case 'processing':
-      return 'var(--color-warning-strong)';
     case 'ready':
-      return 'var(--color-success-strong)';
+      return 'success';
     case 'error':
-      return 'var(--color-danger)';
+      return 'danger';
     default:
-      return 'var(--color-text-muted)';
+      return 'info';
   }
 }
 
@@ -72,210 +69,223 @@ function getStatusLabel(status: DocumentEntry['status']): string {
   }
 }
 
-const ITEM_HEIGHT = 60;
+/**
+ * Lumen phase 6 (design-language section 5 "type icon"): the document type,
+ * from the file name's extension (the stored fileType differs between the
+ * browser pipeline and desktop rows, the name does not). Decorative: the name
+ * next to it already carries the extension.
+ */
+type DocKind = 'pdf' | 'doc' | 'sheet' | 'slides' | 'text' | 'other';
+// A Map, not an object literal: the extension is user-controlled (any file name can be
+// picked under "All Files"), and a plain object would answer `x.constructor` or
+// `x.__proto__` with an inherited member instead of falling through to 'other'.
+const KIND_BY_EXTENSION: ReadonlyMap<string, DocKind> = new Map<string, DocKind>([
+  ['pdf', 'pdf'],
+  ['doc', 'doc'],
+  ['docx', 'doc'],
+  ['xls', 'sheet'],
+  ['xlsx', 'sheet'],
+  ['csv', 'sheet'],
+  ['ppt', 'slides'],
+  ['pptx', 'slides'],
+  ['txt', 'text'],
+  ['md', 'text'],
+]);
+const KIND_ICON: Record<DocKind, IconName> = {
+  pdf: 'file-pdf',
+  doc: 'file-type',
+  sheet: 'file-spreadsheet',
+  slides: 'presentation',
+  text: 'file-text',
+  other: 'file',
+};
+export function documentKind(fileName: string): DocKind {
+  const dot = fileName.lastIndexOf('.');
+  const extension = dot < 0 ? '' : fileName.slice(dot + 1).toLowerCase();
+  return KIND_BY_EXTENSION.get(extension) ?? 'other';
+}
+
+/** Content-box width of `el` in CSS px, fractional like the `@container` query
+ *  measures it (clientWidth rounds, so it is derived from the border box). */
+function contentWidth(el: HTMLElement): number {
+  const style = window.getComputedStyle(el);
+  const sides = ['borderLeftWidth', 'borderRightWidth', 'paddingLeft', 'paddingRight'] as const;
+  const inset = sides.reduce((sum, side) => sum + (parseFloat(style[side]) || 0), 0);
+  return el.getBoundingClientRect().width - inset;
+}
+
+/**
+ * Row height for the layout the CSS has active. The table is a size container
+ * (`@container (max-width: STACKED_MAX_WIDTH px)` in pages/documents.css), so the
+ * hook measures that SAME element's content width with a ResizeObserver and
+ * applies the same threshold: the 60px / 112px virtualization heights cannot
+ * disagree with the layout. An unmeasured (0px) container keeps the wide height.
+ */
+function useItemHeight(tableRef: React.RefObject<HTMLElement | null>, active: boolean): number {
+  const [stacked, setStacked] = useState(false);
+  useLayoutEffect(() => {
+    const el = tableRef.current;
+    if (!active || el === null) return undefined;
+    const apply = (width: number) => setStacked(width > 0 && width <= STACKED_MAX_WIDTH);
+    apply(contentWidth(el));
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[entries.length - 1];
+      if (entry !== undefined) apply(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tableRef, active]);
+  return stacked ? STACKED_ITEM_HEIGHT : ITEM_HEIGHT;
+}
 const BUFFER = 5;
+
+/** Distance from the top of the scroller's content to the top of the list (the
+ *  wide layout shows a table head above it; the stacked layout does not). */
+function measureListOffset(scroller: HTMLElement, listEl: HTMLElement): number {
+  return listEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+}
+
+/** Scrolls `active` into the scroller when any part of it lies outside (WCAG 2.4.11). */
+function keepInView(scroller: HTMLElement, active: HTMLElement): void {
+  const view = scroller.getBoundingClientRect();
+  const box = active.getBoundingClientRect();
+  if (box.top < view.top || box.bottom > view.bottom) active.scrollIntoView({ block: 'nearest' });
+}
 
 const DocumentItem = React.memo<{
   doc: DocumentEntry;
   onDelete?: (docId: string) => void;
   isDeleting: boolean;
   onCancelIndexing?: (docId: string) => void;
-}>(({ doc, onDelete, isDeleting, onCancelIndexing }) => {
+  /** Fired right after Confirm calls onDelete, so the list can move focus off this
+   *  row (its Confirm button is about to be replaced) before the row goes away. */
+  onDeleteConfirmed?: (docId: string) => void;
+}>(({ doc, onDelete, isDeleting, onCancelIndexing, onDeleteConfirmed }) => {
   // U5: two-step delete confirmation. First click of the trash icon arms the
   // inline confirm (reusing the SidebarConversationItem idiom); Confirm fires
   // onDelete, Cancel reverts. Keeps the virtualized 60px row height by showing
   // the confirm controls in place of the status badge + delete button.
   const [isConfirming, setIsConfirming] = useState(false);
+  // Focus management for the swap between the trash button and the Confirm/Cancel
+  // pair (review LOW-A/LOW-B). Each step removes the control that has focus, and a
+  // removed element drops focus to <body> without a blur event, so the next control
+  // is focused explicitly once the swapped markup has committed:
+  //   arm     -> Cancel (the safe default; Confirm is one Tab away)
+  //   cancel  -> back on this row's trash button
+  //   confirm -> handled by the list (onDeleteConfirmed moves it to a neighbour)
+  const rootRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef<'cancel' | 'trash' | null>(null);
+  // True while the processing row's "Cancel indexing" button holds focus. Removing a
+  // focused element fires no blur, so the flag survives the removal and tells the
+  // effect below that focus was lost to it (not moved on by the user).
+  const indexingCancelFocusedRef = useRef(false);
+
+  // Indexing finished (or failed): the focused "Cancel indexing" button is gone and
+  // focus would fall to <body>. Hand it to this row's delete button instead.
+  const hasIndexingCancel = doc.status === 'processing' && onCancelIndexing !== undefined;
+  useLayoutEffect(() => {
+    if (!indexingCancelFocusedRef.current || hasIndexingCancel) return;
+    indexingCancelFocusedRef.current = false;
+    const active = document.activeElement;
+    if (active !== null && active !== document.body) return;
+    rootRef.current?.querySelector<HTMLElement>('[data-doc-action="delete"]')?.focus();
+  }, [hasIndexingCancel]);
+
+  useLayoutEffect(() => {
+    const target = pendingFocusRef.current;
+    if (target === null) return;
+    pendingFocusRef.current = null;
+    rootRef.current
+      ?.querySelector<HTMLElement>(`[data-doc-action="${target === 'cancel' ? 'cancel-delete' : 'delete'}"]`)
+      ?.focus();
+  }, [isConfirming]);
 
   const handleDelete = useCallback(() => {
     if (!isDeleting) {
+      pendingFocusRef.current = 'cancel';
       setIsConfirming(true);
     }
   }, [isDeleting]);
 
   const handleConfirmDelete = useCallback(() => {
+    pendingFocusRef.current = null;
     setIsConfirming(false);
     onDelete?.(doc.id);
-  }, [doc.id, onDelete]);
+    onDeleteConfirmed?.(doc.id);
+  }, [doc.id, onDelete, onDeleteConfirmed]);
 
   const handleCancelDelete = useCallback(() => {
+    pendingFocusRef.current = 'trash';
     setIsConfirming(false);
   }, []);
 
+  const kind = documentKind(doc.fileName);
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 'var(--spacing-md)',
-        padding: 'var(--spacing-md)',
-        borderBottom: '1px solid var(--color-bubble-system)',
-        backgroundColor: 'var(--color-bubble-assistant)',
-        opacity: isDeleting ? 0.5 : 1,
-        transition: 'opacity 0.2s ease',
-        height: `${ITEM_HEIGHT}px`,
-        boxSizing: 'border-box',
-      }}
-    >
-      {/* File icon */}
-      <div
-        style={{
-          width: '40px',
-          height: '40px',
-          borderRadius: '8px',
-          backgroundColor: 'var(--color-primary)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          flexShrink: 0,
-        }}
-      >
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="var(--color-text-on-primary)"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-          <polyline points="14 2 14 8 20 8" />
-        </svg>
+    <div ref={rootRef} className={cx('app-doc', isDeleting && 'app-doc--deleting')}>
+      {/* Table cells (Lumen phase 6): one cell per value, placed by CSS grid areas
+          (pages/documents.css), so narrow widths reflow them instead of duplicating. */}
+      <div className={`app-doc__icon app-doc__icon--${kind}`} data-kind={kind}>
+        <Icon name={KIND_ICON[kind]} />
       </div>
-
-      {/* Document info */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p
-          style={{
-            fontSize: 'var(--font-size-body)',
-            fontFamily: 'var(--font-family)',
-            color: 'var(--color-text-on-bubble-assistant)',
-            fontWeight: 500,
-            marginBottom: '2px',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-          title={doc.fileName}
-        >
-          {doc.fileName}
-        </p>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--spacing-sm)',
-            fontSize: 'var(--font-size-small)',
-            fontFamily: 'var(--font-family)',
-          }}
-        >
-          <span style={{ color: 'var(--color-text-muted)' }}>
-            {formatFileSize(doc.fileSize)}
-          </span>
-          <span style={{ color: 'var(--color-text-muted)' }}>•</span>
-          <span style={{ color: 'var(--color-text-muted)' }}>
-            {formatDate(doc.uploadedAt)}
-          </span>
-          {doc.chunkCount !== undefined && doc.chunkCount > 0 && (
+      <p className="app-doc__name" title={doc.fileName}>
+        {doc.fileName}
+      </p>
+      <span className="app-doc__meta">
+        <span className="app-doc__date" title={formatDate(doc.uploadedAt)}>
+          {formatDate(doc.uploadedAt)}
+        </span>
+        <span className="app-doc__size">
+          <span className="ui-visually-hidden">Size: </span>
+          {formatFileSize(doc.fileSize)}
+        </span>
+        <span className="app-doc__chunks">
+          {doc.chunkCount !== undefined && doc.chunkCount > 0 ? (
             <>
-              <span style={{ color: 'var(--color-text-muted)' }}>•</span>
-              <span style={{ color: 'var(--color-text-muted)' }}>
-                {doc.chunkCount} chunks
-              </span>
+              <span className="ui-visually-hidden">Chunks: </span>
+              {`${doc.chunkCount} chunks`}
             </>
-          )}
-        </div>
-      </div>
+          ) : null}
+        </span>
+      </span>
 
-      {/* Status badge (collapsed during delete-confirmation to make room). */}
+      {/* Status (collapsed during delete-confirmation to make room). */}
       {!isConfirming && (
-        <div
-          aria-live="polite"
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            gap: 'var(--spacing-xs)',
-          }}
-        >
-          <span
-            style={{
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              color: getStatusColor(doc.status),
-              fontWeight: 500,
-            }}
-          >
-            {getStatusLabel(doc.status)}
-          </span>
+        <div aria-live="polite" className="app-doc__status">
+          <span className="ui-visually-hidden">Status: </span>
+          <StatusPill status={getStatusTone(doc.status)}>{getStatusLabel(doc.status)}</StatusPill>
 
           {/* Progress bar for uploading/processing */}
           {(doc.status === 'uploading' || doc.status === 'processing') && (
-            <div
-              role="progressbar"
-              aria-valuenow={Math.round(doc.progress)}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-label={`${getStatusLabel(doc.status)}: ${Math.round(doc.progress)}%`}
-              style={{
-                width: '80px',
-                height: '4px',
-                backgroundColor: 'var(--color-bubble-system)',
-                borderRadius: '2px',
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  width: `${doc.progress}%`,
-                  height: '100%',
-                  backgroundColor: getStatusColor(doc.status),
-                  transition: 'width 0.3s ease',
-                }}
-              />
-            </div>
+            <ProgressBar
+              className="app-doc__progress"
+              label={`${getStatusLabel(doc.status)}: ${Math.round(doc.progress)}%`}
+              value={Math.round(doc.progress)}
+            />
           )}
 
           {/* U2: per-document indexing Cancel button. Only rendered during the
               processing stage and only when the host wires the cancel handler. */}
           {doc.status === 'processing' && onCancelIndexing && (
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="secondary"
               onClick={() => onCancelIndexing(doc.id)}
-              aria-label={`Cancel indexing ${doc.fileName}`}
-              style={{
-                border: '1px solid var(--color-text-muted)',
-                borderRadius: '6px',
-                backgroundColor: 'transparent',
-                color: 'var(--color-text-muted)',
-                fontSize: 'var(--font-size-small)',
-                fontFamily: 'var(--font-family)',
-                padding: '0 var(--spacing-xs)',
-                cursor: 'pointer',
-                lineHeight: 1.4,
-                whiteSpace: 'nowrap',
+              onFocus={() => {
+                indexingCancelFocusedRef.current = true;
               }}
+              onBlur={() => {
+                indexingCancelFocusedRef.current = false;
+              }}
+              aria-label={`Cancel indexing ${doc.fileName}`}
             >
               Cancel
-            </button>
+            </Button>
           )}
 
           {/* Error message */}
           {doc.status === 'error' && doc.errorMessage && (
-            <span
-              style={{
-                fontSize: 'var(--font-size-small)',
-                fontFamily: 'var(--font-family)',
-                color: 'var(--color-danger)',
-                maxWidth: '200px',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}
-              title={doc.errorMessage}
-            >
+            <span className="app-doc__error" title={doc.errorMessage}>
               {doc.errorMessage}
             </span>
           )}
@@ -283,117 +293,52 @@ const DocumentItem = React.memo<{
       )}
 
       {/* U5: two-step delete confirmation (inline alert, SidebarConversationItem idiom).
-          Confirm/Cancel buttons replace the status badge + trash icon when armed. */}
+          Confirm/Cancel buttons replace the status badge + trash icon when armed.
+          Disabled controls stay NATIVELY disabled (and also carry aria-disabled for
+          the Lumen disabled look). */}
       {isConfirming ? (
-        <div
-          role="alert"
-          aria-label={`Delete ${doc.fileName}?`}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--spacing-xs)',
-            flexShrink: 0,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              color: 'var(--color-text-on-bubble-assistant)',
-              marginRight: 'var(--spacing-xs)',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Delete {doc.fileName}?
-          </span>
-          <button
-            type="button"
+        <div role="alert" aria-label={`Delete ${doc.fileName}?`} className="app-doc__confirm">
+          <span className="app-doc__confirm-text" title={`Delete ${doc.fileName}?`}>Delete {doc.fileName}?</span>
+          <Button
+            size="sm"
+            variant="danger"
             onClick={handleConfirmDelete}
             disabled={isDeleting}
+            aria-disabled={isDeleting || undefined}
             aria-label={`Confirm delete ${doc.fileName}`}
-            style={{
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              backgroundColor: 'var(--color-danger)',
-              color: 'var(--color-text-on-primary)',
-              border: 'none',
-              borderRadius: '6px',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              fontWeight: 500,
-              cursor: isDeleting ? 'not-allowed' : 'pointer',
-              whiteSpace: 'nowrap',
-            }}
           >
             Confirm
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
             onClick={handleCancelDelete}
             disabled={isDeleting}
+            aria-disabled={isDeleting || undefined}
             aria-label={`Cancel delete ${doc.fileName}`}
-            style={{
-              padding: 'var(--spacing-xs) var(--spacing-sm)',
-              backgroundColor: 'transparent',
-              color: 'var(--color-text-muted)',
-              border: '1px solid var(--color-text-muted)',
-              borderRadius: '6px',
-              fontSize: 'var(--font-size-small)',
-              fontFamily: 'var(--font-family)',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-            }}
+            data-doc-action="cancel-delete"
           >
             Cancel
-          </button>
+          </Button>
         </div>
-      ) : onDelete ? (
-        /* Delete trigger button (arms the inline confirm). Not rendered in
-           B9 Electron mode (no per-document delete in the frozen contract). */
-        <button
-          type="button"
-          onClick={handleDelete}
-          disabled={isDeleting}
-          aria-label={`Delete ${doc.fileName}`}
-          style={{
-            width: '32px',
-            height: '32px',
-            border: 'none',
-            borderRadius: '6px',
-            backgroundColor: 'transparent',
-            cursor: isDeleting ? 'not-allowed' : 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            color: 'var(--color-text-muted)',
-            transition: 'all 0.2s ease',
-          }}
-          onMouseEnter={(e) => {
-            if (!isDeleting) {
-              e.currentTarget.style.backgroundColor = 'var(--color-danger)';
-              e.currentTarget.style.color = 'var(--color-text-on-primary)';
-            }
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.color = 'var(--color-text-muted)';
-          }}
-        >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-          </svg>
-        </button>
-      ) : null}
+      ) : (
+        <div className="app-doc__actions">
+          {onDelete ? (
+            /* Delete trigger button (arms the inline confirm). Not rendered in
+               B9 Electron mode (no per-document delete in the frozen contract). */
+            <IconButton
+              icon="trash"
+              size="sm"
+              className="app-doc__delete"
+              onClick={handleDelete}
+              disabled={isDeleting}
+              aria-disabled={isDeleting || undefined}
+              aria-label={`Delete ${doc.fileName}`}
+              data-doc-action="delete"
+            />
+          ) : null}
+        </div>
+      )}
     </div>
   );
 });
@@ -402,10 +347,157 @@ DocumentItem.displayName = 'DocumentItem';
 
 export const DocumentList: React.FC<DocumentListProps> = React.memo(
   ({ documents, onDelete, deletingId, onCancelIndexing }) => {
-    const [scrollTop, setScrollTop] = useState(0);
     const [containerHeight, setContainerHeight] = useState(300);
     const listRef = useRef<HTMLDivElement>(null);
     const scrollContainerRef = useRef<HTMLElement | null>(null);
+    const tableRef = useRef<HTMLDivElement>(null);
+    const itemHeight = useItemHeight(tableRef, documents.length > 0);
+    // The scroll position is stored with the row height it was measured at, so a
+    // layout switch can re-derive the same ROW at the top (see below).
+    const [scroll, setScroll] = useState({ top: 0, height: itemHeight });
+    // Last scroll position and list offset seen under the CURRENT layout. A layout
+    // switch must never read scroller.scrollTop after the commit: the new row
+    // height has already resized the placeholder and the browser has clamped it.
+    const lastScrollTopRef = useRef(0);
+    const listOffsetRef = useRef(0);
+    const previousHeightRef = useRef(itemHeight);
+    // The document whose row holds keyboard focus. Keyed by id (not index) so it
+    // survives a layout switch; that row is always kept mounted (see below).
+    const [focusedId, setFocusedId] = useState<string | null>(null);
+    // Kept current so handleDeleteConfirmed can stay referentially stable (the memoized
+    // rows must not re-render on every list update).
+    const documentsRef = useRef(documents);
+    documentsRef.current = documents;
+    const emptyRef = useRef<HTMLDivElement>(null);
+    const emptyFocusPendingRef = useRef(false);
+    // Confirmed deletes whose removal has not landed yet. Each shrink of the list may
+    // leave the focused neighbour clipped, so the length effect below re-checks it, and
+    // consumes one pending delete per row removed. A COUNT, not a flag: two quick
+    // confirms (keyboard) land separately and both need the re-check. Only then: a count
+    // change from elsewhere (an upload) must never scroll the user away from where they are.
+    const pendingDeletesRef = useRef(0);
+    const previousLengthRef = useRef(documents.length);
+    // Ids whose delete was confirmed here and whose row has not left `documents` yet.
+    // Such a row is on its way out (its trash is disabled while its delete is in flight,
+    // and it unmounts once the delete lands), so it is never a focus target for the next
+    // delete. Pruned only when the row is gone, NOT when the list grows: an upload landing
+    // mid-delete does not end the delete. A delete that fails leaves its id here, so that
+    // row is merely skipped as a focus target until it goes away.
+    const pendingRemovalIdsRef = useRef<Set<string>>(new Set());
+
+    const findRow = (id: string): HTMLElement | undefined =>
+      Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-doc-id]') ?? []).find(
+        (el) => el.dataset.docId === id
+      );
+
+    // Confirm removes the focused Confirm button (and, once the delete lands, the row):
+    // hand focus to the next row's delete button, else the previous one (skipping rows whose
+    // own delete is already in flight), else the list itself (and the empty state if that was
+    // the last document), never <body>.
+    const handleDeleteConfirmed = useCallback((docId: string) => {
+      const docs = documentsRef.current;
+      const pending = pendingRemovalIdsRef.current;
+      pending.add(docId);
+      const index = docs.findIndex((doc) => doc.id === docId);
+      const isLive = (doc: DocumentEntry) => !pending.has(doc.id);
+      const neighbour = docs.slice(index + 1).find(isLive) ?? docs.slice(0, index).reverse().find(isLive);
+      const listEl = listRef.current;
+      pendingDeletesRef.current += 1;
+      const target =
+        neighbour === undefined
+          ? undefined
+          : Array.from(listEl?.querySelectorAll<HTMLElement>('[data-doc-id]') ?? [])
+              .find((el) => el.dataset.docId === neighbour.id)
+              ?.querySelector<HTMLElement>('[data-doc-action="delete"]');
+      target?.focus();
+      // A natively disabled control (a delete already running on that row) ignores focus():
+      // fall back to the list rather than letting focus drop to <body>.
+      if (target === undefined || document.activeElement !== target) {
+        if (listEl === null) return;
+        emptyFocusPendingRef.current = neighbour === undefined;
+        // Programmatic-focus target only: tabindex exists just while focus is on it,
+        // so clicking plain row text never lands focus on the list.
+        listEl.setAttribute('tabindex', '-1');
+        listEl.focus();
+      }
+    }, []);
+
+    // After the last document is gone the list is replaced by the empty state: carry
+    // the pending focus over to it.
+    useLayoutEffect(() => {
+      if (documents.length === 0 && emptyFocusPendingRef.current) {
+        emptyFocusPendingRef.current = false;
+        emptyRef.current?.setAttribute('tabindex', '-1');
+        emptyRef.current?.focus();
+      }
+    }, [documents.length]);
+
+    // Deleting a row shifts the rows below it up while focus (just handed to the next
+    // row's delete button, which scrolled into view BEFORE the shift) stays on its
+    // control: with overflow-anchor off nothing re-anchors, so the control can end up
+    // clipped by the scroll region. Re-check on every length change (WCAG 2.4.11).
+    useLayoutEffect(() => {
+      const previous = previousLengthRef.current;
+      previousLengthRef.current = documents.length;
+      const pendingRemovals = pendingRemovalIdsRef.current;
+      if (pendingRemovals.size > 0) {
+        const present = new Set(documents.map((doc) => doc.id));
+        pendingRemovals.forEach((id) => {
+          if (!present.has(id)) pendingRemovals.delete(id);
+        });
+      }
+      if (pendingDeletesRef.current === 0) return;
+      // Pending deletes outlive a failed delete; a growing list proves this change is not
+      // ours (and that anything still pending is stale).
+      if (documents.length >= previous) {
+        if (documents.length > previous) pendingDeletesRef.current = 0;
+        return;
+      }
+      pendingDeletesRef.current = Math.max(0, pendingDeletesRef.current - (previous - documents.length));
+      const scroller = scrollContainerRef.current;
+      const listEl = listRef.current;
+      const active = document.activeElement;
+      if (scroller === null || listEl === null || !(active instanceof HTMLElement)) return;
+      if (active !== scroller && listEl.contains(active)) keepInView(scroller, active);
+    }, [documents.length]);
+
+    // A pin must never outlive the focus it protects. A removed focused element fires
+    // no blur (an armed row's Confirm/Cancel swap, a deleted document), so onBlur alone
+    // can leave `focusedId` set and keep that row and its neighbours mounted forever.
+    // Verified on every commit: if the pinned row is gone or no longer contains the
+    // active element, drop the pin (review LOW-A, NIT-2).
+    useLayoutEffect(() => {
+      if (focusedId === null) return;
+      const row = findRow(focusedId);
+      if (row === undefined || !row.contains(document.activeElement)) setFocusedId(null);
+    });
+    // A layout switch changes the row height: keep the same ROW at the top of the
+    // list (scroll position by item index, not by pixels). The list does not start
+    // at the scroller's top (the wide layout shows a table head above it), so the
+    // offset is subtracted before and re-added after the conversion.
+    useLayoutEffect(() => {
+      const previous = previousHeightRef.current;
+      previousHeightRef.current = itemHeight;
+      const scroller = scrollContainerRef.current;
+      const listEl = listRef.current;
+      if (previous === itemHeight || scroller === null || listEl === null) return;
+      const row = (lastScrollTopRef.current - listOffsetRef.current) / previous;
+      const offset = measureListOffset(scroller, listEl);
+      // At the very top (the table head still showing) stay at 0: re-adding the wide
+      // layout's head offset would scroll the head out of view. Otherwise round (a
+      // truncating assignment lands up to 1px short of the row boundary).
+      const atTop = lastScrollTopRef.current <= listOffsetRef.current;
+      scroller.scrollTop = atTop ? 0 : Math.round(offset + row * itemHeight);
+      // Keep the focused control on screen (WCAG 2.4.11): the row-index conversion
+      // can leave it outside the scroll area even though it is still mounted.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== scroller && listEl.contains(active)) {
+        keepInView(scroller, active);
+      }
+      lastScrollTopRef.current = scroller.scrollTop;
+      listOffsetRef.current = offset;
+      setScroll({ top: scroller.scrollTop, height: itemHeight });
+    }, [itemHeight]);
 
     useLayoutEffect(() => {
       if (documents.length === 0) {
@@ -437,12 +529,15 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
       scrollContainerRef.current = scroller;
 
       const handleScroll = () => {
-        setScrollTop(scroller!.scrollTop);
+        lastScrollTopRef.current = scroller!.scrollTop;
+        setScroll({ top: scroller!.scrollTop, height: previousHeightRef.current });
         setContainerHeight(scroller!.clientHeight);
       };
 
       // Initialize with current scroll position and viewport height
-      setScrollTop(scroller.scrollTop);
+      lastScrollTopRef.current = scroller.scrollTop;
+      listOffsetRef.current = measureListOffset(scroller, listEl);
+      setScroll({ top: scroller.scrollTop, height: previousHeightRef.current });
       setContainerHeight(scroller.clientHeight || 300);
 
       scroller.addEventListener('scroll', handleScroll, { passive: true });
@@ -465,81 +560,92 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
     }, [documents.length]);
 
     if (documents.length === 0) {
+      // ui-empty layout with a <p> title: a heading here would collide with the
+      // page's "Documents" heading.
       return (
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 'var(--spacing-xxl)',
-            color: 'var(--color-text-muted)',
-          }}
-        >
-          <svg
-            width="48"
-            height="48"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{ marginBottom: 'var(--spacing-md)', opacity: 0.5 }}
-          >
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-          </svg>
-          <p
-            style={{
-              fontSize: 'var(--font-size-body)',
-              fontFamily: 'var(--font-family)',
-              textAlign: 'center',
-              // Lumen axe: the inherited muted grey is 4.18:1 on the page
-              // background; the primary text token passes AA.
-              color: 'var(--color-text-primary)',
-            }}
-          >
-            No documents uploaded yet
-          </p>
+        <div ref={emptyRef} onBlur={(event) => event.currentTarget.removeAttribute('tabindex')} className="ui-empty app-doc-list__empty">
+          <Icon name="file-text" size={32} className="ui-empty__icon" />
+          <p className="app-doc-list__empty-title">No documents uploaded yet</p>
         </div>
       );
     }
 
+    // Between a layout switch committing and its layout effect re-aiming the
+    // scroller, `scroll` still holds the old row height: render the rows around the
+    // same index so a focused row is never unmounted (focus would fall to body).
+    const scrollTop = scroll.height === itemHeight ? scroll.top : (scroll.top / scroll.height) * itemHeight;
     const totalItems = documents.length;
-    const startIndex = Math.max(0, Math.floor(scrollTop / ITEM_HEIGHT) - BUFFER);
+    const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - BUFFER);
     const endIndex = Math.min(
       totalItems,
-      Math.ceil((scrollTop + containerHeight) / ITEM_HEIGHT) + BUFFER
+      Math.ceil((scrollTop + containerHeight) / itemHeight) + BUFFER
     );
-    const visibleDocuments = documents.slice(startIndex, endIndex);
-    const totalHeight = totalItems * ITEM_HEIGHT;
+    // The focused row (and its neighbours, so Tab / Shift+Tab still reach the next
+    // and previous rows) stays mounted wherever the window is: unmounting a focused
+    // control drops focus to <body>. Rendered in index order to keep tab order.
+    const focusedIndex = focusedId === null ? -1 : documents.findIndex((doc) => doc.id === focusedId);
+    const renderedSet = new Set<number>();
+    for (let i = startIndex; i < endIndex; i++) renderedSet.add(i);
+    if (focusedIndex >= 0) {
+      for (let i = Math.max(0, focusedIndex - 1); i <= Math.min(totalItems - 1, focusedIndex + 1); i++) {
+        renderedSet.add(i);
+      }
+    }
+    const renderedIndices = Array.from(renderedSet).sort((a, b) => a - b);
+    const totalHeight = totalItems * itemHeight;
 
     return (
+      <div ref={tableRef} className="app-doc-table">
+        {/* Column headings: decorative only (aria-hidden; labels drawn from
+            data-label by CSS, so they add no text). Each row's cells carry their
+            own self-describing text ("117.2 KB", "12 chunks", the status pill). */}
+        <div className="app-doc-table__head" aria-hidden="true">
+          <span />
+          <span data-label="Name" />
+          <span data-label="Size" />
+          <span data-label="Chunks" />
+          <span data-label="Status" />
+          <span />
+        </div>
       <div
         ref={listRef}
         role="list"
         aria-label="Uploaded documents"
-        style={{
-          border: '1px solid var(--color-bubble-system)',
-          borderRadius: '12px',
-          overflow: 'hidden',
+        className="app-doc-list"
+        onBlur={(event) => {
+          if (event.target === event.currentTarget) {
+            emptyFocusPendingRef.current = false;
+            event.currentTarget.removeAttribute('tabindex');
+          }
         }}
       >
-        {/* Placeholder div maintains the full scroll height for the scrollbar */}
+        {/* Placeholder div maintains the full scroll height for the scrollbar.
+            Positional inline styles only: virtualization computes them per render. */}
         <div style={{ height: `${totalHeight}px`, position: 'relative' }}>
-          {visibleDocuments.map((doc, i) => {
-            const index = startIndex + i;
+          {renderedIndices.map((index) => {
+            const doc = documents[index]!;
             return (
               <div
                 key={doc.id}
                 role="listitem"
+                // Pinned rows make the mounted set non-contiguous: say where each sits.
+                aria-setsize={totalItems}
+                aria-posinset={index + 1}
+                data-doc-id={doc.id}
+                className="app-doc-list__item"
+                onFocus={() => setFocusedId(doc.id)}
+                onBlur={(event) => {
+                  // Focus moving to another control in the same row keeps it pinned.
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setFocusedId((current) => (current === doc.id ? null : current));
+                  }
+                }}
                 style={{
                   position: 'absolute',
-                  top: `${index * ITEM_HEIGHT}px`,
+                  top: `${index * itemHeight}px`,
                   left: 0,
                   right: 0,
-                  height: `${ITEM_HEIGHT}px`,
+                  height: `${itemHeight}px`,
                 }}
               >
                 <DocumentItem
@@ -547,11 +653,13 @@ export const DocumentList: React.FC<DocumentListProps> = React.memo(
                   onDelete={onDelete}
                   isDeleting={deletingId === doc.id}
                   onCancelIndexing={onCancelIndexing}
+                  onDeleteConfirmed={handleDeleteConfirmed}
                 />
               </div>
             );
           })}
         </div>
+      </div>
       </div>
     );
   }
