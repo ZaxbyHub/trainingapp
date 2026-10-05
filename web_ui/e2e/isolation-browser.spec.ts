@@ -39,6 +39,13 @@ import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { expect, test, type Page } from '@playwright/test';
 
+/** Firefox cannot run the in-frame isolation probes (see the reason; PRR-151-030). */
+const FIREFOX_SKIP_REASON =
+  "Firefox: the app is served with COOP same-origin + COEP require-corp (SharedArrayBuffer), and under those headers Playwright's Firefox (Juggler) cannot attach to ANY iframe (frame.url() stays empty, frame evaluate/locators never resolve; verified: the same pages are inspectable once COOP/COEP are stripped). This spec reads results from inside the course/boot frames, and its course fixtures also use location.ancestorOrigins, which Firefox does not implement. Chromium keeps the full assertion. Stripping the isolation headers to make it run would test a different posture, so it is skipped, not faked.";
+function skipOnFirefox(browserName: string): void {
+  test.skip(browserName === 'firefox', FIREFOX_SKIP_REASON);
+}
+
 const PROBE_PACK = 'isolation-probe-course';
 const CLICK_PACK = 'isolation-click-course';
 const OTHER_PACK = 'isolation-other-course';
@@ -358,7 +365,8 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('course content cannot reach app storage, app windows, other packs, popups or top navigation', async ({ page }) => {
+test('course content cannot reach app storage, app windows, other packs, popups or top navigation', async ({ page, browserName }) => {
+  skipOnFirefox(browserName);
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
   await page.evaluate((seed) => {
@@ -417,7 +425,8 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   await expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
 });
 
-test('course content cannot escape its CSP through a same-origin player-origin document (FC6)', async ({ page }) => {
+test('course content cannot escape its CSP through a same-origin player-origin document (FC6)', async ({ page, browserName }) => {
+  skipOnFirefox(browserName);
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
   // The cross-origin egress sink: every request that reaches it is an escape.
@@ -527,7 +536,8 @@ function navEgressStoryHtml(): string {
   return `<!doctype html><html><head><title>nav egress probe</title></head><body><pre id="nav-probe">running</pre><script>${script}</script></body></html>`;
 }
 
-test('a course cannot navigate its own frame or the boot frame off the player origin (navigation egress)', async ({ page }) => {
+test('a course cannot navigate its own frame or the boot frame off the player origin (navigation egress)', async ({ page, browserName }) => {
+  skipOnFirefox(browserName);
   const logs: string[] = [];
   page.on('console', (message) => {
     if (message.text().startsWith('NAV-EGRESS')) logs.push(message.text());
@@ -603,7 +613,8 @@ function childNavStoryHtml(): string {
   return `<!doctype html><html><head><title>child nav probe</title></head><body><pre id="child-nav-probe">running</pre><script>${script}</script></body></html>`;
 }
 
-test('a course cannot steer a child iframe it created off-origin (grandchild navigation egress)', async ({ page }) => {
+test('a course cannot steer a child iframe it created off-origin (grandchild navigation egress)', async ({ page, browserName }) => {
+  skipOnFirefox(browserName);
   const logs: string[] = [];
   page.on('console', (message) => {
     if (message.text().startsWith('CHILD-NAV')) logs.push(message.text());
@@ -639,7 +650,8 @@ test('a course cannot steer a child iframe it created off-origin (grandchild nav
   expect(new URL(page.url()).origin).toBe(appOrigin);
 });
 
-test('course content cannot run a same-origin app asset as an unconfined worker (review round 4 F1)', async ({ page }) => {
+test('course content cannot run a same-origin app asset as an unconfined worker (review round 4 F1)', async ({ page, browserName }) => {
+  skipOnFirefox(browserName);
   const assets = builtWorkerAssets();
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
@@ -698,7 +710,8 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
   expect(hits, 'F1 worker egress').toEqual([]);
 });
 
-test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page }) => {
+test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page, browserName }) => {
+  skipOnFirefox(browserName);
   await page.goto('/');
   await page.getByRole('button', { name: 'Documents', exact: true }).click();
   await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });

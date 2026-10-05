@@ -11,10 +11,12 @@ default `npm run test:e2e` config ignores this folder). Design context:
 | `lumen-tooltip-overflow.spec.ts` | tooltip stays inside a 500px viewport | yes |
 | `lumen-doc-row-reflow.spec.ts` | document rows reflow (container query on the table), never clip Delete/Cancel/Confirm, at 320-1440px with the 64px rail or 260px sidebar; dates in several locales (en-US, de-DE, fi-FI and a worst-case string) never overflow the row; sidebar, drawer and spacing geometry is read from source, so a CSS change cannot silently drift the test | yes |
 | `lumen-doc-list-scroll.spec.ts` | the real DocumentList (80 docs): keeps the same row at the top and focus on its control across the 800px stack/wide switch; inline row height equals rendered height on both sides of the boundary; delete-confirm hands focus to the neighbouring row (never `<body>`) and keeps it inside the scroll region, including two quick deletes; a focus-pinned row stays pinned only while it holds focus; adding a document does not scroll the user away; bottom-up quick deletes (first delete held in IndexedDB) never focus a row whose own delete is in flight; header Upload keeps focus around the file chooser | yes |
-| `lumen-baseline.spec.ts` | `toHaveScreenshot` pixel baselines | no (Windows only) |
+| `lumen-baseline.spec.ts` | `toHaveScreenshot` pixel baselines | non-required Windows job (`web-ui-visual-baseline`), never in the ubuntu job |
 
 CI runs only the a11y subset (`npm run test:visual:a11y:ci`: every spec above
-marked "yes", reusing the `web-ui-e2e` job's `dist/`). Locally,
+marked "yes", reusing the `web-ui-e2e` job's `dist/`; Chromium only, like every pixel and axe baseline here: the screenshots are
+engine-specific, so they are never taken in Firefox. Firefox is covered by the browser e2e suite (`playwright.config.ts`,
+`npm run test:e2e`, run under both Chromium and Firefox in the required `web-ui e2e` job). Locally,
 `npm run test:visual:a11y` builds first and runs the same specs; `npm run test:visual` runs everything including pixels.
 
 ## Who re-baselines, and when
@@ -27,7 +29,9 @@ build; the repo uses caret ranges, so do not exact-pin).
 ## Screenshot baselines (Windows only)
 
 Baselines are rendered by Windows Chromium and stored under
-`e2e/visual/__screenshots__/win32/`. Ubuntu CI never runs the pixel spec. Outside CI,
+`e2e/visual/__screenshots__/win32/` (64 PNGs: chat, documents and settings 16 each, training 8, overlays 8). Ubuntu CI never runs the pixel spec;
+the non-required `web-ui-visual-baseline` job (`windows-latest`) runs it WITHOUT `--update-snapshots` on a clean build with no staged weights, and
+may be red if the runner's fonts differ from the generating machine (no tolerance is added). Outside CI,
 running it on Linux or macOS (only `win32/` baselines exist) does not diff: the
 config sets no `updateSnapshots`, so Playwright's default `missing` mode FAILS with
 missing-snapshot errors and WRITES new PNGs under `e2e/visual/__screenshots__/<platform>/`.
@@ -35,6 +39,10 @@ Delete those generated folders and never commit them. Regenerate on Windows only
 
 1. Remove any `web_ui/.env.production` (written by `prepare-models`; it changes
    the model-blocked overlay pixels).
+   The overlay baselines also embed machine-derived text: the model-gate Banner shows "Insufficient memory: N GB available"
+   (from `navigator.deviceMemory`) and WebGPU-presence copy. Regenerate on a machine whose profile matches the committed
+   baselines, state its RAM and WebGPU availability in the PR, and treat an overlay diff that is only that text as a machine
+   difference, not a UI regression.
 2. `npm run build` from a clean state.
 3. `npx playwright test --config playwright.visual.config.ts --update-snapshots`
 4. Review every changed PNG and include before/after images of the changed

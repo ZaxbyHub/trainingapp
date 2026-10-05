@@ -292,7 +292,7 @@ Courses run on a dedicated player origin instead:
 - **Worker updates.** A new version of the course worker waits (no notice is
   shown) until no course is open, so an update never replaces the worker under
   a playing course; it takes over once the open course is closed.
-- **Support.** Chrome and Edge; Safari is not supported; Firefox is untested.
+- **Support.** Chrome, Edge and Firefox (the browser e2e suite, including the player-origin isolation specs, runs under both Chromium and Firefox in CI); Safari/WebKit is not supported.
 
 Threat model: nothing on the player origin is trusted. A malicious course can
 take the relay port, but the app's relay serves only the open pack's files. It

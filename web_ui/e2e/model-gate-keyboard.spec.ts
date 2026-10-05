@@ -36,13 +36,18 @@ test('Shift+Tab from the gate reaches the shell navigation', async ({ page }) =>
   expect(await activeIn(page, '[role="alertdialog"]')).toBe(false);
 });
 
-test('Tab from the gate leaves it (no trap) and never lands in the inert chat content', async ({ page }) => {
+test('Tab from the gate leaves it (no trap) and never lands in the inert chat content', async ({ page, browserName }) => {
   await boot(page);
   await page.getByRole('button', { name: 'Use a local server or cloud model' }).focus();
   // Forward Tab from the last gate button must leave the gate; with a trap it would wrap
   // back to Retry. Inert content is skipped, so it lands outside the chat region entirely.
   await page.keyboard.press('Tab');
-  expect(await activeIn(page, '[role="alertdialog"]'), 'Tab left the gate').toBe(false);
+  // A trap wraps to the first gate button (Retry) in every engine.
+  await expect(page.getByRole('button', { name: 'Retry' })).not.toBeFocused();
+  // Chromium moves focus out of the document (to browser chrome) when nothing tabbable remains. Firefox
+  // keeps focus on the last tabbable element instead, so "left the gate" is only observable there as
+  // "did not wrap" (asserted above) plus "never reached inert content" (below).
+  if (browserName !== 'firefox') expect(await activeIn(page, '[role="alertdialog"]'), 'Tab left the gate').toBe(false);
   expect(await activeIn(page, '.chat-page__content')).toBe(false);
   for (let i = 0; i < 12; i++) {
     await page.keyboard.press('Tab');

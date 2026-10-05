@@ -568,7 +568,7 @@ The browser app installs Knowledge Packs and plays training courses like the des
 (ADR-0012). Pack files are kept in this browser profile's private storage (OPFS); the Packs panel
 shows how much browser storage is used and available, and an install is refused when the free
 browser quota is less than twice the pack's unpacked size. Supported browsers: current Chrome and
-Edge. Safari is not supported; Firefox is untested.
+Edge. Firefox is supported (verified by the browser e2e suite in CI). Safari/WebKit is not supported.
 
 Course content runs on a separate **player origin** so it can never read the app's data. The
 app (not the host) answers course files with the training CSP, whose `worker-src` admits only
