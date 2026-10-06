@@ -3,8 +3,9 @@ import { resolve } from 'node:path';
 import React, { createRef, useState } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
-import { Button, Dialog, Tabs, ToastProvider, Tooltip, useToast, type TabItem } from './index';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Button, Combobox, Dialog, Tabs, ToastProvider, Tooltip, useToast, type TabItem } from './index';
+import { overlayCount, registerOverlay, settleEscape } from './overlayStack';
 
 function DialogHarness({ onClose = () => {} }: { onClose?: () => void }) {
   const [open, setOpen] = useState(false);
@@ -673,21 +674,17 @@ describe('Dialog Escape owned by a control inside (PRR-151-070)', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('does not close from an expanded combobox or open popup button; closes once collapsed, and from a disclosure button', () => {
+  it('does not close from an expanded combobox; closes once collapsed, and from a disclosure button', () => {
     const onClose = vi.fn();
     const { rerender } = render(
       <Host onClose={onClose} onOuter={() => {}}>
         <input aria-label="pick" role="combobox" aria-expanded="true" aria-controls="lb" />
-        <button type="button" aria-haspopup="menu" aria-expanded="true">
-          Menu
-        </button>
         <button type="button" aria-expanded="true">
           Details
         </button>
       </Host>
     );
     fireEvent.keyDown(screen.getByRole('combobox', { name: 'pick' }), { key: 'Escape' });
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Menu' }), { key: 'Escape' });
     expect(onClose).not.toHaveBeenCalled();
     // A plain disclosure (aria-expanded without a popup) does not own Escape.
     fireEvent.keyDown(screen.getByRole('button', { name: 'Details' }), { key: 'Escape' });
@@ -699,6 +696,400 @@ describe('Dialog Escape owned by a control inside (PRR-151-070)', () => {
     );
     fireEvent.keyDown(screen.getByRole('combobox', { name: 'pick' }), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  // Review INFO (PR #151): deferring to every expanded popup button made Escape a dead key
+  // when the popup ignored it. A popup button now defers only when its popup handled the
+  // key (preventDefault here; stopping propagation means the dialog never sees it).
+  it('an open popup button defers only when its popup handled Escape; one that ignores it no longer makes Escape a dead key', () => {
+    const onClose = vi.fn();
+    const onOuter = vi.fn();
+    render(
+      <Host onClose={onClose} onOuter={onOuter}>
+        <button type="button" aria-haspopup="menu" aria-expanded="true" onKeyDown={(e) => e.key === 'Escape' && e.preventDefault()}>
+          Handled
+        </button>
+        <button type="button" aria-haspopup="menu" aria-expanded="true">
+          Ignored
+        </button>
+      </Host>
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Handled' }), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Ignored' }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onOuter).not.toHaveBeenCalled(); // neither press reached content behind
+  });
+
+  it('the real Combobox: the first Escape closes its list only, the second closes the dialog', async () => {
+    function Pick() {
+      const [value, setValue] = useState('');
+      return <Combobox aria-label="model" value={value} onValueChange={setValue} options={['alpha', 'beta']} />;
+    }
+    const onClose = vi.fn();
+    render(
+      <Host onClose={onClose} onOuter={() => {}}>
+        <Pick />
+      </Host>
+    );
+    const input = screen.getByRole('combobox', { name: 'model' });
+    expect(input).toHaveFocus();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.keyboard('{Escape}');
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Dialog Escape stack (PRR-151-038)', () => {
+  const esc = (target: Element = document.body, init: KeyboardEventInit = {}) => fireEvent.keyDown(target, { key: 'Escape', ...init });
+  const blurAll = () => act(() => (document.activeElement as HTMLElement | null)?.blur());
+  type Spy = { mock: { calls: unknown[][]; invocationCallOrder: number[] } };
+  /** Keydown CAPTURE listeners on document still registered, replaying add/remove calls in order. */
+  function liveCaptureKeydown(add: Spy, remove: Spy): number {
+    const calls = [
+      ...add.mock.calls.map((args, i) => ({ at: add.mock.invocationCallOrder[i], args, added: true })),
+      ...remove.mock.calls.map((args, i) => ({ at: remove.mock.invocationCallOrder[i], args, added: false })),
+    ].sort((a, b) => a.at - b.at);
+    const live = new Set<unknown>();
+    for (const { args, added } of calls) {
+      const [type, fn, opts] = args;
+      const capture = typeof opts === 'boolean' ? opts : (opts as AddEventListenerOptions | undefined)?.capture === true;
+      if (type !== 'keydown' || !capture) continue;
+      if (added) live.add(fn);
+      else live.delete(fn);
+    }
+    return live.size;
+  }
+  const onWindow = vi.fn();
+
+  beforeEach(() => {
+    // Isolation: no dialog left registered by an earlier test.
+    expect(overlayCount()).toBe(0);
+    onWindow.mockReset();
+    window.addEventListener('keydown', onWindow);
+  });
+  afterEach(() => {
+    window.removeEventListener('keydown', onWindow);
+    vi.restoreAllMocks();
+  });
+
+  it('focus on <body>: Escape closes the dialog; no later capture listener, React parent or window listener sees it', async () => {
+    const onClose = vi.fn();
+    const onParent = vi.fn();
+    const lateCapture = vi.fn();
+    render(
+      <div onKeyDown={onParent}>
+        <DialogHarness onClose={onClose} />
+      </div>
+    );
+    const opener = screen.getByRole('button', { name: 'Open' });
+    await userEvent.click(opener);
+    blurAll();
+    expect(document.body).toHaveFocus();
+    // Same node and phase as the stack's listener, registered after it.
+    document.addEventListener('keydown', lateCapture, true);
+    try {
+      esc();
+    } finally {
+      document.removeEventListener('keydown', lateCapture, true);
+    }
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(lateCapture).not.toHaveBeenCalled();
+    expect(onWindow).not.toHaveBeenCalled();
+    expect(onParent).not.toHaveBeenCalled();
+    expect(opener).toHaveFocus(); // focus return still applies (focus was on <body>)
+  });
+
+  it('focus on a toast above the dialog: Escape closes the dialog, not the toast', async () => {
+    const onClose = vi.fn();
+    function ToastOverModal() {
+      const { showToast } = useToast();
+      const [open, setOpen] = useState(true);
+      React.useEffect(() => {
+        showToast('Saved', 'info');
+      }, [showToast]);
+      return (
+        <Dialog
+          open={open}
+          onClose={() => {
+            onClose();
+            setOpen(false);
+          }}
+          title="Modal"
+          footer={<Button>First</Button>}
+        />
+      );
+    }
+    render(
+      <ToastProvider>
+        <ToastOverModal />
+      </ToastProvider>
+    );
+    const dismiss = await waitFor(() => screen.getAllByRole('button', { name: 'Dismiss notification' })[0]);
+    expect(screen.getByRole('dialog', { name: 'Modal' }).contains(dismiss)).toBe(false);
+    act(() => dismiss.focus());
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(dismiss).toBeInTheDocument();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('dismissible={false} with focus outside the panel: Escape is swallowed (default-prevented) and the dialog stays', () => {
+    render(<Dialog open dismissible={false} title="Gate" footer={<Button>Go</Button>} />);
+    blurAll();
+    expect(esc()).toBe(false);
+    expect(screen.getByRole('dialog', { name: 'Gate' })).toBeInTheDocument();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('Escape from inside the panel is not seen by a native listener on the portal container added after the dialog opened', () => {
+    const onClose = vi.fn();
+    const onBody = vi.fn();
+    render(<Dialog open onClose={onClose} title="P" footer={<Button>In</Button>} />);
+    document.body.addEventListener('keydown', onBody);
+    try {
+      esc(screen.getByRole('button', { name: 'In' }));
+    } finally {
+      document.body.removeEventListener('keydown', onBody);
+    }
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onBody).not.toHaveBeenCalled();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('stacked dialogs: Escape closes only the top one, even with focus in the lower panel', () => {
+    const outerClose = vi.fn();
+    const innerClose = vi.fn();
+    function Two() {
+      const [outer, setOuter] = useState(true);
+      const [inner, setInner] = useState(true);
+      return (
+        <>
+          <Dialog
+            open={outer}
+            onClose={() => {
+              outerClose();
+              setOuter(false);
+            }}
+            title="Outer"
+            footer={<Button>Outer action</Button>}
+          />
+          <Dialog
+            open={inner}
+            onClose={() => {
+              innerClose();
+              setInner(false);
+            }}
+            title="Inner"
+            footer={<Button>Inner action</Button>}
+          />
+        </>
+      );
+    }
+    render(<Two />);
+    const outerAction = screen.getByRole('button', { name: 'Outer action' });
+    act(() => outerAction.focus());
+    esc(outerAction);
+    expect(innerClose).toHaveBeenCalledTimes(1);
+    expect(outerClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Inner' })).toBeNull();
+    esc(outerAction);
+    expect(outerClose).toHaveBeenCalledTimes(1);
+    expect(innerClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('nested dialogs (one opened from inside the other): Escape from inside or from <body> closes only the inner', () => {
+    const outerClose = vi.fn();
+    function Nested() {
+      const [inner, setInner] = useState(false);
+      return (
+        <Dialog open onClose={outerClose} title="Outer" footer={<Button>Outer action</Button>}>
+          <Dialog open={inner} onClose={() => setInner(false)} title="Inner" footer={<Button>Inner action</Button>} />
+          <Button onClick={() => setInner(true)}>More</Button>
+        </Dialog>
+      );
+    }
+    render(<Nested />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    esc(screen.getByRole('button', { name: 'Inner action' }));
+    expect(screen.queryByRole('dialog', { name: 'Inner' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    blurAll();
+    esc();
+    expect(screen.queryByRole('dialog', { name: 'Inner' })).toBeNull();
+    expect(outerClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toBeInTheDocument();
+  });
+
+  it('the boot layer counts as topmost: Escape from a later default dialog is swallowed by the boot gate', () => {
+    const defaultClose = vi.fn();
+    render(
+      <>
+        <Dialog open layer="boot" dismissible={false} title="Boot" footer={<Button>Boot action</Button>} />
+        <Dialog open onClose={defaultClose} title="Default" footer={<Button>Default action</Button>} />
+      </>
+    );
+    const action = screen.getByRole('button', { name: 'Default action' });
+    act(() => action.focus());
+    expect(esc(action)).toBe(false);
+    expect(defaultClose).not.toHaveBeenCalled();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('a non-modal, non-dismissible gate (the chat gates) leaves Escape outside its panel to the page; inside, it swallows it', () => {
+    const onShell = vi.fn();
+    render(
+      <>
+        <button type="button" onKeyDown={(e) => e.key === 'Escape' && onShell()}>
+          Shell
+        </button>
+        <div style={{ position: 'relative' }}>
+          <Dialog open contained modal={false} dismissible={false} title="Gate" footer={<Button>Gate action</Button>} />
+        </div>
+      </>
+    );
+    expect(esc(screen.getByRole('button', { name: 'Shell' }))).toBe(true);
+    expect(onShell).toHaveBeenCalledTimes(1);
+    expect(onWindow).toHaveBeenCalledTimes(1);
+    expect(esc(screen.getByRole('button', { name: 'Gate action' }))).toBe(false);
+    expect(onWindow).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Gate' })).toBeInTheDocument();
+  });
+
+  it('a non-modal but dismissible dialog takes part: Escape from outside its panel closes it', () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <Button>Page</Button>
+        <Dialog open modal={false} onClose={onClose} title="Panel" footer={<Button>In</Button>} />
+      </>
+    );
+    esc(screen.getByRole('button', { name: 'Page' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('a non-claiming gate above a modal does not shield it: Escape from outside both reaches the modal', () => {
+    const outerClose = vi.fn();
+    render(
+      <Dialog open onClose={outerClose} title="Outer">
+        <div style={{ position: 'relative' }}>
+          <Dialog open contained modal={false} dismissible={false} title="Gate" footer={<Button>Gate action</Button>} />
+        </div>
+      </Dialog>
+    );
+    blurAll();
+    esc();
+    expect(outerClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('focus outside the panel: an Escape that cancels an IME composition does not close, and still does not leak', () => {
+    const onClose = vi.fn();
+    render(<Dialog open onClose={onClose} title="T" footer={<Button>In</Button>} />);
+    blurAll();
+    esc(document.body, { isComposing: true });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onWindow).not.toHaveBeenCalled();
+    esc();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('StrictMode: the double mount leaves one entry and one listener; Escape closes once; unmount leaves none', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    const onClose = vi.fn();
+    const { unmount } = render(
+      <React.StrictMode>
+        <Dialog open onClose={onClose} title="S" footer={<Button>In</Button>} />
+      </React.StrictMode>
+    );
+    expect(overlayCount()).toBe(1);
+    expect(liveCaptureKeydown(add, remove)).toBe(1);
+    blurAll();
+    esc();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(overlayCount()).toBe(0);
+    expect(liveCaptureKeydown(add, remove)).toBe(0);
+  });
+
+  it('close and unmount both unregister; one listener lives exactly while any dialog is open', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    function Host({ a, b }: { a: boolean; b: boolean }) {
+      return (
+        <>
+          <Dialog open={a} onClose={() => {}} title="A" />
+          <Dialog open={b} onClose={() => {}} title="B" />
+        </>
+      );
+    }
+    const { rerender, unmount } = render(<Host a b={false} />);
+    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([1, 1]);
+    rerender(<Host a b />);
+    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([2, 1]);
+    rerender(<Host a={false} b />);
+    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([1, 1]);
+    rerender(<Host a={false} b={false} />); // closed, still mounted
+    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([0, 0]);
+    rerender(<Host a b />);
+    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([2, 1]);
+    unmount();
+    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([0, 0]);
+    expect(esc()).toBe(true); // nothing intercepts Escape any more
+    expect(onWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('module: a panel already removed from the DOM is skipped; settleEscape acts only for the panel the key was routed to', () => {
+    // A modal, dismissible entry whose panel is not in the document (removed before its
+    // effect cleanup ran) must not claim the key.
+    const closeDetached = vi.fn();
+    const unregisterDetached = registerOverlay({
+      panel: document.createElement('div'),
+      isModal: () => true,
+      isDismissible: () => true,
+      close: closeDetached,
+    });
+    try {
+      expect(esc()).toBe(true);
+      expect(closeDetached).not.toHaveBeenCalled();
+      expect(onWindow).toHaveBeenCalledTimes(1);
+    } finally {
+      unregisterDetached();
+    }
+
+    const panel = document.createElement('div');
+    const inside = document.createElement('button');
+    panel.appendChild(inside);
+    const other = document.createElement('div');
+    document.body.append(panel, other);
+    const close = vi.fn();
+    const unregister = registerOverlay({ panel, isModal: () => true, isDismissible: () => true, close });
+    // Stand-in for the panel's onKeyDown (bubble phase): a foreign panel tries first.
+    const closesAfterForeign: number[] = [];
+    const settle = (e: KeyboardEvent) => {
+      settleEscape(other, e);
+      closesAfterForeign.push(close.mock.calls.length);
+      settleEscape(panel, e);
+    };
+    panel.addEventListener('keydown', settle);
+    try {
+      esc(inside);
+      expect(closesAfterForeign).toEqual([0]);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      panel.removeEventListener('keydown', settle);
+      unregister();
+      panel.remove();
+      other.remove();
+    }
   });
 });
 
