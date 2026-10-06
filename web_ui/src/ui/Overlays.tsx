@@ -145,9 +145,10 @@ function topmostModalPanel(): HTMLElement | null {
  * keeps working.
  *
  * Escape is routed by the overlay stack (ui/overlayStack.ts): it reaches the topmost
- * open dialog wherever focus is (on <body>, on a toast), never a dialog below it and
- * never content behind. A non-modal, non-dismissible dialog only handles Escape from
- * inside its own panel.
+ * open dialog wherever focus is (on <body>, on a toast), never a dialog below it. Behind
+ * the dialog, no React parent, no bubble-phase listener and no capture listener registered
+ * after the stack's sees the key (see overlayStack.ts for the exact limits). A non-modal,
+ * non-dismissible dialog only handles Escape from inside its own panel.
  */
 export function Dialog<D extends boolean = true>(props: DialogProps<D>) {
   const {

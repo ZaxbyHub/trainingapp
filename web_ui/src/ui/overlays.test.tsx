@@ -748,22 +748,31 @@ describe('Dialog Escape stack (PRR-151-038)', () => {
   const esc = (target: Element = document.body, init: KeyboardEventInit = {}) => fireEvent.keyDown(target, { key: 'Escape', ...init });
   const blurAll = () => act(() => (document.activeElement as HTMLElement | null)?.blur());
   type Spy = { mock: { calls: unknown[][]; invocationCallOrder: number[] } };
-  /** Keydown CAPTURE listeners on document still registered, replaying add/remove calls in order. */
-  function liveCaptureKeydown(add: Spy, remove: Spy): number {
+  /**
+   * Keydown listeners on document still registered, per phase, replaying the add/remove calls
+   * in order (a listener is identified by function AND capture flag, as the DOM does).
+   */
+  function liveKeydown(add: Spy, remove: Spy): { capture: number; bubble: number } {
     const calls = [
       ...add.mock.calls.map((args, i) => ({ at: add.mock.invocationCallOrder[i], args, added: true })),
       ...remove.mock.calls.map((args, i) => ({ at: remove.mock.invocationCallOrder[i], args, added: false })),
     ].sort((a, b) => a.at - b.at);
-    const live = new Set<unknown>();
+    const live = { capture: new Set<unknown>(), bubble: new Set<unknown>() };
     for (const { args, added } of calls) {
       const [type, fn, opts] = args;
       const capture = typeof opts === 'boolean' ? opts : (opts as AddEventListenerOptions | undefined)?.capture === true;
-      if (type !== 'keydown' || !capture) continue;
-      if (added) live.add(fn);
-      else live.delete(fn);
+      if (type !== 'keydown') continue;
+      const set = capture ? live.capture : live.bubble;
+      if (added) set.add(fn);
+      else set.delete(fn);
     }
-    return live.size;
+    return { capture: live.capture.size, bubble: live.bubble.size };
   }
+  /** [registered overlays, document keydown capture listeners, document keydown bubble listeners]. */
+  const state = (add: Spy, remove: Spy) => {
+    const { capture, bubble } = liveKeydown(add, remove);
+    return [overlayCount(), capture, bubble];
+  };
   const onWindow = vi.fn();
 
   beforeEach(() => {
@@ -1001,7 +1010,8 @@ describe('Dialog Escape stack (PRR-151-038)', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('StrictMode: the double mount leaves one entry and one listener; Escape closes once; unmount leaves none', () => {
+  // The bubble-phase count is the PRR-151-007 toast-Tab listener (one per open dialog).
+  it('StrictMode: the double mount leaves one entry and one listener per phase; Escape closes once; unmount leaves none', () => {
     const add = vi.spyOn(document, 'addEventListener');
     const remove = vi.spyOn(document, 'removeEventListener');
     const onClose = vi.fn();
@@ -1010,17 +1020,15 @@ describe('Dialog Escape stack (PRR-151-038)', () => {
         <Dialog open onClose={onClose} title="S" footer={<Button>In</Button>} />
       </React.StrictMode>
     );
-    expect(overlayCount()).toBe(1);
-    expect(liveCaptureKeydown(add, remove)).toBe(1);
+    expect(state(add, remove)).toEqual([1, 1, 1]);
     blurAll();
     esc();
     expect(onClose).toHaveBeenCalledTimes(1);
     unmount();
-    expect(overlayCount()).toBe(0);
-    expect(liveCaptureKeydown(add, remove)).toBe(0);
+    expect(state(add, remove)).toEqual([0, 0, 0]);
   });
 
-  it('close and unmount both unregister; one listener lives exactly while any dialog is open', () => {
+  it('close and unmount both unregister; one capture listener lives exactly while any dialog is open, no listener after', () => {
     const add = vi.spyOn(document, 'addEventListener');
     const remove = vi.spyOn(document, 'removeEventListener');
     function Host({ a, b }: { a: boolean; b: boolean }) {
@@ -1032,17 +1040,17 @@ describe('Dialog Escape stack (PRR-151-038)', () => {
       );
     }
     const { rerender, unmount } = render(<Host a b={false} />);
-    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([1, 1]);
+    expect(state(add, remove)).toEqual([1, 1, 1]);
     rerender(<Host a b />);
-    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([2, 1]);
+    expect(state(add, remove)).toEqual([2, 1, 2]);
     rerender(<Host a={false} b />);
-    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([1, 1]);
+    expect(state(add, remove)).toEqual([1, 1, 1]);
     rerender(<Host a={false} b={false} />); // closed, still mounted
-    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([0, 0]);
+    expect(state(add, remove)).toEqual([0, 0, 0]);
     rerender(<Host a b />);
-    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([2, 1]);
+    expect(state(add, remove)).toEqual([2, 1, 2]);
     unmount();
-    expect([overlayCount(), liveCaptureKeydown(add, remove)]).toEqual([0, 0]);
+    expect(state(add, remove)).toEqual([0, 0, 0]);
     expect(esc()).toBe(true); // nothing intercepts Escape any more
     expect(onWindow).toHaveBeenCalledTimes(1);
   });
