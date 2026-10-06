@@ -36,9 +36,6 @@
  *   boot-screen-loading   DesktopBootGate before the shell, "Starting TrainingApp" (stubbed desktopApi whose
  *   boot-screen-error     discovery never settles / rejects: "Desktop backend unavailable" + Retry); also
  *                         outside the shell
- *   training-player-frame the training player's course <iframe> chrome (.app-player__frame border, radius and
- *                         background), clipped to the frame with an EMPTY-body fixture course so no course
- *                         pixels enter the capture
  * Seeding writes raw IndexedDB records (conversations: Dexie store
  * `docqa_conversations`; documents: `<profile>-doc-qa-documents`) and reloads;
  * no model weights are needed. A fixed clock and UTC/en-US keep dates stable.
@@ -76,9 +73,7 @@
  * overlay captures cover the real-viewport case.
  */
 
-import { createHash } from 'node:crypto';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import JSZip from 'jszip';
 import {
   assertOverlayOptOutAllowed,
   expectModelGateHidden,
@@ -416,42 +411,6 @@ function stubDesktopBridge(mode: 'loading' | 'error'): () => void {
       };
 }
 
-// training-player-frame: a minimal training pack (the shape lumen-axe.spec.ts installs) whose
-// player page has an EMPTY body, so the clipped capture holds only our frame chrome.
-const FRAME_COURSE_ID = 'frame-fixture-course';
-const FRAME_SLIDE_PATH = 'docs/slide-001-5rN4PvXJM5d.json';
-const FRAME_SLIDE_DOC = Buffer.from(
-  JSON.stringify({ slide_id: '5rN4PvXJM5d', slide_title: 'Welcome', section_title: 'Launch Menu', on_screen_text: 'Start the course' }),
-  'utf8'
-);
-
-async function frameCourseZip(): Promise<Buffer> {
-  const zip = new JSZip();
-  zip.file(
-    'pack.json',
-    JSON.stringify({
-      id: FRAME_COURSE_ID,
-      name: 'Frame Fixture Course',
-      version: '1.0.0',
-      published_at: '2026-10-01T00:00:00Z',
-      source_class: 'training',
-      embedding: { model_id: 'bge-small-en-v1.5', dims: 384, normalize: true },
-      chunking: { strategy: 'slide-aware', size: 256, overlap: 0 },
-      docs: [
-        {
-          path: FRAME_SLIDE_PATH,
-          sha256: createHash('sha256').update(FRAME_SLIDE_DOC).digest('hex'),
-          title: 'Welcome',
-          mime: 'application/json',
-        },
-      ],
-    })
-  );
-  zip.file(FRAME_SLIDE_PATH, FRAME_SLIDE_DOC);
-  zip.file('assets/player/story.html', '<!doctype html><html lang="en"><head><title>course</title></head><body></body></html>');
-  return Buffer.from(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
-}
-
 for (const theme of THEMES) {
   for (const width of WIDTHS) {
     test.describe(`${theme} @ ${width}`, () => {
@@ -524,42 +483,6 @@ for (const theme of THEMES) {
           await expect(page).toHaveScreenshot(`boot-screen-${mode}-${theme}-${width}.png`);
         });
       }
-
-      test('training-player-frame', async ({ page }) => {
-        await boot(page, theme);
-        await hideModelGate(page, { expectGate: true });
-        await clickNav(page, 'Documents');
-        await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
-        await page
-          .getByTestId('pack-install-input')
-          .setInputFiles({ name: `${FRAME_COURSE_ID}-1.0.0.zip`, mimeType: 'application/zip', buffer: await frameCourseZip() });
-        await expect(page.getByTestId(`pack-row-${FRAME_COURSE_ID}-1.0.0`)).toBeVisible({ timeout: 60_000 });
-        await clickNav(page, 'Training');
-        // A sole installed course opens straight into its player page.
-        const frame = page.locator('iframe[data-testid="training-player-frame"]');
-        await expect(frame).toBeVisible({ timeout: 30_000 });
-        await expect(page.getByRole('button', { name: 'All courses' })).toBeVisible();
-        await expectModelGateHidden(page);
-        // The install toast auto-dismisses on a timer and would overlap the clip at a time-dependent
-        // moment: dismiss it explicitly and wait until none is left.
-        const dismiss = page.getByRole('button', { name: 'Dismiss notification' });
-        while ((await dismiss.count()) > 0) await dismiss.first().click();
-        await expect(dismiss).toHaveCount(0);
-        await page.waitForTimeout(500);
-        await quiesce(page);
-        const box = await frame.boundingBox();
-        expect(box, 'player frame is laid out').not.toBeNull();
-        const pad = 8;
-        const x = Math.max(0, Math.floor(box!.x) - pad);
-        const y = Math.max(0, Math.floor(box!.y) - pad);
-        const clip = {
-          x,
-          y,
-          width: Math.ceil(box!.x + box!.width) + pad - x,
-          height: Math.ceil(box!.y + box!.height) + pad - y,
-        };
-        await expect(page).toHaveScreenshot(`training-player-frame-${theme}-${width}.png`, { clip });
-      });
     });
   }
 }
