@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   // false = service init still pending (the boot overlay is up); reset to true before each test.
   isInitialized: true,
   initError: null as string | null,
+  // Overrides the boot step text the init hook reports (null = derived from isInitialized).
+  currentStep: null as string | null,
   persistenceError: null as string | null,
   clearPersistenceError: vi.fn(),
 }));
@@ -43,7 +45,7 @@ vi.mock('./hooks/useServiceInitialization', () => ({
   useServiceInitialization: () => ({
     isInitialized: state.isInitialized,
     initError: state.initError,
-    currentStep: state.isInitialized ? 'Ready' : 'Initializing search services...',
+    currentStep: state.currentStep ?? (state.isInitialized ? 'Ready' : 'Initializing search services...'),
     servicesReady: { embeddings: true, vectorIndex: true, keywordIndex: true, modelCached: true, webgpuAvailable: false },
   }),
 }));
@@ -139,6 +141,7 @@ vi.mock('./pages/SettingsPage', () => ({
 beforeEach(() => {
   state.isInitialized = true;
   state.initError = null;
+  state.currentStep = null;
   state.persistenceError = null;
   state.clearPersistenceError = vi.fn();
 });
@@ -323,6 +326,30 @@ describe('App unsupported-browser notice', () => {
       expect(records.some((r) => r.target === region && Array.from(r.addedNodes).includes(banner))).toBe(true);
     });
 
+    // critic-final-2 P1: "announced once" on the boot surface. A boot step change re-renders the
+    // dialog; the notice's region must stay the SAME node (a re-keyed or re-created region is a new
+    // live region inserted with its content, which re-announces the notice on every step).
+    it('a boot step change keeps the notice region and banner as the same nodes (no re-announce)', () => {
+      setUa(UA.safari);
+      state.currentStep = 'Initializing search services...';
+      const { rerender } = render(<App />);
+      const boot = screen.getByRole('dialog', { name: 'Starting TrainingApp' });
+      const banner = screen.getByText(NOTICE).closest('.ui-banner') as HTMLElement;
+      const region = banner.parentElement as HTMLElement;
+      expect(region).toHaveAttribute('role', 'status');
+      expect(within(boot).getByText('Initializing search services...')).toBeInTheDocument();
+
+      state.currentStep = 'Loading the language model...';
+      rerender(<App />);
+      // The step really changed (the dialog re-rendered with the new step)...
+      expect(within(boot).getByText('Loading the language model...')).toBeInTheDocument();
+      // ...and the notice region and its banner are the very same elements, still attached.
+      const bannerAfter = screen.getByText(NOTICE).closest('.ui-banner') as HTMLElement;
+      expect(bannerAfter).toBe(banner);
+      expect(bannerAfter.parentElement).toBe(region);
+      expect(region.isConnected).toBe(true);
+    });
+
     it('a supported browser gets no extra DOM on the boot surface (the step text stays its only status region)', () => {
       setUa(UA.chrome);
       render(<App />);
@@ -368,6 +395,33 @@ describe('App unsupported-browser notice', () => {
     observer.disconnect();
     expect(region).toHaveAttribute('role', 'status');
     expect(records.some((r) => r.target === region && Array.from(r.addedNodes).includes(banner))).toBe(true);
+  });
+
+  // critic-final-2 P13: "announced once" in the shell. The shell copy of the notice is announced by
+  // the ONE always-mounted polite region it shares with the degraded-search notice: no live region
+  // of its own (no nested, late-filled or separate status region), and it is not itself an alert.
+  it('the shell notice has exactly one live-region ancestor: the always-mounted region shared with the degraded-search notice', () => {
+    setUa(UA.safari);
+    state.initError = 'vector index failed';
+    render(<App />);
+    const banner = screen.getByText(NOTICE).closest('.ui-banner') as HTMLElement;
+    const liveAncestors: HTMLElement[] = [];
+    for (let el = banner.parentElement; el; el = el.parentElement) {
+      if (el.hasAttribute('role') && ['status', 'alert', 'log'].includes(el.getAttribute('role') as string)) liveAncestors.push(el);
+      else if (el.hasAttribute('aria-live')) liveAncestors.push(el);
+    }
+    expect(liveAncestors).toHaveLength(1);
+    const region = liveAncestors[0];
+    expect(region).toHaveAttribute('role', 'status');
+    expect(region).not.toHaveAttribute('aria-live');
+    // The banner sits directly in that region, and is not a live region itself.
+    expect(banner.parentElement).toBe(region);
+    expect(banner).not.toHaveAttribute('role');
+    expect(banner).not.toHaveAttribute('aria-live');
+    expect(banner.querySelector('[role="status"], [role="alert"], [aria-live]')).toBeNull();
+    // It is the always-mounted shell region: the same element the degraded-search notice lives in.
+    const degraded = screen.getByText(/Search is degraded/).closest('.ui-banner') as HTMLElement;
+    expect(degraded.parentElement).toBe(region);
   });
 
   // PR #151 final review LOW-C: a throwing userAgent getter must not crash the app for a

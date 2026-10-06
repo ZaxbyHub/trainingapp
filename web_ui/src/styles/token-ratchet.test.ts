@@ -35,8 +35,9 @@
  * that silently stops matching fails here rather than passing vacuously. The per-surface
  * hygiene tests (ui/, layouts/, ...) stay as the stricter extra guard for the migrated surfaces.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { COLOR_LITERAL_RE, findNamedColors } from './color-literals';
@@ -399,10 +400,6 @@ function findImperativeStyleWrites(text: string): string[] {
 
 interface Source { rel: string; text: string }
 
-// Files the TS parser rejected (LOW-F). Recorded, not thrown, so one bad file fails the dedicated test
-// below with its diagnostics instead of aborting the whole module; such a file is scanned unstripped.
-const parseFailures: string[] = [];
-
 /** One scanned file: comment-stripped, or (unparseable) recorded in `failures` and kept raw. */
 function loadSource(rel: string, raw: string, failures: string[]): Source {
   try {
@@ -414,10 +411,30 @@ function loadSource(rel: string, raw: string, failures: string[]): Source {
   }
 }
 
-const sources: Source[] = walk(SRC)
-  .map((p) => relative(SRC, p).replace(/\\/g, '/'))
-  .filter((rel) => isSource(rel) && !DATA_MODULES.has(rel))
-  .map((rel) => loadSource(rel, readFileSync(join(SRC, rel), 'utf8'), parseFailures));
+interface Scan {
+  sources: Source[];
+  /** Files the TS parser rejected (LOW-F), with their diagnostics. */
+  parseFailures: string[];
+}
+
+/**
+ * Scan every non-test css/ts/tsx file under `root`. A file the TS parser rejects is recorded in the
+ * scan's OWN `parseFailures` (not thrown, so one bad file fails the dedicated test below with its
+ * diagnostics instead of aborting the whole module) and is scanned unstripped. The list is created
+ * here and returned, so no caller can hand the scan a throwaway array (critic-final-2 P11); the
+ * scanTree self-test below runs this on a fixture tree.
+ */
+function scanTree(root: string): Scan {
+  const parseFailures: string[] = [];
+  const sources = walk(root)
+    .map((p) => relative(root, p).replace(/\\/g, '/'))
+    .filter((rel) => isSource(rel) && !DATA_MODULES.has(rel))
+    .map((rel) => loadSource(rel, readFileSync(join(root, rel), 'utf8'), parseFailures));
+  return { sources, parseFailures };
+}
+
+const SCAN = scanTree(SRC);
+const sources: Source[] = SCAN.sources;
 
 const declaredIn = (css: string): Set<string> => new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 const LUMEN = declaredIn(sources.find((s) => s.rel === 'styles/lumen-tokens.css')?.text ?? '');
@@ -441,7 +458,7 @@ describe('repo-wide token ratchet (web_ui/src)', () => {
   });
 
   it('every scanned ts/tsx file parses cleanly (an unparseable file is an error, never silently blanked: LOW-F)', () => {
-    expect(parseFailures).toEqual([]);
+    expect(SCAN.parseFailures).toEqual([]);
   });
 
   it('1. no retired token anywhere (definition or reference)', () => {
@@ -576,6 +593,36 @@ describe('token ratchet self-tests', () => {
     const clean: string[] = [];
     expect(loadSource('lib/ok.ts', "const a = 1; // #abcabc\nconst b = '#123123';", clean).text).not.toContain('#abcabc');
     expect(clean).toEqual([]);
+  });
+
+  it('scanTree scans exactly the non-test sources of a tree and reports its unparseable files in its own list (P11)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'token-ratchet-scan-'));
+    try {
+      const files: Record<string, string> = {
+        'components/broken.ts': "export const C = () => <Banner tone=\"warning\">x // y</Banner>; const y = '#444444';",
+        'lib/ok.ts': "const a = 1; // #abcabc\nconst b = '#123123';",
+        'styles/a.css': 'a { color: var(--accent); }',
+        'components/x.test.ts': "const c = '#999999';",
+        'test/helper.ts': "const d = '#888888';",
+        'styles/retired-tokens.ts': "export const R = ['--color-primary'];",
+        'notes.md': '# not a source',
+      };
+      for (const [rel, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(root, rel)), { recursive: true });
+        writeFileSync(join(root, rel), text);
+      }
+      const scan = scanTree(root);
+      expect(scan.sources.map((s) => s.rel).sort()).toEqual(['components/broken.ts', 'lib/ok.ts', 'styles/a.css']);
+      // The broken file is reported by name, in the scan's own list, and kept raw.
+      expect(scan.parseFailures).toHaveLength(1);
+      expect(scan.parseFailures[0]).toMatch(/^components\/broken\.ts does not parse cleanly: /);
+      expect(scan.sources.find((s) => s.rel === 'components/broken.ts')?.text).toBe(files['components/broken.ts']);
+      expect(scan.sources.find((s) => s.rel === 'lib/ok.ts')?.text).not.toContain('#abcabc');
+      // Two scans never share a failure list.
+      expect(scanTree(root).parseFailures).not.toBe(scan.parseFailures);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('comment stripping survives a JSX apostrophe and a template literal with nested braces', () => {
