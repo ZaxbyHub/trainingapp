@@ -64,18 +64,35 @@ async function failingLaunch(step: 'firstWindow' | 'waitForLoadState'): Promise<
 // critic-final-2 D2 / critic-final-3 L2: no file may launch Electron itself (that would run on the
 // developer's real profile); every launch goes through launchElectron, which always passes a temp
 // --user-data-dir. The guard looks for ANY way to reach the launcher (named or aliased import,
-// default or namespace import, require/dynamic-import destructuring), not the `.launch(` call text.
-// The identifier is assembled at runtime, so this file never contains it and scans itself too.
+// default or namespace import, require/dynamic-import destructuring, a literal bracket key, a
+// re-export, or a bare `<launcher>.launch`), not just one call text. The identifier is assembled
+// at runtime, so this file never contains it and scans itself too.
 const LAUNCHER = ['_elec', 'tron'].join('');
-const MODULES = String.raw`(?:@playwright\/test|playwright)`;
+const MODULES = String.raw`(?:@playwright\/test|playwright-core|playwright)`;
 const BYPASS_PATTERNS: readonly RegExp[] = [
-  // import { _x }, import { _x as y }, import { a, _x as b, type C } from the Playwright package
-  new RegExp(String.raw`import\s*(?:type\s*)?\{[^}]*\b${LAUNCHER}\b[^}]*\}\s*from\s*['"]${MODULES}['"]`),
+  // import/export { _x }, { _x as y }, { a, _x as b, type C } from the Playwright package
+  new RegExp(String.raw`(?:import|export)\s*(?:type\s*)?\{[^}]*\b${LAUNCHER}\b[^}]*\}\s*from\s*['"]${MODULES}['"]`),
   // default / namespace import, then pw._x.launch(...), or require('playwright')._x
   new RegExp(String.raw`\.${LAUNCHER}\b`),
   // const { _x } = require(...) / await import(...)
   new RegExp(String.raw`\{[^}]*\b${LAUNCHER}\b[^}]*\}\s*=`),
+  // <launcher>.launch(...) however the launcher was obtained
+  new RegExp(String.raw`\b${LAUNCHER}\s*\.\s*launch\b`),
+  // pw['_x'] / pw["_x"] (a literal bracket key)
+  new RegExp(String.raw`\[\s*['"]${LAUNCHER}['"]\s*\]`),
 ];
+
+/** Every .ts file under dir (recursive, so fixtures/ and any subdirectory count), relative paths. */
+function listTsFiles(dir: string, rel = ''): string[] {
+  const found: string[] = [];
+  for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
+    if (entry.name === 'node_modules') continue;
+    const next = rel ? `${rel}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) found.push(...listTsFiles(dir, next));
+    else if (entry.name.endsWith('.ts')) found.push(next);
+  }
+  return found;
+}
 
 /** True when the source reaches the Playwright Electron launcher by any of the known routes. */
 function bypassesLaunchHelper(source: string): boolean {
@@ -92,6 +109,12 @@ test('the bypass detector flags the aliased, default, namespace and require form
     `import * as pw from ${pkg};\nawait pw.${LAUNCHER}.launch({});`,
     `const { ${LAUNCHER}: electron } = require('playwright');`,
     `const { ${LAUNCHER} } = await import(${pkg});`,
+    // critic-final-4 L2-a, L2-a2, L2-b, L2-c, L2-d
+    `import { ${LAUNCHER} } from 'playwright-core';\nawait ${LAUNCHER}.launch({});`,
+    `import { ${LAUNCHER} as e } from 'playwright-core';`,
+    `import * as pw from ${pkg};\nawait pw['${LAUNCHER}'].launch({});\nawait pw["${LAUNCHER}"].launch({});`,
+    `export { ${LAUNCHER} as desktopLauncher } from ${pkg};`,
+    `export const go = () => ${LAUNCHER}.launch({ args: [] });`,
   ];
   for (const source of flagged) expect(bypassesLaunchHelper(source), source).toBe(true);
   const clean = [
@@ -104,7 +127,9 @@ test('the bypass detector flags the aliased, default, namespace and require form
 
 test('every desktop e2e file launches Electron through launch-helpers (never the Playwright launcher directly)', () => {
   const dir = path.dirname(fileURLToPath(import.meta.url));
-  const files = fs.readdirSync(dir).filter((name) => name.endsWith('.ts'));
+  const files = listTsFiles(dir);
+  // L2-d: the walk is recursive, so a launcher hidden in fixtures/ or any subdirectory is seen.
+  expect(files, 'the walk must reach helper files, not just top-level specs').toContain('launch-helpers.ts');
   const specs = files.filter((name) => name.endsWith('.spec.ts'));
   expect(specs.length).toBeGreaterThanOrEqual(7);
   // launch-helpers.ts is the one place allowed to import the launcher.

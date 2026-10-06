@@ -34,9 +34,14 @@ const blocked = () => {
   throw new DOMException('The operation is insecure.', 'SecurityError');
 };
 
+const realStorage = Object.getOwnPropertyDescriptor(window, 'localStorage');
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  // Put the real window.localStorage property back before touching it again.
+  if (realStorage) Object.defineProperty(window, 'localStorage', realStorage);
+  else delete (window as unknown as { localStorage?: Storage }).localStorage;
   window.localStorage.clear();
 });
 
@@ -49,10 +54,24 @@ describe('TrainingPage with blocked web storage (2+ courses)', () => {
     expect(getItem).toHaveBeenCalledWith(LAST_PACK_KEY);
   });
 
-  it('a readable remembered course is still honoured (control for the fallback)', async () => {
+  it('a throwing window.localStorage getter (real blocked storage) also falls back to the library', async () => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new DOMException('denied', 'SecurityError');
+      },
+    });
+    render(<TrainingPage />);
+    await waitFor(() => expect(screen.getByTestId('training-course-course-a')).toBeInTheDocument());
+    expect(screen.getByTestId('training-course-course-b')).toBeInTheDocument();
+  });
+
+  it('a readable remembered course is still honoured (positive control for the fallback)', async () => {
     window.localStorage.setItem(LAST_PACK_KEY, 'course-b/1.0.0');
     render(<TrainingPage />);
+    // Positive signal first: the packs have loaded and the remembered course is the selected one.
+    await waitFor(() => expect(screen.getByTestId('training-pack-select')).toHaveValue('course-b/1.0.0'));
     // The remembered course opens directly, so the library card grid is not shown.
-    await waitFor(() => expect(screen.queryByTestId('training-course-course-a')).not.toBeInTheDocument());
+    expect(screen.queryByTestId('training-course-course-a')).not.toBeInTheDocument();
   });
 });
