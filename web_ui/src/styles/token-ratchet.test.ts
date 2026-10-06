@@ -135,14 +135,46 @@ function skipBraces(t: string, i: number): number {
   return j;
 }
 
+/** A scanned .ts/.tsx text the TypeScript parser could not parse cleanly (see stripTsComments). */
+class TsParseError extends Error {
+  readonly fileName: string;
+  readonly diagnostics: string[];
+  constructor(fileName: string, diagnostics: string[]) {
+    super(`${fileName} does not parse cleanly: ${diagnostics.join('; ')}`);
+    this.fileName = fileName;
+    this.diagnostics = diagnostics;
+  }
+}
+
+/**
+ * The parser's syntax diagnostics. `parseDiagnostics` is internal (not in the public typings): if a
+ * TypeScript upgrade drops it, this throws (fails closed) rather than silently stop checking.
+ */
+function parseDiagnosticsOf(sf: ts.SourceFile, fileName: string): readonly ts.Diagnostic[] {
+  const diagnostics = (sf as unknown as { parseDiagnostics?: readonly ts.Diagnostic[] }).parseDiagnostics;
+  if (!Array.isArray(diagnostics)) throw new TsParseError(fileName, ['TypeScript no longer exposes SourceFile.parseDiagnostics']);
+  return diagnostics;
+}
+
 /**
  * Blanks every comment of one TS/TSX text (comment characters become spaces, newlines stay), leaving
  * strings, templates and regex literals untouched. Comments are located with the TypeScript parser: the
  * trivia before each token, JSX text skipped (a `//` there is text). `.ts` files parse as TS, not TSX, so
  * `<T>x` assertions stay valid.
+ *
+ * Fails CLOSED (PR #151 final review LOW-F): createSourceFile never throws, and on a syntax error it
+ * recovers by guessing, which can turn live code into "comment" trivia that is then blanked. So any
+ * parse diagnostic throws a TsParseError instead of returning a silently blanked text.
  */
-function stripTsComments(t: string, tsx = true): string {
-  const sf = ts.createSourceFile(tsx ? 'x.tsx' : 'x.ts', t, ts.ScriptTarget.Latest, true, tsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+function stripTsComments(t: string, tsx = true, fileName = tsx ? 'x.tsx' : 'x.ts'): string {
+  const sf = ts.createSourceFile(fileName, t, ts.ScriptTarget.Latest, true, tsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const diagnostics = parseDiagnosticsOf(sf, fileName);
+  if (diagnostics.length > 0) {
+    throw new TsParseError(
+      fileName,
+      diagnostics.map((d) => `${d.start ?? '?'}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`)
+    );
+  }
   const spans = new Map<number, number>();
   const collect = (pos: number): void => {
     for (const r of [...(ts.getLeadingCommentRanges(t, pos) ?? []), ...(ts.getTrailingCommentRanges(t, pos) ?? [])]) spans.set(r.pos, r.end);
@@ -194,8 +226,9 @@ function stripCssComments(t: string): string {
   return out;
 }
 
+/** `.css` strips CSS comments; `.tsx` parses as TSX and every other (`.ts`) file as plain TS. */
 const strip = (rel: string, text: string): string =>
-  rel.endsWith('.css') ? stripCssComments(text) : stripTsComments(text, rel.endsWith('.tsx'));
+  rel.endsWith('.css') ? stripCssComments(text) : stripTsComments(text, rel.endsWith('.tsx'), rel);
 
 // ---------------------------------------------------------------------------------------------
 // Rules (pure; each takes comment-stripped text)
@@ -366,10 +399,23 @@ function findImperativeStyleWrites(text: string): string[] {
 
 interface Source { rel: string; text: string }
 
+// Files the TS parser rejected (LOW-F). Recorded, not thrown, so one bad file fails the dedicated test
+// below with its diagnostics instead of aborting the whole module; such a file is scanned unstripped.
+const parseFailures: string[] = [];
+
 const sources: Source[] = walk(SRC)
   .map((p) => relative(SRC, p).replace(/\\/g, '/'))
   .filter((rel) => isSource(rel) && !DATA_MODULES.has(rel))
-  .map((rel) => ({ rel, text: strip(rel, readFileSync(join(SRC, rel), 'utf8')) }));
+  .map((rel) => {
+    const raw = readFileSync(join(SRC, rel), 'utf8');
+    try {
+      return { rel, text: strip(rel, raw) };
+    } catch (e) {
+      if (!(e instanceof TsParseError)) throw e;
+      parseFailures.push(e.message);
+      return { rel, text: raw };
+    }
+  });
 
 const declaredIn = (css: string): Set<string> => new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 const LUMEN = declaredIn(sources.find((s) => s.rel === 'styles/lumen-tokens.css')?.text ?? '');
@@ -390,6 +436,10 @@ describe('repo-wide token ratchet (web_ui/src)', () => {
     expect(sources.some((s) => /\.test\./.test(s.rel) || s.rel.startsWith('test/'))).toBe(false);
     expect(LUMEN.has('--accent')).toBe(true);
     expect(RUNTIME_PROPS.has('--ui-tooltip-shift')).toBe(true);
+  });
+
+  it('every scanned ts/tsx file parses cleanly (an unparseable file is an error, never silently blanked: LOW-F)', () => {
+    expect(parseFailures).toEqual([]);
   });
 
   it('1. no retired token anywhere (definition or reference)', () => {
@@ -482,12 +532,35 @@ describe('token ratchet self-tests', () => {
       ');',
     ].join('\n');
     expect(findColorLiterals(stripTsComments(planted))).toEqual(['#111111', '#222222', '#333333']);
+    // The "//" in JSX text with a live {expression} on the SAME line (PR #151 final review LOW-A): a
+    // stripper that treated the JSX text as trivia would blank the rest of the line, expression included.
+    const sameLine = "const c = (<p>\n  // see {'#333333'}</p>);";
+    expect(stripTsComments(sameLine)).toBe(sameLine);
+    expect(findColorLiterals(stripTsComments(sameLine))).toEqual(['#333333']);
     // The same text with real comments still strips them, and JSX comments are stripped.
     const real = "const d = <p>t</p>; // #aaaaaa\nconst e = <p>{/* #bbbbbb */ 'x'}</p>; /* #cccccc */ const f = '#dddddd';";
     expect(findColorLiterals(stripTsComments(real))).toEqual(['#dddddd']);
     // A .ts file parses as TS (angle-bracket assertions are not JSX) and keeps its strings and regexes.
     const plainTs = "const g = <string>h; // #eeeeee\nconst r = /\\/\\//; const s = '#123abc'; const u = `${'//'}#abcdef`;";
     expect(findColorLiterals(stripTsComments(plainTs, false))).toEqual(['#123abc', '#abcdef']);
+  });
+
+  it('comment stripping fails closed on a file the TS parser rejects, and routes .ts as TS and .tsx as TSX (LOW-F)', () => {
+    // JSX in a .ts file is a parse error, so it is reported, not recovered into blanked "comments".
+    const jsxInTs = "export const C = () => <Banner tone=\"warning\">x // y</Banner>; const y = '#444444';";
+    expect(() => strip('components/a.ts', jsxInTs)).toThrow(TsParseError);
+    expect(() => strip('components/a.ts', jsxInTs)).toThrow(/components\/a\.ts does not parse cleanly/);
+    // The same text is valid TSX.
+    expect(findColorLiterals(strip('components/a.tsx', jsxInTs))).toEqual(['#444444']);
+    // Any other syntax error fails closed too.
+    expect(() => strip('lib/b.tsx', "const a = {; // c\nconst b = '#555555';")).toThrow(TsParseError);
+    expect(() => strip('lib/b.ts', "const a = `open ${x}\nconst b = '#666666';")).toThrow(TsParseError);
+    // A .ts angle-bracket assertion parses as TS (it would be an unclosed JSX element under TSX).
+    const assertion = "const g = <string>h; // #eeeeee\nconst s = '#123abc';";
+    expect(findColorLiterals(strip('lib/c.ts', assertion))).toEqual(['#123abc']);
+    expect(() => strip('lib/c.tsx', assertion)).toThrow(TsParseError);
+    // A TypeScript without the internal parseDiagnostics field fails closed, not open.
+    expect(() => parseDiagnosticsOf({} as ts.SourceFile, 'lib/d.ts')).toThrow(/no longer exposes SourceFile\.parseDiagnostics/);
   });
 
   it('comment stripping survives a JSX apostrophe and a template literal with nested braces', () => {
