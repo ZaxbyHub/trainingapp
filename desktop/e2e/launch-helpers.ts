@@ -64,10 +64,17 @@ export function isProcessAlive(pid: number): boolean {
  *  the single-instance lock and the profile files. */
 export async function closeApp(app: ElectronApplication): Promise<void> {
   live.delete(app);
+  // Captured BEFORE close(): Playwright disposes the handle during close, after which
+  // process() throws and the kill fallback below would be skipped for a lingering tree.
+  let child: ReturnType<ElectronApplication['process']> | undefined;
+  try {
+    child = app.process();
+  } catch {
+    child = undefined;
+  }
   await Promise.race([app.close().catch(() => undefined), new Promise((resolve) => setTimeout(resolve, 8_000))]);
   try {
-    const child = app.process();
-    if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
+    if (child !== undefined && child.exitCode === null && child.signalCode === null && child.pid !== undefined) {
       spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
       await new Promise((resolve) => setTimeout(resolve, 3_000));
     }
