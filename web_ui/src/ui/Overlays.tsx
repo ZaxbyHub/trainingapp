@@ -114,6 +114,33 @@ export type DialogProps<D extends boolean = true> = DialogBaseProps & DialogPlac
 /** Each open dialog panel's opener, so a dialog opened from inside another can fall back to it. */
 const dialogOpeners = new WeakMap<Element, HTMLElement | null>();
 
+/**
+ * The toast viewport (ui/Toast.tsx) paints above every dialog (z 1200) and is portaled to
+ * <body>, outside any dialog panel. Named by class rather than imported: Toast imports
+ * Button, which imports this module.
+ */
+const TOAST_VIEWPORT = '.ui-toast-viewport';
+
+/**
+ * The modal dialog that owns keyboard focus: a boot-layer dialog first, otherwise the
+ * last in document order (portals append on open; a contained dialog sits in place, so
+ * one nested in an open dialog's panel comes after it, and one in page content before).
+ */
+function topmostModalPanel(): HTMLElement | null {
+  const rank = (panel: HTMLElement): number =>
+    panel.parentElement?.classList.contains('ui-dialog__backdrop--boot') ? 1 : 0;
+  let best: HTMLElement | null = null;
+  let bestRank = -1;
+  for (const panel of Array.from(document.querySelectorAll<HTMLElement>('.ui-dialog[aria-modal="true"]'))) {
+    const r = rank(panel);
+    if (r >= bestRank) {
+      best = panel;
+      bestRank = r;
+    }
+  }
+  return best;
+}
+
 /** Popup widgets that own Escape while open (Escape closes the popup, not the dialog). */
 const ESCAPE_OWNER = '[role="combobox"][aria-expanded="true"], [aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]';
 
@@ -194,7 +221,30 @@ export function Dialog<D extends boolean = true>(props: DialogProps<D>) {
       panel.addEventListener('focusin', onFocusIn);
       observer.observe(panel, { childList: true, subtree: true });
     }
+
+    // A toast sits above a modal dialog and outside its panel, so focus can still reach
+    // its dismiss button by explicit action (a press released off the button, assistive
+    // tech moving focus, the toast cap handing focus on). Tab from there must not walk
+    // the background content the modal claims is unavailable: at the viewport's edge,
+    // Tab / Shift+Tab go back into the topmost modal's first / last control. Moving
+    // between toasts is left to the browser; non-modal dialogs do not take part.
+    const onDocumentKeyDown = (e: KeyboardEvent) => {
+      // Only the topmost aria-modal panel acts, so a non-modal dialog never does.
+      if (e.key !== 'Tab' || e.defaultPrevented || !panel) return;
+      const from = e.target instanceof HTMLElement ? e.target : null;
+      const viewport = from?.closest<HTMLElement>(TOAST_VIEWPORT);
+      if (!from || !viewport || topmostModalPanel() !== panel) return;
+      const toastControls = Array.from(viewport.querySelectorAll<HTMLElement>(FOCUSABLE));
+      const at = toastControls.indexOf(from);
+      if (at >= 0 && toastControls[e.shiftKey ? at - 1 : at + 1]) return;
+      e.preventDefault();
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+      ((e.shiftKey ? items[items.length - 1] : items[0]) ?? panel).focus();
+    };
+    document.addEventListener('keydown', onDocumentKeyDown);
+
     return () => {
+      document.removeEventListener('keydown', onDocumentKeyDown);
       observer.disconnect();
       panel?.removeEventListener('focusin', onFocusIn);
       if (rehomeTimer !== undefined) clearTimeout(rehomeTimer);
