@@ -73,7 +73,12 @@ Surfaces other than `overlay` and `drawer` are scanned or captured with the mode
 The gated state itself (gate up, content inert) is covered by the `overlay` axe pass, the `overlay-model-not-ready`
 baselines and `e2e/model-gate-keyboard.spec.ts` (the in-chat gate, in the browser build).
 
-The desktop model gate has no e2e coverage: it is covered by unit tests only
-(`DesktopModelBlockedOverlay.test.tsx`, `App.firstRunModelGate.test.tsx`, `ChatPage.overlay.test.tsx`), because
-every desktop e2e spec runs the stub engine. The desktop e2e suite covers the first-run wizard only
-(`desktop/e2e/first-run-wizard.spec.ts`).
+The desktop model gate is covered by unit tests (`DesktopModelBlockedOverlay.test.tsx`,
+`App.firstRunModelGate.test.tsx`, `ChatPage.overlay.test.tsx`) and by an Electron e2e,
+`desktop/e2e/desktop-model-gate.spec.ts`. Every other desktop e2e spec runs the stub engine, which the gate never
+covers, so this spec boots the real engine resolution against an EMPTY model directory (no weights are loaded). It
+asserts the gate's role, name and actions, that the covered chat content is `inert` under Tab and Shift+Tab (including
+a full cycle that wraps), that Open Settings and "Use a local server or cloud model" navigate to Settings, and that only
+the desktop gate renders when "In this window" is selected. It runs in the non-required `renderer-e2e` job of
+`desktop-build.yml` (`npm --prefix desktop run test:e2e`). The other desktop e2e specs cover the first-run wizard
+(`first-run-wizard.spec.ts`), packs, the training player and settings layout.
