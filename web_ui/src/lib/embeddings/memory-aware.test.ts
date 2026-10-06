@@ -314,4 +314,35 @@ describe('memory-aware', () => {
       expect(config.maxChunkCount).toBe(1000);
     });
   });
+
+  // critic-final-2: Settings computes the budget in a mount effect, so a navigator getter that
+  // throws (a patched or hostile navigator) must not throw out of these helpers.
+  describe('throwing navigator getters', () => {
+    const throwing = (prop: 'userAgent' | 'deviceMemory') =>
+      Object.defineProperty(mockNavigator, prop, {
+        configurable: true,
+        get() {
+          throw new Error(`${prop} getter blew up`);
+        },
+      });
+    afterEach(() => {
+      // Back to plain data properties so the outer beforeEach can assign them again.
+      Object.defineProperty(mockNavigator, 'userAgent', { configurable: true, writable: true, enumerable: true, value: '' });
+      Object.defineProperty(mockNavigator, 'deviceMemory', { configurable: true, writable: true, enumerable: true, value: undefined });
+    });
+
+    test('a throwing userAgent reads as not Firefox (Chrome-class overhead), no throw', () => {
+      mockNavigator.deviceMemory = 6;
+      throwing('userAgent');
+      // 6GB: taper 0.5 of the non-Firefox 2048MB base = 1024 (Firefox would be 1280).
+      expect(getMemoryBudget()).toEqual({ totalMB: 6144, availableMB: 5120, browserOverheadMB: 1024 });
+      expect(getMemoryPressureStatus()).toBe('moderate');
+    });
+
+    test('a throwing deviceMemory reads as unknown (8), no throw', () => {
+      throwing('deviceMemory');
+      expect(getDeviceMemory()).toBe(8);
+      expect(getMemoryBudget().totalMB).toBe(8192);
+    });
+  });
 });

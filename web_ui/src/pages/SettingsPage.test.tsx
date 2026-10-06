@@ -575,6 +575,40 @@ describe('SettingsPage', () => {
     expect((getMemoryPressureStatus as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterMount + 2);
   });
 
+  // critic-final-2: the memory effect reads navigator.userAgent (memory-aware getMemoryBudget). A
+  // throwing getter (patched or hostile navigator) must not take Settings down. This runs the REAL
+  // memory-aware module (the file-level mock delegates to it here) so the effect really reads the UA.
+  test('opening Settings with a throwing navigator.userAgent getter does not crash the page', async () => {
+    const memory = await import('../lib/embeddings/memory-aware');
+    const actual = await vi.importActual<typeof import('../lib/embeddings/memory-aware')>('../lib/embeddings/memory-aware');
+    const budget = vi.mocked(memory.getMemoryBudget);
+    const pressure = vi.mocked(memory.getMemoryPressureStatus);
+    const budgetImpl = budget.getMockImplementation();
+    const pressureImpl = pressure.getMockImplementation();
+    budget.mockImplementation(actual.getMemoryBudget);
+    pressure.mockImplementation(actual.getMemoryPressureStatus);
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      get() {
+        throw new Error('userAgent getter blew up');
+      },
+    });
+    try {
+      render(<SettingsPage />);
+      // The memory effect ran with the real module (jsdom: no deviceMemory -> 8 GB, no overhead).
+      expect(await screen.findByText('Memory Used (0 MB of 8.0 GB)')).toBeInTheDocument();
+      expect(budget).toHaveBeenCalled();
+      // And the page is still mounted after it (an effect that throws unmounts the whole root).
+      expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
+      vi.advanceTimersByTime(5000);
+      expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
+    } finally {
+      delete (window.navigator as { userAgent?: string }).userAgent;
+      if (budgetImpl) budget.mockImplementation(budgetImpl);
+      if (pressureImpl) pressure.mockImplementation(pressureImpl);
+    }
+  });
+
   test('radio groups use native input as the sole radio (no duplicate role) (issue #24 F9)', async () => {
     render(<SettingsPage />);
 
