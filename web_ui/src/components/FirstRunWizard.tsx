@@ -14,7 +14,7 @@
  * Lumen phase 7: built on ui/Dialog (focus trap, Escape, focus return) and
  * ui/Banner (role=alert errors); styles live in first-run.css.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Banner, Button, Checkbox, Dialog, Icon, RadioCardGroup } from '../ui';
 import {
   activateRequiredPacks,
@@ -69,6 +69,24 @@ export function FirstRunGate() {
   // Completion flips the backend to needed=false; without this the status refresh
   // would unmount the wizard before its terminal "Setup complete" step could be read.
   const [finished, setFinished] = useState(false);
+  // Wizard sessions (PR #151 final review LOW-4): every open and every close starts
+  // a new one. A completion marks `finished` only for the session it was started in
+  // and only while that session is still open: Complete's IPC can resolve after the
+  // operator pressed Escape (and even after a reopen), and a `finished` latched
+  // then would keep a later, NOT completed wizard on screen after a status refresh
+  // reports needed=false. The ref is the live session; `session` is the one this
+  // render belongs to (captured by onCompleted below).
+  const openRef = useRef(false);
+  const sessionRef = useRef(0);
+  const [session, setSession] = useState(0);
+  const setWizardOpen = useCallback((next: boolean): void => {
+    if (openRef.current === next) return; // a push while open keeps the session
+    openRef.current = next;
+    sessionRef.current += 1;
+    setSession(sessionRef.current);
+    setOpen(next);
+    setFinished(false);
+  }, []);
 
   useEffect(() => {
     if (window.desktopApi === undefined) return;
@@ -76,13 +94,13 @@ export function FirstRunGate() {
     const openIfNeeded = (next: FirstRunStatus | null): void => {
       if (cancelled || next === null) return;
       setStatus(next);
-      if (next.needed) setOpen(true);
+      if (next.needed) setWizardOpen(true);
     };
     void fetchFirstRunStatus().then(openIfNeeded);
     const unsubscribePush = onFirstRunRequired((next) => {
       if (cancelled) return;
       setStatus(next);
-      if (next.needed) setOpen(true);
+      if (next.needed) setWizardOpen(true);
     });
     const unsubscribeReopen = onFirstRunReopen(() => {
       void fetchFirstRunStatus().then(openIfNeeded);
@@ -92,18 +110,15 @@ export function FirstRunGate() {
       unsubscribePush();
       unsubscribeReopen();
     };
-  }, []);
+  }, [setWizardOpen]);
 
   if (!open || status === null || (!status.needed && !finished)) return null;
   return (
     <FirstRunWizard
       status={status}
-      onClose={() => {
-        setOpen(false);
-        setFinished(false);
-      }}
+      onClose={() => setWizardOpen(false)}
       onCompleted={() => {
-        setFinished(true);
+        if (sessionRef.current === session) setFinished(true);
         void fetchFirstRunStatus().then((next) => {
           if (next !== null) setStatus(next);
         });

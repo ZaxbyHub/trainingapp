@@ -12,7 +12,8 @@ import React from 'react';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, act, within } from '@testing-library/react';
 import { FirstRunGate, FirstRunWizard } from './FirstRunWizard';
-import { clearFirstRunSession } from './first-run-session';
+import { clearFirstRunSession, getFirstRunSession } from './first-run-session';
+import { emitFirstRunReopen } from '../lib/first-run';
 import type { FirstRunStatus } from '../lib/first-run';
 
 const completeFirstRunMock = vi.fn();
@@ -749,5 +750,146 @@ describe('FirstRunGate completion refresh (PRR-151-047)', () => {
     expect(document.activeElement).toBe(view.getByTestId('wizard-finish'));
     fireEvent.click(view.getByTestId('wizard-finish'));
     expect(view.queryByTestId('first-run-wizard')).toBeNull();
+  });
+
+  // PR #151 final review LOW-4: Complete's IPC resolving after Escape must not latch
+  // `finished` onto a later, non-completed wizard session.
+  describe('a completion that resolves after Escape (LOW-4)', () => {
+    function stubBridge(statuses: FirstRunStatus[]) {
+      let push: ((next: FirstRunStatus) => void) | null = null;
+      const getFirstRunStatus = vi.fn();
+      for (const s of statuses) getFirstRunStatus.mockResolvedValueOnce(s);
+      (window as unknown as { desktopApi: unknown }).desktopApi = {
+        getFirstRunStatus,
+        onFirstRunRequired: (cb: (next: FirstRunStatus) => void) => {
+          push = cb;
+          return () => undefined;
+        },
+      };
+      return { getFirstRunStatus, push: (next: FirstRunStatus) => push?.(next) };
+    }
+    const flush = async (): Promise<void> => {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    };
+    const wizard = (base: HTMLElement): HTMLElement | null => base.querySelector('[data-testid="first-run-wizard"]');
+
+    it('Complete in flight, Escape, resolve, reopen: the completion is honoured and the reopened wizard is not stuck "finished"', async () => {
+      const gate = deferred<{ ok: boolean }>();
+      completeFirstRunMock.mockReturnValue(gate.promise);
+      const needed = packsActive();
+      const done = { ...packsActive(), needed: false };
+      const rerun = { ...packsActive(), rerun: true };
+      const bridge = stubBridge([needed, done, rerun]);
+      const view = render(<FirstRunGate />);
+      await flush();
+      next(view.getByTestId, 4);
+      fireEvent.click(view.getByTestId('license-ack'));
+      await act(async () => {
+        fireEvent.click(view.getByTestId('wizard-complete'));
+      });
+      fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' });
+      expect(wizard(view.baseElement)).toBeNull();
+
+      await act(async () => {
+        gate.resolve({ ok: true });
+      });
+      await flush();
+      // The backend completion is still honoured: in-session progress cleared and
+      // the gate refreshed its status (the second fetch).
+      expect(getFirstRunSession()).toBeNull();
+      expect(bridge.getFirstRunStatus).toHaveBeenCalledTimes(2);
+      expect(wizard(view.baseElement)).toBeNull();
+
+      // Settings "Re-run setup": a fresh wizard on step 1.
+      await act(async () => {
+        emitFirstRunReopen();
+      });
+      await flush();
+      expect(view.getByTestId('wizard-announcer')).toHaveTextContent('Step 1 of 5: Hardware check');
+
+      // The status flips to needed=false without THIS wizard completing: it must
+      // unmount like any other not-needed status (a latched `finished` kept it up).
+      act(() => bridge.push(done));
+      expect(wizard(view.baseElement)).toBeNull();
+    });
+
+    it('a completion that resolves after Escape AND a reopen does not mark the reopened session finished', async () => {
+      const gate = deferred<{ ok: boolean }>();
+      completeFirstRunMock.mockReturnValue(gate.promise);
+      const needed = packsActive();
+      const done = { ...packsActive(), needed: false };
+      const bridge = stubBridge([needed, needed, done]);
+      const view = render(<FirstRunGate />);
+      await flush();
+      next(view.getByTestId, 4);
+      fireEvent.click(view.getByTestId('license-ack'));
+      await act(async () => {
+        fireEvent.click(view.getByTestId('wizard-complete'));
+      });
+      fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' });
+      await act(async () => {
+        emitFirstRunReopen(); // reopened before the old completion lands
+      });
+      await flush();
+      expect(wizard(view.baseElement)).not.toBeNull();
+      expect(view.queryByTestId('step-complete')).toBeNull();
+
+      await act(async () => {
+        gate.resolve({ ok: true });
+      });
+      await flush();
+      expect(bridge.getFirstRunStatus).toHaveBeenCalledTimes(3); // the late completion still refreshed
+      expect(getFirstRunSession()).toBeNull();
+      // Setup is complete (needed=false) and this session never completed: it closes.
+      expect(wizard(view.baseElement)).toBeNull();
+    });
+
+    it('a needed=true push while the wizard is already open keeps its session: its own completion still reaches the terminal step', async () => {
+      const gate = deferred<{ ok: boolean }>();
+      completeFirstRunMock.mockReturnValue(gate.promise);
+      const needed = packsActive();
+      const done = { ...packsActive(), needed: false };
+      const bridge = stubBridge([needed, done]);
+      const view = render(<FirstRunGate />);
+      await flush();
+      next(view.getByTestId, 4);
+      fireEvent.click(view.getByTestId('license-ack'));
+      await act(async () => {
+        fireEvent.click(view.getByTestId('wizard-complete'));
+      });
+      act(() => bridge.push(needed)); // e.g. a repeated boot push while open
+      await act(async () => {
+        gate.resolve({ ok: true });
+      });
+      await flush();
+      expect(view.getByTestId('step-complete')).toBeInTheDocument();
+    });
+
+    it('Finish, then a Settings re-run: the reopened wizard is not "finished" either (closing clears it)', async () => {
+      completeFirstRunMock.mockResolvedValue({ ok: true });
+      const needed = packsActive();
+      const done = { ...packsActive(), needed: false };
+      const rerun = { ...packsActive(), rerun: true };
+      const bridge = stubBridge([needed, done, rerun]);
+      const view = render(<FirstRunGate />);
+      await flush();
+      next(view.getByTestId, 4);
+      fireEvent.click(view.getByTestId('license-ack'));
+      await act(async () => {
+        fireEvent.click(view.getByTestId('wizard-complete'));
+      });
+      await flush();
+      fireEvent.click(view.getByTestId('wizard-finish'));
+      expect(wizard(view.baseElement)).toBeNull();
+      await act(async () => {
+        emitFirstRunReopen();
+      });
+      await flush();
+      expect(view.getByTestId('wizard-announcer')).toHaveTextContent('Step 1 of 5');
+      act(() => bridge.push(done));
+      expect(wizard(view.baseElement)).toBeNull();
+    });
   });
 });
