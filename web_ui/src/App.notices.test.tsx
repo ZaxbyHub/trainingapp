@@ -5,10 +5,12 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 import App from './App';
 
 const state = vi.hoisted(() => ({
+  // false = service init still pending (the boot overlay is up); reset to true before each test.
+  isInitialized: true,
   initError: null as string | null,
   persistenceError: null as string | null,
   clearPersistenceError: vi.fn(),
@@ -39,9 +41,9 @@ vi.mock('./hooks/useConversations', () => ({
 }));
 vi.mock('./hooks/useServiceInitialization', () => ({
   useServiceInitialization: () => ({
-    isInitialized: true,
+    isInitialized: state.isInitialized,
     initError: state.initError,
-    currentStep: 'Ready',
+    currentStep: state.isInitialized ? 'Ready' : 'Initializing search services...',
     servicesReady: { embeddings: true, vectorIndex: true, keywordIndex: true, modelCached: true, webgpuAvailable: false },
   }),
 }));
@@ -135,6 +137,7 @@ vi.mock('./pages/SettingsPage', () => ({
 
 
 beforeEach(() => {
+  state.isInitialized = true;
   state.initError = null;
   state.persistenceError = null;
   state.clearPersistenceError = vi.fn();
@@ -283,6 +286,108 @@ describe('App unsupported-browser notice', () => {
     setUa(UA.safari);
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss unsupported-browser notice' }));
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  // PR #151 final review LOW-B: the notice is upfront, i.e. on the boot surface while service
+  // init is still pending (or hung), not only after init completes.
+  describe('while service init is still pending (LOW-B)', () => {
+    beforeEach(() => {
+      state.isInitialized = false;
+    });
+
+    it('shows the notice inside the boot dialog, the only visible surface', () => {
+      setUa(UA.safari);
+      render(<App />);
+      const boot = screen.getByRole('dialog', { name: 'Starting TrainingApp' });
+      const banner = screen.getByText(NOTICE).closest('.ui-banner') as HTMLElement;
+      expect(boot).toContainElement(banner);
+      expect(banner).toBeVisible();
+      expect(banner).toHaveClass('ui-banner--warning');
+      expect(banner).not.toHaveAttribute('role');
+      expect(banner.parentElement).toHaveAttribute('role', 'status');
+      expect(screen.getByRole('button', { name: 'Dismiss unsupported-browser notice' })).toBeInTheDocument();
+    });
+
+    it('the boot surface polite region is mounted empty and then filled (not inserted with its content)', () => {
+      setUa(UA.safari);
+      const observer = new MutationObserver(() => undefined);
+      observer.observe(document.body, { childList: true, subtree: true });
+      render(<App />);
+      const banner = screen.getByText(NOTICE).closest('.ui-banner') as HTMLElement;
+      const region = banner.parentElement as HTMLElement;
+      const records = observer.takeRecords();
+      observer.disconnect();
+      expect(region).toHaveAttribute('role', 'status');
+      // The banner was added INTO the already-inserted region element.
+      expect(records.some((r) => r.target === region && Array.from(r.addedNodes).includes(banner))).toBe(true);
+    });
+
+    it('a supported browser gets no extra DOM on the boot surface (the step text stays its only status region)', () => {
+      setUa(UA.chrome);
+      render(<App />);
+      const boot = screen.getByRole('dialog', { name: 'Starting TrainingApp' });
+      expect(within(boot).getAllByRole('status')).toHaveLength(1);
+      expect(screen.queryByText(NOTICE)).toBeNull();
+    });
+
+    it('init completing moves the notice to the shell without a crash; a dismissal made while pending sticks', () => {
+      setUa(UA.safari);
+      const { rerender } = render(<App />);
+      expect(screen.getByText(NOTICE)).toBeInTheDocument();
+      // Init completes: the hook count must not change across the gate (React #310).
+      state.isInitialized = true;
+      rerender(<App />);
+      expect(screen.queryByRole('dialog', { name: 'Starting TrainingApp' })).toBeNull();
+      expect(screen.getByRole('main')).toBeInTheDocument();
+      const shellBanner = screen.getByText(NOTICE).closest('.ui-banner') as HTMLElement;
+      expect(shellBanner).toHaveClass('app-notice');
+      expect(shellBanner.parentElement).toHaveAttribute('role', 'status');
+
+      // A second boot: dismiss on the boot surface, then init completes.
+      cleanup();
+      state.isInitialized = false;
+      const second = render(<App />);
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss unsupported-browser notice' }));
+      expect(screen.queryByText(NOTICE)).toBeNull();
+      state.isInitialized = true;
+      second.rerender(<App />);
+      expect(screen.getByRole('main')).toBeInTheDocument();
+      expect(screen.queryByText(NOTICE)).toBeNull();
+    });
+  });
+
+  it('LOW-B: with init already done, the shell polite region exists before the notice lands in it', () => {
+    setUa(UA.safari);
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(document.body, { childList: true, subtree: true });
+    render(<App />);
+    const banner = screen.getByText(NOTICE).closest('.ui-banner') as HTMLElement;
+    const region = banner.parentElement as HTMLElement;
+    const records = observer.takeRecords();
+    observer.disconnect();
+    expect(region).toHaveAttribute('role', 'status');
+    expect(records.some((r) => r.target === region && Array.from(r.addedNodes).includes(banner))).toBe(true);
+  });
+
+  // PR #151 final review LOW-C: a throwing userAgent getter must not crash the app for a
+  // cosmetic notice; it is an unknown browser, so no notice.
+  it.each([
+    ['init done', true],
+    ['init pending', false],
+  ])('LOW-C: a throwing userAgent getter renders the app (%s) with no notice and no crash fallback', (_name, initialized) => {
+    state.isInitialized = initialized;
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      get() {
+        throw new Error('userAgent getter blew up');
+      },
+    });
+    render(<App />);
+    expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull();
+    expect(
+      initialized ? screen.getByRole('main') : screen.getByRole('dialog', { name: 'Starting TrainingApp' })
+    ).toBeInTheDocument();
     expect(screen.queryByText(NOTICE)).toBeNull();
   });
 });

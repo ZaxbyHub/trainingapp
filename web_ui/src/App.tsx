@@ -46,11 +46,18 @@ export function LoadingOverlay({
   currentStep,
   initError,
   onRetry,
+  notice,
 }: {
   currentStep: string;
   initError: string | null;
   /** Re-run the failed boot step. Omitted where no honest re-run exists. */
   onRetry?: () => void;
+  /**
+   * A non-blocking notice shown on the boot surface itself (the browser app's unsupported-browser
+   * notice: PR #151 final review LOW-B). Nothing behind this modal boot dialog is visible, so a
+   * notice that must be seen while boot is pending or hung has to live here. Omitted: no extra DOM.
+   */
+  notice?: ReactNode;
 }) {
   // The live region is mounted EMPTY and filled after mount: a role=status that is
   // inserted together with its text is not reliably announced (PRR-151-041), so the
@@ -82,9 +89,23 @@ export function LoadingOverlay({
           {announced}
         </p>
         {initError ? <Banner tone="danger">{initError}</Banner> : <ProgressBar label="Starting" />}
+        {notice !== undefined && notice !== null && <LateFilledStatus>{notice}</LateFilledStatus>}
       </div>
     </Dialog>
   );
+}
+
+/**
+ * A polite role=status region that is mounted EMPTY and receives its content one commit later:
+ * a live region inserted together with its content is not reliably announced (PRR-151-041; the
+ * same pattern as LoadingOverlay's step text).
+ */
+function LateFilledStatus({ children }: { children: ReactNode }) {
+  const [filled, setFilled] = useState(false);
+  useEffect(() => {
+    setFilled(true);
+  }, []);
+  return <div role="status">{filled ? children : null}</div>;
 }
 
 /**
@@ -219,9 +240,33 @@ function AppContent() {
   // new ones to the same string) re-arms the notice instead of staying latched off.
   const [dismissedInitError, setDismissedInitError] = useState<string | null>(null);
   // Upfront unsupported-browser notice (browser app only; Electron is never "a browser").
-  // Classified once at mount; dismissal is for this session only.
-  const [browserUnsupported] = useState(() => !isElectron() && isKnownUnsupportedBrowser());
+  // Classified once, in a mount effect rather than during render (PR #151 final review LOW-B):
+  // the polite region that shows it is already mounted, empty, when the notice lands, so the
+  // notice is a content change inside an existing live region. Dismissal is for this session only.
+  const [browserUnsupported, setBrowserUnsupported] = useState(false);
   const [browserNoticeDismissed, setBrowserNoticeDismissed] = useState(false);
+  // HOOK-ORDER NOTE: above the `if (!isInitialized)` early return, like every hook here.
+  useEffect(() => {
+    setBrowserUnsupported(!isElectron() && isKnownUnsupportedBrowser());
+  }, []);
+  const showBrowserNotice = browserUnsupported && !browserNoticeDismissed;
+  const browserNotice = (className?: string) => (
+    <Banner
+      tone="warning"
+      live={false}
+      className={className}
+      action={
+        <IconButton
+          icon="x"
+          size="sm"
+          aria-label="Dismiss unsupported-browser notice"
+          onClick={() => setBrowserNoticeDismissed(true)}
+        />
+      }
+    >
+      This browser isn&apos;t supported. Use a current Chrome, Edge or Firefox.
+    </Banner>
+  );
   const { setModelReady, setModelLoadingProgress, browserEngine } = useInferenceMode();
 
   const {
@@ -344,8 +389,14 @@ function AppContent() {
     // initError together with isInitialized=true (see the init-error banner
     // below), so this overlay is the in-progress state in practice. A Retry
     // here would have nothing honest to call.
+    // The unsupported-browser notice is shown ON the boot surface (LOW-B): it must be seen
+    // even while init is pending or hung, and nothing behind this modal dialog is visible.
     return (
-      <LoadingOverlay currentStep={currentStep} initError={initError} />
+      <LoadingOverlay
+        currentStep={currentStep}
+        initError={initError}
+        notice={showBrowserNotice ? browserNotice() : undefined}
+      />
     );
   }
 
@@ -459,23 +510,7 @@ function AppContent() {
       {/* The polite region is always mounted so the notice (and a later, different failure)
           is a content change inside an existing live region, not an inserted-with-content one. */}
       <div role="status">
-        {browserUnsupported && !browserNoticeDismissed && (
-          <Banner
-            tone="warning"
-            live={false}
-            className="app-notice"
-            action={
-              <IconButton
-                icon="x"
-                size="sm"
-                aria-label="Dismiss unsupported-browser notice"
-                onClick={() => setBrowserNoticeDismissed(true)}
-              />
-            }
-          >
-            This browser isn&apos;t supported. Use a current Chrome, Edge or Firefox.
-          </Banner>
-        )}
+        {showBrowserNotice && browserNotice('app-notice')}
         {initError && initError !== dismissedInitError && (
           <Banner
             tone="warning"
