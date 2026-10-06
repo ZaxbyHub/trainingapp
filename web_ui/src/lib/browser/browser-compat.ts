@@ -4,7 +4,7 @@
  *
  * Supported browsers (PR #151 review PRR-151-030, user decision; README "Browser support"):
  * - Chrome/Edge 113+: supported, full WebGPU support
- * - Firefox: supported (CI-verified); WebGPU availability depends on the build and is
+ * - Firefox 112+: supported (CI-verified; 112 is the first with native `inert`); WebGPU availability depends on the build and is
  *   reported by checkFeatures(), not assumed
  * - Safari and every other WebKit-engine browser: NOT supported. That includes every
  *   browser on iOS/iPadOS (Firefox FxiOS, Chrome CriOS and Edge EdgiOS there are WebKit),
@@ -138,6 +138,12 @@ function meetsMinimumVersion(version: number | null, minimum: number): boolean {
   return version !== null && version >= minimum;
 }
 
+/** Firefox below 112 has no native `inert` (user decision). An unparsable version is not held against it. */
+const FIREFOX_MIN = 112;
+function isOldFirefox(version: number | null): boolean {
+  return version !== null && version < FIREFOX_MIN;
+}
+
 /**
  * Generate compatibility guidance based on browser info
  */
@@ -167,7 +173,16 @@ export function getCompatMessage(info: BrowserInfo): CompatGuidance {
     };
   }
 
-  // Firefox = supported. WebGPU is reported from feature detection, not assumed.
+  // Firefox < 112 = unsupported (no native inert).
+  if (name === 'firefox' && isOldFirefox(version)) {
+    return {
+      level: 'unsupported',
+      message: `Firefox ${version} detected. Firefox ${FIREFOX_MIN} or newer is required.`,
+      recommendations: ['Update Firefox to version 112 or newer'],
+    };
+  }
+
+  // Firefox 112+ = supported. WebGPU is reported from feature detection, not assumed.
   if (name === 'firefox') {
     const webgpu = info.features.webgpu === 'full';
     return {
@@ -206,7 +221,7 @@ export function getCompatMessage(info: BrowserInfo): CompatGuidance {
 
 /**
  * Whether this browser's NAME and VERSION make it unsupported (Chrome/Edge below 113,
- * and Safari or any other WebKit engine). An unrecognised engine is NOT reported here:
+ * Firefox below 112, and Safari or any other WebKit engine). An unrecognised engine is NOT reported here:
  * we cannot tell that it is unsupported, so the App shows no upfront notice for it
  * (detectBrowserInfo still lets it through when WebAssembly works). Synchronous and
  * feature-free so the App can ask once at mount.
@@ -215,7 +230,8 @@ export function isKnownUnsupportedBrowser(): boolean {
   const { name, version } = detectBrowser();
   if (name === 'unknown') return false;
   if (name === 'chrome' || name === 'edge') return !meetsMinimumVersion(version, 113);
-  return name !== 'firefox';
+  if (name === 'firefox') return isOldFirefox(version);
+  return true;
 }
 
 /**
@@ -232,7 +248,7 @@ export async function detectBrowserInfo(): Promise<BrowserInfo> {
     isSupported = meetsMinimumVersion(version, 113);
   } else if (name === 'firefox') {
     // Supported (PRR-151-030), independent of WebGPU (see getCompatMessage).
-    isSupported = true;
+    isSupported = !isOldFirefox(version);
   }
   // 'safari' (WebKit, every iOS/iPadOS browser) stays unsupported whatever its features.
 

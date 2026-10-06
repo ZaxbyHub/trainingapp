@@ -483,6 +483,18 @@ describe('getCompatMessage', () => {
     expect(result.recommendations).toEqual([]);
   });
 
+  test.each([[111, 'unsupported'], [112, 'full'], [115, 'full']] as const)('Firefox %i → %s (112 is the minimum)', (version, level) => {
+    const info: BrowserInfo = {
+      name: 'firefox',
+      version,
+      isSupported: version >= 112,
+      features: { webgpu: 'full', opfs: true, indexedDB: true, sharedArrayBuffer: true, wasm: true, workers: true },
+    };
+    const result = getCompatMessage(info);
+    expect(result.level).toBe(level);
+    if (level === 'unsupported') expect(result.message).toContain('Firefox 112');
+  });
+
   test('Firefox null version → full (supported)', () => {
     const info: BrowserInfo = {
       name: 'firefox',
@@ -676,6 +688,15 @@ describe('detectBrowserInfo', () => {
     expect(result.features.wasm).toBe(true);
   });
 
+  test.each([[111, false], [112, true], [115, true]] as const)('Firefox %i → isSupported %s', async (version, supported) => {
+    globalThis.navigator = createMockNavigator({
+      userAgent: `Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:${version}.0) Gecko/20100101 Firefox/${version}.0`,
+      gpu: undefined,
+      storage: undefined,
+    });
+    expect((await detectBrowserInfo()).isSupported).toBe(supported);
+  });
+
   test('Safari with partial webgpu → isSupported false (WebKit is unsupported)', async () => {
     globalThis.navigator = createMockNavigator({
       userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
@@ -751,7 +772,10 @@ describe('isKnownUnsupportedBrowser', () => {
     ['Chrome 120', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', false],
     ['Chrome 112', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36', true],
     ['Edge 120', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0', false],
-    ['Firefox', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0', false],
+    ['Firefox 121', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0', false],
+    ['Firefox 115', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:115.0) Gecko/20100101 Firefox/115.0', false],
+    ['Firefox 112', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:112.0) Gecko/20100101 Firefox/112.0', false],
+    ['Firefox 111', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:111.0) Gecko/20100101 Firefox/111.0', true],
     ['Safari', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15', true],
     ['FxiOS', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/121 Mobile/15E148 Safari/604.1', true],
     ['an unrecognised engine (not claimed unsupported)', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 SomeBrowser/1.0', false],
