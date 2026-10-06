@@ -45,17 +45,19 @@
  * session; the boot-screen states fake only the bridge discovery calls, which is enough for
  * the boot gate (it never mounts the app) but not for those two.
  *
- * Forced crash (crash-page): NO production hook. The baselines run against the production
- * build, where a DEV-guarded trigger would be absent, and an always-on one would ship. The
- * spec instead makes the web-storage read of the sidebar-open key throw (init script), the
- * same failure a browser with storage blocked produces (a SecurityError from localStorage).
- * That read is AppLayout's useSidebarState initializer, which runs while AppContent renders the
- * shell once boot completes and has no try/catch, so the App-level ErrorBoundary around
- * AppContent shows its fallback (inside ThemeProvider, so it is themed). Only that one key
- * throws: the theme, inference-mode and profile reads above the boundary (each guarded anyway)
- * still work, and no inner page boundary wraps AppLayout. The test asserts the forced message.
- * (Until PR #151 final review LOW-C this made navigator.userAgent throw; the browser classifier
- * now treats a throwing userAgent as an unknown browser, so that no longer crashes.)
+ * Forced crash (crash-page): NO production hook, and no reliance on a real product bug. The
+ * baselines run against the production build, where a DEV-guarded trigger would be absent and an
+ * always-on one would ship. The spec instead patches the BUILT entry chunk in flight (page.route):
+ * the module script that dist/index.html names is served with one extra property in the props
+ * object AppContent passes to AppLayout, whose value throws the forced message. That object is
+ * built only on the shell render path, once boot completes, so the boot dialog renders and goes
+ * as usual and the App-level ErrorBoundary around AppContent then shows its fallback (inside
+ * ThemeProvider, so it is themed). The anchor is the `onOpenModelSettings:()=>` property (prop keys
+ * survive minification); the test fails loudly, before loading the page, unless the anchor occurs
+ * exactly once in that chunk. dist/ itself is never modified. The test asserts the forced message.
+ * (Earlier seams: a throwing navigator.userAgent until PR #151 final review LOW-C, then a throwing
+ * web-storage read of the sidebar-open key until critic-final-2 D1; both were real crashes and
+ * are now fixed in the product, so neither can serve as a seam.)
  *
  * Determinism: theme is forced via the persisted `theme-preference` key (and
  * emulated colorScheme); animations are disabled by the config and reduced
@@ -76,6 +78,8 @@
  * overlay captures cover the real-viewport case.
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import {
   assertOverlayOptOutAllowed,
@@ -356,7 +360,12 @@ function dynamicMasks(page: Page): Locator[] {
  * Boot with the page's theme forced and no app-level readiness wait: for states that
  * never reach the readiness path (crash fallback, boot gate).
  */
-async function bootBare(page: Page, theme: 'light' | 'dark', init?: () => void): Promise<void> {
+async function bootBare(
+  page: Page,
+  theme: 'light' | 'dark',
+  init?: () => void,
+  beforeGoto?: (page: Page) => Promise<void>
+): Promise<void> {
   await blockExternalNetwork(page);
   await stubHardware(page);
   await page.clock.setFixedTime(new Date(NOW + 24 * 3600 * 1000));
@@ -368,6 +377,8 @@ async function bootBare(page: Page, theme: 'light' | 'dark', init?: () => void):
     }
   }, theme);
   if (init) await page.addInitScript(init);
+  // Registered after blockExternalNetwork, so its routes are consulted first (last registered wins).
+  if (beforeGoto) await beforeGoto(page);
   await page.goto('/');
 }
 
@@ -380,18 +391,36 @@ async function quiesce(page: Page): Promise<void> {
 
 const FORCED_CRASH_MESSAGE = 'Forced render crash for the visual baseline';
 
+/** In the built entry chunk: the AppLayout props object built by AppContent's shell render. */
+const CRASH_ANCHOR = 'onOpenModelSettings:()=>';
+const CRASH_INJECTION = `__forcedCrash:(()=>{throw new Error(${JSON.stringify(FORCED_CRASH_MESSAGE)})})(),${CRASH_ANCHOR}`;
+
 /**
- * Make AppContent throw while rendering (see the header): reading the sidebar-open key
- * (web_ui/src/lib/storage/persisted-keys.ts SIDEBAR_OPEN_KEY) from web storage throws. Every
- * other key reads normally. Runs before any app script. Page-side only (Playwright's own
- * isolated world is untouched). Serialized into the page, so the key and message are literals.
+ * The entry chunk dist/index.html loads, patched so AppContent throws while rendering the shell
+ * (see the header). Read from disk (the preview server serves this same dist/), and found through
+ * index.html, so the content hash in its name never matters. Fails the test, loudly, unless there
+ * is exactly one module entry script and the anchor occurs exactly once in it.
  */
-function forceAppContentCrash(): void {
-  const getItem = Storage.prototype.getItem;
-  Storage.prototype.getItem = function (this: Storage, key: string): string | null {
-    if (key === 'sidebarOpen') throw new Error('Forced render crash for the visual baseline');
-    return getItem.call(this, key);
-  };
+function crashPatchedEntryChunk(): { file: string; body: string } {
+  const html = readFileSync(fileURLToPath(new URL('../../dist/index.html', import.meta.url)), 'utf8');
+  const entries = [...html.matchAll(/<script\b[^>]*\btype="module"[^>]*\bsrc="\.?\/?(assets\/[^"]+\.js)"/g)].map((m) => m[1]);
+  expect(entries, 'dist/index.html must load exactly one module entry chunk').toHaveLength(1);
+  const file = entries[0];
+  const source = readFileSync(fileURLToPath(new URL(`../../dist/${file}`, import.meta.url)), 'utf8');
+  expect(
+    source.split(CRASH_ANCHOR).length - 1,
+    `crash seam anchor ${CRASH_ANCHOR} must occur exactly once in dist/${file} (did AppContent's AppLayout props change?)`
+  ).toBe(1);
+  return { file, body: source.replace(CRASH_ANCHOR, CRASH_INJECTION) };
+}
+
+/** Serve the crash-patched entry chunk in place of the real one, keeping the server's headers. */
+async function forceAppContentCrash(page: Page): Promise<void> {
+  const { file, body } = crashPatchedEntryChunk();
+  await page.route(`**/${file}`, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body });
+  });
 }
 
 /**
@@ -465,7 +494,7 @@ for (const theme of THEMES) {
       // Surfaces outside the app shell: only <body> (and the dialog/banner on it) paint, so
       // these are where the phase 8 body colour change is visible.
       test('crash-page', async ({ page }) => {
-        await bootBare(page, theme, forceAppContentCrash);
+        await bootBare(page, theme, undefined, forceAppContentCrash);
         await expect(page.getByRole('heading', { name: 'Something went wrong' })).toBeVisible({ timeout: 30_000 });
         await expect(page.getByText(FORCED_CRASH_MESSAGE)).toBeVisible();
         await quiesce(page);
