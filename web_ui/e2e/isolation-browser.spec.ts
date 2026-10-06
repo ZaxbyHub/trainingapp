@@ -53,18 +53,29 @@ import JSZip from 'jszip';
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * The ONE property Firefox cannot exercise (PRR-151-030): a click INSIDE the
- * course frame. Under the app's COOP/COEP, Playwright's Firefox delivers no
- * input into the course frame at all (measured: page.mouse.click on the frame's
- * button, a mouse down/up anywhere on the frame and a focus + Tab + Enter all
- * produced no pointerdown/mousedown/keydown in the course document, while the
- * same document's postMessage reports arrived), and frame locators never
- * resolve. Without a real click there is no user activation, which is the
- * subject of that spec. The script-initiated popup and top-navigation attempts
- * (no activation) DO run on Firefox, in the first spec of this file.
+ * Spec 6 (a REAL click inside the course frame) on Firefox, PRR-151-030 lane I.
+ *
+ * Firefox puts a cross-site iframe of a cross-origin-isolated page in its own
+ * content process (Fission), and Playwright's Firefox cannot deliver input into an
+ * out-of-process iframe: mouse and keyboard events never reach it and frame
+ * locators never resolve. Proven WITHOUT app code by e2e/frame-input/
+ * frame-input.repro.ts (a static COOP+COEP page with a cross-origin iframe gets no
+ * events on Firefox; Chromium, and the same Firefox with Fission disabled, get
+ * them all; stock Firefox over WebDriver BiDi fails the same way for ANY
+ * cross-site iframe, so it is the driver, not these headers). Upstream:
+ * microsoft/playwright#21780 (closed, not planned). Real user input is routed by
+ * the browser's parent process and is not affected.
+ *
+ * So spec 6 launches its OWN browser with Fission disabled
+ * (MOZ_FORCE_DISABLE_FISSION=1; ignored by Chromium, which runs the same path).
+ * Only the process model changes: the app keeps COOP same-origin + COEP
+ * require-corp (the test asserts crossOriginIsolated), the course frame keeps its
+ * sandbox, CSP and player origin, and the click must be trusted and carry user
+ * activation (asserted inside the course), so the sandbox refusal is exercised
+ * by the Gecko DOM exactly as a user's click would. The other specs keep the
+ * default (Fission on) browser and observe through out-of-band reports.
  */
-const FIREFOX_CLICK_SKIP_REASON =
-  "Firefox: Playwright cannot deliver a real click (mouse or keyboard) into the course frame under the app's COOP same-origin + COEP require-corp headers, so a click-initiated (user-activated) popup/top navigation cannot be produced. Script-initiated attempts are asserted on Firefox in the first spec.";
+const NO_FISSION_ENV = { MOZ_FORCE_DISABLE_FISSION: '1' };
 
 /**
  * How a sandboxed window.open (no allow-popups) is refused differs by engine:
@@ -330,12 +341,18 @@ function clickStoryHtml(appOrigin: string): string {
     r[key] = value;
     out.textContent = JSON.stringify(r);
   }
-  document.getElementById('escape-popup').addEventListener('click', function () {
+  function activation(e) {
+    var ua = navigator.userActivation;
+    return { trusted: e.isTrusted, active: ua ? ua.isActive : 'unsupported' };
+  }
+  document.getElementById('escape-popup').addEventListener('click', function (e) {
+    record('popupClick', activation(e));
     var popup = null;
     try { popup = window.open('about:blank#isolation-click-popup', '_blank'); } catch (e) { popup = 'threw:' + e.name; }
     record('popup', popup === null ? 'null' : typeof popup === 'string' ? popup : 'window');
   });
-  document.getElementById('escape-top').addEventListener('click', function () {
+  document.getElementById('escape-top').addEventListener('click', function (e) {
+    record('topClick', activation(e));
     try { window.top.location.href = appOrigin + '/#isolation-click-hijacked'; record('topNavigation', 'no-error'); }
     catch (e) { record('topNavigation', (e && e.name) || String(e)); }
   });
@@ -864,36 +881,80 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
   expect(hits, 'F1 worker egress').toEqual([]);
 });
 
-test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page, browserName }) => {
-  test.skip(browserName === 'firefox', FIREFOX_CLICK_SKIP_REASON);
-  await page.goto('/');
-  const appOrigin = new URL(page.url()).origin;
-  await page.getByRole('button', { name: 'Documents', exact: true }).click();
-  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
-  await install(page, await packZip(CLICK_PACK, '1.0.0', { 'story.html': clickStoryHtml(appOrigin) }), 'click.zip', CLICK_PACK, '1.0.0');
-  await page.getByRole('button', { name: 'Training', exact: true }).click();
-  const option = page.getByTestId('training-pack-select').locator('option', { hasText: CLICK_PACK });
-  await expect(option).toHaveCount(1, { timeout: 30_000 });
-  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
-  const course = page.frameLocator('iframe[data-testid="training-player-frame"]');
-  await expect(course.locator('#escape-popup')).toBeVisible({ timeout: 60_000 });
+test('a click inside the course frame cannot open a popup or navigate the top page', async ({
+  browserName,
+  playwright,
+  launchOptions,
+  headless,
+  baseURL,
+  viewport,
+}) => {
+  test.setTimeout(150_000);
+  // Own browser, Fission off (see NO_FISSION_ENV). Same loopback-only network rule
+  // as the beforeEach hook, which only covers the fixture page.
+  const browser = await playwright[browserName].launch({ ...launchOptions, headless, env: { ...process.env, ...launchOptions.env, ...NO_FISSION_ENV } });
+  try {
+    const context = await browser.newContext({ baseURL, viewport });
+    await context.route('**/*', (route) => {
+      const host = new URL(route.request().url()).hostname;
+      return host === '127.0.0.1' || host === 'localhost' ? route.fallback() : route.abort();
+    });
+    const page = await context.newPage();
+    await page.goto('/');
+    const appOrigin = new URL(page.url()).origin;
+    // The app's isolation is unchanged by the process-model switch.
+    expect(await page.evaluate(() => self.crossOriginIsolated), 'app page crossOriginIsolated').toBe(true);
+    await page.getByRole('button', { name: 'Documents', exact: true }).click();
+    await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+    await install(page, await packZip(CLICK_PACK, '1.0.0', { 'story.html': clickStoryHtml(appOrigin) }), 'click.zip', CLICK_PACK, '1.0.0');
+    await page.getByRole('button', { name: 'Training', exact: true }).click();
+    const option = page.getByTestId('training-pack-select').locator('option', { hasText: CLICK_PACK });
+    await expect(option).toHaveCount(1, { timeout: 30_000 });
+    await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+    const course = page.frameLocator('iframe[data-testid="training-player-frame"]');
+    await expect(course.locator('#escape-popup')).toBeVisible({ timeout: 60_000 });
 
-  // A real click grants the course frame transient activation, which would
-  // let an unsandboxed cross-origin frame open a popup and navigate the top
-  // page. The sandbox (no allow-popups, no allow-top-navigation[-by-user-
-  // activation]) refuses both: no popup event, top URL unchanged (FC5).
-  const popups: string[] = [];
-  page.on('popup', (p) => popups.push(p.url()));
-  page.context().on('page', (p) => popups.push(p.url()));
-  const topBefore = page.url();
-  await course.locator('#escape-popup').click();
-  await expect(course.locator('#click-probe')).toContainText('"popup"', { timeout: 10_000 });
-  await page.waitForTimeout(500);
-  expect(popups, 'FC5 click-initiated popup').toEqual([]);
-  await course.locator('#escape-top').click();
-  await page.waitForTimeout(1000);
-  expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
-  const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
-  expect(clicked.popup, 'FC5 click-initiated window.open').toBe('null');
-  expect(clicked.topNavigation, 'FC5 click-initiated top navigation throws').not.toBe('no-error');
+    // Nothing in the app covers the course: the top page's hit test at the
+    // button's centre lands on the course iframe, and no ancestor of the iframe
+    // is inert, aria-hidden or pointer-events: none.
+    const button = await course.locator('#escape-popup').boundingBox();
+    if (button === null) throw new Error('course button has no box');
+    const cover = await page.evaluate(([x, y]) => {
+      const frame = document.querySelector('iframe[data-testid="training-player-frame"]');
+      const blocked: string[] = [];
+      for (let el = frame; el !== null; el = el.parentElement) {
+        if (el.hasAttribute('inert')) blocked.push(`${el.nodeName} inert`);
+        if (el.getAttribute('aria-hidden') === 'true') blocked.push(`${el.nodeName} aria-hidden`);
+        if (getComputedStyle(el).pointerEvents === 'none') blocked.push(`${el.nodeName} pointer-events:none`);
+      }
+      return { hitIsFrame: frame !== null && document.elementFromPoint(x, y) === frame, blocked };
+    }, [button.x + button.width / 2, button.y + button.height / 2] as const);
+    expect(cover, 'nothing covers or disables the course frame').toEqual({ hitIsFrame: true, blocked: [] });
+
+    // A real click grants the course frame transient activation, which would
+    // let an unsandboxed cross-origin frame open a popup and navigate the top
+    // page. The sandbox (no allow-popups, no allow-top-navigation[-by-user-
+    // activation]) refuses both: no popup event, top URL unchanged (FC5).
+    const popups: string[] = [];
+    page.on('popup', (p) => popups.push(p.url()));
+    context.on('page', (p) => popups.push(p.url()));
+    const topBefore = page.url();
+    await course.locator('#escape-popup').click();
+    await expect(course.locator('#click-probe')).toContainText('"popup"', { timeout: 10_000 });
+    await page.waitForTimeout(500);
+    expect(popups, 'FC5 click-initiated popup').toEqual([]);
+    await course.locator('#escape-top').click();
+    await expect(course.locator('#click-probe')).toContainText('"topNavigation"', { timeout: 10_000 });
+    await page.waitForTimeout(1000);
+    expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
+    const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
+    // Each attempt really ran inside a trusted, user-activated click.
+    expect(clicked.popupClick, 'FC5 popup click is trusted and user-activated').toEqual({ trusted: true, active: true });
+    expect(clicked.topClick, 'FC5 top-navigation click is trusted and user-activated').toEqual({ trusted: true, active: true });
+    expectNoPopupWindow(clicked.popup, browserName, 'FC5 click-initiated window.open');
+    expect(typeof clicked.topNavigation, 'FC5 click-initiated top navigation recorded').toBe('string');
+    expect(clicked.topNavigation, 'FC5 click-initiated top navigation throws').not.toBe('no-error');
+  } finally {
+    await browser.close();
+  }
 });
