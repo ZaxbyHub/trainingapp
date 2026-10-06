@@ -37,9 +37,13 @@
  * not move, it sits on the first/last tabbable element, and the keydown was not
  * default-prevented (a page trap swallowing Tab is still caught).
  *
- * Side effect: the PRR-151-017 test switches the inference mode in this Electron
- * profile's localStorage; it switches back at the end, and the desktop seed
- * forces 'api' on every boot regardless.
+ * Hermetic profile (PR #151 final review LOW-D): Electron's userData (renderer
+ * localStorage/IndexedDB, and the key of the single-instance lock) is a temp
+ * directory passed as --user-data-dir, not the dev profile a plain `electron .`
+ * uses, so a running dev instance cannot make this app quit at once and nothing
+ * here leaks into it. The PRR-151-017 test's inference-mode switch therefore
+ * lands in that temp profile (it still switches back at the end), and the whole
+ * workspace is deleted afterwards.
  */
 import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
@@ -73,6 +77,8 @@ const t = (): string => `[model-gate ${Math.round((Date.now() - T0) / 100) / 10}
 
 interface GateWorkspace {
   root: string;
+  /** Electron userData (--user-data-dir): renderer storage + single-instance lock key. */
+  userDataDir: string;
   storePath: string;
   modelDir: string;
   packsRoot: string;
@@ -82,6 +88,8 @@ interface GateWorkspace {
 /** Temp profile: completed first-run sidecar, EMPTY model dir, no manifest. */
 function makeWorkspace(): GateWorkspace {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'prr151-028-model-gate-'));
+  const userDataDir = path.join(root, 'userdata');
+  fs.mkdirSync(userDataDir, { recursive: true });
   const storePath = path.join(root, 'store', 'profiles', 'default', 'store.sqlite');
   fs.mkdirSync(path.dirname(storePath), { recursive: true });
   const modelDir = path.join(root, 'models-empty');
@@ -99,7 +107,7 @@ function makeWorkspace(): GateWorkspace {
       manifestDigests: {},
     },
   });
-  return { root, storePath, modelDir, packsRoot, manifestPath };
+  return { root, userDataDir, storePath, modelDir, packsRoot, manifestPath };
 }
 
 async function launchApp(ws: GateWorkspace): Promise<{ app: ElectronApplication; page: Page }> {
@@ -121,7 +129,11 @@ async function launchApp(ws: GateWorkspace): Promise<{ app: ElectronApplication;
     TRAININGAPP_DESKTOP_MANIFEST: ws.manifestPath,
     TRAININGAPP_INFERENCE_MODEL_DIR: ws.modelDir,
   });
-  const app = await _electron.launch({ args: ['.'], cwd: path.join(REPO_ROOT, 'desktop'), env });
+  const app = await _electron.launch({
+    args: ['.', `--user-data-dir=${ws.userDataDir}`],
+    cwd: path.join(REPO_ROOT, 'desktop'),
+    env,
+  });
   app.process().stderr?.on('data', (d: Buffer) => {
     for (const line of d.toString().split('\n')) {
       if (line.includes('[trainingapp-desktop]') || line.includes('[trainingapp-backend]')) {
@@ -292,11 +304,19 @@ test.describe.serial('desktop model gate on Electron (PRR-151-028 / 018 / 017)',
 
   test.afterAll(async () => {
     if (app !== undefined) await closeApp(app);
+    // Electron can hold profile files for a moment after exit: retry, and report a
+    // leftover instead of failing the suite in teardown.
     try {
-      fs.rmSync(workspace.root, { recursive: true, force: true });
-    } catch {
-      /* windows tmp cleanup race is fine in teardown */
+      fs.rmSync(workspace.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+    } catch (err) {
+      console.warn(`${t()} could not remove the temp workspace ${workspace.root}: ${err instanceof Error ? err.message : String(err)}`);
     }
+  });
+
+  test('runs on a temp Electron profile, not the dev userData profile (LOW-D)', async () => {
+    const userData = await app.evaluate(({ app: electronApp }) => electronApp.getPath('userData'));
+    const norm = (p: string): string => path.resolve(p).toLowerCase();
+    expect(norm(userData)).toBe(norm(workspace.userDataDir));
   });
 
   test('the desktop gate renders: named non-modal alertdialog with its two actions, focused, chat content inert', async () => {
