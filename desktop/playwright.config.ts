@@ -10,6 +10,10 @@ import { defineConfig } from '@playwright/test';
  * in-process inside Electron with the deterministic stub engine + hash
  * embedder, so no LLM weights are needed.
  *
+ * One exception: desktop-model-gate.spec.ts boots the REAL llama engine against
+ * an EMPTY model directory (still no weights: the engine loads lazily) so the
+ * desktop model gate renders (PR #151 review PRR-151-028).
+ *
  * No Playwright browser download is required: _electron drives the Electron
  * binary already present in desktop/node_modules.
  */
