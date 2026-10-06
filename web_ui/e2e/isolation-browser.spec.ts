@@ -944,9 +944,10 @@ test('a click inside the course frame cannot open a popup or navigate the top pa
     await page.waitForTimeout(500);
     expect(popups, 'FC5 click-initiated popup').toEqual([]);
     await course.locator('#escape-top').click();
-    await expect(course.locator('#click-probe')).toContainText('"topNavigation"', { timeout: 10_000 });
     await page.waitForTimeout(1000);
     expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
+    // The handler ran (a top navigation that went through would have removed the course).
+    await expect(course.locator('#click-probe')).toContainText('"topNavigation"', { timeout: 10_000 });
     const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
     // Each attempt really ran inside a trusted, user-activated click.
     expect(clicked.popupClick, 'FC5 popup click is trusted and user-activated').toEqual({ trusted: true, active: true });
