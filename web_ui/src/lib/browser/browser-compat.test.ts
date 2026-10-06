@@ -785,3 +785,39 @@ describe('isKnownUnsupportedBrowser', () => {
     expect(isKnownUnsupportedBrowser()).toBe(expected);
   });
 });
+
+// PR #151 final review LOW-C: a throwing userAgent getter (patched or hostile navigator) must not
+// crash the classifier; it reads as an unknown browser (no upfront notice).
+describe('a userAgent read that throws or is not a string', () => {
+  function throwingNavigator(): Navigator {
+    const nav = createMockNavigator();
+    Object.defineProperty(nav, 'userAgent', {
+      get() {
+        throw new Error('userAgent getter blew up');
+      },
+    });
+    return nav;
+  }
+
+  test('detectBrowser classifies it as unknown instead of throwing', () => {
+    globalThis.navigator = throwingNavigator();
+    expect(() => detectBrowser()).not.toThrow();
+    expect(detectBrowser()).toEqual({ name: 'unknown', version: null });
+  });
+
+  test('isKnownUnsupportedBrowser reports false (no notice) instead of throwing', () => {
+    globalThis.navigator = throwingNavigator();
+    expect(isKnownUnsupportedBrowser()).toBe(false);
+  });
+
+  test('detectBrowserInfo resolves (as unknown) instead of rejecting', async () => {
+    globalThis.navigator = throwingNavigator();
+    await expect(detectBrowserInfo()).resolves.toMatchObject({ name: 'unknown', version: null });
+  });
+
+  test('a non-string userAgent classifies as unknown', () => {
+    globalThis.navigator = createMockNavigator({ userAgent: { toLowerCase: 1 } });
+    expect(detectBrowser()).toEqual({ name: 'unknown', version: null });
+    expect(isKnownUnsupportedBrowser()).toBe(false);
+  });
+});

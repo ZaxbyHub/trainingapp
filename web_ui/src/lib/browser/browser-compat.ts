@@ -75,13 +75,24 @@ function parseUserAgent(ua: string): { name: BrowserName; version: number | null
 }
 
 /**
- * Detect browser from navigator.userAgent
+ * Detect browser from navigator.userAgent.
+ *
+ * Never throws (PR #151 final review LOW-C): the App classifies the browser at mount for the
+ * upfront unsupported-browser notice, so a navigator whose userAgent getter throws (a patched or
+ * hostile environment) or returns a non-string must not take the whole app down for a cosmetic
+ * notice. Such a browser classifies as 'unknown', which shows no notice.
  */
 export function detectBrowser(): { name: BrowserName; version: number | null } {
-  if (typeof navigator === 'undefined' || !navigator.userAgent) {
+  let ua: unknown;
+  try {
+    ua = typeof navigator === 'undefined' ? undefined : navigator.userAgent;
+  } catch {
+    ua = undefined;
+  }
+  if (typeof ua !== 'string' || ua === '') {
     return { name: 'unknown', version: null };
   }
-  return parseUserAgent(navigator.userAgent);
+  return parseUserAgent(ua);
 }
 
 /**

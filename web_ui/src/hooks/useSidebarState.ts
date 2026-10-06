@@ -10,6 +10,9 @@ export interface SidebarState {
 export function useSidebarState(): SidebarState {
   const [isOpen, setIsOpen] = useState(() => {
     if (typeof window !== 'undefined') {
+      // COUPLING: this read is unguarded, so storage that throws here crashes the app into the
+      // App-level ErrorBoundary. web_ui/e2e/visual/lumen-baseline.spec.ts (crash-page) relies on
+      // exactly that to render the crash fallback; guarding this read needs a new crash seam there.
       const saved = localStorage.getItem(SIDEBAR_OPEN_KEY);
       if (saved !== null) return saved === 'true';
       return window.innerWidth > 1024;

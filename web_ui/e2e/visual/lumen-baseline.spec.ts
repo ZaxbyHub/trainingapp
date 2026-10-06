@@ -47,12 +47,15 @@
  *
  * Forced crash (crash-page): NO production hook. The baselines run against the production
  * build, where a DEV-guarded trigger would be absent, and an always-on one would ship. The
- * spec instead makes `navigator.userAgent` throw (init script); AppContent reads it while
- * rendering (isKnownUnsupportedBrowser in a useState initializer), so the App-level
- * ErrorBoundary around AppContent shows its fallback (inside ThemeProvider, so it is themed).
- * AppContent's mount-time render is the only reader of userAgent before effects run (the other
- * readers, memory-aware getMemoryBudget and detectBrowser, run from effects/handlers), so no
- * provider above the boundary throws first. The test asserts the forced message is shown.
+ * spec instead makes the web-storage read of the sidebar-open key throw (init script), the
+ * same failure a browser with storage blocked produces (a SecurityError from localStorage).
+ * That read is AppLayout's useSidebarState initializer, which runs while AppContent renders the
+ * shell once boot completes and has no try/catch, so the App-level ErrorBoundary around
+ * AppContent shows its fallback (inside ThemeProvider, so it is themed). Only that one key
+ * throws: the theme, inference-mode and profile reads above the boundary (each guarded anyway)
+ * still work, and no inner page boundary wraps AppLayout. The test asserts the forced message.
+ * (Until PR #151 final review LOW-C this made navigator.userAgent throw; the browser classifier
+ * now treats a throwing userAgent as an unknown browser, so that no longer crashes.)
  *
  * Determinism: theme is forced via the persisted `theme-preference` key (and
  * emulated colorScheme); animations are disabled by the config and reduced
@@ -378,16 +381,17 @@ async function quiesce(page: Page): Promise<void> {
 const FORCED_CRASH_MESSAGE = 'Forced render crash for the visual baseline';
 
 /**
- * Make AppContent throw while rendering (see the header): navigator.userAgent throws.
- * Runs before any app script. Page-side only (Playwright's own isolated world is untouched).
+ * Make AppContent throw while rendering (see the header): reading the sidebar-open key
+ * (web_ui/src/lib/storage/persisted-keys.ts SIDEBAR_OPEN_KEY) from web storage throws. Every
+ * other key reads normally. Runs before any app script. Page-side only (Playwright's own
+ * isolated world is untouched). Serialized into the page, so the key and message are literals.
  */
 function forceAppContentCrash(): void {
-  Object.defineProperty(Navigator.prototype, 'userAgent', {
-    configurable: true,
-    get() {
-      throw new Error('Forced render crash for the visual baseline');
-    },
-  });
+  const getItem = Storage.prototype.getItem;
+  Storage.prototype.getItem = function (this: Storage, key: string): string | null {
+    if (key === 'sidebarOpen') throw new Error('Forced render crash for the visual baseline');
+    return getItem.call(this, key);
+  };
 }
 
 /**
