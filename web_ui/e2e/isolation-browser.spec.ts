@@ -36,10 +36,13 @@
  * Observation channel (PRR-151-030, Chromium AND Firefox): each course REPORTS
  * its observations to the app page with postMessage (targetOrigin = the app
  * origin), and the test reads them from a collector it installs in the TOP page.
- * The app is served with COOP same-origin + COEP require-corp, and under those
- * headers Playwright's Firefox cannot attach to any iframe (frame DOM, frame
- * evaluate) nor deliver input into one, so nothing here may depend on reaching
- * into a frame. A report counts only when its event.origin is the player origin
+ * The app is served with COOP same-origin + COEP require-corp, which makes Firefox
+ * run the cross-origin course frame in its own process (Fission), and Playwright's
+ * Firefox cannot attach to an out-of-process iframe (frame DOM, frame evaluate)
+ * nor deliver input into one, so nothing here may depend on reaching into a frame.
+ * The one exception is the click-activation spec, which launches its browser with
+ * Fission off (see NO_FISSION_ENV) and so can click and read inside the frame.
+ * A report counts only when its event.origin is the player origin
  * and its event.source is the course frame's window. On Chromium the in-frame
  * record is also read and must equal the report. The app origin is baked into
  * each fixture (it is known when the zip is built); the fixture also reports
@@ -64,7 +67,8 @@ import { expect, test, type Page } from '@playwright/test';
  * them all; stock Firefox over WebDriver BiDi fails the same way for ANY
  * cross-site iframe, so it is the driver, not these headers). Upstream:
  * microsoft/playwright#21780 (closed, not planned). Real user input is routed by
- * the browser's parent process and is not affected.
+ * Firefox's parent process and is not expected to be affected (not measured by
+ * automation; see the lane I report for PRR-151-030).
  *
  * So spec 6 launches its OWN browser with Fission disabled
  * (MOZ_FORCE_DISABLE_FISSION=1; ignored by Chromium, which runs the same path).
