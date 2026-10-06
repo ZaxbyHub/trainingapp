@@ -255,8 +255,8 @@ Courses run on a dedicated player origin instead:
   206/416, and bounded reads.
 - **Headers.** Course responses carry CORP `cross-origin`, `nosniff`,
   `no-cache` and the training CSP without the private `app:` sources plus
-  `frame-ancestors 'self' <app origin>`, with `worker-src` pinned to `blob:`
-  and the open pack's relay path (on the player origin `'self'` would admit
+  `frame-ancestors 'self' <app origin>`, with `worker-src` pinned to `blob:`,
+  the open pack's relay path and the course service worker's script `/training/sw.js` (on the player origin `'self'` would admit
   app assets served without the course CSP); course documents also carry COEP
   `require-corp` (without it the app's COEP blocks the frame). The server
   that answers the player origin serves only static files (course JS can
@@ -292,8 +292,8 @@ Courses run on a dedicated player origin instead:
 - **Worker updates.** A new version of the course worker waits (no notice is
   shown) until no course is open, so an update never replaces the worker under
   a playing course; it takes over once the open course is closed.
-- **Support.** Chrome, Edge and Firefox (the browser e2e suite runs under both Chromium and Firefox in CI; five of the six player-origin isolation specs run on Firefox, the click-activation spec is skipped there because Playwright's Firefox delivers no input into the course frame); Safari and every other WebKit browser (including all iOS/iPadOS browsers) are not supported.
-- **Known Firefox limitation.** Known Firefox limitation: a dedicated worker started from a pack's own script (a course `.js` served by the course service worker) never starts on Firefox, although a `blob:` worker does; Chromium runs both. It stays confined either way (it can never reach the egress sink), and no Storyline fixture in this repo creates a dedicated worker, but real content that does would not work on Firefox. `e2e/isolation-browser.spec.ts` pins this (the worker-escape spec expects `{ state: 'error' }` on Firefox and fails when it is fixed, so the row must then be updated).
+- **Support.** Chrome, Edge and Firefox (the browser e2e suite runs under both Chromium and Firefox in CI; all six player-origin isolation specs run on Firefox; the click-activation spec launches its own Firefox with Fission disabled, `MOZ_FORCE_DISABLE_FISSION=1`, because Playwright cannot send input into an out-of-process frame (microsoft/playwright#21780), a test-harness limit that real users are not expected to hit); Safari and every other WebKit browser (including all iOS/iPadOS browsers) are not supported.
+- **Firefox engine notes.** The course document's `worker-src` names the course service worker's script (`<player>/training/sw.js`) because Firefox requires it before starting dedicated workers under a service worker; dedicated workers from a pack's own script run on both engines. Chromium's course frame is not `crossOriginIsolated` (the permissions-policy default) while Firefox reports true; this is benign.
 
 Threat model: nothing on the player origin is trusted. A malicious course can
 take the relay port, but the app's relay serves only the open pack's files. It

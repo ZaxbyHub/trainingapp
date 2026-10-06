@@ -572,7 +572,7 @@ Edge. Firefox is supported (verified by the browser e2e suite in CI). Safari and
 
 Course content runs on a separate **player origin** so it can never read the app's data. The
 app (not the host) answers course files with the training CSP, whose `worker-src` admits only
-`blob:` and the open course's own files, so a course cannot start one of the app's own scripts on
+`blob:`, the open course's own files and the course service worker's script (which answers a worker request with 404), so a course cannot start one of the app's own scripts on
 that origin as an unconfined worker (ADR-0012). The player origin is resolved once at app start,
 in this order:
 
