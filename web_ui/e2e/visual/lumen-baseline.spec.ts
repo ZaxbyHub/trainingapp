@@ -540,6 +540,11 @@ for (const theme of THEMES) {
         await expect(frame).toBeVisible({ timeout: 30_000 });
         await expect(page.getByRole('button', { name: 'All courses' })).toBeVisible();
         await expectModelGateHidden(page);
+        // The install toast auto-dismisses on a timer and would overlap the clip at a time-dependent
+        // moment: dismiss it explicitly and wait until none is left.
+        const dismiss = page.getByRole('button', { name: 'Dismiss notification' });
+        while ((await dismiss.count()) > 0) await dismiss.first().click();
+        await expect(dismiss).toHaveCount(0);
         await page.waitForTimeout(500);
         await quiesce(page);
         const box = await frame.boundingBox();
