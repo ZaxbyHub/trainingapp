@@ -13,6 +13,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { cx, mergeIds } from './cx';
+import { registerOverlay, settleEscape, stackOrder } from './overlayStack';
 import { computeTooltipShift } from './tooltip-position';
 
 const FOCUSABLE =
@@ -127,22 +128,9 @@ const TOAST_VIEWPORT = '.ui-toast-viewport';
  * one nested in an open dialog's panel comes after it, and one in page content before).
  */
 function topmostModalPanel(): HTMLElement | null {
-  const rank = (panel: HTMLElement): number =>
-    panel.parentElement?.classList.contains('ui-dialog__backdrop--boot') ? 1 : 0;
-  let best: HTMLElement | null = null;
-  let bestRank = -1;
-  for (const panel of Array.from(document.querySelectorAll<HTMLElement>('.ui-dialog[aria-modal="true"]'))) {
-    const r = rank(panel);
-    if (r >= bestRank) {
-      best = panel;
-      bestRank = r;
-    }
-  }
-  return best;
+  // The same order the Escape stack uses (ui/overlayStack.ts).
+  return stackOrder(Array.from(document.querySelectorAll<HTMLElement>('.ui-dialog[aria-modal="true"]')))[0] ?? null;
 }
-
-/** Popup widgets that own Escape while open (Escape closes the popup, not the dialog). */
-const ESCAPE_OWNER = '[role="combobox"][aria-expanded="true"], [aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]';
 
 /**
  * role="dialog" (+ aria-modal unless `modal` is false). On open it moves focus into the dialog (first
@@ -154,7 +142,13 @@ const ESCAPE_OWNER = '[role="combobox"][aria-expanded="true"], [aria-haspopup]:n
  * Focus stays live while a modal dialog is open: a press on the backdrop never blurs the
  * focused control, and if the focused control inside the panel is removed (a Retry
  * button replaced by a progress panel) focus is re-homed onto the panel, so the Tab trap
- * and Escape keep working.
+ * keeps working.
+ *
+ * Escape is routed by the overlay stack (ui/overlayStack.ts): it reaches the topmost
+ * open dialog wherever focus is (on <body>, on a toast), never a dialog below it. Behind
+ * the dialog, no React parent, no bubble-phase listener and no capture listener registered
+ * after the stack's sees the key (see overlayStack.ts for the exact limits). A non-modal,
+ * non-dismissible dialog only handles Escape from inside its own panel.
  */
 export function Dialog<D extends boolean = true>(props: DialogProps<D>) {
   const {
@@ -183,6 +177,11 @@ export function Dialog<D extends boolean = true>(props: DialogProps<D>) {
   initialFocusRef.current = initialFocus;
   const modalRef = useRef(modal);
   modalRef.current = modal;
+  // Read by the overlay stack at event time: the dialog may change these while open.
+  const dismissibleRef = useRef(dismissible);
+  dismissibleRef.current = dismissible;
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return undefined;
@@ -198,9 +197,9 @@ export function Dialog<D extends boolean = true>(props: DialogProps<D>) {
 
     // Re-home focus when the focused control inside a modal panel is removed: browsers
     // (and jsdom) drop focus to <body> without a blur event, which would leave the Tab
-    // trap and the panel-scoped Escape handler dead while the dialog stays open. The
-    // re-home is deferred one task so a consumer's own re-home effect (the first-run
-    // wizard focuses its next primary action) runs first and wins.
+    // trap dead while the dialog stays open. The re-home is deferred one task so a
+    // consumer's own re-home effect (the first-run wizard focuses its next primary
+    // action) runs first and wins.
     let lastInside: Element | null = panel?.contains(document.activeElement) ? document.activeElement : null;
     let rehomeTimer: ReturnType<typeof setTimeout> | undefined;
     const focusLost = () => {
@@ -274,22 +273,29 @@ export function Dialog<D extends boolean = true>(props: DialogProps<D>) {
     };
   }, [open]);
 
+  // One entry per open (a fresh one per effect run keeps StrictMode's double mount
+  // balanced); unregistered on close and on unmount.
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!open || !panel) return undefined;
+    return registerOverlay({
+      panel,
+      isModal: () => modalRef.current,
+      isDismissible: () => dismissibleRef.current,
+      close: () => onCloseRef.current?.(),
+    });
+  }, [open]);
+
   const onKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
       if (e.key === 'Escape') {
-        // Never let Escape reach anything layered behind the dialog.
+        // Escape from inside the panel, after the widgets inside had their say: the
+        // overlay stack decides (close, swallow, or leave it to a control that consumed
+        // it). Whatever it decides, nothing behind the dialog sees the key: not a React
+        // parent, and not a native listener on the same container node.
         e.stopPropagation();
-        if (!dismissible) {
-          e.preventDefault();
-          return;
-        }
-        // Escape that a control inside already consumed (a combobox closing its list, an
-        // IME cancelling a composition, an open popup menu) must not also close the dialog.
-        const target = e.target instanceof Element ? e.target : null;
-        if (e.defaultPrevented || e.nativeEvent.defaultPrevented || e.nativeEvent.isComposing || target?.closest(ESCAPE_OWNER)) {
-          return;
-        }
-        onClose?.();
+        e.nativeEvent.stopImmediatePropagation();
+        settleEscape(panelRef.current, e.nativeEvent);
         return;
       }
       // Non-modal: no trap; Tab flows to the rest of the page (inert content is skipped).
@@ -313,7 +319,7 @@ export function Dialog<D extends boolean = true>(props: DialogProps<D>) {
         firstEl.focus();
       }
     },
-    [dismissible, onClose, modal]
+    [modal]
   );
 
   if (!open) return null;
