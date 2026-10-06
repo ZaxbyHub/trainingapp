@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from '@playwright/test';
 import playwrightConfig from '../playwright.config.js';
-import { SPEC_FILE_PATTERN } from './spec-pattern.js';
+import { SOURCE_FILE_PATTERN, SPEC_FILE_PATTERN } from './spec-pattern.js';
 import { closeAllApps, closeApp, isProcessAlive, launchElectron, makeTempDir, makeUserDataDir, removeTempDir } from './launch-helpers.js';
 
 const roots: string[] = [];
@@ -93,7 +93,7 @@ const BYPASS_PATTERNS: readonly RegExp[] = [
   new RegExp(String.raw`\[\s*['"\x60]${LAUNCHER}['"\x60]\s*\]`),
 ];
 
-const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
+const SOURCE_FILE = SOURCE_FILE_PATTERN;
 const SPEC_FILE = SPEC_FILE_PATTERN;
 
 /** Every ts/mts/cts/js/mjs/cjs/tsx/jsx file under dir (recursive, so fixtures/ and subdirectories count), relative paths. */
@@ -152,6 +152,27 @@ await e.launch({});`,
 
 test('playwright.config testMatch is the shared spec pattern the guard scans', () => {
   expect(playwrightConfig.testMatch).toBe(SPEC_FILE_PATTERN);
+});
+
+test('the guard scans the same root Playwright collects from, with no per-project override', () => {
+  // critic-final-7 N1: the guard walks this directory, so the config's testDir must resolve to it,
+  // and no project may collect from elsewhere or with another pattern.
+  const scanRoot = path.dirname(fileURLToPath(import.meta.url));
+  const configDir = path.resolve(scanRoot, '..');
+  expect(path.resolve(configDir, String(playwrightConfig.testDir))).toBe(scanRoot);
+  for (const project of playwrightConfig.projects ?? []) {
+    expect(project.testMatch, 'a project testMatch override escapes the guard').toBeUndefined();
+    expect(project.testDir, 'a project testDir override escapes the guard').toBeUndefined();
+  }
+});
+
+test('the guard reads every JS/TS source extension (and nothing else)', () => {
+  for (const name of ['a.ts', 'a.tsx', 'a.mts', 'a.cts', 'a.js', 'a.jsx', 'a.mjs', 'a.cjs']) {
+    expect(SOURCE_FILE_PATTERN.test(name), name).toBe(true);
+  }
+  for (const name of ['a.json', 'a.md', 'a.css', 'a.html', 'a.ts.map', 'a.tsx.bak', 'ts']) {
+    expect(SOURCE_FILE_PATTERN.test(name), name).toBe(false);
+  }
 });
 
 test('every desktop e2e file launches Electron through launch-helpers (never the Playwright launcher directly)', () => {

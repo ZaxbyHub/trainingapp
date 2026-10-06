@@ -4,3 +4,6 @@
  * structural launch guard, so Playwright can never collect a spec the guard does not scan.
  */
 export const SPEC_FILE_PATTERN = /\.spec\.[cm]?[jt]s$/;
+
+/** Which files the structural launch guard reads (specs and every helper they can import). */
+export const SOURCE_FILE_PATTERN = /\.[cm]?[jt]sx?$/;
