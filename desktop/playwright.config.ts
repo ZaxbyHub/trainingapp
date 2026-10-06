@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { SPEC_FILE_PATTERN } from './e2e/spec-pattern.js';
 
 /**
  * Playwright-under-Electron suite (issue #67, B9 / AC1).
@@ -19,6 +20,9 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './e2e',
+  // Same pattern the structural launch guard scans (launch-helpers.spec.ts), so no collected spec
+  // can escape it (no *.test.*, no .tsx/.jsx).
+  testMatch: SPEC_FILE_PATTERN,
   timeout: 180_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,

@@ -15,6 +15,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from '@playwright/test';
+import playwrightConfig from '../playwright.config.js';
+import { SPEC_FILE_PATTERN } from './spec-pattern.js';
 import { closeAllApps, closeApp, isProcessAlive, launchElectron, makeTempDir, makeUserDataDir, removeTempDir } from './launch-helpers.js';
 
 const roots: string[] = [];
@@ -69,16 +71,18 @@ async function failingLaunch(step: 'firstWindow' | 'waitForLoadState'): Promise<
 // at runtime, so this file never contains it and scans itself too.
 //
 // Closed-world limit (deliberately NOT detected; a static text scan cannot see them): a launcher
-// read through Reflect.get(pw, '<name>'), an `export * from` barrel that re-exports the package
-// and is then used without `.launch`/brackets, and any runtime-computed property name
-// (pw[name]). The viaHelper assertion below still forces every spec to call launchElectron(.
+// read through Reflect.get(pw, '<name>'), an `export * from` barrel whenever the consumer's call
+// is not the literal `<launcher>.launch`, string-concatenated or runtime-computed keys (pw[name]),
+// and files outside desktop/e2e. The viaHelper assertion below still forces every collected spec
+// to call launchElectron(: playwright.config.ts testMatch IS SPEC_FILE_PATTERN (asserted below),
+// so Playwright cannot collect a spec that the guard does not scan.
 const LAUNCHER = ['_elec', 'tron'].join('');
 // The Playwright family only: @playwright/test, playwright, playwright-core and any subpath of them
 // (playwright/test, playwright-core/index.mjs, ...).
 const MODULES = String.raw`(?:@playwright\/test|playwright(?:-core)?)(?:\/[^'"]*)?`;
 const BYPASS_PATTERNS: readonly RegExp[] = [
-  // import/export { _x }, { _x as y }, { a, _x as b, type C } from the Playwright package
-  new RegExp(String.raw`(?:import|export)\s*(?:type\s*)?\{[^}]*\b${LAUNCHER}\b[^}]*\}\s*from\s*['"]${MODULES}['"]`),
+  // import/export { _x }, { _x as y }, { a, _x as b, type C }, `import pw, { _x }` from the Playwright package
+  new RegExp(String.raw`(?:import|export)\s*(?:type\s*)?(?:[\w$]+\s*,\s*)?\{[^}]*\b${LAUNCHER}\b[^}]*\}\s*from\s*['"]${MODULES}['"]`),
   // default / namespace import, then pw._x.launch(...), or require('playwright')._x
   new RegExp(String.raw`\.${LAUNCHER}\b`),
   // const { _x } = require(...) / await import(...)
@@ -89,10 +93,10 @@ const BYPASS_PATTERNS: readonly RegExp[] = [
   new RegExp(String.raw`\[\s*['"\x60]${LAUNCHER}['"\x60]\s*\]`),
 ];
 
-const SOURCE_FILE = /\.[cm]?[jt]s$/;
-const SPEC_FILE = /\.spec\.[cm]?[jt]s$/;
+const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
+const SPEC_FILE = SPEC_FILE_PATTERN;
 
-/** Every ts/mts/cts/js/mjs/cjs file under dir (recursive, so fixtures/ and subdirectories count), relative paths. */
+/** Every ts/mts/cts/js/mjs/cjs/tsx/jsx file under dir (recursive, so fixtures/ and subdirectories count), relative paths. */
 function listSourceFiles(dir: string, rel = ''): string[] {
   const found: string[] = [];
   for (const entry of fs.readdirSync(path.join(dir, rel), { withFileTypes: true })) {
@@ -129,6 +133,9 @@ test('the bypass detector flags the aliased, default, namespace and require form
     `import * as pw from ${pkg};
 const a = pw[\`${LAUNCHER}\`];`,
     `import { ${LAUNCHER} as e } from 'playwright/test';`,
+    // critic-final-6 P2: a default import before the braces
+    `import pw, { ${LAUNCHER} as e } from 'playwright';
+await e.launch({});`,
     `import { ${LAUNCHER} as e } from 'playwright-core/index.mjs';`,
     `export { ${LAUNCHER} as e } from "playwright-core/lib/index.js";`,
   ];
@@ -141,6 +148,10 @@ const a = pw[\`${LAUNCHER}\`];`,
     `import { x } from './playwright/test.js';`,
   ];
   for (const source of clean) expect(bypassesLaunchHelper(source), source).toBe(false);
+});
+
+test('playwright.config testMatch is the shared spec pattern the guard scans', () => {
+  expect(playwrightConfig.testMatch).toBe(SPEC_FILE_PATTERN);
 });
 
 test('every desktop e2e file launches Electron through launch-helpers (never the Playwright launcher directly)', () => {
