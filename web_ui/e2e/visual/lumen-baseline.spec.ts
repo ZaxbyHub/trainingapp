@@ -70,7 +70,12 @@
  * for the packaged model, so no "Insufficient memory" failure) and a WebGPU API with
  * no adapter ("WebGPU is unavailable, but the wllama engine runs on the CPU"). That
  * is exactly what the committed overlay-model-not-ready-*.png baselines show, so a
- * regeneration on a 4 GB or WebGPU-capable box renders the same text.
+ * regeneration on a 4 GB or WebGPU-capable box renders the same text. The Knowledge
+ * Packs storage line ("Browser storage: 432 KB used, 10.0 GB available (not persistent
+ * ...") is machine-derived as well: Chromium computes navigator.storage.estimate().quota
+ * from the host's free disk space (a GitHub windows-latest runner rendered 4.0 GB, the
+ * baseline machine 10.0 GB), so the same stub pins the quota to 10 GiB and
+ * persisted() to false.
  *
  * Viewport note: each capture grows the viewport to the full content height, so
  * height-dependent layout (100vh regions, the pinned composer, the sidebar footer)
@@ -182,16 +187,29 @@ async function waitReady(page: Page): Promise<void> {
 }
 
 /**
- * Pin the hardware the readiness gate reads (see the header, PRR-151-036):
- * model-readiness.ts derives its memory failure from navigator.deviceMemory
- * (memory-aware.ts getMemoryBudget) and its WebGPU text from
- * navigator.gpu.requestAdapter(). Defined on the prototype before any app script runs.
+ * Pin the machine-derived values the captured pages read (see the header,
+ * PRR-151-036): model-readiness.ts derives its memory failure from
+ * navigator.deviceMemory (memory-aware.ts getMemoryBudget) and its WebGPU text from
+ * navigator.gpu.requestAdapter(); the Documents page's Knowledge Packs storage line
+ * (PacksPanel formatBytes over browser-pack-manager storageReport) reads
+ * navigator.storage.estimate().quota, which Chromium derives from the host's free disk
+ * space, and persisted(). Usage is real (deterministic: 432 KB); only the quota is
+ * fixed, to 10 GiB, which renders "10.0 GB available". Defined before any app script runs.
  */
 async function stubHardware(page: Page): Promise<void> {
   await page.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, get: () => 8 });
     const gpu = { requestAdapter: async () => null };
     Object.defineProperty(Navigator.prototype, 'gpu', { configurable: true, get: () => gpu });
+    const storage = navigator.storage;
+    if (storage) {
+      const realEstimate = storage.estimate.bind(storage);
+      storage.estimate = async () => ({
+        ...(await realEstimate()),
+        quota: 10 * 1024 * 1024 * 1024,
+      });
+      storage.persisted = async () => false;
+    }
   });
 }
 
