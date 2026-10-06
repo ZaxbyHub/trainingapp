@@ -4,7 +4,7 @@ import React, { createRef, useState } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { Button, Dialog, Tabs, Tooltip, type TabItem } from './index';
+import { Button, Dialog, Tabs, ToastProvider, Tooltip, useToast, type TabItem } from './index';
 
 function DialogHarness({ onClose = () => {} }: { onClose?: () => void }) {
   const [open, setOpen] = useState(false);
@@ -699,6 +699,150 @@ describe('Dialog Escape owned by a control inside (PRR-151-070)', () => {
     );
     fireEvent.keyDown(screen.getByRole('combobox', { name: 'pick' }), { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('Dialog + toasts above it (PRR-151-007)', () => {
+  // Real ToastProvider: its viewport portals to <body>, above every dialog (z 1200).
+  function Toasts({ messages }: { messages: string[] }) {
+    const { showToast } = useToast();
+    React.useEffect(() => {
+      messages.forEach((m) => showToast(m, 'info'));
+    }, [messages, showToast]);
+    return null;
+  }
+  type Kind = 'modal' | 'non-modal' | 'none';
+  // dialogFirst: the dialog portal is appended before the toast viewport (opened at mount);
+  // otherwise it opens afterwards (the app's real order: the viewport mounts with the app).
+  function Page({ kind, dialogFirst, messages = ['Saved'] }: { kind: Kind; dialogFirst: boolean; messages?: string[] }) {
+    const [open, setOpen] = useState(dialogFirst);
+    React.useEffect(() => setOpen(true), []);
+    const dialog =
+      kind === 'none' ? null : kind === 'modal' ? (
+        <Dialog open={open} onClose={() => setOpen(false)} title="Modal" footer={<><Button>First</Button><Button>Last</Button></>} />
+      ) : (
+        <div style={{ position: 'relative' }}>
+          <Dialog open={open} contained modal={false} dismissible={false} title="Gate" footer={<Button>Gate action</Button>} />
+        </div>
+      );
+    return (
+      <>
+        <Button>Background</Button>
+        {dialogFirst ? dialog : null}
+        <ToastProvider>
+          <Toasts messages={messages} />
+          {dialogFirst ? null : dialog}
+        </ToastProvider>
+      </>
+    );
+  }
+  const dismissButtons = () => screen.getAllByRole('button', { name: 'Dismiss notification' });
+  const viewportOf = (el: HTMLElement) => el.closest('.ui-toast-viewport') as HTMLElement;
+  const order = [true, false] as const;
+
+  it.each(order)('modal open (dialog portal first=%s): Tab and Shift+Tab from a focused toast land inside the panel', async (dialogFirst) => {
+    render(<Page kind="modal" dialogFirst={dialogFirst} />);
+    const dismiss = await waitFor(() => dismissButtons()[0]);
+    const panel = screen.getByRole('dialog', { name: 'Modal' });
+    // Sanity: the page structure really puts the toast outside the panel.
+    expect(viewportOf(dismiss).parentElement).toBe(document.body);
+    expect(panel.contains(dismiss)).toBe(false);
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
+    act(() => dismiss.focus());
+    await userEvent.tab({ shift: true });
+    expect(screen.getByRole('button', { name: 'Last' })).toHaveFocus();
+  });
+
+  it('modal open: Tab moves between toasts first, and only the last edge goes back into the panel', async () => {
+    render(<Page kind="modal" dialogFirst={false} messages={['One', 'Two']} />);
+    await waitFor(() => expect(dismissButtons()).toHaveLength(2));
+    const [one, two] = dismissButtons();
+    act(() => one.focus());
+    await userEvent.tab();
+    expect(two).toHaveFocus(); // toasts stay reachable from each other
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
+  });
+
+  it('two stacked modals: the toast hands focus to the topmost one only', async () => {
+    function Stacked() {
+      const [inner, setInner] = useState(false);
+      React.useEffect(() => setInner(true), []);
+      return (
+        <ToastProvider>
+          <Toasts messages={['Saved']} />
+          <Dialog open onClose={() => {}} title="Outer" footer={<Button>Outer action</Button>} />
+          <Dialog open={inner} onClose={() => setInner(false)} title="Inner" footer={<Button>Inner action</Button>} />
+        </ToastProvider>
+      );
+    }
+    render(<Stacked />);
+    const dismiss = await waitFor(() => dismissButtons()[0]);
+    await waitFor(() => screen.getByRole('dialog', { name: 'Inner' }));
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Inner action' })).toHaveFocus();
+  });
+
+  it('topmost: the boot layer wins over document order; a contained modal in page content does not cover a portaled one', async () => {
+    function Layers({ boot }: { boot: boolean }) {
+      const [later, setLater] = useState(false);
+      React.useEffect(() => setLater(true), []);
+      return (
+        <ToastProvider>
+          <Toasts messages={['Saved']} />
+          {boot ? <Dialog open layer="boot" onClose={() => {}} title="Boot" footer={<Button>Boot action</Button>} /> : null}
+          <Dialog open onClose={() => {}} title="Default" footer={<Button>Default action</Button>} />
+          {later ? (
+            <div style={{ position: 'relative' }}>
+              <Dialog open contained onClose={() => {}} title="Contained" footer={<Button>Contained action</Button>} />
+            </div>
+          ) : null}
+        </ToastProvider>
+      );
+    }
+    const { unmount } = render(<Layers boot />);
+    let dismiss = await waitFor(() => dismissButtons()[0]);
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Boot action' })).toHaveFocus(); // first in DOM, highest layer
+    unmount();
+    render(<Layers boot={false} />);
+    dismiss = await waitFor(() => dismissButtons()[0]);
+    await waitFor(() => screen.getByRole('dialog', { name: 'Contained' }));
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Default action' })).toHaveFocus(); // not the contained modal mounted later
+  });
+
+  it.each(['non-modal', 'none'] as const)('%s: Tab from a toast is left to the browser (unchanged)', async (kind) => {
+    render(<Page kind={kind} dialogFirst={false} />);
+    const dismiss = await waitFor(() => dismissButtons()[0]);
+    act(() => dismiss.focus());
+    // Not intercepted: the keydown is not default-prevented...
+    expect(fireEvent.keyDown(dismiss, { key: 'Tab' })).toBe(true);
+    expect(fireEvent.keyDown(dismiss, { key: 'Tab', shiftKey: true })).toBe(true);
+    expect(dismiss).toHaveFocus();
+    // ...and the real Tab order is plain document order: Shift+Tab reaches the control
+    // before the viewport (the page, or the non-modal gate), Tab leaves the document.
+    await userEvent.tab({ shift: true });
+    expect(screen.getByRole('button', { name: kind === 'none' ? 'Background' : 'Gate action' })).toHaveFocus();
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(document.body).toHaveFocus();
+  });
+
+  it('dismissing a focused toast over a modal still returns focus to where it came from (toast focus return unchanged)', async () => {
+    render(<Page kind="modal" dialogFirst={false} />);
+    const dismiss = await waitFor(() => dismissButtons()[0]);
+    const last = screen.getByRole('button', { name: 'Last' });
+    act(() => last.focus());
+    act(() => dismiss.focus()); // entered from inside the panel
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Dismiss notification' })).toBeNull());
+    expect(last).toHaveFocus();
   });
 });
 
