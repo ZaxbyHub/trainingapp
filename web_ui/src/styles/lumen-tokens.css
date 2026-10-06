@@ -1,6 +1,7 @@
 /* Lumen design tokens (docs/design/design-language.md section 3).
    These are the ONLY design tokens: the legacy --color-* / --spacing-* /
-   --radius-* / --font-* / --shadow-sm|md|lg tokens (tokens.css and the dark
+   --radius-* / --font-family / --font-size-* / --line-height-* / --shadow-sm|md|lg
+   tokens (tokens.css and the dark
    overrides in theme.css) were retired and deleted in Lumen phase 8. Their frozen
    names live in src/styles/retired-tokens.ts and the pairwise legacy -> Lumen
    remap in src/styles/token-remap.ts. The repo-wide ratchet

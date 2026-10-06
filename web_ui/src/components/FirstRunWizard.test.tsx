@@ -11,7 +11,8 @@
 import React from 'react';
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, fireEvent, cleanup, act, within } from '@testing-library/react';
-import { FirstRunWizard } from './FirstRunWizard';
+import { FirstRunGate, FirstRunWizard } from './FirstRunWizard';
+import { clearFirstRunSession } from './first-run-session';
 import type { FirstRunStatus } from '../lib/first-run';
 
 const completeFirstRunMock = vi.fn();
@@ -46,6 +47,7 @@ function stubStatus(overrides: { packs?: Partial<FirstRunStatus['packs']> } = {}
 beforeEach(() => {
   completeFirstRunMock.mockReset();
   activateRequiredPacksMock.mockReset();
+  clearFirstRunSession();
 });
 afterEach(cleanup);
 
@@ -431,5 +433,321 @@ describe('FirstRunWizard completion flow and focus recovery', () => {
     fireEvent.click(getByTestId('first-run-skip'));
     expect(onClose).toHaveBeenCalledTimes(2);
     expect(completeFirstRunMock).not.toHaveBeenCalled();
+  });
+});
+
+/** A promise the test settles by hand (controls when an IPC call "returns"). */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const packsPending = (): FirstRunStatus =>
+  stubStatus({
+    packs: {
+      toolsAvailable: true,
+      required: [{ id: 'bundled-min', version: '1.0.0', resolvedDir: null }],
+      installed: [],
+    },
+  });
+const packsActive = (): FirstRunStatus =>
+  stubStatus({
+    packs: {
+      toolsAvailable: true,
+      required: [{ id: 'bundled-min', version: '1.0.0', resolvedDir: null }],
+      installed: [{ id: 'bundled-min', version: '1.0.0', active: true }],
+    },
+  });
+
+describe('FirstRunWizard step announcements (PRR-151-004, PRR-151-068)', () => {
+  const LABELS = [
+    'Hardware check',
+    'Inference profile',
+    'File integrity',
+    'Knowledge packs',
+    'Licensing notices',
+  ];
+
+  it('announces "Step N of 5: <label>" in one persistent live region on every transition', () => {
+    const { getByTestId } = mount();
+    const region = getByTestId('wizard-announcer');
+    expect(region).toHaveAttribute('role', 'status');
+    expect(region).toHaveAttribute('aria-live', 'polite');
+    expect(region).toHaveTextContent(`Step 1 of 5: ${LABELS[0]}`);
+    for (let i = 1; i < 5; i += 1) {
+      next(getByTestId, 1);
+      expect(getByTestId('wizard-announcer')).toBe(region); // same node: never remounted
+      expect(region).toHaveTextContent(`Step ${i + 1} of 5: ${LABELS[i]}`);
+    }
+    for (let i = 3; i >= 0; i -= 1) {
+      fireEvent.click(within(getByTestId('first-run-wizard')).getByRole('button', { name: 'Back' }));
+      expect(region).toHaveTextContent(`Step ${i + 1} of 5: ${LABELS[i]}`);
+    }
+  });
+
+  it('announces the terminal step', async () => {
+    completeFirstRunMock.mockResolvedValue({ ok: true });
+    const { getByTestId } = mount(packsActive());
+    next(getByTestId, 4);
+    fireEvent.click(getByTestId('license-ack'));
+    await act(async () => {
+      fireEvent.click(getByTestId('wizard-complete'));
+    });
+    expect(getByTestId('wizard-announcer')).toHaveTextContent('Setup complete');
+  });
+
+  it('the step list shows human labels, never the raw slugs', () => {
+    const { getByTestId } = mount();
+    const steps = getByTestId('wizard-steps');
+    expect(steps).toHaveTextContent('Hardware check');
+    expect(steps).toHaveTextContent('Knowledge packs');
+    expect(steps.textContent).not.toMatch(/detect-hardware|select-profile|activate-packs|licensing-notices/);
+  });
+});
+
+describe('FirstRunWizard licensing text region (PRR-151-073)', () => {
+  it('the scrollable, focusable notices text is a named region', () => {
+    const status = {
+      ...stubStatus(),
+      licenses: { available: true, path: 'docs/licenses.md', content: 'MIT and friends' },
+    } as FirstRunStatus;
+    const { getByTestId, getByRole } = mount(status);
+    next(getByTestId, 4);
+    const region = getByRole('region', { name: 'Licensing notices text' });
+    expect(region).toHaveTextContent('MIT and friends');
+    expect(region).toHaveAttribute('tabindex', '0');
+  });
+});
+
+describe('FirstRunWizard in-session progress (PRR-151-013)', () => {
+  it('Skip then reopen in the same session restores step, profile and licence tick; nothing hits storage', () => {
+    const first = mount();
+    next(first.getByTestId, 1);
+    fireEvent.click(first.getByTestId('profile-fast'));
+    next(first.getByTestId, 3);
+    fireEvent.click(first.getByTestId('license-ack'));
+    fireEvent.click(first.getByTestId('first-run-skip'));
+    first.unmount();
+
+    const second = mount();
+    expect(second.getByTestId('wizard-announcer')).toHaveTextContent('Step 5 of 5: Licensing notices');
+    expect(second.getByTestId('license-ack')).toBeChecked();
+    fireEvent.click(within(second.getByTestId('first-run-wizard')).getByRole('button', { name: 'Back' }));
+    fireEvent.click(within(second.getByTestId('first-run-wizard')).getByRole('button', { name: 'Back' }));
+    fireEvent.click(within(second.getByTestId('first-run-wizard')).getByRole('button', { name: 'Back' }));
+    expect(second.getByTestId('profile-fast')).toBeChecked();
+    expect(completeFirstRunMock).not.toHaveBeenCalled();
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it('an untouched profile follows the new status recommendation on reopen', () => {
+    const withRec = (r: 'quality' | 'fast'): FirstRunStatus => {
+      const s = stubStatus();
+      s.profile.recommended = r;
+      return s;
+    };
+    const first = mount(withRec('quality'));
+    next(first.getByTestId, 1);
+    fireEvent.click(first.getByTestId('first-run-skip'));
+    first.unmount();
+    const second = mount(withRec('fast'));
+    expect(second.getByTestId('wizard-announcer')).toHaveTextContent('Step 2 of 5');
+    expect(second.getByTestId('profile-fast')).toBeChecked();
+  });
+
+  it('an explicit profile pick survives a reopen even when the recommendation differs', () => {
+    const first = mount();
+    next(first.getByTestId, 1);
+    fireEvent.click(first.getByTestId('profile-fast'));
+    fireEvent.click(first.getByTestId('first-run-skip'));
+    first.unmount();
+    const s = stubStatus();
+    s.profile.recommended = 'quality';
+    const second = mount(s);
+    expect(second.getByTestId('profile-fast')).toBeChecked();
+  });
+
+  it('Finish then reopen starts fresh', async () => {
+    completeFirstRunMock.mockResolvedValue({ ok: true });
+    const first = mount(packsActive());
+    next(first.getByTestId, 1);
+    fireEvent.click(first.getByTestId('profile-fast'));
+    next(first.getByTestId, 3);
+    fireEvent.click(first.getByTestId('license-ack'));
+    await act(async () => {
+      fireEvent.click(first.getByTestId('wizard-complete'));
+    });
+    fireEvent.click(first.getByTestId('wizard-finish'));
+    first.unmount();
+
+    const second = mount(packsActive());
+    expect(second.getByTestId('wizard-announcer')).toHaveTextContent('Step 1 of 5: Hardware check');
+    next(second.getByTestId, 1);
+    expect(second.getByTestId('profile-quality')).toBeChecked();
+    next(second.getByTestId, 3);
+    expect(second.getByTestId('license-ack')).not.toBeChecked();
+  });
+});
+
+describe('FirstRunWizard in-flight guards (PRR-151-014)', () => {
+  const toComplete = (view: { getByTestId: (id: string) => HTMLElement }): void => {
+    next(view.getByTestId, 4);
+    fireEvent.click(view.getByTestId('license-ack'));
+  };
+
+  it('a double-click on Complete issues one IPC call, disables the controls, then lands on the terminal step', async () => {
+    const gate = deferred<{ ok: boolean }>();
+    completeFirstRunMock.mockReturnValue(gate.promise);
+    const onCompleted = vi.fn();
+    const view = render(
+      <FirstRunWizard status={packsActive()} onClose={vi.fn()} onCompleted={onCompleted} refreshStatus={vi.fn()} />,
+    );
+    toComplete(view);
+    const button = view.getByTestId('wizard-complete');
+    await act(async () => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    expect(completeFirstRunMock).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    await act(async () => {
+      gate.resolve({ ok: true });
+    });
+    expect(view.getByTestId('step-complete')).toBeInTheDocument();
+    expect(view.queryByTestId('complete-error')).toBeNull();
+    expect(completeFirstRunMock).toHaveBeenCalledTimes(1);
+    expect(onCompleted).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves focus to Finish even when focus was parked on the dialog panel as the terminal step appears', async () => {
+    const gate = deferred<{ ok: boolean }>();
+    completeFirstRunMock.mockReturnValue(gate.promise);
+    const view = mount(packsActive());
+    toComplete(view);
+    await act(async () => {
+      fireEvent.click(view.getByTestId('wizard-complete'));
+    });
+    const panel = view.getByTestId('first-run-wizard');
+    panel.focus();
+    expect(document.activeElement).toBe(panel);
+    await act(async () => {
+      gate.resolve({ ok: true });
+    });
+    expect(document.activeElement).toBe(view.getByTestId('wizard-finish'));
+  });
+
+  it('a refused completion re-enables Complete so the operator can retry', async () => {
+    completeFirstRunMock.mockResolvedValueOnce({ ok: false, detail: 'nope' });
+    const view = mount(packsActive());
+    toComplete(view);
+    await act(async () => {
+      fireEvent.click(view.getByTestId('wizard-complete'));
+    });
+    expect(view.getByTestId('complete-error')).toHaveTextContent('nope');
+    expect(view.getByTestId('wizard-complete')).not.toBeDisabled();
+  });
+
+  it('a double-click on the activate button issues one IPC call and is disabled while in flight', async () => {
+    const gate = deferred<{ ok: boolean; results: Array<{ id: string; ok: boolean; detail: string }> }>();
+    activateRequiredPacksMock.mockReturnValue(gate.promise);
+    const refreshStatus = vi.fn();
+    const view = render(
+      <FirstRunWizard status={packsPending()} onClose={vi.fn()} onCompleted={vi.fn()} refreshStatus={refreshStatus} />,
+    );
+    next(view.getByTestId, 3);
+    const button = view.getByTestId('activate-packs-button');
+    await act(async () => {
+      fireEvent.click(button);
+      fireEvent.click(button);
+    });
+    expect(activateRequiredPacksMock).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    await act(async () => {
+      gate.resolve({ ok: true, results: [{ id: 'bundled-min', ok: true, detail: 'installed' }] });
+    });
+    expect(refreshStatus).toHaveBeenCalledTimes(1);
+    expect(view.getByTestId('activate-packs-button')).not.toBeDisabled();
+  });
+
+  it('a completion that resolves after unmount still clears in-session progress and notifies the owner, without touching the dead tree', async () => {
+    const gate = deferred<{ ok: boolean }>();
+    completeFirstRunMock.mockReturnValue(gate.promise);
+    const onCompleted = vi.fn();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const first = render(
+      <FirstRunWizard status={packsActive()} onClose={vi.fn()} onCompleted={onCompleted} refreshStatus={vi.fn()} />,
+    );
+    toComplete(first);
+    await act(async () => {
+      fireEvent.click(first.getByTestId('wizard-complete'));
+    });
+    first.unmount(); // Skip while the IPC call is in flight
+    await act(async () => {
+      gate.resolve({ ok: true });
+    });
+    expect(onCompleted).toHaveBeenCalledTimes(1);
+    expect(errorSpy).not.toHaveBeenCalled();
+    errorSpy.mockRestore();
+    const second = mount(packsActive());
+    expect(second.getByTestId('wizard-announcer')).toHaveTextContent('Step 1 of 5');
+  });
+
+  it('a refusal that arrives after unmount is ignored', async () => {
+    const gate = deferred<{ ok: boolean; detail?: string }>();
+    completeFirstRunMock.mockReturnValue(gate.promise);
+    const onCompleted = vi.fn();
+    const first = render(
+      <FirstRunWizard status={packsActive()} onClose={vi.fn()} onCompleted={onCompleted} refreshStatus={vi.fn()} />,
+    );
+    toComplete(first);
+    await act(async () => {
+      fireEvent.click(first.getByTestId('wizard-complete'));
+    });
+    first.unmount();
+    await act(async () => {
+      gate.resolve({ ok: false, detail: 'late' });
+    });
+    expect(onCompleted).not.toHaveBeenCalled();
+    // progress is kept (completion did not happen): reopen resumes on the licensing step
+    expect(mount(packsActive()).getByTestId('wizard-announcer')).toHaveTextContent('Step 5 of 5');
+  });
+});
+
+describe('FirstRunGate completion refresh (PRR-151-047)', () => {
+  afterEach(() => {
+    delete (window as unknown as { desktopApi?: unknown }).desktopApi;
+  });
+
+  it('keeps the wizard mounted on its terminal step after the refresh reports needed=false; Finish closes it', async () => {
+    completeFirstRunMock.mockResolvedValue({ ok: true });
+    const needed = packsActive();
+    const done = { ...packsActive(), needed: false };
+    const getFirstRunStatus = vi.fn().mockResolvedValueOnce(needed).mockResolvedValue(done);
+    (window as unknown as { desktopApi: unknown }).desktopApi = {
+      getFirstRunStatus,
+      onFirstRunRequired: () => () => undefined,
+    };
+    const view = render(<FirstRunGate />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    next(view.getByTestId, 4);
+    fireEvent.click(view.getByTestId('license-ack'));
+    view.getByTestId('wizard-complete').focus();
+    await act(async () => {
+      fireEvent.click(view.getByTestId('wizard-complete'));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(getFirstRunStatus).toHaveBeenCalledTimes(2);
+    expect(view.getByTestId('step-complete')).toBeInTheDocument();
+    expect(document.activeElement).toBe(view.getByTestId('wizard-finish'));
+    fireEvent.click(view.getByTestId('wizard-finish'));
+    expect(view.queryByTestId('first-run-wizard')).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { RETIRED_TOKENS, RETIRED_TOKEN_RE } from '../styles/retired-tokens';
+import { COLOR_LITERAL_RE } from '../styles/color-literals';
 
 const SRC = resolve(__dirname, '..');
 const FILES = ['components/FirstRunWizard.tsx', 'components/first-run.css', 'components/ToastProvider.tsx'];
@@ -25,7 +26,7 @@ const LEGACY_NAMES = RETIRED_TOKENS;
 const LEGACY = RETIRED_TOKEN_RE;
 const FALLBACK = /var\(\s*--[\w-]+\s*,/;
 const USED_VAR = /var\(\s*(--[\w-]+)/g;
-const COLOR_LITERAL = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/;
+const COLOR_LITERAL = COLOR_LITERAL_RE; // shared with styles/token-ratchet.test.ts (hex + every color function)
 const ESCAPE_HATCH = /\bcssText\b|\binsertRule\b|dangerouslySetInnerHTML|\.innerHTML\b/;
 const INLINE_STYLE = /\bstyle=\{/;
 const unknownTokens = (text: string): string[] =>
@@ -47,6 +48,10 @@ describe('first-run + toast token hygiene (phase 7)', () => {
     ]);
     expect(FALLBACK.test('var(--bg-raised, #1e1e1e)')).toBe(true);
     expect(FALLBACK.test('var(--bg-raised)')).toBe(false);
+    // Every color form is a literal here, not just hex / rgb / hsl (PRR-151-053).
+    for (const lit of ['#fff', 'rgba(0,0,0,.5)', 'hsl(1 2% 3%)', 'oklch(0.5 0.1 200)', 'lab(50% 1 1)', 'color(srgb 1 0 0)']) {
+      expect(COLOR_LITERAL.test(lit), lit).toBe(true);
+    }
     expect(LUMEN.has('--bg-raised')).toBe(true);
     expect(LUMEN.has('--color-border')).toBe(false);
   });

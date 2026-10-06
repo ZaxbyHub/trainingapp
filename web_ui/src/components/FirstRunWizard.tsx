@@ -24,6 +24,11 @@ import {
   onFirstRunRequired,
   type FirstRunStatus,
 } from '../lib/first-run';
+import {
+  clearFirstRunSession,
+  getFirstRunSession,
+  saveFirstRunSession,
+} from './first-run-session';
 import './first-run.css';
 
 const WIZARD_STEPS = [
@@ -36,6 +41,16 @@ const WIZARD_STEPS = [
 ] as const;
 
 type Step = (typeof WIZARD_STEPS)[number];
+
+/** Human labels for the step list and the live announcement (PRR-151-068): never the raw slugs. */
+const STEP_LABELS: Record<Step, string> = {
+  'detect-hardware': 'Hardware check',
+  'select-profile': 'Inference profile',
+  'verify-manifest': 'File integrity',
+  'activate-packs': 'Knowledge packs',
+  'licensing-notices': 'Licensing notices',
+  complete: 'Setup complete',
+};
 
 const formatBytes = (bytes: number): string => `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
 
@@ -51,6 +66,9 @@ function formatGiB(bytes: number): string {
 export function FirstRunGate() {
   const [status, setStatus] = useState<FirstRunStatus | null>(null);
   const [open, setOpen] = useState(false);
+  // Completion flips the backend to needed=false; without this the status refresh
+  // would unmount the wizard before its terminal "Setup complete" step could be read.
+  const [finished, setFinished] = useState(false);
 
   useEffect(() => {
     if (window.desktopApi === undefined) return;
@@ -76,13 +94,19 @@ export function FirstRunGate() {
     };
   }, []);
 
-  if (!open || status === null || !status.needed) return null;
+  if (!open || status === null || (!status.needed && !finished)) return null;
   return (
     <FirstRunWizard
       status={status}
-      onClose={() => setOpen(false)}
+      onClose={() => {
+        setOpen(false);
+        setFinished(false);
+      }}
       onCompleted={() => {
-        void fetchFirstRunStatus().then((next) => setStatus(next));
+        setFinished(true);
+        void fetchFirstRunStatus().then((next) => {
+          if (next !== null) setStatus(next);
+        });
       }}
       refreshStatus={() => {
         void fetchFirstRunStatus().then((next) => {
@@ -106,11 +130,20 @@ export function FirstRunWizard({
   /** Re-fetch the status snapshot (after pack activation changes it). */
   refreshStatus: () => void;
 }) {
-  const [stepIndex, setStepIndex] = useState(0);
-  const [selectedProfile, setSelectedProfile] = useState<'quality' | 'fast'>(
-    status.profile.recommended,
+  // In-session progress survives Escape/Skip + reopen (PRR-151-013); memory only.
+  const [resumed] = useState(getFirstRunSession);
+  const [stepIndex, setStepIndex] = useState(() =>
+    Math.min(Math.max(resumed?.stepIndex ?? 0, 0), WIZARD_STEPS.length - 2),
   );
-  const [acknowledged, setAcknowledged] = useState(status.state.acknowledgedLicenses);
+  // Null until the operator picks: an untouched profile follows the current snapshot's
+  // recommendation (also on resume) instead of freezing a stale default.
+  const [pickedProfile, setPickedProfile] = useState<'quality' | 'fast' | null>(
+    resumed?.pickedProfile ?? null,
+  );
+  const selectedProfile = pickedProfile ?? status.profile.recommended;
+  const [acknowledged, setAcknowledged] = useState(
+    resumed?.acknowledged ?? status.state.acknowledgedLicenses,
+  );
   const [activation, setActivation] = useState<{
     ran: boolean;
     ok: boolean;
@@ -118,6 +151,22 @@ export function FirstRunWizard({
   } | null>(null);
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [completed, setCompleted] = useState(false);
+  // Single-flight guards (PRR-151-014): refs close the double-click window before React
+  // re-renders; state drives the disabled look. mountedRef drops late post-unmount updates.
+  const [activating, setActivating] = useState(false);
+  const [completing, setCompleting] = useState(false);
+  const activatingRef = useRef(false);
+  const completingRef = useRef(false);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!completed) saveFirstRunSession({ stepIndex, pickedProfile, acknowledged });
+  }, [completed, stepIndex, pickedProfile, acknowledged]);
   const rootRef = useRef<HTMLDivElement>(null);
 
   // Modal keyboard behavior (PRR-003) comes from ui/Dialog: Escape dismisses exactly
@@ -159,7 +208,10 @@ export function FirstRunWizard({
   useEffect(() => {
     const root = rootRef.current;
     const dialog = root?.closest<HTMLElement>('[role="dialog"]');
-    if (!root || !dialog || dialog.contains(document.activeElement)) return;
+    // Focus parked on the dialog panel itself (Dialog re-homes there when the focused
+    // control is removed) still needs the primary action, so only a focused child counts.
+    const active = document.activeElement;
+    if (!root || !dialog || (dialog.contains(active) && active !== dialog)) return;
     root
       .querySelector<HTMLElement>(
         '[data-testid="wizard-finish"], [data-testid="wizard-complete"], [data-testid="wizard-next"]',
@@ -197,26 +249,53 @@ export function FirstRunWizard({
   const goBack = (): void => setStepIndex((index) => Math.max(index - 1, 0));
 
   const runActivation = async (): Promise<void> => {
-    const outcome = await activateRequiredPacks();
-    setActivation({ ran: true, ok: outcome.ok, results: outcome.results });
-    // The activation changed the pack set — refresh the snapshot so the
-    // Complete gate (packsSatisfied) reflects reality.
-    if (outcome.ok) refreshStatus();
+    if (activatingRef.current) return;
+    activatingRef.current = true;
+    setActivating(true);
+    try {
+      const outcome = await activateRequiredPacks();
+      if (!mountedRef.current) return;
+      setActivation({ ran: true, ok: outcome.ok, results: outcome.results });
+      // The activation changed the pack set — refresh the snapshot so the
+      // Complete gate (packsSatisfied) reflects reality.
+      if (outcome.ok) refreshStatus();
+    } finally {
+      activatingRef.current = false;
+      if (mountedRef.current) setActivating(false);
+    }
   };
 
   const runComplete = async (): Promise<void> => {
+    if (completingRef.current) return;
+    completingRef.current = true;
+    setCompleting(true);
     setCompleteError(null);
-    const outcome = await completeFirstRun({
-      selectedProfile,
-      acknowledgedLicenses: acknowledged,
-    });
-    if (outcome.ok) {
-      setCompleted(true);
-      onCompleted();
-    } else {
-      setCompleteError(outcome.detail ?? 'completion refused');
+    try {
+      const outcome = await completeFirstRun({
+        selectedProfile,
+        acknowledgedLicenses: acknowledged,
+      });
+      if (outcome.ok) {
+        // Completion is recorded: drop the in-memory progress even if the wizard was
+        // skipped while this call was in flight, and always tell the owner.
+        clearFirstRunSession();
+        if (mountedRef.current) setCompleted(true);
+        onCompleted();
+      } else if (mountedRef.current) {
+        setCompleteError(outcome.detail ?? 'completion refused');
+      }
+    } finally {
+      completingRef.current = false;
+      if (mountedRef.current) setCompleting(false);
     }
   };
+
+  // Persistent polite live region (PRR-151-004): a step change swaps the sibling content
+  // without moving focus (the stable Next button stays focused), so announce it here.
+  const announcement =
+    step === 'complete'
+      ? STEP_LABELS.complete
+      : `Step ${stepIndex + 1} of ${WIZARD_STEPS.length - 1}: ${STEP_LABELS[step]}`;
 
   const stepState = (index: number): 'done' | 'current' | 'todo' =>
     completed || index < stepIndex ? 'done' : index === stepIndex ? 'current' : 'todo';
@@ -244,6 +323,16 @@ export function FirstRunWizard({
             : 'A short, deterministic setup: hardware check, profile choice, file integrity, packs, and licenses.'}
         </p>
 
+        <div
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="ui-visually-hidden"
+          data-testid="wizard-announcer"
+        >
+          {announcement}
+        </div>
+
         <ol className="first-run__steps" data-testid="wizard-steps" aria-label="Setup steps">
           {WIZARD_STEPS.map((name, index) => {
             const state = stepState(index);
@@ -253,7 +342,7 @@ export function FirstRunWizard({
                 className={`first-run__step first-run__step--${state}`}
                 aria-current={state === 'current' ? 'step' : undefined}
               >
-                {name}
+                {STEP_LABELS[name]}
                 {state === 'done' ? <span className="ui-visually-hidden"> (done)</span> : null}
               </li>
             );
@@ -291,7 +380,7 @@ export function FirstRunWizard({
               legend="Inference profile"
               hideLegend
               value={selectedProfile}
-              onChange={(value) => setSelectedProfile(value === 'fast' ? 'fast' : 'quality')}
+              onChange={(value) => setPickedProfile(value === 'fast' ? 'fast' : 'quality')}
               options={[
                 {
                   value: 'quality',
@@ -402,7 +491,12 @@ export function FirstRunWizard({
                   <p className="first-run__text">All required packs are active.</p>
                 ) : (
                   <div>
-                    <Button variant="primary" onClick={() => void runActivation()} data-testid="activate-packs-button">
+                    <Button
+                      variant="primary"
+                      onClick={() => void runActivation()}
+                      {...off(activating)}
+                      data-testid="activate-packs-button"
+                    >
                       Install and activate required packs
                     </Button>
                   </div>
@@ -435,7 +529,7 @@ export function FirstRunWizard({
           <section className="first-run__section" data-testid="step-licensing-notices">
             <h3 className="first-run__heading">Licensing notices</h3>
             {status.licenses.available ? (
-              <pre className="first-run__license" tabIndex={0} aria-label="Licensing notices text">
+              <pre className="first-run__license" tabIndex={0} role="region" aria-label="Licensing notices text">
                 {status.licenses.content}
               </pre>
             ) : (
@@ -485,7 +579,7 @@ export function FirstRunWizard({
           {completed ? (
             <span />
           ) : (
-            <Button onClick={goBack} {...off(stepIndex === 0)}>
+            <Button onClick={goBack} {...off(stepIndex === 0 || completing)}>
               Back
             </Button>
           )}
@@ -504,7 +598,7 @@ export function FirstRunWizard({
               <Button
                 variant="primary"
                 onClick={() => void runComplete()}
-                {...off(!completeEnabled)}
+                {...off(!completeEnabled || completing)}
                 data-testid="wizard-complete"
                 aria-describedby={completeEnabled ? undefined : 'wizard-complete-blocked-reasons'}
               >

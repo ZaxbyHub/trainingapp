@@ -2,12 +2,16 @@
  * Cross-browser compatibility detection for web-llm v0.2.83
  * FR-015: Graceful degradation support
  *
- * Detects browser capabilities and provides user guidance for:
- * - Chrome/Edge 113+: Full WebGPU support
- * - Firefox: Experimental WebGPU (degraded)
- * - Safari: Partial WebGPU support (degraded)
+ * Supported browsers (PR #151 review PRR-151-030, user decision; README "Browser support"):
+ * - Chrome/Edge 113+: supported, full WebGPU support
+ * - Firefox: supported (CI-verified); WebGPU availability depends on the build and is
+ *   reported by checkFeatures(), not assumed
+ * - Safari and every other WebKit-engine browser: NOT supported. That includes every
+ *   browser on iOS/iPadOS (Firefox FxiOS, Chrome CriOS and Edge EdgiOS there are WebKit),
+ *   so they classify by engine as 'safari', not by brand.
  */
 
+/** 'safari' means the WebKit engine: Safari itself and every iOS/iPadOS browser. */
 export type BrowserName = 'chrome' | 'edge' | 'firefox' | 'safari' | 'unknown';
 
 export type WebGpuSupport = 'full' | 'partial' | 'none';
@@ -28,7 +32,7 @@ export interface BrowserInfo {
   features: FeatureSupport;
 }
 
-export type CompatLevel = 'full' | 'degraded' | 'unsupported';
+export type CompatLevel = 'full' | 'unsupported';
 
 export interface CompatGuidance {
   level: CompatLevel;
@@ -53,8 +57,11 @@ function parseUserAgent(ua: string): { name: BrowserName; version: number | null
     return { name: 'chrome', version: chromeMatch ? parseInt(chromeMatch[1], 10) : null };
   }
 
-  if (uaLower.includes('firefox/') || uaLower.includes('fxios/')) {
-    const firefoxMatch = uaLower.match(/(?:firefox|fxios)\/(\d+)/);
+  // Gecko Firefox only. Firefox on iOS (FxiOS) is WebKit: like Chrome (CriOS) and
+  // Edge (EdgiOS) there, it carries no firefox/, chrome/ or edg/ token and falls
+  // through to the Safari/WebKit branch below (engine, not brand).
+  if (uaLower.includes('firefox/')) {
+    const firefoxMatch = uaLower.match(/firefox\/(\d+)/);
     return { name: 'firefox', version: firefoxMatch ? parseInt(firefoxMatch[1], 10) : null };
   }
 
@@ -160,30 +167,27 @@ export function getCompatMessage(info: BrowserInfo): CompatGuidance {
     };
   }
 
-  // Firefox = degraded (experimental WebGPU)
+  // Firefox = supported. WebGPU is reported from feature detection, not assumed.
   if (name === 'firefox') {
+    const webgpu = info.features.webgpu === 'full';
     return {
-      level: 'degraded',
-      message: `Firefox${version ? ` ${version}` : ''} detected. WebGPU support is experimental and may be incomplete.`,
-      recommendations: [
-        'For best results, use Chrome 113+ or Edge 113+',
-        'Firefox WebGPU can be enabled via about:config (webgpu.enabled)',
-        'Expect potential issues with WASM threading (SharedArrayBuffer)',
-        'Consider the desktop app or an external model server (Settings → Model & connection) as an alternative',
-      ],
+      level: 'full',
+      message: `Firefox${version ? ` ${version}` : ''} detected. Firefox is supported${webgpu ? ', with WebGPU available.' : '.'}`,
+      recommendations: webgpu
+        ? []
+        : ['WebGPU is not available in this Firefox: use the desktop app or an external model server (Settings → Model & connection) for in-app answers'],
     };
   }
 
-  // Safari = degraded (partial WebGPU)
+  // Safari / WebKit (every iOS/iPadOS browser included) = unsupported, the same
+  // level and shape as every other unsupported browser.
   if (name === 'safari') {
     return {
-      level: 'degraded',
-      message: `Safari${version ? ` ${version}` : ''} detected. WebGPU support is partial and performance may be limited.`,
+      level: 'unsupported',
+      message: `Safari${version ? ` ${version}` : ''} (WebKit) detected. Safari and other WebKit-based browsers, including every browser on iPhone and iPad, are not supported.`,
       recommendations: [
-        'For full WebGPU support, use Chrome 113+ or Edge 113+',
-        'Safari WebGPU implementation may have limited adapter availability',
-        'Consider the desktop app or an external model server (Settings → Model & connection) for reliable inference',
-        'Alternatively, use Chrome on iOS for better compatibility',
+        'Use Chrome 113+, Edge 113+ or Firefox on a desktop computer',
+        'Or use the desktop app',
       ],
     };
   }
@@ -191,9 +195,9 @@ export function getCompatMessage(info: BrowserInfo): CompatGuidance {
   // Unknown browser = unsupported
   return {
     level: 'unsupported',
-    message: 'Unable to detect browser. web-llm requires a Chromium-based browser for full support.',
+    message: 'Unable to detect browser. Supported browsers are Chrome 113+, Edge 113+ and Firefox.',
     recommendations: [
-      'Use Chrome 113+ or Edge 113+ for full WebGPU support',
+      'Use Chrome 113+ or Edge 113+ for full WebGPU support, or Firefox',
       'Download Chrome: https://www.google.com/chrome/',
       'Download Edge: https://www.microsoft.com/edge/',
     ],
@@ -212,10 +216,11 @@ export async function detectBrowserInfo(): Promise<BrowserInfo> {
   let isSupported = false;
   if (name === 'chrome' || name === 'edge') {
     isSupported = meetsMinimumVersion(version, 113);
-  } else if (name === 'firefox' || name === 'safari') {
-    // These are degraded, not unsupported
-    isSupported = features.webgpu !== 'none' || features.wasm;
+  } else if (name === 'firefox') {
+    // Supported (PRR-151-030), independent of WebGPU (see getCompatMessage).
+    isSupported = true;
   }
+  // 'safari' (WebKit, every iOS/iPadOS browser) stays unsupported whatever its features.
 
   // But if webgpu is available (even partial) and wasm works, allow degraded mode
   if (!isSupported && name === 'unknown' && features.wasm) {

@@ -75,6 +75,9 @@ export function mimeTypeFor(name: string): string {
   return TRAINING_MIME_TYPES[ext] ?? 'application/octet-stream';
 }
 
+/** The course service worker's script path on the player origin (public/training/sw.js). */
+export const TRAINING_SW_SCRIPT_PATH = '/training/sw.js';
+
 /**
  * The course worker sources (review round 4, F1): `blob:` plus the OPEN
  * pack's own relay path, never `'self'`. On the player origin `'self'`
@@ -86,9 +89,22 @@ export function mimeTypeFor(name: string): string {
  * stays confined, and a `blob:` worker inherits its creator's policy (HTML
  * Standard, "run a worker": a local-scheme worker URL gets a clone of the
  * owner's policy container). Without a valid open pack: `blob:` only.
+ *
+ * With an open pack the list also names the course service worker's own
+ * script URL, exactly (`<player>/training/sw.js`, no directory, no `'self'`).
+ * Firefox lets a document controlled by a service worker start a dedicated
+ * worker from a URL only if the document's worker-src admits the CONTROLLING
+ * service worker's script URL; without it every pack-script worker fails with
+ * a worker-src violation naming `/training/sw.js?app=...` (measured, Firefox
+ * and Playwright's Firefox; `blob:` workers are exempt; the worker response's
+ * own CSP makes no difference). That source grants course content nothing it
+ * lacked: a dedicated or shared worker on `/training/sw.js` is answered 404 by
+ * the service worker (sw.js fetch handler), so it never runs, and registering
+ * `/training/sw.js` was already possible through the boot frame, whose header
+ * CSP admits exactly this URL (vite.config.ts bootPageCsp).
  */
 export function courseWorkerSources(playerOrigin: string, packId: string | null): string {
-  return packId !== null && PACK_ID_PATTERN.test(packId) ? `blob: ${playerOrigin}/training/${packId}/` : 'blob:';
+  return packId !== null && PACK_ID_PATTERN.test(packId) ? `blob: ${playerOrigin}/training/${packId}/ ${playerOrigin}${TRAINING_SW_SCRIPT_PATH}` : 'blob:';
 }
 
 /**

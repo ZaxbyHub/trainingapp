@@ -4,10 +4,11 @@
  * assertions: always-mounted live regions (WAI-ARIA), tone to region routing,
  * dismiss + auto-dismiss + pause timing, focus return, reduced motion.
  */
+import { useRef } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
 import { ToastProvider, useToast } from './ToastProvider';
-import { TOAST_DURATION_MS, TOAST_EXIT_MS } from '../ui/Toast';
+import { MAX_TOASTS, TOAST_DURATION_MS, TOAST_EXIT_MS } from '../ui/Toast';
 
 type Tone = 'success' | 'error' | 'info';
 
@@ -16,6 +17,17 @@ function Trigger({ message, type }: { message: string; type: Tone }) {
   return (
     <button onClick={() => showToast(message, type)} data-testid="trigger">
       Show
+    </button>
+  );
+}
+
+/** Each click shows a DIFFERENT message (identical message+type pairs are deduped). */
+function Burst() {
+  const { showToast } = useToast();
+  const n = useRef(0);
+  return (
+    <button onClick={() => showToast(`Message ${n.current++}`, 'info')} data-testid="burst">
+      Burst
     </button>
   );
 }
@@ -127,7 +139,15 @@ describe('ToastProvider live regions (WAI-ARIA)', () => {
     );
     const { rerender } = render(tree);
     show();
-    rerender(tree);
+    // Fresh elements (the same `tree` reference would bail out and re-render nothing),
+    // so the provider and the probe genuinely re-render.
+    rerender(
+      <ToastProvider>
+        <Probe />
+        <Trigger message="x" type="info" />
+      </ToastProvider>
+    );
+    expect(seen.length).toBeGreaterThan(1);
     expect(new Set(seen).size).toBe(1);
   });
 
@@ -190,11 +210,15 @@ describe('ToastProvider dismissal timing', () => {
     setup();
     show();
     const btn = dismissBtn();
+    advance(3000);
     act(() => btn.focus());
     advance(60000);
     expect(toastEl('Saved successfully')).not.toHaveClass('ui-toast--leaving');
     act(() => btn.blur());
-    advance(TOAST_DURATION_MS);
+    // Resumes with the 2000 ms that were left; a restart would run the full 5000 again.
+    advance(1999);
+    expect(toastEl('Saved successfully')).not.toHaveClass('ui-toast--leaving');
+    advance(1);
     expect(toastEl('Saved successfully')).toHaveClass('ui-toast--leaving');
   });
 
@@ -203,13 +227,16 @@ describe('ToastProvider dismissal timing', () => {
     show();
     const toast = toastEl('Saved successfully');
     const btn = dismissBtn();
+    advance(3000);
     act(() => btn.focus());
     fireEvent.mouseEnter(toast);
     fireEvent.mouseLeave(toast);
     advance(60000);
     expect(toast).not.toHaveClass('ui-toast--leaving');
     act(() => btn.blur());
-    advance(TOAST_DURATION_MS);
+    advance(1999);
+    expect(toast).not.toHaveClass('ui-toast--leaving');
+    advance(1);
     expect(toast).toHaveClass('ui-toast--leaving');
   });
 
@@ -218,13 +245,16 @@ describe('ToastProvider dismissal timing', () => {
     show();
     const toast = toastEl('Saved successfully');
     const btn = dismissBtn();
+    advance(3000);
     fireEvent.mouseEnter(toast);
     act(() => btn.focus());
     act(() => btn.blur());
     advance(60000);
     expect(toast).not.toHaveClass('ui-toast--leaving');
     fireEvent.mouseLeave(toast);
-    advance(TOAST_DURATION_MS);
+    advance(1999);
+    expect(toast).not.toHaveClass('ui-toast--leaving');
+    advance(1);
     expect(toast).toHaveClass('ui-toast--leaving');
   });
 
@@ -237,14 +267,54 @@ describe('ToastProvider dismissal timing', () => {
   });
 
   it('dismissing one toast leaves the others', () => {
-    setup();
-    show();
-    show();
+    render(
+      <ToastProvider>
+        <Burst />
+      </ToastProvider>
+    );
+    fireEvent.click(screen.getByTestId('burst'));
+    fireEvent.click(screen.getByTestId('burst'));
     const buttons = screen.getAllByRole('button', { name: /dismiss notification/i });
     expect(buttons).toHaveLength(2);
     fireEvent.click(buttons[0]);
     advance(TOAST_EXIT_MS);
-    expect(screen.getAllByText('Saved successfully')).toHaveLength(1);
+    expect(screen.queryByText('Message 0')).not.toBeInTheDocument();
+    expect(screen.getByText('Message 1')).toBeInTheDocument();
+  });
+
+  it('only the dismiss button dismisses: clicking, Enter or Space on the toast body does not', () => {
+    setup();
+    show();
+    const toast = toastEl('Saved successfully');
+    const text = screen.getByText('Saved successfully');
+    fireEvent.click(text);
+    fireEvent.click(toast);
+    for (const key of ['Enter', ' ']) {
+      fireEvent.keyDown(text, { key });
+      fireEvent.keyDown(toast, { key });
+      fireEvent.keyUp(toast, { key });
+    }
+    advance(TOAST_EXIT_MS + 100);
+    expect(toast).not.toHaveClass('ui-toast--leaving');
+    expect(screen.getByText('Saved successfully')).toBeInTheDocument();
+  });
+
+  it('pauses when the pointer already rests on the toast at mount (no mouseenter fires)', () => {
+    const realMatches = Element.prototype.matches;
+    vi.spyOn(Element.prototype, 'matches').mockImplementation(function (this: Element, sel: string) {
+      return sel === ':hover' ? this.classList.contains('ui-toast') : realMatches.call(this, sel);
+    });
+    setup();
+    show();
+    const toast = toastEl('Saved successfully');
+    advance(60000);
+    expect(toast).not.toHaveClass('ui-toast--leaving');
+    fireEvent.mouseLeave(toast);
+    advance(TOAST_DURATION_MS - 1);
+    expect(toast).not.toHaveClass('ui-toast--leaving');
+    advance(1);
+    expect(toast).toHaveClass('ui-toast--leaving');
+    vi.restoreAllMocks();
   });
 });
 
@@ -259,6 +329,38 @@ describe('ToastProvider focus handling', () => {
     const btn = dismissBtn();
     act(() => btn.focus());
     fireEvent.click(btn);
+    advance(TOAST_EXIT_MS);
+    expect(document.activeElement).toBe(opener);
+  });
+
+  it('does not restore a stale element once focus left the toasts and came back from nowhere', () => {
+    setup();
+    const opener = screen.getByTestId('trigger');
+    act(() => opener.focus());
+    show();
+    const btn = dismissBtn();
+    act(() => btn.focus()); // entered from the opener
+    act(() => btn.blur()); // focus leaves to nowhere (e.g. the window lost focus)
+    act(() => btn.focus()); // and returns with no related target
+    fireEvent.click(btn);
+    advance(TOAST_EXIT_MS);
+    expect(document.activeElement).not.toBe(opener);
+  });
+
+  it('keeps the original return target while focus moves between toasts', () => {
+    render(
+      <ToastProvider>
+        <Burst />
+      </ToastProvider>
+    );
+    const opener = screen.getByTestId('burst');
+    act(() => opener.focus());
+    fireEvent.click(opener);
+    fireEvent.click(opener);
+    const [first, second] = screen.getAllByRole('button', { name: /dismiss notification/i });
+    act(() => first.focus());
+    act(() => second.focus());
+    fireEvent.click(second);
     advance(TOAST_EXIT_MS);
     expect(document.activeElement).toBe(opener);
   });
@@ -279,5 +381,85 @@ describe('ToastProvider focus handling', () => {
     expect(fireEvent.keyDown(dismissBtn(), { key: 'Tab' })).toBe(true);
     expect(document.querySelectorAll('.ui-toast-viewport [tabindex]')).toHaveLength(0);
     expect(document.querySelectorAll('.ui-toast-viewport button')).toHaveLength(1);
+  });
+});
+
+describe('ToastProvider bounds and placement', () => {
+  timers();
+
+  it('hands focus to a surviving toast when the cap drops the toast that holds it', () => {
+    render(
+      <ToastProvider>
+        <Burst />
+      </ToastProvider>
+    );
+    for (let i = 0; i < MAX_TOASTS; i += 1) fireEvent.click(screen.getByTestId('burst'));
+    act(() => screen.getAllByRole('button', { name: /dismiss notification/i })[0].focus()); // oldest: Message 0
+    fireEvent.click(screen.getByTestId('burst')); // drops Message 0
+    expect(screen.queryByText('Message 0')).not.toBeInTheDocument();
+    expect(document.activeElement).not.toBe(document.body);
+    expect(document.activeElement).toBe(screen.getByText('Message 1').closest('.ui-toast')!.querySelector('button'));
+  });
+
+  it('a repeat that arrives while the first is fading out shows as a new toast', () => {
+    setup();
+    show();
+    fireEvent.click(dismissBtn());
+    expect(toastEl('Saved successfully')).toHaveClass('ui-toast--leaving');
+    show(); // same message and type, mid-fade
+    advance(TOAST_EXIT_MS); // the first is removed
+    expect(screen.getAllByText('Saved successfully')).toHaveLength(1);
+    expect(toastEl('Saved successfully')).not.toHaveClass('ui-toast--leaving');
+  });
+
+  it('a repeated toast restarts the auto-dismiss timer of the one already showing', () => {
+    setup();
+    show();
+    advance(4000);
+    show(); // identical: no second toast, but a fresh 5000 ms
+    expect(screen.getAllByText('Saved successfully')).toHaveLength(1);
+    advance(4999);
+    expect(toastEl('Saved successfully')).not.toHaveClass('ui-toast--leaving');
+    advance(1);
+    expect(toastEl('Saved successfully')).toHaveClass('ui-toast--leaving');
+  });
+
+  it('caps visible toasts at MAX_TOASTS, dropping the oldest', () => {
+    render(
+      <ToastProvider>
+        <Burst />
+      </ToastProvider>
+    );
+    for (let i = 0; i < MAX_TOASTS + 2; i += 1) fireEvent.click(screen.getByTestId('burst'));
+    expect(screen.getAllByRole('button', { name: /dismiss notification/i })).toHaveLength(MAX_TOASTS);
+    expect(screen.queryByText('Message 0')).not.toBeInTheDocument();
+    expect(screen.queryByText('Message 1')).not.toBeInTheDocument();
+    expect(screen.getByText(`Message ${MAX_TOASTS + 1}`)).toBeInTheDocument();
+  });
+
+  it('does not stack an identical message and type that is already showing', () => {
+    setup();
+    show();
+    show();
+    expect(screen.getAllByText('Saved successfully')).toHaveLength(1);
+  });
+
+  it('still shows the same message with a different tone', () => {
+    const { rerender } = setup('Same', 'info');
+    show();
+    rerender(
+      <ToastProvider>
+        <Trigger message="Same" type="error" />
+      </ToastProvider>
+    );
+    show();
+    expect(screen.getAllByText('Same')).toHaveLength(2);
+  });
+
+  it('portals the viewport to document.body, outside the provider subtree', () => {
+    const { container } = setup();
+    const viewport = document.querySelector('.ui-toast-viewport')!;
+    expect(viewport.parentElement).toBe(document.body);
+    expect(container.contains(viewport)).toBe(false);
   });
 });

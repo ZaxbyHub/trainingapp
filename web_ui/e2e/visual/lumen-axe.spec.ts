@@ -5,17 +5,35 @@
  * Run through playwright.visual.config.ts; CI runs it in the required web-ui e2e
  * job via `npm run test:visual:a11y:ci` (see e2e/visual/README.md).
  *
- * Fails on any serious/critical violation NODE (rule id + selector) that is not
- * a named known-baseline entry. KNOWN_BASELINE records PRE-EXISTING master
- * violations (measured on the unchanged UI) per surface; later phases must
- * delete entries as they fix them, and any new node or rule on a surface fails. A baseline entry
- * that no longer reproduces ALSO fails, so the list cannot rot.
+ * Fails on ANY serious/critical violation node (rule id + selector) on any scanned
+ * surface: zero nodes allowed, no baseline. KNOWN_BASELINE (below) once held
+ * pre-existing master violations; phase 7 emptied it, and every scan now also fails
+ * if an entry is added for its key (PR #151 review PRR-151-065: the old
+ * stale-entry check could no longer fire on an empty map, so it was removed rather
+ * than kept as dead code).
+ *
+ * Every scan first waits for web fonts and two animation frames
+ * (settleFontsAndFrames), so axe sees settled, font-swapped layout (PRR-151-073).
+ * Surfaces other than 'overlay' and 'drawer' are scanned with the model gate hidden
+ * and the chat inert lifted for the rest of the page (e2e/model-gate.ts
+ * hideModelGate); its post-condition is re-checked right before each such scan
+ * (PRR-151-003/-025/-063).
  */
 
 import { createHash } from 'node:crypto';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import JSZip from 'jszip';
+import {
+  assertOverlayOptOutAllowed,
+  expectModelGateHidden,
+  hideModelGate,
+  requireModelGate,
+  settleFontsAndFrames,
+} from '../model-gate';
+
+// PRR-151-054: the LUMEN_ALLOW_NO_OVERLAY opt-out is refused under CI.
+assertOverlayOptOutAllowed();
 
 // Waits below allow up to 60s; the 30s default test timeout would cut them short.
 test.describe.configure({ timeout: 180_000 });
@@ -48,8 +66,8 @@ const NAV: Record<Exclude<Surface, 'overlay' | 'chat'>, string> = {
  * Phase 6 (Documents & Training) fixed and removed both 'documents:light:*' entries.
  * Phase 7 (overlays) rebuilt the model gate on ui/Dialog + Banner + Button (its
  * outlined "Open Settings" button was the last 'overlay:light:*' node) and emptied
- * the baseline: every key is now zero-node. The map stays so a future, justified,
- * pre-existing entry has somewhere to live; never add one for a surface a PR touches.
+ * the baseline: every key is now zero-node, and expectAxeClean fails if an entry is
+ * added for the key it scans. Do not add entries: fix the violation instead.
  */
 const KNOWN_BASELINE: Record<string, readonly string[]> = {};
 
@@ -128,7 +146,7 @@ async function bootWithInstalledCourse(page: Page, theme: string): Promise<void>
   await page.goto('/');
   await expect(page.getByText('Initializing search services', { exact: false })).toHaveCount(0, { timeout: 60_000 });
   await page.evaluate(() => document.fonts.ready);
-  await hideModelGate(page);
+  await hideModelGate(page, { expectGate: true });
   await clickNav(page, 'Documents');
   await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
   await page
@@ -137,22 +155,14 @@ async function bootWithInstalledCourse(page: Page, theme: string): Promise<void>
   await expect(page.getByTestId(`pack-row-${AXE_COURSE_ID}-1.0.0`)).toBeVisible({ timeout: 60_000 });
 }
 
-/** Scan the surface itself, not the model-gate overlay stacked on it (same technique as the surface passes). */
-async function hideModelGate(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
-    });
-    // The gate makes the chat content inert (axe skips inert subtrees, Playwright refuses to
-    // click them). The surface underneath is what these specs capture/scan, so lift it too.
-    document.querySelectorAll('.chat-page__content[inert]').forEach((el) => el.removeAttribute('inert'));
-  });
-  await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
-}
-
-/** Zero serious/critical nodes allowed: these keys are never baselined. */
+/**
+ * Zero serious/critical nodes allowed: no key is baselined. Waits for fonts and two
+ * frames first (PRR-151-073). Callers scanning a surface UNDER a hidden gate call
+ * expectModelGateHidden right before this.
+ */
 async function expectAxeClean(page: Page, key: string, excludeSelector?: string): Promise<void> {
   await page.waitForTimeout(500);
+  await settleFontsAndFrames(page);
   let builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa']);
   if (excludeSelector !== undefined) builder = builder.exclude(excludeSelector);
   const results = await builder.analyze();
@@ -189,42 +199,22 @@ for (const theme of THEMES) {
           await page.evaluate(() => document.fonts.ready);
 
           if (surface === 'overlay') {
-            const shown = (await page.getByRole('alertdialog').count()) > 0;
-            if (!shown && process.env.LUMEN_ALLOW_NO_OVERLAY === '1') test.skip(true, 'overlay opt-out (LUMEN_ALLOW_NO_OVERLAY=1)');
-            expect(shown, 'model-gate overlay must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for builds with staged weights').toBe(true);
+            // The gate itself is what this pass scans (with the covered content inert).
+            await requireModelGate(page);
           } else {
             if (surface !== 'chat') {
               await clickNav(page, NAV[surface]);
             }
             // Scan the surface itself, not the model-gate overlay stacked on it. Hide the
             // Dialog backdrop (stable test id), as lumen-baseline.spec.ts does; hiding only the
-            // dialog leaves the 70% scrim masking real contrast results. hideModelGate also
-            // lifts the gate's inert on the chat content (axe skips inert subtrees).
-            await hideModelGate(page);
+            // dialog leaves the 70% scrim masking real contrast results. On 'chat' the gate
+            // must be up first; elsewhere the chat page (and its gate) are already unmounted.
+            await hideModelGate(page, { expectGate: surface === 'chat' });
+            await page.waitForTimeout(500);
+            // Re-checked right before the scan: a gate mounting late would re-add inert.
+            await expectModelGateHidden(page);
           }
-          await page.waitForTimeout(500);
-
-          const results = await new AxeBuilder({ page })
-            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])
-            .analyze();
-          const blocking = results.violations.filter(
-            (v) => v.impact === 'serious' || v.impact === 'critical'
-          );
-          // A finding is (rule id, node selector): a new low-contrast node on an already
-          // baselined surface must fail, not hide behind the rule id.
-          const found = blocking
-            .flatMap((v) => v.nodes.map((n) => `${v.id} | ${n.target.join(' ')}`))
-            .sort();
-          const key = `${surface}:${theme}:${width}`;
-          const known = [...(KNOWN_BASELINE[key] ?? [])].sort();
-
-          if (process.env.LUMEN_AXE_INVENTORY) {
-            console.info(`AXE ${key} ${JSON.stringify(found)}`);
-          }
-          const unexpected = found.filter((f) => !known.includes(f));
-          expect(unexpected, `new serious/critical axe nodes on ${key}`).toEqual([]);
-          const stale = known.filter((f) => !found.includes(f));
-          expect(stale, `stale baseline entries on ${key} (fixed? remove them)`).toEqual([]);
+          await expectAxeClean(page, `${surface}:${theme}:${width}`);
         });
       }
 
@@ -235,6 +225,7 @@ for (const theme of THEMES) {
         await expect(tab).toHaveAttribute('aria-selected', 'true');
         await expect(page.getByTestId(`pack-row-${AXE_COURSE_ID}-1.0.0`)).toBeVisible();
         await page.mouse.move(0, 0);
+        await expectModelGateHidden(page);
         await expectAxeClean(page, `training-packs:${theme}:${width}`);
       });
 
@@ -245,11 +236,13 @@ for (const theme of THEMES) {
         const frame = page.locator('iframe[data-testid="training-player-frame"]');
         await expect(frame).toBeVisible({ timeout: 30_000 });
         await expect(page.getByRole('button', { name: 'All courses' })).toBeVisible();
+        await expectModelGateHidden(page);
         await expectAxeClean(page, `training-player:${theme}:${width}`, 'iframe[data-testid="training-player-frame"]');
 
         await page.getByRole('button', { name: 'All courses' }).click();
         await expect(page.getByTestId(`training-course-${AXE_COURSE_ID}`)).toBeVisible();
         await page.mouse.move(0, 0);
+        await expectModelGateHidden(page);
         await expectAxeClean(page, `training-library:${theme}:${width}`);
       });
 
@@ -277,9 +270,7 @@ for (const theme of THEMES) {
           await page.evaluate(() => document.fonts.ready);
           // The scenario is "drawer over the model gate": require the gate (same opt-out
           // as the overlay pass for builds with staged weights).
-          const gateShown = (await page.locator('[role="alertdialog"]').count()) > 0;
-          if (!gateShown && process.env.LUMEN_ALLOW_NO_OVERLAY === '1') test.skip(true, 'overlay opt-out (LUMEN_ALLOW_NO_OVERLAY=1)');
-          expect(gateShown, 'model-gate overlay must be up behind the drawer').toBe(true);
+          await requireModelGate(page);
           await page.getByRole('button', { name: 'Open navigation' }).click();
           const drawer = page.getByRole('dialog', { name: 'Navigation' });
           await expect(drawer).toBeVisible();
@@ -287,21 +278,7 @@ for (const theme of THEMES) {
           // Document what axe can and cannot see: everything behind the drawer is inert.
           await expect(page.locator('main')).toHaveAttribute('inert', '');
           await expect(page.locator('.ui-shell__topbar')).toHaveAttribute('inert', '');
-          await page.waitForTimeout(500);
-
-          const results = await new AxeBuilder({ page })
-            .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22a', 'wcag22aa'])
-            .analyze();
-          const found = results.violations
-            .filter((v) => v.impact === 'serious' || v.impact === 'critical')
-            .flatMap((v) => v.nodes.map((n) => `${v.id} | ${n.target.join(' ')}`))
-            .sort();
-          const key = `drawer:${theme}:${width}`;
-          if (process.env.LUMEN_AXE_INVENTORY) {
-            console.info(`AXE ${key} ${JSON.stringify(found)}`);
-          }
-          expect(KNOWN_BASELINE[key], `${key} must never be baselined`).toBeUndefined();
-          expect(found, `serious/critical axe nodes on ${key}`).toEqual([]);
+          await expectAxeClean(page, `drawer:${theme}:${width}`);
         });
       }
     });

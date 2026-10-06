@@ -16,6 +16,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { ITEM_HEIGHT, STACKED_ITEM_HEIGHT, STACKED_MAX_WIDTH } from '../../src/components/documentRowLayout';
+import { hideModelGate } from '../model-gate';
 
 const NOW = Date.UTC(2026, 8, 30, 12, 0, 0);
 const COUNT = 80;
@@ -66,12 +67,9 @@ async function boot(page: Page): Promise<void> {
   );
   await page.reload();
   await expect(page.getByText('Initializing search services', { exact: false })).toHaveCount(0, { timeout: 60_000 });
-  // The model-blocked overlay (when present) is irrelevant here and covers the page.
-  await page.evaluate(() =>
-    document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      ((el.closest('[data-testid="ui-dialog-backdrop"]') ?? el) as HTMLElement).style.display = 'none';
-    })
-  );
+  // The model-blocked overlay (when present) is irrelevant here and covers the page
+  // (shared helper, e2e/model-gate.ts; tolerant: the gate may or may not be up).
+  await hideModelGate(page, { expectGate: false });
   await page.getByRole('button', { name: 'Documents', exact: true }).first().click({ force: true });
   await page.waitForSelector('.app-doc');
 }

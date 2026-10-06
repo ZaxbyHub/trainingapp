@@ -39,6 +39,7 @@ import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { fetchModelStatus, isElectron, modelsAbsentForRealEngine, useDesktopSession } from '../lib/desktop-session';
 import { notifyDesktopModelsChanged } from '../lib/desktop-models-events';
 import { DesktopModelBlockedOverlay } from '../components/DesktopModelBlockedOverlay';
+import { useInertFallback } from '../components/inertFallback';
 import { Button, Icon, PageHeader, StatusPill } from '../ui';
 import { ModelChip } from '../components/ModelChip';
 import { describeChatModel, routesToDesktopBackend } from '../lib/chat/model-chip';
@@ -438,6 +439,18 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
       void ensureReadinessGateChecked(browserEngine);
     }
   }, [mode, browserEngine]);
+
+  // The gate's Retry (PRR-151-015): one re-check at a time. While it runs the
+  // overlay's Retry is `loading` (aria-disabled: presses are ignored, focus stays;
+  // a click is a discrete event, so the busy state renders before the next one),
+  // and readiness-gate's latest-request guard keeps an older in-flight check from
+  // overwriting this one's result.
+  const [gateRetrying, setGateRetrying] = useState(false);
+  const retryReadinessCheck = useCallback(() => {
+    setGateRetrying(true);
+    resetReadinessCache();
+    void Promise.resolve(ensureReadinessGateChecked(browserEngine)).finally(() => setGateRetrying(false));
+  }, [browserEngine]);
 
   // Cleanup on unmount — finalize + persist the in-flight turn (S2/S3) before
   // releasing resources. Reads from refs (not closure state) so the latest
@@ -1071,10 +1084,19 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // (not the typed prop) because React 18 has no `inert`; the gate Dialogs are
   // siblings of this wrapper, never inside it.
   const modelGateUp = desktopModelBlocked || isModelBlocked;
+  // PRR-151-018: in an engine without native `inert` the attribute does nothing;
+  // emulate its keyboard/AT effects there (no-op where inert is implemented).
+  const gatedContentRef = useRef<HTMLDivElement>(null);
+  useInertFallback(gatedContentRef, modelGateUp);
+  // PRR-151-017: exactly ONE gate at a time. The desktop gate wins: handleSend
+  // returns early on desktopModelBlocked in every inference mode, so it is the
+  // gate that actually binds; the browser gate (reachable in Electron when
+  // "In this window" is selected) would only stack a second alertdialog on it.
+  const browserGateUp = isModelBlocked && !desktopModelBlocked;
 
   return (
     <div className="chat-page">
-      <div className="chat-page__content" {...(modelGateUp ? { inert: '' } : {})}>
+      <div ref={gatedContentRef} className="chat-page__content" {...(modelGateUp ? { inert: '' } : {})}>
       {/* Header (Lumen phase 5): model chip, desktop mode toggle, connection
           warning, then the conversation actions. */}
       <PageHeader
@@ -1217,15 +1239,13 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
           /ask (AC5). Extracted component per the shared-file convention. */}
       <DesktopModelBlockedOverlay open={desktopModelBlocked} onOpenSettings={onOpenSettings} />
 
-      {isModelBlocked && (
+      {browserGateUp && (
         <ModelBlockedOverlay
           readinessResult={getReadinessResultSnapshot()}
           browserEngine={browserEngine}
           modelLoadingProgress={modelLoadingProgress}
-          onRetry={() => {
-            resetReadinessCache();
-            void ensureReadinessGateChecked(browserEngine);
-          }}
+          retrying={gateRetrying}
+          onRetry={retryReadinessCheck}
           onOpenSettings={onOpenSettings}
         />
       )}

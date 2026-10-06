@@ -32,12 +32,139 @@
  * The course script only records outcomes; it carries no payload beyond what
  * the assertions need. Run under web_ui/playwright.config.ts (vite preview of
  * the production build on 127.0.0.1:4174; player origin http://localhost:4174).
+ *
+ * Observation channel (PRR-151-030, Chromium AND Firefox): each course REPORTS
+ * its observations to the app page with postMessage (targetOrigin = the app
+ * origin), and the test reads them from a collector it installs in the TOP page.
+ * The app is served with COOP same-origin + COEP require-corp, which makes Firefox
+ * run the cross-origin course frame in its own process (Fission), and Playwright's
+ * Firefox cannot attach to an out-of-process iframe (frame DOM, frame evaluate)
+ * nor deliver input into one, so nothing here may depend on reaching into a frame.
+ * The one exception is the click-activation spec, which launches its browser with
+ * Fission off (see NO_FISSION_ENV) and so can click and read inside the frame.
+ * A report counts only when its event.origin is the player origin
+ * and its event.source is the course frame's window. On Chromium the in-frame
+ * record is also read and must equal the report. The app origin is baked into
+ * each fixture (it is known when the zip is built); the fixture also reports
+ * location.ancestorOrigins[0], which must name the same origin. Nothing about the
+ * app's headers, CSPs or sandboxes is relaxed for either engine.
  */
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
 import { expect, test, type Page } from '@playwright/test';
+
+/**
+ * Spec 6 (a REAL click inside the course frame) on Firefox, PRR-151-030 lane I.
+ *
+ * Firefox puts a cross-site iframe of a cross-origin-isolated page in its own
+ * content process (Fission), and Playwright's Firefox cannot deliver input into an
+ * out-of-process iframe: mouse and keyboard events never reach it and frame
+ * locators never resolve. Proven WITHOUT app code by e2e/frame-input/
+ * frame-input.repro.ts (a static COOP+COEP page with a cross-origin iframe gets no
+ * events on Firefox; Chromium, and the same Firefox with Fission disabled, get
+ * them all; stock Firefox over WebDriver BiDi fails the same way for ANY
+ * cross-site iframe, so it is the driver, not these headers). Upstream:
+ * microsoft/playwright#21780 (closed, not planned). Real user input is routed by
+ * Firefox's parent process and is not expected to be affected (not measured by
+ * automation; see the lane I report for PRR-151-030).
+ *
+ * So spec 6 launches its OWN browser with Fission disabled
+ * (MOZ_FORCE_DISABLE_FISSION=1; ignored by Chromium, which runs the same path).
+ * Only the process model changes: the app keeps COOP same-origin + COEP
+ * require-corp (the test asserts crossOriginIsolated), the course frame keeps its
+ * sandbox, CSP and player origin, and the click must be trusted and carry user
+ * activation (asserted inside the course), so the sandbox refusal is exercised
+ * by the Gecko DOM exactly as a user's click would. The other specs keep the
+ * default (Fission on) browser and observe through out-of-band reports.
+ */
+const NO_FISSION_ENV = { MOZ_FORCE_DISABLE_FISSION: '1' };
+
+/**
+ * How a sandboxed window.open (no allow-popups) is refused differs by engine:
+ * Chromium returns null, Firefox throws InvalidAccessError. Either way no window
+ * is obtained; any other outcome (a window) fails. The test also counts popup
+ * pages, so a popup that opened despite the return value is still caught.
+ */
+function expectNoPopupWindow(outcome: unknown, browserName: string, label: string): void {
+  if (browserName === 'firefox') expect(outcome, label).toBe('threw:InvalidAccessError');
+  else expect(outcome, label).toBe('null');
+}
+
+/** Reports the course fixtures post to the app page (see the header). */
+interface CourseReport {
+  origin: string;
+  fromCourse: boolean;
+  kind: string;
+  payload: unknown;
+}
+
+/** The player origin for an app origin: the other loopback name of the same server. */
+function playerOriginOf(appOrigin: string): string {
+  const u = new URL(appOrigin);
+  u.hostname = u.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
+  return u.origin;
+}
+
+/**
+ * Installed in the TOP page only (page.evaluate after goto, never an init
+ * script: an init script would also run inside the course frame).
+ */
+async function installReportCollector(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __isolationReports: CourseReport[] };
+    w.__isolationReports = [];
+    window.addEventListener('message', (event) => {
+      const data = event.data as { __isolationProbe?: unknown; payload?: unknown } | null;
+      if (data === null || typeof data !== 'object' || typeof data.__isolationProbe !== 'string') return;
+      const course = document.querySelector<HTMLIFrameElement>('iframe[data-testid="training-player-frame"]');
+      w.__isolationReports.push({
+        origin: event.origin,
+        fromCourse: course !== null && event.source === course.contentWindow,
+        kind: data.__isolationProbe,
+        payload: data.payload,
+      });
+    });
+  });
+}
+
+async function reportsOf(page: Page, kind: string): Promise<CourseReport[]> {
+  return page.evaluate((k) => (window as unknown as { __isolationReports: CourseReport[] }).__isolationReports.filter((r) => r.kind === k), kind);
+}
+
+/** Every report of `kind` came from the course frame's window on the player origin. */
+function expectFromCourse(reports: CourseReport[], appOrigin: string): void {
+  for (const r of reports) {
+    expect(r.origin, `report ${r.kind} origin`).toBe(playerOriginOf(appOrigin));
+    expect(r.fromCourse, `report ${r.kind} came from the course frame's window`).toBe(true);
+  }
+}
+
+/** Wait for the first report of `kind` and return its (JSON) payload, parsed. */
+async function courseReport<T>(page: Page, kind: string, appOrigin: string, timeout: number): Promise<T> {
+  await expect.poll(async () => (await reportsOf(page, kind)).length, { timeout, message: `course report "${kind}"` }).toBeGreaterThan(0);
+  const reports = await reportsOf(page, kind);
+  expectFromCourse(reports, appOrigin);
+  return JSON.parse(String(reports[0].payload)) as T;
+}
+
+/** Chromium can still read the frame: its in-frame record must equal the report. */
+async function expectFrameRecordMatches(page: Page, browserName: string, selector: string, reported: unknown): Promise<void> {
+  if (browserName !== 'chromium') return;
+  const text = await page.frameLocator('iframe[data-testid="training-player-frame"]').locator(selector).textContent();
+  expect(JSON.parse(text ?? 'null'), `in-frame ${selector} record equals the posted report`).toEqual(reported);
+}
+
+/**
+ * Course-side prelude: the app origin (baked, see the header), the
+ * ancestorOrigins cross-check and the report() channel. Plain ES5.
+ */
+function coursePrelude(appOrigin: string): string {
+  return `var appOrigin = ${JSON.stringify(appOrigin)};
+  var ancestorOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || null;
+  function report(kind, payload) { try { window.parent.postMessage({ __isolationProbe: kind, payload: payload }, appOrigin); } catch (e) { /* parent gone */ } }`;
+}
 
 const PROBE_PACK = 'isolation-probe-course';
 const CLICK_PACK = 'isolation-click-course';
@@ -74,14 +201,17 @@ function builtWorkerAssets(): { classic: string; module: string; shared: string 
  * pdf.js worker, the boot script and the course service worker as dedicated
  * workers, and service worker registrations. Controls: a worker on the pack's
  * own relay-served script and a blob: worker both run, and both stay confined
- * (their fetch to the sink is refused).
+ * (their fetch to the sink is refused). The course service worker's script is
+ * the one non-pack script the course worker-src admits (Firefox requires it of
+ * a controlled document that starts a worker, PRR-151-030 R1); the course
+ * service worker answers it 404 (swScript), so a worker on it still never runs.
  */
-function workerEscapeStoryHtml(assets: { classic: string; module: string; shared: string }): string {
+function workerEscapeStoryHtml(appOrigin: string, assets: { classic: string; module: string; shared: string }): string {
   const script = `
 (async function () {
-  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  ${coursePrelude(appOrigin)}
   var SINK = appOrigin + '/__worker-sink/';
-  var r = { violations: [], attempts: {}, controls: {}, register: {} };
+  var r = { violations: [], attempts: {}, controls: {}, register: {}, ancestorOrigin: ancestorOrigin };
   document.addEventListener('securitypolicyviolation', function (e) {
     r.violations.push((e.effectiveDirective || e.violatedDirective) + ' ' + e.blockedURI);
   });
@@ -101,6 +231,8 @@ function workerEscapeStoryHtml(assets: { classic: string; module: string; shared
   await tryWorker('appModule', ${JSON.stringify(assets.module)}, { type: 'module' });
   await tryWorker('bootScript', '/training-boot.js');
   await tryWorker('courseServiceWorker', '/training/sw.js');
+  // The course service worker's answer for its own script URL (the host would answer 200).
+  try { r.swScript = (await fetch('/training/sw.js')).status; } catch (e) { r.swScript = 'threw:' + name(e); }
   // A SharedWorker is governed by worker-src too (review round 5, I1).
   var shared = 'constructed';
   try {
@@ -111,9 +243,14 @@ function workerEscapeStoryHtml(assets: { classic: string; module: string; shared
   } catch (e) { shared = 'threw:' + name(e); }
   await wait(1500);
   r.attempts.appShared = shared;
+  // Bounded: a registration that never settles still yields a report ('pending').
   async function tryRegister(label, url, scope) {
-    try { await navigator.serviceWorker.register(url, { scope: scope }); r.register[label] = 'registered'; }
-    catch (e) { r.register[label] = 'rejected:' + name(e); }
+    r.register[label] = 'pending';
+    var attempt = navigator.serviceWorker.register(url, { scope: scope }).then(
+      function () { r.register[label] = 'registered'; },
+      function (e) { r.register[label] = 'rejected:' + name(e); }
+    );
+    await Promise.race([attempt, wait(5000)]);
   }
   await tryRegister('appAsset', ${JSON.stringify(assets.classic)}, '/assets/');
   await tryRegister('packPath', '/training/${WORKER_PACK}/probe-sw.js', '/training/${WORKER_PACK}/');
@@ -133,6 +270,7 @@ function workerEscapeStoryHtml(assets: { classic: string; module: string; shared
   await control('blobWorker', URL.createObjectURL(new Blob([body], { type: 'text/javascript' })));
   await wait(500);
   document.getElementById('worker-probe').textContent = JSON.stringify(r);
+  report('worker-probe', JSON.stringify(r));
 })();`;
   return `<!doctype html><html><head><title>worker probe</title></head><body><pre id="worker-probe"></pre><script>${script}</script></body></html>`;
 }
@@ -151,11 +289,23 @@ const SEEDED = {
   session: { 'external-provider-apikey': SENTINEL_KEY },
 };
 
-/** The course page: runs each probe and records the outcome in <pre id="probe">. */
-function probeStoryHtml(): string {
+/**
+ * The course page: runs each probe and records the outcome in <pre id="probe">
+ * (and reports it). It also answers the app's GENUINE bridge state poll (the
+ * pack-local bridge protocol: a request carrying a MessagePort, answered on that
+ * port) with slide GENUINE, so the forged-message row below is not vacuous: the
+ * readout demonstrably works, and only the genuine channel feeds it.
+ */
+function probeStoryHtml(appOrigin: string): string {
   const script = `
+window.addEventListener('message', function (e) {
+  var d = e.data;
+  if (e.source !== window.parent || !d || d.__trainingapp !== true || d.kind !== 'state' || !e.ports || !e.ports[0]) return;
+  e.ports[0].postMessage({ __trainingapp: true, kind: 'state-result', reqId: d.reqId, state: { slideId: 'GENUINE', slideTitle: 'Genuine bridge' } });
+});
 (async function () {
-  var r = {};
+  ${coursePrelude(appOrigin)}
+  var r = { ancestorOrigin: ancestorOrigin };
   function errName(fn) { try { fn(); return 'no-error'; } catch (e) { return (e && e.name) || String(e); } }
   r.localRead = ['external-provider-apikey', 'external-provider-config', 'openai-provider-apikey'].map(function (k) { return localStorage.getItem(k); });
   r.sessionRead = sessionStorage.getItem('external-provider-apikey');
@@ -166,8 +316,6 @@ function probeStoryHtml(): string {
   } catch (e) { r.idbNames = ['error:' + e.name]; }
   r.parentStorage = errName(function () { return window.parent.localStorage.length; });
   r.topDocument = errName(function () { return window.top.document.title; });
-  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
-  r.appOrigin = appOrigin;
   window.parent.postMessage({ __trainingapp: true, kind: 'state-result', reqId: 1, state: { slideId: 'FORGED', slideTitle: 'Forged' } }, '*');
   window.parent.postMessage({ type: 'trainingapp-relay-request' }, '*');
   window.parent.postMessage({ type: 'trainingapp-relay-handshake' }, '*');
@@ -182,6 +330,7 @@ function probeStoryHtml(): string {
   r.popup = popup === null ? 'null' : typeof popup === 'string' ? popup : 'window';
   r.topNavigation = errName(function () { window.top.location.href = appOrigin + '/#isolation-hijacked'; });
   document.getElementById('probe').textContent = JSON.stringify(r);
+  report('probe', JSON.stringify(r));
 })();`;
   return `<!doctype html><html><head><title>isolation probe</title></head><body><pre id="probe"></pre><script>${script}</script></body></html>`;
 }
@@ -191,22 +340,28 @@ function probeStoryHtml(): string {
  * navigation in the probe course above would already move an unsandboxed app
  * away); its buttons attempt a popup and a top navigation from a real click.
  */
-function clickStoryHtml(): string {
+function clickStoryHtml(appOrigin: string): string {
   const script = `
 (function () {
-  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  ${coursePrelude(appOrigin)}
   function record(key, value) {
     var out = document.getElementById('click-probe');
     var r = out.textContent ? JSON.parse(out.textContent) : {};
     r[key] = value;
     out.textContent = JSON.stringify(r);
   }
-  document.getElementById('escape-popup').addEventListener('click', function () {
+  function activation(e) {
+    var ua = navigator.userActivation;
+    return { trusted: e.isTrusted, active: ua ? ua.isActive : 'unsupported' };
+  }
+  document.getElementById('escape-popup').addEventListener('click', function (e) {
+    record('popupClick', activation(e));
     var popup = null;
     try { popup = window.open('about:blank#isolation-click-popup', '_blank'); } catch (e) { popup = 'threw:' + e.name; }
     record('popup', popup === null ? 'null' : typeof popup === 'string' ? popup : 'window');
   });
-  document.getElementById('escape-top').addEventListener('click', function () {
+  document.getElementById('escape-top').addEventListener('click', function (e) {
+    record('topClick', activation(e));
     try { window.top.location.href = appOrigin + '/#isolation-click-hijacked'; record('topNavigation', 'no-error'); }
     catch (e) { record('topNavigation', (e && e.name) || String(e)); }
   });
@@ -231,12 +386,12 @@ function clickStoryHtml(): string {
  * egress to a cross-origin sink the test counts. The page only records
  * outcomes; it carries no payload.
  */
-function escapeStoryHtml(): string {
+function escapeStoryHtml(appOrigin: string): string {
   const script = `
 (async function () {
-  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  ${coursePrelude(appOrigin)}
   var SINK = appOrigin + '/__fc6-sink/';
-  var r = {};
+  var r = { ancestorOrigin: ancestorOrigin };
   function wait(ms) { return new Promise(function (res) { setTimeout(res, ms); }); }
   function name(e) { return (e && e.name) || String(e); }
   async function egress(w, label) {
@@ -254,7 +409,7 @@ function escapeStoryHtml(): string {
     } catch (e) { out.form = name(e); }
     return out;
   }
-  async function nested(label, src) {
+  async function nested(label, src, probeEgress) {
     var f = document.createElement('iframe');
     var loaded = new Promise(function (res) { f.addEventListener('load', res, { once: true }); });
     f.src = src;
@@ -265,12 +420,16 @@ function escapeStoryHtml(): string {
       void w.document.documentElement;
       if (w.location.href === 'about:blank') return { framed: 'not-loaded' };
     } catch (e) { return { framed: 'blocked:' + name(e) }; }
+    if (probeEgress === false) return { framed: 'same-origin-document' };
     return { framed: 'same-origin-document', egress: await egress(w, label) };
   }
   r.nestedBoot = await nested('nested-boot', '/training-boot.html');
   r.nestedBootScript = await nested('nested-boot-js', '/training-boot.js');
   r.nestedTraining404 = await nested('nested-training-404', '/training');
   r.nestedWorkerRefusal = await nested('nested-sw-refusal', '/training/sw.js');
+  // Positive control: an allowed same-origin pack document IS framed and readable,
+  // so a blocked row cannot pass merely because this engine hides every frame.
+  r.nestedControl = await nested('nested-control', '/training/${ESCAPE_PACK}/control.html', false);
   var sibling = null;
   for (var i = 0; i < window.parent.frames.length; i++) {
     try {
@@ -321,6 +480,7 @@ function escapeStoryHtml(): string {
   r.sibling = sibling ? { found: true, code: await siblingCode(sibling), egress: await egress(sibling, 'sibling-boot') } : { found: false };
   await wait(1500);
   document.getElementById('escape-probe').textContent = JSON.stringify(r);
+  report('escape-probe', JSON.stringify(r));
 })();`;
   return `<!doctype html><html><head><title>escape probe</title></head><body><pre id="escape-probe"></pre><script>${script}</script></body></html>`;
 }
@@ -358,9 +518,13 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('course content cannot reach app storage, app windows, other packs, popups or top navigation', async ({ page }) => {
+test('course content cannot reach app storage, app windows, other packs, popups or top navigation', async ({ page, browserName }) => {
+  const popups: string[] = [];
+  page.on('popup', (p) => popups.push(p.url()));
+  page.context().on('page', (p) => popups.push(p.url()));
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
+  await installReportCollector(page);
   await page.evaluate((seed) => {
     for (const [k, v] of Object.entries(seed.local)) localStorage.setItem(k, v);
     for (const [k, v] of Object.entries(seed.session)) sessionStorage.setItem(k, v);
@@ -369,8 +533,8 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
 
   await install(page, await packZip(OTHER_PACK, '1.0.0', { 'story.html': '<html><body>OTHER</body></html>' }), 'other.zip', OTHER_PACK, '1.0.0');
-  await install(page, await packZip(PROBE_PACK, '1.0.0', { 'story.html': probeStoryHtml(), 'v1-only.txt': 'v1' }), 'probe-1.zip', PROBE_PACK, '1.0.0');
-  await install(page, await packZip(PROBE_PACK, '2.0.0', { 'story.html': probeStoryHtml(), 'v2-only.txt': 'v2' }), 'probe-2.zip', PROBE_PACK, '2.0.0');
+  await install(page, await packZip(PROBE_PACK, '1.0.0', { 'story.html': probeStoryHtml(appOrigin), 'v1-only.txt': 'v1' }), 'probe-1.zip', PROBE_PACK, '1.0.0');
+  await install(page, await packZip(PROBE_PACK, '2.0.0', { 'story.html': probeStoryHtml(appOrigin), 'v2-only.txt': 'v2' }), 'probe-2.zip', PROBE_PACK, '2.0.0');
   await expect(page.getByTestId(`pack-status-${PROBE_PACK}-2.0.0`)).toHaveText(/active/i);
 
   await page.getByRole('button', { name: 'Training', exact: true }).click();
@@ -378,9 +542,8 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   await expect(option).toHaveCount(1, { timeout: 30_000 });
   await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
   const frame = page.locator('iframe[data-testid="training-player-frame"]');
-  const probe = page.frameLocator('iframe[data-testid="training-player-frame"]').locator('#probe');
-  await expect(probe).not.toHaveText('', { timeout: 60_000 });
-  const r = JSON.parse((await probe.textContent()) ?? '{}') as Record<string, unknown>;
+  const r = await courseReport<Record<string, unknown>>(page, 'probe', appOrigin, 60_000);
+  await expectFrameRecordMatches(page, browserName, '#probe', r);
 
   // App storage is unreachable: course reads see its own (empty) origin.
   expect(r.localRead).toEqual([null, null, null]);
@@ -396,7 +559,8 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   // Cross-origin window access throws.
   expect(r.parentStorage).toBe('SecurityError');
   expect(r.topDocument).toBe('SecurityError');
-  expect(r.appOrigin).toBe(appOrigin);
+  // Fixture fidelity: the browser names the same embedder the fixture was built for.
+  expect(r.ancestorOrigin).toBe(appOrigin);
   // Relay / worker scoping.
   expect(r.ownActive).toBe(200);
   expect(r.otherPack).toBe(404);
@@ -404,22 +568,31 @@ test('course content cannot reach app storage, app windows, other packs, popups 
   expect(r.appShellOnPlayerOrigin).toBe(404);
   expect(r.appOrigin_root).not.toBe(200);
   // Sandbox, script-initiated attempts (no user activation): window.open
-  // returns null and top navigation throws. Click-initiated attempts are the
-  // next test.
-  expect(r.popup).toBe('null');
+  // yields no window (see expectNoPopupWindow) and top navigation throws.
+  // Click-initiated attempts are the last test.
+  expectNoPopupWindow(r.popup, browserName, 'script-initiated window.open from the course');
   expect(r.topNavigation).not.toBe('no-error');
   await page.waitForTimeout(1000);
   expect(page.url()).not.toContain('isolation-hijacked');
   expect(new URL(page.url()).origin).toBe(appOrigin);
-  // Forged messages changed nothing the app shows.
+  expect(popups, 'popup opened from the course').toEqual([]);
+  // Forged messages changed nothing the app shows, while the GENUINE bridge
+  // reply (on the request's own port) does feed the readout: non-vacuous. The
+  // change log keeps every reported slide, so a forged slide that a later
+  // genuine poll overwrote would still be caught.
+  await expect(page.getByTestId('training-player-slide')).toHaveText('GENUINE|Genuine bridge', { timeout: 15_000 });
+  await expect(page.getByTestId('training-player-slidechange')).not.toContainText('FORGED');
   await expect(page.getByTestId('training-player-slide')).not.toContainText('FORGED');
   // Checked last so the behavioral rows above decide a sandbox regression.
   await expect(frame).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms');
 });
 
-test('course content cannot escape its CSP through a same-origin player-origin document (FC6)', async ({ page }) => {
+test('course content cannot escape its CSP through a same-origin player-origin document (FC6)', async ({ page, browserName }) => {
+  // The course probe alone waits up to 90 s for its report; the default 30 s budget would cut it short.
+  test.setTimeout(150_000);
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
+  await installReportCollector(page);
   // The cross-origin egress sink: every request that reaches it is an escape.
   const hits: string[] = [];
   const popups: string[] = [];
@@ -431,14 +604,18 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   });
   await page.getByRole('button', { name: 'Documents', exact: true }).click();
   await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
-  await install(page, await packZip(ESCAPE_PACK, '1.0.0', { 'story.html': escapeStoryHtml() }), 'escape.zip', ESCAPE_PACK, '1.0.0');
+  await install(
+    page,
+    await packZip(ESCAPE_PACK, '1.0.0', { 'story.html': escapeStoryHtml(appOrigin), 'control.html': '<!doctype html><title>control</title><p>same-origin control</p>' }),
+    'escape.zip',
+    ESCAPE_PACK,
+    '1.0.0',
+  );
   await page.getByRole('button', { name: 'Training', exact: true }).click();
   const option = page.getByTestId('training-pack-select').locator('option', { hasText: ESCAPE_PACK });
   await expect(option).toHaveCount(1, { timeout: 30_000 });
   await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
-  const probe = page.frameLocator('iframe[data-testid="training-player-frame"]').locator('#escape-probe');
-  await expect(probe).not.toHaveText('', { timeout: 90_000 });
-  const r = JSON.parse((await probe.textContent()) ?? '{}') as Record<
+  const r = await courseReport<Record<
     string,
     {
       framed?: string;
@@ -453,13 +630,17 @@ test('course content cannot escape its CSP through a same-origin player-origin d
         topNavigation?: string;
       };
     }
-  >;
+  >>(page, 'escape-probe', appOrigin, 90_000);
+  await expectFrameRecordMatches(page, browserName, '#escape-probe', r);
+  expect((r as Record<string, unknown>).ancestorOrigin, 'fixture fidelity: embedder origin').toBe(appOrigin);
   await page.waitForTimeout(1000);
   test.info().annotations.push({ type: 'fc6-probe', description: `${JSON.stringify(r)} sink hits: ${JSON.stringify(hits)}` });
 
   // Nested: every same-origin player document refuses to be framed by course
   // content (frame-ancestors), so the course never gets a window under a
-  // weaker policy.
+  // weaker policy. Positive control first: an allowed same-origin pack document
+  // IS framed and readable, so the blocked rows are not an engine blind spot.
+  expect(r.nestedControl?.framed, 'FC6 control: an allowed same-origin pack document is framed').toBe('same-origin-document');
   for (const key of ['nestedBoot', 'nestedBootScript', 'nestedTraining404', 'nestedWorkerRefusal']) {
     expect(r[key]?.framed ?? '', `FC6 ${key} framed by course content`).toMatch(/^blocked:/);
   }
@@ -470,11 +651,7 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   // ...and runs no same-origin script or worker but its own two files.
   // Discriminating (review round 4, F3): the refusal must come from the boot
   // page's pinned worker-src / script-src, naming the exact blocked script.
-  const playerOrigin = (() => {
-    const u = new URL(appOrigin);
-    u.hostname = u.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
-    return u.origin;
-  })();
+  const playerOrigin = playerOriginOf(appOrigin);
   expect(r.sibling?.code?.violations ?? [], 'FC6 sibling boot worker refused by worker-src').toContain(`worker-src ${playerOrigin}/training-boot.js`);
   expect(r.sibling?.code?.worker, 'FC6 sibling boot starts a worker from another same-origin script').not.toBe('constructed');
   expect(r.sibling?.code?.script, 'FC6 sibling boot loads another same-origin script').toBe('error');
@@ -482,7 +659,7 @@ test('course content cannot escape its CSP through a same-origin player-origin d
   expect(r.sibling?.code?.violations ?? [], 'FC6 sibling boot script refused by script-src').toContain(`script-src-elem ${playerOrigin}/training/sw.js`);
   // ...and is sandboxed like the course frame: no popup, no top navigation.
   expect(popups, 'FC6 popup opened from the sibling boot frame').toEqual([]);
-  expect(r.sibling?.code?.openPopup, 'FC6 sibling boot window.open').toBe('null');
+  expectNoPopupWindow(r.sibling?.code?.openPopup, browserName, 'FC6 sibling boot window.open');
   expect(r.sibling?.code?.topNavigation, 'FC6 sibling boot top navigation').not.toBe('no-error');
   expect(page.url()).not.toContain('fc6-boot-hijacked');
   await expect(page.locator('iframe[data-testid="training-player-boot"]')).toHaveAttribute('sandbox', 'allow-scripts allow-same-origin');
@@ -500,26 +677,27 @@ test('course content cannot escape its CSP through a same-origin player-origin d
  * `frame-src <player origin>` must refuse both before any request is sent.
  * Each attempt is announced on the console so the row is not vacuous.
  */
-function navEgressStoryHtml(): string {
+function navEgressStoryHtml(appOrigin: string): string {
   const script = `
 (function () {
-  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  ${coursePrelude(appOrigin)}
+  function step(text) { console.log('NAV-EGRESS ' + text); report('nav-egress', text); }
   var SINK = appOrigin + '/__nav-egress-sink/';
   setTimeout(function () {
     var boot = null;
     for (var i = 0; i < window.parent.frames.length; i++) {
       try { if (window.parent.frames[i].location.pathname === '/training-boot.html') boot = window.parent.frames[i]; } catch (e) { /* cross-origin */ }
     }
-    console.log('NAV-EGRESS boot-frame ' + (boot ? 'found' : 'missing'));
+    step('boot-frame ' + (boot ? 'found' : 'missing'));
     if (boot) {
       var a = boot.document.createElement('a');
       a.href = SINK + 'boot-link?data=course-secret';
       boot.document.body.appendChild(a);
       a.click();
-      console.log('NAV-EGRESS boot-link clicked');
+      step('boot-link clicked');
     }
     setTimeout(function () {
-      console.log('NAV-EGRESS self-navigation attempted');
+      step('self-navigation attempted');
       location.href = SINK + 'self?data=course-secret';
     }, 1000);
   }, 1500);
@@ -528,12 +706,10 @@ function navEgressStoryHtml(): string {
 }
 
 test('a course cannot navigate its own frame or the boot frame off the player origin (navigation egress)', async ({ page }) => {
-  const logs: string[] = [];
-  page.on('console', (message) => {
-    if (message.text().startsWith('NAV-EGRESS')) logs.push(message.text());
-  });
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
+  await installReportCollector(page);
+  const steps = async (): Promise<string[]> => (await reportsOf(page, 'nav-egress')).map((r) => `NAV-EGRESS ${String(r.payload)}`);
   const hits: string[] = [];
   await page.route(`${appOrigin}/__nav-egress-sink/**`, (route) => {
     hits.push(route.request().url());
@@ -541,23 +717,22 @@ test('a course cannot navigate its own frame or the boot frame off the player or
   });
   await page.getByRole('button', { name: 'Documents', exact: true }).click();
   await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
-  await install(page, await packZip(NAV_PACK, '1.0.0', { 'story.html': navEgressStoryHtml() }), 'nav.zip', NAV_PACK, '1.0.0');
+  await install(page, await packZip(NAV_PACK, '1.0.0', { 'story.html': navEgressStoryHtml(appOrigin) }), 'nav.zip', NAV_PACK, '1.0.0');
   await page.getByRole('button', { name: 'Training', exact: true }).click();
   const option = page.getByTestId('training-pack-select').locator('option', { hasText: NAV_PACK });
   await expect(option).toHaveCount(1, { timeout: 30_000 });
   await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
 
-  await expect.poll(() => logs.includes('NAV-EGRESS self-navigation attempted'), { timeout: 60_000 }).toBe(true);
+  await expect.poll(async () => (await steps()).includes('NAV-EGRESS self-navigation attempted'), { timeout: 60_000 }).toBe(true);
   await page.waitForTimeout(2000);
   // Non-vacuous: the course reached the boot frame and attempted both navigations.
-  expect(logs).toEqual(expect.arrayContaining(['NAV-EGRESS boot-frame found', 'NAV-EGRESS boot-link clicked', 'NAV-EGRESS self-navigation attempted']));
+  expectFromCourse(await reportsOf(page, 'nav-egress'), appOrigin);
+  expect(await steps()).toEqual(expect.arrayContaining(['NAV-EGRESS boot-frame found', 'NAV-EGRESS boot-link clicked', 'NAV-EGRESS self-navigation attempted']));
   expect(hits, 'navigation egress from a player frame').toEqual([]);
   expect(new URL(page.url()).origin).toBe(appOrigin);
   // The control that refused them: the app shell's runtime frame policy for
   // the resolved player origin.
-  const player = new URL(appOrigin);
-  player.hostname = player.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
-  await expect(page.locator('head meta[http-equiv="Content-Security-Policy"]')).toHaveAttribute('content', `frame-src ${player.origin}`);
+  await expect(page.locator('head meta[http-equiv="Content-Security-Policy"]')).toHaveAttribute('content', `frame-src ${playerOriginOf(appOrigin)}`);
 });
 
 /**
@@ -577,39 +752,38 @@ test('a course cannot navigate its own frame or the boot frame off the player or
  * it to `frame-src *` (in training-relay.ts and sw.js courseCsp) turns the row
  * red with one sink hit.
  */
-function childNavStoryHtml(): string {
+function childNavStoryHtml(appOrigin: string): string {
   const script = `
 (function () {
-  var appOrigin = (location.ancestorOrigins && location.ancestorOrigins[0]) || '';
+  ${coursePrelude(appOrigin)}
+  function step(text) { console.log('CHILD-NAV ' + text); report('child-nav', text); }
   var SINK = appOrigin + '/__child-nav-sink/';
   var child = document.createElement('iframe');
   child.onload = function () {
     if (child.dataset.navigated) return;
     child.dataset.navigated = '1';
-    console.log('CHILD-NAV child-loaded ' + child.contentWindow.location.pathname);
+    step('child-loaded ' + child.contentWindow.location.pathname);
     setTimeout(function () {
       try {
         child.contentWindow.location.href = SINK + 'child?data=course-secret';
-        console.log('CHILD-NAV navigation-attempted');
+        step('navigation-attempted');
       } catch (e) {
-        console.log('CHILD-NAV navigation-threw ' + ((e && e.name) || e));
+        step('navigation-threw ' + ((e && e.name) || e));
       }
     }, 500);
   };
   child.src = '/training/${CHILD_NAV_PACK}/child.html';
   document.body.appendChild(child);
-  console.log('CHILD-NAV child-created');
+  step('child-created');
 })();`;
   return `<!doctype html><html><head><title>child nav probe</title></head><body><pre id="child-nav-probe">running</pre><script>${script}</script></body></html>`;
 }
 
 test('a course cannot steer a child iframe it created off-origin (grandchild navigation egress)', async ({ page }) => {
-  const logs: string[] = [];
-  page.on('console', (message) => {
-    if (message.text().startsWith('CHILD-NAV')) logs.push(message.text());
-  });
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
+  await installReportCollector(page);
+  const steps = async (): Promise<string[]> => (await reportsOf(page, 'child-nav')).map((r) => `CHILD-NAV ${String(r.payload)}`);
   const hits: string[] = [];
   await page.route(`${appOrigin}/__child-nav-sink/**`, (route) => {
     hits.push(route.request().url());
@@ -619,7 +793,7 @@ test('a course cannot steer a child iframe it created off-origin (grandchild nav
   await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
   await install(
     page,
-    await packZip(CHILD_NAV_PACK, '1.0.0', { 'story.html': childNavStoryHtml(), 'child.html': '<!doctype html><title>child</title><p>same-origin child</p>' }),
+    await packZip(CHILD_NAV_PACK, '1.0.0', { 'story.html': childNavStoryHtml(appOrigin), 'child.html': '<!doctype html><title>child</title><p>same-origin child</p>' }),
     'child-nav.zip',
     CHILD_NAV_PACK,
     '1.0.0',
@@ -629,22 +803,27 @@ test('a course cannot steer a child iframe it created off-origin (grandchild nav
   await expect(option).toHaveCount(1, { timeout: 30_000 });
   await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
 
-  await expect.poll(() => logs.some((l) => l === 'CHILD-NAV navigation-attempted' || l.startsWith('CHILD-NAV navigation-threw')), { timeout: 60_000 }).toBe(true);
+  const attempted = (l: string): boolean => l === 'CHILD-NAV navigation-attempted' || l.startsWith('CHILD-NAV navigation-threw');
+  await expect.poll(async () => (await steps()).some(attempted), { timeout: 60_000 }).toBe(true);
   await page.waitForTimeout(2000);
   // Non-vacuous: the course created a same-origin child, it loaded the pack
   // document, and the course then attempted the off-origin navigation.
+  expectFromCourse(await reportsOf(page, 'child-nav'), appOrigin);
+  const logs = await steps();
   expect(logs).toEqual(expect.arrayContaining(['CHILD-NAV child-created', `CHILD-NAV child-loaded /training/${CHILD_NAV_PACK}/child.html`]));
   expect(logs.some((l) => l === 'CHILD-NAV navigation-attempted' || l.startsWith('CHILD-NAV navigation-threw'))).toBe(true);
   expect(hits, 'grandchild navigation egress from a course-created frame').toEqual([]);
   expect(new URL(page.url()).origin).toBe(appOrigin);
 });
 
-test('course content cannot run a same-origin app asset as an unconfined worker (review round 4 F1)', async ({ page }) => {
+test('course content cannot run a same-origin app asset as an unconfined worker (review round 4 F1)', async ({ page, browserName }) => {
+  // The course probe alone waits up to 90 s for its report; the default 30 s budget would cut it short.
+  test.setTimeout(150_000);
   const assets = builtWorkerAssets();
   await page.goto('/');
   const appOrigin = new URL(page.url()).origin;
-  const player = new URL(appOrigin);
-  player.hostname = player.hostname === '127.0.0.1' ? 'localhost' : '127.0.0.1';
+  await installReportCollector(page);
+  const player = new URL(playerOriginOf(appOrigin));
   const hits: string[] = [];
   await page.route(`${appOrigin}/__worker-sink/**`, (route) => {
     hits.push(new URL(route.request().url()).pathname);
@@ -654,7 +833,7 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
   await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
   await install(
     page,
-    await packZip(WORKER_PACK, '1.0.0', { 'story.html': workerEscapeStoryHtml(assets), 'ok-worker.js': OK_WORKER_JS }),
+    await packZip(WORKER_PACK, '1.0.0', { 'story.html': workerEscapeStoryHtml(appOrigin, assets), 'ok-worker.js': OK_WORKER_JS }),
     'worker.zip',
     WORKER_PACK,
     '1.0.0',
@@ -663,29 +842,41 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
   const option = page.getByTestId('training-pack-select').locator('option', { hasText: WORKER_PACK });
   await expect(option).toHaveCount(1, { timeout: 30_000 });
   await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
-  const probe = page.frameLocator('iframe[data-testid="training-player-frame"]').locator('#worker-probe');
-  await expect(probe).not.toHaveText('', { timeout: 90_000 });
-  const r = JSON.parse((await probe.textContent()) ?? '{}') as {
+  const r = await courseReport<{
     violations: string[];
     attempts: Record<string, string>;
     controls: Record<string, { state?: string; fetch?: string }>;
     register: Record<string, string>;
-  };
+    swScript: number | string;
+    ancestorOrigin: string | null;
+  }>(page, 'worker-probe', appOrigin, 90_000);
+  await expectFrameRecordMatches(page, browserName, '#worker-probe', r);
+  expect(r.ancestorOrigin, 'fixture fidelity: embedder origin').toBe(appOrigin);
   test.info().annotations.push({ type: 'worker-probe', description: `${JSON.stringify(r)} sink hits: ${JSON.stringify(hits)}` });
 
-  // Every same-origin script outside the open pack is refused by worker-src
-  // before it runs: a violation per target, and none of them ever messages.
+  // Every same-origin script outside the open pack (except the course service
+  // worker's own script, below) is refused by worker-src before it runs: a
+  // violation per target, and none of them ever messages.
   for (const [label, target] of [
     ['appClassic', assets.classic],
     ['appModule', assets.module],
     ['bootScript', '/training-boot.js'],
-    ['courseServiceWorker', '/training/sw.js'],
     ['appShared', assets.shared],
   ] as const) {
     // Soft: every refused target is reported, not only the first.
     expect.soft(r.violations, `F1 ${label}: worker-src violation for ${target}`).toContain(`worker-src ${player.origin}${target}`);
     expect.soft(r.attempts[label], `F1 ${label}: a worker that runs`).not.toBe('running');
   }
+  // The course service worker's script is admitted by the course worker-src
+  // (Firefox starts a worker in a controlled document only if the document's
+  // worker-src admits the controlling worker's script URL, PRR-151-030 R1), so
+  // it is refused one step later: the course service worker answers its own
+  // script URL 404, and a worker on it fails to start. No violation names it
+  // (the policy admits it; the refusal is the worker's). Soft, so the pack
+  // worker row below still reports when the admission regresses.
+  expect.soft(r.swScript, 'F1 courseServiceWorker: the course service worker refuses its own script URL').toBe(404);
+  expect.soft(r.attempts.courseServiceWorker, 'F1 courseServiceWorker: a worker on the course service worker script').toBe('error');
+  expect.soft(r.violations.filter((v) => v.includes('/training/sw.js')), 'F1 courseServiceWorker: admitted by worker-src').toEqual([]);
   // Service workers: an app asset is refused by worker-src; a pack-path
   // script is fetched past the relay and gets the host's reserved 404.
   expect(r.register.appAsset ?? '').toMatch(/^rejected:/);
@@ -693,39 +884,91 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
   expect(r.register.packPath ?? '').toMatch(/^rejected:/);
   // Controls (non-vacuous): workers run, and stay confined by the course CSP
   // (a pack script carries it; a blob: worker inherits it).
-  expect(r.controls.packWorker).toEqual({ state: 'running', fetch: 'TypeError' });
   expect(r.controls.blobWorker).toEqual({ state: 'running', fetch: 'TypeError' });
+  // The pack-script control is NOT refused by worker-src on either engine.
+  expect(r.violations.filter((v) => v.includes(`/training/${WORKER_PACK}/`)), 'F1 pack worker refused by worker-src').toEqual([]);
+  // Both engines: a worker on the pack's own script runs (Firefox too, since
+  // the course worker-src admits the controlling service worker's script URL,
+  // PRR-151-030 R1) and its fetch to the sink is refused by the course CSP.
+  expect(r.controls.packWorker, 'F1 pack worker runs, confined').toEqual({ state: 'running', fetch: 'TypeError' });
   expect(hits, 'F1 worker egress').toEqual([]);
 });
 
-test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page }) => {
-  await page.goto('/');
-  await page.getByRole('button', { name: 'Documents', exact: true }).click();
-  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
-  await install(page, await packZip(CLICK_PACK, '1.0.0', { 'story.html': clickStoryHtml() }), 'click.zip', CLICK_PACK, '1.0.0');
-  await page.getByRole('button', { name: 'Training', exact: true }).click();
-  const option = page.getByTestId('training-pack-select').locator('option', { hasText: CLICK_PACK });
-  await expect(option).toHaveCount(1, { timeout: 30_000 });
-  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
-  const course = page.frameLocator('iframe[data-testid="training-player-frame"]');
-  await expect(course.locator('#escape-popup')).toBeVisible({ timeout: 60_000 });
+test('a click inside the course frame cannot open a popup or navigate the top page', async ({
+  browserName,
+  playwright,
+  launchOptions,
+  headless,
+  baseURL,
+  viewport,
+}) => {
+  test.setTimeout(150_000);
+  // Own browser, Fission off (see NO_FISSION_ENV). Same loopback-only network rule
+  // as the beforeEach hook, which only covers the fixture page.
+  const browser = await playwright[browserName].launch({ ...launchOptions, headless, env: { ...process.env, ...launchOptions.env, ...NO_FISSION_ENV } });
+  try {
+    const context = await browser.newContext({ baseURL, viewport });
+    await context.route('**/*', (route) => {
+      const host = new URL(route.request().url()).hostname;
+      return host === '127.0.0.1' || host === 'localhost' ? route.fallback() : route.abort();
+    });
+    const page = await context.newPage();
+    await page.goto('/');
+    const appOrigin = new URL(page.url()).origin;
+    // The app's isolation is unchanged by the process-model switch.
+    expect(await page.evaluate(() => self.crossOriginIsolated), 'app page crossOriginIsolated').toBe(true);
+    await page.getByRole('button', { name: 'Documents', exact: true }).click();
+    await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+    await install(page, await packZip(CLICK_PACK, '1.0.0', { 'story.html': clickStoryHtml(appOrigin) }), 'click.zip', CLICK_PACK, '1.0.0');
+    await page.getByRole('button', { name: 'Training', exact: true }).click();
+    const option = page.getByTestId('training-pack-select').locator('option', { hasText: CLICK_PACK });
+    await expect(option).toHaveCount(1, { timeout: 30_000 });
+    await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+    const course = page.frameLocator('iframe[data-testid="training-player-frame"]');
+    await expect(course.locator('#escape-popup')).toBeVisible({ timeout: 60_000 });
 
-  // A real click grants the course frame transient activation, which would
-  // let an unsandboxed cross-origin frame open a popup and navigate the top
-  // page. The sandbox (no allow-popups, no allow-top-navigation[-by-user-
-  // activation]) refuses both: no popup event, top URL unchanged (FC5).
-  const popups: string[] = [];
-  page.on('popup', (p) => popups.push(p.url()));
-  page.context().on('page', (p) => popups.push(p.url()));
-  const topBefore = page.url();
-  await course.locator('#escape-popup').click();
-  await expect(course.locator('#click-probe')).toContainText('"popup"', { timeout: 10_000 });
-  await page.waitForTimeout(500);
-  expect(popups, 'FC5 click-initiated popup').toEqual([]);
-  await course.locator('#escape-top').click();
-  await page.waitForTimeout(1000);
-  expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
-  const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
-  expect(clicked.popup, 'FC5 click-initiated window.open').toBe('null');
-  expect(clicked.topNavigation, 'FC5 click-initiated top navigation throws').not.toBe('no-error');
+    // Nothing in the app covers the course: the top page's hit test at the
+    // button's centre lands on the course iframe, and no ancestor of the iframe
+    // is inert, aria-hidden or pointer-events: none.
+    const button = await course.locator('#escape-popup').boundingBox();
+    if (button === null) throw new Error('course button has no box');
+    const cover = await page.evaluate(([x, y]) => {
+      const frame = document.querySelector('iframe[data-testid="training-player-frame"]');
+      const blocked: string[] = [];
+      for (let el = frame; el !== null; el = el.parentElement) {
+        if (el.hasAttribute('inert')) blocked.push(`${el.nodeName} inert`);
+        if (el.getAttribute('aria-hidden') === 'true') blocked.push(`${el.nodeName} aria-hidden`);
+        if (getComputedStyle(el).pointerEvents === 'none') blocked.push(`${el.nodeName} pointer-events:none`);
+      }
+      return { hitIsFrame: frame !== null && document.elementFromPoint(x, y) === frame, blocked };
+    }, [button.x + button.width / 2, button.y + button.height / 2] as const);
+    expect(cover, 'nothing covers or disables the course frame').toEqual({ hitIsFrame: true, blocked: [] });
+
+    // A real click grants the course frame transient activation, which would
+    // let an unsandboxed cross-origin frame open a popup and navigate the top
+    // page. The sandbox (no allow-popups, no allow-top-navigation[-by-user-
+    // activation]) refuses both: no popup event, top URL unchanged (FC5).
+    const popups: string[] = [];
+    page.on('popup', (p) => popups.push(p.url()));
+    context.on('page', (p) => popups.push(p.url()));
+    const topBefore = page.url();
+    await course.locator('#escape-popup').click();
+    await expect(course.locator('#click-probe')).toContainText('"popup"', { timeout: 10_000 });
+    await page.waitForTimeout(500);
+    expect(popups, 'FC5 click-initiated popup').toEqual([]);
+    await course.locator('#escape-top').click();
+    await page.waitForTimeout(1000);
+    expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
+    // The handler ran (a top navigation that went through would have removed the course).
+    await expect(course.locator('#click-probe')).toContainText('"topNavigation"', { timeout: 10_000 });
+    const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
+    // Each attempt really ran inside a trusted, user-activated click.
+    expect(clicked.popupClick, 'FC5 popup click is trusted and user-activated').toEqual({ trusted: true, active: true });
+    expect(clicked.topClick, 'FC5 top-navigation click is trusted and user-activated').toEqual({ trusted: true, active: true });
+    expectNoPopupWindow(clicked.popup, browserName, 'FC5 click-initiated window.open');
+    expect(typeof clicked.topNavigation, 'FC5 click-initiated top navigation recorded').toBe('string');
+    expect(clicked.topNavigation, 'FC5 click-initiated top navigation throws').not.toBe('no-error');
+  } finally {
+    await browser.close();
+  }
 });

@@ -568,11 +568,11 @@ The browser app installs Knowledge Packs and plays training courses like the des
 (ADR-0012). Pack files are kept in this browser profile's private storage (OPFS); the Packs panel
 shows how much browser storage is used and available, and an install is refused when the free
 browser quota is less than twice the pack's unpacked size. Supported browsers: current Chrome and
-Edge. Safari is not supported; Firefox is untested.
+Edge. Firefox is supported (verified by the browser e2e suite in CI). Safari and every other WebKit browser (all iOS/iPadOS browsers) are not supported.
 
 Course content runs on a separate **player origin** so it can never read the app's data. The
 app (not the host) answers course files with the training CSP, whose `worker-src` admits only
-`blob:` and the open course's own files, so a course cannot start one of the app's own scripts on
+`blob:`, the open course's own files and the course service worker's script (which answers a worker request with 404), so a course cannot start one of the app's own scripts on
 that origin as an unconfined worker (ADR-0012). The player origin is resolved once at app start,
 in this order:
 
