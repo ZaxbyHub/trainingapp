@@ -101,7 +101,7 @@ describe('TrainingRelay scoping and serving', () => {
       expect(r.headers['x-content-type-options']).toBe('nosniff');
       expect(r.headers['cross-origin-embedder-policy']).toBe('require-corp');
       expect(r.headers['content-security-policy']).toBe(buildBrowserTrainingCsp(APP, PLAYER, 'pack-a'));
-      expect(r.headers['content-security-policy']).toContain(`worker-src blob: ${PLAYER}/training/pack-a/;`);
+      expect(r.headers['content-security-policy']).toContain(`worker-src blob: ${PLAYER}/training/pack-a/ ${PLAYER}/training/sw.js;`);
     }
   });
 
@@ -237,7 +237,7 @@ describe('relay helpers', () => {
     expect(csp).not.toMatch(/\*/);
   });
 
-  it('pins the course worker sources to blob: and the open pack path, never self (review round 4 F1)', () => {
+  it('pins the course worker sources to blob:, the open pack path and the exact course worker script, never self (review round 4 F1)', () => {
     expect(buildBrowserTrainingCsp(APP, PLAYER, 'pack-a')).toBe(
       [
         "default-src 'self'",
@@ -246,7 +246,7 @@ describe('relay helpers', () => {
         "img-src 'self' data:",
         "font-src 'self' data:",
         "connect-src 'self'",
-        `worker-src blob: ${PLAYER}/training/pack-a/`,
+        `worker-src blob: ${PLAYER}/training/pack-a/ ${PLAYER}/training/sw.js`,
         "frame-src 'self'",
         "media-src 'self' data:",
         "object-src 'none'",
@@ -261,8 +261,23 @@ describe('relay helpers', () => {
     for (const id of ['pack-a', null, 'x']) {
       const workerSrc = /worker-src ([^;]*)/.exec(buildBrowserTrainingCsp(APP, PLAYER, id))?.[1] ?? '';
       expect(workerSrc).not.toContain("'self'");
-      expect(workerSrc).not.toMatch(/\/assets|training-boot|sw\.js/);
+      expect(workerSrc).not.toMatch(/\/assets|training-boot/);
     }
+  });
+
+  it('admits the course worker script by its EXACT URL only while a pack is open (Firefox controlled-worker check, PRR-151-030 R1)', () => {
+    // Firefox starts a dedicated worker in a service-worker-controlled document
+    // only if the document's worker-src admits the controlling worker's script
+    // URL. The source is the exact file: no /training/ directory (other packs),
+    // no other player-origin path, no 'self'. The worker answers that URL 404
+    // itself (player-origin-hosting.test.ts), so it can never run as a worker.
+    expect(courseWorkerSources(PLAYER, 'pack-a').split(' ')).toEqual(['blob:', `${PLAYER}/training/pack-a/`, `${PLAYER}/training/sw.js`]);
+    expect(courseWorkerSources(PLAYER, 'pack-a').split(' ').filter((s) => s.includes('sw.js'))).toEqual([`${PLAYER}/training/sw.js`]);
+    expect(courseWorkerSources(PLAYER, 'pack-a').split(' ')).not.toContain(`${PLAYER}/training/`);
+    for (const closed of [null, '../assets', 'Pack A', 'x']) expect(courseWorkerSources(PLAYER, closed), String(closed)).toBe('blob:');
+    // Second layer behind the service worker's own 404: the relay never resolves that URL to a file.
+    expect(resolveTrainingPath('/training/sw.js')).toEqual({ kind: 'refuse', status: 404 });
+    expect(resolveTrainingPath('/training/sw.js?app=x')).toEqual({ kind: 'refuse', status: 404 });
   });
 
   it('relay refusals pin workers to the open pack too, and to blob: alone when no pack is open', async () => {
@@ -273,6 +288,6 @@ describe('relay helpers', () => {
     relay.setOpenPack('pack-a');
     const refused = await open(relay, '/training/pack-b/story.html');
     expect(refused.status).toBe(404);
-    expect(refused.headers['content-security-policy']).toContain(`worker-src blob: ${PLAYER}/training/pack-a/;`);
+    expect(refused.headers['content-security-policy']).toContain(`worker-src blob: ${PLAYER}/training/pack-a/ ${PLAYER}/training/sw.js;`);
   });
 });

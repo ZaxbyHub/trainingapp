@@ -422,6 +422,37 @@ describe('course worker refusals are never usable documents (FC6)', () => {
     expect(response.headers.get('x-frame-options')).toBe('DENY');
   });
 
+  it('every exact script the course worker-src admits outside the open pack path is refused by the worker itself (PRR-151-030 R1)', async () => {
+    // The course CSP admits the course worker's own script URL (Firefox requires
+    // it of a controlled document that starts a worker). A worker on it must
+    // never run: the fetch handler answers it 404 before any relay is asked,
+    // whatever the relay would say.
+    const listeners = loadWorker(`${PLAYER}/training/sw.js?app=${encodeURIComponent('http://127.0.0.1:4174')}`);
+    let relayAsked = 0;
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event: MessageEvent<{ type: string; id: number }>) => {
+      relayAsked += 1;
+      channel.port1.postMessage({ type: 'open-result', id: event.data.id, status: 200, headers: { 'content-type': 'text/javascript' }, body: 'postMessage(1)' });
+    };
+    listeners.message?.({ data: { type: 'trainingapp-relay-port' }, ports: [channel.port2], source: { url: `${PLAYER}/training-boot.html` } });
+    try {
+      const course = await fetchEvent(listeners, `${PLAYER}/training/pack-a/story.html`);
+      const sources = (/worker-src ([^;]*)/.exec(course.headers.get('content-security-policy') ?? '')?.[1] ?? '').split(' ');
+      const outsidePack = sources.filter((s) => s !== 'blob:' && !s.startsWith(`${PLAYER}/training/pack-a/`));
+      expect(outsidePack).toEqual([`${PLAYER}/training/sw.js`]);
+      const asked = relayAsked;
+      for (const url of outsidePack) {
+        for (const suffix of ['', '?app=x']) {
+          const response = await fetchEvent(listeners, url + suffix);
+          expect(response.status, url + suffix).toBe(404);
+          expect(response.headers.get('content-security-policy')).toContain("default-src 'none'");
+        }
+      }
+      expect(relayAsked, 'the relay is never asked for the course worker script').toBe(asked);
+    } finally {
+      channel.port1.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
