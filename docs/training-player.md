@@ -259,7 +259,7 @@ Courses run on a dedicated player origin instead:
   the open pack's relay path and the course service worker's script `/training/sw.js`
   (CSP matches it percent-decoded, so `sw%2ejs` and `%73w.js` match too; the
   worker itself answers 404, without asking the relay, to any path that decodes,
-  repeatedly, to exactly `/training/sw.js` or does not decode) (on the player origin `'self'` would admit
+  repeatedly, to exactly `/training/sw.js` or does not decode; a path still changing after 8 decode passes is refused too, so the check fails closed) (on the player origin `'self'` would admit
   app assets served without the course CSP); course documents also carry COEP
   `require-corp` (without it the app's COEP blocks the frame). The server
   that answers the player origin serves only static files (course JS can
