@@ -17,7 +17,7 @@ describe('browser course serving mirrors desktop app://training', () => {
     expect({ ...TRAINING_MIME_TYPES }).toEqual({ ...MIME_TYPES });
   });
 
-  it('training CSP = desktop training CSP without app: sources + frame-ancestors pinned to self and the app origin; worker-src pinned to the open pack path', () => {
+  it('training CSP = desktop training CSP without app: sources + frame-ancestors pinned to self and the app origin; worker-src pinned to the open pack path plus the course service worker script', () => {
     const app = 'http://localhost:4183';
     const player = 'http://127.0.0.1:4183';
     const desktopDirectives = buildTrainingCspPolicy()
@@ -27,9 +27,11 @@ describe('browser course serving mirrors desktop app://training', () => {
     // Desktop keeps worker-src 'self' blob: (every successful app://training
     // response carries this CSP, so a 'self' worker stays confined; a 4xx
     // carries the renderer CSP but can never be loaded as a worker script);
-    // the browser pins blob: + the open pack's relay path (review round 4 F1).
+    // the browser pins blob: + the open pack's relay path (review round 4 F1)
+    // + the course service worker script, which Firefox requires the document's
+    // worker-src to admit before it starts any SW-controlled dedicated worker.
     expect(desktopDirectives).toContain("worker-src 'self' blob:");
-    const expected = desktopDirectives.map((d) => (d.startsWith('worker-src ') ? `worker-src blob: ${player}/training/pack-a/` : d));
+    const expected = desktopDirectives.map((d) => (d.startsWith('worker-src ') ? `worker-src blob: ${player}/training/pack-a/ ${player}/training/sw.js` : d));
     const browserDirectives = buildBrowserTrainingCsp(app, player, 'pack-a')
       .split(';')
       .map((d) => d.trim());
