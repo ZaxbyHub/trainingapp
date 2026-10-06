@@ -91,9 +91,11 @@ describe('desktop twin drift (required web-ui job)', () => {
     // worker-src 'self' blob: because every successful app://training
     // response carries the training CSP (a 4xx carries the renderer CSP but
     // can never be a worker script); on the player origin 'self' would admit app assets
-    // served without it, so the browser pins blob: + the open pack's path.
+    // served without it, so the browser pins blob: + the open pack's path
+    // (+ the exact course worker script URL Firefox requires of a controlled
+    // document that starts a worker; that URL never runs as one).
     expect(desktop).toContain("worker-src 'self' blob:");
-    const expected = desktop.map((d) => (d.startsWith('worker-src ') ? `worker-src blob: ${player}/training/pack-a/` : d));
+    const expected = desktop.map((d) => (d.startsWith('worker-src ') ? `worker-src blob: ${player}/training/pack-a/ ${player}/training/sw.js` : d));
     const browser = buildBrowserTrainingCsp(app, player, 'pack-a')
       .split(';')
       .map((d) => d.trim())

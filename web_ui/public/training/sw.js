@@ -31,6 +31,7 @@
 
 var SW_VERSION = 2;
 var TRAINING_PREFIX = '/training/';
+var TRAINING_SW_PATH = '/training/sw.js';
 var RELAY_WAIT_MS = 10000;
 var REQUEST_TIMEOUT_MS = 30000;
 var READ_CHUNK_BYTES = 1024 * 1024;
@@ -84,7 +85,18 @@ function packIdFromPath(pathname) {
   return PACK_ID_PATTERN.test(segment) ? segment : null;
 }
 
-/** The course CSP; in lockstep with buildBrowserTrainingCsp (training-relay.ts). */
+/**
+ * The course CSP; in lockstep with buildBrowserTrainingCsp (training-relay.ts).
+ * worker-src = courseWorkerSources: blob:, the open pack's path and this
+ * worker's own script URL. Firefox lets a document controlled by this worker
+ * start a dedicated worker from a URL only if the document's worker-src also
+ * admits the CONTROLLING service worker's script URL (otherwise: a worker-src
+ * violation naming /training/sw.js?app=..., and the worker never starts; blob:
+ * workers are exempt). Admitting it gives the course nothing new: a dedicated or
+ * shared worker on /training/sw.js is answered 404 by the fetch handler below,
+ * and registering it was already possible through the boot frame (whose policy
+ * admits exactly this URL).
+ */
 function courseCsp(packId) {
   return [
     "default-src 'self'",
@@ -93,7 +105,7 @@ function courseCsp(packId) {
     "img-src 'self' data:",
     "font-src 'self' data:",
     "connect-src 'self'",
-    'worker-src ' + (packId !== null ? 'blob: ' + PLAYER_ORIGIN + TRAINING_PREFIX + packId + '/' : 'blob:'),
+    'worker-src ' + (packId !== null ? 'blob: ' + PLAYER_ORIGIN + TRAINING_PREFIX + packId + '/ ' + PLAYER_ORIGIN + TRAINING_SW_PATH : 'blob:'),
     "frame-src 'self'",
     "media-src 'self' data:",
     "object-src 'none'",
@@ -348,7 +360,7 @@ self.addEventListener('fetch', function (event) {
   }
   // Player clients reach nothing but this origin's /training/ pack paths:
   // no other origin (app origin included), no app shell, no network.
-  if (url.origin !== self.location.origin || url.pathname.indexOf(TRAINING_PREFIX) !== 0 || url.pathname === '/training/sw.js') {
+  if (url.origin !== self.location.origin || url.pathname.indexOf(TRAINING_PREFIX) !== 0 || url.pathname === TRAINING_SW_PATH) {
     event.respondWith(refusal(404, 'Not Found'));
     return;
   }

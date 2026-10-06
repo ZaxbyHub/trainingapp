@@ -36,10 +36,13 @@
  * Observation channel (PRR-151-030, Chromium AND Firefox): each course REPORTS
  * its observations to the app page with postMessage (targetOrigin = the app
  * origin), and the test reads them from a collector it installs in the TOP page.
- * The app is served with COOP same-origin + COEP require-corp, and under those
- * headers Playwright's Firefox cannot attach to any iframe (frame DOM, frame
- * evaluate) nor deliver input into one, so nothing here may depend on reaching
- * into a frame. A report counts only when its event.origin is the player origin
+ * The app is served with COOP same-origin + COEP require-corp, which makes Firefox
+ * run the cross-origin course frame in its own process (Fission), and Playwright's
+ * Firefox cannot attach to an out-of-process iframe (frame DOM, frame evaluate)
+ * nor deliver input into one, so nothing here may depend on reaching into a frame.
+ * The one exception is the click-activation spec, which launches its browser with
+ * Fission off (see NO_FISSION_ENV) and so can click and read inside the frame.
+ * A report counts only when its event.origin is the player origin
  * and its event.source is the course frame's window. On Chromium the in-frame
  * record is also read and must equal the report. The app origin is baked into
  * each fixture (it is known when the zip is built); the fixture also reports
@@ -53,18 +56,30 @@ import JSZip from 'jszip';
 import { expect, test, type Page } from '@playwright/test';
 
 /**
- * The ONE property Firefox cannot exercise (PRR-151-030): a click INSIDE the
- * course frame. Under the app's COOP/COEP, Playwright's Firefox delivers no
- * input into the course frame at all (measured: page.mouse.click on the frame's
- * button, a mouse down/up anywhere on the frame and a focus + Tab + Enter all
- * produced no pointerdown/mousedown/keydown in the course document, while the
- * same document's postMessage reports arrived), and frame locators never
- * resolve. Without a real click there is no user activation, which is the
- * subject of that spec. The script-initiated popup and top-navigation attempts
- * (no activation) DO run on Firefox, in the first spec of this file.
+ * Spec 6 (a REAL click inside the course frame) on Firefox, PRR-151-030 lane I.
+ *
+ * Firefox puts a cross-site iframe of a cross-origin-isolated page in its own
+ * content process (Fission), and Playwright's Firefox cannot deliver input into an
+ * out-of-process iframe: mouse and keyboard events never reach it and frame
+ * locators never resolve. Proven WITHOUT app code by e2e/frame-input/
+ * frame-input.repro.ts (a static COOP+COEP page with a cross-origin iframe gets no
+ * events on Firefox; Chromium, and the same Firefox with Fission disabled, get
+ * them all; stock Firefox over WebDriver BiDi fails the same way for ANY
+ * cross-site iframe, so it is the driver, not these headers). Upstream:
+ * microsoft/playwright#21780 (closed, not planned). Real user input is routed by
+ * Firefox's parent process and is not expected to be affected (not measured by
+ * automation; see the lane I report for PRR-151-030).
+ *
+ * So spec 6 launches its OWN browser with Fission disabled
+ * (MOZ_FORCE_DISABLE_FISSION=1; ignored by Chromium, which runs the same path).
+ * Only the process model changes: the app keeps COOP same-origin + COEP
+ * require-corp (the test asserts crossOriginIsolated), the course frame keeps its
+ * sandbox, CSP and player origin, and the click must be trusted and carry user
+ * activation (asserted inside the course), so the sandbox refusal is exercised
+ * by the Gecko DOM exactly as a user's click would. The other specs keep the
+ * default (Fission on) browser and observe through out-of-band reports.
  */
-const FIREFOX_CLICK_SKIP_REASON =
-  "Firefox: Playwright cannot deliver a real click (mouse or keyboard) into the course frame under the app's COOP same-origin + COEP require-corp headers, so a click-initiated (user-activated) popup/top navigation cannot be produced. Script-initiated attempts are asserted on Firefox in the first spec.";
+const NO_FISSION_ENV = { MOZ_FORCE_DISABLE_FISSION: '1' };
 
 /**
  * How a sandboxed window.open (no allow-popups) is refused differs by engine:
@@ -186,7 +201,10 @@ function builtWorkerAssets(): { classic: string; module: string; shared: string 
  * pdf.js worker, the boot script and the course service worker as dedicated
  * workers, and service worker registrations. Controls: a worker on the pack's
  * own relay-served script and a blob: worker both run, and both stay confined
- * (their fetch to the sink is refused).
+ * (their fetch to the sink is refused). The course service worker's script is
+ * the one non-pack script the course worker-src admits (Firefox requires it of
+ * a controlled document that starts a worker, PRR-151-030 R1); the course
+ * service worker answers it 404 (swScript), so a worker on it still never runs.
  */
 function workerEscapeStoryHtml(appOrigin: string, assets: { classic: string; module: string; shared: string }): string {
   const script = `
@@ -213,6 +231,8 @@ function workerEscapeStoryHtml(appOrigin: string, assets: { classic: string; mod
   await tryWorker('appModule', ${JSON.stringify(assets.module)}, { type: 'module' });
   await tryWorker('bootScript', '/training-boot.js');
   await tryWorker('courseServiceWorker', '/training/sw.js');
+  // The course service worker's answer for its own script URL (the host would answer 200).
+  try { r.swScript = (await fetch('/training/sw.js')).status; } catch (e) { r.swScript = 'threw:' + name(e); }
   // A SharedWorker is governed by worker-src too (review round 5, I1).
   var shared = 'constructed';
   try {
@@ -330,12 +350,18 @@ function clickStoryHtml(appOrigin: string): string {
     r[key] = value;
     out.textContent = JSON.stringify(r);
   }
-  document.getElementById('escape-popup').addEventListener('click', function () {
+  function activation(e) {
+    var ua = navigator.userActivation;
+    return { trusted: e.isTrusted, active: ua ? ua.isActive : 'unsupported' };
+  }
+  document.getElementById('escape-popup').addEventListener('click', function (e) {
+    record('popupClick', activation(e));
     var popup = null;
     try { popup = window.open('about:blank#isolation-click-popup', '_blank'); } catch (e) { popup = 'threw:' + e.name; }
     record('popup', popup === null ? 'null' : typeof popup === 'string' ? popup : 'window');
   });
-  document.getElementById('escape-top').addEventListener('click', function () {
+  document.getElementById('escape-top').addEventListener('click', function (e) {
+    record('topClick', activation(e));
     try { window.top.location.href = appOrigin + '/#isolation-click-hijacked'; record('topNavigation', 'no-error'); }
     catch (e) { record('topNavigation', (e && e.name) || String(e)); }
   });
@@ -821,25 +847,36 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
     attempts: Record<string, string>;
     controls: Record<string, { state?: string; fetch?: string }>;
     register: Record<string, string>;
+    swScript: number | string;
     ancestorOrigin: string | null;
   }>(page, 'worker-probe', appOrigin, 90_000);
   await expectFrameRecordMatches(page, browserName, '#worker-probe', r);
   expect(r.ancestorOrigin, 'fixture fidelity: embedder origin').toBe(appOrigin);
   test.info().annotations.push({ type: 'worker-probe', description: `${JSON.stringify(r)} sink hits: ${JSON.stringify(hits)}` });
 
-  // Every same-origin script outside the open pack is refused by worker-src
-  // before it runs: a violation per target, and none of them ever messages.
+  // Every same-origin script outside the open pack (except the course service
+  // worker's own script, below) is refused by worker-src before it runs: a
+  // violation per target, and none of them ever messages.
   for (const [label, target] of [
     ['appClassic', assets.classic],
     ['appModule', assets.module],
     ['bootScript', '/training-boot.js'],
-    ['courseServiceWorker', '/training/sw.js'],
     ['appShared', assets.shared],
   ] as const) {
     // Soft: every refused target is reported, not only the first.
     expect.soft(r.violations, `F1 ${label}: worker-src violation for ${target}`).toContain(`worker-src ${player.origin}${target}`);
     expect.soft(r.attempts[label], `F1 ${label}: a worker that runs`).not.toBe('running');
   }
+  // The course service worker's script is admitted by the course worker-src
+  // (Firefox starts a worker in a controlled document only if the document's
+  // worker-src admits the controlling worker's script URL, PRR-151-030 R1), so
+  // it is refused one step later: the course service worker answers its own
+  // script URL 404, and a worker on it fails to start. No violation names it
+  // (the policy admits it; the refusal is the worker's). Soft, so the pack
+  // worker row below still reports when the admission regresses.
+  expect.soft(r.swScript, 'F1 courseServiceWorker: the course service worker refuses its own script URL').toBe(404);
+  expect.soft(r.attempts.courseServiceWorker, 'F1 courseServiceWorker: a worker on the course service worker script').toBe('error');
+  expect.soft(r.violations.filter((v) => v.includes('/training/sw.js')), 'F1 courseServiceWorker: admitted by worker-src').toEqual([]);
   // Service workers: an app asset is refused by worker-src; a pack-path
   // script is fetched past the relay and gets the host's reserved 404.
   expect(r.register.appAsset ?? '').toMatch(/^rejected:/);
@@ -850,50 +887,88 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
   expect(r.controls.blobWorker).toEqual({ state: 'running', fetch: 'TypeError' });
   // The pack-script control is NOT refused by worker-src on either engine.
   expect(r.violations.filter((v) => v.includes(`/training/${WORKER_PACK}/`)), 'F1 pack worker refused by worker-src').toEqual([]);
-  if (browserName === 'firefox') {
-    // Known Firefox product limitation (lane G report, PRR-151-030 follow-up): a
-    // worker whose script the course service worker serves does not start in
-    // Firefox (the course document is crossOriginIsolated there; the script is
-    // served 200 text/javascript, COEP require-corp). It never runs, so it can
-    // never reach the sink (the hits row below). When that is fixed this row
-    // fails and must become the Chromium row.
-    expect(r.controls.packWorker, 'F1 pack worker on Firefox (known limitation)').toEqual({ state: 'error' });
-  } else {
-    expect(r.controls.packWorker).toEqual({ state: 'running', fetch: 'TypeError' });
-  }
+  // Both engines: a worker on the pack's own script runs (Firefox too, since
+  // the course worker-src admits the controlling service worker's script URL,
+  // PRR-151-030 R1) and its fetch to the sink is refused by the course CSP.
+  expect(r.controls.packWorker, 'F1 pack worker runs, confined').toEqual({ state: 'running', fetch: 'TypeError' });
   expect(hits, 'F1 worker egress').toEqual([]);
 });
 
-test('a click inside the course frame cannot open a popup or navigate the top page', async ({ page, browserName }) => {
-  test.skip(browserName === 'firefox', FIREFOX_CLICK_SKIP_REASON);
-  await page.goto('/');
-  const appOrigin = new URL(page.url()).origin;
-  await page.getByRole('button', { name: 'Documents', exact: true }).click();
-  await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
-  await install(page, await packZip(CLICK_PACK, '1.0.0', { 'story.html': clickStoryHtml(appOrigin) }), 'click.zip', CLICK_PACK, '1.0.0');
-  await page.getByRole('button', { name: 'Training', exact: true }).click();
-  const option = page.getByTestId('training-pack-select').locator('option', { hasText: CLICK_PACK });
-  await expect(option).toHaveCount(1, { timeout: 30_000 });
-  await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
-  const course = page.frameLocator('iframe[data-testid="training-player-frame"]');
-  await expect(course.locator('#escape-popup')).toBeVisible({ timeout: 60_000 });
+test('a click inside the course frame cannot open a popup or navigate the top page', async ({
+  browserName,
+  playwright,
+  launchOptions,
+  headless,
+  baseURL,
+  viewport,
+}) => {
+  test.setTimeout(150_000);
+  // Own browser, Fission off (see NO_FISSION_ENV). Same loopback-only network rule
+  // as the beforeEach hook, which only covers the fixture page.
+  const browser = await playwright[browserName].launch({ ...launchOptions, headless, env: { ...process.env, ...launchOptions.env, ...NO_FISSION_ENV } });
+  try {
+    const context = await browser.newContext({ baseURL, viewport });
+    await context.route('**/*', (route) => {
+      const host = new URL(route.request().url()).hostname;
+      return host === '127.0.0.1' || host === 'localhost' ? route.fallback() : route.abort();
+    });
+    const page = await context.newPage();
+    await page.goto('/');
+    const appOrigin = new URL(page.url()).origin;
+    // The app's isolation is unchanged by the process-model switch.
+    expect(await page.evaluate(() => self.crossOriginIsolated), 'app page crossOriginIsolated').toBe(true);
+    await page.getByRole('button', { name: 'Documents', exact: true }).click();
+    await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+    await install(page, await packZip(CLICK_PACK, '1.0.0', { 'story.html': clickStoryHtml(appOrigin) }), 'click.zip', CLICK_PACK, '1.0.0');
+    await page.getByRole('button', { name: 'Training', exact: true }).click();
+    const option = page.getByTestId('training-pack-select').locator('option', { hasText: CLICK_PACK });
+    await expect(option).toHaveCount(1, { timeout: 30_000 });
+    await page.getByTestId('training-pack-select').selectOption((await option.getAttribute('value')) ?? '');
+    const course = page.frameLocator('iframe[data-testid="training-player-frame"]');
+    await expect(course.locator('#escape-popup')).toBeVisible({ timeout: 60_000 });
 
-  // A real click grants the course frame transient activation, which would
-  // let an unsandboxed cross-origin frame open a popup and navigate the top
-  // page. The sandbox (no allow-popups, no allow-top-navigation[-by-user-
-  // activation]) refuses both: no popup event, top URL unchanged (FC5).
-  const popups: string[] = [];
-  page.on('popup', (p) => popups.push(p.url()));
-  page.context().on('page', (p) => popups.push(p.url()));
-  const topBefore = page.url();
-  await course.locator('#escape-popup').click();
-  await expect(course.locator('#click-probe')).toContainText('"popup"', { timeout: 10_000 });
-  await page.waitForTimeout(500);
-  expect(popups, 'FC5 click-initiated popup').toEqual([]);
-  await course.locator('#escape-top').click();
-  await page.waitForTimeout(1000);
-  expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
-  const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
-  expect(clicked.popup, 'FC5 click-initiated window.open').toBe('null');
-  expect(clicked.topNavigation, 'FC5 click-initiated top navigation throws').not.toBe('no-error');
+    // Nothing in the app covers the course: the top page's hit test at the
+    // button's centre lands on the course iframe, and no ancestor of the iframe
+    // is inert, aria-hidden or pointer-events: none.
+    const button = await course.locator('#escape-popup').boundingBox();
+    if (button === null) throw new Error('course button has no box');
+    const cover = await page.evaluate(([x, y]) => {
+      const frame = document.querySelector('iframe[data-testid="training-player-frame"]');
+      const blocked: string[] = [];
+      for (let el = frame; el !== null; el = el.parentElement) {
+        if (el.hasAttribute('inert')) blocked.push(`${el.nodeName} inert`);
+        if (el.getAttribute('aria-hidden') === 'true') blocked.push(`${el.nodeName} aria-hidden`);
+        if (getComputedStyle(el).pointerEvents === 'none') blocked.push(`${el.nodeName} pointer-events:none`);
+      }
+      return { hitIsFrame: frame !== null && document.elementFromPoint(x, y) === frame, blocked };
+    }, [button.x + button.width / 2, button.y + button.height / 2] as const);
+    expect(cover, 'nothing covers or disables the course frame').toEqual({ hitIsFrame: true, blocked: [] });
+
+    // A real click grants the course frame transient activation, which would
+    // let an unsandboxed cross-origin frame open a popup and navigate the top
+    // page. The sandbox (no allow-popups, no allow-top-navigation[-by-user-
+    // activation]) refuses both: no popup event, top URL unchanged (FC5).
+    const popups: string[] = [];
+    page.on('popup', (p) => popups.push(p.url()));
+    context.on('page', (p) => popups.push(p.url()));
+    const topBefore = page.url();
+    await course.locator('#escape-popup').click();
+    await expect(course.locator('#click-probe')).toContainText('"popup"', { timeout: 10_000 });
+    await page.waitForTimeout(500);
+    expect(popups, 'FC5 click-initiated popup').toEqual([]);
+    await course.locator('#escape-top').click();
+    await page.waitForTimeout(1000);
+    expect(page.url(), 'FC5 click-initiated top navigation').toBe(topBefore);
+    // The handler ran (a top navigation that went through would have removed the course).
+    await expect(course.locator('#click-probe')).toContainText('"topNavigation"', { timeout: 10_000 });
+    const clicked = JSON.parse((await course.locator('#click-probe').textContent()) ?? '{}') as Record<string, unknown>;
+    // Each attempt really ran inside a trusted, user-activated click.
+    expect(clicked.popupClick, 'FC5 popup click is trusted and user-activated').toEqual({ trusted: true, active: true });
+    expect(clicked.topClick, 'FC5 top-navigation click is trusted and user-activated').toEqual({ trusted: true, active: true });
+    expectNoPopupWindow(clicked.popup, browserName, 'FC5 click-initiated window.open');
+    expect(typeof clicked.topNavigation, 'FC5 click-initiated top navigation recorded').toBe('string');
+    expect(clicked.topNavigation, 'FC5 click-initiated top navigation throws').not.toBe('no-error');
+  } finally {
+    await browser.close();
+  }
 });
