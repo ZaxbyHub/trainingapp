@@ -29,7 +29,7 @@ build; the repo uses caret ranges, so do not exact-pin).
 ## Screenshot baselines (Windows only)
 
 Baselines are rendered by Windows Chromium and stored under
-`e2e/visual/__screenshots__/win32/` (64 PNGs: chat, documents and settings 16 each, training 8, overlays 8). Ubuntu CI never runs the pixel spec;
+`e2e/visual/__screenshots__/win32/` (88 PNGs: chat, documents and settings 16 each, training 8, overlays 8, crash page 8, boot screen 16 (loading and error)). The crash and boot-screen states cover surfaces outside the app shell (the outer ErrorBoundary fallback and the desktop boot gate, where only `<body>` paints); the crash is forced by making `navigator.userAgent` throw in the test page (no production hook) and the boot gate by stubbing `window.desktopApi`. The training player's course `<iframe>` frame is deliberately NOT baselined: its rounded-corner rasterization differs by 1/255 on a few pixels between runs of the same build (light theme), which zero tolerance cannot absorb. Ubuntu CI never runs the pixel spec;
 the non-required `web-ui-visual-baseline` job (`windows-latest`) runs it WITHOUT `--update-snapshots` on a clean build with no staged weights, and
 may be red if the runner's fonts differ from the generating machine (no tolerance is added). Outside CI,
 running it on Linux or macOS (only `win32/` baselines exist) does not diff: the
