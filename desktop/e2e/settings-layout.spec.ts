@@ -12,46 +12,31 @@
  * renderer (stub engine + hash embedder; no weights), same recipe as
  * renderer-smoke.spec.ts.
  */
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import os from 'node:os';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { closeAllApps, closeApp, launchElectron, makeTempDir, makeUserDataDir, removeTempDir } from './launch-helpers.js';
 
 let storeDir: string;
 let storePath: string;
+/** Temp Electron profile (--user-data-dir): never the developer's real one. */
+let userDataDir: string;
 
 test.beforeAll(() => {
-  storeDir = mkdtempSync(path.join(os.tmpdir(), 'settings-layout-store-'));
+  storeDir = makeTempDir('settings-layout-store-');
   storePath = path.join(storeDir, 'profiles', 'default', 'store.sqlite');
   mkdirSync(path.dirname(storePath), { recursive: true });
+  userDataDir = makeUserDataDir(storeDir);
 });
 
-test.afterAll(() => {
-  try {
-    rmSync(storeDir, { recursive: true, force: true });
-  } catch {
-    /* windows tmp cleanup race is fine in teardown */
-  }
+test.afterAll(async () => {
+  await closeAllApps();
+  removeTempDir(storeDir);
 });
-
-async function closeApp(app: ElectronApplication): Promise<void> {
-  await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 8_000))]);
-  try {
-    if (app.process().exitCode === null) {
-      spawnSync('taskkill', ['/PID', String(app.process().pid), '/T', '/F'], {
-        stdio: 'ignore',
-      });
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-    }
-  } catch {
-    /* process already gone */
-  }
-}
 
 async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await _electron.launch({
-    args: ['.'],
+  const { app, page } = await launchElectron({
+    userDataDir,
     env: {
       ...process.env,
       ELECTRON_START_URL: 'http://127.0.0.1:4173',
@@ -59,10 +44,8 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
       TRAININGAPP_DESKTOP_ENGINE: 'stub',
       TRAININGAPP_DESKTOP_EMBEDDER: 'hash',
       TRAININGAPP_DESKTOP_STORE_PATH: storePath,
-    } as Record<string, string>,
+    },
   });
-  const page = await app.firstWindow();
-  await page.waitForLoadState('domcontentloaded');
   await page.waitForTimeout(2_000);
   return { app, page };
 }
@@ -205,7 +188,7 @@ test.describe.serial('settings layout guardrail', () => {
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.waitForTimeout(400);
       const scrollTargets = await page.evaluate(() => {
-        const hosts: HTMLElement[] = [];
+        const hosts: Element[] = [];
         for (const el of document.querySelectorAll('main, div')) {
           const s = getComputedStyle(el);
           if (s.overflowY === 'auto' && el.scrollHeight > el.clientHeight + 1) hosts.push(el);

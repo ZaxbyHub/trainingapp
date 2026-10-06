@@ -12,11 +12,10 @@
  * The stub engine also exercises AC5's gate semantics: /status/models
  * reports engine 'stub', so the first-run gate must NOT block sending.
  */
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import os from 'node:os';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { closeAllApps, closeApp, launchElectron, makeTempDir, makeUserDataDir, removeTempDir } from './launch-helpers.js';
 
 const DOC_TEXT = [
   'Training module 1: workplace safety overview.',
@@ -26,50 +25,28 @@ const DOC_TEXT = [
 
 let storeDir: string;
 let storePath: string;
+/** Temp Electron profile, shared by both launches (the restart leg). */
+let userDataDir: string;
 const T0 = Date.now();
 const t = (): string => `[smoke ${Math.round((Date.now() - T0) / 100) / 10}s]`;
 
 test.beforeAll(() => {
-  storeDir = mkdtempSync(path.join(os.tmpdir(), 'issue67-e2e-store-'));
+  storeDir = makeTempDir('issue67-e2e-store-');
   storePath = path.join(storeDir, 'profiles', 'default', 'store.sqlite');
   mkdirSync(path.dirname(storePath), { recursive: true });
+  userDataDir = makeUserDataDir(storeDir);
 });
 
-test.afterAll(() => {
-  try {
-    rmSync(storeDir, { recursive: true, force: true });
-  } catch {
-    /* windows tmp cleanup race is fine in teardown */
-  }
+test.afterAll(async () => {
+  // Teardown (launch-helpers.ts): close any app a failing test left running, then
+  // remove the workspace (the app holds files in its temp profile while it runs).
+  await closeAllApps();
+  removeTempDir(storeDir);
 });
-
-/**
- * Teardown helper: prefer graceful close, but never let a wedged quit hang
- * the suite — on Windows the backend's keep-alive sockets can outlive quit.
- * The kill path is last-resort teardown after all assertions have passed.
- */
-async function closeApp(app: ElectronApplication): Promise<void> {
-  await Promise.race([
-    app.close(),
-    new Promise((resolve) => setTimeout(resolve, 8_000)),
-  ]);
-  try {
-    if (app.process().exitCode === null) {
-      // Kill the WHOLE tree: surviving GPU/renderer children keep the
-      // single-instance lock and block the relaunched instance.
-      spawnSync('taskkill', ['/PID', String(app.process().pid), '/T', '/F'], {
-        stdio: 'ignore',
-      });
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-    }
-  } catch {
-    /* process already gone */
-  }
-}
 
 async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await _electron.launch({
-    args: ['.'],
+  return launchElectron({
+    userDataDir,
     env: {
       ...process.env,
       ELECTRON_START_URL: 'http://127.0.0.1:4173',
@@ -86,26 +63,27 @@ async function launchApp(): Promise<{ app: ElectronApplication; page: Page }> {
       // default 1ms finishes a stub answer before a click can land).
       TRAININGAPP_STUB_TOKEN_DELAY_MS: '600',
       TRAININGAPP_DESKTOP_STORE_PATH: storePath,
-    } as Record<string, string>,
+    },
+    onLaunched: (app) => {
+      app.process().stdout?.on('data', (d: Buffer) => {
+        for (const line of d.toString().split('\n')) {
+          if (line.includes('[stop-debug]') || line.includes('[cors-debug]')) console.log(`[backend] ${line.trim().slice(0, 160)}`);
+        }
+      });
+      app.process().stderr?.on('data', (d: Buffer) => {
+        for (const line of d.toString().split('\n')) {
+          if (line.includes('[stop-debug]') || line.includes('[cors-debug]') || line.includes('[trainingapp-backend]')) {
+            console.log(`[backend-err] ${line.trim().slice(0, 160)}`);
+          }
+        }
+      });
+    },
+    onWindow: (page) => {
+      page.on('console', (msg) => {
+        if (msg.type() === 'error') console.log(`${t()} [renderer-error] ${msg.text().slice(0, 240)}`);
+      });
+    },
   });
-  app.process().stdout?.on('data', (d: Buffer) => {
-    for (const line of d.toString().split('\n')) {
-      if (line.includes('[stop-debug]') || line.includes('[cors-debug]')) console.log(`[backend] ${line.trim().slice(0, 160)}`);
-    }
-  });
-  app.process().stderr?.on('data', (d: Buffer) => {
-    for (const line of d.toString().split('\n')) {
-      if (line.includes('[stop-debug]') || line.includes('[cors-debug]') || line.includes('[trainingapp-backend]')) {
-        console.log(`[backend-err] ${line.trim().slice(0, 160)}`);
-      }
-    }
-  });
-  const page = await app.firstWindow();
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') console.log(`${t()} [renderer-error] ${msg.text().slice(0, 240)}`);
-  });
-  await page.waitForLoadState('domcontentloaded');
-  return { app, page };
 }
 
 test.describe.serial('renderer smoke (AC1)', () => {

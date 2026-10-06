@@ -42,6 +42,11 @@ jobs:
       - name: Install desktop dependencies
         run: npm --prefix desktop ci --no-audit --no-fund
 
+      # critic-final-2 D4: desktop/tsconfig.json covers main/** only, so the
+      # Playwright-under-Electron specs (desktop/e2e) get their own typecheck.
+      - name: Typecheck the desktop e2e specs
+        run: npm --prefix desktop run typecheck:e2e
+
       # Issue #73: packtool must be built BEFORE the desktop vitest run — the
       # c6-prebuilt-install test shells out to node packtool/dist/cli.js to
       # build a real fixture pack for the zero-re-embed install test.

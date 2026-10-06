@@ -63,14 +63,14 @@
  * zipping the staged contracts/fixtures/packs/bundled-min folder
  * (pack.json + docs/) — no checked-in zip artifact is used.
  */
-import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
-import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { closeAllApps, closeApp, launchElectron, makeUserDataDir, removeTempDir } from './launch-helpers.js';
 
 const THIS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -96,6 +96,8 @@ const T0 = Date.now();
 const t = (): string => `[c7-packs ${Math.round((Date.now() - T0) / 100) / 10}s]`;
 
 interface PacksWorkspace {
+  /** Temp Electron profile (--user-data-dir), shared by every launch on this workspace. */
+  userDataDir: string;
   root: string;
   storePath: string;
   manifestPath: string;
@@ -152,12 +154,12 @@ function makeWorkspace(prefix: string, requiredPacks: Array<{ id: string; versio
     packs: requiredPacks,
   };
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
-  return { root, storePath, manifestPath, packsRoot };
+  return { root, userDataDir: makeUserDataDir(root), storePath, manifestPath, packsRoot };
 }
 
 async function launchApp(workspace: PacksWorkspace, extraEnv: Record<string, string> = {}): Promise<{ app: ElectronApplication; page: Page }> {
-  const app = await _electron.launch({
-    args: ['.'],
+  return launchElectron({
+    userDataDir: workspace.userDataDir,
     cwd: path.join(REPO_ROOT, 'desktop'),
     env: {
       ...process.env,
@@ -170,35 +172,22 @@ async function launchApp(workspace: PacksWorkspace, extraEnv: Record<string, str
       TRAININGAPP_DESKTOP_MANIFEST: workspace.manifestPath,
       TRAININGAPP_FIRST_RUN_FORCE: '1',
       ...extraEnv,
-    } as Record<string, string>,
+    },
+    onLaunched: (app) => {
+      app.process().stderr?.on('data', (d: Buffer) => {
+        for (const line of d.toString().split('\n')) {
+          if (line.includes('[trainingapp-desktop]') || line.includes('[trainingapp-backend]')) {
+            console.log(`${t()} [main] ${line.trim().slice(0, 200)}`);
+          }
+        }
+      });
+    },
+    onWindow: (page) => {
+      page.on('console', (msg) => {
+        if (msg.type() === 'error') console.log(`${t()} [renderer-error] ${msg.text().slice(0, 240)}`);
+      });
+    },
   });
-  app.process().stderr?.on('data', (d: Buffer) => {
-    for (const line of d.toString().split('\n')) {
-      if (line.includes('[trainingapp-desktop]') || line.includes('[trainingapp-backend]')) {
-        console.log(`${t()} [main] ${line.trim().slice(0, 200)}`);
-      }
-    }
-  });
-  const page = await app.firstWindow();
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') console.log(`${t()} [renderer-error] ${msg.text().slice(0, 240)}`);
-  });
-  await page.waitForLoadState('domcontentloaded');
-  return { app, page };
-}
-
-/** Prefer graceful close; never let a wedged quit hang the suite (Windows
- *  keep-alive sockets — same teardown as renderer-smoke). */
-async function closeApp(app: ElectronApplication): Promise<void> {
-  await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 8_000))]);
-  try {
-    if (app.process().exitCode === null) {
-      spawnSync('taskkill', ['/PID', String(app.process().pid), '/T', '/F'], { stdio: 'ignore' });
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-    }
-  } catch {
-    /* already gone */
-  }
 }
 
 /**
@@ -253,16 +242,12 @@ async function buildPackZip(fixtureDir: string): Promise<Buffer> {
 
 const workspaces: string[] = [];
 
-test.afterAll(() => {
+test.afterAll(async () => {
+  // Close any app a failing test left running first: it holds files in its temp profile.
+  await closeAllApps();
   while (workspaces.length > 0) {
     const dir = workspaces.pop();
-    if (dir !== undefined) {
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-      } catch {
-        /* windows tmp cleanup race is fine in teardown */
-      }
-    }
+    if (dir !== undefined) removeTempDir(dir);
   }
 });
 

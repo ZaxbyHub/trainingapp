@@ -55,7 +55,7 @@ Informational (never blocks merge): the 3-leg Tests matrix, `perf-thresholds` (f
 
 ### 4. Desktop Build (`desktop-build.yml`) — workflow-level path filter (`desktop/**`, `web_ui/**`, `contracts/**`, `packtool/**`) — informational
 
-**Jobs:** Electron shell build (unsigned NSIS, fixture models, E1 manifest gate, packaged-boot smoke per #133/#131), renderer Playwright-under-Electron (#67), Electron-backend conformance (#61), store interop + pack schema/parity (#63/#68/#70). Its workflow-level `paths:` filter is safe because none of its checks are required.
+**Jobs:** Electron shell build (unsigned NSIS, fixture models, E1 manifest gate, packaged-boot smoke per #133/#131; also typechecks the `desktop/e2e` specs, `npm --prefix desktop run typecheck:e2e`), renderer Playwright-under-Electron (#67), Electron-backend conformance (#61), store interop + pack schema/parity (#63/#68/#70). Its workflow-level `paths:` filter is safe because none of its checks are required.
 
 ### 5. Security Scan (`security.yml`) — unfiltered — required
 
