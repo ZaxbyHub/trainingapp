@@ -13,11 +13,23 @@
  *   5. inline `style={...}` carries geometry keys only (no color / spacing / border / font)
  *   6. `var(--x, fallback)` only for the exact sanctioned pairs in SANCTIONED_FALLBACKS (a fallback
  *      masks an UNDEFINED token); a stale allow-list entry fails
- *   7. no imperative style writes in .ts/.tsx (`el.style.color = ...`, `style.setProperty('color', ...)`,
- *      cssText, insertRule, setAttribute('style'), ...) beyond geometry and the enumerated allow-list
+ *   7. no imperative style writes in .ts/.tsx beyond geometry and the enumerated allow-list:
+ *      - `el.style.color = ...`, `style.setProperty('color', ...)`, cssText, setAttribute('style')
+ *      - the style object escaping (`const s = el.style`, `{ style } = el`, `Object.assign(el.style, ..)`,
+ *        `el['style']`), because an alias hides every later write; `.style.<prop>` access stays legal
+ *      - `attributeStyleMap`, attribute-node and setAttributeNS style writes
+ *      - injected markup/sheets: a `<style` element (JSX or string), `style="..."` markup, createElement('style'),
+ *        rel=stylesheet, the HTML sinks innerHTML/outerHTML/insertAdjacentHTML/createContextualFragment/
+ *        document.write/srcdoc, and the stylesheet APIs (CSSStyleSheet, replaceSync, insertRule, deleteRule,
+ *        addRule, cssRules, styleSheets, adoptedStyleSheets)
  *
- * Known limit of the comment stripper: a `//` preceded by whitespace inside JSX *text* is read as a line
- * comment (JSX text cannot be told apart from code without a parser); `http://x` is handled.
+ * TS/TSX comments are found with the TypeScript parser (not a regex scanner), so a `//` in JSX text, a URL,
+ * a string, a template or a regex literal is never mistaken for a comment.
+ *
+ * Residual (a lint, not a security boundary): `Reflect.set` / `Object.defineProperty` on a style object,
+ * `setAttribute(nameVariable, ...)` with a computed name, `React.createElement('div', { style })` /
+ * `cloneElement` props (rule 5 reads JSX `style={...}` only), a style value assembled across files, and
+ * eval/Function. Code that does any of these must be caught in review.
  *
  * Each rule is a pure function with a self-test that feeds it a violating fixture, so a rule
  * that silently stops matching fails here rather than passing vacuously. The per-surface
@@ -25,6 +37,7 @@
  */
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { COLOR_LITERAL_RE, findNamedColors } from './color-literals';
 import { RETIRED_TOKEN_RE } from './retired-tokens';
@@ -122,50 +135,34 @@ function skipBraces(t: string, i: number): number {
   return j;
 }
 
-/** Strips // and block comments from TS/TSX/JSX, leaving string, template and regex literals intact. */
-function stripTsComments(t: string): string {
+/**
+ * Blanks every comment of one TS/TSX text (comment characters become spaces, newlines stay), leaving
+ * strings, templates and regex literals untouched. Comments are located with the TypeScript parser: the
+ * trivia before each token, JSX text skipped (a `//` there is text). `.ts` files parse as TS, not TSX, so
+ * `<T>x` assertions stay valid.
+ */
+function stripTsComments(t: string, tsx = true): string {
+  const sf = ts.createSourceFile(tsx ? 'x.tsx' : 'x.ts', t, ts.ScriptTarget.Latest, true, tsx ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const spans = new Map<number, number>();
+  const collect = (pos: number): void => {
+    for (const r of [...(ts.getLeadingCommentRanges(t, pos) ?? []), ...(ts.getTrailingCommentRanges(t, pos) ?? [])]) spans.set(r.pos, r.end);
+  };
+  const visit = (n: ts.Node): void => {
+    if (n.kind === ts.SyntaxKind.JsxText) return;
+    if (n.kind >= ts.SyntaxKind.FirstJSDocNode && n.kind <= ts.SyntaxKind.LastJSDocNode) return;
+    const kids = n.getChildren(sf);
+    if (kids.length === 0) collect(n.getFullStart());
+    else kids.forEach(visit);
+  };
+  visit(sf);
   let out = '';
-  let i = 0;
-  while (i < t.length) {
-    const c = t[i];
-    if ((c === '"' || c === "'") && /[\w$]$/.test(out)) {
-      // An apostrophe/quote glued to a word is JSX text (Don't), not a string opener.
-      out += c;
-      i++;
-    } else if (c === '"' || c === "'" || c === '`') {
-      const j = skipString(t, i);
-      out += t.slice(i, j);
-      i = j;
-    } else if (c === '/' && t[i + 1] === '/' && t[i - 1] === ':' && !/\s/.test(t[i + 2] ?? ' ')) {
-      // `http://x` in JSX text: a URL scheme, not a line comment (a real `key: // note` has a space after the slashes).
-      out += '//';
-      i += 2;
-    } else if (c === '/' && t[i + 1] === '/') {
-      while (i < t.length && t[i] !== '\n') i++;
-    } else if (c === '/' && t[i + 1] === '*') {
-      const e = t.indexOf('*/', i + 2);
-      const end = e < 0 ? t.length : e + 2;
-      out += t.slice(i, end).replace(/[^\n]/g, ' ');
-      i = end;
-    } else if (c === '/' && /(^|[(,=:[!&|?{};])\s*$/.test(out)) {
-      // Regex literal: copy through the closing slash (a `/` or quote inside must not start a comment/string).
-      let j = i + 1;
-      let inClass = false;
-      while (j < t.length && t[j] !== '\n') {
-        if (t[j] === '\\') { j += 2; continue; }
-        if (t[j] === '[') inClass = true;
-        else if (t[j] === ']') inClass = false;
-        else if (t[j] === '/' && !inClass) break;
-        j++;
-      }
-      out += t.slice(i, j + 1);
-      i = j + 1;
-    } else {
-      out += c;
-      i++;
-    }
+  let at = 0;
+  for (const [pos, end] of [...spans].sort((x, y) => x[0] - y[0])) {
+    if (pos < at) continue;
+    out += t.slice(at, pos) + t.slice(pos, end).replace(/[^\n]/g, ' ');
+    at = end;
   }
-  return out;
+  return out + t.slice(at);
 }
 
 /** Strips block comments from CSS; quoted strings are copied through (a `"/*"` in `content:` is not a comment). */
@@ -197,7 +194,8 @@ function stripCssComments(t: string): string {
   return out;
 }
 
-const strip = (rel: string, text: string): string => (rel.endsWith('.css') ? stripCssComments(text) : stripTsComments(text));
+const strip = (rel: string, text: string): string =>
+  rel.endsWith('.css') ? stripCssComments(text) : stripTsComments(text, rel.endsWith('.tsx'));
 
 // ---------------------------------------------------------------------------------------------
 // Rules (pure; each takes comment-stripped text)
@@ -328,18 +326,37 @@ function findInlineStyleViolations(text: string): string[] {
   return out;
 }
 
-/** Imperative style writes in one comment-stripped TS/TSX text (rule 7). Geometry properties are legal. */
+/** Stylesheet-construction APIs: any mention is a way to ship CSS the CSS-file rules never see. */
+const SHEET_API = /\b(?:CSSStyleSheet|replaceSync|insertRule|deleteRule|addRule|removeRule|cssRules|styleSheets|adoptedStyleSheets)\b/g;
+/** HTML sinks: markup that can carry a `<style>` or `style="..."` (banned outright; a concatenated string defeats a content check). */
+const HTML_SINK = /\b(?:innerHTML|outerHTML|insertAdjacentHTML|createContextualFragment|dangerouslySetInnerHTML)\b|\bdocument\.write(?:ln)?\b|\bsrcdoc\b/gi;
+
+/**
+ * Imperative style writes in one comment-stripped TS/TSX text (rule 7). Geometry properties are legal.
+ * Labels are deterministic (the allow-list and its stale-entry check key on `file|label`).
+ */
 function findImperativeStyleWrites(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/\.style\.(\w+)\s*(?:=(?!=)|\+=)/g)) if (!GEOMETRY_KEYS.has(m[1])) out.push(m[1]);
-  for (const m of text.matchAll(/\bstyle\.setProperty\(\s*(?:(['"`])([^'"`]*)\1|([^'"`\s)][^,)]*))/g)) {
+  for (const m of text.matchAll(/\.style\s*\??\.\s*(\w+)\s*(?:=(?!=)|\+=)/g)) if (!GEOMETRY_KEYS.has(m[1])) out.push(m[1]);
+  for (const m of text.matchAll(/\bstyle\s*\??\.\s*setProperty\s*\(\s*(?:(['"`])([^'"`]*)\1|([^'"`\s)][^,)]*))/g)) {
     const name = m[2] ?? '<dynamic>';
     if (!RUNTIME_PROP_NAMES.includes(name)) out.push(`setProperty(${name})`);
   }
-  if (/\.style\[/.test(text)) out.push('style[...]');
-  if (/\binsertRule\b|\badoptedStyleSheets\b/.test(text)) out.push('insertRule/adoptedStyleSheets');
-  if (/setAttribute\(\s*['"`]style['"`]/.test(text)) out.push("setAttribute('style')");
+  if (/\bstyle\s*\??\.\s*setProperty\b(?!\s*\()/.test(text)) out.push('style.setProperty (unbound)');
+  // The style object escaping into a variable, argument or property hides every later write through the alias.
+  if (/\.style\b(?![\w$-])(?!\s*\??\.\s*\w)/.test(text)) out.push('style (aliased)');
+  if (/\[\s*['"`]style['"`]\s*\]/.test(text) || /\.style\s*\??\.?\s*\[/.test(text)) out.push('style[...]');
+  if (/\{[^{}]*\bstyle\b[^{}]*\}\s*=(?![=>])/.test(text)) out.push('{ style } = ...');
+  if (/\battributeStyleMap\b/.test(text)) out.push('attributeStyleMap');
+  if (/\bsetAttribute(?:NS)?\([^)]*['"`]style['"`]/.test(text)) out.push("setAttribute('style')");
+  if (/\b(?:get|set)AttributeNode(?:NS)?\b|\battributes\s*(?:\.\s*style\b|\[\s*['"`]style)/.test(text)) out.push('style attribute node');
   if (/Object\.assign\([^;]*\.style\b/.test(text)) out.push('Object.assign(...style)');
+  if (/<style\b/i.test(text)) out.push('<style>');
+  if (/(?<![\w$.])(?<!(?:const|let|var)\s+)style\s*=\s*\\?["']/.test(text)) out.push('style="..."');
+  if (/\bcreateElement(?:NS)?\([^)]*['"`]style['"`]/i.test(text)) out.push("createElement('style')");
+  if (/['"`]stylesheet['"`]/i.test(text)) out.push('rel=stylesheet');
+  for (const m of text.matchAll(HTML_SINK)) out.push(`html sink: ${m[0]}`);
+  for (const m of text.matchAll(SHEET_API)) out.push(`sheet API: ${m[0]}`);
   return out;
 }
 
@@ -453,6 +470,26 @@ describe('token ratchet self-tests', () => {
     expect(findColorLiterals(stripTsComments('const o = { a: // #aaa\n 1 }; // #bbb\nconst c = \'#ccc\';'))).toEqual(['#ccc']);
   });
 
+  it('comment stripping keeps live code after a "//" in JSX text, with or without a colon or a space before it (Q5)', () => {
+    const planted = [
+      "const a = <p>see a // b</p>; const hexOne = '#111111';",
+      "const b = <p>x//y</p>; const hexTwo = '#222222';",
+      'const c = (',
+      '  <p>',
+      '    // looks like a comment but is text',
+      "    {ok && <i title=\"//\">{'#333333'}</i>}",
+      '  </p>',
+      ');',
+    ].join('\n');
+    expect(findColorLiterals(stripTsComments(planted))).toEqual(['#111111', '#222222', '#333333']);
+    // The same text with real comments still strips them, and JSX comments are stripped.
+    const real = "const d = <p>t</p>; // #aaaaaa\nconst e = <p>{/* #bbbbbb */ 'x'}</p>; /* #cccccc */ const f = '#dddddd';";
+    expect(findColorLiterals(stripTsComments(real))).toEqual(['#dddddd']);
+    // A .ts file parses as TS (angle-bracket assertions are not JSX) and keeps its strings and regexes.
+    const plainTs = "const g = <string>h; // #eeeeee\nconst r = /\\/\\//; const s = '#123abc'; const u = `${'//'}#abcdef`;";
+    expect(findColorLiterals(stripTsComments(plainTs, false))).toEqual(['#123abc', '#abcdef']);
+  });
+
   it('comment stripping survives a JSX apostrophe and a template literal with nested braces', () => {
     const ts = "const x = <p>Don't</p>; // gone #111\nconst y = `a ${ {k: '#222'}.k } b`; // gone #333\nconst z = '#444';";
     const out = stripTsComments(ts);
@@ -548,13 +585,76 @@ describe('token ratchet self-tests', () => {
     expect(findImperativeStyleWrites("el.style.cssText = 'color:red'; el.style.display = 'none';")).toEqual(['cssText', 'display']);
     expect(findImperativeStyleWrites("host.style.setProperty('--settings-nav-h', '1px'); tip.style.setProperty(\"--ui-tooltip-shift\", '0px');")).toEqual([]);
     expect(findImperativeStyleWrites("el.style.setProperty('color', 'red'); el.style.setProperty('--made-up', '1'); el.style.setProperty(name, v);")).toEqual(['setProperty(color)', 'setProperty(--made-up)', 'setProperty(<dynamic>)']);
-    expect(findImperativeStyleWrites("el.style['color'] = 'red';")).toEqual(['style[...]']);
+    expect(findImperativeStyleWrites("el.style['color'] = 'red';")).toEqual(['style (aliased)', 'style[...]']);
+    expect(findImperativeStyleWrites("el['style'].color = 'red';")).toEqual(['style[...]']);
     expect(findImperativeStyleWrites("sheet.insertRule('a{}'); el.setAttribute('style', 'x'); Object.assign(el.style, { color: 'red' });")).toEqual([
-      'insertRule/adoptedStyleSheets',
+      'style (aliased)',
       "setAttribute('style')",
       'Object.assign(...style)',
+      'sheet API: insertRule',
     ]);
     for (const reason of Object.values(STYLE_WRITE_ALLOW)) expect(reason.length).toBeGreaterThan(20);
+  });
+
+  it('rule 7 closes the aliased el.style bypass: the style object may not escape (Q1)', () => {
+    expect(findImperativeStyleWrites("const s = el.style; s.color = 'red';")).toEqual(['style (aliased)']);
+    expect(findImperativeStyleWrites("const { style } = el; style.color = 'red';")).toEqual(['{ style } = ...']);
+    expect(findImperativeStyleWrites("const { style: s, id } = el; s.padding = '1px';")).toEqual(['{ style } = ...']);
+    expect(findImperativeStyleWrites("Object.assign(el.style, { color: 'red' });")).toEqual(['style (aliased)', 'Object.assign(...style)']);
+    expect(findImperativeStyleWrites("paint(el.style, 'red'); const t = cond ? el.style : other;")).toEqual(['style (aliased)']);
+    expect(findImperativeStyleWrites("el.style = 'color: red';")).toEqual(['style (aliased)']);
+    expect(findImperativeStyleWrites("el\n  ?.style\n  .color = 'red';")).toEqual(['color']);
+    const setProp = findImperativeStyleWrites('const set = el.style.setProperty; set.call(el.style, "color", "red");');
+    expect(setProp).toContain('style.setProperty (unbound)');
+    // Legal: geometry writes, reads through a member, a computed-style read and an unrelated destructure.
+    expect(findImperativeStyleWrites("el.style.height = 'auto'; const h = el.style.height; el?.style.width;")).toEqual([]);
+    expect(findImperativeStyleWrites("const style = window.getComputedStyle(el); const v = style.getPropertyValue('--x'); const { a, b } = el;")).toEqual([]);
+    expect(findImperativeStyleWrites('function F({ style }: Props) { return null; }')).toEqual([]);
+  });
+
+  it('rule 7 closes attributeStyleMap and attribute-node style writes (Q2)', () => {
+    expect(findImperativeStyleWrites("el.attributeStyleMap.set('color', 'red');")).toEqual(['attributeStyleMap']);
+    expect(findImperativeStyleWrites("const m = el.attributeStyleMap; m.set('color', 'red');")).toEqual(['attributeStyleMap']);
+    expect(findImperativeStyleWrites("el.setAttributeNS(null, 'style', 'color:red');")).toEqual(["setAttribute('style')"]);
+    expect(findImperativeStyleWrites("el.setAttributeNode(attr); el.attributes.style.value = 'x';")).toEqual(['value', 'style attribute node']);
+    expect(findImperativeStyleWrites("el.setAttribute('tabindex', '-1'); el.setAttribute('aria-hidden', 'true');")).toEqual([]);
+  });
+
+  it('rule 7 closes injected style elements, style markup and HTML sinks (Q3)', () => {
+    expect(findImperativeStyleWrites("const s = document.createElement('style'); s.textContent = 'a{color:red}';")).toEqual(["createElement('style')"]);
+    expect(findImperativeStyleWrites('document.head.append(document.createElement("style"));')).toEqual(["createElement('style')"]);
+    expect(findImperativeStyleWrites("host.innerHTML = '<p>x</p>';")).toEqual(['html sink: innerHTML']);
+    expect(findImperativeStyleWrites("host.insertAdjacentHTML('beforeend', '<style>a{color:red}</style>');")).toEqual(['<style>', 'html sink: insertAdjacentHTML']);
+    expect(findImperativeStyleWrites("host.insertAdjacentHTML('beforeend', '<' + 'sty' + 'le>')")).toEqual(['html sink: insertAdjacentHTML']);
+    expect(findImperativeStyleWrites('const x = <style>{css}</style>;')).toEqual(['<style>']);
+    expect(findImperativeStyleWrites("const h = '<div style=\"color:red\">x</div>';")).toEqual(['style="..."']);
+    expect(findImperativeStyleWrites("const h = '<div style=\\'color:red\\'>x</div>';")).toEqual(['style="..."']);
+    expect(findImperativeStyleWrites("el.outerHTML = a; range.createContextualFragment(a); document.write(a); f.srcdoc = a; <div dangerouslySetInnerHTML={x} />")).toEqual([
+      'html sink: outerHTML',
+      'html sink: createContextualFragment',
+      'html sink: document.write',
+      'html sink: srcdoc',
+      'html sink: dangerouslySetInnerHTML',
+    ]);
+    expect(findImperativeStyleWrites("link.rel = 'stylesheet'; link.href = u;")).toEqual(['rel=stylesheet']);
+    // Legal: a variable named style, JSX style props (rule 5 owns them), non-style createElement, DOMParser for XML.
+    expect(findImperativeStyleWrites("const style = 'x'; let y = <div style={{ width: 1 }} />; const m = document.createElement('meta'); new DOMParser().parseFromString(x, 'text/xml');")).toEqual([]);
+  });
+
+  it('rule 7 closes constructable stylesheets and CSSOM rule APIs but leaves String.replace alone (Q4)', () => {
+    expect(findImperativeStyleWrites("const sh = new CSSStyleSheet(); sh.replaceSync('a{color:red}');")).toEqual(['sheet API: CSSStyleSheet', 'sheet API: replaceSync']);
+    expect(findImperativeStyleWrites("await sh.replace('a{color:red}'); document.adoptedStyleSheets = [sh];")).toEqual(['sheet API: adoptedStyleSheets']);
+    expect(findImperativeStyleWrites("document.styleSheets[0].cssRules[0]; sheet.deleteRule(0); sheet.addRule('a', 'b');")).toEqual([
+      'sheet API: styleSheets',
+      'sheet API: cssRules',
+      'sheet API: deleteRule',
+      'sheet API: addRule',
+    ]);
+    expect(findImperativeStyleWrites("const t = name.replace(/a/g, 'b').replace('c', 'd'); x.replaceAll('a', 'b');")).toEqual([]);
+  });
+
+  it('every real-tree style-write allow-list key names an existing file (no dangling entry)', () => {
+    for (const key of Object.keys(STYLE_WRITE_ALLOW)) expect(sources.some((s) => s.rel === key.split('|')[0]), key).toBe(true);
   });
 
   it('rule 5 detects non-geometry inline-style keys, spreads, computed keys and non-literal style values', () => {
