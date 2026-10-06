@@ -219,6 +219,8 @@ describe('App unsupported-browser notice', () => {
     chrome: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     edge: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
     firefox: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    oldFirefox: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:111.0) Gecko/20100101 Firefox/111.0',
+    firefox112: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:112.0) Gecko/20100101 Firefox/112.0',
     oldChrome: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36',
   };
   const setUa = (ua: string) =>
@@ -235,6 +237,7 @@ describe('App unsupported-browser notice', () => {
     ['an iOS WebKit browser', UA.iosWebKit],
     ['Firefox on iOS (FxiOS)', UA.fxios],
     ['Chrome below 113', UA.oldChrome],
+    ['Firefox 111', UA.oldFirefox],
   ])('%s: shows a dismissible warning Banner inside the always-mounted polite region', (_name, ua) => {
     setUa(ua);
     render(<App />);
@@ -250,6 +253,7 @@ describe('App unsupported-browser notice', () => {
     ['Chrome', UA.chrome],
     ['Edge', UA.edge],
     ['Firefox', UA.firefox],
+    ['Firefox 112', UA.firefox112],
   ])('%s: no notice', (_name, ua) => {
     setUa(ua);
     render(<App />);
