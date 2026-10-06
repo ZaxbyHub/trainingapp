@@ -403,19 +403,21 @@ interface Source { rel: string; text: string }
 // below with its diagnostics instead of aborting the whole module; such a file is scanned unstripped.
 const parseFailures: string[] = [];
 
+/** One scanned file: comment-stripped, or (unparseable) recorded in `failures` and kept raw. */
+function loadSource(rel: string, raw: string, failures: string[]): Source {
+  try {
+    return { rel, text: strip(rel, raw) };
+  } catch (e) {
+    if (!(e instanceof TsParseError)) throw e;
+    failures.push(e.message);
+    return { rel, text: raw };
+  }
+}
+
 const sources: Source[] = walk(SRC)
   .map((p) => relative(SRC, p).replace(/\\/g, '/'))
   .filter((rel) => isSource(rel) && !DATA_MODULES.has(rel))
-  .map((rel) => {
-    const raw = readFileSync(join(SRC, rel), 'utf8');
-    try {
-      return { rel, text: strip(rel, raw) };
-    } catch (e) {
-      if (!(e instanceof TsParseError)) throw e;
-      parseFailures.push(e.message);
-      return { rel, text: raw };
-    }
-  });
+  .map((rel) => loadSource(rel, readFileSync(join(SRC, rel), 'utf8'), parseFailures));
 
 const declaredIn = (css: string): Set<string> => new Set([...css.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
 const LUMEN = declaredIn(sources.find((s) => s.rel === 'styles/lumen-tokens.css')?.text ?? '');
@@ -561,6 +563,19 @@ describe('token ratchet self-tests', () => {
     expect(() => strip('lib/c.tsx', assertion)).toThrow(TsParseError);
     // A TypeScript without the internal parseDiagnostics field fails closed, not open.
     expect(() => parseDiagnosticsOf({} as ts.SourceFile, 'lib/d.ts')).toThrow(/no longer exposes SourceFile\.parseDiagnostics/);
+  });
+
+  it('the real-tree scan records an unparseable file as a failure (with its name) and keeps its raw text (LOW-F)', () => {
+    const failures: string[] = [];
+    const bad = "export const C = () => <Banner tone=\"warning\">x // y</Banner>; const y = '#444444';";
+    const loaded = loadSource('components/broken.ts', bad, failures);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatch(/^components\/broken\.ts does not parse cleanly: /);
+    expect(loaded).toEqual({ rel: 'components/broken.ts', text: bad });
+    // A clean file records nothing and comes back stripped.
+    const clean: string[] = [];
+    expect(loadSource('lib/ok.ts', "const a = 1; // #abcabc\nconst b = '#123123';", clean).text).not.toContain('#abcabc');
+    expect(clean).toEqual([]);
   });
 
   it('comment stripping survives a JSX apostrophe and a template literal with nested braces', () => {
