@@ -98,8 +98,14 @@ export const TRAINING_SW_SCRIPT_PATH = '/training/sw.js';
  * a worker-src violation naming `/training/sw.js?app=...` (measured, Firefox
  * and Playwright's Firefox; `blob:` workers are exempt; the worker response's
  * own CSP makes no difference). That source grants course content nothing it
- * lacked: a dedicated or shared worker on `/training/sw.js` is answered 404 by
- * the service worker (sw.js fetch handler), so it never runs, and registering
+ * lacked: a dedicated or shared worker on `/training/sw.js`, in any spelling the
+ * CSP admits (CSP matches the percent-decoded path and ignores the query, so
+ * `sw%2ejs` and `%73w.js` match too), is answered 404 by the service worker
+ * itself before any relay is asked (sw.js `isOwnScriptPath`: the pathname
+ * decoded repeatedly, compared case-sensitively), so it never runs. This relay
+ * has no matching check and needs none: it is not the defence here (course JS
+ * can hold the relay port, NC1), and `resolveTrainingPath` refuses every such
+ * two-segment path with 404 anyway. Registering
  * `/training/sw.js` was already possible through the boot frame, whose header
  * CSP admits exactly this URL (vite.config.ts bootPageCsp).
  */

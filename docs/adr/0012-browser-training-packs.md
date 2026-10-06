@@ -250,7 +250,7 @@ could be served were not isolated from app storage.
    Course JS cannot frame any other player-origin document, and the boot frame it can script
    allows no `fetch`, forms, beacons, images, popups or top navigation, and runs no script or
    worker but its own two files. The course's own `worker-src` admits only `blob:`, the open
-   pack's relay path and the course service worker's own script `/training/sw.js` (Firefox needs it to start controlled dedicated workers; the service worker answers a worker on that URL with 404, so it never runs), so it cannot start an app asset as an unconfined worker or service worker
+   pack's relay path and the course service worker's own script `/training/sw.js` (Firefox needs it to start controlled dedicated workers; CSP matches that source against the percent-decoded path and ignores the query, so it also admits encoded spellings such as `/training/sw%2ejs` and `/training/%73w.js`. The service worker itself answers 404, before asking the relay, to every request whose path, decoded repeatedly, equals `/training/sw.js` exactly (case-sensitive, like CSP), and to any path that does not decode. So a worker on that script never runs, whoever holds the relay port), so it cannot start an app asset as an unconfined worker or service worker
    (review round 4 F1; the worker-escape row of `web_ui/e2e/isolation-browser.spec.ts`).
 6. **Navigation egress (closed).** CSP on a course document does not govern navigation of the
    course's own frame or of the boot frame (a frame the course creates is governed by the course

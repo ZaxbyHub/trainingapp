@@ -453,6 +453,72 @@ describe('course worker refusals are never usable documents (FC6)', () => {
       channel.port1.close();
     }
   });
+
+  // PR #151 review LOW-1 / CORRECTIONS C1: CSP3 matches a path source against the
+  // PERCENT-DECODED URL path (case-sensitive, query ignored), so the course
+  // worker-src also admits encoded spellings of /training/sw.js. The relay's own
+  // refusal is no defence here (course JS can hold the relay port, NC1): the
+  // hostile relay below answers 200 to everything, so only the worker's own
+  // decode-aware refusal keeps these at 404.
+  it.each([
+    ['sw%2ejs', 'CSP-admitted: %2e'],
+    ['sw%2Ejs', 'CSP-admitted: upper-case hex'],
+    ['%73w.js', 'CSP-admitted: %73 = s'],
+    ['%73%77%2e%6a%73', 'CSP-admitted: every byte encoded'],
+    ['sw%252ejs', 'double-encoded'],
+    ['%2573w.js', 'double-encoded'],
+    ['sw%25252Ejs', 'triple-encoded, upper-case hex'],
+    ['sw.js%', 'malformed escape: does not decode'],
+    [`sw%${'25'.repeat(10)}2ejs`, 'still changing after the decode-pass cap: refused (fail closed)'],
+  ])('/training/%s (%s) is refused 404 by the worker itself, never relayed (LOW-1)', async (spelling) => {
+    const listeners = loadWorker(`${PLAYER}/training/sw.js?app=${encodeURIComponent('http://127.0.0.1:4174')}`);
+    let relayAsked = 0;
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event: MessageEvent<{ type: string; id: number }>) => {
+      if (event.data.type !== 'open') return; // relay-ready etc.
+      relayAsked += 1;
+      channel.port1.postMessage({ type: 'open-result', id: event.data.id, status: 200, headers: { 'content-type': 'text/javascript' }, body: 'postMessage(1)' });
+    };
+    listeners.message?.({ data: { type: 'trainingapp-relay-port' }, ports: [channel.port2], source: { url: `${PLAYER}/training-boot.html` } });
+    try {
+      for (const suffix of ['', '?app=x']) {
+        const url = `${PLAYER}/training/${spelling}${suffix}`;
+        const response = await fetchEvent(listeners, url);
+        expect(response.status, url).toBe(404);
+        expect(response.headers.get('content-security-policy'), url).toContain("default-src 'none'");
+      }
+      expect(relayAsked, 'the relay is never asked for an encoded spelling of the worker script').toBe(0);
+      // %2F: an encoded separator in the prefix is refused too (by the raw
+      // /training/ prefix check: no relay either).
+      expect((await fetchEvent(listeners, `${PLAYER}/training%2Fsw.js`)).status).toBe(404);
+      expect(relayAsked).toBe(0);
+    } finally {
+      channel.port1.close();
+    }
+  });
+
+  it('the decode-aware refusal does not over-refuse: pack paths named like the worker, or holding a literal %, still reach the relay (LOW-1)', async () => {
+    const listeners = loadWorker();
+    const asked: string[] = [];
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event: MessageEvent<{ type: string; id: number; path: string }>) => {
+      if (event.data.type !== 'open') return;
+      asked.push(event.data.path);
+      channel.port1.postMessage({ type: 'open-result', id: event.data.id, status: 200, headers: { 'content-type': 'text/plain' }, body: 'ok' });
+    };
+    listeners.message?.({ data: { type: 'trainingapp-relay-port' }, ports: [channel.port2], source: { url: `${PLAYER}/training-boot.html` } });
+    try {
+      // A pack's own sw.js, a file literally named `100%.txt` (sent as 100%25.txt:
+      // the second decode pass fails and must NOT refuse), and `a%2e.txt` (sent
+      // double-encoded; decodes to a..txt, not the worker script).
+      for (const p of ['/training/pack-a/sw.js', '/training/pack-a/100%25.txt', '/training/pack-a/a%252e.txt', '/training/SW.JS']) {
+        expect((await fetchEvent(listeners, `${PLAYER}${p}`)).status, p).toBe(200);
+      }
+      expect(asked).toEqual(['/training/pack-a/sw.js', '/training/pack-a/100%25.txt', '/training/pack-a/a%252e.txt', '/training/SW.JS']);
+    } finally {
+      channel.port1.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
