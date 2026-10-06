@@ -186,7 +186,10 @@ function builtWorkerAssets(): { classic: string; module: string; shared: string 
  * pdf.js worker, the boot script and the course service worker as dedicated
  * workers, and service worker registrations. Controls: a worker on the pack's
  * own relay-served script and a blob: worker both run, and both stay confined
- * (their fetch to the sink is refused).
+ * (their fetch to the sink is refused). The course service worker's script is
+ * the one non-pack script the course worker-src admits (Firefox requires it of
+ * a controlled document that starts a worker, PRR-151-030 R1); the course
+ * service worker answers it 404 (swScript), so a worker on it still never runs.
  */
 function workerEscapeStoryHtml(appOrigin: string, assets: { classic: string; module: string; shared: string }): string {
   const script = `
@@ -213,6 +216,8 @@ function workerEscapeStoryHtml(appOrigin: string, assets: { classic: string; mod
   await tryWorker('appModule', ${JSON.stringify(assets.module)}, { type: 'module' });
   await tryWorker('bootScript', '/training-boot.js');
   await tryWorker('courseServiceWorker', '/training/sw.js');
+  // The course service worker's answer for its own script URL (the host would answer 200).
+  try { r.swScript = (await fetch('/training/sw.js')).status; } catch (e) { r.swScript = 'threw:' + name(e); }
   // A SharedWorker is governed by worker-src too (review round 5, I1).
   var shared = 'constructed';
   try {
@@ -821,25 +826,36 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
     attempts: Record<string, string>;
     controls: Record<string, { state?: string; fetch?: string }>;
     register: Record<string, string>;
+    swScript: number | string;
     ancestorOrigin: string | null;
   }>(page, 'worker-probe', appOrigin, 90_000);
   await expectFrameRecordMatches(page, browserName, '#worker-probe', r);
   expect(r.ancestorOrigin, 'fixture fidelity: embedder origin').toBe(appOrigin);
   test.info().annotations.push({ type: 'worker-probe', description: `${JSON.stringify(r)} sink hits: ${JSON.stringify(hits)}` });
 
-  // Every same-origin script outside the open pack is refused by worker-src
-  // before it runs: a violation per target, and none of them ever messages.
+  // Every same-origin script outside the open pack (except the course service
+  // worker's own script, below) is refused by worker-src before it runs: a
+  // violation per target, and none of them ever messages.
   for (const [label, target] of [
     ['appClassic', assets.classic],
     ['appModule', assets.module],
     ['bootScript', '/training-boot.js'],
-    ['courseServiceWorker', '/training/sw.js'],
     ['appShared', assets.shared],
   ] as const) {
     // Soft: every refused target is reported, not only the first.
     expect.soft(r.violations, `F1 ${label}: worker-src violation for ${target}`).toContain(`worker-src ${player.origin}${target}`);
     expect.soft(r.attempts[label], `F1 ${label}: a worker that runs`).not.toBe('running');
   }
+  // The course service worker's script is admitted by the course worker-src
+  // (Firefox starts a worker in a controlled document only if the document's
+  // worker-src admits the controlling worker's script URL, PRR-151-030 R1), so
+  // it is refused one step later: the course service worker answers its own
+  // script URL 404, and a worker on it fails to start. No violation names it
+  // (the policy admits it; the refusal is the worker's). Soft, so the pack
+  // worker row below still reports when the admission regresses.
+  expect.soft(r.swScript, 'F1 courseServiceWorker: the course service worker refuses its own script URL').toBe(404);
+  expect.soft(r.attempts.courseServiceWorker, 'F1 courseServiceWorker: a worker on the course service worker script').toBe('error');
+  expect.soft(r.violations.filter((v) => v.includes('/training/sw.js')), 'F1 courseServiceWorker: admitted by worker-src').toEqual([]);
   // Service workers: an app asset is refused by worker-src; a pack-path
   // script is fetched past the relay and gets the host's reserved 404.
   expect(r.register.appAsset ?? '').toMatch(/^rejected:/);
@@ -850,17 +866,10 @@ test('course content cannot run a same-origin app asset as an unconfined worker 
   expect(r.controls.blobWorker).toEqual({ state: 'running', fetch: 'TypeError' });
   // The pack-script control is NOT refused by worker-src on either engine.
   expect(r.violations.filter((v) => v.includes(`/training/${WORKER_PACK}/`)), 'F1 pack worker refused by worker-src').toEqual([]);
-  if (browserName === 'firefox') {
-    // Known Firefox product limitation (lane G report, PRR-151-030 follow-up): a
-    // worker whose script the course service worker serves does not start in
-    // Firefox (the course document is crossOriginIsolated there; the script is
-    // served 200 text/javascript, COEP require-corp). It never runs, so it can
-    // never reach the sink (the hits row below). When that is fixed this row
-    // fails and must become the Chromium row.
-    expect(r.controls.packWorker, 'F1 pack worker on Firefox (known limitation)').toEqual({ state: 'error' });
-  } else {
-    expect(r.controls.packWorker).toEqual({ state: 'running', fetch: 'TypeError' });
-  }
+  // Both engines: a worker on the pack's own script runs (Firefox too, since
+  // the course worker-src admits the controlling service worker's script URL,
+  // PRR-151-030 R1) and its fetch to the sink is refused by the course CSP.
+  expect(r.controls.packWorker, 'F1 pack worker runs, confined').toEqual({ state: 'running', fetch: 'TypeError' });
   expect(hits, 'F1 worker egress').toEqual([]);
 });
 
