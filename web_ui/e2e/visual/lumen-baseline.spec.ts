@@ -31,13 +31,31 @@
  *                         mode (and its radio), moving those connection fields into this section.
  *                         No connection test runs (cross-origin traffic is aborted anyway).
  *   overlay-model-not-ready   the alertdialog browser builds without staged weights show
+ *   crash-page            the outer ErrorBoundary fallback (App.tsx: AppContent throws), which renders OUTSIDE
+ *                         the app shell, so only <body> paints behind it (phase 8 moved body to --bg-canvas)
+ *   boot-screen-loading   DesktopBootGate before the shell, "Starting TrainingApp" (stubbed desktopApi whose
+ *   boot-screen-error     discovery never settles / rejects: "Desktop backend unavailable" + Retry); also
+ *                         outside the shell
+ *   training-player-frame the training player's course <iframe> chrome (.app-player__frame border, radius and
+ *                         background), clipped to the frame with an EMPTY-body fixture course so no course
+ *                         pixels enter the capture
  * Seeding writes raw IndexedDB records (conversations: Dexie store
  * `docqa_conversations`; documents: `<profile>-doc-qa-documents`) and reloads;
  * no model weights are needed. A fixed clock and UTC/en-US keep dates stable.
  *
  * NOT covered (deferred, reported): FirstRunWizard and DesktopModelBlockedOverlay
- * render only when window.desktopApi exists (Electron preload), which a
- * plain-browser harness cannot provide without faking the desktop bridge.
+ * render only when window.desktopApi exists (Electron preload) AND need a resolved desktop
+ * session; the boot-screen states fake only the bridge discovery calls, which is enough for
+ * the boot gate (it never mounts the app) but not for those two.
+ *
+ * Forced crash (crash-page): NO production hook. The baselines run against the production
+ * build, where a DEV-guarded trigger would be absent, and an always-on one would ship. The
+ * spec instead makes `navigator.userAgent` throw (init script); AppContent reads it while
+ * rendering (isKnownUnsupportedBrowser in a useState initializer), so the App-level
+ * ErrorBoundary around AppContent shows its fallback (inside ThemeProvider, so it is themed).
+ * AppContent's mount-time render is the only reader of userAgent before effects run (the other
+ * readers, memory-aware getMemoryBudget and detectBrowser, run from effects/handlers), so no
+ * provider above the boundary throws first. The test asserts the forced message is shown.
  *
  * Determinism: theme is forced via the persisted `theme-preference` key (and
  * emulated colorScheme); animations are disabled by the config and reduced
@@ -58,7 +76,9 @@
  * overlay captures cover the real-viewport case.
  */
 
+import { createHash } from 'node:crypto';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import JSZip from 'jszip';
 import {
   assertOverlayOptOutAllowed,
   expectModelGateHidden,
@@ -334,6 +354,104 @@ function dynamicMasks(page: Page): Locator[] {
   ];
 }
 
+/**
+ * Boot with the page's theme forced and no app-level readiness wait: for states that
+ * never reach the readiness path (crash fallback, boot gate).
+ */
+async function bootBare(page: Page, theme: 'light' | 'dark', init?: () => void): Promise<void> {
+  await blockExternalNetwork(page);
+  await stubHardware(page);
+  await page.clock.setFixedTime(new Date(NOW + 24 * 3600 * 1000));
+  await page.addInitScript((t) => {
+    try {
+      localStorage.setItem('theme-preference', t);
+    } catch {
+      /* ignore */
+    }
+  }, theme);
+  if (init) await page.addInitScript(init);
+  await page.goto('/');
+}
+
+/** Park the pointer and drop focus so no ring or hover enters a capture. */
+async function quiesce(page: Page): Promise<void> {
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null));
+  await page.mouse.move(0, 0);
+  await settleFontsAndFrames(page);
+}
+
+const FORCED_CRASH_MESSAGE = 'Forced render crash for the visual baseline';
+
+/**
+ * Make AppContent throw while rendering (see the header): navigator.userAgent throws.
+ * Runs before any app script. Page-side only (Playwright's own isolated world is untouched).
+ */
+function forceAppContentCrash(): void {
+  Object.defineProperty(Navigator.prototype, 'userAgent', {
+    configurable: true,
+    get() {
+      throw new Error('Forced render crash for the visual baseline');
+    },
+  });
+}
+
+/**
+ * Stub the preload bridge the boot gate discovers the backend through. 'loading': the
+ * discovery never settles (the 15s bridge timeout is not reached within a capture);
+ * 'error': it rejects at once.
+ */
+function stubDesktopBridge(mode: 'loading' | 'error'): () => void {
+  return mode === 'loading'
+    ? () => {
+        (window as unknown as { desktopApi: unknown }).desktopApi = {
+          getBackendInfo: () => new Promise(() => undefined),
+          getAuthToken: () => new Promise(() => undefined),
+        };
+      }
+    : () => {
+        (window as unknown as { desktopApi: unknown }).desktopApi = {
+          getBackendInfo: () => Promise.reject(new Error('stubbed backend unavailable')),
+          getAuthToken: () => Promise.reject(new Error('stubbed backend unavailable')),
+        };
+      };
+}
+
+// training-player-frame: a minimal training pack (the shape lumen-axe.spec.ts installs) whose
+// player page has an EMPTY body, so the clipped capture holds only our frame chrome.
+const FRAME_COURSE_ID = 'frame-fixture-course';
+const FRAME_SLIDE_PATH = 'docs/slide-001-5rN4PvXJM5d.json';
+const FRAME_SLIDE_DOC = Buffer.from(
+  JSON.stringify({ slide_id: '5rN4PvXJM5d', slide_title: 'Welcome', section_title: 'Launch Menu', on_screen_text: 'Start the course' }),
+  'utf8'
+);
+
+async function frameCourseZip(): Promise<Buffer> {
+  const zip = new JSZip();
+  zip.file(
+    'pack.json',
+    JSON.stringify({
+      id: FRAME_COURSE_ID,
+      name: 'Frame Fixture Course',
+      version: '1.0.0',
+      published_at: '2026-10-01T00:00:00Z',
+      source_class: 'training',
+      embedding: { model_id: 'bge-small-en-v1.5', dims: 384, normalize: true },
+      chunking: { strategy: 'slide-aware', size: 256, overlap: 0 },
+      docs: [
+        {
+          path: FRAME_SLIDE_PATH,
+          sha256: createHash('sha256').update(FRAME_SLIDE_DOC).digest('hex'),
+          title: 'Welcome',
+          mime: 'application/json',
+        },
+      ],
+    })
+  );
+  zip.file(FRAME_SLIDE_PATH, FRAME_SLIDE_DOC);
+  zip.file('assets/player/story.html', '<!doctype html><html lang="en"><head><title>course</title></head><body></body></html>');
+  return Buffer.from(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
+}
+
 for (const theme of THEMES) {
   for (const width of WIDTHS) {
     test.describe(`${theme} @ ${width}`, () => {
@@ -380,6 +498,63 @@ for (const theme of THEMES) {
           });
         });
       }
+
+      // Surfaces outside the app shell: only <body> (and the dialog/banner on it) paint, so
+      // these are where the phase 8 body colour change is visible.
+      test('crash-page', async ({ page }) => {
+        await bootBare(page, theme, forceAppContentCrash);
+        await expect(page.getByRole('heading', { name: 'Something went wrong' })).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByText(FORCED_CRASH_MESSAGE)).toBeVisible();
+        await quiesce(page);
+        await expect(page).toHaveScreenshot(`crash-page-${theme}-${width}.png`);
+      });
+
+      for (const mode of ['loading', 'error'] as const) {
+        test(`boot-screen-${mode}`, async ({ page }) => {
+          await bootBare(page, theme, stubDesktopBridge(mode));
+          if (mode === 'loading') {
+            await expect(page.getByRole('heading', { name: 'Starting TrainingApp' })).toBeVisible({ timeout: 30_000 });
+            await expect(page.getByText('Connecting to the desktop backend...')).toBeVisible();
+          } else {
+            await expect(page.getByRole('heading', { name: 'Desktop backend unavailable' })).toBeVisible({ timeout: 30_000 });
+            await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+          }
+          await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+          await quiesce(page);
+          await expect(page).toHaveScreenshot(`boot-screen-${mode}-${theme}-${width}.png`);
+        });
+      }
+
+      test('training-player-frame', async ({ page }) => {
+        await boot(page, theme);
+        await hideModelGate(page, { expectGate: true });
+        await clickNav(page, 'Documents');
+        await expect(page.getByTestId('packs-panel')).toBeVisible({ timeout: 45_000 });
+        await page
+          .getByTestId('pack-install-input')
+          .setInputFiles({ name: `${FRAME_COURSE_ID}-1.0.0.zip`, mimeType: 'application/zip', buffer: await frameCourseZip() });
+        await expect(page.getByTestId(`pack-row-${FRAME_COURSE_ID}-1.0.0`)).toBeVisible({ timeout: 60_000 });
+        await clickNav(page, 'Training');
+        // A sole installed course opens straight into its player page.
+        const frame = page.locator('iframe[data-testid="training-player-frame"]');
+        await expect(frame).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByRole('button', { name: 'All courses' })).toBeVisible();
+        await expectModelGateHidden(page);
+        await page.waitForTimeout(500);
+        await quiesce(page);
+        const box = await frame.boundingBox();
+        expect(box, 'player frame is laid out').not.toBeNull();
+        const pad = 8;
+        const x = Math.max(0, Math.floor(box!.x) - pad);
+        const y = Math.max(0, Math.floor(box!.y) - pad);
+        const clip = {
+          x,
+          y,
+          width: Math.ceil(box!.x + box!.width) + pad - x,
+          height: Math.ceil(box!.y + box!.height) + pad - y,
+        };
+        await expect(page).toHaveScreenshot(`training-player-frame-${theme}-${width}.png`, { clip });
+      });
     });
   }
 }
