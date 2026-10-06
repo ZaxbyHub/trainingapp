@@ -230,8 +230,8 @@ jobs:
       # browser pack store and lists, its course frame loads from the
       # localhost player origin (never the app origin), non-pack zips stay on
       # the generic unsupported-type path, and removal clears the row.
-      # (Chromium and Firefox projects; specs that read inside the course/boot iframes are
-      # skipped on Firefox with a recorded reason, see e2e/isolation-browser.spec.ts.)
+      # (Chromium and Firefox projects; all 6 isolation specs run on both. Spec 6 launches its
+      # own Firefox with Fission off for input delivery, see e2e/isolation-browser.spec.ts.)
       - name: Run browser pack e2e
         run: npm run test:e2e
 
