@@ -27,6 +27,7 @@ import {
   EXTERNAL_SYSTEM_PROMPT,
 } from '../lib/llm/external-prompts';
 import { ensureReadinessGateChecked, getReadinessResultSnapshot, resetReadinessCache } from '../lib/llm/readiness-gate';
+import { READINESS_IN_FLIGHT_EVENT, type ReadinessInFlightDetail } from '../lib/llm/readiness-events';
 import { WEBLLM_DEFAULT_MODEL_ID } from '../lib/llm/web-llm-service';
 import { LLM_MODEL_DIR } from '../lib/models/model-manifest';
 import { citationsToRefs } from '../lib/api/citations';
@@ -445,11 +446,30 @@ function ChatPageInner({ messages: messagesProp, onMessagesChange, onSaveConvers
   // a click is a discrete event, so the busy state renders before the next one),
   // and readiness-gate's latest-request guard keeps an older in-flight check from
   // overwriting this one's result.
+  // Busy ends only when BOTH the Retry's own check has settled AND no newer check is
+  // in flight (PR #151 final review LOW-3): a reset + re-check from elsewhere (the
+  // WebGPU watchdog, Settings) supersedes the Retry's check, which then settles
+  // early while the newest check still runs. readiness-gate announces its in-flight
+  // state (READINESS_IN_FLIGHT_EVENT); either completion order releases busy.
   const [gateRetrying, setGateRetrying] = useState(false);
+  const retryPendingRef = useRef(false);
+  const readinessInFlightRef = useRef(false);
+  useEffect(() => {
+    const onInFlight = (event: Event): void => {
+      readinessInFlightRef.current = (event as CustomEvent<ReadinessInFlightDetail>).detail?.inFlight === true;
+      if (!readinessInFlightRef.current && !retryPendingRef.current) setGateRetrying(false);
+    };
+    window.addEventListener(READINESS_IN_FLIGHT_EVENT, onInFlight);
+    return () => window.removeEventListener(READINESS_IN_FLIGHT_EVENT, onInFlight);
+  }, []);
   const retryReadinessCheck = useCallback(() => {
+    retryPendingRef.current = true;
     setGateRetrying(true);
     resetReadinessCache();
-    void Promise.resolve(ensureReadinessGateChecked(browserEngine)).finally(() => setGateRetrying(false));
+    void Promise.resolve(ensureReadinessGateChecked(browserEngine)).finally(() => {
+      retryPendingRef.current = false;
+      if (!readinessInFlightRef.current) setGateRetrying(false);
+    });
   }, [browserEngine]);
 
   // Cleanup on unmount — finalize + persist the in-flight turn (S2/S3) before

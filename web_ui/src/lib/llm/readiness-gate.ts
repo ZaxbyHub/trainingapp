@@ -12,6 +12,7 @@ import { getPreferredBrowserEngine } from './llm-factory';
 import { LLM_MODEL_DIR } from '../models/model-manifest';
 import { WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
 import type { BrowserEngine } from '../../types/llm';
+import { READINESS_IN_FLIGHT_EVENT, type ReadinessInFlightDetail } from './readiness-events';
 
 let readinessGateInitPromise: Promise<ReadinessResult | null> | null = null;
 /**
@@ -74,6 +75,26 @@ export function getReadinessGateInstance(): ModelReadinessGate | null {
   return readinessGateInstance.current;
 }
 
+/**
+ * True while the LATEST readiness check is still running: one started since the
+ * last reset and not superseded by a newer check (PR #151 final review LOW-3). A
+ * superseded check may still be running, but its result can no longer reach the
+ * cache or the events, so it does not count.
+ */
+export function isReadinessCheckInFlight(): boolean {
+  return readinessGateInitPromise !== null;
+}
+
+/** Announce the current isReadinessCheckInFlight() (READINESS_IN_FLIGHT_EVENT). */
+function notifyReadinessInFlight(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent<ReadinessInFlightDetail>(READINESS_IN_FLIGHT_EVENT, {
+      detail: { inFlight: isReadinessCheckInFlight() },
+    })
+  );
+}
+
 /** Update the cache from an observed event (used by the hook's listener). */
 export function applyReadinessFromEvent(result: ReadinessResult | undefined, hasWebGPU: boolean): void {
   if (result) lastReadinessResult = result;
@@ -83,6 +104,10 @@ export function applyReadinessFromEvent(result: ReadinessResult | undefined, has
 /**
  * Reset cached readiness state (Retry, recovery, test teardown). Also
  * invalidates any check still in flight: its result predates the reset.
+ * Deliberately no READINESS_IN_FLIGHT_EVENT here: every app caller starts a new
+ * check right after the reset, and a momentary "nothing in flight" between the
+ * two would release the gate's busy Retry early (LOW-3). After a BARE reset the
+ * superseded check announces "not in flight" when it settles.
  */
 export function resetReadinessCache(): void {
   readinessGeneration += 1;
@@ -207,10 +232,15 @@ export async function ensureReadinessGateChecked(
         readinessGateInitPromise = null;
         readinessGateInitEngine = null;
       }
+      // No check is current any more (this one finished, or a bare reset
+      // superseded it): announce it. While a NEWER check runs, stay quiet; that
+      // check announces when it settles.
+      if (readinessGateInitPromise === null) notifyReadinessInFlight();
     }
   };
 
   thisPromise = run();
   readinessGateInitPromise = thisPromise;
+  notifyReadinessInFlight();
   return thisPromise;
 }

@@ -50,7 +50,9 @@ import {
   applyReadinessFromEvent,
   resetReadinessCache,
   ensureReadinessGateChecked,
+  isReadinessCheckInFlight,
 } from './readiness-gate';
+import { READINESS_IN_FLIGHT_EVENT } from './readiness-events';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -521,6 +523,73 @@ describe('readiness-gate', () => {
       await p;
       expect(getReadinessResultSnapshot()).toBeNull();
       expect(events).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #151 final review LOW-3: in-flight signal for the gate's Retry busy state
+  // -------------------------------------------------------------------------
+
+  describe('isReadinessCheckInFlight() + READINESS_IN_FLIGHT_EVENT (LOW-3)', () => {
+    function deferredChecks() {
+      const pending: Array<{ resolve: (r: ReadinessResult) => void; reject: (e: unknown) => void }> = [];
+      mockCheckReadiness.mockImplementation(
+        () =>
+          new Promise<ReadinessResult>((resolve, reject) => {
+            pending.push({ resolve, reject });
+          })
+      );
+      return pending;
+    }
+
+    function recordInFlight(): boolean[] {
+      const seen: boolean[] = [];
+      onWindowEvent(READINESS_IN_FLIGHT_EVENT, (e) => seen.push((e as CustomEvent<{ inFlight: boolean }>).detail.inFlight));
+      return seen;
+    }
+
+    it('is false with no check, true while one runs, false (and announced) once it settles', async () => {
+      const pending = deferredChecks();
+      const seen = recordInFlight();
+      expect(isReadinessCheckInFlight()).toBe(false);
+      const p = ensureReadinessGateChecked('wllama');
+      expect(isReadinessCheckInFlight()).toBe(true);
+      expect(seen).toEqual([true]);
+      pending[0].resolve(makeReadinessResult());
+      await p;
+      expect(isReadinessCheckInFlight()).toBe(false);
+      expect(seen).toEqual([true, false]);
+    });
+
+    it('a superseded check (Retry, then a watchdog/Settings reset + re-check) settling first does NOT announce "not in flight"', async () => {
+      const pending = deferredChecks();
+      const seen = recordInFlight();
+      resetReadinessCache();
+      const retry = ensureReadinessGateChecked('wllama'); // the gate's Retry
+      resetReadinessCache(); // e.g. the WebGPU watchdog
+      const newer = ensureReadinessGateChecked('wllama');
+      expect(seen).toEqual([true, true]); // the reset between them announces nothing
+
+      pending[0].resolve(makeReadinessResult());
+      await retry; // the Retry's own check is done...
+      expect(isReadinessCheckInFlight()).toBe(true); // ...but the newest is not
+      expect(seen).toEqual([true, true]);
+
+      pending[1].resolve(makeReadinessResult());
+      await newer;
+      expect(isReadinessCheckInFlight()).toBe(false);
+      expect(seen).toEqual([true, true, false]);
+    });
+
+    it('after a BARE reset the superseded check announces "not in flight" when it settles (never stuck busy); a rejecting one too', async () => {
+      const pending = deferredChecks();
+      const seen = recordInFlight();
+      const p = ensureReadinessGateChecked('wllama');
+      resetReadinessCache();
+      expect(isReadinessCheckInFlight()).toBe(false);
+      pending[0].reject(new Error('probe failed'));
+      await p;
+      expect(seen).toEqual([true, false]);
     });
   });
 });

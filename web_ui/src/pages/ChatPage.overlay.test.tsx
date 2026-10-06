@@ -22,6 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { AppShell, DRAWER_MEDIA_QUERY, SideNav } from '../ui';
 import { ChatPage } from './ChatPage';
 import type { ReadinessResult } from '../lib/llm/model-readiness';
+import { READINESS_IN_FLIGHT_EVENT } from '../lib/llm/readiness-events';
 import type { BrowserEngine } from '../types/llm';
 
 // Mutable per-test state read by the mocked modules below. Reassigned in
@@ -274,6 +275,57 @@ describe('ChatPage — model-blocked overlay (F-AC7)', () => {
     fireEvent.click(idle);
     expect(mockEnsureReadinessGateChecked).toHaveBeenCalledTimes(2);
     expect(mockResetReadinessCache).toHaveBeenCalledTimes(2);
+  });
+
+  // PR #151 final review LOW-3: a reset + re-check from elsewhere (the WebGPU
+  // watchdog, Settings) supersedes the Retry's check, which then settles early.
+  // Retry must stay busy until the NEWEST check settles, as readiness-gate
+  // announces through READINESS_IN_FLIGHT_EVENT.
+  function announceInFlight(inFlight: boolean): void {
+    window.dispatchEvent(new CustomEvent(READINESS_IN_FLIGHT_EVENT, { detail: { inFlight } }));
+  }
+
+  it('LOW-3: Retry stays busy when its check is superseded, until the newest check settles (either order)', async () => {
+    currentReadinessResult = makeReadinessResult({ failures: ['No weights.'] });
+    renderChatPage();
+    mockEnsureReadinessGateChecked.mockClear();
+    let finishRetry!: (v: null) => void;
+    mockEnsureReadinessGateChecked.mockImplementationOnce(() => {
+      announceInFlight(true); // the real module announces every check it starts
+      return new Promise<null>((r) => { finishRetry = r; });
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(screen.getByRole('button', { name: 'Retry' })).toHaveAttribute('aria-busy', 'true');
+
+    // The watchdog (or Settings) resets and starts a newer check: still in flight.
+    act(() => announceInFlight(true));
+    // The Retry's own (superseded) check settles first.
+    await act(async () => { finishRetry(null); });
+    expect(screen.getByRole('button', { name: 'Retry' })).toHaveAttribute('aria-busy', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(mockEnsureReadinessGateChecked).toHaveBeenCalledTimes(1); // still single-flight
+
+    // The newest check settles: nothing is in flight any more.
+    act(() => announceInFlight(false));
+    expect(screen.getByRole('button', { name: 'Retry' })).not.toHaveAttribute('aria-busy');
+  });
+
+  it('LOW-3: a "not in flight" announcement BEFORE the own Retry check settles does not release busy early', async () => {
+    currentReadinessResult = makeReadinessResult({ failures: ['No weights.'] });
+    renderChatPage();
+    mockEnsureReadinessGateChecked.mockClear();
+    let finishRetry!: (v: null) => void;
+    mockEnsureReadinessGateChecked.mockImplementationOnce(() => {
+      announceInFlight(true);
+      return new Promise<null>((r) => { finishRetry = r; });
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    // e.g. readiness-gate's own finally announces just before the Retry promise resolves
+    act(() => announceInFlight(false));
+    expect(screen.getByRole('button', { name: 'Retry' })).toHaveAttribute('aria-busy', 'true');
+    await act(async () => { finishRetry(null); });
+    expect(screen.getByRole('button', { name: 'Retry' })).not.toHaveAttribute('aria-busy');
   });
 
   it('Open Settings button invokes the onOpenSettings prop', () => {
