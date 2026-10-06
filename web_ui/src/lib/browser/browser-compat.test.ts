@@ -9,6 +9,7 @@ import {
   checkFeatures,
   getCompatMessage,
   detectBrowserInfo,
+  isKnownUnsupportedBrowser,
   BrowserInfo,
   FeatureSupport,
 } from './browser-compat';
@@ -742,5 +743,21 @@ describe('detectBrowserInfo', () => {
     expect(result.features).toHaveProperty('sharedArrayBuffer');
     expect(result.features).toHaveProperty('wasm');
     expect(result.features).toHaveProperty('workers');
+  });
+});
+
+describe('isKnownUnsupportedBrowser', () => {
+  const cases: Array<[string, string, boolean]> = [
+    ['Chrome 120', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', false],
+    ['Chrome 112', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36', true],
+    ['Edge 120', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0', false],
+    ['Firefox', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0', false],
+    ['Safari', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15', true],
+    ['FxiOS', 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/121 Mobile/15E148 Safari/604.1', true],
+    ['an unrecognised engine (not claimed unsupported)', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Gecko/20100101 SomeBrowser/1.0', false],
+  ];
+  test.each(cases)('%s -> %s', (_name, userAgent, expected) => {
+    globalThis.navigator = createMockNavigator({ userAgent });
+    expect(isKnownUnsupportedBrowser()).toBe(expected);
   });
 });

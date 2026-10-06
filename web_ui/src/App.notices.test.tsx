@@ -207,3 +207,78 @@ describe('App notices (Lumen phase 7)', () => {
     expect(screen.queryByRole('button', { name: 'Dismiss error' })).toBeNull();
   });
 });
+
+// Upfront unsupported-browser notice. The REAL browser-compat classifier runs (no mock):
+// only navigator.userAgent / window.desktopApi are varied.
+describe('App unsupported-browser notice', () => {
+  const NOTICE = /This browser isn.t supported/;
+  const UA = {
+    safari: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+    iosWebKit: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
+    fxios: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/121 Mobile/15E148 Safari/604.1',
+    chrome: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    edge: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0',
+    firefox: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+    oldChrome: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36',
+  };
+  const setUa = (ua: string) =>
+    Object.defineProperty(window.navigator, 'userAgent', { value: ua, configurable: true });
+
+  afterEach(() => {
+    // Remove the own-property override so the prototype (jsdom) UA is back.
+    delete (window.navigator as { userAgent?: string }).userAgent;
+    delete (window as { desktopApi?: unknown }).desktopApi;
+  });
+
+  it.each([
+    ['Safari', UA.safari],
+    ['an iOS WebKit browser', UA.iosWebKit],
+    ['Firefox on iOS (FxiOS)', UA.fxios],
+    ['Chrome below 113', UA.oldChrome],
+  ])('%s: shows a dismissible warning Banner inside the always-mounted polite region', (_name, ua) => {
+    setUa(ua);
+    render(<App />);
+    const banner = screen.getByText(NOTICE).closest('.ui-banner') as HTMLElement;
+    expect(banner).toHaveTextContent('Use a current Chrome, Edge or Firefox.');
+    expect(banner).toHaveClass('ui-banner--warning', 'app-notice');
+    expect(banner).not.toHaveAttribute('role');
+    expect(banner.parentElement).toHaveAttribute('role', 'status');
+    expect(banner.parentElement?.querySelectorAll('[style]')).toHaveLength(0);
+  });
+
+  it.each([
+    ['Chrome', UA.chrome],
+    ['Edge', UA.edge],
+    ['Firefox', UA.firefox],
+  ])('%s: no notice', (_name, ua) => {
+    setUa(ua);
+    render(<App />);
+    expect(screen.queryByText(NOTICE)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss unsupported-browser notice' })).toBeNull();
+  });
+
+  it('Electron: no notice even when the UA would classify as unsupported', async () => {
+    setUa(UA.safari);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ engine: 'stub', profile: 'auto', models: {} }), { status: 200 })),
+    );
+    (window as unknown as { desktopApi: unknown }).desktopApi = {
+      getBackendInfo: vi.fn(async () => ({ url: 'http://127.0.0.1:4567', mode: 'node' })),
+      getAuthToken: vi.fn(async () => 'tok'),
+      onFirstRunRequired: vi.fn(() => () => undefined),
+      getFirstRunStatus: vi.fn(async () => ({ needed: false })),
+    };
+    render(<App />);
+    // The boot gate resolves and the app shell mounts (so absence is not just "still booting").
+    await screen.findByRole('main');
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+
+  it('Dismiss hides the notice', () => {
+    setUa(UA.safari);
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss unsupported-browser notice' }));
+    expect(screen.queryByText(NOTICE)).toBeNull();
+  });
+});

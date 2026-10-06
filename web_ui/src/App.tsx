@@ -13,6 +13,7 @@ import {
   type DesktopSessionState,
 } from './lib/desktop-session';
 import { subscribeLatestModelStatus } from './lib/desktop-models-events';
+import { isKnownUnsupportedBrowser } from './lib/browser/browser-compat';
 import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
 import { AppLayout } from './layouts/AppLayout';
 import { FirstRunGate } from './components/FirstRunWizard';
@@ -217,6 +218,10 @@ function AppContent() {
   // The init-error text the user dismissed. A later, different failure (the hook appends
   // new ones to the same string) re-arms the notice instead of staying latched off.
   const [dismissedInitError, setDismissedInitError] = useState<string | null>(null);
+  // Upfront unsupported-browser notice (browser app only; Electron is never "a browser").
+  // Classified once at mount; dismissal is for this session only.
+  const [browserUnsupported] = useState(() => !isElectron() && isKnownUnsupportedBrowser());
+  const [browserNoticeDismissed, setBrowserNoticeDismissed] = useState(false);
   const { setModelReady, setModelLoadingProgress, browserEngine } = useInferenceMode();
 
   const {
@@ -454,6 +459,23 @@ function AppContent() {
       {/* The polite region is always mounted so the notice (and a later, different failure)
           is a content change inside an existing live region, not an inserted-with-content one. */}
       <div role="status">
+        {browserUnsupported && !browserNoticeDismissed && (
+          <Banner
+            tone="warning"
+            live={false}
+            className="app-notice"
+            action={
+              <IconButton
+                icon="x"
+                size="sm"
+                aria-label="Dismiss unsupported-browser notice"
+                onClick={() => setBrowserNoticeDismissed(true)}
+              />
+            }
+          >
+            This browser isn&apos;t supported. Use a current Chrome, Edge or Firefox.
+          </Banner>
+        )}
         {initError && initError !== dismissedInitError && (
           <Banner
             tone="warning"

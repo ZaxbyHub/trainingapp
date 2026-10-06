@@ -205,6 +205,20 @@ export function getCompatMessage(info: BrowserInfo): CompatGuidance {
 }
 
 /**
+ * Whether this browser's NAME and VERSION make it unsupported (Chrome/Edge below 113,
+ * and Safari or any other WebKit engine). An unrecognised engine is NOT reported here:
+ * we cannot tell that it is unsupported, so the App shows no upfront notice for it
+ * (detectBrowserInfo still lets it through when WebAssembly works). Synchronous and
+ * feature-free so the App can ask once at mount.
+ */
+export function isKnownUnsupportedBrowser(): boolean {
+  const { name, version } = detectBrowser();
+  if (name === 'unknown') return false;
+  if (name === 'chrome' || name === 'edge') return !meetsMinimumVersion(version, 113);
+  return name !== 'firefox';
+}
+
+/**
  * Combined browser detection and feature check
  * Returns complete BrowserInfo with all capabilities
  */
@@ -222,7 +236,8 @@ export async function detectBrowserInfo(): Promise<BrowserInfo> {
   }
   // 'safari' (WebKit, every iOS/iPadOS browser) stays unsupported whatever its features.
 
-  // But if webgpu is available (even partial) and wasm works, allow degraded mode
+  // An unrecognised engine with working WebAssembly is let through: nothing says it
+  // is unsupported (there is no degraded tier; see CompatLevel).
   if (!isSupported && name === 'unknown' && features.wasm) {
     isSupported = true;
   }
