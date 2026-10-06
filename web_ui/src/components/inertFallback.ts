@@ -10,12 +10,14 @@
  * gate. When — and only when — `inert` is unsupported, this hook emulates its two
  * keyboard/AT effects:
  *   - every focusable descendant gets tabindex="-1" (its original tabindex, or its
- *     absence, is saved and restored exactly when the gate lifts);
+ *     absence, is saved and restored exactly when the gate lifts; a value the app
+ *     writes while the gate is up, even "-1", replaces the saved one);
  *   - every element CHILD of the wrapper gets aria-hidden="true" (not the wrapper
  *     itself: some engines drop `display: contents` boxes from the accessibility
  *     tree, taking their ARIA attributes with them).
  * A MutationObserver re-applies it to focusables mounted, or re-enabled by React,
- * while the gate is up. Pointer blocking is not emulated: the gate's scrim already
+ * while the gate is up, and records the app's own tabindex/aria-hidden writes so
+ * release restores the app's LATEST values, not the pre-gate ones (LOW-2). Pointer blocking is not emulated: the gate's scrim already
  * covers the chat region.
  */
 import { useLayoutEffect, type RefObject } from 'react';
@@ -42,24 +44,58 @@ export function supportsNativeInert(): boolean {
   return typeof HTMLElement !== 'undefined' && 'inert' in HTMLElement.prototype;
 }
 
-/** Apply (or re-apply, idempotently) the emulation under `root`. */
-export function applyInertFallback(root: HTMLElement): void {
-  for (const child of Array.from(root.children)) {
-    if (!child.hasAttribute(SAVED_HIDDEN)) {
-      child.setAttribute(SAVED_HIDDEN, child.getAttribute('aria-hidden') ?? ABSENT);
-    }
-    if (child.getAttribute('aria-hidden') !== 'true') child.setAttribute('aria-hidden', 'true');
+/**
+ * The elements whose CURRENT tabindex / aria-hidden value is the fallback's own
+ * (PR #151 final review LOW-2). An element leaves its set when the app writes that
+ * attribute while the gate is up (noteAppWrites), and the next apply then saves the
+ * app's value as the one to restore. Tracked explicitly, never inferred from the
+ * value: an app that sets tabIndex={-1} or aria-hidden="true" mid-gate writes the
+ * same value the fallback does, and that is still the app's intent on release.
+ */
+export interface InertFallbackWrites {
+  tabindex: WeakSet<Element>;
+  hidden: WeakSet<Element>;
+}
+
+export function createInertFallbackWrites(): InertFallbackWrites {
+  return { tabindex: new WeakSet(), hidden: new WeakSet() };
+}
+
+/**
+ * Record app writes: every `tabindex` / `aria-hidden` attribute record handed to the
+ * observer is someone else's write, because the observer drops the records of the
+ * fallback's own writes right after making them (takeRecords). A record is queued
+ * even when the value is unchanged, which is what makes a same-value write visible.
+ */
+export function noteAppWrites(records: readonly MutationRecord[], writes: InertFallbackWrites): void {
+  for (const record of records) {
+    if (record.type !== 'attributes') continue;
+    if (record.attributeName === 'tabindex') writes.tabindex.delete(record.target as Element);
+    else if (record.attributeName === 'aria-hidden') writes.hidden.delete(record.target as Element);
   }
-  for (const el of Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE))) {
+}
+
+/**
+ * Apply (or re-apply, idempotently) the emulation under `root`. An element whose
+ * current value is not the fallback's own (first sight, or an app write since)
+ * has that value saved for release, then gets the emulated value.
+ */
+export function applyInertFallback(root: HTMLElement, writes: InertFallbackWrites): void {
+  for (const child of Array.from(root.children)) {
+    if (writes.hidden.has(child)) continue;
+    const current = child.getAttribute('aria-hidden');
+    child.setAttribute(SAVED_HIDDEN, current ?? ABSENT);
+    if (current !== 'true') child.setAttribute('aria-hidden', 'true');
+    writes.hidden.add(child);
+  }
+  // Also elements saved earlier that the app has since made non-focusable (e.g.
+  // removed their tabindex): their saved value must follow the app too.
+  for (const el of Array.from(root.querySelectorAll<HTMLElement>(`${FOCUSABLE},[${SAVED_TABINDEX}]`))) {
+    if (writes.tabindex.has(el)) continue;
     const current = el.getAttribute('tabindex');
-    if (!el.hasAttribute(SAVED_TABINDEX)) {
-      el.setAttribute(SAVED_TABINDEX, current ?? ABSENT);
-    } else if (current !== '-1') {
-      // React (or anything else) changed it while the gate was up: that is the
-      // value to restore later.
-      el.setAttribute(SAVED_TABINDEX, current ?? ABSENT);
-    }
+    el.setAttribute(SAVED_TABINDEX, current ?? ABSENT);
     if (current !== '-1') el.setAttribute('tabindex', '-1');
+    writes.tabindex.add(el);
   }
 }
 
@@ -87,16 +123,27 @@ export function useInertFallback(ref: RefObject<HTMLElement | null>, active: boo
   useLayoutEffect(() => {
     const root = ref.current;
     if (!active || root === null || supportsNativeInert()) return undefined;
-    applyInertFallback(root);
+    const writes = createInertFallbackWrites();
+    applyInertFallback(root, writes);
     const observer =
       typeof MutationObserver === 'undefined'
         ? null
-        : new MutationObserver(() => applyInertFallback(root));
-    // Our own writes only ever set tabindex to "-1" / aria-hidden to "true", which
-    // re-apply as no-ops, so the observer settles after one extra pass.
+        : new MutationObserver((records, self) => {
+            noteAppWrites(records, writes);
+            applyInertFallback(root, writes);
+            // Drop the records of the writes just made: they are the fallback's own,
+            // and nothing else can run between those writes and this call.
+            self.takeRecords();
+          });
     observer?.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['tabindex', 'aria-hidden'] });
     return () => {
-      observer?.disconnect();
+      if (observer !== null) {
+        // App writes committed together with the release (the same render that lifts
+        // the gate) are still queued: honour them before restoring.
+        noteAppWrites(observer.takeRecords(), writes);
+        applyInertFallback(root, writes);
+        observer.disconnect();
+      }
       releaseInertFallback(root);
     };
   }, [ref, active]);

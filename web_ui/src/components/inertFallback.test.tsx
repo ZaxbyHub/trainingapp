@@ -34,6 +34,46 @@ function Harness({ active, extra = false }: { active: boolean; extra?: boolean }
   );
 }
 
+/** MutationObserver callbacks are microtasks. */
+async function flushObserver(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
+/** The app changes covered attributes while the gate is up (PR #151 final review LOW-2). */
+function AppWritesHarness({
+  active,
+  paraHidden,
+  sectionHidden,
+  plainTab,
+  chipTab,
+}: {
+  active: boolean;
+  paraHidden?: 'false' | 'true';
+  sectionHidden?: 'false' | 'true';
+  plainTab?: number;
+  chipTab?: number;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useInertFallback(ref, active);
+  return (
+    <div ref={ref} className="covered">
+      <p data-testid="para" aria-hidden={paraHidden}>
+        Text
+      </p>
+      <section data-testid="section" aria-hidden={sectionHidden}>
+        <button type="button" tabIndex={plainTab}>
+          Plain
+        </button>
+        <span data-testid="chip" tabIndex={chipTab}>
+          Chip
+        </span>
+      </section>
+    </div>
+  );
+}
+
 afterEach(() => {
   cleanup();
   delete (HTMLElement.prototype as unknown as { inert?: boolean }).inert;
@@ -85,6 +125,59 @@ describe('useInertFallback (PRR-151-018)', () => {
     screen.getByRole('button', { name: 'Before' }).focus();
     await user.tab();
     expect(screen.getByRole('button', { name: 'After' })).toHaveFocus();
+  });
+
+  it('a focusable mounted while the gate is up gets ITS original tabindex back on release, not the fallback\'s "-1" (LOW-2)', async () => {
+    const { rerender } = render(<Harness active />);
+    rerender(<Harness active extra />);
+    await flushObserver();
+    expect(screen.getByRole('button', { name: 'Late', hidden: true })).toHaveAttribute('tabindex', '-1');
+    rerender(<Harness active={false} extra />);
+    expect(screen.getByRole('button', { name: 'Late' })).not.toHaveAttribute('tabindex');
+    expect(document.querySelectorAll('[data-inert-fallback-tabindex], [data-inert-fallback-aria-hidden]')).toHaveLength(0);
+  });
+
+  describe('release restores the app\'s LATEST values, not the pre-gate ones (LOW-2)', () => {
+    const plain = (): HTMLElement => screen.getByRole('button', { name: 'Plain', hidden: true });
+
+    it('React sets aria-hidden="false", aria-hidden="true" and tabIndex={-1} mid-gate: after release the DOM matches React', async () => {
+      const { rerender } = render(<AppWritesHarness active />);
+      expect(screen.getByTestId('para')).toHaveAttribute('aria-hidden', 'true');
+      expect(plain()).toHaveAttribute('tabindex', '-1');
+
+      // Mid-gate app writes. tabIndex={-1} and aria-hidden="true" are the SAME values
+      // the fallback wrote: only the write itself tells them apart.
+      rerender(<AppWritesHarness active paraHidden="false" sectionHidden="true" plainTab={-1} />);
+      await flushObserver();
+      // Still emulating inert while the gate is up.
+      expect(screen.getByTestId('para')).toHaveAttribute('aria-hidden', 'true');
+      expect(plain()).toHaveAttribute('tabindex', '-1');
+
+      rerender(<AppWritesHarness active={false} paraHidden="false" sectionHidden="true" plainTab={-1} />);
+      expect(screen.getByTestId('para')).toHaveAttribute('aria-hidden', 'false');
+      expect(screen.getByTestId('section')).toHaveAttribute('aria-hidden', 'true');
+      expect(plain()).toHaveAttribute('tabindex', '-1');
+      expect(document.querySelectorAll('[data-inert-fallback-tabindex], [data-inert-fallback-aria-hidden]')).toHaveLength(0);
+    });
+
+    it('an app write that lands in the SAME render that lifts the gate is honoured too', () => {
+      const { rerender } = render(<AppWritesHarness active />);
+      rerender(<AppWritesHarness active={false} paraHidden="false" plainTab={0} />);
+      expect(screen.getByTestId('para')).toHaveAttribute('aria-hidden', 'false');
+      expect(screen.getByTestId('section')).not.toHaveAttribute('aria-hidden');
+      expect(plain()).toHaveAttribute('tabindex', '0');
+    });
+
+    it('a pre-gate tabIndex={0} the app REMOVES mid-gate is absent after release (also on an element that is then no longer focusable)', async () => {
+      const { rerender } = render(<AppWritesHarness active plainTab={0} chipTab={0} />);
+      expect(screen.getByTestId('chip')).toHaveAttribute('tabindex', '-1');
+      rerender(<AppWritesHarness active />);
+      await flushObserver();
+      expect(plain()).toHaveAttribute('tabindex', '-1');
+      rerender(<AppWritesHarness active={false} />);
+      expect(plain()).not.toHaveAttribute('tabindex');
+      expect(screen.getByTestId('chip')).not.toHaveAttribute('tabindex');
+    });
   });
 
   it('is a no-op where inert is native (the attribute already does the work)', () => {
