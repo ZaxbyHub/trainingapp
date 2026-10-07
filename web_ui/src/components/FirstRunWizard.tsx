@@ -263,6 +263,8 @@ export function FirstRunWizard({
   const goNext = (): void => setStepIndex((index) => Math.min(index + 1, WIZARD_STEPS.length - 2));
   const goBack = (): void => setStepIndex((index) => Math.max(index - 1, 0));
 
+  const errorDetail = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
   const runActivation = async (): Promise<void> => {
     if (activatingRef.current) return;
     activatingRef.current = true;
@@ -274,6 +276,17 @@ export function FirstRunWizard({
       // The activation changed the pack set — refresh the snapshot so the
       // Complete gate (packsSatisfied) reflects reality.
       if (outcome.ok) refreshStatus();
+    } catch (err) {
+      // A rejected IPC call (bridge missing, handler threw) must not escape as an
+      // unhandled rejection from the `void runActivation()` click handler: surface it
+      // through the same failed-result list a refused activation uses. (PRR-152-04)
+      if (mountedRef.current) {
+        setActivation({
+          ran: true,
+          ok: false,
+          results: [{ id: 'activate-packs', ok: false, detail: errorDetail(err) }],
+        });
+      }
     } finally {
       activatingRef.current = false;
       if (mountedRef.current) setActivating(false);
@@ -286,10 +299,19 @@ export function FirstRunWizard({
     setCompleting(true);
     setCompleteError(null);
     try {
-      const outcome = await completeFirstRun({
-        selectedProfile,
-        acknowledgedLicenses: acknowledged,
-      });
+      let outcome: Awaited<ReturnType<typeof completeFirstRun>>;
+      try {
+        outcome = await completeFirstRun({
+          selectedProfile,
+          acknowledgedLicenses: acknowledged,
+        });
+      } catch (err) {
+        // A rejected IPC call must not escape as an unhandled rejection from the
+        // `void runComplete()` click handler: show it in the wizard's own error banner
+        // (Complete re-enables, as for a refusal). (PRR-152-04)
+        if (mountedRef.current) setCompleteError(errorDetail(err));
+        return;
+      }
       if (outcome.ok) {
         // Completion is recorded: drop the in-memory progress even if the wizard was
         // skipped while this call was in flight, and always tell the owner.

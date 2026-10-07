@@ -652,6 +652,50 @@ describe('FirstRunWizard in-flight guards (PRR-151-014)', () => {
     expect(view.getByTestId('wizard-complete')).not.toBeDisabled();
   });
 
+  it('a rejected completion IPC shows the error banner and re-enables Complete, with no unhandled rejection (PRR-152-04)', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      completeFirstRunMock.mockRejectedValueOnce(new Error('ipc channel closed'));
+      const view = mount(packsActive());
+      toComplete(view);
+      await act(async () => {
+        fireEvent.click(view.getByTestId('wizard-complete'));
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(view.getByTestId('complete-error')).toHaveTextContent('ipc channel closed');
+      expect(view.getByTestId('wizard-complete')).not.toBeDisabled();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('a rejected activation IPC lists a failed result and re-enables the button, with no unhandled rejection (PRR-152-04)', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      activateRequiredPacksMock.mockRejectedValueOnce(new Error('bridge unavailable'));
+      const refreshStatus = vi.fn();
+      const view = render(
+        <FirstRunWizard status={packsPending()} onClose={vi.fn()} onCompleted={vi.fn()} refreshStatus={refreshStatus} />,
+      );
+      next(view.getByTestId, 3);
+      await act(async () => {
+        fireEvent.click(view.getByTestId('activate-packs-button'));
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const failed = within(view.getByTestId('step-activate-packs')).getByText(/bridge unavailable/).closest('li') as HTMLElement;
+      expect(failed).toHaveClass('first-run__result--failed');
+      expect(failed).toHaveTextContent('Failed: activate-packs: bridge unavailable');
+      expect(view.getByTestId('activate-packs-button')).not.toBeDisabled();
+      expect(refreshStatus).not.toHaveBeenCalled();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
   it('a double-click on the activate button issues one IPC call and is disabled while in flight', async () => {
     const gate = deferred<{ ok: boolean; results: Array<{ id: string; ok: boolean; detail: string }> }>();
     activateRequiredPacksMock.mockReturnValue(gate.promise);
