@@ -55,6 +55,9 @@ function timers() {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    // Spies (e.g. Element.prototype.matches) are restored here, not at the end of the test that
+    // made them, so a mid-test throw cannot leak one into later tests. (PRR-152-07)
+    vi.restoreAllMocks();
     cleanup();
   });
 }
@@ -314,7 +317,10 @@ describe('ToastProvider dismissal timing', () => {
     expect(toast).not.toHaveClass('ui-toast--leaving');
     advance(1);
     expect(toast).toHaveClass('ui-toast--leaving');
-    vi.restoreAllMocks();
+  });
+
+  it('does not inherit the Element.prototype.matches spy of the previous test (PRR-152-07)', () => {
+    expect(vi.isMockFunction(Element.prototype.matches)).toBe(false);
   });
 });
 
