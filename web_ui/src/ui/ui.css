@@ -213,7 +213,10 @@
 .ui-dialog__footer { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-6); }
 
 .ui-tooltip-wrap { position: relative; display: inline-flex; }
-.ui-tooltip { position: absolute; z-index: 1100; top: calc(100% + var(--space-1)); left: 50%; transform: translateX(calc(-50% + var(--ui-tooltip-shift, 0px))); width: max-content; max-width: min(240px, calc(100vw - 16px)); padding: var(--space-1) var(--space-2); background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-control); border-radius: var(--r-control); box-shadow: var(--shadow-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
+/* z 1090: a popover anchored in page content (tooltip, above the combobox list 1050) paints over page
+   content and default dialogs, and strictly below the boot gate (1100), so the two never tie and rely
+   on DOM order. Inside a dialog the backdrop is a stacking context, so this only orders siblings there. */
+.ui-tooltip { position: absolute; z-index: 1090; top: calc(100% + var(--space-1)); left: 50%; transform: translateX(calc(-50% + var(--ui-tooltip-shift, 0px))); width: max-content; max-width: min(240px, calc(100vw - 16px)); padding: var(--space-1) var(--space-2); background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border-control); border-radius: var(--r-control); box-shadow: var(--shadow-2); font-size: var(--type-caption-size); line-height: var(--type-caption-line); }
 
 .ui-tooltip--end { top: 50%; left: calc(100% + var(--space-2)); transform: translateY(-50%); }
 /* WCAG 1.4.13 hoverable: a transparent bridge covers the gap between trigger and tooltip so the

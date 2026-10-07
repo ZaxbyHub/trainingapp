@@ -74,9 +74,19 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
   // line, and at narrow widths the composer stays one line tall with the real
   // font's second line clipped. (Which weights are already loaded when the chat
   // mounts depends on what the boot screen rendered, so this is a latent race.)
+  // Lazily fetched unicode-range subsets (Greek/Cyrillic/Vietnamese) land after `ready`
+  // has resolved, so `loadingdone` re-measures too.
   useEffect(() => {
     // adjustHeight is a no-op once the textarea ref is cleared, so a late-resolving
     // promise after unmount needs no cancel flag.
+    void document.fonts?.ready.then(adjustHeight);
+    const fonts = document.fonts;
+    fonts?.addEventListener?.('loadingdone', adjustHeight);
+    return () => fonts?.removeEventListener?.('loadingdone', adjustHeight);
+  }, [adjustHeight]);
+
+  // Pasted text can need glyphs whose font has not loaded yet: re-measure once it has.
+  const handlePaste = useCallback(() => {
     void document.fonts?.ready.then(adjustHeight);
   }, [adjustHeight]);
 
@@ -252,6 +262,7 @@ export const ChatInput: React.FC<ChatInputProps> = React.memo(({
               onDraftChange?.(next);
             }}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             placeholder="Ask a question… (Enter to send, Shift+Enter for a new line)"
             disabled={isLoading || disabled}
             rows={1}

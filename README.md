@@ -59,7 +59,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Application Shell**: Navigation rail with Chat, Documents, Settings pages and responsive flexbox layout
 - **Theme System**: Dark/light mode toggle with system preference detection and localStorage persistence
 - **Design Token Foundation (Phase 1)**: Comprehensive CSS custom property system on 8px grid with Inter font, status color tokens (info/warning/success), and radius tokens (sm/md/lg)
-- **Toast Notifications**: Non-blocking toast system with success/error/info variants and entrance animations
+- **Toast Notifications**: Non-blocking toast system with success/error/info variants, entrance and exit fades, and a 5 second auto-dismiss that pauses on hover and focus (only the dismiss button closes a toast early), at most 5 toasts at once (the oldest is dropped), identical messages not duplicated (the repeat restarts the timer), and a viewport portaled to `document.body`
 - **Keyboard Shortcuts**: Ctrl+Enter (send), Ctrl+L (clear chat), Ctrl+, (open settings) with input/textarea focus guard
 - **Testing Framework**: vitest configured with @testing-library/react and jsdom environment
 
@@ -70,7 +70,7 @@ The browser app is a complete, offline RAG client. See `PACKAGING.md` for the bu
 - **Assistant Message Styling**: Full-width prose layout (no bubble background/radius) for improved readability
 - **User Message Styling**: 75% width bubbles aligned right, maintaining visual distinction
 - **Action Row Copy Button**: Copy button relocated below message content in a dedicated action row
-- **Composer Redesign**: Raised card input with 20px radius (`--radius-lg`), enhanced focus feedback (border color + shadow), elevation shadow, and 12px radius buttons (`--radius-md`)
+- **Composer Redesign**: Raised card input with 20px radius, enhanced focus feedback (border color + shadow), elevation shadow, and 12px radius buttons
 
 ### Core Capabilities
 - **Offline-First Design**: No internet required after initial setup
@@ -146,7 +146,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 - **Controlled ChatPage**: Refactored with `messages`, `onMessagesChange`, and `onSaveConversation` props for explicit state management
 - **App Wiring**: `useConversations` hook connects AppLayout and ChatPage for automatic conversation loading and saving
 - **Simplified Header**: Compact padding, right-aligned controls, removed title text
-- **Elevation Tokens**: New shadow hierarchy (`--shadow-sm/md/lg`) and surface colors (`--color-bg/surface/raised`) for consistent depth
+- **Elevation Tokens**: A shadow hierarchy and surface colors (since replaced by the Lumen `--shadow-*` and `--bg-*` tokens) for consistent depth
 - **Relative Timestamps**: `relativeTime.ts` utility formats conversation timestamps as "2m ago", "Yesterday", etc.
 
 ### Interactive Source Pills (Phase 4)
@@ -243,11 +243,10 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
   - **About**: Version info and app description
 - **IndexedDB Persistence**: User preferences (theme, preferredModel, serverUrl) stored in IndexedDB with automatic load/save
 - **InferenceModeProvider at Root**: Provider moved to `App.tsx` root level for shared state across all pages (Chat, Documents, Settings)
-- **Cross-Browser Compatibility** (`browser-compat.ts`): Detection for Chrome/Edge 113+ (full WebGPU), Firefox (degraded/experimental), Safari (degraded/partial); provides compatibility guidance with upgrade recommendations
+- **Cross-Browser Compatibility** (`browser-compat.ts`): Detection for Chrome/Edge 113+ (full WebGPU) and Firefox 112 or newer (supported; WebGPU is experimental there, so in-browser model features may be degraded); classifies the browser by name and version so the app can show the unsupported-browser notice. Firefox is verified in CI by the Playwright browser e2e suite (it runs under both Chromium and Firefox). Safari and every other WebKit browser (all iOS/iPadOS browsers included, FxiOS among them) are classified unsupported (as is Firefox below 112), and the browser app shows a dismissible "This browser isn't supported" notice at load (the course player's start-failure message names Safari as unsupported too)
 - **Reusable UI Components**:
   - `ErrorBoundary.tsx`: Class-based error boundary catching render errors with retry functionality
-  - `LoadingSkeleton.tsx`: Shimmer-animated skeleton placeholders (text, card, avatar, button variants)
-  - `EmptyState.tsx`: Contextual empty states (no-documents, no-results, no-chat-history, generic) with optional action buttons
+  - `ui/EmptyState`: Contextual empty state primitive from the Lumen component library (`src/ui/`); the earlier `LoadingSkeleton` and `components/EmptyState.tsx` were removed (Lumen phases 7-8)
 
 ### End-to-End Integration (Phase 8)
 - **Dual-Mode Streaming**: `ChatPage` now connects to `RAGOrchestrator` for browser-local inference (WebGPU) and `SSEStreamConsumer` for API server streaming, with seamless mode switching
@@ -281,8 +280,7 @@ The desktop app runs GGUF models via node-llama-cpp (Node main-process backend, 
 | `DocumentList.tsx` | `src/components/` | Paginated document list with status tracking |
 | `ModelDownloadProgress.tsx` | `src/components/` | Accessible progress bar for model download |
 | `ErrorBoundary.tsx` | `src/components/` | Error boundary with retry functionality |
-| `LoadingSkeleton.tsx` | `src/components/` | Shimmer-animated skeleton placeholders |
-| `EmptyState.tsx` | `src/components/` | Contextual empty states with optional action buttons |
+| `EmptyState` | `src/ui/` | Contextual empty state (Lumen primitive; replaces the removed `LoadingSkeleton` and `components/EmptyState.tsx`) |
 | `Sidebar.tsx` | `src/components/` | Responsive 260px sidebar with conversation history (Phase 3) |
 | `SidebarConversationItem.tsx` | `src/components/` | Conversation list item with context menu (Phase 3) |
 
@@ -944,18 +942,11 @@ the desktop app's renderer. This section documents its development flow.
 - Pure CSS design token system (no Tailwind)
 - vitest + @testing-library/react for testing
 
-### Design Token System (Phase 1 — Updated)
-Translates Python theme.py (ColorTokens, TypeScale, Spacing) to CSS custom properties:
+### Design Token System (Lumen)
+The web UI is styled only by the Lumen design tokens in `web_ui/src/styles/lumen-tokens.css`: colors (`--bg-*`, `--text-*`, `--accent*`, status), `--type-*` typography, `--space-*` spacing, `--r-*` radii and `--shadow-1/2/3`, each with a dark-theme override. Design rules and contrast guarantees: `docs/design/design-language.md`.
+The earlier `--color-*`, `--spacing-*`, `--radius-*`, `--font-family`, `--font-size-*`, `--line-height-*` and `--shadow-sm/md/lg` tokens (59 names, frozen in `web_ui/src/styles/retired-tokens.ts`) were retired in Lumen phase 8 (legacy to Lumen map: `web_ui/src/styles/token-remap.ts`).
 
-| Token Category | Examples |
-|---------------|----------|
-| Colors | `--color-primary`, `--color-info`, `--color-warning`, `--color-success`, `--color-bubble-user`, `--color-text-muted`, `--color-text-primary` |
-| Typography | `--font-family` (Inter first), `--font-size-display` (32px), `--font-size-h1` (24px), `--font-size-h2` (20px), `--font-size-h3` (17px), `--font-size-body` (15px), `--font-size-caption` (13px), `--font-size-small` (11px) |
-| Line Height | `--line-height-body` (1.6), `--line-height-heading` (1.3), `--line-height-tight` (1.2) |
-| Spacing | `--spacing-xs` (4px) through `--spacing-xxxl` (64px) on 8px grid |
-| Radius | `--radius-sm` (6px), `--radius-md` (12px), `--radius-lg` (20px) |
-
-**Font**: Inter (self-hosted via @fontsource/inter, weights 400/500/600/700)
+**Font**: Inter (self-hosted via @fontsource/inter, weights 400/500/600/700) as `--font-sans`
 
 Dark mode overrides via `[data-theme="dark"]` attribute on `<html>`.
 

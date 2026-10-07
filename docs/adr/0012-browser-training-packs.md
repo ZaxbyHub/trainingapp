@@ -187,7 +187,7 @@ could be served were not isolated from app storage.
 - Responses carry the desktop MIME table, `Cross-Origin-Resource-Policy: cross-origin`,
   `nosniff`, `no-cache`, and the training CSP: the desktop `buildTrainingCspPolicy()` without the
   private `app:` sources plus `frame-ancestors 'self' <app origin>`, with one deliberate
-  divergence: `worker-src blob: <player origin>/training/<open pack>/` instead of `'self' blob:` (pinned by
+  divergence: `worker-src blob: <player origin>/training/<open pack>/ <player origin>/training/sw.js` instead of `'self' blob:` (pinned by
   `desktop/src/__tests__/browser-training-serving-drift.test.ts`). A worker takes its CSP from
   its own script response. On the player origin `'self'` would admit every app asset
   (`/assets/*.js`, `/training-boot.js`, `/training/sw.js`), which the host serves with only
@@ -249,8 +249,8 @@ could be served were not isolated from app storage.
    static-only host. The worker refuses only requests from worker-controlled course pages.
    Course JS cannot frame any other player-origin document, and the boot frame it can script
    allows no `fetch`, forms, beacons, images, popups or top navigation, and runs no script or
-   worker but its own two files. The course's own `worker-src` admits only `blob:` and the open
-   pack's relay path, so it cannot start an app asset as an unconfined worker or service worker
+   worker but its own two files. The course's own `worker-src` admits only `blob:`, the open
+   pack's relay path and the course service worker's own script `/training/sw.js` (Firefox needs it to start controlled dedicated workers; CSP matches that source against the percent-decoded path and ignores the query, so it also admits encoded spellings such as `/training/sw%2ejs` and `/training/%73w.js`. The service worker itself answers 404, before asking the relay, to every request whose path, decoded repeatedly, equals `/training/sw.js` exactly (case-sensitive, like CSP), and to any path that does not decode (the repeated decode stops being followed after 8 passes: a path still changing then fails closed, as refused). So a worker on that script never runs, whoever holds the relay port), so it cannot start an app asset as an unconfined worker or service worker
    (review round 4 F1; the worker-escape row of `web_ui/e2e/isolation-browser.spec.ts`).
 6. **Navigation egress (closed).** CSP on a course document does not govern navigation of the
    course's own frame or of the boot frame (a frame the course creates is governed by the course
@@ -394,15 +394,15 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
 |---|---|
 | Chrome / Edge (Chromium) | Supported. Course playback, Range media, storage isolation and exact-origin messaging measured on Chromium 153 (plan critic rounds 2-4) and exercised by `web_ui/e2e/packs-browser.spec.ts`. |
 | Chrome with the `BlockThirdPartyCookies` policy, Edge strict tracking prevention | Not measured in this trace (the player origin is third-party to the app page, so partitioned third-party service workers are required). |
-| Firefox | Untested. |
-| Safari | Not supported for packs or course playback; the UI says so. |
+| Firefox | Firefox 112 or newer supported; older Firefox is unsupported (no native `inert`), with the same upfront notice (decided after this ADR; PR #151 review, PRR-151-030). The browser e2e suite runs under both Chromium and Firefox in the required `web-ui e2e` CI job, including all six player-origin isolation specs in `web_ui/e2e/isolation-browser.spec.ts`. Five observe through out-of-band `postMessage` reports (Playwright's Firefox cannot reach into the course frame under COOP/COEP); the click-activation spec launches its own Firefox with Fission disabled (`MOZ_FORCE_DISABLE_FISSION=1`) because Playwright cannot send input into an out-of-process frame (microsoft/playwright#21780). Only the test browser's process model changes; real users are not expected to be affected. Firefox requires the course document's `worker-src` to admit the course service worker's script before it will start service-worker-controlled dedicated workers, which is why the list below names `/training/sw.js`. Engine difference, benign: Chromium's course frame is not `crossOriginIsolated` (the permissions-policy default) while Firefox reports true. |
+| Safari and every other WebKit browser (including all iOS/iPadOS browsers) | Not supported for packs or course playback; the app says so up front: `browser-compat.ts` classifies them as unsupported and the browser app shows a dismissible notice at load, and the player's start-failure message names Safari as unsupported. |
 
 ### Divergences from desktop (disclosed)
 
 | Area | Desktop | Browser | Why |
 |---|---|---|---|
 | Course origin | `app://training` host | dedicated player origin + relay | no custom schemes in a browser |
-| CSP | training CSP | same minus `app:`, plus `frame-ancestors 'self' <app>`, and `worker-src blob: <player origin>/training/<open pack>/` instead of `'self' blob:`; every other player-origin document refuses framing, and the boot page has its own header CSP (FC6) | the player is embeddable only by the app; course JS can frame no weaker same-origin document and start no app asset as a worker (on the player origin `'self'` reaches app assets served without the course CSP) |
+| CSP | training CSP | same minus `app:`, plus `frame-ancestors 'self' <app>`, and `worker-src blob: <player origin>/training/<open pack>/ <player origin>/training/sw.js` instead of `'self' blob:`; every other player-origin document refuses framing, and the boot page has its own header CSP (FC6) | the player is embeddable only by the app; course JS can frame no weaker same-origin document and start no app asset as a worker (on the player origin `'self'` reaches app assets served without the course CSP) |
 | Course frame navigation | renderer `frame-src 'self' app:` refuses off-origin navigation of the course frame | runtime app-shell meta `frame-src <player origin>` refuses off-origin navigation of the course frame and the boot frame | a browser host cannot know a configured player origin, and header policies intersect (threat model item 6) |
 | Prebuilt index | mounted (`index.sqlite`) | not used; slide docs re-indexed in the browser | no SQLite in the browser (ADR-0009) |
 | Linked Learn rows | `links` table | computed at ask time (cosine ≥ 0.5, top 3, 4 s budget) | no links store in the browser |
@@ -430,5 +430,5 @@ path with 404 (pinned by `tests/test_api_server_training_routes.py`).
 - A future packtool bridge injection, a per-pack player origin, or signing player assets would
   each need their own decision record.
 - Manual measurements the plan called for (the real 292 MB publish in Chrome and Edge, the
-  enterprise-policy and strict-tracking variants, a Firefox smoke check) were not performed in
+  enterprise-policy and strict-tracking variants, a Firefox smoke check; Firefox is now covered by the CI e2e suite, see Browser support) were not performed in
   this trace and remain open.

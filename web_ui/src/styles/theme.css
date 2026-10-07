@@ -1,9 +1,4 @@
-@import "./tokens.css";
 @import "./lumen-tokens.css";
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
 
 :root {
   color-scheme: light;
@@ -11,17 +6,6 @@
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --color-info: #38bdf8;
-  --color-warning: #facc15;
-  --color-success: #4ade80;
-  --color-text-primary: #e0e0e0;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
-  --color-bg: #1a1a2e;
-  --color-surface: #252539;
-  --color-raised: #2a2a3e;
-  --color-surface-elevated: #252539;
 }
 
 html,
@@ -36,10 +20,24 @@ body {
 }
 
 body {
-  background-color: var(--color-bubble-assistant);
-  color: var(--color-text-on-bubble-assistant);
-  font-family: var(--font-family);
-  font-size: var(--font-size-body);
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--type-body-size);
+}
+
+/* U6d: respect prefers-reduced-motion. Disable the spin/shimmer loops for users who
+   request reduced motion. StreamingIndicator already guards itself; this covers the
+   boot overlay spinner, the streaming cursor, and the skeleton shimmer. (Relocated
+   unchanged from the retired tokens.css in Lumen phase 8.) */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
 /* Chat-specific styles (message actions, header actions) live in pages/chat.css (Lumen phase 5). */

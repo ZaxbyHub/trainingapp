@@ -311,7 +311,13 @@ export function TrainingPage({ initialPackId, pendingSlideId, onSlideChange, onL
     // that dir, the same course's preferred (active) row.
     if (courses.length === 1) return courses[0];
     if (typeof window !== 'undefined' && courses.length > 1) {
-      const last = window.localStorage.getItem(LAST_PACK_KEY);
+      // A blocked storage (privacy mode, restricted iframe) throws on read: no remembered course.
+      let last: string | null = null;
+      try {
+        last = window.localStorage.getItem(LAST_PACK_KEY);
+      } catch {
+        last = null;
+      }
       if (last !== null) {
         const byLast = courses.find((pack) => packDirKey(pack) === last);
         if (byLast !== undefined) return byLast;

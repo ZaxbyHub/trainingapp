@@ -31,19 +31,51 @@
  *                         mode (and its radio), moving those connection fields into this section.
  *                         No connection test runs (cross-origin traffic is aborted anyway).
  *   overlay-model-not-ready   the alertdialog browser builds without staged weights show
+ *   crash-page            the outer ErrorBoundary fallback (App.tsx: AppContent throws), which renders OUTSIDE
+ *                         the app shell, so only <body> paints behind it (phase 8 moved body to --bg-canvas)
+ *   boot-screen-loading   DesktopBootGate before the shell, "Starting TrainingApp" (stubbed desktopApi whose
+ *   boot-screen-error     discovery never settles / rejects: "Desktop backend unavailable" + Retry); also
+ *                         outside the shell
  * Seeding writes raw IndexedDB records (conversations: Dexie store
  * `docqa_conversations`; documents: `<profile>-doc-qa-documents`) and reloads;
  * no model weights are needed. A fixed clock and UTC/en-US keep dates stable.
  *
  * NOT covered (deferred, reported): FirstRunWizard and DesktopModelBlockedOverlay
- * render only when window.desktopApi exists (Electron preload), which a
- * plain-browser harness cannot provide without faking the desktop bridge.
+ * render only when window.desktopApi exists (Electron preload) AND need a resolved desktop
+ * session; the boot-screen states fake only the bridge discovery calls, which is enough for
+ * the boot gate (it never mounts the app) but not for those two.
+ *
+ * Forced crash (crash-page): NO production hook, and no reliance on a real product bug. The
+ * baselines run against the production build, where a DEV-guarded trigger would be absent and an
+ * always-on one would ship. The spec instead patches the BUILT entry chunk in flight (page.route):
+ * the module script that dist/index.html names is served with one extra property in the props
+ * object AppContent passes to AppLayout, whose value throws the forced message. That object is
+ * built only on the shell render path, once boot completes, so the boot dialog renders and goes
+ * as usual and the App-level ErrorBoundary around AppContent then shows its fallback (inside
+ * ThemeProvider, so it is themed). The anchor is the `onOpenModelSettings:()=>` property (prop keys
+ * survive minification); the test fails loudly, before loading the page, unless the anchor occurs
+ * exactly once in that chunk. dist/ itself is never modified. The test asserts the forced message.
+ * (Earlier seams: a throwing navigator.userAgent until PR #151 final review LOW-C, then a throwing
+ * web-storage read of the sidebar-open key until critic-final-2 D1; both were real crashes and
+ * are now fixed in the product, so neither can serve as a seam.)
  *
  * Determinism: theme is forced via the persisted `theme-preference` key (and
  * emulated colorScheme); animations are disabled by the config and reduced
  * motion is requested; fonts are awaited; all cross-origin traffic is
- * aborted; hardware/quota-derived text is masked (the Hardware Capability
- * section is masked per value cell, not as a whole).
+ * aborted; hardware/quota-derived VALUES in Settings are masked (the Hardware
+ * Capability section is masked per value cell, not as a whole). The model gate's
+ * readiness TEXT is hardware-derived too and is not masked (it is the content under
+ * test), so the hardware it reads is pinned instead (PR #151 review PRR-151-036):
+ * stubHardware() reports navigator.deviceMemory = 8 (Chromium's cap: enough memory
+ * for the packaged model, so no "Insufficient memory" failure) and a WebGPU API with
+ * no adapter ("WebGPU is unavailable, but the wllama engine runs on the CPU"). That
+ * is exactly what the committed overlay-model-not-ready-*.png baselines show, so a
+ * regeneration on a 4 GB or WebGPU-capable box renders the same text. The Knowledge
+ * Packs storage line ("Browser storage: 432 KB used, 10.0 GB available (not persistent
+ * ...") is machine-derived as well: Chromium computes navigator.storage.estimate().quota
+ * from the host's free disk space (a GitHub windows-latest runner rendered 4.0 GB, the
+ * baseline machine 10.0 GB), so the same stub pins the quota to 10 GiB and
+ * persisted() to false.
  *
  * Viewport note: each capture grows the viewport to the full content height, so
  * height-dependent layout (100vh regions, the pinned composer, the sidebar footer)
@@ -51,7 +83,19 @@
  * overlay captures cover the real-viewport case.
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { expect, test, type Locator, type Page } from '@playwright/test';
+import {
+  assertOverlayOptOutAllowed,
+  expectModelGateHidden,
+  hideModelGate,
+  requireModelGate,
+  settleFontsAndFrames,
+} from '../model-gate';
+
+// PRR-151-054: the LUMEN_ALLOW_NO_OVERLAY opt-out is refused under CI.
+assertOverlayOptOutAllowed();
 
 // Waits below allow up to 60s; the 30s default test timeout would cut them short.
 test.describe.configure({ timeout: 180_000 });
@@ -142,8 +186,36 @@ async function waitReady(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
 }
 
+/**
+ * Pin the machine-derived values the captured pages read (see the header,
+ * PRR-151-036): model-readiness.ts derives its memory failure from
+ * navigator.deviceMemory (memory-aware.ts getMemoryBudget) and its WebGPU text from
+ * navigator.gpu.requestAdapter(); the Documents page's Knowledge Packs storage line
+ * (PacksPanel formatBytes over browser-pack-manager storageReport) reads
+ * navigator.storage.estimate().quota, which Chromium derives from the host's free disk
+ * space, and persisted(). Usage is real (deterministic: 432 KB); only the quota is
+ * fixed, to 10 GiB, which renders "10.0 GB available". Defined before any app script runs.
+ */
+async function stubHardware(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'deviceMemory', { configurable: true, get: () => 8 });
+    const gpu = { requestAdapter: async () => null };
+    Object.defineProperty(Navigator.prototype, 'gpu', { configurable: true, get: () => gpu });
+    const storage = navigator.storage;
+    if (storage) {
+      const realEstimate = storage.estimate.bind(storage);
+      storage.estimate = async () => ({
+        ...(await realEstimate()),
+        quota: 10 * 1024 * 1024 * 1024,
+      });
+      storage.persisted = async () => false;
+    }
+  });
+}
+
 async function boot(page: Page, theme: 'light' | 'dark'): Promise<void> {
   await blockExternalNetwork(page);
+  await stubHardware(page);
   await page.clock.setFixedTime(new Date(NOW + 24 * 3600 * 1000));
   await page.addInitScript((t) => {
     try {
@@ -238,22 +310,6 @@ async function seedPopulated(page: Page): Promise<void> {
 }
 
 /**
- * Hide the model-gate scrim (the Dialog backdrop, found by its stable test id) so the surface
- * underneath renders, and lift the gate's inert on the chat content so it can be interacted with.
- */
-async function hideModelGate(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    document.querySelectorAll('[role="alertdialog"]').forEach((el) => {
-      (el.closest('[data-testid="ui-dialog-backdrop"]') ?? el).setAttribute('data-lumen-hidden', '1');
-    });
-    // The gate makes the chat content inert (axe skips inert subtrees, Playwright refuses to
-    // click them). The surface underneath is what these specs capture/scan, so lift it too.
-    document.querySelectorAll('.chat-page__content[inert]').forEach((el) => el.removeAttribute('inert'));
-  });
-  await page.addStyleTag({ content: '[data-lumen-hidden="1"]{display:none !important}' });
-}
-
-/**
  * Grow the viewport until nothing scrolls vertically, so one screenshot holds
  * the whole surface (the scroller is <main>, so `fullPage` alone does not work).
  */
@@ -318,6 +374,94 @@ function dynamicMasks(page: Page): Locator[] {
   ];
 }
 
+/**
+ * Boot with the page's theme forced and no app-level readiness wait: for states that
+ * never reach the readiness path (crash fallback, boot gate).
+ */
+async function bootBare(
+  page: Page,
+  theme: 'light' | 'dark',
+  init?: () => void,
+  beforeGoto?: (page: Page) => Promise<void>
+): Promise<void> {
+  await blockExternalNetwork(page);
+  await stubHardware(page);
+  await page.clock.setFixedTime(new Date(NOW + 24 * 3600 * 1000));
+  await page.addInitScript((t) => {
+    try {
+      localStorage.setItem('theme-preference', t);
+    } catch {
+      /* ignore */
+    }
+  }, theme);
+  if (init) await page.addInitScript(init);
+  // Registered after blockExternalNetwork, so its routes are consulted first (last registered wins).
+  if (beforeGoto) await beforeGoto(page);
+  await page.goto('/');
+}
+
+/** Park the pointer and drop focus so no ring or hover enters a capture. */
+async function quiesce(page: Page): Promise<void> {
+  await page.evaluate(() => (document.activeElement instanceof HTMLElement ? document.activeElement.blur() : null));
+  await page.mouse.move(0, 0);
+  await settleFontsAndFrames(page);
+}
+
+const FORCED_CRASH_MESSAGE = 'Forced render crash for the visual baseline';
+
+/** In the built entry chunk: the AppLayout props object built by AppContent's shell render. */
+const CRASH_ANCHOR = 'onOpenModelSettings:()=>';
+const CRASH_INJECTION = `__forcedCrash:(()=>{throw new Error(${JSON.stringify(FORCED_CRASH_MESSAGE)})})(),${CRASH_ANCHOR}`;
+
+/**
+ * The entry chunk dist/index.html loads, patched so AppContent throws while rendering the shell
+ * (see the header). Read from disk (the preview server serves this same dist/), and found through
+ * index.html, so the content hash in its name never matters. Fails the test, loudly, unless there
+ * is exactly one module entry script and the anchor occurs exactly once in it.
+ */
+function crashPatchedEntryChunk(): { file: string; body: string } {
+  const html = readFileSync(fileURLToPath(new URL('../../dist/index.html', import.meta.url)), 'utf8');
+  const entries = [...html.matchAll(/<script\b[^>]*\btype="module"[^>]*\bsrc="\.?\/?(assets\/[^"]+\.js)"/g)].map((m) => m[1]);
+  expect(entries, 'dist/index.html must load exactly one module entry chunk').toHaveLength(1);
+  const file = entries[0];
+  const source = readFileSync(fileURLToPath(new URL(`../../dist/${file}`, import.meta.url)), 'utf8');
+  expect(
+    source.split(CRASH_ANCHOR).length - 1,
+    `crash seam anchor ${CRASH_ANCHOR} must occur exactly once in dist/${file} (did AppContent's AppLayout props change?)`
+  ).toBe(1);
+  return { file, body: source.replace(CRASH_ANCHOR, CRASH_INJECTION) };
+}
+
+/** Serve the crash-patched entry chunk in place of the real one, keeping the server's headers. */
+async function forceAppContentCrash(page: Page): Promise<void> {
+  const { file, body } = crashPatchedEntryChunk();
+  await page.route(`**/${file}`, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({ response, body });
+  });
+}
+
+/**
+ * Stub the preload bridge the boot gate discovers the backend through. 'loading': the
+ * discovery never settles (the 15s bridge timeout is not reached within a capture);
+ * 'error': it rejects at once.
+ */
+function stubDesktopBridge(mode: 'loading' | 'error'): () => void {
+  return mode === 'loading'
+    ? () => {
+        (window as unknown as { desktopApi: unknown }).desktopApi = {
+          getBackendInfo: () => new Promise(() => undefined),
+          getAuthToken: () => new Promise(() => undefined),
+        };
+      }
+    : () => {
+        (window as unknown as { desktopApi: unknown }).desktopApi = {
+          getBackendInfo: () => Promise.reject(new Error('stubbed backend unavailable')),
+          getAuthToken: () => Promise.reject(new Error('stubbed backend unavailable')),
+        };
+      };
+}
+
 for (const theme of THEMES) {
   for (const width of WIDTHS) {
     test.describe(`${theme} @ ${width}`, () => {
@@ -330,19 +474,12 @@ for (const theme of THEMES) {
 
       test('overlay-model-not-ready', async ({ page }) => {
         await boot(page, theme);
-        const shown = (await page.getByRole('alertdialog').count()) > 0;
-        if (!shown && process.env.LUMEN_ALLOW_NO_OVERLAY === '1') {
-          test.skip(true, 'overlay opt-out (LUMEN_ALLOW_NO_OVERLAY=1)');
-        }
         // Absent gate = regression or a staged-weights build: fail unless explicitly opted out.
-        expect(shown, 'model-gate overlay must render; set LUMEN_ALLOW_NO_OVERLAY=1 only for builds with staged weights').toBe(true);
+        await requireModelGate(page);
         // The composer grows once the web font lands (its auto-resize re-measures on
         // fonts.ready); capturing mid-growth gave two renders across fresh loads that
         // differed by 1/255 at the card corners. Settle fonts and two frames first.
-        await page.evaluate(async () => {
-          await document.fonts.ready;
-          await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-        });
+        await settleFontsAndFrames(page);
         await expect(page).toHaveScreenshot(`overlay-model-not-ready-${theme}-${width}.png`, {
           mask: dynamicMasks(page),
         });
@@ -352,7 +489,9 @@ for (const theme of THEMES) {
         test(state.id, async ({ page }) => {
           await boot(page, theme);
           if (state.seed) await seedPopulated(page);
-          if ((await page.getByRole('alertdialog').count()) > 0) await hideModelGate(page);
+          // Every state starts on the chat page with the gate up (no staged weights; under the
+          // local opt-out a staged-weights build has no gate and the state is captured as is).
+          await hideModelGate(page, { expectGate: true });
           if (state.nav) {
             await clickNav(page, state.nav);
           }
@@ -360,11 +499,39 @@ for (const theme of THEMES) {
           await page.waitForTimeout(500);
           if (state.act) await state.act(page);
           await fitViewportToContent(page, width);
+          // Re-checked right before the capture: no gate in the PNG, no inert content.
+          await expectModelGateHidden(page);
           await expect(page).toHaveScreenshot(`${state.id}-${theme}-${width}.png`, {
             mask: dynamicMasks(page),
             ...railGearTolerance(state.id, theme, width),
             ...bannerCornerTolerance(state.id, theme, width),
           });
+        });
+      }
+
+      // Surfaces outside the app shell: only <body> (and the dialog/banner on it) paint, so
+      // these are where the phase 8 body colour change is visible.
+      test('crash-page', async ({ page }) => {
+        await bootBare(page, theme, undefined, forceAppContentCrash);
+        await expect(page.getByRole('heading', { name: 'Something went wrong' })).toBeVisible({ timeout: 30_000 });
+        await expect(page.getByText(FORCED_CRASH_MESSAGE)).toBeVisible();
+        await quiesce(page);
+        await expect(page).toHaveScreenshot(`crash-page-${theme}-${width}.png`);
+      });
+
+      for (const mode of ['loading', 'error'] as const) {
+        test(`boot-screen-${mode}`, async ({ page }) => {
+          await bootBare(page, theme, stubDesktopBridge(mode));
+          if (mode === 'loading') {
+            await expect(page.getByRole('heading', { name: 'Starting TrainingApp' })).toBeVisible({ timeout: 30_000 });
+            await expect(page.getByText('Connecting to the desktop backend...')).toBeVisible();
+          } else {
+            await expect(page.getByRole('heading', { name: 'Desktop backend unavailable' })).toBeVisible({ timeout: 30_000 });
+            await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+          }
+          await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+          await quiesce(page);
+          await expect(page).toHaveScreenshot(`boot-screen-${mode}-${theme}-${width}.png`);
         });
       }
     });

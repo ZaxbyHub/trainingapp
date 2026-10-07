@@ -154,7 +154,13 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('a pack installs through the Packs panel and its course plays from the dedicated player origin', async ({ page }) => {
+test('a pack installs through the Packs panel and its course plays from the dedicated player origin', async ({ page, browserName }) => {
+  // Firefox: Playwright cannot attach to iframes under the app's COOP/COEP headers (frame.url() stays empty), so
+  // the course document is observed on the network instead of through the frame DOM. Chromium reads the frame.
+  const courseResponse =
+    browserName === 'firefox'
+      ? page.waitForResponse((r) => new URL(r.url()).pathname === `/training/${PACK_ID}/story.html`, { timeout: 60_000 })
+      : null;
   await openDocuments(page);
   await installViaPanel(page, await coursePackZip('1.0.0'), `${PACK_ID}-1.0.0.zip`);
   await expect(page.getByTestId(`pack-row-${PACK_ID}-1.0.0`)).toBeVisible({ timeout: 60_000 });
@@ -169,6 +175,13 @@ test('a pack installs through the Packs panel and its course plays from the dedi
   const appOrigin = new URL(page.url()).origin;
   expect(src.origin).not.toBe(appOrigin);
   expect(src.pathname).toBe(`/training/${PACK_ID}/story.html`);
+  if (courseResponse !== null) {
+    const response = await courseResponse;
+    expect(response.status()).toBe(200);
+    expect(new URL(response.url()).origin).toBe(src.origin);
+    expect(await response.text()).toContain('BROWSER-PARITY:1.0.0');
+    return;
+  }
   await expect(page.frameLocator('iframe[data-testid="training-player-frame"]').locator('body')).toContainText('BROWSER-PARITY:1.0.0', {
     timeout: 60_000,
   });

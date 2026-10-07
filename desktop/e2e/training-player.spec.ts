@@ -44,12 +44,11 @@
  * Tags: `@ac2` = C2 (10 jumps across 3 sections), `@ac3` = C3 (slidechange
  * semantics). The drivers run this file once per tag via --grep.
  */
-import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import os from 'node:os';
+import { cpSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { test, expect, _electron, type ElectronApplication, type Page } from '@playwright/test';
+import { test, expect, type ElectronApplication, type Page } from '@playwright/test';
+import { closeAllApps, closeApp, launchElectron, makeTempDir, makeUserDataDir, removeTempDir } from './launch-helpers.js';
 
 const PACK_ID = 'opmed-cdp-mlc';
 // ESM-safe __dirname (desktop package.json sets "type": "module").
@@ -98,31 +97,32 @@ function assertNoCoopCoepConsoleErrors(): void {
   expect(offending, `COOP/COEP console errors appeared (AC1): ${offending.join(' || ')}`).toEqual([]);
 }
 
-/** Teardown helper mirroring renderer-smoke.spec.ts (Windows-safe quit). */
-async function closeApp(app: ElectronApplication): Promise<void> {
-  await Promise.race([app.close(), new Promise((resolve) => setTimeout(resolve, 8_000))]);
-  try {
-    if (app.process().exitCode === null) {
-      spawnSync('taskkill', ['/PID', String(app.process().pid), '/T', '/F'], { stdio: 'ignore' });
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-    }
-  } catch {
-    /* process already gone */
+/** Temp dirs this file created (store + Electron profile per launch, staged packs). */
+const tempDirs: string[] = [];
+
+test.afterAll(async () => {
+  // Close any app a failing test left running first: it holds files in its temp profile.
+  await closeAllApps();
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir !== undefined) removeTempDir(dir);
   }
-}
+});
 
 async function launchTrainingApp(): Promise<{ app: ElectronApplication; page: Page; packsDir: string }> {
   // Stage the packs root (fixture -> <packId>/assets/player/) unless the
   // runner already provided TRAININGAPP_DESKTOP_PACKS_DIR (real-publish runs).
   let packsDir = process.env.TRAININGAPP_DESKTOP_PACKS_DIR ?? '';
   if (packsDir === '') {
-    const packsRoot = mkdtempSync(path.join(os.tmpdir(), 'd5-packs-'));
+    const packsRoot = makeTempDir('d5-packs-');
+    tempDirs.push(packsRoot);
     const playerDir = path.join(packsRoot, PACK_ID, 'assets', 'player');
     mkdirSync(playerDir, { recursive: true });
     cpSync(FIXTURE_DIR, playerDir, { recursive: true });
     packsDir = packsRoot;
   }
-  const storeDir = mkdtempSync(path.join(os.tmpdir(), 'd5-training-e2e-store-'));
+  const storeDir = makeTempDir('d5-training-e2e-store-');
+  tempDirs.push(storeDir);
   const storePath = path.join(storeDir, 'profiles', 'default', 'store.sqlite');
   mkdirSync(path.dirname(storePath), { recursive: true });
 
@@ -135,12 +135,15 @@ async function launchTrainingApp(): Promise<{ app: ElectronApplication; page: Pa
   env.TRAININGAPP_DESKTOP_EMBEDDER = 'hash';
   env.TRAININGAPP_DESKTOP_STORE_PATH = storePath;
 
-  const app = await _electron.launch({ args: ['.'], env });
-  const page = await app.firstWindow();
-  page.on('console', (msg) => {
-    if (msg.type() === 'error') consoleErrors.push(msg.text());
+  const { app, page } = await launchElectron({
+    userDataDir: makeUserDataDir(storeDir),
+    env,
+    onWindow: (p) => {
+      p.on('console', (msg) => {
+        if (msg.type() === 'error') consoleErrors.push(msg.text());
+      });
+    },
   });
-  await page.waitForLoadState('domcontentloaded');
   return { app, page, packsDir };
 }
 

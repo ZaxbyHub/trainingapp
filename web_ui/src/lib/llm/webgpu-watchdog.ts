@@ -265,6 +265,13 @@ export function createRecoveryHandler(service: WebLLMService): (reason: string) 
 
     service.dispose();
 
+    // The cached readiness result describes the engine we just disposed. Drop it
+    // NOW, not only after a successful re-init: both failure paths below throw,
+    // and a surviving cache would short-circuit every later
+    // ensureReadinessGateChecked() with the stale pre-loss result while the
+    // overlay (fed the modelCached:false event above) waits forever. (PRR-152-01)
+    resetReadinessCache();
+
     // Step 2: Re-check WebGPU availability
     const gate = new ModelReadinessGate();
     const webgpuAvailable = await gate.checkWebGPU();

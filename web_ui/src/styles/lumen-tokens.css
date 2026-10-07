@@ -1,11 +1,15 @@
 /* Lumen design tokens (docs/design/design-language.md section 3).
-   ADDITIVE: these sit next to the legacy --color-* / --radius-* / --spacing-*
-   tokens in tokens.css, which are untouched. No existing consumer references
-   any name defined here. Components in web_ui/src/ui/ use ONLY these tokens
-   (enforced by src/ui/ui-token-hygiene.test.ts); AA contrast is enforced by
-   src/styles/lumen-tokens.contrast.test.ts, which parses THIS file. Keep every
-   token a literal value or a var() of another token defined here so that test
-   can resolve it. */
+   These are the ONLY design tokens: the legacy --color-* / --spacing-* /
+   --radius-* / --font-family / --font-size-* / --line-height-* / --shadow-sm|md|lg
+   tokens (tokens.css and the dark
+   overrides in theme.css) were retired and deleted in Lumen phase 8. Their frozen
+   names live in src/styles/retired-tokens.ts and the pairwise legacy -> Lumen
+   remap in src/styles/token-remap.ts. The repo-wide ratchet
+   (src/styles/token-ratchet.test.ts) forbids retired tokens, color literals
+   outside this file, unresolved var() references, and bare `outline: none`.
+   AA contrast is enforced by src/styles/lumen-tokens.contrast.test.ts, which
+   parses THIS file. Keep every token a literal value or a var() of another
+   token defined here so that test can resolve it. */
 
 :root {
   /* ---- 3.1 primitives: slate (cool neutral) ---- */
@@ -84,6 +88,7 @@
   --bubble-user: var(--iris-50);
 
   /* ---- 3.3 typography ---- */
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif; /* identical to the retired --font-family: zero rendering change */
   --font-mono: "Cascadia Code", "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
   --type-display-size: 30px;
   --type-display-line: 36px;

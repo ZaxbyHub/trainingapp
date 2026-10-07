@@ -7,18 +7,35 @@ export interface SidebarState {
   setOpen: (open: boolean) => void;
 }
 
+/** The open state when nothing usable is persisted: open on wide windows, closed on narrow ones. */
+function defaultOpen(): boolean {
+  return window.innerWidth > 1024;
+}
+
 export function useSidebarState(): SidebarState {
   const [isOpen, setIsOpen] = useState(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(SIDEBAR_OPEN_KEY);
+      // Web storage can throw on access (a SecurityError where storage is blocked). The sidebar
+      // state is a convenience, so a failed read falls back to the default instead of crashing
+      // the shell (critic-final-2 D1).
+      let saved: string | null;
+      try {
+        saved = localStorage.getItem(SIDEBAR_OPEN_KEY);
+      } catch {
+        return defaultOpen();
+      }
       if (saved !== null) return saved === 'true';
-      return window.innerWidth > 1024;
+      return defaultOpen();
     }
     return true;
   });
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_OPEN_KEY, isOpen.toString());
+    try {
+      localStorage.setItem(SIDEBAR_OPEN_KEY, isOpen.toString());
+    } catch {
+      // Blocked or full storage: the state just is not remembered across reloads.
+    }
   }, [isOpen]);
 
   const toggle = () => setIsOpen((prev) => !prev);

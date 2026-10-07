@@ -6,6 +6,8 @@
 
 > This document reflects the implemented state architecture after Phase 5 completion. The `useConversations` hook is fully implemented with persistence error surfacing. All components use consistent design tokens.
 
+> **Historical token names:** the `--color-*`, `--spacing-*`, `--radius-*` and `--shadow-*` tokens quoted in the code samples below (section 7 and the inline-style examples) describe the Phase 5 implementation. They were retired and deleted in Lumen phase 8; the current tokens are in `web_ui/src/styles/lumen-tokens.css`.
+
 ---
 
 ## 1. Current State Architecture

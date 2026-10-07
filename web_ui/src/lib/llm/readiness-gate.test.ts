@@ -45,11 +45,14 @@ function makeReadinessResult(overrides: Partial<ReadinessResult> = {}): Readines
 
 import {
   getReadinessSnapshot,
+  getReadinessResultSnapshot,
   getReadinessGateInstance,
   applyReadinessFromEvent,
   resetReadinessCache,
   ensureReadinessGateChecked,
+  isReadinessCheckInFlight,
 } from './readiness-gate';
+import { READINESS_IN_FLIGHT_EVENT } from './readiness-events';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -425,6 +428,168 @@ describe('readiness-gate', () => {
 
       await ensureReadinessGateChecked('wllama');
       expect(errorDetail!.message).toBe('Failed to check model readiness');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #151 review PRR-151-015: latest-request guard (no last-writer-wins)
+  // -------------------------------------------------------------------------
+
+  describe('ensureReadinessGateChecked() latest-request guard (PRR-151-015)', () => {
+    /** Each checkReadiness call returns a promise the test settles by hand. */
+    function deferredChecks() {
+      const pending: Array<{ engine: string; resolve: (r: ReadinessResult) => void; reject: (e: unknown) => void }> = [];
+      mockCheckReadiness.mockImplementation(
+        (_modelId: string, engine: string) =>
+          new Promise<ReadinessResult>((resolve, reject) => {
+            pending.push({ engine, resolve, reject });
+          })
+      );
+      return pending;
+    }
+
+    function recordChecked(): CustomEvent[] {
+      const events: CustomEvent[] = [];
+      onWindowEvent('readiness-gate-checked', (e) => events.push(e as CustomEvent));
+      return events;
+    }
+
+    it('Retry: a pre-reset check resolving AFTER the post-reset check cannot overwrite the cache or re-dispatch', async () => {
+      const pending = deferredChecks();
+      const events = recordChecked();
+      const stale = makeReadinessResult({ ready: false, failures: ['stale: missing weights'] });
+      const fresh = makeReadinessResult({ ready: true, failures: [] });
+
+      const before = ensureReadinessGateChecked('wllama'); // e.g. the [mode, engine] effect
+      resetReadinessCache(); // the gate's Retry
+      const after = ensureReadinessGateChecked('wllama');
+      expect(pending).toHaveLength(2); // the reset forced a NEW probe, not a dedupe
+
+      pending[1].resolve(fresh);
+      await after;
+      pending[0].resolve(stale); // the older probe lands last
+      await expect(before).resolves.toBe(stale); // its own caller still gets its result
+
+      expect(getReadinessResultSnapshot()).toBe(fresh);
+      expect(events.map((e) => e.detail.result)).toEqual([fresh]);
+    });
+
+    it('engine switch: an older wllama check resolving after the newer webllm check is ignored', async () => {
+      const pending = deferredChecks();
+      const events = recordChecked();
+      const wllamaResult = makeReadinessResult({ failures: ['wllama: missing weights'], ready: false });
+      const webllmResult = makeReadinessResult({ checks: { webgpu: true, modelCached: true, memory: { availableBytes: 8_000_000_000, requiredBytes: 2_000_000_000, sufficient: true, tier: 'HIGH' } } });
+
+      const a = ensureReadinessGateChecked('wllama');
+      const b = ensureReadinessGateChecked('webllm');
+      pending[1].resolve(webllmResult);
+      await b;
+      pending[0].resolve(wllamaResult);
+      await a;
+
+      expect(getReadinessResultSnapshot()).toBe(webllmResult);
+      expect(events.map((e) => e.detail.engine)).toEqual(['webllm']);
+      // The cache is keyed to the latest engine: a webllm call is a cache hit.
+      await expect(ensureReadinessGateChecked('webllm')).resolves.toBe(webllmResult);
+      expect(mockCheckReadiness).toHaveBeenCalledTimes(2);
+    });
+
+    it('a superseded check that REJECTS dispatches neither the error nor the fallback event', async () => {
+      const pending = deferredChecks();
+      const events = recordChecked();
+      const errors: CustomEvent[] = [];
+      onWindowEvent('readiness-gate-error', (e) => errors.push(e as CustomEvent));
+      const fresh = makeReadinessResult();
+
+      const before = ensureReadinessGateChecked('wllama');
+      resetReadinessCache();
+      const after = ensureReadinessGateChecked('wllama');
+      pending[1].resolve(fresh);
+      await after;
+      pending[0].reject(new Error('stale probe failed'));
+      await expect(before).resolves.toBeNull();
+
+      expect(errors).toHaveLength(0);
+      expect(events.map((e) => e.detail.result)).toEqual([fresh]);
+      expect(getReadinessResultSnapshot()).toBe(fresh);
+    });
+
+    it('a check in flight across a bare reset leaves the reset state alone', async () => {
+      const pending = deferredChecks();
+      const events = recordChecked();
+      const p = ensureReadinessGateChecked('wllama');
+      resetReadinessCache();
+      pending[0].resolve(makeReadinessResult());
+      await p;
+      expect(getReadinessResultSnapshot()).toBeNull();
+      expect(events).toHaveLength(0);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // PR #151 final review LOW-3: in-flight signal for the gate's Retry busy state
+  // -------------------------------------------------------------------------
+
+  describe('isReadinessCheckInFlight() + READINESS_IN_FLIGHT_EVENT (LOW-3)', () => {
+    function deferredChecks() {
+      const pending: Array<{ resolve: (r: ReadinessResult) => void; reject: (e: unknown) => void }> = [];
+      mockCheckReadiness.mockImplementation(
+        () =>
+          new Promise<ReadinessResult>((resolve, reject) => {
+            pending.push({ resolve, reject });
+          })
+      );
+      return pending;
+    }
+
+    function recordInFlight(): boolean[] {
+      const seen: boolean[] = [];
+      onWindowEvent(READINESS_IN_FLIGHT_EVENT, (e) => seen.push((e as CustomEvent<{ inFlight: boolean }>).detail.inFlight));
+      return seen;
+    }
+
+    it('is false with no check, true while one runs, false (and announced) once it settles', async () => {
+      const pending = deferredChecks();
+      const seen = recordInFlight();
+      expect(isReadinessCheckInFlight()).toBe(false);
+      const p = ensureReadinessGateChecked('wllama');
+      expect(isReadinessCheckInFlight()).toBe(true);
+      expect(seen).toEqual([true]);
+      pending[0].resolve(makeReadinessResult());
+      await p;
+      expect(isReadinessCheckInFlight()).toBe(false);
+      expect(seen).toEqual([true, false]);
+    });
+
+    it('a superseded check (Retry, then a watchdog/Settings reset + re-check) settling first does NOT announce "not in flight"', async () => {
+      const pending = deferredChecks();
+      const seen = recordInFlight();
+      resetReadinessCache();
+      const retry = ensureReadinessGateChecked('wllama'); // the gate's Retry
+      resetReadinessCache(); // e.g. the WebGPU watchdog
+      const newer = ensureReadinessGateChecked('wllama');
+      expect(seen).toEqual([true, true]); // the reset between them announces nothing
+
+      pending[0].resolve(makeReadinessResult());
+      await retry; // the Retry's own check is done...
+      expect(isReadinessCheckInFlight()).toBe(true); // ...but the newest is not
+      expect(seen).toEqual([true, true]);
+
+      pending[1].resolve(makeReadinessResult());
+      await newer;
+      expect(isReadinessCheckInFlight()).toBe(false);
+      expect(seen).toEqual([true, true, false]);
+    });
+
+    it('after a BARE reset the superseded check announces "not in flight" when it settles (never stuck busy); a rejecting one too', async () => {
+      const pending = deferredChecks();
+      const seen = recordInFlight();
+      const p = ensureReadinessGateChecked('wllama');
+      resetReadinessCache();
+      expect(isReadinessCheckInFlight()).toBe(false);
+      pending[0].reject(new Error('probe failed'));
+      await p;
+      expect(seen).toEqual([true, false]);
     });
   });
 });

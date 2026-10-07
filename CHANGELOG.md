@@ -47,9 +47,10 @@
 - **`start.command` works again:** `serve-offline.mjs` imported `dirname` from `node:url` and
   failed at startup; `vite preview` no longer inherits the dev server's `/api` and `/auth`
   proxy.
-- Supported browsers: current Chrome and Edge. Safari is not supported; Firefox is untested.
-  Manual checks on the real 292 MB publish, under enterprise cookie policies and strict-tracking
-  settings, and a Firefox smoke check are still open (ADR-0012).
+- Supported browsers: current Chrome and Edge, and Firefox 112 or newer (verified in CI by the
+  browser e2e suite, which runs under both Chromium and Firefox). Safari and every other WebKit
+  browser are not supported. Manual checks on the real 292 MB publish and under enterprise
+  cookie policies and strict-tracking settings are still open (ADR-0012).
 
 ### Added — connect to any OpenAI- or Anthropic-compatible endpoint, grounded, opt-in (trace universal-provider-settings-overhaul)
 

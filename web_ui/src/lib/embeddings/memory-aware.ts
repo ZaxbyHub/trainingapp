@@ -30,13 +30,35 @@ export type MemoryPressureStatus = 'normal' | 'moderate' | 'critical';
  * subtraction (see getMemoryBudget's graduated taper) and lets the model
  * gate decide on its own merits instead of false-blocking on unknown hardware.
  * (issue #21 F4)
+ *
+ * Never throws: a deviceMemory getter that throws reads as unknown (see readUserAgent).
  */
 export function getDeviceMemory(): number {
-  const deviceMemory = (navigator as { deviceMemory?: number }).deviceMemory;
+  let deviceMemory: unknown;
+  try {
+    deviceMemory = (navigator as { deviceMemory?: number }).deviceMemory;
+  } catch {
+    deviceMemory = undefined;
+  }
   if (typeof deviceMemory === 'number' && deviceMemory > 0) {
     return deviceMemory;
   }
   return 8;
+}
+
+/**
+ * navigator.userAgent, or '' when it cannot be read. Never throws, like the browser classifier
+ * (browser-compat detectBrowser, PR #151 final review LOW-C): Settings computes the memory budget
+ * in a mount effect, so a userAgent getter that throws (a patched or hostile navigator) would
+ * otherwise take the Settings page down (critic-final-2). An unreadable UA counts as not Firefox.
+ */
+function readUserAgent(): string {
+  try {
+    const ua: unknown = navigator.userAgent;
+    return typeof ua === 'string' ? ua : '';
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -54,8 +76,7 @@ export function getMemoryBudget(): MemoryBudget {
   const rawGD = getDeviceMemory();
   const totalMB = rawGD * 1024;
 
-  const userAgent = navigator.userAgent;
-  const isFirefox = /Firefox/i.test(userAgent);
+  const isFirefox = /Firefox/i.test(readUserAgent());
   const baseOverheadMB = isFirefox ? 2560 : 2048;
   // Graduated taper: 1.0 at rawGD<=4, 0.0 at rawGD>=8. Linear between.
   // (navigator.deviceMemory caps at 8 in Chrome, so reported 8 already means

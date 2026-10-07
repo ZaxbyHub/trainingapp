@@ -2,39 +2,17 @@
  * Cross-browser compatibility detection for web-llm v0.2.83
  * FR-015: Graceful degradation support
  *
- * Detects browser capabilities and provides user guidance for:
- * - Chrome/Edge 113+: Full WebGPU support
- * - Firefox: Experimental WebGPU (degraded)
- * - Safari: Partial WebGPU support (degraded)
+ * Supported browsers (PR #151 review PRR-151-030, user decision; README "Browser support"):
+ * - Chrome/Edge 113+: supported
+ * - Firefox 112+: supported (CI-verified; 112 is the first with native `inert`); WebGPU availability depends on the
+ *   build and is not part of this classification
+ * - Safari and every other WebKit-engine browser: NOT supported. That includes every
+ *   browser on iOS/iPadOS (Firefox FxiOS, Chrome CriOS and Edge EdgiOS there are WebKit),
+ *   so they classify by engine as 'safari', not by brand.
  */
 
+/** 'safari' means the WebKit engine: Safari itself and every iOS/iPadOS browser. */
 export type BrowserName = 'chrome' | 'edge' | 'firefox' | 'safari' | 'unknown';
-
-export type WebGpuSupport = 'full' | 'partial' | 'none';
-
-export interface FeatureSupport {
-  webgpu: WebGpuSupport;
-  opfs: boolean;
-  indexedDB: boolean;
-  sharedArrayBuffer: boolean;
-  wasm: boolean;
-  workers: boolean;
-}
-
-export interface BrowserInfo {
-  name: BrowserName;
-  version: number | null;
-  isSupported: boolean;
-  features: FeatureSupport;
-}
-
-export type CompatLevel = 'full' | 'degraded' | 'unsupported';
-
-export interface CompatGuidance {
-  level: CompatLevel;
-  message: string;
-  recommendations: string[];
-}
 
 /**
  * Parse user agent to extract browser name and version
@@ -53,8 +31,11 @@ function parseUserAgent(ua: string): { name: BrowserName; version: number | null
     return { name: 'chrome', version: chromeMatch ? parseInt(chromeMatch[1], 10) : null };
   }
 
-  if (uaLower.includes('firefox/') || uaLower.includes('fxios/')) {
-    const firefoxMatch = uaLower.match(/(?:firefox|fxios)\/(\d+)/);
+  // Gecko Firefox only. Firefox on iOS (FxiOS) is WebKit: like Chrome (CriOS) and
+  // Edge (EdgiOS) there, it carries no firefox/, chrome/ or edg/ token and falls
+  // through to the Safari/WebKit branch below (engine, not brand).
+  if (uaLower.includes('firefox/')) {
+    const firefoxMatch = uaLower.match(/firefox\/(\d+)/);
     return { name: 'firefox', version: firefoxMatch ? parseInt(firefoxMatch[1], 10) : null };
   }
 
@@ -68,60 +49,24 @@ function parseUserAgent(ua: string): { name: BrowserName; version: number | null
 }
 
 /**
- * Detect browser from navigator.userAgent
+ * Detect browser from navigator.userAgent.
+ *
+ * Never throws (PR #151 final review LOW-C): the App classifies the browser at mount for the
+ * upfront unsupported-browser notice, so a navigator whose userAgent getter throws (a patched or
+ * hostile environment) or returns a non-string must not take the whole app down for a cosmetic
+ * notice. Such a browser classifies as 'unknown', which shows no notice.
  */
 export function detectBrowser(): { name: BrowserName; version: number | null } {
-  if (typeof navigator === 'undefined' || !navigator.userAgent) {
+  let ua: unknown;
+  try {
+    ua = typeof navigator === 'undefined' ? undefined : navigator.userAgent;
+  } catch {
+    ua = undefined;
+  }
+  if (typeof ua !== 'string' || ua === '') {
     return { name: 'unknown', version: null };
   }
-  return parseUserAgent(navigator.userAgent);
-}
-
-/**
- * Check WebGPU support level
- */
-async function checkWebGpuSupport(): Promise<WebGpuSupport> {
-  if (typeof navigator === 'undefined' || !navigator.gpu) {
-    return 'none';
-  }
-
-  try {
-    const adapter = await navigator.gpu.requestAdapter();
-    if (adapter) {
-      return 'full';
-    }
-    return 'partial';
-  } catch {
-    return 'partial';
-  }
-}
-
-/**
- * Check all browser features
- */
-export async function checkFeatures(): Promise<FeatureSupport> {
-  const webgpu = await checkWebGpuSupport();
-
-  const opfs = typeof navigator !== 'undefined' &&
-    navigator.storage !== undefined &&
-    typeof navigator.storage.getDirectory === 'function';
-
-  const hasIndexedDB = typeof indexedDB !== 'undefined';
-
-  const sharedArrayBuffer = typeof SharedArrayBuffer !== 'undefined';
-
-  const wasm = typeof WebAssembly !== 'undefined';
-
-  const workers = typeof Worker !== 'undefined';
-
-  return {
-    webgpu,
-    opfs,
-    indexedDB: hasIndexedDB,
-    sharedArrayBuffer,
-    wasm,
-    workers,
-  };
+  return parseUserAgent(ua);
 }
 
 /**
@@ -131,101 +76,22 @@ function meetsMinimumVersion(version: number | null, minimum: number): boolean {
   return version !== null && version >= minimum;
 }
 
-/**
- * Generate compatibility guidance based on browser info
- */
-export function getCompatMessage(info: BrowserInfo): CompatGuidance {
-  const { name, version } = info;
-
-  // Chrome/Edge 113+ = full support
-  if ((name === 'chrome' || name === 'edge') && meetsMinimumVersion(version, 113)) {
-    return {
-      level: 'full',
-      message: `${name === 'edge' ? 'Microsoft Edge' : 'Chrome'} ${version} detected with full WebGPU support. All features available.`,
-      recommendations: [],
-    };
-  }
-
-  // Chrome/Edge < 113 = unsupported, needs upgrade
-  if (name === 'chrome' || name === 'edge') {
-    return {
-      level: 'unsupported',
-      message: `${name === 'edge' ? 'Edge' : 'Chrome'} ${version ?? 'unknown version'} detected. web-llm requires Chrome or Edge 113+ for WebGPU support.`,
-      recommendations: [
-        'Update your browser to the latest version',
-        'Chrome 113+ or Edge 113+ is required for full WebGPU support',
-        'Download latest Chrome: https://www.google.com/chrome/',
-        'Download latest Edge: https://www.microsoft.com/edge/',
-      ],
-    };
-  }
-
-  // Firefox = degraded (experimental WebGPU)
-  if (name === 'firefox') {
-    return {
-      level: 'degraded',
-      message: `Firefox${version ? ` ${version}` : ''} detected. WebGPU support is experimental and may be incomplete.`,
-      recommendations: [
-        'For best results, use Chrome 113+ or Edge 113+',
-        'Firefox WebGPU can be enabled via about:config (webgpu.enabled)',
-        'Expect potential issues with WASM threading (SharedArrayBuffer)',
-        'Consider the desktop app or an external model server (Settings → Model & connection) as an alternative',
-      ],
-    };
-  }
-
-  // Safari = degraded (partial WebGPU)
-  if (name === 'safari') {
-    return {
-      level: 'degraded',
-      message: `Safari${version ? ` ${version}` : ''} detected. WebGPU support is partial and performance may be limited.`,
-      recommendations: [
-        'For full WebGPU support, use Chrome 113+ or Edge 113+',
-        'Safari WebGPU implementation may have limited adapter availability',
-        'Consider the desktop app or an external model server (Settings → Model & connection) for reliable inference',
-        'Alternatively, use Chrome on iOS for better compatibility',
-      ],
-    };
-  }
-
-  // Unknown browser = unsupported
-  return {
-    level: 'unsupported',
-    message: 'Unable to detect browser. web-llm requires a Chromium-based browser for full support.',
-    recommendations: [
-      'Use Chrome 113+ or Edge 113+ for full WebGPU support',
-      'Download Chrome: https://www.google.com/chrome/',
-      'Download Edge: https://www.microsoft.com/edge/',
-    ],
-  };
+/** Firefox below 112 has no native `inert` (user decision). An unparsable version is not held against it. */
+const FIREFOX_MIN = 112;
+function isOldFirefox(version: number | null): boolean {
+  return version !== null && version < FIREFOX_MIN;
 }
 
 /**
- * Combined browser detection and feature check
- * Returns complete BrowserInfo with all capabilities
+ * Whether this browser's NAME and VERSION make it unsupported (Chrome/Edge below 113,
+ * Firefox below 112, and Safari or any other WebKit engine). An unrecognised engine is NOT reported here:
+ * we cannot tell that it is unsupported, so the App shows no upfront notice for it.
+ * Synchronous and feature-free so the App can ask once at mount.
  */
-export async function detectBrowserInfo(): Promise<BrowserInfo> {
+export function isKnownUnsupportedBrowser(): boolean {
   const { name, version } = detectBrowser();
-  const features = await checkFeatures();
-
-  // Determine base support level from browser name/version
-  let isSupported = false;
-  if (name === 'chrome' || name === 'edge') {
-    isSupported = meetsMinimumVersion(version, 113);
-  } else if (name === 'firefox' || name === 'safari') {
-    // These are degraded, not unsupported
-    isSupported = features.webgpu !== 'none' || features.wasm;
-  }
-
-  // But if webgpu is available (even partial) and wasm works, allow degraded mode
-  if (!isSupported && name === 'unknown' && features.wasm) {
-    isSupported = true;
-  }
-
-  return {
-    name,
-    version,
-    isSupported,
-    features,
-  };
+  if (name === 'unknown') return false;
+  if (name === 'chrome' || name === 'edge') return !meetsMinimumVersion(version, 113);
+  if (name === 'firefox') return isOldFirefox(version);
+  return true;
 }

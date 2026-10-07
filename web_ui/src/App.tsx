@@ -9,9 +9,11 @@ import {
   fetchModelStatus,
   initDesktopSession,
   isElectron,
+  resetDesktopSession,
   type DesktopSessionState,
 } from './lib/desktop-session';
 import { subscribeLatestModelStatus } from './lib/desktop-models-events';
+import { isKnownUnsupportedBrowser } from './lib/browser/browser-compat';
 import { migrateLegacyProviderToDesktop } from './lib/llm/external-migration';
 import { AppLayout } from './layouts/AppLayout';
 import { FirstRunGate } from './components/FirstRunWizard';
@@ -44,17 +46,32 @@ export function LoadingOverlay({
   currentStep,
   initError,
   onRetry,
+  notice,
 }: {
   currentStep: string;
   initError: string | null;
   /** Re-run the failed boot step. Omitted where no honest re-run exists. */
   onRetry?: () => void;
+  /**
+   * A non-blocking notice shown on the boot surface itself (the browser app's unsupported-browser
+   * notice: PR #151 final review LOW-B). Nothing behind this modal boot dialog is visible, so a
+   * notice that must be seen while boot is pending or hung has to live here. Omitted: no extra DOM.
+   */
+  notice?: ReactNode;
 }) {
+  // The live region is mounted EMPTY and filled after mount: a role=status that is
+  // inserted together with its text is not reliably announced (PRR-151-041), so the
+  // first boot step is only spoken if the region already exists when its text lands.
+  const [announced, setAnnounced] = useState('');
+  useEffect(() => {
+    setAnnounced(initError ? '' : currentStep);
+  }, [currentStep, initError]);
   return (
     <Dialog
       open
       dismissible={false}
       layer="boot"
+      headingLevel={1}
       className="blocking-gate"
       title={initError ? currentStep : 'Starting TrainingApp'}
       footer={
@@ -66,21 +83,29 @@ export function LoadingOverlay({
       }
     >
       <div className="blocking-gate__stack">
-        {initError ? (
-          <Banner tone="danger">{initError}</Banner>
-        ) : (
-          <>
-            {/* The step text lives in a polite status region (as before the Dialog
-                migration) so each boot step change is announced; the title is stable. */}
-            <p role="status" className="blocking-gate__lead">
-              {currentStep}
-            </p>
-            <ProgressBar label="Starting" />
-          </>
-        )}
+        {/* The step text lives in a persistent polite status region so each boot step
+            change (including the first) is announced; the title is stable. */}
+        <p role="status" className="blocking-gate__lead">
+          {announced}
+        </p>
+        {initError ? <Banner tone="danger">{initError}</Banner> : <ProgressBar label="Starting" />}
+        {notice !== undefined && notice !== null && <LateFilledStatus>{notice}</LateFilledStatus>}
       </div>
     </Dialog>
   );
+}
+
+/**
+ * A polite role=status region that is mounted EMPTY and receives its content one commit later:
+ * a live region inserted together with its content is not reliably announced (PRR-151-041; the
+ * same pattern as LoadingOverlay's step text).
+ */
+function LateFilledStatus({ children }: { children: ReactNode }) {
+  const [filled, setFilled] = useState(false);
+  useEffect(() => {
+    setFilled(true);
+  }, []);
+  return <div role="status">{filled ? children : null}</div>;
 }
 
 /**
@@ -130,6 +155,10 @@ export function DesktopBootGate({ children }: { children: ReactNode }) {
         if (cancelled) return;
         setState({ session, models, loading: false, error: null });
       } catch (err) {
+        // initDesktopSession clears its memo only when discovery itself rejects. A
+        // throw AFTER it resolved (seeding, migration) must clear it too, or Retry
+        // re-resolves the same session and fails identically (PRR-151-010).
+        resetDesktopSession();
         if (cancelled) return;
         setState({
           session: null,
@@ -163,12 +192,26 @@ export function DesktopBootGate({ children }: { children: ReactNode }) {
     );
   }, [session]);
 
+  // Keyed per state/attempt: Retry unmounts the focused button, and the loading
+  // panel has nothing focusable, so remounting the Dialog re-runs its open-time focus
+  // (onto the panel) instead of leaving focus on <body> with the modal trap inert.
   if (state.loading) {
-    return <LoadingOverlay currentStep="Connecting to the desktop backend..." initError={null} />;
+    return (
+      <LoadingOverlay
+        key={`boot-loading-${attempt}`}
+        currentStep="Connecting to the desktop backend..."
+        initError={null}
+      />
+    );
   }
   if (state.error) {
     return (
-      <LoadingOverlay currentStep="Desktop backend unavailable" initError={state.error} onRetry={retryBoot} />
+      <LoadingOverlay
+        key="boot-error"
+        currentStep="Desktop backend unavailable"
+        initError={state.error}
+        onRetry={retryBoot}
+      />
     );
   }
   return <DesktopSessionProvider value={state}>{children}</DesktopSessionProvider>;
@@ -193,7 +236,37 @@ function AppContent() {
   // slidechange, marked stale when the player moves to a different pack, and
   // naturally cleared on reload (in-memory only).
   const [pinnedSlide, setPinnedSlide] = useState<PinnedSlide | null>(null);
-  const [initErrorDismissed, setInitErrorDismissed] = useState(false);
+  // The init-error text the user dismissed. A later, different failure (the hook appends
+  // new ones to the same string) re-arms the notice instead of staying latched off.
+  const [dismissedInitError, setDismissedInitError] = useState<string | null>(null);
+  // Upfront unsupported-browser notice (browser app only; Electron is never "a browser").
+  // Classified once, in a mount effect rather than during render (PR #151 final review LOW-B):
+  // the polite region that shows it is already mounted, empty, when the notice lands, so the
+  // notice is a content change inside an existing live region. Dismissal is for this session only.
+  const [browserUnsupported, setBrowserUnsupported] = useState(false);
+  const [browserNoticeDismissed, setBrowserNoticeDismissed] = useState(false);
+  // HOOK-ORDER NOTE: above the `if (!isInitialized)` early return, like every hook here.
+  useEffect(() => {
+    setBrowserUnsupported(!isElectron() && isKnownUnsupportedBrowser());
+  }, []);
+  const showBrowserNotice = browserUnsupported && !browserNoticeDismissed;
+  const browserNotice = (className?: string) => (
+    <Banner
+      tone="warning"
+      live={false}
+      className={className}
+      action={
+        <IconButton
+          icon="x"
+          size="sm"
+          aria-label="Dismiss unsupported-browser notice"
+          onClick={() => setBrowserNoticeDismissed(true)}
+        />
+      }
+    >
+      This browser isn&apos;t supported. Use a current Chrome, Edge or Firefox.
+    </Banner>
+  );
   const { setModelReady, setModelLoadingProgress, browserEngine } = useInferenceMode();
 
   const {
@@ -316,8 +389,14 @@ function AppContent() {
     // initError together with isInitialized=true (see the init-error banner
     // below), so this overlay is the in-progress state in practice. A Retry
     // here would have nothing honest to call.
+    // The unsupported-browser notice is shown ON the boot surface (LOW-B): it must be seen
+    // even while init is pending or hung, and nothing behind this modal dialog is visible.
     return (
-      <LoadingOverlay currentStep={currentStep} initError={initError} />
+      <LoadingOverlay
+        currentStep={currentStep}
+        initError={initError}
+        notice={showBrowserNotice ? browserNotice() : undefined}
+      />
     );
   }
 
@@ -336,7 +415,7 @@ function AppContent() {
   // and the default case render the SAME element, so the pinned-slide props
   // can never be wired at one render site and forgotten at the other.
   const chatPage = (
-    <ErrorBoundary>
+    <ErrorBoundary resetKeys={[currentPage]}>
       <ChatPage
         messages={currentMessages}
         onMessagesChange={setCurrentMessages}
@@ -359,19 +438,19 @@ function AppContent() {
         return chatPage;
       case 'documents':
         return (
-          <ErrorBoundary>
+          <ErrorBoundary resetKeys={[currentPage]}>
             <DocumentsPage />
           </ErrorBoundary>
         );
       case 'settings':
         return (
-          <ErrorBoundary>
+          <ErrorBoundary resetKeys={[currentPage]}>
             <SettingsPage initialSection={settingsSection ?? undefined} sectionRequest={settingsRequest} />
           </ErrorBoundary>
         );
       case 'training':
         return (
-          <ErrorBoundary>
+          <ErrorBoundary resetKeys={[currentPage]}>
             <TrainingPage
               initialPackId={trainingTarget?.packId}
               pendingSlideId={trainingTarget?.slideId}
@@ -428,8 +507,11 @@ function AppContent() {
           re-init, since the hook guards against re-running in-process).
           Polite status region (it is not an interruption), so the Banner's own
           alert role is switched off (live={false}) inside it. */}
-      {initError && !initErrorDismissed && (
-        <div role="status">
+      {/* The polite region is always mounted so the notice (and a later, different failure)
+          is a content change inside an existing live region, not an inserted-with-content one. */}
+      <div role="status">
+        {showBrowserNotice && browserNotice('app-notice')}
+        {initError && initError !== dismissedInitError && (
           <Banner
             tone="warning"
             live={false}
@@ -443,15 +525,15 @@ function AppContent() {
                   icon="x"
                   size="sm"
                   aria-label="Dismiss degraded-search notice"
-                  onClick={() => setInitErrorDismissed(true)}
+                  onClick={() => setDismissedInitError(initError)}
                 />
               </>
             }
           >
             Search is degraded — answers may miss information. ({initError})
           </Banner>
-        </div>
-      )}
+        )}
+      </div>
       {renderPage()}
     </AppLayout>
   );

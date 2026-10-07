@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { SPEC_FILE_PATTERN } from './e2e/spec-pattern.js';
 
 /**
  * Playwright-under-Electron suite (issue #67, B9 / AC1).
@@ -10,11 +11,18 @@ import { defineConfig } from '@playwright/test';
  * in-process inside Electron with the deterministic stub engine + hash
  * embedder, so no LLM weights are needed.
  *
+ * One exception: desktop-model-gate.spec.ts boots the REAL llama engine against
+ * an EMPTY model directory (still no weights: the engine loads lazily) so the
+ * desktop model gate renders (PR #151 review PRR-151-028).
+ *
  * No Playwright browser download is required: _electron drives the Electron
  * binary already present in desktop/node_modules.
  */
 export default defineConfig({
   testDir: './e2e',
+  // Same pattern the structural launch guard scans (launch-helpers.spec.ts), so no collected spec
+  // can escape it (no *.test.*, no .tsx/.jsx).
+  testMatch: SPEC_FILE_PATTERN,
   timeout: 180_000,
   expect: { timeout: 20_000 },
   fullyParallel: false,

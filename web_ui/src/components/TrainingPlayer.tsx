@@ -298,7 +298,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
         )}
         {playerError !== null && location !== null && (
           <p role="alert" ref={focusAlertOnAppear} tabIndex={-1} data-testid="training-player-error" className={DANGER_ALERT_CLASS}>
-            Course player could not start: {playerError}. Course playback is supported in current Chrome and Edge (Safari is not
+            Course player could not start: {playerError}. Course playback is supported in current Chrome, Edge and Firefox (Safari is not
             supported).{' '}
             <button
               type="button"
@@ -316,14 +316,7 @@ export const TrainingPlayer = forwardRef<TrainingPlayerHandle, TrainingPlayerPro
           src={location?.src ?? 'about:blank'}
           onLoad={handleFrameLoad}
           title={`Training player (${packId})`}
-          style={{
-            flex: 1,
-            width: '100%',
-            minHeight: 0,
-            border: '1px solid var(--color-secondary)',
-            borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'var(--color-surface)',
-          }}
+          className="app-player__frame"
         />
         <div data-testid="training-player-slidechange" className="ui-visually-hidden" aria-hidden="true">
           {changeLog.map((entry, index) => (

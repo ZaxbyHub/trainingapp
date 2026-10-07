@@ -35,7 +35,8 @@ vi.mock('./lib/inference/desktop-seed', () => ({ seedInferenceModeForDesktop: vi
 vi.mock('./lib/llm/external-migration', () => ({ migrateLegacyProviderToDesktop: vi.fn(async () => false) }));
 
 import { DesktopBootGate, LoadingOverlay } from './App';
-import { resetDesktopSessionForTests } from './lib/desktop-session';
+import { DESKTOP_BRIDGE_TIMEOUT_MS, resetDesktopSessionForTests } from './lib/desktop-session';
+import { seedInferenceModeForDesktop } from './lib/inference/desktop-seed';
 
 beforeEach(() => {
   resetDesktopSessionForTests();
@@ -80,6 +81,26 @@ describe('LoadingOverlay', () => {
     expect(status).toHaveTextContent('Building the index');
   });
 
+  it('PRR-151-035: the boot surface title is the document h1 (loading and failure)', () => {
+    const { rerender } = render(<LoadingOverlay currentStep="Connecting..." initError={null} />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Starting TrainingApp' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
+    rerender(<LoadingOverlay currentStep="Desktop backend unavailable" initError="down" />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Desktop backend unavailable' })).toBeInTheDocument();
+  });
+
+  it('PRR-151-041: the status region exists (empty) before its first text lands, so the first step is a content change', () => {
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+    render(<LoadingOverlay currentStep="Connecting to the desktop backend..." initError={null} />);
+    const status = screen.getByRole('status');
+    const records = observer.takeRecords();
+    observer.disconnect();
+    // A text node was added INTO the already-inserted status element (not inserted along with it).
+    expect(records.some((r) => r.target === status && Array.from(r.addedNodes).some((n) => n.nodeType === Node.TEXT_NODE))).toBe(true);
+    expect(status).toHaveTextContent('Connecting to the desktop backend...');
+  });
+
   it('failure: a danger Banner with role=alert; Retry appears only when onRetry is provided', () => {
     const { rerender } = render(<LoadingOverlay currentStep="Desktop backend unavailable" initError="bridge down" />);
     const alert = screen.getByRole('alert');
@@ -95,6 +116,60 @@ describe('LoadingOverlay', () => {
 });
 
 describe('DesktopBootGate Retry', () => {
+  it('PRR-151-016: after Retry the focus is inside the loading dialog, not dropped to body', async () => {
+    const getBackendInfo = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('ipc not ready'))
+      .mockReturnValue(new Promise(() => undefined));
+    (window as unknown as { desktopApi: unknown }).desktopApi = { getBackendInfo, getAuthToken: vi.fn(async () => 'tok') };
+    render(<DesktopBootGate><div /></DesktopBootGate>);
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    retry.focus();
+    expect(document.activeElement).toBe(retry);
+    await act(async () => {
+      fireEvent.click(retry);
+    });
+    const dialog = screen.getByRole('dialog', { name: 'Starting TrainingApp' });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it('PRR-151-016: a wedged getBackendInfo becomes an error with Retry after the timeout, and Retry re-asks', async () => {
+    vi.useFakeTimers();
+    try {
+      const getBackendInfo = vi.fn().mockReturnValue(new Promise(() => undefined));
+      (window as unknown as { desktopApi: unknown }).desktopApi = { getBackendInfo, getAuthToken: vi.fn(async () => 'tok') };
+      render(<DesktopBootGate><div /></DesktopBootGate>);
+      expect(screen.queryByRole('alert')).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(DESKTOP_BRIDGE_TIMEOUT_MS + 1);
+      });
+      expect(screen.getByRole('alert')).toHaveTextContent(/Timed out/);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      });
+      // The memo was cleared on timeout: Retry is a real second call, not the wedged promise.
+      expect(getBackendInfo).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('PRR-151-010: a throw AFTER discovery resolved (seed) still leaves Retry a real re-run', async () => {
+    const getBackendInfo = vi.fn().mockResolvedValue({ url: 'http://127.0.0.1:4567', mode: 'node' });
+    (window as unknown as { desktopApi: unknown }).desktopApi = { getBackendInfo, getAuthToken: vi.fn(async () => 'tok') };
+    vi.mocked(seedInferenceModeForDesktop).mockImplementationOnce(() => {
+      throw new Error('QuotaExceededError');
+    });
+    render(<DesktopBootGate><div data-testid="app-mounted" /></DesktopBootGate>);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/QuotaExceededError/);
+    expect(getBackendInfo).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    });
+    expect(await screen.findByTestId('app-mounted')).toBeInTheDocument();
+    expect(getBackendInfo).toHaveBeenCalledTimes(2);
+  });
+
   it('a failed boot offers Retry; Retry re-runs the boot and mounts the app when it succeeds', async () => {
     const getBackendInfo = vi
       .fn()

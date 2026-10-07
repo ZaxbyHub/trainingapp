@@ -12,6 +12,7 @@ import { getPreferredBrowserEngine } from './llm-factory';
 import { LLM_MODEL_DIR } from '../models/model-manifest';
 import { WEBLLM_DEFAULT_MODEL_ID } from './web-llm-service';
 import type { BrowserEngine } from '../../types/llm';
+import { READINESS_IN_FLIGHT_EVENT, type ReadinessInFlightDetail } from './readiness-events';
 
 let readinessGateInitPromise: Promise<ReadinessResult | null> | null = null;
 /**
@@ -28,6 +29,16 @@ let lastReadinessResult: ReadinessResult | null = null;
 let lastReadinessEngine: BrowserEngine | null = null;
 let webgpuAvailableCached = false;
 const readinessGateInstance: { current: ModelReadinessGate | null } = { current: null };
+/**
+ * Latest-request guard (PR #151 review PRR-151-015). Bumped by every NEW check
+ * (not by callers that share an in-flight promise) and by resetReadinessCache().
+ * A check applies its result to the module cache and dispatches its events only
+ * while its generation is still the latest, so an older check that resolves
+ * after a newer one (a gate Retry, an engine switch, a WebGPU recovery) can no
+ * longer overwrite the newer result (last-writer-wins). The superseded check
+ * still resolves its own promise for the callers that awaited it.
+ */
+let readinessGeneration = 0;
 
 /**
  * Readiness model id for each engine. Both branches read a single source of
@@ -64,14 +75,42 @@ export function getReadinessGateInstance(): ModelReadinessGate | null {
   return readinessGateInstance.current;
 }
 
+/**
+ * True while the LATEST readiness check is still running: one started since the
+ * last reset and not superseded by a newer check (PR #151 final review LOW-3). A
+ * superseded check may still be running, but its result can no longer reach the
+ * cache or the events, so it does not count.
+ */
+export function isReadinessCheckInFlight(): boolean {
+  return readinessGateInitPromise !== null;
+}
+
+/** Announce the current isReadinessCheckInFlight() (READINESS_IN_FLIGHT_EVENT). */
+function notifyReadinessInFlight(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(
+    new CustomEvent<ReadinessInFlightDetail>(READINESS_IN_FLIGHT_EVENT, {
+      detail: { inFlight: isReadinessCheckInFlight() },
+    })
+  );
+}
+
 /** Update the cache from an observed event (used by the hook's listener). */
 export function applyReadinessFromEvent(result: ReadinessResult | undefined, hasWebGPU: boolean): void {
   if (result) lastReadinessResult = result;
   webgpuAvailableCached = hasWebGPU;
 }
 
-/** Reset cached readiness state (test/teardown). */
+/**
+ * Reset cached readiness state (Retry, recovery, test teardown). Also
+ * invalidates any check still in flight: its result predates the reset.
+ * Deliberately no READINESS_IN_FLIGHT_EVENT here: every app caller starts a new
+ * check right after the reset, and a momentary "nothing in flight" between the
+ * two would release the gate's busy Retry early (LOW-3). After a BARE reset the
+ * superseded check announces "not in flight" when it settles.
+ */
 export function resetReadinessCache(): void {
+  readinessGeneration += 1;
   readinessGateInitPromise = null;
   readinessGateInitEngine = null;
   lastReadinessResult = null;
@@ -107,6 +146,11 @@ export async function ensureReadinessGateChecked(
   // Tag the in-flight promise with its engine NOW (before any await) so the
   // dedup guard above can match concurrent same-engine callers.
   readinessGateInitEngine = engine;
+  // This check's generation: it may write the shared cache / dispatch only
+  // while no newer check (or reset) has started since.
+  readinessGeneration += 1;
+  const generation = readinessGeneration;
+  const isLatest = (): boolean => generation === readinessGeneration;
   // Declared before the closure (and assigned after) rather than inline, so
   // the `finally` block's reference to `thisPromise` is a closure over an
   // already-assigned variable at the time it actually runs (after the first
@@ -120,6 +164,10 @@ export async function ensureReadinessGateChecked(
         modelIdForEngine(engine),
         engine
       );
+
+      // Superseded while in flight: a newer check (or a reset) owns the cache
+      // and the events now. Applying this older snapshot would overwrite it.
+      if (!isLatest()) return readinessResult;
 
       // Use the real adapter-probe result (not mere navigator.gpu presence).
       const hasWebGPU = readinessResult.checks.webgpu;
@@ -147,6 +195,8 @@ export async function ensureReadinessGateChecked(
 
       return readinessResult;
     } catch (error) {
+      // A superseded check's failure is stale too: no error / fallback events.
+      if (!isLatest()) return null;
       const message = error instanceof Error ? error.message : 'Failed to check model readiness';
       if (typeof window !== 'undefined') {
         window.dispatchEvent(
@@ -182,10 +232,15 @@ export async function ensureReadinessGateChecked(
         readinessGateInitPromise = null;
         readinessGateInitEngine = null;
       }
+      // No check is current any more (this one finished, or a bare reset
+      // superseded it): announce it. While a NEWER check runs, stay quiet; that
+      // check announces when it settles.
+      if (readinessGateInitPromise === null) notifyReadinessInFlight();
     }
   };
 
   thisPromise = run();
   readinessGateInitPromise = thisPromise;
+  notifyReadinessInFlight();
   return thisPromise;
 }

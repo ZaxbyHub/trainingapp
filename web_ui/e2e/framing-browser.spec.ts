@@ -68,7 +68,15 @@ test('a foreign page cannot frame the app', async ({ page, baseURL }) => {
   await page.goto(`${OUTER}/`);
   await page.waitForTimeout(3000);
   for (const frame of page.frames()) {
-    expect(await frame.locator('nav[aria-label="Main navigation"]').count(), frame.url()).toBe(0);
+    // The blocked frame is not inspectable in Firefox (url '' and locators never resolve), so a frame
+    // that does not answer within 4s counts as "no app document"; an app that rendered would answer
+    // immediately. Either way no frame may have navigated to the app.
+    expect(frame.url(), 'a frame loaded the app').not.toBe(`${baseURL}/`);
+    const navCount = await Promise.race([
+      frame.locator('nav[aria-label="Main navigation"]').count(),
+      new Promise<number>((resolve) => setTimeout(() => resolve(0), 4000)),
+    ]);
+    expect(navCount, frame.url()).toBe(0);
   }
 });
 

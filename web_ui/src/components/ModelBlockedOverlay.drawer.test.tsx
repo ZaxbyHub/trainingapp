@@ -1,11 +1,12 @@
 /**
- * Phase-3 review F1: the model-gate overlay (an aria-modal alertdialog inside
- * <main>, z 200) and the AppShell nav drawer (an aria-modal dialog, z 300) can
- * be open together at <= 768px. The overlay's focus trap must only act on Tab
- * presses that start INSIDE the overlay; a Shift+Tab inside the open drawer
- * must stay in the drawer, never jump to the overlay under the drawer's scrim.
+ * Phase-3 review F1, updated for Lumen phase 7: the model gate (a NON-modal
+ * alertdialog contained to the chat page inside <main>, z 200, no aria-modal and
+ * no Tab trap) and the AppShell nav drawer (an aria-modal dialog with its own
+ * Tab trap, z 300) can be open together at <= 768px. Tab / Shift+Tab inside the
+ * open drawer must stay in the drawer, and the gate must never trap Tab: from
+ * its edges focus moves on to the shell (the drawer button / navigation).
  */
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppShell, DRAWER_MEDIA_QUERY, SideNav } from '../ui';
@@ -101,14 +102,29 @@ describe('model-gate overlay + open nav drawer (phase 3 review F1)', () => {
     expect(chat).toHaveFocus();
   });
 
-  it('the gate does not trap Tab or Shift+Tab (the drawer / shell nav stay reachable)', () => {
+  it('the gate does not trap Tab or Shift+Tab (the drawer / shell nav stay reachable)', async () => {
+    const user = userEvent.setup();
     drawerWidth();
     renderShellWithGate();
     const overlay = screen.getByRole('alertdialog');
     const buttons = within(overlay).getAllByRole('button');
     const first = buttons[0];
     const last = buttons[buttons.length - 1];
+    // No handler intercepts an edge press: it is not default-prevented AND no script moved
+    // focus (a trap that refocuses without preventDefault would fail the second check).
+    act(() => first.focus());
     expect(fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })).toBe(true);
+    expect(first).toHaveFocus();
+    act(() => last.focus());
     expect(fireEvent.keyDown(last, { key: 'Tab' })).toBe(true);
+    expect(last).toHaveFocus();
+    // Real Tab order: Shift+Tab from the gate's first control lands on the shell's drawer
+    // button, outside the gate; Tab from its last control leaves the gate too.
+    act(() => first.focus());
+    await user.tab({ shift: true });
+    expect(screen.getByRole('button', { name: 'Open navigation' })).toHaveFocus();
+    act(() => last.focus());
+    await user.tab();
+    expect(overlay.contains(document.activeElement)).toBe(false);
   });
 });

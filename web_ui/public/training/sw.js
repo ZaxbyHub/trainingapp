@@ -31,6 +31,7 @@
 
 var SW_VERSION = 2;
 var TRAINING_PREFIX = '/training/';
+var TRAINING_SW_PATH = '/training/sw.js';
 var RELAY_WAIT_MS = 10000;
 var REQUEST_TIMEOUT_MS = 30000;
 var READ_CHUNK_BYTES = 1024 * 1024;
@@ -78,13 +79,66 @@ function workerAppOrigin(href) {
 var PLAYER_ORIGIN = self.location.origin;
 var APP_ORIGIN = workerAppOrigin(self.location.href);
 
+/** Most percent-decoding passes isOwnScriptPath applies before it gives up and refuses. */
+var MAX_DECODE_PASSES = 8;
+
+/**
+ * True when a request pathname names this worker's own script, so the fetch
+ * handler answers it 404 itself, before any relay is asked (PR #151 review
+ * LOW-1). CSP3 matches the course's worker-src source `<player>/training/sw.js`
+ * against the PERCENT-DECODED request path, case-sensitively and ignoring the
+ * query, so it also admits spellings such as /training/sw%2ejs, /training/sw%2Ejs
+ * and /training/%73w.js; a raw `pathname === TRAINING_SW_PATH` test would miss
+ * them and hand them to whoever holds the relay port (course JS can, NC1).
+ * The rule: decode the whole pathname repeatedly (so double or deeper encodings
+ * such as sw%252ejs are refused too, and %2F decodes like any other escape) and
+ * refuse if ANY pass equals TRAINING_SW_PATH exactly (case-sensitive, like CSP;
+ * hex case such as %2e vs %2E is equal after decoding). A pathname that does not
+ * decode at all (malformed escape) is refused too: the app relay refuses it as
+ * well (resolveTrainingPath -> 404). A LATER pass that fails to decode ends the
+ * loop instead: a pack file literally named `100%.txt`, requested with its
+ * percent sign encoded (100%25.txt), must still be served; every pass compared
+ * so far was a well-formed string. The same file requested with a BARE percent
+ * sign (100%.txt, e.g. a hand-written href the browser does not re-encode) fails
+ * to decode on the FIRST pass and is refused 404 here, as the relay refuses it.
+ * Still changing after MAX_DECODE_PASSES: refused (fail closed).
+ */
+function isOwnScriptPath(pathname) {
+  var current = pathname;
+  for (var pass = 0; pass < MAX_DECODE_PASSES; pass++) {
+    if (current === TRAINING_SW_PATH) return true;
+    var next;
+    try {
+      next = decodeURIComponent(current);
+    } catch (err) {
+      return pass === 0;
+    }
+    if (next === current) return false;
+    current = next;
+  }
+  return true;
+}
+
 /** The pack id of a /training/<packId>/... path, or null (raw segment; never decoded). */
 function packIdFromPath(pathname) {
   var segment = pathname.slice(TRAINING_PREFIX.length).split('/')[0];
   return PACK_ID_PATTERN.test(segment) ? segment : null;
 }
 
-/** The course CSP; in lockstep with buildBrowserTrainingCsp (training-relay.ts). */
+/**
+ * The course CSP; in lockstep with buildBrowserTrainingCsp (training-relay.ts).
+ * worker-src = courseWorkerSources: blob:, the open pack's path and this
+ * worker's own script URL. Firefox lets a document controlled by this worker
+ * start a dedicated worker from a URL only if the document's worker-src also
+ * admits the CONTROLLING service worker's script URL (otherwise: a worker-src
+ * violation naming /training/sw.js?app=..., and the worker never starts; blob:
+ * workers are exempt). Admitting it gives the course nothing new: a dedicated or
+ * shared worker on /training/sw.js, in any spelling the CSP admits (the query is
+ * ignored and the path is matched percent-decoded: sw%2ejs, %73w.js...), is
+ * answered 404 by the fetch handler below before any relay is asked
+ * (isOwnScriptPath), and registering it was already possible through the boot
+ * frame (whose policy admits exactly this URL).
+ */
 function courseCsp(packId) {
   return [
     "default-src 'self'",
@@ -93,7 +147,7 @@ function courseCsp(packId) {
     "img-src 'self' data:",
     "font-src 'self' data:",
     "connect-src 'self'",
-    'worker-src ' + (packId !== null ? 'blob: ' + PLAYER_ORIGIN + TRAINING_PREFIX + packId + '/' : 'blob:'),
+    'worker-src ' + (packId !== null ? 'blob: ' + PLAYER_ORIGIN + TRAINING_PREFIX + packId + '/ ' + PLAYER_ORIGIN + TRAINING_SW_PATH : 'blob:'),
     "frame-src 'self'",
     "media-src 'self' data:",
     "object-src 'none'",
@@ -347,8 +401,9 @@ self.addEventListener('fetch', function (event) {
     return;
   }
   // Player clients reach nothing but this origin's /training/ pack paths:
-  // no other origin (app origin included), no app shell, no network.
-  if (url.origin !== self.location.origin || url.pathname.indexOf(TRAINING_PREFIX) !== 0 || url.pathname === '/training/sw.js') {
+  // no other origin (app origin included), no app shell, no network, and
+  // never this worker's own script in any spelling (isOwnScriptPath).
+  if (url.origin !== self.location.origin || url.pathname.indexOf(TRAINING_PREFIX) !== 0 || isOwnScriptPath(url.pathname)) {
     event.respondWith(refusal(404, 'Not Found'));
     return;
   }

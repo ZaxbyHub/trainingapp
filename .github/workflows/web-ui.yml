@@ -218,8 +218,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright chromium
-        run: npx playwright install --with-deps chromium
+      # Firefox is a supported, CI-verified browser (PRR-151-030): `npm run test:e2e` below runs
+      # the same e2e specs under the chromium AND firefox Playwright projects. Safari/WebKit is
+      # not supported and is not installed. The Lumen a11y subset (axe) stays chromium-only.
+      - name: Install Playwright chromium and firefox
+        run: npx playwright install --with-deps chromium firefox
 
       # Builds the production renderer (dist/), then starts the vite preview
       # webServer pinned to 127.0.0.1:4174 (desktop's harness owns 4173) and
@@ -227,13 +230,16 @@ jobs:
       # browser pack store and lists, its course frame loads from the
       # localhost player origin (never the app origin), non-pack zips stay on
       # the generic unsupported-type path, and removal clears the row.
+      # (Chromium and Firefox projects; all 6 isolation specs run on both. Spec 6 launches its
+      # own Firefox with Fission off for input delivery, see e2e/isolation-browser.spec.ts.)
       - name: Run browser pack e2e
         run: npm run test:e2e
 
       # Lumen a11y subset (axe, tooltip overflow, document-row reflow and document-list
       # scroll specs; the list is in web_ui/package.json) of the visual harness. Reuses the
-      # dist/ built by the step above; the pixel-baseline spec is Windows-only and
-      # is deliberately not run here (see web_ui/e2e/visual/README.md).
+      # dist/ built by the step above (chromium only). The pixel-baseline spec is Windows-only
+      # and is not run in this ubuntu job; it runs in the non-required `web-ui-visual-baseline`
+      # job below (see web_ui/e2e/visual/README.md).
       - name: Run Lumen a11y visual subset
         run: npm run test:visual:a11y:ci
 
@@ -245,5 +251,57 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: web-ui-e2e-traces
+          path: web_ui/test-results/
+          retention-days: 7
+
+  # Lumen pixel baselines (PRR-151-027). NOT a required check: it is deliberately absent from branch
+  # protection, so a red run here is informative, never merge-blocking. The committed PNGs under
+  # web_ui/e2e/visual/__screenshots__/win32/ are rendered by Windows Chromium, so this is the only
+  # runner that can compare them. It runs WITHOUT --update-snapshots (a diff fails, nothing is
+  # rewritten) and mirrors the runbook in web_ui/e2e/visual/README.md: a clean production build with
+  # no .env.production and no staged weights (prepare-models is never run), because the model-gate
+  # overlay pixels depend on that. It may be red on day one if the runner's fonts or GPU stack differ
+  # from the machine that generated the baselines; no tolerance is added to hide that.
+  web-ui-visual-baseline:
+    name: web-ui visual baselines (Windows pixel spec, non-required)
+    needs: [changes]
+    if: always() && needs.changes.outputs.webui != 'false'
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: web_ui
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          lfs: true
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 'lts/*'
+          cache: 'npm'
+          cache-dependency-path: web_ui/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright chromium
+        run: npx playwright install chromium
+
+      # Clean build: no .env.production (written only by prepare-models, which this job never runs).
+      - name: Build (no staged weights)
+        run: |
+          rm -f .env.production
+          npm run build
+
+      - name: Run Lumen pixel baselines (no --update-snapshots)
+        run: npx playwright test --config playwright.visual.config.ts lumen-baseline
+
+      - name: Upload Playwright traces and diffs on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: web-ui-visual-baseline-diffs
           path: web_ui/test-results/
           retention-days: 7

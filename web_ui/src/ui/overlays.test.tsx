@@ -3,8 +3,9 @@ import { resolve } from 'node:path';
 import React, { createRef, useState } from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
-import { Button, Dialog, Tabs, Tooltip, type TabItem } from './index';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Button, Combobox, Dialog, Tabs, ToastProvider, Tooltip, useToast, type TabItem } from './index';
+import { overlayCount, registerOverlay, settleEscape } from './overlayStack';
 
 function DialogHarness({ onClose = () => {} }: { onClose?: () => void }) {
   const [open, setOpen] = useState(false);
@@ -105,6 +106,7 @@ describe('Dialog (blocking-overlay options)', () => {
     const { unmount } = render(
       <div onKeyDown={onKeyDown}>
         <Dialog open alert onClose={() => {}} title="x" />
+        {/* @ts-expect-error onClose is rejected with dismissible={false} (it could never be called); kept to pin the runtime too */}
         <Dialog open alert dismissible={false} onClose={onClose} title="Blocked" footer={<Button>Go</Button>} />
       </div>
     );
@@ -122,6 +124,7 @@ describe('Dialog (blocking-overlay options)', () => {
 
   it('dismissible=false: a backdrop press does not call onClose', () => {
     const onClose = vi.fn();
+    // @ts-expect-error onClose is rejected with dismissible={false}; kept to pin the runtime too
     render(<Dialog open dismissible={false} onClose={onClose} title="Blocked" />);
     fireEvent.mouseDown(screen.getByTestId('ui-dialog-backdrop'));
     expect(onClose).not.toHaveBeenCalled();
@@ -203,8 +206,9 @@ describe('Dialog (blocking-overlay options)', () => {
       );
     }
 
-    it('focus inside the dialog when it closes returns to the opener', async () => {
-      render(<Host modal={false} />);
+    // The return condition is modal-independent: pin both paths (PRR-151-059).
+    it.each([false, true])('modal=%s: focus inside the dialog when it closes returns to the opener', async (modal) => {
+      render(<Host modal={modal} />);
       const opener = screen.getByRole('button', { name: 'Opener' });
       await userEvent.click(opener);
       expect(screen.getByRole('button', { name: 'Inside' })).toHaveFocus();
@@ -245,8 +249,8 @@ describe('Dialog (blocking-overlay options)', () => {
       }
     });
 
-    it('non-modal: focus the user moved outside the dialog is NOT yanked back to the opener', async () => {
-      render(<Host modal={false} />);
+    it.each([false, true])('modal=%s: focus moved outside the dialog is NOT yanked back to the opener', async (modal) => {
+      render(<Host modal={modal} />);
       await userEvent.click(screen.getByRole('button', { name: 'Opener' }));
       const elsewhere = screen.getByRole('button', { name: 'Elsewhere' });
       elsewhere.focus();
@@ -328,28 +332,36 @@ describe('Dialog (blocking-overlay options)', () => {
     expect(screen.getByTestId('ui-dialog-backdrop')).toHaveClass('ui-dialog__backdrop--boot');
     rerender(<Dialog onClose={() => {}} open title="T" />);
     expect(screen.getByTestId('ui-dialog-backdrop')).not.toHaveClass('ui-dialog__backdrop--boot');
+    // @ts-expect-error layer is rejected on a contained dialog; the runtime still ignores it
     rerender(<Dialog onClose={() => {}} open contained layer="boot" title="T" />);
     expect(screen.getByTestId('ui-dialog-backdrop')).not.toHaveClass('ui-dialog__backdrop--boot');
   });
 
-  it('stacking order is deterministic: contained < drawer < default dialog < boot (< toasts 1200)', () => {
+  it('stacking ladder: every z-index in ui.css and toast.css is pinned, strictly ordered, with no ties (PRR-151-019)', () => {
     const css = readFileSync(resolve(__dirname, 'ui.css'), 'utf8');
     const toastCss = readFileSync(resolve(__dirname, 'toast.css'), 'utf8');
-    const z = (selector: string): number => {
-      const m = new RegExp(selector.replace(/[.]/g, String.raw`\.`) + String.raw`\s*\{[^}]*z-index:\s*(\d+)`).exec(css);
+    const z = (source: string, selector: string): number => {
+      const m = new RegExp(selector.replace(/[.]/g, String.raw`\.`) + String.raw`\s*\{[^}]*z-index:\s*(\d+)`).exec(source);
       if (!m) throw new Error('no z-index for ' + selector);
       return Number(m[1]);
     };
-    const contained = z('.ui-dialog__backdrop--contained');
-    const drawer = z('.ui-shell--drawer .ui-shell__sidebar');
-    const dflt = z('.ui-dialog__backdrop');
-    const boot = z('.ui-dialog__backdrop--boot');
-    expect(contained).toBeLessThan(drawer);
-    expect(drawer).toBeLessThan(dflt);
-    expect(dflt).toBeLessThan(boot);
-    const toast = Number(/z-index:\s*(\d+)/.exec(toastCss)?.[1]);
-    expect(boot).toBeLessThan(toast);
-    expect(toast).toBeGreaterThan(dflt); // the wizard (default layer) never covers a toast
+    const ladder = {
+      contained: z(css, '.ui-dialog__backdrop--contained'),
+      scrim: z(css, '.ui-shell__scrim'),
+      drawer: z(css, '.ui-shell--drawer .ui-shell__sidebar'),
+      dialog: z(css, '.ui-dialog__backdrop'),
+      combobox: z(css, '.ui-combobox__list'),
+      tooltip: z(css, '.ui-tooltip'),
+      boot: z(css, '.ui-dialog__backdrop--boot'),
+      toast: z(toastCss, '.ui-toast-viewport'),
+    };
+    expect(ladder).toEqual({ contained: 200, scrim: 299, drawer: 300, dialog: 1000, combobox: 1050, tooltip: 1090, boot: 1100, toast: 1200 });
+    // Strictly increasing in the order above: no two layers tie (a tie falls back to DOM order).
+    const values = Object.values(ladder);
+    values.slice(1).forEach((v, i) => expect(v).toBeGreaterThan(values[i]));
+    // Nothing else in these stylesheets declares a z-index, so a new layer cannot slip in unpinned.
+    expect(css.match(/z-index\s*:/g)).toHaveLength(7);
+    expect(toastCss.match(/z-index\s*:/g)).toHaveLength(1);
   });
 
   it('describedBy sets aria-describedby and the description is exposed', () => {
@@ -362,6 +374,874 @@ describe('Dialog (blocking-overlay options)', () => {
       'aria-describedby',
       'why'
     );
+  });
+});
+
+describe('Dialog prop types (PRR-151-069 / 052)', () => {
+  it('dismissible: omitted / literal / dynamic boolean need onClose; literal false rejects it; contained rejects layer', () => {
+    const flag = screen.queryByText('never-rendered') === null; // a runtime boolean, typed `boolean`
+    const { unmount } = render(
+      <>
+        {/* Accepted: a dynamic boolean with onClose (it may become dismissible). */}
+        <Dialog open dismissible={flag} onClose={() => {}} title="Dynamic" />
+        {/* Accepted: a literal false without onClose. */}
+        <Dialog open dismissible={false} title="Blocked" />
+        {/* Accepted: contained without a layer, and a window-wide boot layer. */}
+        <Dialog open contained onClose={() => {}} title="Contained" />
+        <Dialog open layer="boot" onClose={() => {}} title="Boot" />
+      </>
+    );
+    expect(screen.getAllByRole('dialog')).toHaveLength(4);
+    unmount();
+    // Rejected at compile time (tsc -p tsconfig.test.json fails with TS2578 if any of these
+    // stops being an error). Never rendered: these lines exist only for the type checker.
+    const rejected = () => (
+      <>
+        {/* @ts-expect-error a dynamic dismissible still requires onClose */}
+        <Dialog open dismissible={flag} title="x" />
+        {/* @ts-expect-error a literal true requires onClose */}
+        <Dialog open dismissible title="x" />
+        {/* @ts-expect-error dismissible={false} never calls onClose, so passing one is a mistake */}
+        <Dialog open dismissible={false} onClose={() => {}} title="x" />
+        {/* @ts-expect-error a contained dialog stacks at the contained level; layer would be ignored */}
+        <Dialog open contained layer="boot" onClose={() => {}} title="x" />
+      </>
+    );
+    expect(typeof rejected).toBe('function');
+  });
+});
+
+describe('Dialog headingLevel', () => {
+  it('defaults to an h2 title; headingLevel={1} renders an h1 that still names the dialog', () => {
+    const { rerender } = render(<Dialog open onClose={() => {}} title="Starting" />);
+    expect(screen.getByRole('heading', { level: 2, name: 'Starting' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
+    rerender(<Dialog open onClose={() => {}} headingLevel={1} title="Starting" />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Starting' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 2 })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Starting' })).toBeInTheDocument();
+  });
+});
+
+describe('Dialog backdrop press keeps focus live (PRR-151-006)', () => {
+  function WizardLike({ onClose }: { onClose: () => void }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <Button onClick={() => setOpen(true)}>Open</Button>
+        <Dialog
+          open={open}
+          onClose={() => {
+            onClose();
+            setOpen(false);
+          }}
+          closeOnBackdrop={false}
+          title="Setup"
+          footer={
+            <>
+              <Button>Back</Button>
+              <Button>Next</Button>
+            </>
+          }
+        />
+      </>
+    );
+  }
+  const pressBackdrop = () => userEvent.pointer({ keys: '[MouseLeft]', target: screen.getByTestId('ui-dialog-backdrop') });
+
+  it('closeOnBackdrop={false}: the press does not blur the focused control; Tab still wraps and Escape still closes', async () => {
+    const onClose = vi.fn();
+    render(<WizardLike onClose={onClose} />);
+    const opener = screen.getByRole('button', { name: 'Open' });
+    await userEvent.click(opener);
+    const back = screen.getByRole('button', { name: 'Back' });
+    const next = screen.getByRole('button', { name: 'Next' });
+    expect(back).toHaveFocus();
+    await pressBackdrop();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(back).toHaveFocus(); // not dropped to <body>
+    await userEvent.tab();
+    expect(next).toHaveFocus();
+    await userEvent.tab();
+    expect(back).toHaveFocus(); // the trap is still live
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(opener).toHaveFocus();
+  });
+
+  it('dismissible={false}: the press keeps focus on the focused control', async () => {
+    render(<Dialog open dismissible={false} title="Gate" footer={<Button>Go</Button>} />);
+    const go = screen.getByRole('button', { name: 'Go' });
+    expect(go).toHaveFocus();
+    await pressBackdrop();
+    expect(go).toHaveFocus();
+  });
+
+  it('a modal whose focus already left the panel gets it back on a backdrop press', async () => {
+    render(<Dialog open dismissible={false} title="Gate" footer={<Button>Go</Button>} />);
+    act(() => screen.getByRole('button', { name: 'Go' }).blur());
+    expect(document.body).toHaveFocus();
+    await pressBackdrop();
+    expect(screen.getByRole('dialog', { name: 'Gate' })).toHaveFocus();
+  });
+
+  it('a press that closes the dialog returns focus to the opener', async () => {
+    render(<DialogHarness />);
+    const opener = screen.getByRole('button', { name: 'Open' });
+    await userEvent.click(opener);
+    await pressBackdrop();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+});
+
+describe('Dialog re-homes focus when the focused control is removed (PRR-151-016)', () => {
+  function RetryGate({ modal = true }: { modal?: boolean }) {
+    const [loading, setLoading] = useState(false);
+    return (
+      <Dialog
+        open
+        dismissible={false}
+        modal={modal}
+        title="Boot"
+        footer={loading ? undefined : <Button onClick={() => setLoading(true)}>Retry</Button>}
+      >
+        {loading ? <p>Connecting</p> : <p>Failed</p>}
+      </Dialog>
+    );
+  }
+  const tick = () => new Promise<void>((r) => setTimeout(r, 20));
+
+  it('modal: Retry unmounting into a zero-focusable panel re-homes focus onto the panel; Tab and Escape stay handled', async () => {
+    render(<RetryGate />);
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    expect(retry).toHaveFocus();
+    await userEvent.click(retry);
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    const panel = screen.getByRole('dialog', { name: 'Boot' });
+    await waitFor(() => expect(panel).toHaveFocus());
+    expect(fireEvent.keyDown(panel, { key: 'Tab' })).toBe(false); // trapped: no focusables, stays on the panel
+    expect(panel).toHaveFocus();
+    expect(fireEvent.keyDown(panel, { key: 'Escape' })).toBe(false); // swallowed by the blocking dialog
+  });
+
+  it('non-modal: no re-home (focus may legitimately live outside a non-modal dialog)', async () => {
+    render(<RetryGate modal={false} />);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await tick();
+    expect(document.body).toHaveFocus();
+  });
+
+  it('a consumer that re-homes focus itself within the same turn wins over the panel fallback', async () => {
+    function Steps() {
+      const [done, setDone] = useState(false);
+      const finishRef = React.useRef<HTMLButtonElement>(null);
+      return (
+        <Dialog
+          open
+          onClose={() => {}}
+          title="Wizard"
+          footer={
+            done ? (
+              <Button key="finish" ref={finishRef}>
+                Finish
+              </Button>
+            ) : (
+              <Button
+                key="complete"
+                onClick={() => {
+                  setDone(true);
+                  // The consumer's own re-home lands after the removal, before the dialog's deferred one.
+                  setTimeout(() => finishRef.current?.focus(), 0);
+                }}
+              >
+                Complete
+              </Button>
+            )
+          }
+        />
+      );
+    }
+    render(<Steps />);
+    await userEvent.click(screen.getByRole('button', { name: 'Complete' }));
+    const finish = await screen.findByRole('button', { name: 'Finish' });
+    await waitFor(() => expect(finish).toHaveFocus());
+    await tick();
+    expect(finish).toHaveFocus(); // not pulled back onto the panel
+  });
+});
+
+describe('Dialog focus return when the opener is gone (PRR-151-037 / 046)', () => {
+  it('stacked: inner dialog opened from the outer one, outer closed first; closing the inner lands on the page opener', async () => {
+    function Host() {
+      const [outer, setOuter] = useState(false);
+      const [inner, setInner] = useState(false);
+      return (
+        <>
+          <Button onClick={() => setOuter(true)}>Page opener</Button>
+          <Dialog open={outer} onClose={() => setOuter(false)} title="Outer" footer={<Button onClick={() => setInner(true)}>More</Button>} />
+          <Dialog
+            open={inner}
+            onClose={() => setInner(false)}
+            title="Inner"
+            footer={<Button onClick={() => setOuter(false)}>Close outer</Button>}
+          />
+        </>
+      );
+    }
+    render(<Host />);
+    const pageOpener = screen.getByRole('button', { name: 'Page opener' });
+    await userEvent.click(pageOpener);
+    await userEvent.click(screen.getByRole('button', { name: 'More' }));
+    const closeOuter = screen.getByRole('button', { name: 'Close outer' });
+    expect(closeOuter).toHaveFocus();
+    await userEvent.click(closeOuter); // the inner dialog's opener ("More") is now detached
+    expect(screen.queryByRole('dialog', { name: 'Outer' })).toBeNull();
+    expect(closeOuter).toHaveFocus(); // the outer's cleanup did not steal focus from the inner
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(pageOpener).toHaveFocus();
+  });
+
+  it('an opener removed while its dialog is open: focus goes to the topmost dialog still open, not <body>', async () => {
+    function Host() {
+      const [showOpener, setShowOpener] = useState(true);
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <Dialog open dismissible={false} modal={false} title="Gate" />
+          {showOpener ? <Button onClick={() => setOpen(true)}>Row action</Button> : null}
+          <Dialog
+            open={open}
+            onClose={() => setOpen(false)}
+            title="Confirm"
+            footer={
+              <Button
+                onClick={() => {
+                  setShowOpener(false);
+                  setOpen(false);
+                }}
+              >
+                Delete row
+              </Button>
+            }
+          />
+        </>
+      );
+    }
+    render(<Host />);
+    await userEvent.click(screen.getByRole('button', { name: 'Row action' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete row' }));
+    expect(screen.queryByRole('dialog', { name: 'Confirm' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Gate' })).toHaveFocus();
+  });
+});
+
+describe('Dialog Escape owned by a control inside (PRR-151-070)', () => {
+  function Host({ onClose, onOuter, children }: { onClose: () => void; onOuter: () => void; children: React.ReactNode }) {
+    return (
+      <div onKeyDown={onOuter}>
+        <Dialog open onClose={onClose} title="Host">
+          {children}
+        </Dialog>
+      </div>
+    );
+  }
+
+  it('does not close when a child already handled Escape (defaultPrevented), and still does not let it propagate', () => {
+    const onClose = vi.fn();
+    const onOuter = vi.fn();
+    render(
+      <Host onClose={onClose} onOuter={onOuter}>
+        <input aria-label="widget" onKeyDown={(e) => e.key === 'Escape' && e.preventDefault()} />
+      </Host>
+    );
+    fireEvent.keyDown(screen.getByLabelText('widget'), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onOuter).not.toHaveBeenCalled();
+  });
+
+  it('does not close on Escape that cancels an IME composition', () => {
+    const onClose = vi.fn();
+    render(
+      <Host onClose={onClose} onOuter={() => {}}>
+        <input aria-label="text" />
+      </Host>
+    );
+    fireEvent.keyDown(screen.getByLabelText('text'), { key: 'Escape', isComposing: true });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByLabelText('text'), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not close from an expanded combobox; closes once collapsed, and from a disclosure button', () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
+      <Host onClose={onClose} onOuter={() => {}}>
+        <input aria-label="pick" role="combobox" aria-expanded="true" aria-controls="lb" />
+        <button type="button" aria-expanded="true">
+          Details
+        </button>
+      </Host>
+    );
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'pick' }), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    // A plain disclosure (aria-expanded without a popup) does not own Escape.
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Details' }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    rerender(
+      <Host onClose={onClose} onOuter={() => {}}>
+        <input aria-label="pick" role="combobox" aria-expanded="false" aria-controls="lb" />
+      </Host>
+    );
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'pick' }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
+  // Review INFO (PR #151): deferring to every expanded popup button made Escape a dead key
+  // when the popup ignored it. A popup button now defers only when its popup handled the
+  // key (preventDefault here; stopping propagation means the dialog never sees it).
+  it('an open popup button defers only when its popup handled Escape; one that ignores it no longer makes Escape a dead key', () => {
+    const onClose = vi.fn();
+    const onOuter = vi.fn();
+    render(
+      <Host onClose={onClose} onOuter={onOuter}>
+        <button type="button" aria-haspopup="menu" aria-expanded="true" onKeyDown={(e) => e.key === 'Escape' && e.preventDefault()}>
+          Handled
+        </button>
+        <button type="button" aria-haspopup="menu" aria-expanded="true">
+          Ignored
+        </button>
+      </Host>
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Handled' }), { key: 'Escape' });
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Ignored' }), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onOuter).not.toHaveBeenCalled(); // neither press reached content behind
+  });
+
+  it('the real Combobox: the first Escape closes its list only, the second closes the dialog', async () => {
+    function Pick() {
+      const [value, setValue] = useState('');
+      return <Combobox aria-label="model" value={value} onValueChange={setValue} options={['alpha', 'beta']} />;
+    }
+    const onClose = vi.fn();
+    render(
+      <Host onClose={onClose} onOuter={() => {}}>
+        <Pick />
+      </Host>
+    );
+    const input = screen.getByRole('combobox', { name: 'model' });
+    expect(input).toHaveFocus();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(input).toHaveAttribute('aria-expanded', 'true');
+    await userEvent.keyboard('{Escape}');
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(onClose).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Dialog Escape stack (PRR-151-038)', () => {
+  const esc = (target: Element = document.body, init: KeyboardEventInit = {}) => fireEvent.keyDown(target, { key: 'Escape', ...init });
+  const blurAll = () => act(() => (document.activeElement as HTMLElement | null)?.blur());
+  type Spy = { mock: { calls: unknown[][]; invocationCallOrder: number[] } };
+  /**
+   * Keydown listeners on document still registered, per phase, replaying the add/remove calls
+   * in order (a listener is identified by function AND capture flag, as the DOM does).
+   */
+  function liveKeydown(add: Spy, remove: Spy): { capture: number; bubble: number } {
+    const calls = [
+      ...add.mock.calls.map((args, i) => ({ at: add.mock.invocationCallOrder[i], args, added: true })),
+      ...remove.mock.calls.map((args, i) => ({ at: remove.mock.invocationCallOrder[i], args, added: false })),
+    ].sort((a, b) => a.at - b.at);
+    const live = { capture: new Set<unknown>(), bubble: new Set<unknown>() };
+    for (const { args, added } of calls) {
+      const [type, fn, opts] = args;
+      const capture = typeof opts === 'boolean' ? opts : (opts as AddEventListenerOptions | undefined)?.capture === true;
+      if (type !== 'keydown') continue;
+      const set = capture ? live.capture : live.bubble;
+      if (added) set.add(fn);
+      else set.delete(fn);
+    }
+    return { capture: live.capture.size, bubble: live.bubble.size };
+  }
+  /** [registered overlays, document keydown capture listeners, document keydown bubble listeners]. */
+  const state = (add: Spy, remove: Spy) => {
+    const { capture, bubble } = liveKeydown(add, remove);
+    return [overlayCount(), capture, bubble];
+  };
+  const onWindow = vi.fn();
+
+  beforeEach(() => {
+    // Isolation: no dialog left registered by an earlier test.
+    expect(overlayCount()).toBe(0);
+    onWindow.mockReset();
+    window.addEventListener('keydown', onWindow);
+  });
+  afterEach(() => {
+    window.removeEventListener('keydown', onWindow);
+    vi.restoreAllMocks();
+  });
+
+  it('focus on <body>: Escape closes the dialog; no later capture listener, React parent or window listener sees it', async () => {
+    const onClose = vi.fn();
+    const onParent = vi.fn();
+    const lateCapture = vi.fn();
+    render(
+      <div onKeyDown={onParent}>
+        <DialogHarness onClose={onClose} />
+      </div>
+    );
+    const opener = screen.getByRole('button', { name: 'Open' });
+    await userEvent.click(opener);
+    blurAll();
+    expect(document.body).toHaveFocus();
+    // Same node and phase as the stack's listener, registered after it.
+    document.addEventListener('keydown', lateCapture, true);
+    try {
+      esc();
+    } finally {
+      document.removeEventListener('keydown', lateCapture, true);
+    }
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(lateCapture).not.toHaveBeenCalled();
+    expect(onWindow).not.toHaveBeenCalled();
+    expect(onParent).not.toHaveBeenCalled();
+    expect(opener).toHaveFocus(); // focus return still applies (focus was on <body>)
+  });
+
+  it('focus on a toast above the dialog: Escape closes the dialog, not the toast', async () => {
+    const onClose = vi.fn();
+    function ToastOverModal() {
+      const { showToast } = useToast();
+      const [open, setOpen] = useState(true);
+      React.useEffect(() => {
+        showToast('Saved', 'info');
+      }, [showToast]);
+      return (
+        <Dialog
+          open={open}
+          onClose={() => {
+            onClose();
+            setOpen(false);
+          }}
+          title="Modal"
+          footer={<Button>First</Button>}
+        />
+      );
+    }
+    render(
+      <ToastProvider>
+        <ToastOverModal />
+      </ToastProvider>
+    );
+    const dismiss = await waitFor(() => screen.getAllByRole('button', { name: 'Dismiss notification' })[0]);
+    expect(screen.getByRole('dialog', { name: 'Modal' }).contains(dismiss)).toBe(false);
+    act(() => dismiss.focus());
+    await userEvent.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(dismiss).toBeInTheDocument();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('dismissible={false} with focus outside the panel: Escape is swallowed (default-prevented) and the dialog stays', () => {
+    render(<Dialog open dismissible={false} title="Gate" footer={<Button>Go</Button>} />);
+    blurAll();
+    expect(esc()).toBe(false);
+    expect(screen.getByRole('dialog', { name: 'Gate' })).toBeInTheDocument();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('Escape from inside the panel is not seen by a native listener on the portal container added after the dialog opened', () => {
+    const onClose = vi.fn();
+    const onBody = vi.fn();
+    render(<Dialog open onClose={onClose} title="P" footer={<Button>In</Button>} />);
+    document.body.addEventListener('keydown', onBody);
+    try {
+      esc(screen.getByRole('button', { name: 'In' }));
+    } finally {
+      document.body.removeEventListener('keydown', onBody);
+    }
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onBody).not.toHaveBeenCalled();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('stacked dialogs: Escape closes only the top one, even with focus in the lower panel', () => {
+    const outerClose = vi.fn();
+    const innerClose = vi.fn();
+    function Two() {
+      const [outer, setOuter] = useState(true);
+      const [inner, setInner] = useState(true);
+      return (
+        <>
+          <Dialog
+            open={outer}
+            onClose={() => {
+              outerClose();
+              setOuter(false);
+            }}
+            title="Outer"
+            footer={<Button>Outer action</Button>}
+          />
+          <Dialog
+            open={inner}
+            onClose={() => {
+              innerClose();
+              setInner(false);
+            }}
+            title="Inner"
+            footer={<Button>Inner action</Button>}
+          />
+        </>
+      );
+    }
+    render(<Two />);
+    const outerAction = screen.getByRole('button', { name: 'Outer action' });
+    act(() => outerAction.focus());
+    esc(outerAction);
+    expect(innerClose).toHaveBeenCalledTimes(1);
+    expect(outerClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Inner' })).toBeNull();
+    esc(outerAction);
+    expect(outerClose).toHaveBeenCalledTimes(1);
+    expect(innerClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('nested dialogs (one opened from inside the other): Escape from inside or from <body> closes only the inner', () => {
+    const outerClose = vi.fn();
+    function Nested() {
+      const [inner, setInner] = useState(false);
+      return (
+        <Dialog open onClose={outerClose} title="Outer" footer={<Button>Outer action</Button>}>
+          <Dialog open={inner} onClose={() => setInner(false)} title="Inner" footer={<Button>Inner action</Button>} />
+          <Button onClick={() => setInner(true)}>More</Button>
+        </Dialog>
+      );
+    }
+    render(<Nested />);
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    esc(screen.getByRole('button', { name: 'Inner action' }));
+    expect(screen.queryByRole('dialog', { name: 'Inner' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'More' }));
+    blurAll();
+    esc();
+    expect(screen.queryByRole('dialog', { name: 'Inner' })).toBeNull();
+    expect(outerClose).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Outer' })).toBeInTheDocument();
+  });
+
+  it('the boot layer counts as topmost: Escape from a later default dialog is swallowed by the boot gate', () => {
+    const defaultClose = vi.fn();
+    render(
+      <>
+        <Dialog open layer="boot" dismissible={false} title="Boot" footer={<Button>Boot action</Button>} />
+        <Dialog open onClose={defaultClose} title="Default" footer={<Button>Default action</Button>} />
+      </>
+    );
+    const action = screen.getByRole('button', { name: 'Default action' });
+    act(() => action.focus());
+    expect(esc(action)).toBe(false);
+    expect(defaultClose).not.toHaveBeenCalled();
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('a non-modal, non-dismissible gate (the chat gates) leaves Escape outside its panel to the page; inside, it swallows it', () => {
+    const onShell = vi.fn();
+    render(
+      <>
+        <button type="button" onKeyDown={(e) => e.key === 'Escape' && onShell()}>
+          Shell
+        </button>
+        <div style={{ position: 'relative' }}>
+          <Dialog open contained modal={false} dismissible={false} title="Gate" footer={<Button>Gate action</Button>} />
+        </div>
+      </>
+    );
+    expect(esc(screen.getByRole('button', { name: 'Shell' }))).toBe(true);
+    expect(onShell).toHaveBeenCalledTimes(1);
+    expect(onWindow).toHaveBeenCalledTimes(1);
+    expect(esc(screen.getByRole('button', { name: 'Gate action' }))).toBe(false);
+    expect(onWindow).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Gate' })).toBeInTheDocument();
+  });
+
+  it('a non-modal but dismissible dialog takes part: Escape from outside its panel closes it', () => {
+    const onClose = vi.fn();
+    render(
+      <>
+        <Button>Page</Button>
+        <Dialog open modal={false} onClose={onClose} title="Panel" footer={<Button>In</Button>} />
+      </>
+    );
+    esc(screen.getByRole('button', { name: 'Page' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onWindow).not.toHaveBeenCalled();
+  });
+
+  it('a non-claiming gate above a modal does not shield it: Escape from outside both reaches the modal', () => {
+    const outerClose = vi.fn();
+    render(
+      <Dialog open onClose={outerClose} title="Outer">
+        <div style={{ position: 'relative' }}>
+          <Dialog open contained modal={false} dismissible={false} title="Gate" footer={<Button>Gate action</Button>} />
+        </div>
+      </Dialog>
+    );
+    blurAll();
+    esc();
+    expect(outerClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('focus outside the panel: an Escape that cancels an IME composition does not close, and still does not leak', () => {
+    const onClose = vi.fn();
+    render(<Dialog open onClose={onClose} title="T" footer={<Button>In</Button>} />);
+    blurAll();
+    esc(document.body, { isComposing: true });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onWindow).not.toHaveBeenCalled();
+    esc();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // The bubble-phase count is the PRR-151-007 toast-Tab listener (one per open dialog).
+  it('StrictMode: the double mount leaves one entry and one listener per phase; Escape closes once; unmount leaves none', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    const onClose = vi.fn();
+    const { unmount } = render(
+      <React.StrictMode>
+        <Dialog open onClose={onClose} title="S" footer={<Button>In</Button>} />
+      </React.StrictMode>
+    );
+    expect(state(add, remove)).toEqual([1, 1, 1]);
+    blurAll();
+    esc();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+    expect(state(add, remove)).toEqual([0, 0, 0]);
+  });
+
+  it('close and unmount both unregister; one capture listener lives exactly while any dialog is open, no listener after', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    function Host({ a, b }: { a: boolean; b: boolean }) {
+      return (
+        <>
+          <Dialog open={a} onClose={() => {}} title="A" />
+          <Dialog open={b} onClose={() => {}} title="B" />
+        </>
+      );
+    }
+    const { rerender, unmount } = render(<Host a b={false} />);
+    expect(state(add, remove)).toEqual([1, 1, 1]);
+    rerender(<Host a b />);
+    expect(state(add, remove)).toEqual([2, 1, 2]);
+    rerender(<Host a={false} b />);
+    expect(state(add, remove)).toEqual([1, 1, 1]);
+    rerender(<Host a={false} b={false} />); // closed, still mounted
+    expect(state(add, remove)).toEqual([0, 0, 0]);
+    rerender(<Host a b />);
+    expect(state(add, remove)).toEqual([2, 1, 2]);
+    unmount();
+    expect(state(add, remove)).toEqual([0, 0, 0]);
+    expect(esc()).toBe(true); // nothing intercepts Escape any more
+    expect(onWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it('module: a panel already removed from the DOM is skipped; settleEscape acts only for the panel the key was routed to', () => {
+    // A modal, dismissible entry whose panel is not in the document (removed before its
+    // effect cleanup ran) must not claim the key.
+    const closeDetached = vi.fn();
+    const unregisterDetached = registerOverlay({
+      panel: document.createElement('div'),
+      isModal: () => true,
+      isDismissible: () => true,
+      close: closeDetached,
+    });
+    try {
+      expect(esc()).toBe(true);
+      expect(closeDetached).not.toHaveBeenCalled();
+      expect(onWindow).toHaveBeenCalledTimes(1);
+    } finally {
+      unregisterDetached();
+    }
+
+    const panel = document.createElement('div');
+    const inside = document.createElement('button');
+    panel.appendChild(inside);
+    const other = document.createElement('div');
+    document.body.append(panel, other);
+    const close = vi.fn();
+    const unregister = registerOverlay({ panel, isModal: () => true, isDismissible: () => true, close });
+    // Stand-in for the panel's onKeyDown (bubble phase): a foreign panel tries first.
+    const closesAfterForeign: number[] = [];
+    const settle = (e: KeyboardEvent) => {
+      settleEscape(other, e);
+      closesAfterForeign.push(close.mock.calls.length);
+      settleEscape(panel, e);
+    };
+    panel.addEventListener('keydown', settle);
+    try {
+      esc(inside);
+      expect(closesAfterForeign).toEqual([0]);
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      panel.removeEventListener('keydown', settle);
+      unregister();
+      panel.remove();
+      other.remove();
+    }
+  });
+});
+
+describe('Dialog + toasts above it (PRR-151-007)', () => {
+  // Real ToastProvider: its viewport portals to <body>, above every dialog (z 1200).
+  function Toasts({ messages }: { messages: string[] }) {
+    const { showToast } = useToast();
+    React.useEffect(() => {
+      messages.forEach((m) => showToast(m, 'info'));
+    }, [messages, showToast]);
+    return null;
+  }
+  type Kind = 'modal' | 'non-modal' | 'none';
+  // dialogFirst: the dialog portal is appended before the toast viewport (opened at mount);
+  // otherwise it opens afterwards (the app's real order: the viewport mounts with the app).
+  function Page({ kind, dialogFirst, messages = ['Saved'] }: { kind: Kind; dialogFirst: boolean; messages?: string[] }) {
+    const [open, setOpen] = useState(dialogFirst);
+    React.useEffect(() => setOpen(true), []);
+    const dialog =
+      kind === 'none' ? null : kind === 'modal' ? (
+        <Dialog open={open} onClose={() => setOpen(false)} title="Modal" footer={<><Button>First</Button><Button>Last</Button></>} />
+      ) : (
+        <div style={{ position: 'relative' }}>
+          <Dialog open={open} contained modal={false} dismissible={false} title="Gate" footer={<Button>Gate action</Button>} />
+        </div>
+      );
+    return (
+      <>
+        <Button>Background</Button>
+        {dialogFirst ? dialog : null}
+        <ToastProvider>
+          <Toasts messages={messages} />
+          {dialogFirst ? null : dialog}
+        </ToastProvider>
+      </>
+    );
+  }
+  const dismissButtons = () => screen.getAllByRole('button', { name: 'Dismiss notification' });
+  const viewportOf = (el: HTMLElement) => el.closest('.ui-toast-viewport') as HTMLElement;
+  const order = [true, false] as const;
+
+  it.each(order)('modal open (dialog portal first=%s): Tab and Shift+Tab from a focused toast land inside the panel', async (dialogFirst) => {
+    render(<Page kind="modal" dialogFirst={dialogFirst} />);
+    const dismiss = await waitFor(() => dismissButtons()[0]);
+    const panel = screen.getByRole('dialog', { name: 'Modal' });
+    // Sanity: the page structure really puts the toast outside the panel.
+    expect(viewportOf(dismiss).parentElement).toBe(document.body);
+    expect(panel.contains(dismiss)).toBe(false);
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
+    act(() => dismiss.focus());
+    await userEvent.tab({ shift: true });
+    expect(screen.getByRole('button', { name: 'Last' })).toHaveFocus();
+  });
+
+  it('modal open: Tab moves between toasts first, and only the last edge goes back into the panel', async () => {
+    render(<Page kind="modal" dialogFirst={false} messages={['One', 'Two']} />);
+    await waitFor(() => expect(dismissButtons()).toHaveLength(2));
+    const [one, two] = dismissButtons();
+    act(() => one.focus());
+    await userEvent.tab();
+    expect(two).toHaveFocus(); // toasts stay reachable from each other
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
+  });
+
+  it('two stacked modals: the toast hands focus to the topmost one only', async () => {
+    function Stacked() {
+      const [inner, setInner] = useState(false);
+      React.useEffect(() => setInner(true), []);
+      return (
+        <ToastProvider>
+          <Toasts messages={['Saved']} />
+          <Dialog open onClose={() => {}} title="Outer" footer={<Button>Outer action</Button>} />
+          <Dialog open={inner} onClose={() => setInner(false)} title="Inner" footer={<Button>Inner action</Button>} />
+        </ToastProvider>
+      );
+    }
+    render(<Stacked />);
+    const dismiss = await waitFor(() => dismissButtons()[0]);
+    await waitFor(() => screen.getByRole('dialog', { name: 'Inner' }));
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Inner action' })).toHaveFocus();
+  });
+
+  it('topmost: the boot layer wins over document order; a contained modal in page content does not cover a portaled one', async () => {
+    function Layers({ boot }: { boot: boolean }) {
+      const [later, setLater] = useState(false);
+      React.useEffect(() => setLater(true), []);
+      return (
+        <ToastProvider>
+          <Toasts messages={['Saved']} />
+          {boot ? <Dialog open layer="boot" onClose={() => {}} title="Boot" footer={<Button>Boot action</Button>} /> : null}
+          <Dialog open onClose={() => {}} title="Default" footer={<Button>Default action</Button>} />
+          {later ? (
+            <div style={{ position: 'relative' }}>
+              <Dialog open contained onClose={() => {}} title="Contained" footer={<Button>Contained action</Button>} />
+            </div>
+          ) : null}
+        </ToastProvider>
+      );
+    }
+    const { unmount } = render(<Layers boot />);
+    let dismiss = await waitFor(() => dismissButtons()[0]);
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Boot action' })).toHaveFocus(); // first in DOM, highest layer
+    unmount();
+    render(<Layers boot={false} />);
+    dismiss = await waitFor(() => dismissButtons()[0]);
+    await waitFor(() => screen.getByRole('dialog', { name: 'Contained' }));
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(screen.getByRole('button', { name: 'Default action' })).toHaveFocus(); // not the contained modal mounted later
+  });
+
+  it.each(['non-modal', 'none'] as const)('%s: Tab from a toast is left to the browser (unchanged)', async (kind) => {
+    render(<Page kind={kind} dialogFirst={false} />);
+    const dismiss = await waitFor(() => dismissButtons()[0]);
+    act(() => dismiss.focus());
+    // Not intercepted: the keydown is not default-prevented...
+    expect(fireEvent.keyDown(dismiss, { key: 'Tab' })).toBe(true);
+    expect(fireEvent.keyDown(dismiss, { key: 'Tab', shiftKey: true })).toBe(true);
+    expect(dismiss).toHaveFocus();
+    // ...and the real Tab order is plain document order: Shift+Tab reaches the control
+    // before the viewport (the page, or the non-modal gate), Tab leaves the document.
+    await userEvent.tab({ shift: true });
+    expect(screen.getByRole('button', { name: kind === 'none' ? 'Background' : 'Gate action' })).toHaveFocus();
+    act(() => dismiss.focus());
+    await userEvent.tab();
+    expect(document.body).toHaveFocus();
+  });
+
+  it('dismissing a focused toast over a modal still returns focus to where it came from (toast focus return unchanged)', async () => {
+    render(<Page kind="modal" dialogFirst={false} />);
+    const dismiss = await waitFor(() => dismissButtons()[0]);
+    const last = screen.getByRole('button', { name: 'Last' });
+    act(() => last.focus());
+    act(() => dismiss.focus()); // entered from inside the panel
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Dismiss notification' })).toBeNull());
+    expect(last).toHaveFocus();
   });
 });
 

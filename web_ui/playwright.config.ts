@@ -4,7 +4,7 @@ import { defineConfig, devices } from '@playwright/test';
  * web_ui browser-mode e2e harness (issue #76; browser packs per ADR-0012).
  *
  * Modeled on desktop/playwright.config.ts (issue #67, B9), but this harness
- * exercises the PLAIN-BROWSER surface: Playwright's chromium project against
+ * exercises the PLAIN-BROWSER surface: Playwright's chromium and firefox projects against
  * `vite preview` of the production renderer build (dist/), with no Electron
  * shell and no window.desktopApi. `npm run test:e2e` builds the renderer
  * first, then runs e2e/packs-browser.spec.ts (browser Knowledge Pack install
@@ -38,6 +38,14 @@ export default defineConfig({
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+    },
+    // Firefox is a supported, CI-verified browser (PRR-151-030): the required
+    // `web-ui e2e` job runs this same spec set under both projects. Safari/WebKit is
+    // NOT supported and has no project. The Lumen visual/axe specs stay Chromium-only
+    // (playwright.visual.config.ts): pixel baselines are engine-specific.
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
     },
   ],
   webServer: {

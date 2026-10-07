@@ -255,8 +255,11 @@ Courses run on a dedicated player origin instead:
   206/416, and bounded reads.
 - **Headers.** Course responses carry CORP `cross-origin`, `nosniff`,
   `no-cache` and the training CSP without the private `app:` sources plus
-  `frame-ancestors 'self' <app origin>`, with `worker-src` pinned to `blob:`
-  and the open pack's relay path (on the player origin `'self'` would admit
+  `frame-ancestors 'self' <app origin>`, with `worker-src` pinned to `blob:`,
+  the open pack's relay path and the course service worker's script `/training/sw.js`
+  (CSP matches it percent-decoded, so `sw%2ejs` and `%73w.js` match too; the
+  worker itself answers 404, without asking the relay, to any path that decodes,
+  repeatedly, to exactly `/training/sw.js` or does not decode; a path still changing after 8 decode passes is refused too, so the check fails closed) (on the player origin `'self'` would admit
   app assets served without the course CSP); course documents also carry COEP
   `require-corp` (without it the app's COEP blocks the frame). The server
   that answers the player origin serves only static files (course JS can
@@ -292,7 +295,8 @@ Courses run on a dedicated player origin instead:
 - **Worker updates.** A new version of the course worker waits (no notice is
   shown) until no course is open, so an update never replaces the worker under
   a playing course; it takes over once the open course is closed.
-- **Support.** Chrome and Edge; Safari is not supported; Firefox is untested.
+- **Support.** Chrome, Edge and Firefox 112 or newer (the browser e2e suite runs under both Chromium and Firefox in CI; all six player-origin isolation specs run on Firefox; the click-activation spec launches its own Firefox with Fission disabled, `MOZ_FORCE_DISABLE_FISSION=1`, because Playwright cannot send input into an out-of-process frame (microsoft/playwright#21780), a test-harness limit that real users are not expected to hit); Safari and every other WebKit browser (including all iOS/iPadOS browsers) are not supported.
+- **Firefox engine notes.** The course document's `worker-src` names the course service worker's script (`<player>/training/sw.js`) because Firefox requires it before starting dedicated workers under a service worker; dedicated workers from a pack's own script run on both engines. Chromium's course frame is not `crossOriginIsolated` (the permissions-policy default) while Firefox reports true; this is benign.
 
 Threat model: nothing on the player origin is trusted. A malicious course can
 take the relay port, but the app's relay serves only the open pack's files. It
