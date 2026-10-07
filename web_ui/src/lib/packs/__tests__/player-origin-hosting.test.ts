@@ -519,6 +519,28 @@ describe('course worker refusals are never usable documents (FC6)', () => {
       channel.port1.close();
     }
   });
+
+  // PRR-152-06: the same file requested with a BARE percent sign does not decode on the first
+  // pass, so it is refused 404 by the worker itself and never relayed (the relay would 404 it too).
+  it('a bare percent sign in the request path (100%.txt, not 100%25.txt) is refused 404 and never relayed (PRR-152-06)', async () => {
+    const listeners = loadWorker();
+    let relayAsked = 0;
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (event: MessageEvent<{ type: string; id: number }>) => {
+      if (event.data.type !== 'open') return;
+      relayAsked += 1;
+      channel.port1.postMessage({ type: 'open-result', id: event.data.id, status: 200, headers: { 'content-type': 'text/plain' }, body: 'ok' });
+    };
+    listeners.message?.({ data: { type: 'trainingapp-relay-port' }, ports: [channel.port2], source: { url: `${PLAYER}/training-boot.html` } });
+    try {
+      expect((await fetchEvent(listeners, `${PLAYER}/training/pack-a/100%.txt`)).status).toBe(404);
+      expect(relayAsked).toBe(0);
+      expect((await fetchEvent(listeners, `${PLAYER}/training/pack-a/100%25.txt`)).status).toBe(200);
+      expect(relayAsked).toBe(1);
+    } finally {
+      channel.port1.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -96,8 +96,11 @@ var MAX_DECODE_PASSES = 8;
  * hex case such as %2e vs %2E is equal after decoding). A pathname that does not
  * decode at all (malformed escape) is refused too: the app relay refuses it as
  * well (resolveTrainingPath -> 404). A LATER pass that fails to decode ends the
- * loop instead (a pack file literally named `100%.txt` arrives as 100%25.txt and
- * must still be served); every pass compared so far was a well-formed string.
+ * loop instead: a pack file literally named `100%.txt`, requested with its
+ * percent sign encoded (100%25.txt), must still be served; every pass compared
+ * so far was a well-formed string. The same file requested with a BARE percent
+ * sign (100%.txt, e.g. a hand-written href the browser does not re-encode) fails
+ * to decode on the FIRST pass and is refused 404 here, as the relay refuses it.
  * Still changing after MAX_DECODE_PASSES: refused (fail closed).
  */
 function isOwnScriptPath(pathname) {
