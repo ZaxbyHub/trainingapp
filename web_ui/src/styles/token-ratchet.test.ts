@@ -502,6 +502,13 @@ describe('repo-wide token ratchet (web_ui/src)', () => {
     // A stale allow-list entry (the fallback was removed) must be deleted.
     expect(Object.keys(SANCTIONED_FALLBACKS).filter((k) => !raw.includes(k))).toEqual([]);
   });
+
+  // DATA_MODULES is filtered out of the scan before EVERY rule, and LITERAL_ALLOWED exempts rule 2 wholesale: a
+  // member added to either silently exempts that file from the ratchet, so growing them is a deliberate edit here.
+  it('the file-level exemptions are exactly the pinned members (PRR-152-02)', () => {
+    expect([...DATA_MODULES].sort()).toEqual(['styles/retired-tokens.ts', 'styles/token-remap.ts']);
+    expect([...LITERAL_ALLOWED].sort()).toEqual(['styles/lumen-tokens.css']);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------
