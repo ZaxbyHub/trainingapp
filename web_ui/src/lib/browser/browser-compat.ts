@@ -85,7 +85,7 @@ function isOldFirefox(version: number | null): boolean {
 /**
  * Whether this browser's NAME and VERSION make it unsupported (Chrome/Edge below 113,
  * Firefox below 112, and Safari or any other WebKit engine). An unrecognised engine is NOT reported here:
- * we cannot tell that it is unsupported, so the App shows no upfront notice for it
+ * we cannot tell that it is unsupported, so the App shows no upfront notice for it.
  * Synchronous and feature-free so the App can ask once at mount.
  */
 export function isKnownUnsupportedBrowser(): boolean {
