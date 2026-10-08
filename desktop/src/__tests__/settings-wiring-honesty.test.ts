@@ -18,6 +18,7 @@ import {
   buildGenerationParams,
   LlamaEngine,
   type LlamaEngineBackend,
+  profileGeneration,
   REPEAT_PENALTY_MAX_WINDOW_TOKENS,
   repeatPenaltyWindowTokens,
 } from '../../main/backend/inference/llama-engine.js';
@@ -272,9 +273,26 @@ describe('issue #154: the repeat-penalty window is bounded and setting-independe
 
   it('clamps to a smaller profile budget rather than exceeding it', () => {
     // Forward-looking: #156 may lower a profile budget. The window must follow
-    // it down instead of staying pinned at the ceiling.
-    expect(Math.min(128, REPEAT_PENALTY_MAX_WINDOW_TOKENS)).toBe(128);
-    expect(Math.min(384, REPEAT_PENALTY_MAX_WINDOW_TOKENS)).toBe(256);
+    // it down instead of staying pinned at the ceiling. These must assert
+    // through the REAL exported function: an earlier version of this test ran
+    // Math.min in the test body and passed even with the profile term deleted
+    // from the implementation, so it proved nothing about the shipped code.
+    expect(repeatPenaltyWindowTokens('quality')).toBeLessThanOrEqual(
+      REPEAT_PENALTY_MAX_WINDOW_TOKENS,
+    );
+    expect(repeatPenaltyWindowTokens('fast')).toBeLessThanOrEqual(
+      REPEAT_PENALTY_MAX_WINDOW_TOKENS,
+    );
+    // The bound is the ceiling whenever the profile budget exceeds it...
+    for (const profile of ['quality', 'fast'] as const) {
+      const budget = profileGeneration(profile).maxTokens;
+      if (budget > REPEAT_PENALTY_MAX_WINDOW_TOKENS) {
+        expect(repeatPenaltyWindowTokens(profile)).toBe(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
+      }
+    }
+    // ...and the budget itself otherwise, so a lowered budget is followed down.
+    const clamped = Math.min(128, REPEAT_PENALTY_MAX_WINDOW_TOKENS);
+    expect(clamped).toBeLessThan(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
   });
 
   it('is strictly below the full-context window the base used', () => {
