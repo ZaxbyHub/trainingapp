@@ -206,7 +206,7 @@ transport maps to the contract 503.
 | Threads | `min(cores, 8)` | [desktop/main/backend/inference/profile-select.ts](desktop/main/backend/inference/profile-select.ts) |
 | Profile gate | `auto` selects quality at >= 6 GiB free RAM | `DEFAULT_PROFILE_THRESHOLD_GB` |
 | Generation (quality / fast) | 1024 tokens @ temp 0.2 / 384 @ 0.3 | `PROFILE_GENERATION` |
-| Sampler | top-p 0.9, repeat penalty 1.1, full-context lookback 8192 | [desktop/main/backend/inference/penalties.ts](desktop/main/backend/inference/penalties.ts) |
+| Sampler | top-p 0.9, repeat penalty 1.1, lookback window 8192 (generated tokens only) | [desktop/main/backend/inference/penalties.ts](desktop/main/backend/inference/penalties.ts) (`PENALTY_FULL_CONTEXT_TOKENS`) |
 | History | at most 12 turns carried into the prompt | `MAX_HISTORY_TURNS` |
 
 Vulkan stays off (reserved). The memory governor can force the runtime

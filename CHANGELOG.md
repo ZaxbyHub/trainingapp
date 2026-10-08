@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- **Desktop local inference (trace #154)**: the engine now pins `Gemma4ChatWrapper({reasoning: false})` for the shipped gemma-4 quality model, whose auto-resolved wrapper defaults `reasoning=true` and was spending answer-token budget on thought segments that never reach `responseText`. The pin is gated on the GGUFs own architecture, not the profile name, so a non-gemma model at the quality path keeps the library default wrapper resolution. The desktop-local system prompt gained the same groundedness rule the external endpoint already used, and each request now emits one `console.info` line carrying profile, threads, elapsed ms, answer tokens and outcome.
+
+
 ### Added — Knowledge Packs and training courses in the browser app (trace browser-training-parity)
 
 - **The browser app installs Knowledge Packs and plays training courses** with the same Packs

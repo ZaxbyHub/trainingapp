@@ -9,6 +9,16 @@
 // session.prompt. The browser's -1 (full-context lookback) is mirrored here
 // as lastTokens = the default context window (PENALTY_FULL_CONTEXT_TOKENS)
 // unless the caller passes an explicit context size.
+//
+// SCOPE, verified against the pinned library (#154): lastTokens does NOT cover
+// the prompt. LlamaChat.res (LlamaChat.js:811) holds only generated tokens —
+// its sole writer is pushAll(this.res, this.pendingTokens) (:2283) fed from
+// popFreeChunkTokens() — while the prompt path injectTokens (:1348-1356) routes
+// into prefixTriggerTokens, and getPenaltyTokens (:1077) slices only res. So
+// this constant is a GENERATED-token lookback, not a context-wide one, and no
+// value of it can stop retrieved evidence from being penalised. 8192 exceeds
+// both shipped generation caps (1024/384), so in practice it penalises every
+// generated token. Do not "bound" it expecting a grounding effect.
 
 export interface PenaltyOptions {
   repeatPenalty?: number;
@@ -24,8 +34,10 @@ export interface NativePenaltyParams {
 }
 
 /**
- * Full-context lookback depth mirroring the browser's `penalty_last_n: -1`
- * intent at the shared DEFAULT_N_CTX (web_ui/src/lib/llm/wllama-service.ts:39).
+ * Lookback depth for the generated-token repeat penalty, mirroring the
+ * browser's `penalty_last_n: -1` value at the shared DEFAULT_N_CTX
+ * (web_ui/src/lib/llm/wllama-service.ts:39). See the scope note above: this
+ * window covers generated tokens only and never the prompt.
  */
 export const PENALTY_FULL_CONTEXT_TOKENS = 8192;
 

@@ -8,7 +8,7 @@
 //   - Direct chat (external.grounded=false) skips retrieval;
 //   - tolerant boot replay of external.json; settings.json never carries
 //     external.* (downgrade-safe);
-//   - the local llama.cpp prompt is byte-identical (PRESERVING);
+//   - the local llama.cpp prompt carries a groundedness rule (#154 AC3);
 //   - status/stats never leak the key; cancellation releases the queue.
 import fs from 'node:fs';
 import http from 'node:http';
@@ -473,8 +473,8 @@ describe('direct chat, status and cancellation', () => {
   });
 });
 
-describe('PRESERVING: the local llama.cpp prompt is unchanged', () => {
-  it('the local path still prepends the same flat grounded string and keeps its system prompt', async () => {
+describe('#154 AC3: the local llama.cpp prompt carries a groundedness rule', () => {
+  it('the local path prepends the same flat grounded string and pins a grounded system prompt', async () => {
     const modelDir = tmp('ext-local-');
     fs.mkdirSync(path.join(modelDir, 'gemma-4-e2b-it'), { recursive: true });
     fs.mkdirSync(path.join(modelDir, 'lfm2.5-vl-450m'), { recursive: true });
@@ -499,7 +499,12 @@ describe('PRESERVING: the local llama.cpp prompt is unchanged', () => {
     await engine.query('Q?');
     expect(seen[0]).toBe('Answer the question using the retrieved context when relevant.\n\n[1] PASSAGE-A\n\n\nQuestion: Q?');
     const source = fs.readFileSync(path.join(__dirname, '..', '..', 'main', 'backend', 'inference', 'llama-engine.ts'), 'utf8');
-    expect(source).toContain(`"You are TrainingApp's local assistant. Answer the user's question directly and concisely."`);
+    // #154 AC3: the desktop-local prompt now carries the same groundedness rule
+    // the external path already ships. Pin the RULE, not one literal spelling, so
+    // a wording change does not require editing this grep.
+    expect(source).toContain("TrainingApp's local assistant");
+    expect(source).toMatch(/answer only from that context/i);
+    expect(source).toMatch(/does not contain the answer/i);
   });
 });
 
