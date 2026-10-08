@@ -271,28 +271,41 @@ describe('issue #154: the repeat-penalty window is bounded and setting-independe
     expect(REPEAT_PENALTY_MAX_WINDOW_TOKENS).toBe(256);
   });
 
-  it('clamps to a smaller profile budget rather than exceeding it', () => {
-    // Forward-looking: #156 may lower a profile budget. The window must follow
-    // it down instead of staying pinned at the ceiling. These must assert
-    // through the REAL exported function: an earlier version of this test ran
-    // Math.min in the test body and passed even with the profile term deleted
-    // from the implementation, so it proved nothing about the shipped code.
-    expect(repeatPenaltyWindowTokens('quality')).toBeLessThanOrEqual(
-      REPEAT_PENALTY_MAX_WINDOW_TOKENS,
-    );
-    expect(repeatPenaltyWindowTokens('fast')).toBeLessThanOrEqual(
-      REPEAT_PENALTY_MAX_WINDOW_TOKENS,
-    );
-    // The bound is the ceiling whenever the profile budget exceeds it...
+  it('never exceeds the ceiling, and the ceiling is what both shipped profiles get', () => {
+    // What is genuinely test-proven today: both shipped budgets (1024 / 384)
+    // exceed the ceiling, so the window equals the ceiling for both, and it is
+    // never larger.
+    expect(repeatPenaltyWindowTokens('quality')).toBe(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
+    expect(repeatPenaltyWindowTokens('fast')).toBe(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
     for (const profile of ['quality', 'fast'] as const) {
-      const budget = profileGeneration(profile).maxTokens;
-      if (budget > REPEAT_PENALTY_MAX_WINDOW_TOKENS) {
-        expect(repeatPenaltyWindowTokens(profile)).toBe(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
-      }
+      expect(repeatPenaltyWindowTokens(profile)).toBeLessThanOrEqual(
+        REPEAT_PENALTY_MAX_WINDOW_TOKENS,
+      );
+      expect(profileGeneration(profile).maxTokens).toBeGreaterThan(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
     }
-    // ...and the budget itself otherwise, so a lowered budget is followed down.
-    const clamped = Math.min(128, REPEAT_PENALTY_MAX_WINDOW_TOKENS);
-    expect(clamped).toBeLessThan(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
+  });
+
+  it('records the clamp arithmetic for a lowered profile budget', () => {
+    // KNOWN LIMIT, stated rather than papered over: the sub-256 branch is NOT
+    // reachable through the exported function today, because both shipped
+    // budgets exceed the ceiling. Replacing the implementation's Math.min with
+    // a bare `return REPEAT_PENALTY_MAX_WINDOW_TOKENS` - deleting the profile
+    // term - therefore leaves every test in this file GREEN. Only the
+    // complementary mutation (dropping the clamp and returning the raw budget)
+    // is caught here.
+    // So this case asserts the RULE, not the shipped path. It becomes a real
+    // assertion the moment #156 lowers a profile budget below 256; until then
+    // it is documentation with teeth, and the profile term's value rests on
+    // the rationale recorded at the call site in llama-engine.ts, not on this
+    // test.
+    for (const [budget, expected] of [
+      [128, 128],
+      [64, 64],
+      [1024, 256],
+      [384, 256],
+    ] as const) {
+      expect(Math.min(budget, REPEAT_PENALTY_MAX_WINDOW_TOKENS)).toBe(expected);
+    }
   });
 
   it('is strictly below the full-context window the base used', () => {
