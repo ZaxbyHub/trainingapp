@@ -41,7 +41,7 @@ import type {
   ModelStatus,
   RetrievalSurface,
 } from '../types.js';
-import { buildPenalties, type PenaltyOptions } from './penalties.js';
+import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
 import {
   EXTERNAL_SETTING_KEYS,
   ExternalProviderState,
@@ -155,25 +155,24 @@ const SYSTEM_PROMPT =
   "You are TrainingApp's local assistant. Answer the user's question directly and concisely. " +
   'When retrieved context is provided, answer only from that context and say when it does not contain the answer.';
 
-/**
- * Repeat-penalty lookback for the local path, in tokens.
- *
- * Base passed PENALTY_FULL_CONTEXT_TOKENS (8192, i.e. the whole prompt), which
- * node-llama-cpp applies to the last N of prompt+generated tokens — so the
- * sampler discounted the retrieved evidence it was being asked to quote. This
- * bounds that reach. It narrows rather than eliminates the exposure: the tail
- * of the final chunk and the question stay inside the window.
- *
- * Derived from the profile's generation default, NOT the caller-supplied
- * maxTokens, so a user setting rag_max_tokens to its 4096 ceiling cannot widen
- * the window back over the evidence.
- */
-export const REPEAT_PENALTY_MAX_WINDOW_TOKENS = 256;
-
-/** The penalty lookback actually applied for a profile. */
-export function repeatPenaltyWindowTokens(profile: InferenceProfileName): number {
-  return Math.min(profileGeneration(profile).maxTokens, REPEAT_PENALTY_MAX_WINDOW_TOKENS);
-}
+// Issue #154 investigated bounding the repeat-penalty lookback, on the premise
+// that node-llama-cpp applies it to prompt+generated tokens and was therefore
+// discounting the retrieved evidence the model was asked to quote. That premise
+// is FALSE. In 3.20.0, LlamaChat.res (LlamaChat.js:811) is written only by
+// pushAll(this.res, this.pendingTokens) (:2283) from popFreeChunkTokens() -
+// model-generated tokens. The prompt path, injectTokens (:1348-1356), routes
+// into prefixTriggerTokens and never into res, and getPenaltyTokens (:1077)
+// slices only that generated array. The penalty has therefore never covered
+// prompt or retrieved text, and a smaller window cannot protect it. Narrowing
+// lastTokens would only shrink anti-repetition coverage of the model's OWN
+// output: the base window of 8192 exceeds both shipped generation caps
+// (1024/384), so it penalised every generated token. The change is reverted.
+//
+// Protecting retrieved evidence from repetition penalty would need a mechanism
+// this API does not have: the sampler channel carries only punishTokens
+// (LlamaChat.js:1971-1976), so there is no way to include or exclude prompt
+// tokens. punishTokensFilter and penalizeNewLine operate on that same
+// generated-only array.
 
 /** Map contract history turns ({role, content}) to library chat history. */
 export function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
@@ -216,6 +215,45 @@ export function buildGenerationParams(
   };
 }
 
+/**
+ * Issue #154: resolve the chat wrapper to pin from the LOADED MODEL's identity,
+ * not from the profile name.
+ *
+ * The shipped quality model is gemma-4, whose auto-resolved Gemma4ChatWrapper
+ * defaults reasoning=true - so every answer spent maxTokens budget on thought
+ * segments that never reach responseText. Pinning reasoning off fixes that.
+ *
+ * But a profile is only a label: modelPathFor() honours inference.model /
+ * TRAININGAPP_INFERENCE_MODEL_DIR / --model-dir, so a non-Gemma GGUF can sit at
+ * the quality path. Forcing Gemma-4 markup onto such a model would be a silent
+ * regression (base auto-resolved correctly), so the pin is applied ONLY when the
+ * file really is gemma-4. Anything else returns undefined and the library's own
+ * "auto" resolution applies, exactly as at base.
+ *
+ * Returns undefined - meaning "omit the chatWrapper key entirely" - for every
+ * non-gemma-4 model, for an unreadable header, and on any inspection error.
+ * Omitting is safe: LlamaChatSession defaults the key to "auto" only when it is
+ * absent/undefined, and an explicit null would crash on chatWrapper.settings.
+ */
+async function resolveReasoningSuppressedWrapper(
+  nlc: typeof import('node-llama-cpp'),
+  modelPath: string,
+): Promise<InstanceType<typeof nlc.Gemma4ChatWrapper> | undefined> {
+  try {
+    const info = await nlc.readGgufFileInfo(modelPath, { sourceType: 'filesystem' });
+    const isGemma4 =
+      info.metadata?.general?.architecture === 'gemma4' ||
+      /gemma[ _-]?4/i.test(String(info.metadata?.general?.name ?? ''));
+    if (!isGemma4) return undefined;
+    return new nlc.Gemma4ChatWrapper({ reasoning: false });
+  } catch {
+    // An unreadable header means we cannot prove the model is gemma-4, so we
+    // must not pin a wrapper for it. Fall back to the library default.
+    return undefined;
+  }
+}
+
+
 /** The production backend: node-llama-cpp over one resident loaded model. */
 async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<LlamaEngineBackend> {
   // Dynamic import: native code loads only when a model is actually needed.
@@ -224,6 +262,7 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
   // (llama.cpp #17389 — Gemma-3n E2B Vulkan crash on Intel iGPU).
   const llama = await nlc.getLlama(opts.vulkan ? { gpu: 'vulkan' } : { gpu: false });
   const model = await llama.loadModel({ modelPath: opts.modelPath });
+  const chatWrapper = await resolveReasoningSuppressedWrapper(nlc, opts.modelPath);
   const context = await model.createContext({ threads: opts.threads, contextSize: CONTEXT_SIZE });
   // ONE resident sequence for the lifetime of the backend: v3 allocates
   // sequences at context creation and `getSequence()` throws once the pool is
@@ -256,16 +295,7 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         logMetrics('cancelled');
         return { answer: '', cancelled: true };
       }
-      // #154 AC4: the penalty window is last-N over prompt+generated tokens
-      // (LlamaChat.getPenaltyTokens), so a full-context window discounts the
-      // whole retrieved block. Bounded by the profile budget rather than the
-      // caller's maxTokens override so a user setting it to 4096 cannot widen
-      // the window back over the evidence. This narrows, not eliminates, the
-      // exposure: the tail chunk and the question stay inside the window.
-      const penalties = buildPenalties(
-        { repeatPenalty: SAMPLER_REPEAT_PENALTY } satisfies PenaltyOptions,
-        repeatPenaltyWindowTokens(opts.profile),
-      );
+      const penalties = buildPenalties({ repeatPenalty: SAMPLER_REPEAT_PENALTY } satisfies PenaltyOptions, PENALTY_FULL_CONTEXT_TOKENS);
       const abort = new AbortController();
       // Cancel bridge: the CancellationFlag polls at 20ms and aborts the
       // library prompt (stopOnAbortSignal) — emission stops far inside 200ms.
@@ -283,14 +313,10 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
           contextSequence: sequence,
           systemPrompt: SYSTEM_PROMPT,
           autoDisposeSequence: false,
-          // #154 AC1: gemma-4 auto-resolves to Gemma4ChatWrapper, whose
-          // constructor defaults reasoning=true — so the quality profile spent
-          // its maxTokens budget on thought segments that never reach
-          // responseText. Pin reasoning off for that profile. The key is OMITTED
-          // (not null/undefined) for every other profile so LlamaChatSession
-          // applies its own "auto" default and those paths are unchanged.
-          // Coupled to the profile name because #156 owns model identity.
-          ...(opts.profile === 'quality' ? { chatWrapper: new nlc.Gemma4ChatWrapper({ reasoning: false }) } : {}),
+        // #154 AC1: pin reasoning off, but only for a model actually
+        // verified to be gemma-4. The key is OMITTED (never null/undefined)
+        // for every other model so LlamaChatSession applies its own "auto".
+        ...(chatWrapper ? { chatWrapper } : {}),
         });
         const seededHistory = historyToChatHistory(genOpts.history);
         if (seededHistory.length > 0) session.setChatHistory(seededHistory);
@@ -313,7 +339,10 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'ok';
         return { answer, cancelled: genOpts.cancellationEvent?.isSet() ?? false };
       } catch (err) {
-        outcome = 'error';
+        // The library THROWS rather than returning when an abort lands
+        // before any token (LlamaChat.js:2245-2247), so a user cancellation
+        // during prefill arrives here. Distinguish it from a real failure.
+        outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'error';
         throw err;
       } finally {
         clearInterval(poll);

@@ -8,7 +8,7 @@
 //   - Direct chat (external.grounded=false) skips retrieval;
 //   - tolerant boot replay of external.json; settings.json never carries
 //     external.* (downgrade-safe);
-//   - the local llama.cpp prompt is byte-identical (PRESERVING);
+//   - the local llama.cpp prompt carries a groundedness rule (#154 AC3);
 //   - status/stats never leak the key; cancellation releases the queue.
 import fs from 'node:fs';
 import http from 'node:http';

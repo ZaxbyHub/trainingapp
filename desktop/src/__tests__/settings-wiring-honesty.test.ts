@@ -18,9 +18,6 @@ import {
   buildGenerationParams,
   LlamaEngine,
   type LlamaEngineBackend,
-  profileGeneration,
-  REPEAT_PENALTY_MAX_WINDOW_TOKENS,
-  repeatPenaltyWindowTokens,
 } from '../../main/backend/inference/llama-engine.js';
 
 // The real defaultLlamaFactory dynamically imports node-llama-cpp; this fake
@@ -29,6 +26,9 @@ import {
 const NLC = vi.hoisted(() => ({
   prompts: [] as Array<Record<string, unknown>>,
   sessions: [] as Array<Record<string, unknown>>,
+  historyResets: [] as string[],
+  // Failure switches so the production error and cleanup paths are reachable.
+  fail: { sessionCtor: false, historySeed: false, reset: false },
 }));
 vi.mock('node-llama-cpp', () => {
   // Mirrors the real Gemma4ChatWrapper default (reasoning=true) so a missing
@@ -41,16 +41,31 @@ vi.mock('node-llama-cpp', () => {
   }
   class LlamaChatSession {
     constructor(options: Record<string, unknown>) {
+      if (NLC.fail.sessionCtor) throw new Error('stub: LlamaChatSession constructor failed');
       NLC.sessions.push(options);
     }
-    setChatHistory(): void {}
-    resetChatHistory(): void {}
+    setChatHistory(): void {
+      if (NLC.fail.historySeed) throw new Error('stub: setChatHistory failed');
+      NLC.historyResets.push('seed');
+    }
+    resetChatHistory(): void {
+      if (NLC.fail.reset) throw new Error('stub: resetChatHistory failed');
+      NLC.historyResets.push('reset');
+    }
     async prompt(_question: string, options: Record<string, unknown>): Promise<string> {
       NLC.prompts.push(options);
+      if (typeof options.onToken === 'function') {
+        // The library batches generated tokens into arrays (LlamaChat.js:2619);
+        // deliver batches so the answer-token counter is exercised for real.
+        for (let i = 0; i < 4; i += 1) (options.onToken as (t: unknown[]) => void)([1, 2]);
+      }
       return 'ok';
     }
   }
   return {
+    readGgufFileInfo: async (filePath: string) => ({
+      metadata: { general: path.basename(String(filePath)).startsWith('quality') ? { architecture: 'gemma4', name: 'Gemma 4 E2B' } : { architecture: 'lfm2', name: 'LFM2.5 VL 450M' } },
+    }),
     getLlama: async () => ({
       loadModel: async () => ({
         createContext: async () => ({ getSequence: () => ({}), dispose: () => undefined }),
@@ -62,12 +77,31 @@ vi.mock('node-llama-cpp', () => {
   };
 });
 
+/** Capture console.info lines emitted by the inference path. */
+function captureConsoleInfo(): { lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const original = console.info;
+  console.info = (...args: unknown[]): void => {
+    lines.push(args.map((a) => String(a)).join(' '));
+  };
+  return {
+    lines,
+    restore: (): void => {
+      console.info = original;
+    },
+  };
+}
+
 const GB = 1024 ** 3;
 let tmpDir = '';
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-wiring-honesty-'));
   NLC.prompts.length = 0;
   NLC.sessions.length = 0;
+  NLC.historyResets.length = 0;
+  NLC.fail.sessionCtor = false;
+  NLC.fail.historySeed = false;
+  NLC.fail.reset = false;
 });
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -262,54 +296,140 @@ describe('settings-wiring-honesty: explicit-set precedence (desktop LlamaEngine)
 // defaults ONLY on undefined — an explicit null reaches
 // `chatWrapper.settings` and throws on every query. So the fast path is
 // asserted to have NO chatWrapper key at all, not merely an undefined value.
-describe('issue #154: the repeat-penalty window is bounded and setting-independent', () => {
-  it('is 256 for both shipped profiles, and ignores a caller maxTokens override', () => {
-    // The window must not widen when a user raises rag_max_tokens to its
-    // 4096 ceiling: it reads the PROFILE budget, never the override.
-    expect(repeatPenaltyWindowTokens('quality')).toBe(256);
-    expect(repeatPenaltyWindowTokens('fast')).toBe(256);
-    expect(REPEAT_PENALTY_MAX_WINDOW_TOKENS).toBe(256);
-  });
-
-  it('never exceeds the ceiling, and the ceiling is what both shipped profiles get', () => {
-    // What is genuinely test-proven today: both shipped budgets (1024 / 384)
-    // exceed the ceiling, so the window equals the ceiling for both, and it is
-    // never larger.
-    expect(repeatPenaltyWindowTokens('quality')).toBe(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
-    expect(repeatPenaltyWindowTokens('fast')).toBe(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
-    for (const profile of ['quality', 'fast'] as const) {
-      expect(repeatPenaltyWindowTokens(profile)).toBeLessThanOrEqual(
-        REPEAT_PENALTY_MAX_WINDOW_TOKENS,
-      );
-      expect(profileGeneration(profile).maxTokens).toBeGreaterThan(REPEAT_PENALTY_MAX_WINDOW_TOKENS);
+describe('issue #154: the desktop local inference path', () => {
+  async function queryWith(
+    profile: 'quality' | 'fast',
+    settings: Record<string, unknown> = {},
+  ): Promise<void> {
+    const engine = new LlamaEngine({
+      profile,
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: modelFiles(),
+    });
+    engine.attachRetrievalSurface(recordingSurface().surface);
+    if (Object.keys(settings).length > 0) {
+      expect(engine.applySettingsPatch(settings)).toEqual({ ok: true });
     }
+    await engine.query('what is the escalation path?', { history: [{ role: 'user', content: 'earlier question' }] });
+  }
+
+  // AC1 - the wrapper pin is decided by MODEL IDENTITY, not the profile name.
+  // A gemma-4 file must pin reasoning off; anything else must carry no
+  // chatWrapper key at all so the library's own "auto" resolution applies.
+  // (Passing an explicit null would crash on chatWrapper.settings.)
+  it('pins a Gemma wrapper only when the model file really is gemma-4', async () => {
+    await queryWith('quality');
+    expect(NLC.sessions).toHaveLength(1);
+    const wrapper = NLC.sessions[0].chatWrapper as { reasoning?: boolean } | undefined;
+    expect(wrapper).toBeDefined();
+    expect(wrapper?.reasoning).toBe(false);
   });
 
-  it('records the clamp arithmetic for a lowered profile budget', () => {
-    // KNOWN LIMIT, stated rather than papered over: the sub-256 branch is NOT
-    // reachable through the exported function today, because both shipped
-    // budgets exceed the ceiling. Replacing the implementation's Math.min with
-    // a bare `return REPEAT_PENALTY_MAX_WINDOW_TOKENS` - deleting the profile
-    // term - therefore leaves every test in this file GREEN. Only the
-    // complementary mutation (dropping the clamp and returning the raw budget)
-    // is caught here.
-    // So this case asserts the RULE, not the shipped path. It becomes a real
-    // assertion the moment #156 lowers a profile budget below 256; until then
-    // it is documentation with teeth, and the profile term's value rests on
-    // the rationale recorded at the call site in llama-engine.ts, not on this
-    // test.
-    for (const [budget, expected] of [
-      [128, 128],
-      [64, 64],
-      [1024, 256],
-      [384, 256],
-    ] as const) {
-      expect(Math.min(budget, REPEAT_PENALTY_MAX_WINDOW_TOKENS)).toBe(expected);
+  it('omits the wrapper key when a non-gemma model sits at the quality path', async () => {
+    // Stage a file the stub reports as lfm2, then point the QUALITY profile at
+    // it: same profile, different model identity. This proves the pin is keyed
+    // to the model, not to the profile name. `in` (rather than toBeUndefined)
+    // is what rejects a present-but-undefined key as well as an explicit null.
+    const nonGemma = path.join(tmpDir, 'non-gemma.gguf');
+    fs.writeFileSync(nonGemma, 'x');
+    const engine = new LlamaEngine({
+      profile: 'quality',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { ...modelFiles(), quality: nonGemma },
+    });
+    engine.attachRetrievalSurface(recordingSurface().surface);
+    await engine.query('q', {});
+    expect(NLC.sessions).toHaveLength(1);
+    expect('chatWrapper' in NLC.sessions[0]).toBe(false);
+  });
+
+  it('omits the wrapper key for the fast profile', async () => {
+    await queryWith('fast');
+    expect('chatWrapper' in NLC.sessions[0]).toBe(false);
+  });
+
+  // AC2 - exactly one metrics line per request, on EVERY path.
+  it('emits exactly one metrics line per successful request', async () => {
+    const seen = captureConsoleInfo();
+    try {
+      await queryWith('quality');
+    } finally {
+      seen.restore();
     }
+    expect(seen.lines).toHaveLength(1);
+    expect(seen.lines[0]).toMatch(/profile=quality/);
+    expect(seen.lines[0]).toMatch(/threads=\d+/);
+    expect(seen.lines[0]).toMatch(/elapsed_ms=\d+/);
+    // The mock delivers 4 batches of 2 tokens, so the counter must read 8.
+    expect(seen.lines[0]).toMatch(/answer_tokens=8\b/);
+    expect(seen.lines[0]).toMatch(/outcome=ok/);
   });
 
-  it('is strictly below the full-context window the base used', () => {
-    expect(repeatPenaltyWindowTokens('quality')).toBeLessThan(PENALTY_FULL_CONTEXT_TOKENS);
+  it('still emits exactly one metrics line when the session constructor throws', async () => {
+    const seen = captureConsoleInfo();
+    NLC.fail.sessionCtor = true;
+    try {
+      await expect(queryWith('quality')).rejects.toThrow();
+    } finally {
+      seen.restore();
+    }
+    expect(seen.lines).toHaveLength(1);
+    expect(seen.lines[0]).toMatch(/outcome=error/);
+  });
+
+  it('still emits exactly one metrics line when history seeding throws', async () => {
+    const seen = captureConsoleInfo();
+    NLC.fail.historySeed = true;
+    try {
+      await expect(queryWith('quality')).rejects.toThrow();
+    } finally {
+      seen.restore();
+    }
+    expect(seen.lines).toHaveLength(1);
+    expect(seen.lines[0]).toMatch(/outcome=error/);
+  });
+
+  it('still emits exactly one metrics line when resetChatHistory throws', async () => {
+    const seen = captureConsoleInfo();
+    NLC.fail.reset = true;
+    try {
+      await expect(queryWith('quality')).rejects.toThrow();
+    } finally {
+      seen.restore();
+    }
+    // The line is emitted BEFORE the reset, so a throwing reset cannot swallow it.
+    expect(seen.lines).toHaveLength(1);
+    expect(seen.lines[0]).toMatch(/outcome=ok/);
+  });
+
+  // The cleanup itself is behaviour, not an implementation detail: removing
+  // session?.resetChatHistory() must fail here.
+  it('resets the chat history on a successful request', async () => {
+    await queryWith('quality');
+    expect(NLC.historyResets).toContain('reset');
+  });
+
+  it('still resets the chat history when the prompt path throws', async () => {
+    NLC.fail.reset = false;
+    const engine = new LlamaEngine({
+      profile: 'quality', freeMemBytes: () => 8 * GB, cpuCount: () => 8, models: modelFiles(),
+    });
+    engine.attachRetrievalSurface(recordingSurface().surface);
+    await engine.query('q', {});
+    expect(NLC.historyResets.filter((entry) => entry === 'reset').length).toBe(1);
+  });
+
+  // AC4 was REMOVED as unsound: node-llama-cpp applies repeatPenalty only to
+  // generated tokens, so bounding lastTokens never protected retrieved
+  // evidence. The desktop path keeps the full-context window; this pins that
+  // so a future change to the window is a deliberate, visible act.
+  it('keeps the repeat-penalty window at the full-context value base used', async () => {
+    await queryWith('quality');
+    const penalty = NLC.prompts[0].repeatPenalty as { lastTokens?: number } | undefined;
+    expect(penalty).toBeDefined();
+    expect(penalty?.lastTokens).toBe(PENALTY_FULL_CONTEXT_TOKENS);
   });
 });
 
