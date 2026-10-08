@@ -41,7 +41,7 @@ import type {
   ModelStatus,
   RetrievalSurface,
 } from '../types.js';
-import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
+import { buildPenalties, type PenaltyOptions } from './penalties.js';
 import {
   EXTERNAL_SETTING_KEYS,
   ExternalProviderState,

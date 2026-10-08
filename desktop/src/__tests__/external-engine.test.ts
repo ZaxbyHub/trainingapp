@@ -473,7 +473,7 @@ describe('direct chat, status and cancellation', () => {
   });
 });
 
-describe('PRESERVING: the local llama.cpp prompt is unchanged', () => {
+describe('#154 AC3: the local llama.cpp prompt carries a groundedness rule', () => {
   it('the local path still prepends the same flat grounded string and keeps its system prompt', async () => {
     const modelDir = tmp('ext-local-');
     fs.mkdirSync(path.join(modelDir, 'gemma-4-e2b-it'), { recursive: true });
