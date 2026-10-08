@@ -499,7 +499,12 @@ describe('PRESERVING: the local llama.cpp prompt is unchanged', () => {
     await engine.query('Q?');
     expect(seen[0]).toBe('Answer the question using the retrieved context when relevant.\n\n[1] PASSAGE-A\n\n\nQuestion: Q?');
     const source = fs.readFileSync(path.join(__dirname, '..', '..', 'main', 'backend', 'inference', 'llama-engine.ts'), 'utf8');
-    expect(source).toContain(`"You are TrainingApp's local assistant. Answer the user's question directly and concisely."`);
+    // #154 AC3: the desktop-local prompt now carries the same groundedness rule
+    // the external path already ships. Pin the RULE, not one literal spelling, so
+    // a wording change does not require editing this grep.
+    expect(source).toContain("TrainingApp's local assistant");
+    expect(source).toMatch(/answer only from that context/i);
+    expect(source).toMatch(/does not contain the answer/i);
   });
 });
 

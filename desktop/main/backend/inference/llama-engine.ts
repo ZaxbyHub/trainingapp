@@ -146,8 +146,34 @@ export const INFERENCE_THREADS_MAX = 64;
 // oversized history would overflow CONTEXT_SIZE on the resident model.
 const MAX_HISTORY_TURNS = 12;
 
+// Issue #154 AC3: this is the same groundedness rule the external path already
+// ships (external-prompts.ts EXTERNAL_SYSTEM_PROMPT). It is duplicated rather
+// than imported because that file is drift-locked to a byte-identical browser
+// twin by external-prompts.drift.test.ts; folding this prompt into it would add
+// a second property to maintain under that lock for no benefit.
 const SYSTEM_PROMPT =
-  "You are TrainingApp's local assistant. Answer the user's question directly and concisely.";
+  "You are TrainingApp's local assistant. Answer the user's question directly and concisely. " +
+  'When retrieved context is provided, answer only from that context and say when it does not contain the answer.';
+
+/**
+ * Repeat-penalty lookback for the local path, in tokens.
+ *
+ * Base passed PENALTY_FULL_CONTEXT_TOKENS (8192, i.e. the whole prompt), which
+ * node-llama-cpp applies to the last N of prompt+generated tokens — so the
+ * sampler discounted the retrieved evidence it was being asked to quote. This
+ * bounds that reach. It narrows rather than eliminates the exposure: the tail
+ * of the final chunk and the question stay inside the window.
+ *
+ * Derived from the profile's generation default, NOT the caller-supplied
+ * maxTokens, so a user setting rag_max_tokens to its 4096 ceiling cannot widen
+ * the window back over the evidence.
+ */
+export const REPEAT_PENALTY_MAX_WINDOW_TOKENS = 256;
+
+/** The penalty lookback actually applied for a profile. */
+export function repeatPenaltyWindowTokens(profile: InferenceProfileName): number {
+  return Math.min(profileGeneration(profile).maxTokens, REPEAT_PENALTY_MAX_WINDOW_TOKENS);
+}
 
 /** Map contract history turns ({role, content}) to library chat history. */
 export function historyToChatHistory(history?: unknown[]): ChatHistoryItem[] {
@@ -208,11 +234,38 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
   let disposed = false;
   return {
     async generate(question, genOpts) {
-      if (disposed) throw new Error('the inference backend has been disposed');
+      // #154 AC2: exactly one metrics line per request, including the two
+      // pre-flight exits below and any throw, so the emission is opened here
+      // and closed in a single place rather than only inside the try/finally.
+      const startedAt = Date.now();
+      let generatedTokens = 0;
+      const logMetrics = (outcome: 'ok' | 'cancelled' | 'error'): void => {
+        // profile / threads / elapsed_ms / answer_tokens. `answer_tokens`
+        // counts only tokens that reach responseText: onToken does not fire for
+        // thought segments, and reasoning is disabled for the quality profile.
+        console.info(
+          `[trainingapp-backend] inference profile=${opts.profile} threads=${opts.threads} ` +
+            `elapsed_ms=${Date.now() - startedAt} answer_tokens=${generatedTokens} outcome=${outcome}`,
+        );
+      };
+      if (disposed) {
+        logMetrics('error');
+        throw new Error('the inference backend has been disposed');
+      }
       if (genOpts.cancellationEvent?.isSet()) {
+        logMetrics('cancelled');
         return { answer: '', cancelled: true };
       }
-      const penalties = buildPenalties({ repeatPenalty: SAMPLER_REPEAT_PENALTY } satisfies PenaltyOptions, PENALTY_FULL_CONTEXT_TOKENS);
+      // #154 AC4: the penalty window is last-N over prompt+generated tokens
+      // (LlamaChat.getPenaltyTokens), so a full-context window discounts the
+      // whole retrieved block. Bounded by the profile budget rather than the
+      // caller's maxTokens override so a user setting it to 4096 cannot widen
+      // the window back over the evidence. This narrows, not eliminates, the
+      // exposure: the tail chunk and the question stay inside the window.
+      const penalties = buildPenalties(
+        { repeatPenalty: SAMPLER_REPEAT_PENALTY } satisfies PenaltyOptions,
+        repeatPenaltyWindowTokens(opts.profile),
+      );
       const abort = new AbortController();
       // Cancel bridge: the CancellationFlag polls at 20ms and aborts the
       // library prompt (stopOnAbortSignal) — emission stops far inside 200ms.
@@ -223,13 +276,27 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         contextSequence: sequence,
         systemPrompt: SYSTEM_PROMPT,
         autoDisposeSequence: false,
+        // #154 AC1: gemma-4 auto-resolves to Gemma4ChatWrapper, whose
+        // constructor defaults reasoning=true — so the quality profile spent
+        // its maxTokens budget on thought segments that never reach
+        // responseText. Pin reasoning off for that profile. The key is OMITTED
+        // (not null/undefined) for every other profile so LlamaChatSession
+        // applies its own "auto" default and those paths are unchanged.
+        // Coupled to the profile name because #156 owns model identity.
+        ...(opts.profile === 'quality' ? { chatWrapper: new nlc.Gemma4ChatWrapper({ reasoning: false }) } : {}),
       });
       const seededHistory = historyToChatHistory(genOpts.history);
       if (seededHistory.length > 0) session.setChatHistory(seededHistory);
+      let outcome: 'ok' | 'cancelled' | 'error' = 'ok';
       try {
         const answer = await session.prompt(question, {
           onTextChunk(chunk: string) {
             genOpts.streamCallback?.(chunk);
+          },
+          // The library delivers batched arrays; accept a scalar too so the
+          // count stays a token count under either calling convention.
+          onToken(tokens: unknown) {
+            generatedTokens += Array.isArray(tokens) ? tokens.length : 1;
           },
           signal: abort.signal,
           stopOnAbortSignal: true,
@@ -238,12 +305,17 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
             temperature: genOpts.temperature,
           }),
         });
+        outcome = genOpts.cancellationEvent?.isSet() ? 'cancelled' : 'ok';
         return { answer, cancelled: genOpts.cancellationEvent?.isSet() ?? false };
+      } catch (err) {
+        outcome = 'error';
+        throw err;
       } finally {
         clearInterval(poll);
         // Statelessness: drop the session history so the next request starts
         // clean (the sequence KV is re-evaluated from the fresh history).
         session.resetChatHistory();
+        logMetrics(outcome);
       }
     },
     async dispose() {

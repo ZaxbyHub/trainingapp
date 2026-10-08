@@ -20,10 +20,25 @@ import {
 } from '../../main/backend/inference/llama-engine.js';
 
 // The real defaultLlamaFactory dynamically imports node-llama-cpp; this fake
-// records the options that reach LlamaChatSession.prompt (the sampler).
-const NLC = vi.hoisted(() => ({ prompts: [] as Array<Record<string, unknown>> }));
+// records the options that reach LlamaChatSession.prompt (the sampler) and the
+// options its CONSTRUCTOR receives (the chat wrapper — issue #154).
+const NLC = vi.hoisted(() => ({
+  prompts: [] as Array<Record<string, unknown>>,
+  sessions: [] as Array<Record<string, unknown>>,
+}));
 vi.mock('node-llama-cpp', () => {
+  // Mirrors the real Gemma4ChatWrapper default (reasoning=true) so a missing
+  // override shows up instead of passing silently.
+  class Gemma4ChatWrapper {
+    readonly reasoning: boolean;
+    constructor(options?: { reasoning?: boolean }) {
+      this.reasoning = options?.reasoning ?? true;
+    }
+  }
   class LlamaChatSession {
+    constructor(options: Record<string, unknown>) {
+      NLC.sessions.push(options);
+    }
     setChatHistory(): void {}
     resetChatHistory(): void {}
     async prompt(_question: string, options: Record<string, unknown>): Promise<string> {
@@ -39,6 +54,7 @@ vi.mock('node-llama-cpp', () => {
       }),
     }),
     LlamaChatSession,
+    Gemma4ChatWrapper,
   };
 });
 
@@ -47,6 +63,7 @@ let tmpDir = '';
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-wiring-honesty-'));
   NLC.prompts.length = 0;
+  NLC.sessions.length = 0;
 });
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -233,6 +250,31 @@ describe('settings-wiring-honesty: explicit-set precedence (desktop LlamaEngine)
     const { engine } = engineWithRecorder();
     expect(engine.applySettingsPatch({ 'inference.profile': 'fast' })).toEqual({ ok: true });
     expect(engine.responseSettings().explicit_keys).toEqual([]);
+  });
+});
+
+// Issue #154 Fix 1b: the fast profile must be left on the library's own wrapper
+// resolution. LlamaChatSession destructures `chatWrapper = "auto"`, which
+// defaults ONLY on undefined — an explicit null reaches
+// `chatWrapper.settings` and throws on every query. So the fast path is
+// asserted to have NO chatWrapper key at all, not merely an undefined value.
+describe('issue #154: chat wrapper is pinned only for the quality profile', () => {
+  it('quality pins a Gemma4ChatWrapper with reasoning disabled', async () => {
+    const engine = new LlamaEngine({ profile: 'quality', freeMemBytes: () => 8 * GB, cpuCount: () => 8, models: modelFiles() });
+    await engine.query('q', {});
+    expect(NLC.sessions).toHaveLength(1);
+    const wrapper = NLC.sessions[0].chatWrapper as { reasoning?: boolean };
+    expect(wrapper).toBeDefined();
+    expect(wrapper.reasoning).toBe(false);
+  });
+
+  it('fast omits chatWrapper entirely so the library default applies', async () => {
+    const engine = new LlamaEngine({ profile: 'fast', freeMemBytes: () => 8 * GB, cpuCount: () => 8, models: modelFiles() });
+    await engine.query('q', {});
+    expect(NLC.sessions).toHaveLength(1);
+    // `in` rejects both null and an explicitly-present undefined, which is the
+    // shape that would crash LlamaChatSession.
+    expect('chatWrapper' in NLC.sessions[0]).toBe(false);
   });
 });
 
