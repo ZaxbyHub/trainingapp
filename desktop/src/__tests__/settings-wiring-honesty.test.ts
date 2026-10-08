@@ -13,10 +13,13 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS, SETTING_BOUNDS } from '../../main/backend/engine.js';
+import { PENALTY_FULL_CONTEXT_TOKENS } from '../../main/backend/inference/penalties.js';
 import {
   buildGenerationParams,
   LlamaEngine,
   type LlamaEngineBackend,
+  REPEAT_PENALTY_MAX_WINDOW_TOKENS,
+  repeatPenaltyWindowTokens,
 } from '../../main/backend/inference/llama-engine.js';
 
 // The real defaultLlamaFactory dynamically imports node-llama-cpp; this fake
@@ -258,6 +261,27 @@ describe('settings-wiring-honesty: explicit-set precedence (desktop LlamaEngine)
 // defaults ONLY on undefined — an explicit null reaches
 // `chatWrapper.settings` and throws on every query. So the fast path is
 // asserted to have NO chatWrapper key at all, not merely an undefined value.
+describe('issue #154: the repeat-penalty window is bounded and setting-independent', () => {
+  it('is 256 for both shipped profiles, and ignores a caller maxTokens override', () => {
+    // The window must not widen when a user raises rag_max_tokens to its
+    // 4096 ceiling: it reads the PROFILE budget, never the override.
+    expect(repeatPenaltyWindowTokens('quality')).toBe(256);
+    expect(repeatPenaltyWindowTokens('fast')).toBe(256);
+    expect(REPEAT_PENALTY_MAX_WINDOW_TOKENS).toBe(256);
+  });
+
+  it('clamps to a smaller profile budget rather than exceeding it', () => {
+    // Forward-looking: #156 may lower a profile budget. The window must follow
+    // it down instead of staying pinned at the ceiling.
+    expect(Math.min(128, REPEAT_PENALTY_MAX_WINDOW_TOKENS)).toBe(128);
+    expect(Math.min(384, REPEAT_PENALTY_MAX_WINDOW_TOKENS)).toBe(256);
+  });
+
+  it('is strictly below the full-context window the base used', () => {
+    expect(repeatPenaltyWindowTokens('quality')).toBeLessThan(PENALTY_FULL_CONTEXT_TOKENS);
+  });
+});
+
 describe('issue #154: chat wrapper is pinned only for the quality profile', () => {
   it('quality pins a Gemma4ChatWrapper with reasoning disabled', async () => {
     const engine = new LlamaEngine({ profile: 'quality', freeMemBytes: () => 8 * GB, cpuCount: () => 8, models: modelFiles() });
