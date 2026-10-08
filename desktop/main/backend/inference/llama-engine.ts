@@ -24,7 +24,7 @@
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { ChatHistoryItem } from 'node-llama-cpp';
+import type { ChatHistoryItem, LlamaChatSession } from 'node-llama-cpp';
 import { StubEngine, type StubSettingsState } from '../engine.js';
 import type { PackManager } from '../store/pack-manager.js';
 import { ModelNotConfiguredError } from '../types.js';
@@ -272,23 +272,28 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
       const poll = setInterval(() => {
         if (genOpts.cancellationEvent?.isSet()) abort.abort();
       }, CANCEL_POLL_MS);
-      const session = new nlc.LlamaChatSession({
-        contextSequence: sequence,
-        systemPrompt: SYSTEM_PROMPT,
-        autoDisposeSequence: false,
-        // #154 AC1: gemma-4 auto-resolves to Gemma4ChatWrapper, whose
-        // constructor defaults reasoning=true — so the quality profile spent
-        // its maxTokens budget on thought segments that never reach
-        // responseText. Pin reasoning off for that profile. The key is OMITTED
-        // (not null/undefined) for every other profile so LlamaChatSession
-        // applies its own "auto" default and those paths are unchanged.
-        // Coupled to the profile name because #156 owns model identity.
-        ...(opts.profile === 'quality' ? { chatWrapper: new nlc.Gemma4ChatWrapper({ reasoning: false }) } : {}),
-      });
-      const seededHistory = historyToChatHistory(genOpts.history);
-      if (seededHistory.length > 0) session.setChatHistory(seededHistory);
+      // AC2 exactly-one: the session construction and history seeding are
+      // INSIDE the try so a throw on either path still reaches the finally's
+      // logMetrics. `session` stays nullable because the finally must not
+      // touch it when construction itself failed.
+      let session: LlamaChatSession | null = null;
       let outcome: 'ok' | 'cancelled' | 'error' = 'ok';
       try {
+        session = new nlc.LlamaChatSession({
+          contextSequence: sequence,
+          systemPrompt: SYSTEM_PROMPT,
+          autoDisposeSequence: false,
+          // #154 AC1: gemma-4 auto-resolves to Gemma4ChatWrapper, whose
+          // constructor defaults reasoning=true — so the quality profile spent
+          // its maxTokens budget on thought segments that never reach
+          // responseText. Pin reasoning off for that profile. The key is OMITTED
+          // (not null/undefined) for every other profile so LlamaChatSession
+          // applies its own "auto" default and those paths are unchanged.
+          // Coupled to the profile name because #156 owns model identity.
+          ...(opts.profile === 'quality' ? { chatWrapper: new nlc.Gemma4ChatWrapper({ reasoning: false }) } : {}),
+        });
+        const seededHistory = historyToChatHistory(genOpts.history);
+        if (seededHistory.length > 0) session.setChatHistory(seededHistory);
         const answer = await session.prompt(question, {
           onTextChunk(chunk: string) {
             genOpts.streamCallback?.(chunk);
@@ -312,10 +317,12 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
         throw err;
       } finally {
         clearInterval(poll);
+        // Emit BEFORE resetChatHistory: reset can throw DisposedError, which
+        // would otherwise swallow this request's only metrics line.
+        logMetrics(outcome);
         // Statelessness: drop the session history so the next request starts
         // clean (the sequence KV is re-evaluated from the fresh history).
-        session.resetChatHistory();
-        logMetrics(outcome);
+        session?.resetChatHistory();
       }
     },
     async dispose() {
