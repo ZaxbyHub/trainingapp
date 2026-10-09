@@ -89,10 +89,22 @@ async function main(): Promise<void> {
       autoDisposeSequence: false,
     });
     const sample = await session.prompt(PROMPT, { maxTokens: MAX_TOKENS, temperature: 0 });
+    // The ADAPTER identity, not the backend name. `selected` is just the string
+    // "vulkan", which is the same on every machine and so cannot distinguish
+    // devices or support adapter-change detection. Llama exposes
+    // getGpuDeviceNames(): Promise<string[]>.
+    let device: string | null = null;
+    try {
+      const names = await llama.getGpuDeviceNames();
+      device = Array.isArray(names) && names.length > 0 ? names.join(', ') : null;
+    } catch {
+      // A device name is a nicety; never let it fail the probe.
+      device = null;
+    }
     emit({
       ok: true,
       backend: 'vulkan',
-      device: selected,
+      device,
       // The parent re-judges this itself (probeOutputIsSane) rather than
       // trusting the child's ok flag - see gpu-probe.ts.
       sample: String(sample ?? ''),

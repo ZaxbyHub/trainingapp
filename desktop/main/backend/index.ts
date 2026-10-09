@@ -242,11 +242,13 @@ export class NodeBackendHost implements BackendHost {
    * probe can legitimately be in flight when the app quits.
    */
   private readonly probeChildren = new Set<{ kill: (signal?: NodeJS.Signals) => unknown }>();
-  /** Set when the HOST killed a probe. A verdict from a probe we killed is a
-   *  teardown artifact, not evidence about the machine, so it is never adopted
-   *  or persisted - otherwise quitting during the boot probe stamped the device
-   *  "no GPU" with a SIGTERM reason and disarmed the next boot's probe. */
-  private probeAbandoned = false;
+  /**
+   * PER-CHILD, not a host-global latch. A single boolean was consumed by
+   * whichever probe settled first, so with two probes in flight at shutdown the
+   * second one adopted and persisted a SIGTERM kill verdict anyway. Each killed
+   * child is recorded here and its own probe reads only its own entry.
+   */
+  private readonly abandonedChildren = new Set<{ kill: (signal?: NodeJS.Signals) => unknown }>();
 
   /**
    * The probe runner, injectable so a test can drive the REAL startGpuProbe
@@ -266,9 +268,17 @@ export class NodeBackendHost implements BackendHost {
     let abandonedByHost = false;
     try {
       const modelPath = this.probeModelPath();
+      // A verdict produced WITHOUT running a probe is not evidence about this
+      // machine. On a genuine first run the host starts before models are staged
+      // (wizard/download come later), so this branch fires on exactly the
+      // scenario issue #155 names - and persisting it would pin a perfectly
+      // capable GPU to CPU forever, because a stored verdict skips the next
+      // boot's probe. It is kept in memory for the session so Settings can
+      // explain itself, but it is never written and never arms the boot skip.
+      const probed = modelPath !== null;
       const verdict =
         modelPath === null
-          ? { backend: 'cpu' as const, ok: false, reason: 'GPU probe skipped: no probe model is staged.', device: null }
+          ? { backend: 'cpu' as const, ok: false, reason: 'GPU probe has not run yet: no probe model is staged.', device: null }
           : await this.probeRun({
               args: [modelPath],
               // A SET, not a single field: two probes can overlap (the boot
@@ -279,18 +289,25 @@ export class NodeBackendHost implements BackendHost {
                 this.probeChildren.add(spawned);
               },
               onSettled: () => {
-                // Decide, then reset, then prune - in that order.
-                abandonedByHost = this.probeAbandoned;
-                this.probeAbandoned = false;
-                // Drop the settled child's handle: the Set tracks IN-FLIGHT
-                // children, and a settled probe leaving a dead handle behind
-                // grows it monotonically for the host's lifetime.
-                if (child !== null) this.probeChildren.delete(child);
+                // Decide for THIS child, then prune. The abandonment record is
+                // keyed by the child itself, so overlapping probes cannot
+                // consume each other's flag.
+                abandonedByHost = child !== null && this.abandonedChildren.has(child);
+                if (child !== null) {
+                  this.probeChildren.delete(child);
+                  this.abandonedChildren.delete(child);
+                }
               },
             });
       if (abandonedByHost) {
         // Our own shutdown killed this probe. The verdict describes the kill,
         // not the machine, so it is returned but never adopted or persisted.
+        return verdict;
+      }
+      if (!probed) {
+        // Session-scoped only. Deliberately NOT adoptGpuVerdict: that writes the
+        // sidecar, and a written verdict suppresses the next boot's probe.
+        this.gpuVerdict = verdict;
         return verdict;
       }
       this.adoptGpuVerdict(verdict);
@@ -835,8 +852,10 @@ export class NodeBackendHost implements BackendHost {
     // eventually reap it, but "eventually" is up to DEFAULT_PROBE_TIMEOUT_MS.
     if (this.probeChildren.size > 0) {
       dbg(`killing ${this.probeChildren.size} in-flight gpu probe child(ren)`);
-      this.probeAbandoned = true;
-      for (const child of this.probeChildren) terminateProbeChild(child);
+      for (const child of this.probeChildren) {
+        this.abandonedChildren.add(child);
+        terminateProbeChild(child);
+      }
       this.probeChildren.clear();
     }
     // B8 (issue #66) governance teardown FIRST: no sampler fires mid-shutdown,

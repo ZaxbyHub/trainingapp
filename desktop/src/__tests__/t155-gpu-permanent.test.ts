@@ -736,3 +736,138 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
     }
   }, 30000);
 });
+
+// ---------------------------------------------------------------------------
+// Scenario tests. Every prior review round re-verified the DIFF; none walked
+// the timeline. These two walk it: a first run where models are staged after
+// the host starts (the exact scenario issue #155 names), and two probes in
+// flight when the host shuts down.
+// ---------------------------------------------------------------------------
+
+describe('issue #155 scenarios: the timeline, not the diff', () => {
+  it('first run — no model staged yet must NOT write a verdict that pins the machine to CPU', async () => {
+    // The host starts BEFORE models are staged (wizard/download come later).
+    // With the defect, that produced a synthesised "no probe model" verdict,
+    // which was persisted; and because a persisted verdict suppresses the next
+    // boot's probe, a perfectly capable GPU stayed on CPU forever.
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const { GPU_PROBE_SIDECAR: NAME } = await import('../../main/backend/inference/gpu-probe.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-firstrun-'));
+    try {
+      const profileDir = path.join(dir, 'profiles', 'default');
+      fs.mkdirSync(profileDir, { recursive: true });
+      // NO models staged: engine.modelStatus().models.fast.path is absent.
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: path.join(profileDir, 'missing-q.gguf'), fast: path.join(profileDir, 'missing-f.gguf') },
+      });
+      const host = new NodeBackendHost({ engine, token: 't', storePath: path.join(profileDir, 'store.sqlite') } as never);
+      let spawns = 0;
+      (host as unknown as { probeRun: unknown }).probeRun = () => {
+        spawns += 1;
+        return Promise.resolve({ backend: 'vulkan', ok: true, reason: 'should not run yet', device: 'd' });
+      };
+      await (host as unknown as { start: () => Promise<void> }).start().catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 150));
+
+      const sidecar = path.join(profileDir, NAME);
+      expect(
+        fs.existsSync(sidecar),
+        'a verdict produced WITHOUT running a probe must never be persisted, or it suppresses the next boot probe forever',
+      ).toBe(false);
+      expect(spawns).toBe(0);
+      await (host as unknown as { stop: () => Promise<void> }).stop().catch(() => undefined);
+      setActiveGpuVerdict(null);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('first run — once models exist, the NEXT boot probes and persists a real verdict', async () => {
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const { GPU_PROBE_SIDECAR: NAME } = await import('../../main/backend/inference/gpu-probe.js');
+    const models = stageModels();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-firstrun2-'));
+    try {
+      const profileDir = path.join(dir, 'profiles', 'default');
+      fs.mkdirSync(profileDir, { recursive: true });
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: models.quality, fast: models.fast },
+      });
+      const host = new NodeBackendHost({ engine, token: 't', storePath: path.join(profileDir, 'store.sqlite') } as never);
+      let spawns = 0;
+      (host as unknown as { probeRun: unknown }).probeRun = (opts: {
+        onChild?: (c: { kill: (s?: NodeJS.Signals) => unknown }) => void;
+        onSettled?: () => void;
+      }) => {
+        spawns += 1;
+        opts.onChild?.({ kill: () => true });
+        opts.onSettled?.();
+        return Promise.resolve({ backend: 'vulkan', ok: true, reason: 'real verdict', device: 'Arc Pro B50' });
+      };
+      await (host as unknown as { start: () => Promise<void> }).start().catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 150));
+      expect(spawns, 'with a model staged the boot probe must actually run').toBe(1);
+      const written = JSON.parse(fs.readFileSync(path.join(profileDir, NAME), 'utf8')) as { reason?: string; device?: string };
+      expect(written.reason).toBe('real verdict');
+      expect(written.device).toBe('Arc Pro B50');
+      await (host as unknown as { stop: () => Promise<void> }).stop().catch(() => undefined);
+      setActiveGpuVerdict(null);
+    } finally {
+      fs.rmSync(models.dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('shutdown — with TWO probes in flight, neither kill verdict is persisted', async () => {
+    // The abandonment record was a single host-global latch consumed by whichever
+    // probe settled first, so the second adopted and persisted a SIGTERM verdict
+    // anyway — the same defect one probe had.
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const { GPU_PROBE_SIDECAR: NAME } = await import('../../main/backend/inference/gpu-probe.js');
+    const models = stageModels();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-two-'));
+    try {
+      const profileDir = path.join(dir, 'profiles', 'default');
+      fs.mkdirSync(profileDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(profileDir, NAME),
+        JSON.stringify({ backend: 'vulkan', ok: true, reason: 'SENTINEL', device: 'd' }),
+        'utf8',
+      );
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: models.quality, fast: models.fast },
+      });
+      const host = new NodeBackendHost({ engine, token: 't', storePath: path.join(profileDir, 'store.sqlite') } as never);
+      await (host as unknown as { start: () => Promise<void> }).start().catch(() => undefined);
+      const h = host as unknown as {
+        startGpuProbe: () => Promise<GpuProbeVerdict>;
+        stop: () => Promise<void>;
+      };
+      (host as unknown as { probeRun: unknown }).probeRun = (opts: {
+        onChild?: (c: { kill: (s?: NodeJS.Signals) => unknown }) => void;
+        onSettled?: () => void;
+      }) => runGpuProbe({ ...opts, command: [process.execPath, '-e', 'setTimeout(()=>{},60000)'] });
+      const both = Promise.allSettled([h.startGpuProbe(), h.startGpuProbe()]);
+      await new Promise((r) => setTimeout(r, 120));
+      await h.stop();
+      await both;
+      await new Promise((r) => setTimeout(r, 150));
+      const written = JSON.parse(fs.readFileSync(path.join(profileDir, NAME), 'utf8')) as { reason?: string };
+      expect(String(written.reason ?? '')).not.toContain('SIGTERM');
+      expect(written.reason).toBe('SENTINEL');
+      setActiveGpuVerdict(null);
+    } finally {
+      fs.rmSync(models.dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+});
