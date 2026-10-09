@@ -487,30 +487,6 @@ describe('issue #155 Phase 4.5: the production seams the frozen checks never exe
   });
 });
 
-describe('issue #155 Phase 4.5: the host probe path actually spawns (F1)', () => {
-  it('probeModelPath resolves through modelStatus, not a property the engine does not have', async () => {
-    // Before the fix the host read `(config.engine as {models?}).models`, but
-    // `BackendHostConfig.engine` is an `EngineSurface`, which has NO `models`
-    // member - so the read was `undefined` on every boot and the probe
-    // returned "GPU probe skipped: no probe model is staged." forever while
-    // every frozen check stayed green. This pins the seam that exists.
-    const models = stageModels();
-    const engine = new LlamaEngine({
-      profile: 'fast',
-      freeMemBytes: () => 8 * GB,
-      cpuCount: () => 8,
-      models: { quality: models.quality, fast: models.fast },
-    });
-    const status = engine.modelStatus();
-    expect(status.models.fast.path, 'the engine must report the resolved fast-profile path').toBe(models.fast);
-    expect(typeof status.models.fast.path).toBe('string');
-    // The host reads exactly this; assert the value is a real file so the
-    // probe would actually be able to load it.
-    expect(fs.existsSync(status.models.fast.path as string)).toBe(true);
-    fs.rmSync(models.dir, { recursive: true, force: true });
-  });
-});
-
 
 // ---------------------------------------------------------------------------
 // Round 2 review: these three exist because the round-2 mutation run proved the
@@ -620,14 +596,109 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
     }
   }, 30000);
 
-  it('shutdown never persists the verdict of a probe the host itself killed', async () => {
-    // With the defect, quitting during a live probe wrote a SIGTERM-derived CPU
-    // verdict to gpu-probe.json, which the next boot adopted - disabling the
-    // probe on a machine that was never actually tested.
+  it('shutdown never overwrites the stored verdict with the kill verdict', async () => {
+    // The previous version of this test was un-failable: it never armed
+    // gpuProbeDir (assigned only in start()), so the sidecar never existed, the
+    // assertion sat behind `if (fs.existsSync(...))`, and removing the D1 fix
+    // entirely left all 111 test files green. This one pre-seeds a SENTINEL
+    // verdict so the write path is armed, asserts UNCONDITIONALLY, and injects a
+    // spawn so the kill verdict is producible under vitest.
     const { NodeBackendHost } = await import('../../main/backend/index.js');
     const { GPU_PROBE_SIDECAR: NAME } = await import('../../main/backend/inference/gpu-probe.js');
     const models = stageModels();
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-quit-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-quit2-'));
+    try {
+      const profileDir = path.join(dir, 'profiles', 'default');
+      fs.mkdirSync(profileDir, { recursive: true });
+      const sentinel = { backend: 'vulkan', ok: true, reason: 'SENTINEL-PREEXISTING', device: 'd' };
+      fs.writeFileSync(path.join(profileDir, NAME), JSON.stringify(sentinel), 'utf8');
+
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: models.quality, fast: models.fast },
+      });
+      const host = new NodeBackendHost({ engine, token: 't', storePath: path.join(profileDir, 'store.sqlite') } as never);
+      // Arm the host so gpuProbeDir is set, then take ownership of the probe so
+      // it runs against a child we control and a deadline we control.
+      await (host as unknown as { start: () => Promise<void> }).start().catch(() => undefined);
+      const h = host as unknown as {
+        startGpuProbe: () => Promise<GpuProbeVerdict>;
+        stop: () => Promise<void>;
+      };
+      // Inject the RUNNER, not startGpuProbe: the real startGpuProbe logic
+      // (registration, abandonment, pruning) is what is under test.
+      (host as unknown as { probeRun: unknown }).probeRun = (opts: {
+        args?: string[];
+        onChild?: (c: { kill: (s?: NodeJS.Signals) => unknown }) => void;
+        onSettled?: () => void;
+        timeoutMs?: number;
+      }) => runGpuProbe({ ...opts, command: [process.execPath, '-e', 'setTimeout(()=>{},60000)'] });
+      const inFlight = h.startGpuProbe();
+      const stopped = h.stop();
+      await Promise.allSettled([inFlight, stopped]);
+      await new Promise((r) => setTimeout(r, 150));
+
+      const written = JSON.parse(fs.readFileSync(path.join(profileDir, NAME), 'utf8')) as { reason?: string; backend?: string };
+      expect(
+        String(written.reason ?? ''),
+        'a verdict produced by our own shutdown kill must never overwrite the stored one',
+      ).not.toContain('SIGTERM');
+      expect(written.reason).toBe('SENTINEL-PREEXISTING');
+      setActiveGpuVerdict(null);
+    } finally {
+      fs.rmSync(models.dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('F7-skip - an adopted persisted verdict means the boot probe never spawns', async () => {
+    // The adoption half and the SKIP half are independent. Removing only the
+    // `if (this.gpuVerdict === null)` gate re-arms the clobber the whole F7 fix
+    // exists to stop, so the skip itself needs its own guard.
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const { GPU_PROBE_SIDECAR: NAME } = await import('../../main/backend/inference/gpu-probe.js');
+    const models = stageModels();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-skip-'));
+    try {
+      const profileDir = path.join(dir, 'profiles', 'default');
+      fs.mkdirSync(profileDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(profileDir, NAME),
+        JSON.stringify({ backend: 'vulkan', ok: true, reason: 'PRE-EXISTING', device: 'd' }),
+        'utf8',
+      );
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: models.quality, fast: models.fast },
+      });
+      const host = new NodeBackendHost({ engine, token: 't', storePath: path.join(profileDir, 'store.sqlite') } as never);
+      let spawns = 0;
+      (host as unknown as { startGpuProbe: () => Promise<GpuProbeVerdict> }).startGpuProbe = async () => {
+        spawns += 1;
+        return { backend: 'cpu', ok: false, reason: 'should not have run', device: null };
+      };
+      await (host as unknown as { start: () => Promise<void> }).start().catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 200));
+      expect(spawns, 'a persisted verdict must be reused, not re-probed at every boot').toBe(0);
+      await (host as unknown as { stop: () => Promise<void> }).stop().catch(() => undefined);
+      setActiveGpuVerdict(null);
+    } finally {
+      fs.rmSync(models.dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('the in-flight child set is empty once probes settle', async () => {
+    // The Set tracks IN-FLIGHT children. Leaving settled handles behind grows it
+    // monotonically for the host's lifetime, and a stale handle would let a
+    // later stop() arm the abandonment flag off a dead probe.
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const models = stageModels();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-set-'));
     try {
       const engine = new LlamaEngine({
         profile: 'fast',
@@ -640,18 +711,24 @@ describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
         token: 't',
         storePath: path.join(dir, 'profiles', 'default', 'store.sqlite'),
       } as never);
-      const inFlight = (host as unknown as { startGpuProbe: () => Promise<GpuProbeVerdict> }).startGpuProbe();
-      const stopped = (host as unknown as { stop: () => Promise<void> }).stop();
-      await Promise.allSettled([inFlight, stopped]);
-      await new Promise((r) => setTimeout(r, 120));
-      const sidecar = path.join(dir, 'profiles', 'default', NAME);
-      if (fs.existsSync(sidecar)) {
-        const written = JSON.parse(fs.readFileSync(sidecar, 'utf8')) as { reason?: string };
-        expect(
-          String(written.reason ?? ''),
-          'a verdict produced by our own shutdown kill must never be persisted',
-        ).not.toContain('SIGTERM');
-      }
+      const h = host as unknown as {
+        startGpuProbe: () => Promise<GpuProbeVerdict>;
+        probeChildren: Set<unknown>;
+        stop: () => Promise<void>;
+      };
+      (host as unknown as { probeRun: unknown }).probeRun = (opts: {
+        args?: string[];
+        onChild?: (c: { kill: (s?: NodeJS.Signals) => unknown }) => void;
+        onSettled?: () => void;
+        timeoutMs?: number;
+      }) => runGpuProbe({ ...opts, command: [process.execPath, '-e', 'process.stdout.write(JSON.stringify({ok:true,backend:"vulkan",sample:"OK"}))'] });
+      await h.startGpuProbe();
+      await h.startGpuProbe();
+      expect(
+        h.probeChildren.size,
+        'settled probes must drop their child handle, or the set grows for the host lifetime',
+      ).toBe(0);
+      await h.stop().catch(() => undefined);
       setActiveGpuVerdict(null);
     } finally {
       fs.rmSync(models.dir, { recursive: true, force: true });

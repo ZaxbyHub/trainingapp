@@ -248,25 +248,47 @@ export class NodeBackendHost implements BackendHost {
    *  "no GPU" with a SIGTERM reason and disarmed the next boot's probe. */
   private probeAbandoned = false;
 
+  /**
+   * The probe runner, injectable so a test can drive the REAL startGpuProbe
+   * logic (child registration, abandonment, settle pruning) with a child it
+   * controls. Replacing `startGpuProbe` itself would bypass exactly the logic
+   * under test - which is how the first version of the shutdown test ended up
+   * unable to fail.
+   */
+  private probeRun: typeof runGpuProbe = runGpuProbe;
+
   startGpuProbe = async (): Promise<GpuProbeVerdict> => {
+    // Per-probe state. `abandonedByHost` is captured INSIDE onSettled, which
+    // runs before the reset - reading this flag after the await was the round-3
+    // defect: onSettled reset it first, so the post-await check could never see
+    // it true and the host adopted and persisted its own kill verdict.
+    let child: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+    let abandonedByHost = false;
     try {
       const modelPath = this.probeModelPath();
       const verdict =
         modelPath === null
           ? { backend: 'cpu' as const, ok: false, reason: 'GPU probe skipped: no probe model is staged.', device: null }
-          : await runGpuProbe({
+          : await this.probeRun({
               args: [modelPath],
               // A SET, not a single field: two probes can overlap (the boot
               // probe and a /gpu-test), and a single field was clobbered when
               // the first finished - leaving the second's live child unreapable.
-              onChild: (child) => {
-                this.probeChildren.add(child);
+              onChild: (spawned) => {
+                child = spawned;
+                this.probeChildren.add(spawned);
               },
               onSettled: () => {
+                // Decide, then reset, then prune - in that order.
+                abandonedByHost = this.probeAbandoned;
                 this.probeAbandoned = false;
+                // Drop the settled child's handle: the Set tracks IN-FLIGHT
+                // children, and a settled probe leaving a dead handle behind
+                // grows it monotonically for the host's lifetime.
+                if (child !== null) this.probeChildren.delete(child);
               },
             });
-      if (this.probeAbandoned) {
+      if (abandonedByHost) {
         // Our own shutdown killed this probe. The verdict describes the kill,
         // not the machine, so it is returned but never adopted or persisted.
         return verdict;
@@ -598,7 +620,7 @@ export class NodeBackendHost implements BackendHost {
       // is picked up by the NEXT model load, never by a load already in flight.
       // Skipped when a verdict is already persisted and adopted above - that is
       // what makes the sidecar worth writing. The /gpu-test route forces a
-      // re-probe (force=true), so a changed driver is still recoverable.
+      // re-probe unconditionally, so a changed driver is still recoverable.
       if (this.gpuVerdict === null) void this.startGpuProbe();
       void this.engine.warmup?.().catch((err: unknown) => {
         console.error(
