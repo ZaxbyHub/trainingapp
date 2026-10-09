@@ -871,3 +871,58 @@ describe('issue #155 scenarios: the timeline, not the diff', () => {
     }
   }, 30000);
 });
+
+// ---------------------------------------------------------------------------
+// The REAL probe, executed. A previous round recorded that the child-process
+// path had no guard and claimed it needed "a staged GGUF plus a Vulkan device,
+// neither of which exists in this environment". That excuse was FALSE - the
+// reviewer ran the real probe on this host in ~3.6 s and got a real adapter
+// name back. The suite's own no-weights contract (top of this file) is the
+// honest reason it had no guard; so this test is ENVIRONMENT-GATED: it runs
+// where weights and a GPU exist, and skips - loudly - where they do not, so it
+// never turns a green CI into a red one for a missing asset.
+// ---------------------------------------------------------------------------
+
+const REAL_FAST_MODEL =
+  process.env.TRAININGAPP_PROBE_TEST_MODEL ??
+  'E:/ZCode/trainingapp/desktop/installer-resources/models/llm-fast/lfm2.5-vl-450m/model.gguf';
+
+describe('issue #155: the real probe, end to end', () => {
+  it('reports a real ADAPTER identity, not the backend name', async () => {
+    if (!fs.existsSync(REAL_FAST_MODEL)) {
+      console.warn(`t155: skipping the real-probe test - no staged model at ${REAL_FAST_MODEL}`);
+      return;
+    }
+    // Under vitest this file runs from SOURCE, so the default child path
+    // (gpu-probe-child.js beside gpu-probe.js) does not exist - only the .ts
+    // does. The compiled child in dist/ IS the production artifact, so point at
+    // it explicitly when the source sibling is absent.
+    const defaultChild = gpuProbeChildPath();
+    const command = fs.existsSync(defaultChild)
+      ? undefined
+      : [process.execPath, path.join(__dirname, '..', '..', 'dist', 'main', 'backend', 'inference', 'gpu-probe-child.js')];
+    if (command !== undefined && !fs.existsSync(command[1] as string)) {
+      console.warn('t155: skipping the real-probe test - no compiled gpu-probe-child.js (run `npm --prefix desktop run compile` first)');
+      return;
+    }
+    const verdict = await runGpuProbe({ command, args: [REAL_FAST_MODEL], timeoutMs: 120_000 });
+    if (!verdict.ok) {
+      // No usable GPU here. That is a legitimate outcome, not a failure - but it
+      // must not be the string "vulkan", which is the bug this pins.
+      expect(
+        verdict.device,
+        'a failed probe must not report the backend name as a device identity',
+      ).not.toBe('vulkan');
+      expect(verdict.reason.length).toBeGreaterThan(0);
+      console.warn(`t155: real probe found no usable GPU here (${verdict.reason})`);
+      return;
+    }
+    expect(verdict.backend).toBe('vulkan');
+    // THE PIN: an adapter name is a human-readable device string, not the
+    // backend identifier. `llama.gpu` is literally "vulkan", so a verdict
+    // whose device equals "vulkan" means the extraction never ran.
+    expect(verdict.device, 'the probe must report the adapter identity from getGpuDeviceNames()').toBeTruthy();
+    expect(verdict.device).not.toBe('vulkan');
+    console.log(`t155: real probe -> backend=${verdict.backend} device=${verdict.device}`);
+  }, 180_000);
+});

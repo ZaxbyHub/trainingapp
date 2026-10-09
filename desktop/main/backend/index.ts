@@ -273,8 +273,12 @@ export class NodeBackendHost implements BackendHost {
       // (wizard/download come later), so this branch fires on exactly the
       // scenario issue #155 names - and persisting it would pin a perfectly
       // capable GPU to CPU forever, because a stored verdict skips the next
-      // boot's probe. It is kept in memory for the session so Settings can
-      // explain itself, but it is never written and never arms the boot skip.
+      // boot's probe.
+      //
+      // It is returned to the caller (the boot sequence and the /gpu-test
+      // route), held in `this.gpuVerdict` for this session, and is deliberately
+      // NOT written and NOT published to the shared holder the engine reads -
+      // so it neither reaches the sidecar nor arms the boot-skip gate.
       const probed = modelPath !== null;
       const verdict =
         modelPath === null
