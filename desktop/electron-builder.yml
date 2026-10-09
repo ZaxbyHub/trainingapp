@@ -12,6 +12,14 @@ directories:
 files:
   - dist/**/*
   - package.json
+  # issue #155: the CUDA backend packages are excluded from the installer.
+  # Nothing can select them: the GPU decision resolves to 'vulkan' or 'cpu' only,
+  # and the auto probe passes exclude: ['cuda'] because these packages are not
+  # shipped. They measured ~510 MB unpacked, so carrying them is pure weight.
+  # The exclusion is declared here rather than in npm config so `npm ci` still
+  # installs everything the dev tree and the vulkan path need.
+  - '!**/node_modules/@node-llama-cpp/win-x64-cuda/**'
+  - '!**/node_modules/@node-llama-cpp/win-x64-cuda-ext/**'
 # The desktop:build script copies web_ui/dist into renderer/ before packaging
 # (stage-installer-resources.mjs excludes the weight files duplicated into
 # installer-resources); the main process serves it from <resourcesPath>/web_ui
@@ -56,3 +64,12 @@ asarUnpack:
   - '**/node_modules/pdfjs-dist/**'
   - '**/node_modules/sqlite-vec*/**'
   - '**/node_modules/better-sqlite3/**'
+  # issue #155: the llama.cpp compute backends are pinned explicitly for the
+  # same reason sqlite-vec is above. They used to reach disk only through
+  # electron-builder's implicit native-module heuristic; the Vulkan binary is
+  # now LOADED AT RUNTIME by the GPU probe, so relying on a heuristic that
+  # electron-builder may change would silently turn every packaged install
+  # back into CPU-only. The CPU backend is pinned alongside it because the
+  # probe's CPU fallback path must work even where no GPU binary exists.
+  - '**/node_modules/@node-llama-cpp/win-x64-vulkan/**'
+  - '**/node_modules/@node-llama-cpp/win-x64/**'

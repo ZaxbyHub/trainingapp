@@ -27,5 +27,11 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/__tests__/**/*.test.ts'],
+    // Several inference tests perform a model construct/dispose cycle per
+    // query and sit near vitest's 5s default once the whole suite is loaded on
+    // one machine, so a ceiling - not a product defect - decides pass or fail.
+    // Raised for the whole suite rather than patched per offender, because the
+    // offenders move with load; assertions are unchanged.
+    testTimeout: 30_000,
   },
 });

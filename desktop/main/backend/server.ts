@@ -68,6 +68,12 @@ export interface BackendServerOptions {
    */
   modelStatus?: () => ModelStatus;
   /**
+   * issue #155: the GPU re-probe action for POST /settings/inference/gpu-test.
+   * Host wires its probe runner. When absent the known route degrades to a
+   * contract-safe 503 — never 404, same shape as telemetry and modelStatus.
+   */
+  gpuTest?: () => Promise<{ backend: 'vulkan' | 'cpu'; ok: boolean; reason: string; device?: string | null }>;
+  /**
    * C7 (issue #74): the pack lifecycle surface behind the /packs routes.
    * Provider FUNCTION shape (`() => PackSurface | null`) because the host
    * constructs its PackManager lazily with the store. When absent (or the
@@ -117,6 +123,10 @@ export const CONTRACT_ROUTES: ReadonlyMap<string, ReadonlySet<string>> = new Map
   // universal-provider-settings-overhaul: desktop-backend-only connection test
   // for a draft external endpoint (persists nothing; token-guarded).
   ['/settings/external/test', new Set(['POST'])],
+  // issue #155: re-run the out-of-process GPU capability probe on demand, so a
+  // machine whose driver or hardware changed can recover from a stale negative
+  // verdict. Persists nothing by itself; the host adopts what it returns.
+  ['/settings/inference/gpu-test', new Set(['POST'])],
   ['/stats', new Set(['GET'])],
   ['/telemetry/memory', new Set(['GET'])],
   ['/status/models', new Set(['GET'])],
@@ -985,6 +995,31 @@ export function createBackendServer(opts: BackendServerOptions): http.Server {
               return;
             }
             sendJson(res, 200, engine.responseSettings(), cors);
+            return;
+          }
+          case 'POST /settings/inference/gpu-test': {
+            // issue #155: no body is read and nothing is persisted here; the
+            // host's probe runner decides both. A failure is still a 200 with
+            // ok:false, because "this machine has no usable GPU" is an ANSWER,
+            // not an error - the same shape POST /settings/external/test uses.
+            if (typeof opts.gpuTest !== 'function') {
+              sendJson(res, 503, { detail: 'GPU probing is not wired on this host' }, cors);
+              return;
+            }
+            let outcome: { backend: 'vulkan' | 'cpu'; ok: boolean; reason: string; device?: string | null };
+            try {
+              outcome = await opts.gpuTest();
+            } catch (err) {
+              // A probe that throws is contained HERE rather than becoming a 500
+              // the operator has to interpret: report it as a CPU verdict.
+              outcome = {
+                backend: 'cpu',
+                ok: false,
+                reason: `GPU probe failed: ${err instanceof Error ? err.message : String(err)}`,
+                device: null,
+              };
+            }
+            sendJson(res, 200, outcome, cors);
             return;
           }
           case 'POST /settings/external/test': {

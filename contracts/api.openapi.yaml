@@ -434,6 +434,32 @@ paths:
         "503":
           description: Model status is not wired on this host
 
+  /settings/inference/gpu-test:
+    post:
+      tags: [settings]
+      summary: Re-run the GPU capability probe (issue #155)
+      description: >-
+        Runs the out-of-process GPU probe again and adopts the result, so a
+        machine whose driver or hardware changed can recover from a stale
+        negative verdict. Takes no request body and persists nothing itself; the
+        host adopts and persists the returned verdict.
+
+        "No usable GPU" is an ANSWER, not an error, so a failed probe is a 200
+        with `ok: false` and a populated `reason` - the same shape
+        `POST /settings/external/test` uses. A 503 means the host has no probe
+        wired at all (a known route that cannot be served, never a 404).
+        Transport-token-guarded like every route.
+      operationId: testGpu
+      responses:
+        "200":
+          description: The probe ran; the verdict says whether a GPU is usable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GpuProbeResponse"
+        "503":
+          description: GPU probing is not wired on this host
+
   /packs:
     get:
       tags: [packs]
@@ -572,6 +598,24 @@ components:
       in: header
       name: X-API-Key
   schemas:
+    GpuProbeResponse:
+      type: object
+      description: >-
+        The result of a GPU capability probe run (issue #155). Same shape as the
+        `gpu` member of StatusModelsResponse.
+      required: [backend, ok, reason]
+      properties:
+        backend:
+          type: string
+          enum: [vulkan, cpu]
+        ok:
+          type: boolean
+        reason:
+          type: string
+        device:
+          type: string
+          nullable: true
+
     StatusModelsResponse:
       type: object
       required: [engine, profile, models]
@@ -585,6 +629,34 @@ components:
             GGUFs never block chat.
         profile:
           type: string
+        gpu:
+          type: object
+          description: >-
+            The GPU decision (issue #155), as the engine actually made it.
+            Present for the local llama.cpp backend and absent when an external
+            endpoint generates, because then no local compute backend is
+            involved. `backend` is what runs; `ok` is whether a GPU was usable;
+            `reason` is ALWAYS non-empty so a CPU fallback can be explained
+            rather than guessed at.
+          required: [backend, ok, reason]
+          properties:
+            backend:
+              type: string
+              enum: [vulkan, cpu]
+              description: >-
+                The resolved compute backend. CPU means either the probe found no
+                usable device, the operator pinned CPU, or nothing has been
+                probed yet.
+            ok:
+              type: boolean
+              description: True only when a GPU backend loaded AND produced a sane generation.
+            reason:
+              type: string
+              description: Human-readable explanation; never empty.
+            device:
+              type: string
+              nullable: true
+              description: Adapter identity the backend reported, when it reported one.
         resident:
           type: object
           description: >-

@@ -26,6 +26,14 @@ import { PackManager } from './store/pack-manager.js';
 import { createPackSurface } from './packs/surface.js';
 import { resolvePacksSecurity } from './packs/pack-extract.js';
 import { loadSettingsSnapshot, saveSettingsSnapshot } from './settings-store.js';
+import {
+  activeGpuVerdict,
+  readGpuProbeVerdict,
+  runGpuProbe,
+  setActiveGpuVerdict,
+  writeGpuProbeVerdict,
+  type GpuProbeVerdict,
+} from './inference/gpu-probe.js';
 import { loadExternalSnapshot, replayExternalSnapshot, saveExternalSnapshot } from './external-store.js';
 import { OnnxEmbedder, resolveEmbedder, type EmbeddingSurface } from './ingest/embedder.js';
 import { resolveIngestConfig, resolveIngestLimits } from './ingest/config.js';
@@ -99,6 +107,18 @@ export class NodeBackendHost implements BackendHost {
   /** C3 (#70): pack lifecycle, constructed on start (instance field — the b3
    * duck-type pin reserves host prototypes for start/stop only). */
   private packManager: PackManager | null = null;
+  /**
+   * issue #155: the GPU probe verdict the host owns. The engine reads it
+   * through a SYNC seam (resolveNodeEngine's `gpuVerdict`), because the probe
+   * itself is async and runs out of process; this field is the writable holder
+   * the async probe fills. Null means "never probed", which the engine resolves
+   * to CPU - an unprobed host behaves exactly as it did before issue #155.
+   */
+  private gpuVerdict: GpuProbeVerdict | null = null;
+  /** issue #155: profile dir the gpu-probe.json sidecar lives in, or null when
+   *  the host runs without a store (CI stub) - then the probe still runs but
+   *  nothing is persisted. */
+  private gpuProbeDir: string | null = null;
 
   /** Issue #133: named reason the pack lifecycle is down ('ok' when live);
    *  surfaced to the wizard via getPackLifecycleStatus → packs.unavailableReason. */
@@ -205,6 +225,71 @@ export class NodeBackendHost implements BackendHost {
         detail: 'profile override cleared between generations (recovery sustained)',
       });
     }
+  };
+
+  /**
+   * issue #155: run the GPU probe and adopt its verdict. Own property BY DESIGN
+   * (the b3 duck-type pin requires both host prototypes to expose exactly
+   * start/stop - node-only capabilities must stay off the prototype).
+   *
+   * Never throws: runGpuProbe resolves a CPU verdict for every failure mode,
+   * and this wrapper additionally swallows anything unexpected so a probe
+   * problem can never take host start with it.
+   */
+  startGpuProbe = async (): Promise<GpuProbeVerdict> => {
+    try {
+      const modelPath = this.probeModelPath();
+      const verdict =
+        modelPath === null
+          ? { backend: 'cpu' as const, ok: false, reason: 'GPU probe skipped: no probe model is staged.', device: null }
+          : await runGpuProbe({ args: [modelPath] });
+      this.adoptGpuVerdict(verdict);
+      return verdict;
+    } catch (err) {
+      const verdict: GpuProbeVerdict = {
+        backend: 'cpu',
+        ok: false,
+        reason: `GPU probe failed unexpectedly: ${err instanceof Error ? err.message : String(err)}`,
+        device: null,
+      };
+      this.adoptGpuVerdict(verdict);
+      return verdict;
+    }
+  };
+
+  /**
+   * issue #155: adopt a verdict in memory AND persist it, so a restart does not
+   * re-probe. Called by the automatic probe, by the re-test endpoint, and by the
+   * engine's load-failure downgrade (via onGpuLoadFailure).
+   */
+  adoptGpuVerdict = (verdict: GpuProbeVerdict): void => {
+    this.gpuVerdict = verdict;
+    // Publish to the shared holder the engine reads, and persist so a restart
+    // does not re-probe. Both writers are the host; nothing else mutates it.
+    setActiveGpuVerdict(verdict);
+    if (this.gpuProbeDir !== null) writeGpuProbeVerdict(this.gpuProbeDir, verdict);
+  };
+
+  /** issue #155: the verdict the engine's sync seam reads. */
+  readGpuVerdict = (): GpuProbeVerdict | null => this.gpuVerdict ?? activeGpuVerdict();
+
+  /**
+   * issue #155: which model the probe loads. The FAST profile's GGUF: the probe
+   * validates the BACKEND, the backend behaves identically for both profiles,
+   * and loading the 2.6 GB quality GGUF to answer a question the 332 MB fast
+   * GGUF answers identically would make first boot needlessly slow.
+   */
+  /**
+   * issue #155: OWN PROPERTY, not a prototype method. TypeScript's `private` is
+   * compile-time only, so a `private` method still shows up on the prototype -
+   * and the b3 duck-type pin (b3-backend-selector.test.ts) requires BOTH host
+   * prototypes to expose exactly start/stop. The other node-only capabilities
+   * are arrow class fields for the same reason (createStoreBackup, above).
+   */
+  private probeModelPath = (): string | null => {
+    const models = (this.config.engine as { models?: { quality?: string; fast?: string } } | undefined)?.models;
+    if (models?.fast !== undefined && models.fast !== '' && fs.existsSync(models.fast)) return models.fast;
+    return null;
   };
 
   /**
@@ -382,6 +467,12 @@ export class NodeBackendHost implements BackendHost {
         replayExternalSnapshot(externalSnapshot, (patch) => this.engine.applySettingsPatch(patch));
       }
       persistExternal = (snapshot) => saveExternalSnapshot(storePath, snapshot);
+
+      // issue #155: the profile DIRECTORY is the sidecar home (index.ts:409-412
+      // states the convention; dev-server.ts:119 already uses it). A missing or
+      // corrupt file reads as null and simply means "not probed yet".
+      this.gpuProbeDir = path.dirname(storePath);
+      this.gpuVerdict = readGpuProbeVerdict(this.gpuProbeDir);
     }
     // #133: the first-run wizard applies the operator's profile choice
     // through the SAME validated seam the settings API uses — live apply +
@@ -430,6 +521,15 @@ export class NodeBackendHost implements BackendHost {
       modelStatus: typeof this.engine.modelStatus === 'function'
         ? () => this.engine.modelStatus!()
         : undefined,
+      // issue #155: the on-demand re-probe. Each call re-reads the sidecar
+      // first so a driver change is what the verdict reflects, then re-runs.
+      gpuTest: async () => {
+        if (this.gpuProbeDir !== null) {
+          const stored = readGpuProbeVerdict(this.gpuProbeDir);
+          if (stored !== null) this.gpuVerdict = stored;
+        }
+        return await this.startGpuProbe();
+      },
       // C7 (issue #74): pack lifecycle surface. Provider shape — the
       // PackManager is constructed lazily with the store (see the recovery
       // path below), so resolve it per request; null -> contract-safe 503.
@@ -445,6 +545,11 @@ export class NodeBackendHost implements BackendHost {
       // gate chat on the real load state instead of a time heuristic. The
       // warmup itself never fails host start; single-flight in the engine
       // merges it with a concurrent first query.
+      // issue #155: kick the GPU probe off in the BACKGROUND, next to warmup,
+      // so neither blocks the listener. It runs out of process (gpu-probe.ts),
+      // so a driver fault cannot take the host down; the verdict that lands here
+      // is picked up by the NEXT model load, never by a load already in flight.
+      void this.startGpuProbe();
       void this.engine.warmup?.().catch((err: unknown) => {
         console.error(
           `[trainingapp-backend] model warmup crashed: ${err instanceof Error ? err.message : String(err)}`,

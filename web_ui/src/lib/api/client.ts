@@ -23,6 +23,7 @@ import type {
   StatsResponse,
   ExternalProbeRequest,
   ExternalProbeResponse,
+  GpuProbeResult,
 } from './types';
 import { getToken } from './auth';
 
@@ -515,6 +516,22 @@ export class ApiClient {
       method: 'POST',
       headers: this.requestHeaders(),
       body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      throw new ApiError(response.status, await parseErrorResponse(response));
+    }
+    return response.json();
+  }
+
+  /**
+   * Desktop backend only (issue #155): re-run the out-of-process GPU
+   * capability probe (POST /settings/inference/gpu-test). Takes no body. A
+   * machine with no usable GPU is a 200 with ok:false, not an error.
+   */
+  async testGpu(): Promise<GpuProbeResult> {
+    const response = await fetch(`${this.baseUrl}/settings/inference/gpu-test`, {
+      method: 'POST',
+      headers: this.requestHeaders(),
     });
     if (!response.ok) {
       throw new ApiError(response.status, await parseErrorResponse(response));

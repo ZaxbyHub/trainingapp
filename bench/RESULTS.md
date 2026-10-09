@@ -152,6 +152,34 @@ see the provenance rule 4 above) on the real staged tree, machine-tagged:
 | devstation | startup integrity gate latency (streaming sha256 of the full staged tree) | 2,377 ms | packaged-mode pass, 0 failures, 2026-09-23 |
 | reference-i5 | all E1 size/latency rows | PENDING | operator runs the same commands (E3/#86 owns the matrix) |
 
+### GPU device matrix (issue #155)
+
+Which compute backend the desktop backend actually selects on each machine. Issue #155 turned
+GPU acceleration from a hard-disabled constant into an out-of-process probe plus a CPU
+fallback, so a row here is a statement about what the probe concludes there.
+
+Recording discipline for this table (the same one the `reference-i5` E1 rows above already
+follow): every row is either a figure measured on the machine it names, or an explicit `PENDING`
+naming what is unmeasured. No tok/s number appears here unless it was measured on the machine
+named. The issue #155 comments carry prefill/decode tok/s figures from an external benchmark
+harness; this table does not restate them as its own evidence, because this revision did not
+re-measure them.
+
+| machine | device | backend selected | GPU offload | notes |
+|---|---|---|---|---|
+| devstation | Intel Arc Pro B50 (discrete), driver 32.0.101.8805 | vulkan | supportsGpuOffloading=true | measured: node-llama-cpp 3.20.0, same process reported gpu=false for the shipped CPU-only option and gpu=vulkan for `{gpu:{type:auto,exclude:[cuda]}}` |
+| devstation | Intel Arc Pro B50 (discrete), driver 32.0.101.8805 | cpu | gpu=false, supportsGpuOffloading=false | measured: the same host and the same node-llama-cpp 3.20.0 process under the shipped `{gpu:false}` option - the comparison the GPU row above is measured against |
+| reference-i5 | 12th-gen Core i5 mobile, Intel Iris Xe integrated | PENDING | PENDING | no integrated-GPU host was available; prefill and decode tok/s and the probe's own verdict are unmeasured, and this is the floor-spec machine the speed bar for the quality tier depends on |
+| reference-amd-igpu | AMD integrated, RDNA | PENDING | PENDING | no AMD host was available; backend selection, probe verdict and throughput are unmeasured |
+| reference-amd-dgpu | AMD discrete, RDNA | PENDING | PENDING | no AMD host was available; backend selection, probe verdict and throughput are unmeasured |
+| reference-nvidia | NVIDIA discrete | PENDING | PENDING | no NVIDIA host was available; note the CUDA backend is deliberately not shipped, so this host is expected to resolve to Vulkan-or-CPU rather than CUDA |
+
+Two upstream llama.cpp defects have no runtime mitigation in the pinned library and are covered
+only by the probe plus its CPU fallback, not fixed here: **#27638** (device loss at
+`ubatch >= 2048`; `ubatch` is not exposed by node-llama-cpp 3.20.0) and **#29054** (deterministic
+hang on a q8_0 KV cache; `kvCacheType` is not exposed on `LlamaContextOptions`). Both were
+verified absent by searching the installed package, not assumed.
+
 **Known limit (recorded, never hidden): the single-file NSIS target cannot
 embed the real-weights payload.** `makensis.exe` aborts with `File: failed
 creating mmap of …-x64.nsis.7z` because the app archive is 4,177,827,908
