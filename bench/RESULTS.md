@@ -174,11 +174,16 @@ re-measure them.
 | reference-amd-dgpu | AMD discrete, RDNA | PENDING | PENDING | no AMD host was available; backend selection, probe verdict and throughput are unmeasured |
 | reference-nvidia | NVIDIA discrete | PENDING | PENDING | no NVIDIA host was available; note the CUDA backend is deliberately not shipped, so this host is expected to resolve to Vulkan-or-CPU rather than CUDA |
 
-Two upstream llama.cpp defects have no runtime mitigation in the pinned library and are covered
+One upstream llama.cpp defect has no runtime mitigation in the pinned library and is covered
 only by the probe plus its CPU fallback, not fixed here: **#27638** (device loss at
-`ubatch >= 2048`; `ubatch` is not exposed by node-llama-cpp 3.20.0) and **#29054** (deterministic
-hang on a q8_0 KV cache; `kvCacheType` is not exposed on `LlamaContextOptions`). Both were
-verified absent by searching the installed package, not assumed.
+`ubatch >= 2048`; `ubatch` does not appear anywhere in the installed node-llama-cpp 3.20.0
+`dist/` except one code comment). Verified by searching the installed package, not assumed.
+
+**#29054** (deterministic hang on a q8_0 KV cache) is a different case and is **not** claimed as
+unmitigated: node-llama-cpp 3.20.0 does expose `experimentalKvCacheKeyType` /
+`experimentalKvCacheValueType` on `LlamaContextOptions`, and **both already default to F16**, so
+the f16 mitigation the upstream report asks for is in force by default. The application does not
+surface that experimental override to users, deliberately.
 
 **Known limit (recorded, never hidden): the single-file NSIS target cannot
 embed the real-weights payload.** `makensis.exe` aborts with `File: failed

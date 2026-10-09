@@ -25,8 +25,9 @@
   excludes the CUDA backend packages, which no code path can select and which measured ~510 MB
   unpacked. `bench/RESULTS.md` gains a GPU device matrix whose unmeasured rows say PENDING and
   name what is unmeasured. **Known limits, recorded not hidden**: the pinned
-  node-llama-cpp 3.20.0 exposes neither `ubatch` nor `kvCacheType`, so the mitigations for
-  llama.cpp #27638 and #29054 are the probe plus its CPU fallback and nothing more; and no
+  node-llama-cpp 3.20.0 exposes no `ubatch` control, so the mitigation for
+  llama.cpp #27638 is the probe plus its CPU fallback and nothing more (llama.cpp #29054's f16
+  KV cache needs no mitigation here: the library's KV-cache type already defaults to F16). No
   integrated-GPU host was available, so the floor-spec Iris Xe row is PENDING.
 
 - **Desktop local inference (trace #154)**: the engine now pins `Gemma4ChatWrapper({reasoning: false})` for the shipped gemma-4 quality model, whose auto-resolved wrapper defaults `reasoning=true` and was spending answer-token budget on thought segments that never reach `responseText`. The pin is gated on the GGUFs own architecture, not the profile name, so a non-gemma model at the quality path keeps the library default wrapper resolution. The desktop-local system prompt gained the same groundedness rule the external endpoint already used, and each request now emits one `console.info` line carrying profile, threads, elapsed ms, answer tokens and outcome.

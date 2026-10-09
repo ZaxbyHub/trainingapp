@@ -174,6 +174,13 @@ export interface GpuProbeRunOptions {
   timeoutMs?: number;
   /** Injectable spawn, so tests never fork a real process. */
   spawnFn?: typeof spawn;
+  /**
+   * Called with the live child as soon as it is spawned, so the CALLER can
+   * guarantee no probe outlives it (the host kills it in `stop()`). Without
+   * this the child handle lives only inside this promise's closure and a
+   * shutdown cannot reach it.
+   */
+  onChild?: (child: { kill: (signal?: NodeJS.Signals) => unknown }) => void;
 }
 
 interface ProbeChildReport {
@@ -205,25 +212,34 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
-      clearTimeout(escalate);
+      // `escalate` is undefined until the deadline fires, so this must be
+      // conditional rather than clearing a timer that does not exist yet.
+      if (escalate !== undefined) clearTimeout(escalate);
       resolve(verdict);
     };
 
-    const escalate = setTimeout(() => {
-      try {
-        child.kill('SIGKILL');
-      } catch {
-        // already gone
-      }
-    }, KILL_GRACE_MS);
-    escalate.unref?.();
-
+    // The SIGKILL escalation is armed ONLY when the deadline fires, never at
+    // t=0. Arming it up front capped the EFFECTIVE timeout at KILL_GRACE_MS
+    // (2 s) while the documented default is DEFAULT_PROBE_TIMEOUT_MS (60 s):
+    // any child still loading its GGUF past 2 s was killed and reported as a
+    // failed device. This is the terminate-then-escalate shape proven in
+    // sidecar-manager.ts:244-249 - SIGTERM first, SIGKILL only for a child
+    // that ignores it.
+    let escalate: NodeJS.Timeout | undefined;
     const deadline = setTimeout(() => {
       try {
         child.kill('SIGTERM');
       } catch {
         // already gone
       }
+      escalate = setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // already gone
+        }
+      }, KILL_GRACE_MS);
+      escalate.unref?.();
       finish(cpuVerdict(`GPU probe timed out after ${timeoutMs} ms and was terminated.`));
     }, timeoutMs);
     deadline.unref?.();
@@ -246,6 +262,10 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
       return;
     }
 
+    // Hand the live child to the caller before any listener can fire, so a
+    // shutdown racing this spawn still has something to kill.
+    opts.onChild?.(child);
+
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8');
       if (stdout.length > 1_000_000) {
@@ -263,6 +283,14 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
     });
     child.on('error', (err: Error) => {
       finish(cpuVerdict(`GPU probe process error: ${err.message}`));
+    });
+    // An unhandled 'error' on a stream throws in the embedding process. Attach
+    // a listener so a mid-transfer stream failure becomes a CPU verdict.
+    child.stdout?.on('error', (err: Error) => {
+      finish(cpuVerdict(`GPU probe output stream error: ${err.message}`));
+    });
+    child.stderr?.on('error', () => {
+      // stderr is diagnostic only; never let its failure decide the verdict.
     });
     child.on('close', (code: number | null, signal: string | null) => {
       if (code !== 0) {

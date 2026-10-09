@@ -42,7 +42,7 @@ import type {
   RetrievalSurface,
 } from '../types.js';
 import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
-import { activeGpuVerdict, type GpuProbeVerdict } from './gpu-probe.js';
+import { activeGpuVerdict, setActiveGpuVerdict, type GpuProbeVerdict } from './gpu-probe.js';
 import {
   EXTERNAL_SETTING_KEYS,
   ExternalProviderState,
@@ -676,11 +676,22 @@ export class LlamaEngine implements EngineSurface {
     return { backend: verdict.backend, ok: verdict.ok, reason: verdict.reason, device: verdict.device ?? null };
   }
 
-  /** The resident reuse key: everything a backend is BUILT from that a
-   *  settings change can alter. Model path included so a profile file swap
-   *  reloads too. */
+  /** The resident reuse key for the NEXT load: everything a backend is built
+   *  from that a settings change can alter. Model path included so a profile
+   *  file swap reloads too. */
   private backendIdentityFor(profile: InferenceProfileName, modelPath: string): string {
-    return [profile, modelPath, this.effectiveThreads(), this.effectiveGpuBackend()].join('|');
+    return this.identityFrom(profile, modelPath, this.effectiveThreads(), this.effectiveGpuBackend());
+  }
+
+  /** The key built from an EXPLICIT set of construction values, so a load can
+   *  record what it really used rather than what live state says now. */
+  private identityFrom(
+    profile: InferenceProfileName,
+    modelPath: string,
+    threads: number,
+    backend: GpuBackendName,
+  ): string {
+    return [profile, modelPath, threads, backend].join('|');
   }
 
   private modelPathFor(profile: InferenceProfileName): string {
@@ -791,9 +802,14 @@ export class LlamaEngine implements EngineSurface {
       if (backendName === 'vulkan' && !this.gpuIsForced()) {
         const reason = `GPU load failed, so this machine is now using CPU inference: ${err instanceof Error ? err.message : String(err)}`;
         console.warn(`[trainingapp-backend] ${reason}`);
-        // Update the in-memory holder AND the sidecar, so the next load in this
-        // session resolves to cpu instead of re-attempting the failing GPU on
-        // every subsequent request.
+        // Publish the downgrade to the SHARED holder the default `gpuVerdict`
+        // seam reads. This is what makes it work in production: the engine is
+        // constructed by resolveNodeEngine before any host exists, so a
+        // host-supplied callback could never be wired there. Writing it here
+        // means the very next load in this session resolves to cpu instead of
+        // re-attempting a failing GPU on every subsequent request.
+        setActiveGpuVerdict({ backend: 'cpu', ok: false, reason, device: null });
+        // The optional hook remains for a caller that wants to persist it.
         this.onGpuLoadFailure?.({ backend: 'cpu', ok: false, reason, device: null });
         backendName = 'cpu';
         try {
@@ -819,7 +835,13 @@ export class LlamaEngine implements EngineSurface {
       backend,
       profile,
       inFlight: 0,
-      backendIdentity: this.backendIdentityFor(profile, modelPath),
+      // Built from the values this load ACTUALLY used - `backendName` captured
+      // before the awaits - not from live state re-read afterwards. A verdict
+      // that lands mid-load would otherwise be folded into the key while the
+      // resident was built from the old one: the next query would compute the
+      // same (post-adoption) key, see a match, and reuse a resident that runs
+      // the previous backend forever, while the status reports the new one.
+      backendIdentity: this.identityFrom(profile, modelPath, threads, backendName),
     };
     this.resident = entry;
     return entry;

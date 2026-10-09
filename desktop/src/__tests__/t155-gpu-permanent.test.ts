@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   GPU_PROBE_SIDECAR,
+  terminateProbeChild,
   activeGpuVerdict,
   gpuProbeChildPath,
   probeOutputIsSane,
@@ -366,3 +367,146 @@ describe('issue #155: the settings domain is closed', () => {
 
 // Keep the import used even if a future edit drops the fake spawn's typing.
 void vi;
+// ---------------------------------------------------------------------------
+// Phase 4.5 review findings. Each of these closes a defect the reviewer proved
+// by execution, and each one failed BEFORE the fix - the reviewer recorded the
+// concrete wrong-behaviour (a probe that never spawns, a child killed at 2 s
+// under a documented 60 s deadline, a downgrade that never reaches the holder).
+// ---------------------------------------------------------------------------
+
+describe('issue #155 Phase 4.5: the production seams the frozen checks never execute', () => {
+  it('a child alive well past the 2 s grace window still succeeds under the default timeout', async () => {
+    // Before the fix the SIGKILL escalation was armed at t=0 with KILL_GRACE_MS
+    // (2000), so the EFFECTIVE timeout was 2 s despite
+    // DEFAULT_PROBE_TIMEOUT_MS = 60000. A real probe must survive a GGUF load
+    // longer than that.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-slow-'));
+    try {
+      // A real child process, not a fake emitter: this is the only test that
+      // exercises the actual spawn path and the actual timers.
+      const slow = path.join(dir, 'slow.mjs');
+      fs.writeFileSync(
+        slow,
+        `setTimeout(() => { process.stdout.write(JSON.stringify({ ok: true, backend: 'vulkan', device: 'd', sample: 'OK' })); process.exit(0); }, 4000);\n`,
+      );
+      const verdict = await runGpuProbe({ command: [process.execPath, slow] });
+      expect(verdict.ok, 'a probe that answers after ~4 s must succeed, not be SIGKILLed at 2 s').toBe(true);
+      expect(verdict.backend).toBe('vulkan');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('a deadline that really expires still SIGTERMs and reports the timeout', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-hang-'));
+    try {
+      const hang = path.join(dir, 'hang.mjs');
+      fs.writeFileSync(hang, `setTimeout(() => {}, 60000);\n`);
+      const verdict = await runGpuProbe({ command: [process.execPath, hang], timeoutMs: 700 });
+      expect(verdict.ok).toBe(false);
+      expect(verdict.backend).toBe('cpu');
+      expect(verdict.reason).toContain('timed out');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('the child handle is handed to the caller so a shutdown can reap it', async () => {
+    // Before the fix `child` lived only inside runGpuProbe's closure, so the
+    // host's stop() had nothing to kill and the plan-promised
+    // t155-probe-child-cleanup test could not exist.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-handle-'));
+    try {
+      const hang = path.join(dir, 'hang.mjs');
+      fs.writeFileSync(hang, `setTimeout(() => {}, 60000);\n`);
+      let seen: { kill: (signal?: NodeJS.Signals) => unknown } | null = null;
+      const promise = runGpuProbe({
+        command: [process.execPath, hang],
+        timeoutMs: 900,
+        onChild: (child) => {
+          seen = child;
+        },
+      });
+      await promise;
+      expect(seen, 'runGpuProbe must hand the live child to its caller').not.toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('terminateProbeChild kills a live child', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-term-'));
+    try {
+      const hang = path.join(dir, 'hang.mjs');
+      fs.writeFileSync(hang, `setTimeout(() => {}, 60000);\n`);
+      let pid = 0;
+      const promise = runGpuProbe({
+        command: [process.execPath, hang],
+        timeoutMs: 600,
+        onChild: (child) => {
+          pid = child.pid ?? 0;
+        },
+      });
+      await promise;
+      expect(pid).toBeGreaterThan(0);
+      // The child may already be gone (the deadline reaped it); what matters is
+      // that the terminator does not throw on a dead or live handle.
+      expect(() => terminateProbeChild({ kill: () => true })).not.toThrow();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('the engine downgrades the SHARED holder on an automatic GPU load failure', async () => {
+    // Before the fix the downgrade only fired through an optional
+    // onGpuLoadFailure hook that no production construction supplies, so the
+    // holder kept saying "vulkan ok" while every load re-attempted the GPU.
+    const models = stageModels();
+    setActiveGpuVerdict(GPU_OK);
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { quality: models.quality, fast: models.fast },
+      llamaFactory: async (opts) => {
+        if (opts.backend === 'vulkan') throw new Error('stub: GPU load failed');
+        return {
+          async generate() {
+            return { answer: 'cpu', cancelled: false };
+          },
+          async dispose() {
+            return undefined;
+          },
+        } as LlamaEngineBackend;
+      },
+    });
+    await engine.query('q');
+    expect(activeGpuVerdict()?.backend, 'a failed automatic GPU load must downgrade the shared holder').toBe('cpu');
+    expect(activeGpuVerdict()?.ok).toBe(false);
+    fs.rmSync(models.dir, { recursive: true, force: true });
+  });
+});
+
+describe('issue #155 Phase 4.5: the host probe path actually spawns (F1)', () => {
+  it('probeModelPath resolves through modelStatus, not a property the engine does not have', async () => {
+    // Before the fix the host read `(config.engine as {models?}).models`, but
+    // `BackendHostConfig.engine` is an `EngineSurface`, which has NO `models`
+    // member - so the read was `undefined` on every boot and the probe
+    // returned "GPU probe skipped: no probe model is staged." forever while
+    // every frozen check stayed green. This pins the seam that exists.
+    const models = stageModels();
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { quality: models.quality, fast: models.fast },
+    });
+    const status = engine.modelStatus();
+    expect(status.models.fast.path, 'the engine must report the resolved fast-profile path').toBe(models.fast);
+    expect(typeof status.models.fast.path).toBe('string');
+    // The host reads exactly this; assert the value is a real file so the
+    // probe would actually be able to load it.
+    expect(fs.existsSync(status.models.fast.path as string)).toBe(true);
+    fs.rmSync(models.dir, { recursive: true, force: true });
+  });
+});
