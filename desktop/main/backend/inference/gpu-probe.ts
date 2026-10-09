@@ -32,9 +32,13 @@ export interface GpuProbeVerdict {
 }
 
 /**
- * The process-wide ACTIVE verdict. One writer (the backend host, which runs the
- * async probe) and one reader (the engine, through a sync seam, because the
- * verdict must be readable at model-load time). A null value means "never
+ * The process-wide ACTIVE verdict. TWO writers, both deliberate: the backend
+ * host (which runs the async probe and adopts its result) and the engine
+ * itself (which downgrades the verdict when an automatic GPU load fails - it
+ * cannot route that through the host, because the engine is constructed before
+ * any host exists). One reader: the engine, through a sync seam, because the
+ * verdict must be readable at model-load time. Both writes replace the whole
+ * object on one thread, so there is no torn read. A null value means "never
  * probed", which the engine resolves to CPU.
  */
 let activeVerdict: GpuProbeVerdict | null = null;
@@ -181,6 +185,9 @@ export interface GpuProbeRunOptions {
    * shutdown cannot reach it.
    */
   onChild?: (child: { kill: (signal?: NodeJS.Signals) => unknown }) => void;
+  /** Called once the probe has settled. Lets a caller drop per-probe state
+   *  (the host uses it to clear its shutdown-abandoned flag). */
+  onSettled?: () => void;
 }
 
 interface ProbeChildReport {
@@ -212,9 +219,12 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
       if (settled) return;
       settled = true;
       clearTimeout(deadline);
-      // `escalate` is undefined until the deadline fires, so this must be
-      // conditional rather than clearing a timer that does not exist yet.
-      if (escalate !== undefined) clearTimeout(escalate);
+      // Clear the escalation ONLY when we did not just arm it. The deadline
+      // callback arms `escalate` and then calls finish() in the same tick, so an
+      // unconditional clear cancelled it ~0 ms after arming it and SIGKILL could
+      // never fire - dead code behind a comment claiming sidecar-manager parity.
+      if (escalate !== undefined && !armed) clearTimeout(escalate);
+      opts.onSettled?.();
       resolve(verdict);
     };
 
@@ -222,16 +232,21 @@ export async function runGpuProbe(opts: GpuProbeRunOptions = {}): Promise<GpuPro
     // t=0. Arming it up front capped the EFFECTIVE timeout at KILL_GRACE_MS
     // (2 s) while the documented default is DEFAULT_PROBE_TIMEOUT_MS (60 s):
     // any child still loading its GGUF past 2 s was killed and reported as a
-    // failed device. This is the terminate-then-escalate shape proven in
-    // sidecar-manager.ts:244-249 - SIGTERM first, SIGKILL only for a child
-    // that ignores it.
+    // failed device.
+    //
+    // Ordering note: unlike sidecar-manager.ts:244-249, this resolves the
+    // promise from inside the deadline callback, so `finish` must NOT clear the
+    // timer it just armed - otherwise SIGKILL is unreachable. `armed` records
+    // which case we are in.
     let escalate: NodeJS.Timeout | undefined;
+    let armed = false;
     const deadline = setTimeout(() => {
       try {
         child.kill('SIGTERM');
       } catch {
         // already gone
       }
+      armed = true;
       escalate = setTimeout(() => {
         try {
           child.kill('SIGKILL');

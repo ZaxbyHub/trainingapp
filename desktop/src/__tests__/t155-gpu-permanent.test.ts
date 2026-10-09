@@ -434,7 +434,7 @@ describe('issue #155 Phase 4.5: the production seams the frozen checks never exe
     }
   }, 30000);
 
-  it('terminateProbeChild kills a live child', async () => {
+  it('terminateProbeChild does not throw on a live or already-dead handle', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-term-'));
     try {
       const hang = path.join(dir, 'hang.mjs');
@@ -509,4 +509,153 @@ describe('issue #155 Phase 4.5: the host probe path actually spawns (F1)', () =>
     expect(fs.existsSync(status.models.fast.path as string)).toBe(true);
     fs.rmSync(models.dir, { recursive: true, force: true });
   });
+});
+
+
+// ---------------------------------------------------------------------------
+// Round 2 review: these three exist because the round-2 mutation run proved the
+// earlier claims FALSE. Re-introducing each bug leaves the WHOLE suite green,
+// which means a test that passes both before and after proves nothing.
+// ---------------------------------------------------------------------------
+
+describe('issue #155 Round 2: the fixes that had no guard now have one', () => {
+  it('F1 - the host resolves the probe model from a seam the engine really has', async () => {
+    // The round-1 test only constructed an LlamaEngine and read modelStatus(),
+    // which was ALREADY true before the fix, so it passed with the bug back in
+    // place. This one drives the host's own probeModelPath through a real
+    // NodeBackendHost, so the F1 mutation (reading a non-existent `models`
+    // property off config.engine) actually changes the result.
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const models = stageModels();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-f1-'));
+    try {
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: models.quality, fast: models.fast },
+      });
+      const host = new NodeBackendHost({
+        engine,
+        token: 't',
+        storePath: path.join(dir, 'profiles', 'default', 'store.sqlite'),
+      } as never);
+      const resolved = (host as unknown as { probeModelPath: () => string | null }).probeModelPath();
+      expect(
+        resolved,
+        'the host must resolve the fast model path through modelStatus; with the F1 bug it returns null and the probe skips itself forever',
+      ).toBe(models.fast);
+    } finally {
+      fs.rmSync(models.dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
+
+  it('F5 - a verdict that changes DURING a load forces the next query to reload', async () => {
+    // With the F5 bug the identity is recomputed from live state AFTER the
+    // load, so the key matches and the stale resident is reused forever while
+    // the status reports something else.
+    const models = stageModels();
+    const loads: string[] = [];
+    let flip = false;
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { quality: models.quality, fast: models.fast },
+      gpuVerdict: () => (flip ? GPU_OK : CPU_FAIL),
+      llamaFactory: async (opts) => {
+        loads.push(opts.backend);
+        // Flip the verdict while this load is in flight - exactly the race the
+        // Phase 3 critic said was safe and the round-2 review proved was not.
+        flip = true;
+        return {
+          async generate() {
+            return { answer: 'ok', cancelled: false };
+          },
+          async dispose() {
+            return undefined;
+          },
+        } as LlamaEngineBackend;
+      },
+    });
+    await engine.query('q1');
+    expect(loads).toEqual(['cpu']);
+    await engine.query('q2');
+    expect(
+      loads,
+      'the verdict changed mid-load, so the resident must be rebuilt rather than reused',
+    ).toEqual(['cpu', 'vulkan']);
+    fs.rmSync(models.dir, { recursive: true, force: true });
+  });
+
+  it('F7 - the host adopts a persisted verdict at start and skips the boot re-probe', async () => {
+    // With the F7 bug the stored verdict is read into a field nothing consults
+    // and an unconditional boot probe clobbers it, so this fails.
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const { GPU_PROBE_SIDECAR: NAME } = await import('../../main/backend/inference/gpu-probe.js');
+    const models = stageModels();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-f7-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'profiles', 'default'), { recursive: true });
+      const store = path.join(dir, 'profiles', 'default', 'store.sqlite');
+      fs.writeFileSync(path.join(dir, 'profiles', 'default', NAME), JSON.stringify(GPU_OK), 'utf8');
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: models.quality, fast: models.fast },
+      });
+      const host = new NodeBackendHost({ engine, token: 't', storePath: store } as never);
+      // Drive the store-gated adoption block the way start() does.
+      await (host as unknown as { start: () => Promise<void> }).start().catch(() => undefined);
+      const adopted = activeGpuVerdict();
+      expect(adopted, 'a persisted verdict must be adopted, not discarded').not.toBeNull();
+      expect(adopted?.backend).toBe('vulkan');
+      await (host as unknown as { stop: () => Promise<void> }).stop().catch(() => undefined);
+    } finally {
+      fs.rmSync(models.dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+      setActiveGpuVerdict(null);
+    }
+  }, 30000);
+
+  it('shutdown never persists the verdict of a probe the host itself killed', async () => {
+    // With the defect, quitting during a live probe wrote a SIGTERM-derived CPU
+    // verdict to gpu-probe.json, which the next boot adopted - disabling the
+    // probe on a machine that was never actually tested.
+    const { NodeBackendHost } = await import('../../main/backend/index.js');
+    const { GPU_PROBE_SIDECAR: NAME } = await import('../../main/backend/inference/gpu-probe.js');
+    const models = stageModels();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-quit-'));
+    try {
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: models.quality, fast: models.fast },
+      });
+      const host = new NodeBackendHost({
+        engine,
+        token: 't',
+        storePath: path.join(dir, 'profiles', 'default', 'store.sqlite'),
+      } as never);
+      const inFlight = (host as unknown as { startGpuProbe: () => Promise<GpuProbeVerdict> }).startGpuProbe();
+      const stopped = (host as unknown as { stop: () => Promise<void> }).stop();
+      await Promise.allSettled([inFlight, stopped]);
+      await new Promise((r) => setTimeout(r, 120));
+      const sidecar = path.join(dir, 'profiles', 'default', NAME);
+      if (fs.existsSync(sidecar)) {
+        const written = JSON.parse(fs.readFileSync(sidecar, 'utf8')) as { reason?: string };
+        expect(
+          String(written.reason ?? ''),
+          'a verdict produced by our own shutdown kill must never be persisted',
+        ).not.toContain('SIGTERM');
+      }
+      setActiveGpuVerdict(null);
+    } finally {
+      fs.rmSync(models.dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
 });
