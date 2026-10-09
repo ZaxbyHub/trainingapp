@@ -888,7 +888,12 @@ const REAL_FAST_MODEL =
   'E:/ZCode/trainingapp/desktop/installer-resources/models/llm-fast/lfm2.5-vl-450m/model.gguf';
 
 describe('issue #155: the real probe, end to end', () => {
-  it('reports a real ADAPTER identity, not the backend name', async () => {
+  // A runner-visible SKIP, not an early `return`. An early return inside it()
+  // is recorded as PASSED, which is indistinguishable in the totals from a real
+  // run — so a machine with no weights would silently report this as exercised.
+  // `it.skipIf` keeps the skip visible in the runner output and in the counts.
+  const hasRealModel = fs.existsSync(REAL_FAST_MODEL);
+  it.skipIf(!hasRealModel)('reports a real ADAPTER identity, not the backend name', async () => {
     if (!fs.existsSync(REAL_FAST_MODEL)) {
       console.warn(`t155: skipping the real-probe test - no staged model at ${REAL_FAST_MODEL}`);
       return;

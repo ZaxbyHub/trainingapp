@@ -9,7 +9,7 @@
 // It loads the model handed to it on argv (the host passes the FAST profile's
 // GGUF): the probe validates the BACKEND, the backend behaves identically for
 // both profiles, and loading the 2.6 GB quality GGUF to answer a question the
-// 332 MB fast GGUF answers identically would make first boot needlessly slow.
+// 229 MB fast GGUF answers identically would make first boot needlessly slow.
 import fs from 'node:fs';
 import type * as Nlc from 'node-llama-cpp';
 
