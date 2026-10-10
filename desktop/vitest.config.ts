@@ -27,11 +27,12 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/__tests__/**/*.test.ts'],
-    // Several inference tests perform a model construct/dispose cycle per
-    // query and sit near vitest's 5s default once the whole suite is loaded on
-    // one machine, so a ceiling - not a product defect - decides pass or fail.
-    // Raised for the whole suite rather than patched per offender, because the
-    // offenders move with load; assertions are unchanged.
-    testTimeout: 30_000,
+    // PR #159 review PRR-028: this config previously raised the suite-wide
+    // budget to 30s. That was reverted because the diff ALREADY carries 14
+    // explicit per-test `}, 30_000)` budgets in the two files it touched (the
+    // repo's existing idiom - external-engine.test.ts, d6-learn-host-wiring,
+    // d4-links-ac2-install and others do the same), so the global raise only
+    // bought 6x hang-detection latency across 109 untouched files. Verified:
+    // the whole desktop suite passes at vitest's 5s default.
   },
 });

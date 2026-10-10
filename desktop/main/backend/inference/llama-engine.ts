@@ -42,7 +42,7 @@ import type {
   RetrievalSurface,
 } from '../types.js';
 import { buildPenalties, PENALTY_FULL_CONTEXT_TOKENS, type PenaltyOptions } from './penalties.js';
-import { activeGpuVerdict, setActiveGpuVerdict, type GpuProbeVerdict } from './gpu-probe.js';
+import { activeGpuVerdict, setActiveGpuVerdict, writeGpuProbeVerdict, type GpuProbeVerdict } from './gpu-probe.js';
 import {
   EXTERNAL_SETTING_KEYS,
   ExternalProviderState,
@@ -120,6 +120,13 @@ export interface LlamaEngineOptions {
   modelDir?: string;
   /** Electron injects app.getPath('userData'); models live under <userData>/models. */
   userDataPath?: string;
+  /** issue #155 review PRR-003: the directory holding `gpu-probe.json`
+   *  (`path.dirname(storePath)`). Supplied so the engine can PERSIST its own
+   *  automatic-path GPU load-failure downgrade. It cannot route that write
+   *  through the backend host, which is constructed after it; without this the
+   *  downgrade existed only in memory and was lost on restart, so an affected
+   *  machine re-paid a failing GPU load on every boot. */
+  gpuVerdictDir?: string;
   profile?: ProfileSetting;
   profileThresholdGb?: number;
   threads?: number;
@@ -299,8 +306,17 @@ async function defaultLlamaFactory(opts: LlamaEngineFactoryOptions): Promise<Lla
   // has to state the request, not decide it. CUDA is excluded because the
   // installer does not ship it - an NVIDIA host falls back rather than
   // half-working (AC12).
+  //
+  // PR #159 review PRR-026: `build: 'never'` is passed for the same reason the
+  // probe child passes it. node-llama-cpp defaults to `'never'` under Electron
+  // but `'auto'` under plain Node, and `backend/dev-server.ts` reaches this same
+  // factory on the vulkan branch - where `'auto'` would attempt a FROM-SOURCE
+  // cmake build if no prebuilt matched. The probe child was already pinned; the
+  // engine that actually loads the model was not.
   const llama = await nlc.getLlama(
-    opts.backend === 'vulkan' ? { gpu: { type: 'auto', exclude: ['cuda'] } } : { gpu: false },
+    opts.backend === 'vulkan'
+      ? { gpu: { type: 'auto', exclude: ['cuda'] }, build: 'never' }
+      : { gpu: false, build: 'never' },
   );
   // Explicit gpuLayers (llama.cpp #29277: a device whose free-memory figure is
   // wrong must not silently size the offload from it).
@@ -439,6 +455,8 @@ export function resolveNodeEngine(
     gpuVerdict?: () => GpuProbeVerdict | null;
     /** issue #155: notified when an automatic GPU load fails. */
     onGpuLoadFailure?: (verdict: GpuProbeVerdict) => void;
+    /** issue #155 review PRR-003: where the engine persists that downgrade. */
+    gpuVerdictDir?: string;
   },
 ): EngineSurface {
   if (env.TRAININGAPP_DESKTOP_ENGINE === 'stub') {
@@ -458,6 +476,7 @@ export function resolveNodeEngine(
     ...(overrides?.externalProvider !== undefined ? { externalProvider: overrides.externalProvider } : {}),
     ...(overrides?.gpuVerdict !== undefined ? { gpuVerdict: overrides.gpuVerdict } : {}),
     ...(overrides?.onGpuLoadFailure !== undefined ? { onGpuLoadFailure: overrides.onGpuLoadFailure } : {}),
+    ...(overrides?.gpuVerdictDir !== undefined ? { gpuVerdictDir: overrides.gpuVerdictDir } : {}),
     profile,
     ...(threads !== undefined ? { threads } : {}),
   });
@@ -508,6 +527,14 @@ export class LlamaEngine implements EngineSurface {
   private readonly userDataPath: string | undefined;
   private readonly modelOverrides: { quality?: string; fast?: string };
   private resident: ResidentEntry | null = null;
+  /** issue #155 review PRR-009: set when a GPU load failed after the probe
+   *  reported a working device, cleared when a load succeeds. Distinct from the
+   *  verdict on purpose: the probe's finding is still true (the device works,
+   *  this load did not fit), so the persisted verdict is left alone and only the
+   *  reported status changes. */
+  private gpuLoadFailure: string | null = null;
+  /** issue #155 review PRR-003: where this engine persists its own downgrade. */
+  private readonly gpuVerdictDir: string | undefined;
   private loads = 0;
   private queue: Promise<unknown> = Promise.resolve();
   /**
@@ -555,6 +582,7 @@ export class LlamaEngine implements EngineSurface {
     this.onGpuLoadFailure = options.onGpuLoadFailure;
     this.modelDirOption = options.modelDir;
     this.userDataPath = options.userDataPath;
+    this.gpuVerdictDir = options.gpuVerdictDir;
     this.modelOverrides = options.models ?? {};
     this.external = new ExternalProviderState(options.externalProvider);
   }
@@ -660,20 +688,69 @@ export class LlamaEngine implements EngineSurface {
     return this.vulkanSetting === true || this.vulkanSetting === false;
   }
 
-  /** issue #155: the verdict as the API reports it. Absent verdict reads as a
-   *  CPU decision with a stated reason rather than an absent field, so the
-   *  renderer never has to guess. */
+  /** issue #155 review PRR-002 + PRR-009: the backend as the API reports it.
+   *
+   *  The contract (contracts/api.openapi.yaml) documents `backend` as "the
+   *  resolved compute backend ... `backend` is what runs". Reporting the raw
+   *  probe verdict instead made the field contradict the running backend in
+   *  BOTH pin directions: with `inference.vulkan:false` and a GPU-ok verdict
+   *  the app ran CPU while claiming Vulkan, and with `inference.vulkan:true`
+   *  and a CPU verdict it ran Vulkan while claiming failure. `ok` now means
+   *  "a GPU is actually in use", which is what the renderer's copy assumes.
+   *
+   *  Absent verdict still reads as a CPU decision with a stated reason rather
+   *  than an absent field, so the renderer never has to guess. */
   private gpuStatus(): { backend: GpuBackendName; ok: boolean; reason: string; device: string | null } {
+    const resolved = this.effectiveGpuBackend();
     const verdict = this.gpuVerdictFn();
-    if (verdict === null) {
+
+    // PRR-009: a GPU load that failed AFTER the probe said the device works.
+    // The probe's finding is still true - the device works, this load did not
+    // fit - so the verdict is deliberately left alone and the failure is
+    // reported here instead. Without this, a forced-GPU machine showed
+    // "GPU usable" in Settings while every request 503'd.
+    if (this.gpuLoadFailure !== null && resolved === 'vulkan') {
       return {
-        backend: 'cpu',
+        backend: 'vulkan',
         ok: false,
-        reason: 'GPU acceleration has not been tested on this machine yet; CPU inference is in use.',
+        reason: this.gpuLoadFailure,
+        device: verdict === null ? null : verdict.device ?? null,
+      };
+    }
+
+    if (resolved === 'cpu') {
+      if (verdict === null) {
+        return {
+          backend: 'cpu',
+          ok: false,
+          reason: 'GPU acceleration has not been tested on this machine yet; CPU inference is in use.',
+          device: null,
+        };
+      }
+      if (verdict.ok && verdict.backend === 'vulkan') {
+        // Only reachable via `inference.vulkan: false`: the probe found a
+        // working GPU and the operator pinned CPU anyway.
+        return {
+          backend: 'cpu',
+          ok: false,
+          reason: 'A working GPU was detected, but CPU inference is pinned in Settings.',
+          device: verdict.device ?? null,
+        };
+      }
+      return { backend: 'cpu', ok: false, reason: verdict.reason, device: verdict.device ?? null };
+    }
+
+    // resolved === 'vulkan'. Either the probe said yes, or the operator forced
+    // it against a non-positive verdict.
+    if (verdict === null || !verdict.ok || verdict.backend !== 'vulkan') {
+      return {
+        backend: 'vulkan',
+        ok: false,
+        reason: 'GPU inference is pinned in Settings, but the probe did not find a usable GPU device on this machine.',
         device: null,
       };
     }
-    return { backend: verdict.backend, ok: verdict.ok, reason: verdict.reason, device: verdict.device ?? null };
+    return { backend: 'vulkan', ok: true, reason: verdict.reason, device: verdict.device ?? null };
   }
 
   /** The resident reuse key for the NEXT load: everything a backend is built
@@ -809,7 +886,16 @@ export class LlamaEngine implements EngineSurface {
         // means the very next load in this session resolves to cpu instead of
         // re-attempting a failing GPU on every subsequent request.
         setActiveGpuVerdict({ backend: 'cpu', ok: false, reason, device: null });
-        // The optional hook remains for a caller that wants to persist it.
+        // PRR-003: persist it too. The engine is built before any host exists,
+        // so it cannot route this through `adoptGpuVerdict`; without writing the
+        // sidecar here the downgrade was lost on restart and the next boot
+        // re-read the stale GPU-ok verdict, skipped the probe, and re-paid the
+        // same failing GPU load. Best-effort: a write failure must not lose the
+        // in-memory downgrade that was just published.
+        if (this.gpuVerdictDir !== undefined) {
+          writeGpuProbeVerdict(this.gpuVerdictDir, { backend: 'cpu', ok: false, reason, device: null });
+        }
+        // The optional hook remains for a caller that wants to observe it too.
         this.onGpuLoadFailure?.({ backend: 'cpu', ok: false, reason, device: null });
         backendName = 'cpu';
         try {
@@ -822,6 +908,13 @@ export class LlamaEngine implements EngineSurface {
         }
       } else {
         this.markLoadFailed();
+        // PRR-009: a FORCED vulkan load that failed. The persisted verdict
+        // still says the device works, so `/status/models` would otherwise keep
+        // answering "GPU usable" while every request 503s. Record the failure
+        // so gpuStatus() reports the truth; a later successful load clears it.
+        if (backendName === 'vulkan') {
+          this.gpuLoadFailure = `GPU inference is pinned in Settings, but loading the ${profile} model on the GPU failed: ${err instanceof Error ? err.message : String(err)}`;
+        }
         // Corrupt/unloadable model: wrap into the 503-diagnostic error type,
         // carrying the underlying failure for the operator.
         throw new ModelNotConfiguredError(
@@ -830,6 +923,9 @@ export class LlamaEngine implements EngineSurface {
       }
     }
     this.loads += 1;
+    // A load that succeeded clears any prior forced-GPU failure: the reported
+    // status must reflect the CURRENT state, not a stale one (PRR-009).
+    this.gpuLoadFailure = null;
     this.markLoadReady();
     const entry: ResidentEntry = {
       backend,

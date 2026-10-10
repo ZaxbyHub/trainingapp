@@ -892,23 +892,27 @@ describe('issue #155: the real probe, end to end', () => {
   // is recorded as PASSED, which is indistinguishable in the totals from a real
   // run — so a machine with no weights would silently report this as exercised.
   // `it.skipIf` keeps the skip visible in the runner output and in the counts.
+  //
+  // PR #159 review PRR-007: the skipIf predicate gated ONLY the staged model.
+  // The second guard below (no compiled child) was still an early `return`, so a
+  // machine with the model but no `dist/` reported this as PASSED having
+  // asserted nothing - the exact failure mode the comment above describes.
+  // Both preconditions now live in the skip predicate; there is no `return`.
   const hasRealModel = fs.existsSync(REAL_FAST_MODEL);
-  it.skipIf(!hasRealModel)('reports a real ADAPTER identity, not the backend name', async () => {
-    if (!fs.existsSync(REAL_FAST_MODEL)) {
-      console.warn(`t155: skipping the real-probe test - no staged model at ${REAL_FAST_MODEL}`);
-      return;
+  // Under vitest this file runs from SOURCE, so the default child path
+  // (gpu-probe-child.js beside gpu-probe.js) does not exist - only the .ts
+  // does. The compiled child in dist/ IS the production artifact, so point at
+  // it explicitly when the source sibling is absent.
+  const defaultChild = gpuProbeChildPath();
+  const compiledChild = path.join(__dirname, '..', '..', 'dist', 'main', 'backend', 'inference', 'gpu-probe-child.js');
+  const command = fs.existsSync(defaultChild) ? undefined : [process.execPath, compiledChild];
+  const hasChild = command === undefined || fs.existsSync(command[1] as string);
+  it.skipIf(!hasRealModel || !hasChild)('reports a real ADAPTER identity, not the backend name', async () => {
+    if (!hasRealModel) {
+      throw new Error(`unreachable: skipIf should have skipped - no staged model at ${REAL_FAST_MODEL}`);
     }
-    // Under vitest this file runs from SOURCE, so the default child path
-    // (gpu-probe-child.js beside gpu-probe.js) does not exist - only the .ts
-    // does. The compiled child in dist/ IS the production artifact, so point at
-    // it explicitly when the source sibling is absent.
-    const defaultChild = gpuProbeChildPath();
-    const command = fs.existsSync(defaultChild)
-      ? undefined
-      : [process.execPath, path.join(__dirname, '..', '..', 'dist', 'main', 'backend', 'inference', 'gpu-probe-child.js')];
-    if (command !== undefined && !fs.existsSync(command[1] as string)) {
-      console.warn('t155: skipping the real-probe test - no compiled gpu-probe-child.js (run `npm --prefix desktop run compile` first)');
-      return;
+    if (!hasChild) {
+      throw new Error('unreachable: skipIf should have skipped - no compiled gpu-probe-child.js');
     }
     const verdict = await runGpuProbe({ command, args: [REAL_FAST_MODEL], timeoutMs: 120_000 });
     if (!verdict.ok) {
@@ -930,4 +934,194 @@ describe('issue #155: the real probe, end to end', () => {
     expect(verdict.device).not.toBe('vulkan');
     console.log(`t155: real probe -> backend=${verdict.backend} device=${verdict.device}`);
   }, 180_000);
+});
+
+// ---------------------------------------------------------------------------
+// swarm-pr-review round 1 (PR #159): the status layer must report the backend
+// that RUNS, not the probe's opinion.
+// ---------------------------------------------------------------------------
+
+describe('issue #155 review: the reported backend is the backend that runs', () => {
+  function harness(verdict: typeof GPU_OK | typeof CPU_FAIL, opts: { force: boolean | 'auto' }) {
+    const models = stageModels();
+    const ran: string[] = [];
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { quality: models.quality, fast: models.fast },
+      gpuVerdict: () => verdict,
+      llamaFactory: async (o) => {
+        ran.push(o.backend);
+        return {
+          async generate() {
+            return { answer: `${o.backend} answer`, cancelled: false };
+          },
+          async dispose() {},
+        } as LlamaEngineBackend;
+      },
+    });
+    if (opts.force !== 'auto') engine.applySettingsPatch({ 'inference.vulkan': opts.force });
+    return { engine, ran, models };
+  }
+
+  it('PRR-002 - pinning CPU reports cpu even when the probe found a working GPU', async () => {
+    const { engine, ran } = harness(GPU_OK, { force: false });
+    await engine.query('q');
+    expect(ran).toEqual(['cpu']);
+    const status = engine.modelStatus();
+    expect(status.gpu?.backend, 'the contract says `backend` is what runs').toBe('cpu');
+    expect(status.gpu?.ok).toBe(false);
+    expect(status.gpu?.reason).toContain('pinned');
+  });
+
+  it('PRR-002 - pinning GPU reports vulkan even when the probe failed', async () => {
+    const { engine, ran } = harness(CPU_FAIL, { force: true });
+    await engine.query('q');
+    expect(ran).toEqual(['vulkan']);
+    const status = engine.modelStatus();
+    expect(status.gpu?.backend).toBe('vulkan');
+    expect(status.gpu?.ok).toBe(false);
+  });
+
+  it('PRR-002 - auto still follows the verdict', async () => {
+    const { engine, ran } = harness(GPU_OK, { force: 'auto' });
+    await engine.query('q');
+    expect(ran).toEqual(['vulkan']);
+    expect(engine.modelStatus().gpu?.backend).toBe('vulkan');
+    expect(engine.modelStatus().gpu?.ok).toBe(true);
+  });
+
+  it('PRR-009 - a forced GPU load that fails is reported, not hidden behind the stale probe verdict', async () => {
+    const models = stageModels();
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { quality: models.quality, fast: models.fast },
+      gpuVerdict: () => GPU_OK,
+      llamaFactory: async () => {
+        throw new Error('stub: out of device memory loading the quality model');
+      },
+    });
+    engine.applySettingsPatch({ 'inference.vulkan': true });
+    await expect(engine.query('q')).rejects.toThrow();
+    // The defect: status still said the probe verdict - vulkan / ok:true -
+    // while every request 503'd.
+    const status = engine.modelStatus();
+    expect(status.gpu?.ok, 'a failed forced GPU load must not report ok:true').toBe(false);
+    expect(status.gpu?.reason).toContain('pinned in Settings');
+    expect(status.gpu?.reason).toContain('out of device memory');
+  });
+
+  it('PRR-009 - the failure clears once a load succeeds again', async () => {
+    const models = stageModels();
+    let fail = true;
+    const engine = new LlamaEngine({
+      profile: 'fast',
+      freeMemBytes: () => 8 * GB,
+      cpuCount: () => 8,
+      models: { quality: models.quality, fast: models.fast },
+      gpuVerdict: () => GPU_OK,
+      llamaFactory: async () => {
+        if (fail) throw new Error('stub: transient GPU failure');
+        return { async generate() { return { answer: 'a', cancelled: false }; }, async dispose() {} } as LlamaEngineBackend;
+      },
+    });
+    engine.applySettingsPatch({ 'inference.vulkan': true });
+    await expect(engine.query('q')).rejects.toThrow();
+    expect(engine.modelStatus().gpu?.ok).toBe(false);
+    fail = false;
+    engine.applySettingsPatch({ 'inference.profile': 'quality' });
+    await engine.query('q');
+    expect(engine.modelStatus().gpu?.ok, 'a successful load must clear the failure').toBe(true);
+  });
+
+  it('PRR-003 - the automatic downgrade is PERSISTED, so a restart does not re-pay it', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 't155-persist-'));
+    try {
+      const models = stageModels();
+      const engine = new LlamaEngine({
+        profile: 'fast',
+        freeMemBytes: () => 8 * GB,
+        cpuCount: () => 8,
+        models: { quality: models.quality, fast: models.fast },
+        gpuVerdict: () => GPU_OK,
+        gpuVerdictDir: dir,
+        llamaFactory: async (o) => {
+          if (o.backend === 'vulkan') throw new Error('stub: gpu load failed');
+          return { async generate() { return { answer: 'cpu', cancelled: false }; }, async dispose() {} } as LlamaEngineBackend;
+        },
+      });
+      await engine.query('q');
+      const stored = readGpuProbeVerdict(dir);
+      expect(stored, 'the downgrade must reach disk, or boot #2 re-reads the stale GPU-ok verdict').not.toBeNull();
+      expect(stored?.backend).toBe('cpu');
+      expect(stored?.ok).toBe(false);
+    } finally {
+      setActiveGpuVerdict(null);
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// swarm-pr-review PRR-006: the child module had ZERO coverage in any CI job.
+// The real-probe test above is gated on staged weights, which CI does not have,
+// so every line of gpu-probe-child.ts could be deleted with CI green.
+// The test below pins the child's CONTRACT - one JSON line on stdout, exit 0,
+// a non-empty reason on every failure shape - and needs neither a GPU nor any
+// weights: the missing-model path is the child's own `fail()`.
+// ---------------------------------------------------------------------------
+
+describe('issue #155 review: the probe child contract, without a GPU or weights', () => {
+  const compiledChild = path.join(
+    __dirname,
+    '..',
+    '..',
+    'dist',
+    'main',
+    'backend',
+    'inference',
+    'gpu-probe-child.js',
+  );
+  // Needs the COMPILED child (a spawned node cannot load the .ts source). CI
+  // compiles before the acceptance step - see desktop-build.yml.
+  const hasChild = fs.existsSync(compiledChild);
+
+  it.skipIf(!hasChild)('a missing probe model exits 0 with exactly one JSON verdict line', async () => {
+    const missing = path.join(os.tmpdir(), 't155-no-such-model.gguf');
+    const verdict = await runGpuProbe({
+      command: [process.execPath, compiledChild],
+      args: [missing],
+      timeoutMs: 30_000,
+    });
+    expect(verdict.ok, 'no model cannot be a usable GPU').toBe(false);
+    expect(verdict.backend).toBe('cpu');
+    expect(verdict.reason).not.toBe('');
+    expect(verdict.reason).toContain('not staged');
+    expect(verdict.device, 'a failed probe must not invent a device identity').toBeNull();
+  }, 60_000);
+
+  it.skipIf(!hasChild)('the child writes exactly ONE json line, and the parent parses it whole', async () => {
+    const missing = path.join(os.tmpdir(), 't155-no-such-model-2.gguf');
+    const child = (await import('node:child_process')).spawn(process.execPath, [compiledChild, missing], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    child.stdout?.on('data', (c: Buffer) => {
+      stdout += c.toString('utf8');
+    });
+    const code: number = await new Promise((resolve) => {
+      child.on('close', (c) => resolve(c ?? -1));
+    });
+    expect(code, 'every failure shape must exit 0 so the parent reads the reason').toBe(0);
+    const lines = stdout.split('\n').filter((l) => l.trim() !== '');
+    expect(lines, 'the child must emit exactly one line, not a bare JSON blob the parser has to guess at').toHaveLength(1);
+    const parsed = JSON.parse(lines[0] as string) as Record<string, unknown>;
+    expect(typeof parsed.ok).toBe('boolean');
+    expect(parsed.backend).toBe('cpu');
+    expect(typeof parsed.reason).toBe('string');
+  }, 60_000);
 });

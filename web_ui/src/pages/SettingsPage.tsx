@@ -1103,9 +1103,14 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                 isChecked={(value) => desktopGpu === value}
                 onChange={(value) => handleDesktopGpuChange(value)}
                 // A checked radio fires no change event, so re-selecting the
-                // current choice (e.g. re-pinning 'auto' to re-run the probe
-                // decision) PUTs the same value on click instead — same
+                // current choice re-PUTs the same value instead — the same
                 // pattern as the response-quality preset cards above.
+                //
+                // PR #159 review PRR-031: this previously claimed re-selecting
+                // 'auto' would "re-run the probe decision". It does not — a
+                // settings PUT only re-reads the EXISTING verdict; a re-probe is
+                // the separate button below. The comment promised an affordance
+                // the handler never had.
                 onOptionClick={(value) => {
                   if (desktopGpu === value) handleDesktopGpuChange(value);
                 }}
@@ -1133,20 +1138,24 @@ function SettingsPageInner({ initialSection, sectionRequest, reloadPage }: Setti
                 ]}
               />
               <p className="settings-text">
-                <button
-                  type="button"
-                  className="ui-button"
-                  onClick={handleGpuTest}
-                  disabled={gpuTestPending}
-                >
+                {/* PR #159 review PRR-024: this was the only hand-rolled
+                    <button> in web_ui/src, carrying neither `ui-focusable`
+                    (the project's focus ring) nor a variant class. The Button
+                    primitive supplies the ring, the busy spinner and
+                    aria-busy/aria-disabled. */}
+                <Button variant="secondary" onClick={handleGpuTest} loading={gpuTestPending} disabled={gpuTestPending}>
                   {gpuTestPending ? 'Testing…' : 'Test GPU acceleration again'}
-                </button>
+                </Button>
               </p>
-              {gpuTestNote && (
-                <p className="settings-text" role="status">
-                  {gpuTestNote}
-                </p>
-              )}
+              {/* PR #159 review PRR-023: the result was written into a
+                  role="status" region mounted together with its own text, which
+                  is not reliably announced. The repo documents the opposite
+                  rule (App.tsx:62-64, design-language.md:150) and mounts its
+                  other regions unconditionally, so this one is always in the
+                  accessibility tree and only its TEXT varies. */}
+              <p className="settings-text settings-live" role="status">
+                {gpuTestNote}
+              </p>
             </div>
           )}
           <div className="settings-group">

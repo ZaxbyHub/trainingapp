@@ -63,6 +63,23 @@ different machine.
 | wllama | PENDING |
 | onnxruntime | PENDING |
 
+### reference-amd-igpu / reference-amd-dgpu / reference-nvidia
+
+Registered by PR #159 review PRR-038 so the GPU device matrix can name a machine that
+does not exist yet. `bench/append_results.py` refuses any row whose `machine` tag is
+absent from this registry, so the three `PENDING` rows in that matrix were previously
+unwritable. No such host has been measured; every field stays PENDING. Fill these in
+only on that hardware, using the same commands as `devstation` above.
+
+| field | reference-amd-igpu | reference-amd-dgpu | reference-nvidia |
+|---|---|---|---|
+| CPU model | PENDING | PENDING | PENDING |
+| RAM | PENDING | PENDING | PENDING |
+| OS build | PENDING | PENDING | PENDING |
+| GPU + driver | PENDING | PENDING | PENDING |
+| node-llama-cpp (the engine issue #155 probes) | PENDING | PENDING | PENDING |
+| Backend the probe selects | PENDING | PENDING | PENDING |
+
 ## Native llama.cpp CPU results
 
 One row per (model x quant x threads x prompt length); decode tok/s over the
@@ -144,6 +161,7 @@ see the provenance rule 4 above) on the real staged tree, machine-tagged:
 | devstation | models/reranker (ettin-reranker-32m-v1 q8 + root tokenizers) | 39,611,408 | rerank-worker dtype q8; AutoTokenizer loads from the model ROOT |
 | devstation | models/llm-quality (gemma-4-e2b-it Q4_K_M + mmproj) | 3,606,025,056 | ADR-0002; mmproj has no native consumer at E1 |
 | devstation | models/llm-fast (lfm2.5-vl-450m Q4_K_M + mmproj) | 332,128,736 | ADR-0002 |
+| devstation | backend packages EXCLUDED from the installer: @node-llama-cpp/win-x64-cuda (170,658,131) + win-x64-cuda-ext (362,957,501) | 533,615,632 | issue #155: unreachable - the probe passes `exclude: ['cuda']`. Measured `du -sb desktop/node_modules/@node-llama-cpp/win-x64-cuda{,-ext}`, i.e. 508.95 MiB / 533.6 MB decimal. The "~510 MB" quoted in `desktop/electron-builder.yml` is the MiB figure. PR #159 review PRR-037 |
 | devstation | packs (bundled-docs + training fixtures) | 1,695 | contracts/fixtures/packs layout fixtures |
 | devstation | docs (licenses.md) | 6,240 | the first-run licensing seam |
 | devstation | staged resources total | 4,111,872,009 | 3.83 GiB (17 model files after the review round added the reranker root tokenizers) |
@@ -167,12 +185,19 @@ re-measure them.
 
 | machine | device | backend selected | GPU offload | notes |
 |---|---|---|---|---|
-| devstation | Intel Arc Pro B50 (discrete), driver 32.0.101.8805 | vulkan | supportsGpuOffloading=true | measured: node-llama-cpp 3.20.0, same process reported gpu=false for the shipped CPU-only option and gpu=vulkan for `{gpu:{type:auto,exclude:[cuda]}}` |
-| devstation | Intel Arc Pro B50 (discrete), driver 32.0.101.8805 | cpu | gpu=false, supportsGpuOffloading=false | measured: the same host and the same node-llama-cpp 3.20.0 process under the shipped `{gpu:false}` option - the comparison the GPU row above is measured against |
+| devstation | Intel Arc Pro B50 (discrete), driver 32.0.101.8805 | vulkan | supportsGpuOffloading=true | measured: node-llama-cpp 3.20.0, same process reported gpu=false for the shipped CPU-only option and gpu=vulkan for `{gpu:{type:auto,exclude:[cuda]}}`. Reproduce: `node -e "import('node-llama-cpp').then(n=>n.getLlama({gpu:{type:'auto',exclude:['cuda']},build:'never'}).then(l=>console.log(l.gpu,l.supportsGpuOffloading)))"` |
+| devstation | Intel Arc Pro B50 (discrete), driver 32.0.101.8805 | cpu | gpu=false, supportsGpuOffloading=false | measured: the same host and the same node-llama-cpp 3.20.0 process under the shipped `{gpu:false}` option - the comparison the GPU row above is measured against. Reproduce: `node -e "import('node-llama-cpp').then(n=>n.getLlama({gpu:false,build:'never'}).then(l=>console.log(l.gpu,l.supportsGpuOffloading)))"` |
 | reference-i5 | 12th-gen Core i5 mobile, Intel Iris Xe integrated | PENDING | PENDING | no integrated-GPU host was available; prefill and decode tok/s and the probe's own verdict are unmeasured, and this is the floor-spec machine the speed bar for the quality tier depends on |
 | reference-amd-igpu | AMD integrated, RDNA | PENDING | PENDING | no AMD host was available; backend selection, probe verdict and throughput are unmeasured |
 | reference-amd-dgpu | AMD discrete, RDNA | PENDING | PENDING | no AMD host was available; backend selection, probe verdict and throughput are unmeasured |
 | reference-nvidia | NVIDIA discrete | PENDING | PENDING | no NVIDIA host was available; note the CUDA backend is deliberately not shipped, so this host is expected to resolve to Vulkan-or-CPU rather than CUDA |
+
+PR #159 review PRR-038: the three `reference-amd-*` / `reference-nvidia` tags above are
+not in this file's machine registry, and `bench/append_results.py` raises `SystemExit`
+on any unregistered tag - so a future measured row for them would be rejected. They
+are registered here with the all-PENDING shape the registry already uses for
+`reference-i5` (which likewise has `PENDING` cells), so the tag is usable the day
+that hardware appears.
 
 One upstream llama.cpp defect has no runtime mitigation in the pinned library and is covered
 only by the probe plus its CPU fallback, not fixed here: **#27638** (device loss at

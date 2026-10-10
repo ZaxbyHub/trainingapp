@@ -342,12 +342,12 @@ export class NodeBackendHost implements BackendHost {
     // reuses this verdict.
     //
     // TWO writers, deliberately: the host writes every verdict it adopts, and
-    // the engine writes the automatic-path GPU load-failure downgrade directly
+    // the engine writes the automatic-path GPU load-failure downgrade itself
     // (llama-engine.ts loadBackend). The engine cannot route it through the host
-    // because the engine is constructed by resolveNodeEngine BEFORE any host
-    // exists, so no host-supplied callback could ever be wired there. Both write
-    // whole objects on one thread, so there is no torn read; the earlier
-    // "nothing else mutates it" claim here was false and is removed.
+    // because it is constructed by resolveNodeEngine BEFORE any host exists, so
+    // no host-supplied callback can be wired at construction - it takes the
+    // probe directory directly instead (`gpuVerdictDir`). Both write whole
+    // objects on one thread, so there is no torn read.
     setActiveGpuVerdict(verdict);
     if (this.gpuProbeDir !== null) writeGpuProbeVerdict(this.gpuProbeDir, verdict);
   };
@@ -355,8 +355,14 @@ export class NodeBackendHost implements BackendHost {
   /**
    * issue #155: which model the probe loads. The FAST profile's GGUF: the probe
    * validates the BACKEND, the backend behaves identically for both profiles,
-   * and loading the 2.6 GB quality GGUF to answer a question the 332 MB fast
+   * and loading the 2.6 GB quality GGUF to answer a question the 229 MB fast
    * GGUF answers identically would make first boot needlessly slow.
+   *
+   * PR #159 review PRR-029: this said "332 MB", which is the PROFILE total
+   * (model.gguf 229,313,568 B + mmproj.gguf 102,815,168 B = 332,128,736 B, the
+   * figure bench/RESULTS.md:146 records for `models/llm-fast`). The probe loads
+   * the GGUF ALONE - `process.argv[2]` is a single path - so 229 MB is the
+   * honest figure here, matching the sibling comment in gpu-probe-child.ts.
    */
   /**
    * issue #155: OWN PROPERTY, not a prototype method. TypeScript's `private` is
